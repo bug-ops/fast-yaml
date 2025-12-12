@@ -199,7 +199,7 @@ Due to YAML 1.2 compliance:
 
 Requirements:
 - Python 3.8+
-- Rust 1.70+
+- Rust 1.85+
 - maturin
 
 ```bash

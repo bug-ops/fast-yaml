@@ -122,9 +122,7 @@ fn bench_parse_scaling(c: &mut Criterion) {
 }
 
 fn bench_parse_multi_document(c: &mut Criterion) {
-    let multi_doc = format!(
-        "---\n{SMALL_YAML}\n---\n{MEDIUM_YAML}\n---\n{SMALL_YAML}\n"
-    );
+    let multi_doc = format!("---\n{SMALL_YAML}\n---\n{MEDIUM_YAML}\n---\n{SMALL_YAML}\n");
 
     c.bench_function("parse_multi_document", |b| {
         b.iter(|| {

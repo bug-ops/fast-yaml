@@ -1,0 +1,30 @@
+[package]
+name = "fast-yaml-linter"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "YAML linter with rich diagnostics"
+keywords = ["yaml", "lint", "linter", "validation"]
+categories = ["development-tools", "parsing"]
+
+[dependencies]
+fast-yaml-core = { path = "../fast-yaml-core", version = "0.1.0" }
+thiserror.workspace = true
+
+# Optional dependencies for features
+serde = { version = "1.0", features = ["derive"], optional = true }
+serde_json = { version = "1.0", optional = true }
+is-terminal = "0.4"
+
+[dev-dependencies]
+indoc = "2.0"
+
+[features]
+default = []
+json-output = ["dep:serde", "dep:serde_json"]
+sarif-output = ["dep:serde", "dep:serde_json"]
+all-formats = ["json-output", "sarif-output"]
+
+[lints]
+workspace = true

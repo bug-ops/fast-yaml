@@ -5,7 +5,6 @@ CLAUDE.md
 
 # Rust
 target/
-Cargo.lock
 *.backup
 
 # Python

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/fast-yaml-core",
     "crates/fast-yaml-ffi",
+    "crates/fast-yaml-linter",
     "python",
 ]
 
@@ -10,7 +11,7 @@ members = [
 edition = "2024"
 rust-version = "1.85.0"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/rabax/fast-yaml"
+repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 yaml-rust2 = "0.10"

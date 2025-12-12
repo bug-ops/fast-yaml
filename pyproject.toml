@@ -27,11 +27,7 @@ classifiers = [
 keywords = ["yaml", "parser", "serialization", "rust"]
 
 [project.optional-dependencies]
-dev = [
-    "pytest>=7.0",
-    "pytest-benchmark>=4.0",
-    "pyyaml>=6.0",
-]
+dev = ["pytest>=9.0", "pytest-benchmark>=5.2", "pyyaml>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/yourusername/fast-yaml"
