@@ -1,0 +1,32 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fast-yaml-core",
+    "crates/fast-yaml-ffi",
+    "python",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.85.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rabax/fast-yaml"
+
+[workspace.dependencies]
+yaml-rust2 = "0.10"
+thiserror = "2.0"
+pyo3 = { version = "0.27", features = ["extension-module"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = "warn"
+pedantic = "warn"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+panic = "abort"
