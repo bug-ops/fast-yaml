@@ -1,7 +1,7 @@
 //! fast-yaml-ffi: FFI utilities for fast-yaml bindings.
 //!
 //! This crate provides generic traits and utilities for converting between
-//! Rust types and foreign types (e.g., Python objects via PyO3).
+//! Rust types and foreign types (e.g., Python objects via `PyO3`).
 //!
 //! # Core Traits
 //!
@@ -20,7 +20,9 @@
 //! let rust_value = RustType::from_ffi(&py_obj)?;
 //! ```
 
+/// FFI conversion traits for type conversion across language boundaries.
 pub mod conversion;
+/// Error types for FFI operations.
 pub mod error;
 
 pub use conversion::{FromFfi, ToFfi};

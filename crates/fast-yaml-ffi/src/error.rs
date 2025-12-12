@@ -13,7 +13,12 @@ pub enum FfiError {
 
     /// Type mismatch during conversion.
     #[error("type mismatch: expected {expected}, got {actual}")]
-    TypeMismatch { expected: String, actual: String },
+    TypeMismatch {
+        /// The expected type name.
+        expected: String,
+        /// The actual type name encountered.
+        actual: String,
+    },
 }
 
 /// Result type for FFI operations.

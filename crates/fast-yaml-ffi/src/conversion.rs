@@ -69,7 +69,7 @@ mod tests {
 
     impl FromFfi<i32> for TestType {
         fn from_ffi(foreign: &i32) -> FfiResult<Self> {
-            Ok(TestType(*foreign))
+            Ok(Self(*foreign))
         }
     }
 

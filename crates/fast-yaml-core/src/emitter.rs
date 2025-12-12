@@ -4,7 +4,7 @@ use yaml_rust2::YamlEmitter;
 
 /// Emitter for YAML documents.
 ///
-/// Wraps yaml-rust2's YamlEmitter to provide a consistent API.
+/// Wraps yaml-rust2's `YamlEmitter` to provide a consistent API.
 #[derive(Debug)]
 pub struct Emitter;
 

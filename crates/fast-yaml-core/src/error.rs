@@ -6,15 +6,20 @@ pub enum ParseError {
     /// YAML syntax error with location information.
     #[error("YAML parse error at line {line}, column {column}: {message}")]
     Syntax {
+        /// Line number where the error occurred (1-indexed).
         line: usize,
+        /// Column number where the error occurred (1-indexed).
         column: usize,
+        /// Description of the syntax error.
         message: String,
     },
 
     /// Invalid float value encountered.
     #[error("invalid float value '{value}': {source}")]
     InvalidFloat {
+        /// The invalid float value string.
         value: String,
+        /// The underlying parse error.
         #[source]
         source: std::num::ParseFloatError,
     },

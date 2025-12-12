@@ -4,7 +4,7 @@ use yaml_rust2::YamlLoader;
 
 /// Parser for YAML documents.
 ///
-/// Wraps yaml-rust2's YamlLoader to provide a consistent API.
+/// Wraps yaml-rust2's `YamlLoader` to provide a consistent API.
 #[derive(Debug)]
 pub struct Parser;
 
@@ -82,21 +82,21 @@ mod tests {
 
     #[test]
     fn test_parse_nested() {
-        let yaml = r#"
+        let yaml = r"
 person:
   name: John
   age: 30
   hobbies:
     - reading
     - coding
-"#;
+";
         let result = Parser::parse_str(yaml).unwrap();
         assert!(result.is_some());
     }
 
     #[test]
     fn test_parse_anchors() {
-        let yaml = r#"
+        let yaml = r"
 defaults: &defaults
   adapter: postgres
   host: localhost
@@ -104,7 +104,7 @@ defaults: &defaults
 development:
   <<: *defaults
   database: dev_db
-"#;
+";
         let result = Parser::parse_str(yaml).unwrap();
         assert!(result.is_some());
     }

@@ -1,14 +1,17 @@
+//! Benchmarks for YAML parsing performance.
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use std::fmt::Write;
 use std::hint::black_box;
 use yaml_rust2::YamlLoader;
 
-const SMALL_YAML: &str = r#"
+const SMALL_YAML: &str = r"
 name: test
 value: 123
 active: true
-"#;
+";
 
-const MEDIUM_YAML: &str = r#"
+const MEDIUM_YAML: &str = r"
 database:
   host: localhost
   port: 5432
@@ -40,15 +43,17 @@ settings:
     - authentication
     - caching
     - monitoring
-"#;
+";
 
+#[allow(clippy::cast_precision_loss)]
 fn generate_large_yaml(num_items: usize) -> String {
     let mut yaml = String::from("items:\n");
     for i in 0..num_items {
-        yaml.push_str(&format!(
-            r#"  - id: {}
-    name: item_{}
-    description: This is item number {} with a longer description
+        let _ = write!(
+            yaml,
+            r#"  - id: {i}
+    name: item_{i}
+    description: This is item number {i} with a longer description
     active: {}
     score: {}
     tags:
@@ -62,13 +67,10 @@ fn generate_large_yaml(num_items: usize) -> String {
       updated: "2024-12-01"
       version: {}
 "#,
-            i,
-            i,
-            i,
             i % 2 == 0,
             i as f64 * 1.5,
             i % 10
-        ));
+        );
     }
     yaml
 }
@@ -78,7 +80,7 @@ fn bench_parse_small(c: &mut Criterion) {
         b.iter(|| {
             let docs = YamlLoader::load_from_str(black_box(SMALL_YAML)).unwrap();
             black_box(docs);
-        })
+        });
     });
 }
 
@@ -87,7 +89,7 @@ fn bench_parse_medium(c: &mut Criterion) {
         b.iter(|| {
             let docs = YamlLoader::load_from_str(black_box(MEDIUM_YAML)).unwrap();
             black_box(docs);
-        })
+        });
     });
 }
 
@@ -98,7 +100,7 @@ fn bench_parse_large(c: &mut Criterion) {
         b.iter(|| {
             let docs = YamlLoader::load_from_str(black_box(&large_yaml)).unwrap();
             black_box(docs);
-        })
+        });
     });
 }
 
@@ -112,7 +114,7 @@ fn bench_parse_scaling(c: &mut Criterion) {
             b.iter(|| {
                 let docs = YamlLoader::load_from_str(black_box(yaml)).unwrap();
                 black_box(docs);
-            })
+            });
         });
     }
 
@@ -121,20 +123,19 @@ fn bench_parse_scaling(c: &mut Criterion) {
 
 fn bench_parse_multi_document(c: &mut Criterion) {
     let multi_doc = format!(
-        "---\n{}\n---\n{}\n---\n{}\n",
-        SMALL_YAML, MEDIUM_YAML, SMALL_YAML
+        "---\n{SMALL_YAML}\n---\n{MEDIUM_YAML}\n---\n{SMALL_YAML}\n"
     );
 
     c.bench_function("parse_multi_document", |b| {
         b.iter(|| {
             let docs = YamlLoader::load_from_str(black_box(&multi_doc)).unwrap();
             black_box(docs);
-        })
+        });
     });
 }
 
 fn bench_parse_special_values(c: &mut Criterion) {
-    let special = r#"
+    let special = r"
 null_values:
   - ~
   - null
@@ -159,18 +160,18 @@ integers:
   - -42
   - 0xFF
   - 0o77
-"#;
+";
 
     c.bench_function("parse_special_values", |b| {
         b.iter(|| {
             let docs = YamlLoader::load_from_str(black_box(special)).unwrap();
             black_box(docs);
-        })
+        });
     });
 }
 
 fn bench_parse_anchors(c: &mut Criterion) {
-    let anchors = r#"
+    let anchors = r"
 defaults: &defaults
   adapter: postgres
   host: localhost
@@ -187,13 +188,13 @@ production:
 staging:
   <<: *defaults
   database: staging_db
-"#;
+";
 
     c.bench_function("parse_anchors", |b| {
         b.iter(|| {
             let docs = YamlLoader::load_from_str(black_box(anchors)).unwrap();
             black_box(docs);
-        })
+        });
     });
 }
 

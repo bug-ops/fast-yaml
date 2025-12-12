@@ -35,9 +35,13 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+/// YAML emitter for serializing documents to strings.
 pub mod emitter;
+/// Error types for parsing and emitting operations.
 pub mod error;
+/// YAML parser for deserializing strings to documents.
 pub mod parser;
+/// Value types representing YAML data structures.
 pub mod value;
 
 pub use emitter::Emitter;
