@@ -1,0 +1,31 @@
+# Flow Collections (JSON-like syntax)
+
+# Flow sequences
+empty_sequence: []
+simple_sequence: [1, 2, 3]
+mixed_sequence: [1, "two", true, null]
+nested_sequence: [[1, 2], [3, 4]]
+multiline_sequence: [
+  item1,
+  item2,
+  item3
+]
+
+# Flow mappings
+empty_mapping: {}
+simple_mapping: {name: John, age: 30}
+nested_mapping: {person: {name: John, age: 30}}
+multiline_mapping: {
+  name: John,
+  age: 30,
+  active: true
+}
+
+# Mixed nesting
+complex: {
+  users: [
+    {name: Alice, roles: [admin, user]},
+    {name: Bob, roles: [user]}
+  ],
+  settings: {debug: true, version: 1.0}
+}

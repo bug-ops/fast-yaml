@@ -1,0 +1,7 @@
+# YAML Directives
+
+%YAML 1.2
+---
+# Document with explicit YAML version directive
+version: "1.2"
+content: This document uses YAML 1.2

@@ -1,0 +1,50 @@
+# Anchors and Aliases
+
+# Simple anchor and alias
+defaults: &defaults
+  adapter: postgres
+  host: localhost
+  port: 5432
+
+development:
+  database: dev_db
+  <<: *defaults
+
+production:
+  database: prod_db
+  <<: *defaults
+
+# Multiple anchors
+base: &base
+  name: Base
+  version: 1.0
+
+extended: &extended
+  <<: *base
+  extra: value
+
+final:
+  <<: *extended
+  override: true
+
+# Anchor on scalar
+author: &author John Doe
+books:
+  - title: Book 1
+    author: *author
+  - title: Book 2
+    author: *author
+
+# Anchor on sequence
+tags: &common_tags
+  - yaml
+  - parser
+  - rust
+
+project1:
+  name: Project 1
+  tags: *common_tags
+
+project2:
+  name: Project 2
+  tags: *common_tags

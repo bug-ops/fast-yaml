@@ -1,0 +1,24 @@
+# YAML 1.2.2 Core Schema: Floating point values
+
+# Standard notation
+standard: 1.23
+negative: -1.23
+explicit_positive: +1.23
+
+# Scientific notation
+scientific_lower: 1.23e10
+scientific_upper: 1.23E10
+scientific_positive: 1.23e+10
+scientific_negative: 1.23e-10
+
+# Special values
+infinity: .inf
+negative_infinity: -.inf
+positive_infinity: +.inf
+not_a_number: .nan
+
+# Case variations
+inf_upper: .Inf
+inf_all_upper: .INF
+nan_upper: .NaN
+nan_all_upper: .NAN

@@ -1,0 +1,9 @@
+# YAML 1.2.2 Core Schema: Null values
+# Various representations of null
+
+null_tilde: ~
+null_word_lower: null
+null_word_title: Null
+null_word_upper: NULL
+null_empty:
+null_explicit: !!null null

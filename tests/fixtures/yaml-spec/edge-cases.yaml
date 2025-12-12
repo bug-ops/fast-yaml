@@ -1,0 +1,41 @@
+# Edge Cases and Corner Cases
+
+# Empty values
+empty_value:
+empty_in_sequence:
+  -
+  - value
+  -
+
+# Very long lines (for line length testing)
+long_key_name_that_exceeds_typical_limits_for_readability_and_style_checking: value
+short: this is a very long value that might exceed typical line length limits in many style guides and linters that enforce maximum line lengths for better readability
+
+# Special characters in strings
+special_chars:
+  at_sign: user@example.com
+  ampersand: "Tom & Jerry"
+  asterisk: "5 * 5 = 25"
+  exclamation: "Hello!"
+  question: "How are you?"
+  hash_quoted: "#not a comment"
+  colon_in_value: "time: 10:30"
+  bracket_quoted: "[not a sequence]"
+  brace_quoted: "{not a mapping}"
+
+# Trailing whitespace (intentional for testing)
+with_trailing: "value"
+another: value
+
+# Mixed indentation (valid but unusual)
+mixed:
+  two_spaces: value
+  two_spaces_again: value
+
+# Deeply nested structure
+level1:
+  level2:
+    level3:
+      level4:
+        level5:
+          deep: value

@@ -1,0 +1,46 @@
+# Block Scalar Indicators
+
+# Literal style (|) - preserves newlines
+literal_default: |
+  Line 1
+  Line 2
+  Line 3
+
+# Literal with explicit indentation indicator
+literal_indent2: |2
+   Line 1 (indented by 3, indicator says 2)
+   Line 2
+
+# Literal strip (-) - strip final newlines
+literal_strip: |-
+  Line 1
+  Line 2
+
+# Literal keep (+) - keep all trailing newlines
+literal_keep: |+
+  Line 1
+  Line 2
+
+# Folded style (>) - folds newlines to spaces
+folded_default: >
+  This text will be
+  folded into a single
+  line with spaces.
+
+# Folded strip
+folded_strip: >-
+  Folded text
+  without trailing newline
+
+# Folded keep
+folded_keep: >+
+  Folded text
+  with trailing newlines
+
+# Folded with blank lines preserved
+folded_with_blanks: >
+  First paragraph.
+
+  Second paragraph after blank line.
+
+  Third paragraph.

@@ -1,0 +1,21 @@
+# YAML 1.2.2 Core Schema: Integer values
+
+# Decimal integers
+positive: 12345
+negative: -12345
+explicit_positive: +12345
+zero: 0
+
+# Octal integers (YAML 1.2.2 requires 0o prefix)
+octal_new: 0o755
+octal_zero: 0o0
+
+# Hexadecimal integers
+hex_lower: 0xabcdef
+hex_upper: 0xABCDEF
+hex_mixed: 0xAbCdEf
+hex_short: 0xC
+
+# These are STRINGS in YAML 1.2.2 (old octal format)
+old_octal_014: 014
+old_octal_0755: 0755

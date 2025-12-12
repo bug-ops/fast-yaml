@@ -1,0 +1,25 @@
+# Empty and minimal documents
+
+# Empty document
+---
+...
+
+# Null document
+---
+~
+...
+
+# Just a scalar
+---
+simple scalar
+...
+
+# Empty mapping
+---
+{}
+...
+
+# Empty sequence
+---
+[]
+...

@@ -1,0 +1,19 @@
+# YAML 1.2.2 Core Schema: Boolean values
+# Only true/false are booleans (case-insensitive)
+# yes/no/on/off are strings in YAML 1.2.2
+
+# These are booleans
+bool_true_lower: true
+bool_false_lower: false
+bool_true_title: True
+bool_false_title: False
+bool_true_upper: TRUE
+bool_false_upper: FALSE
+
+# These are STRINGS in YAML 1.2.2 (unlike YAML 1.1)
+yaml11_yes: yes
+yaml11_no: no
+yaml11_on: on
+yaml11_off: off
+yaml11_y: y
+yaml11_n: n

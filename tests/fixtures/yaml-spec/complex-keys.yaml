@@ -1,0 +1,37 @@
+# Complex Mapping Keys
+
+# Question mark explicit key indicator
+? explicit key
+: explicit value
+
+# Sequence as key
+? - item1
+  - item2
+: sequence key value
+
+# Mapping as key
+? name: John
+  age: 30
+: mapping key value
+
+# Flow sequence as key
+? [a, b, c]
+: flow sequence key
+
+# Flow mapping as key
+? {x: 1, y: 2}
+: flow mapping key
+
+# Multiline key
+? |
+  multiline
+  key
+: multiline key value
+
+# Empty key
+?
+: empty key value
+
+# Null key (explicit)
+null: null key value
+~: tilde key value

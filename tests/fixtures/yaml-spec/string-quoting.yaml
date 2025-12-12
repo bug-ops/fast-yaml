@@ -1,0 +1,36 @@
+# String Quoting Styles
+
+# Plain (unquoted) strings
+plain_simple: hello world
+plain_with_colon: not a mapping
+plain_numeric_looking: "123"  # quoted to preserve as string
+
+# Single-quoted strings (no escape sequences except '')
+single_simple: 'hello world'
+single_with_quotes: 'he said ''hello'''
+single_preserves_backslash: 'c:\path\to\file'
+single_no_newline_escape: 'line1\nstill line1'
+
+# Double-quoted strings (with escape sequences)
+double_simple: "hello world"
+double_with_quotes: "he said \"hello\""
+double_newline: "line1\nline2"
+double_tab: "col1\tcol2"
+double_backslash: "c:\\path\\to\\file"
+double_unicode: "smiley: \u263A"
+double_hex: "carriage return: \x0d"
+double_null_char: "null: \x00"
+
+# Multiline strings
+multiline_plain:
+  This is a long
+  string that spans
+  multiple lines.
+
+multiline_double: "This is a long
+  string that spans
+  multiple lines."
+
+multiline_single: 'This is a long
+  string that spans
+  multiple lines.'
