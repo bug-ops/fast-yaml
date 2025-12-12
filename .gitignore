@@ -1,5 +1,7 @@
 # Local working files
 .local/
+.claude/
+CLAUDE.md
 
 # Rust
 target/

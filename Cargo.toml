@@ -19,10 +19,18 @@ pyo3 = { version = "0.27", features = ["extension-module"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+missing_docs = "warn"
 
 [workspace.lints.clippy]
 all = "warn"
 pedantic = "warn"
+nursery = "warn"
+cargo = "warn"
+# Allow specific patterns
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
 
 [profile.release]
 lto = true
