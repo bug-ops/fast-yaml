@@ -27,12 +27,30 @@ classifiers = [
 keywords = ["yaml", "parser", "serialization", "rust"]
 
 [project.optional-dependencies]
-dev = ["pytest>=9.0", "pytest-benchmark>=5.2", "pyyaml>=6.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-benchmark>=4.0",
+    "pyyaml>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-benchmark>=4.0",
+    "pyyaml>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "maturin>=1.7",
+]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/fast-yaml"
-Repository = "https://github.com/yourusername/fast-yaml"
-Documentation = "https://github.com/yourusername/fast-yaml#readme"
+Homepage = "https://github.com/bug-ops/fast-yaml"
+Repository = "https://github.com/bug-ops/fast-yaml"
+Documentation = "https://github.com/bug-ops/fast-yaml#readme"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
