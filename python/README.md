@@ -1,15 +1,15 @@
-# fast-yaml
+# fastyaml-rs
 
-[![PyPI](https://img.shields.io/pypi/v/fast-yaml)](https://pypi.org/project/fast-yaml/)
-[![Python](https://img.shields.io/pypi/pyversions/fast-yaml)](https://pypi.org/project/fast-yaml/)
-[![License](https://img.shields.io/pypi/l/fast-yaml)](https://github.com/bug-ops/fast-yaml/blob/main/LICENSE-MIT)
+[![PyPI](https://img.shields.io/pypi/v/fastyaml-rs)](https://pypi.org/project/fastyaml-rs/)
+[![Python](https://img.shields.io/pypi/pyversions/fastyaml-rs)](https://pypi.org/project/fastyaml-rs/)
+[![License](https://img.shields.io/pypi/l/fastyaml-rs)](https://github.com/bug-ops/fast-yaml/blob/main/LICENSE-MIT)
 
 A fast YAML 1.2.2 parser and linter for Python, powered by Rust.
 
 ## Installation
 
 ```bash
-pip install fast-yaml
+pip install fastyaml-rs
 ```
 
 ## Usage

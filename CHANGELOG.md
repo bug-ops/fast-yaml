@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2025-12-14
+
+### Changed
+- Renamed Python package from `fast-yaml` to `fastyaml-rs` (PyPI name conflict)
+
 ## [0.1.3] - 2025-12-14
 
 ### Fixed
@@ -99,7 +104,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.3...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/bug-ops/fast-yaml/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/bug-ops/fast-yaml/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/bug-ops/fast-yaml/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/bug-ops/fast-yaml/compare/v0.1.0...v0.1.1
