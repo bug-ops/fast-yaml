@@ -440,10 +440,10 @@ command = "cargo"
 args = ["build", "--workspace", "--all-targets", "--release", "--exclude", "fast-yaml"]
 
 [tasks.check]
-description = "Quick check without building (excludes Python extension)"
+description = "Quick check without building (excludes Python/NodeJS extensions)"
 category = "Build"
 command = "cargo"
-args = ["check", "--workspace", "--all-targets", "--all-features", "--exclude", "fast-yaml"]
+args = ["check", "--workspace", "--all-targets", "--all-features", "--exclude", "fast-yaml", "--exclude", "fast-yaml-nodejs"]
 
 [tasks.clean]
 description = "Clean build artifacts"
