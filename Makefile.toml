@@ -48,15 +48,8 @@ install_crate = { rustup_component_name = "rustfmt", binary = "rustfmt", test_ar
 description = "Format Python code with ruff"
 category = "Development"
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run ruff format .
-elif command -v ruff &> /dev/null; then
-    ruff format .
-else
-    echo "Warning: ruff not found, skipping Python formatting"
-fi
-'''
+command = "uv"
+args = ["run", "ruff", "format", "."]
 
 [tasks.format-check]
 description = "Check code formatting without modifying files"
@@ -74,15 +67,8 @@ install_crate = { rustup_component_name = "rustfmt", binary = "rustfmt", test_ar
 description = "Check Python formatting with ruff"
 category = "CI"
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run ruff format --check .
-elif command -v ruff &> /dev/null; then
-    ruff format --check .
-else
-    echo "Warning: ruff not found, skipping Python format check"
-fi
-'''
+command = "uv"
+args = ["run", "ruff", "format", "--check", "."]
 
 # ============================================================================
 # Linting Tasks
@@ -123,15 +109,8 @@ install_crate = { rustup_component_name = "clippy", binary = "cargo-clippy", tes
 description = "Lint Python code with ruff"
 category = "Development"
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run ruff check .
-elif command -v ruff &> /dev/null; then
-    ruff check .
-else
-    echo "Warning: ruff not found, skipping Python linting"
-fi
-'''
+command = "uv"
+args = ["run", "ruff", "check", "."]
 
 [tasks.lint]
 description = "Run all linters (Rust and Python)"
@@ -185,83 +164,46 @@ install_crate = { crate_name = "cargo-nextest", binary = "cargo-nextest", test_a
 description = "Build Python extension with maturin"
 category = "Python"
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run maturin develop --release
-elif command -v maturin &> /dev/null; then
-    maturin develop --release
-else
-    echo "Error: maturin not found. Install with: pip install maturin"
-    exit 1
-fi
-'''
+command = "uv"
+args = ["run", "maturin", "develop", "--release"]
 
 [tasks.python-build-debug]
 description = "Build Python extension in debug mode"
 category = "Python"
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run maturin develop
-elif command -v maturin &> /dev/null; then
-    maturin develop
-else
-    echo "Error: maturin not found. Install with: pip install maturin"
-    exit 1
-fi
-'''
+command = "uv"
+args = ["run", "maturin", "develop"]
 
 [tasks.python-test]
 description = "Run Python test suite with pytest"
 category = "Python"
 dependencies = ["python-build"]
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run pytest ../tests/ ${PYTEST_ARGS}
-elif command -v pytest &> /dev/null; then
-    pytest ../tests/ ${PYTEST_ARGS}
-else
-    echo "Error: pytest not found. Install with: pip install pytest"
-    exit 1
-fi
-'''
+command = "uv"
+args = ["run", "pytest", "../tests/", "-v"]
 
 [tasks.python-test-verbose]
 description = "Run Python tests with verbose output"
 category = "Python"
-env = { PYTEST_ARGS = "-vv -s" }
-run_task = "python-test"
+dependencies = ["python-build"]
+cwd = "${PYTHON_DIR}"
+command = "uv"
+args = ["run", "pytest", "../tests/", "-vv", "-s"]
 
 [tasks.python-typecheck]
 description = "Type check Python code with mypy"
 category = "Python"
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run mypy fast_yaml/
-elif command -v mypy &> /dev/null; then
-    mypy fast_yaml/
-else
-    echo "Warning: mypy not found, skipping type checking"
-fi
-'''
+command = "uv"
+args = ["run", "mypy", "fast_yaml/"]
 
 [tasks.python-coverage]
 description = "Run Python tests with coverage"
 category = "Python"
 dependencies = ["python-build"]
 cwd = "${PYTHON_DIR}"
-script = '''
-if command -v uv &> /dev/null; then
-    uv run pytest ../tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
-elif command -v pytest &> /dev/null; then
-    pytest ../tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
-else
-    echo "Error: pytest not found. Install with: pip install pytest pytest-cov"
-    exit 1
-fi
-'''
+command = "uv"
+args = ["run", "pytest", "../tests/", "-v", "--cov=fast_yaml", "--cov-report=html", "--cov-report=xml"]
 
 # ============================================================================
 # Documentation Tasks
