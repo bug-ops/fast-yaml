@@ -222,7 +222,6 @@ fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Yaml> {
 ///     {'name': 'test', 'value': 123}
 #[pyfunction]
 #[pyo3(signature = (yaml_str))]
-#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
@@ -235,7 +234,7 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs = py
-        .allow_threads(|| YamlLoader::load_from_str(yaml_str))
+        .detach(|| YamlLoader::load_from_str(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     if docs.is_empty() {
@@ -268,7 +267,6 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///     [{'foo': 1}, {'bar': 2}]
 #[pyfunction]
 #[pyo3(signature = (yaml_str))]
-#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
@@ -281,7 +279,7 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs = py
-        .allow_threads(|| YamlLoader::load_from_str(yaml_str))
+        .detach(|| YamlLoader::load_from_str(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     // Pre-allocate Python objects vector with known capacity
@@ -318,7 +316,6 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[pyo3(signature = (data, allow_unicode=true, sort_keys=false))]
 #[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
-#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_dump(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -339,7 +336,7 @@ fn safe_dump(
 
     // Release GIL during CPU-intensive serialization
     let mut output = py
-        .allow_threads(|| {
+        .detach(|| {
             let mut output = String::new();
             let mut emitter = YamlEmitter::new(&mut output);
 
@@ -411,7 +408,6 @@ fn yaml_to_sort_key(yaml: &Yaml) -> String {
 ///     '---\\na: 1\\n---\\nb: 2\\n'
 #[pyfunction]
 #[pyo3(signature = (documents))]
-#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<String> {
     let iter = documents.try_iter()?;
 
@@ -424,7 +420,7 @@ fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<Strin
 
     // Release GIL during CPU-intensive serialization
     let output = py
-        .allow_threads(|| {
+        .detach(|| {
             let mut output = String::new();
 
             for (i, yaml) in yamls.iter().enumerate() {

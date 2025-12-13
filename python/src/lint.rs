@@ -577,10 +577,9 @@ impl PyLinter {
     ///
     /// Raises:
     ///     `ValueError`: If YAML cannot be parsed at all
-    #[allow(deprecated)] // allow_threads is still correct for GIL release
     fn lint(&self, py: Python<'_>, source: &str) -> PyResult<Vec<PyDiagnostic>> {
         // Release GIL during CPU-intensive linting
-        let result = py.allow_threads(|| self.inner.lint(source));
+        let result = py.detach(|| self.inner.lint(source));
 
         result
             .map(|diagnostics| diagnostics.into_iter().map(Into::into).collect())
@@ -790,10 +789,9 @@ impl PyJsonFormatter {
 ///     error: duplicate key 'key' found
 #[pyfunction]
 #[pyo3(signature = (source, config=None))]
-#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn lint(py: Python<'_>, source: &str, config: Option<PyLintConfig>) -> PyResult<Vec<PyDiagnostic>> {
     // Release GIL during CPU-intensive linting
-    let result = py.allow_threads(|| {
+    let result = py.detach(|| {
         let linter = match config {
             Some(cfg) => RustLinter::with_config(cfg.inner),
             None => RustLinter::with_all_rules(),

@@ -218,14 +218,13 @@ impl PyParallelConfig {
 ///     3
 #[pyfunction]
 #[pyo3(signature = (source, config=None))]
-#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn parse_parallel(
     py: Python<'_>,
     source: &str,
     config: Option<PyParallelConfig>,
 ) -> PyResult<Py<PyAny>> {
     // Release GIL for parallel processing
-    let result = py.allow_threads(|| match config {
+    let result = py.detach(|| match config {
         Some(cfg) => parse_parallel_with_config(source, &cfg.inner),
         None => rust_parse_parallel(source),
     });
