@@ -44,7 +44,12 @@
     "build:debug": "napi build --platform",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:verbose": "vitest run --reporter=verbose",
     "bench": "vitest bench",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
+    "lint": "echo 'ESLint not configured yet. Run: npm install --save-dev eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin' && exit 0",
+    "typecheck": "tsc --noEmit",
     "prepublishOnly": "napi prepublish -t npm",
     "artifacts": "napi artifacts",
     "version": "napi version"
@@ -52,6 +57,7 @@
   "devDependencies": {
     "@napi-rs/cli": "^3.0.0-alpha.62",
     "@types/node": "^25.0",
+    "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "vitest": "^4.0"
   },

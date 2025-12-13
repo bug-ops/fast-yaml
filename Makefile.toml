@@ -25,6 +25,9 @@ RUSTFLAGS = "-D warnings"
 PYTHON_DIR = "python"
 PYTEST_ARGS = "-v"
 
+# NodeJS environment
+NODEJS_DIR = "nodejs"
+
 # Coverage output
 COVERAGE_OUTPUT = "lcov.info"
 
@@ -33,9 +36,9 @@ COVERAGE_OUTPUT = "lcov.info"
 # ============================================================================
 
 [tasks.format]
-description = "Format all Rust and Python code"
+description = "Format all Rust, Python, and NodeJS code"
 category = "Development"
-dependencies = ["format-rust", "format-python"]
+dependencies = ["format-rust", "format-python", "format-nodejs"]
 
 [tasks.format-rust]
 description = "Format Rust code with nightly rustfmt (required for Edition 2024)"
@@ -51,10 +54,17 @@ cwd = "${PYTHON_DIR}"
 command = "uv"
 args = ["run", "ruff", "format", "."]
 
+[tasks.format-nodejs]
+description = "Format NodeJS code with prettier"
+category = "Development"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "format"]
+
 [tasks.format-check]
 description = "Check code formatting without modifying files"
 category = "CI"
-dependencies = ["format-check-rust", "format-check-python"]
+dependencies = ["format-check-rust", "format-check-python", "format-check-nodejs"]
 
 [tasks.format-check-rust]
 description = "Check Rust formatting with nightly rustfmt"
@@ -69,6 +79,13 @@ category = "CI"
 cwd = "${PYTHON_DIR}"
 command = "uv"
 args = ["run", "ruff", "format", "--check", "."]
+
+[tasks.format-check-nodejs]
+description = "Check NodeJS formatting with prettier"
+category = "CI"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "format:check"]
 
 # ============================================================================
 # Linting Tasks
@@ -112,10 +129,17 @@ cwd = "${PYTHON_DIR}"
 command = "uv"
 args = ["run", "ruff", "check", "."]
 
-[tasks.lint]
-description = "Run all linters (Rust and Python)"
+[tasks.lint-nodejs]
+description = "Lint NodeJS code with ESLint"
 category = "Development"
-dependencies = ["clippy", "lint-python"]
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "lint"]
+
+[tasks.lint]
+description = "Run all linters (Rust, Python, and NodeJS)"
+category = "Development"
+dependencies = ["clippy", "lint-python", "lint-nodejs"]
 
 # ============================================================================
 # Testing Tasks
@@ -204,6 +228,62 @@ dependencies = ["python-build"]
 cwd = "${PYTHON_DIR}"
 command = "uv"
 args = ["run", "pytest", "../tests/", "-v", "--cov=fast_yaml", "--cov-report=html", "--cov-report=xml"]
+
+# ============================================================================
+# NodeJS Tasks
+# ============================================================================
+
+[tasks.nodejs-deps]
+description = "Install NodeJS dependencies"
+category = "NodeJS"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["install"]
+
+[tasks.nodejs-build]
+description = "Build NodeJS native module with NAPI-RS (release mode)"
+category = "NodeJS"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "build"]
+
+[tasks.nodejs-build-debug]
+description = "Build NodeJS native module in debug mode"
+category = "NodeJS"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "build:debug"]
+
+[tasks.nodejs-test]
+description = "Run NodeJS test suite with Vitest"
+category = "NodeJS"
+dependencies = ["nodejs-build-debug"]
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["test"]
+
+[tasks.nodejs-test-verbose]
+description = "Run NodeJS tests with verbose output"
+category = "NodeJS"
+dependencies = ["nodejs-build-debug"]
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "test:verbose"]
+
+[tasks.nodejs-typecheck]
+description = "Type check NodeJS code with TypeScript"
+category = "NodeJS"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "typecheck"]
+
+[tasks.nodejs-bench]
+description = "Run NodeJS benchmarks"
+category = "NodeJS"
+dependencies = ["nodejs-build"]
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "bench"]
 
 # ============================================================================
 # Documentation Tasks
@@ -395,6 +475,11 @@ description = "CI: Python checks (build, test, typecheck)"
 category = "CI"
 dependencies = ["python-build", "python-test", "python-typecheck"]
 
+[tasks.ci-nodejs]
+description = "CI: NodeJS checks (build, test, typecheck)"
+category = "CI"
+dependencies = ["nodejs-build-debug", "nodejs-test", "nodejs-typecheck"]
+
 [tasks.ci-security]
 description = "CI: Security checks (cargo-deny)"
 category = "CI"
@@ -416,7 +501,10 @@ dependencies = [
     "deny",
     "python-build",
     "python-test",
-    "python-typecheck"
+    "python-typecheck",
+    "nodejs-build-debug",
+    "nodejs-test",
+    "nodejs-typecheck"
 ]
 
 # ============================================================================
@@ -536,7 +624,7 @@ script = '''
 echo "fast-yaml cargo-make tasks"
 echo ""
 echo "Development:"
-echo "  format         - Format Rust and Python code"
+echo "  format         - Format Rust, Python, and NodeJS code"
 echo "  lint           - Run all linters"
 echo "  test           - Run Rust tests with nextest"
 echo "  dev            - Format + lint + test"
@@ -547,9 +635,16 @@ echo "  python-build   - Build Python extension"
 echo "  python-test    - Run Python tests"
 echo "  python-typecheck - Type check Python code"
 echo ""
+echo "NodeJS:"
+echo "  nodejs-deps    - Install NodeJS dependencies"
+echo "  nodejs-build   - Build NodeJS native module"
+echo "  nodejs-test    - Run NodeJS tests"
+echo "  nodejs-typecheck - Type check NodeJS code"
+echo ""
 echo "CI/CD:"
 echo "  ci-rust        - Rust CI pipeline"
 echo "  ci-python      - Python CI pipeline"
+echo "  ci-nodejs      - NodeJS CI pipeline"
 echo "  ci-security    - Security checks"
 echo "  ci-all         - Complete CI pipeline"
 echo ""
