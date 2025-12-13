@@ -507,6 +507,61 @@ jobs:
           path: python/htmlcov/
           retention-days: 30
 
+  # NodeJS coverage (Linux only)
+  nodejs-coverage:
+    name: NodeJS Coverage
+    needs: [format, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "nodejs-coverage"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install NodeJS dependencies
+        run: cargo make nodejs-deps
+
+      - name: Build NodeJS extension
+        run: cargo make nodejs-build-debug
+
+      - name: Run tests with coverage
+        run: cd nodejs && npm run test:coverage
+
+      - name: Upload NodeJS coverage to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: nodejs/coverage/lcov.info
+          flags: nodejs
+          name: nodejs-coverage
+          verbose: true
+
+      - name: Archive NodeJS coverage report
+        uses: actions/upload-artifact@v5
+        with:
+          name: nodejs-coverage-report
+          path: nodejs/coverage/
+          retention-days: 30
+
   # NodeJS release build check (multi-platform)
   nodejs-build:
     name: NodeJS Build (${{ matrix.os }})
@@ -591,7 +646,7 @@ jobs:
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [format, lint, security, test-rust, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality]
+    needs: [format, lint, security, test-rust, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -607,7 +662,8 @@ jobs:
              [[ "${{ needs.python-quality.result }}" != "success" ]] || \
              [[ "${{ needs.python-coverage.result }}" != "success" ]] || \
              [[ "${{ needs.test-nodejs.result }}" != "success" ]] || \
-             [[ "${{ needs.nodejs-quality.result }}" != "success" ]]; then
+             [[ "${{ needs.nodejs-quality.result }}" != "success" ]] || \
+             [[ "${{ needs.nodejs-coverage.result }}" != "success" ]]; then
             echo "One or more required jobs failed"
             exit 1
           fi

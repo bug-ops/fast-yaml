@@ -285,6 +285,14 @@ cwd = "${NODEJS_DIR}"
 command = "npm"
 args = ["run", "bench"]
 
+[tasks.nodejs-coverage]
+description = "Run NodeJS tests with coverage"
+category = "NodeJS"
+dependencies = ["nodejs-build-debug"]
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "test:coverage"]
+
 # ============================================================================
 # Documentation Tasks
 # ============================================================================
