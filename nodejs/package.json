@@ -1,0 +1,75 @@
+{
+  "name": "@fast-yaml/core",
+  "version": "0.1.0",
+  "description": "Fast YAML 1.2.2 parser, linter, and parallel processor for Node.js",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bug-ops/fast-yaml.git",
+    "directory": "nodejs"
+  },
+  "license": "MIT OR Apache-2.0",
+  "keywords": [
+    "yaml",
+    "parser",
+    "linter",
+    "rust",
+    "napi-rs",
+    "performance",
+    "yaml-1.2.2"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "napi": {
+    "binaryName": "fast-yaml",
+    "packageName": "@fast-yaml/core",
+    "targets": [
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "aarch64-apple-darwin",
+      "x86_64-pc-windows-msvc",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-pc-windows-msvc"
+    ]
+  },
+  "scripts": {
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:verbose": "vitest run --reporter=verbose",
+    "test:coverage": "vitest run --coverage",
+    "bench": "vitest bench",
+    "format": "prettier --write \"**/*.{ts,js,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,js,json,md}\"",
+    "lint": "echo 'ESLint not configured yet. Run: npm install --save-dev eslint @typescript-eslint/parser @typescript-eslint/eslint-plugin' && exit 0",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "napi prepublish -t npm",
+    "artifacts": "napi artifacts",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^3.0.0-alpha.62",
+    "@types/node": "^25.0",
+    "@vitest/coverage-v8": "^4.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.0"
+  },
+  "optionalDependencies": {
+    "@fast-yaml/linux-x64-gnu": "0.1.0",
+    "@fast-yaml/linux-x64-musl": "0.1.0",
+    "@fast-yaml/darwin-x64": "0.1.0",
+    "@fast-yaml/darwin-arm64": "0.1.0",
+    "@fast-yaml/win32-x64-msvc": "0.1.0",
+    "@fast-yaml/linux-arm64-gnu": "0.1.0",
+    "@fast-yaml/win32-arm64-msvc": "0.1.0"
+  }
+}

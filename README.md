@@ -2,15 +2,15 @@
 
 [![CI Status](https://img.shields.io/github/actions/workflow/status/bug-ops/fast-yaml/ci.yml?branch=main)](https://github.com/bug-ops/fast-yaml/actions)
 [![PyPI](https://img.shields.io/pypi/v/fast-yaml)](https://pypi.org/project/fast-yaml/)
+[![npm](https://img.shields.io/npm/v/@fast-yaml/core)](https://www.npmjs.com/package/@fast-yaml/core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
-[![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
-[![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://python.org)
+[![Rust](https://img.shields.io/badge/rust-1.86+-orange.svg)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/bug-ops/fast-yaml/graph/badge.svg?token=E33WB16NUD)](https://codecov.io/gh/bug-ops/fast-yaml)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
 
-**High-performance YAML 1.2.2 parser for Python, powered by Rust.**
+**High-performance YAML 1.2.2 parser for Python and Node.js, powered by Rust.**
 
-Drop-in replacement for PyYAML's `safe_*` functions with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
+Drop-in replacement for PyYAML's `safe_*` functions and js-yaml with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
 
 > [!IMPORTANT]
 > **YAML 1.2.2 Compliance** — Unlike PyYAML (YAML 1.1), `fast-yaml` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
@@ -42,9 +42,10 @@ Drop-in replacement for PyYAML's `safe_*` functions with **5-10x faster** parsin
 ### Architecture
 
 - **Zero `unsafe` Code** — Memory-safe Rust with `#![forbid(unsafe_code)]`
-- **Modular Workspace** — Separate crates for core, linter, parallel, and FFI
-- **Cross-platform** — Pre-built wheels for Linux, macOS, Windows
+- **Modular Workspace** — Separate crates for core, linter, parallel, FFI, and bindings
+- **Cross-platform** — Pre-built wheels/binaries for Linux, macOS, Windows
 - **GIL Release** — Python GIL released during CPU-intensive operations
+- **Native Node.js** — NAPI-RS bindings with TypeScript definitions
 
 ## Installation
 
@@ -54,10 +55,26 @@ Drop-in replacement for PyYAML's `safe_*` functions with **5-10x faster** parsin
 pip install fast-yaml
 ```
 
+### Node.js Package
+
+```bash
+# npm
+npm install @fast-yaml/core
+
+# yarn
+yarn add @fast-yaml/core
+
+# pnpm
+pnpm add @fast-yaml/core
+```
+
+> [!NOTE]
+> Node.js 20+ required. TypeScript definitions included.
+
 ### Build from Source
 
 > [!WARNING]
-> **Requires Rust 1.85+** (2024 edition) and Python 3.8+. Install Rust via [rustup.rs](https://rustup.rs/)
+> **Requires Rust 1.86+** (2024 edition). Python 3.9+ or Node.js 20+ required for bindings. Install Rust via [rustup.rs](https://rustup.rs/)
 
 <details>
 <summary><b>Using uv (Recommended)</b></summary>
@@ -126,6 +143,32 @@ print(yaml_str)
 
 > [!TIP]
 > **Migrating from PyYAML?** Just change your import: `import fast_yaml as yaml`
+
+### Node.js Quick Start
+
+```typescript
+import { safeLoad, safeDump } from '@fast-yaml/core';
+
+// Parse YAML
+const data = safeLoad(`
+name: fast-yaml
+version: 0.1.0
+features:
+  - fast
+  - safe
+  - yaml-1.2.2
+`);
+
+console.log(data);
+// { name: 'fast-yaml', version: '0.1.0', features: ['fast', 'safe', 'yaml-1.2.2'] }
+
+// Serialize to YAML
+const yamlStr = safeDump(data);
+console.log(yamlStr);
+```
+
+> [!TIP]
+> **Migrating from js-yaml?** Just change your import: `import { safeLoad, safeDump } from '@fast-yaml/core';`
 
 ## API Reference
 
@@ -316,6 +359,7 @@ fast-yaml/
 │   ├── fast-yaml-parallel/ # Multi-threaded processing
 │   └── fast-yaml-ffi/      # FFI utilities for bindings
 ├── python/                 # PyO3 Python bindings
+├── nodejs/                 # NAPI-RS Node.js bindings
 └── Cargo.toml             # Workspace manifest
 ```
 
@@ -325,56 +369,19 @@ fast-yaml/
 |-----------|---------|---------|
 | **YAML Parser** | [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) | 0.10 |
 | **Python Bindings** | [PyO3](https://pyo3.rs/) | 0.27 |
+| **Node.js Bindings** | [NAPI-RS](https://napi.rs/) | 3.7 |
 | **Parallelism** | [Rayon](https://github.com/rayon-rs/rayon) | 1.10 |
 | **Error Handling** | [thiserror](https://crates.io/crates/thiserror) | 2.0 |
-| **Build Tool** | [maturin](https://maturin.rs/) | 1.7+ |
+| **Build Tools** | [maturin](https://maturin.rs/), [@napi-rs/cli](https://napi.rs/) | 1.7+, 3.0+ |
 
 **Project Metrics**:
 
 - **Language**: Rust 2024 Edition
-- **MSRV**: 1.85.0
-- **Python**: 3.8+
-- **Crates**: 5 (core, linter, parallel, ffi, python)
-- **Tests**: 234+ (Rust) + Python test suite
-
-## Current Status
-
-> [!NOTE]
-> **Phase 4 Complete!** Full Python bindings for linter and parallel processing are now available.
-
-### ✅ Phase 1: Core Parser (Complete)
-
-- YAML 1.2.2 Core Schema parser
-- Python bindings with PyO3
-- `safe_load`, `safe_dump`, `safe_load_all`, `safe_dump_all`
-- Full type hints and documentation
-
-### ✅ Phase 2: Linter (Complete)
-
-- Rich diagnostic system with source context
-- Linting rules (duplicate keys, line length, indentation)
-- Multiple output formats (text, JSON)
-- Pluggable rule architecture
-
-### ✅ Phase 3: Parallel Processing (Complete)
-
-- Multi-threaded document chunking with Rayon
-- Intelligent document boundary detection
-- Configurable thread pool and resource limits
-- DoS protection (input size, document count limits)
-
-### ✅ Phase 4: Python Integration (Complete)
-
-- Linter Python API with full diagnostics
-- Parallel processing Python bindings
-- GIL release during CPU-intensive operations
-- Comprehensive type stubs
-
-### 💡 Phase 5: NodeJS Bindings (Future)
-
-- NAPI-RS NodeJS bindings
-- NPM package with pre-built binaries
-- TypeScript type definitions
+- **MSRV**: 1.86.0
+- **Python**: 3.9+
+- **Node.js**: 20+
+- **Crates**: 6 (core, linter, parallel, ffi, python, nodejs)
+- **Tests**: 234+ (Rust) + Python + Node.js test suites
 
 ## Contributing
 
@@ -415,6 +422,19 @@ Note: YAML 1.2.2 has different boolean/octal handling than YAML 1.1.
 </details>
 
 <details>
+<summary><b>Is this a drop-in replacement for js-yaml?</b></summary>
+
+Yes. The Node.js API is compatible with js-yaml's `safeLoad` and `safeDump` functions:
+
+```typescript
+import { safeLoad, safeDump } from '@fast-yaml/core';
+```
+
+Note: YAML 1.2.2 has different boolean/octal handling than js-yaml's default YAML 1.1.
+
+</details>
+
+<details>
 <summary><b>Why Rust instead of C?</b></summary>
 
 - Memory safety without runtime overhead
@@ -441,6 +461,7 @@ For single-document YAML or small files, use `safe_load()`.
 
 - [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) — Rust YAML parser foundation
 - [PyO3](https://pyo3.rs/) — Rust bindings for Python
+- [NAPI-RS](https://napi.rs/) — Node.js native addon framework
 - [Rayon](https://github.com/rayon-rs/rayon) — Data parallelism library
 - [maturin](https://maturin.rs/) — Build tool for Rust Python extensions
 

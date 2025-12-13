@@ -66,6 +66,12 @@ flag_management:
       carryforward: true
       after_n_builds: 1
 
+    - name: nodejs
+      paths:
+        - nodejs/__test__/
+      carryforward: true
+      after_n_builds: 1
+
 # Component configuration for granular coverage tracking
 component_management:
   default_rules:
@@ -100,6 +106,12 @@ component_management:
       paths:
         - python/fast_yaml/**
         - python/src/**
+
+    - component_id: nodejs
+      name: "NodeJS Bindings"
+      paths:
+        - nodejs/__test__/**
+        - nodejs/src/**
 
 # Ignore test files and generated code
 ignore:

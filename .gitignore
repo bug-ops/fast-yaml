@@ -30,3 +30,18 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node.js
+node_modules/
+*.node
+*.tsbuildinfo
+.npm/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# NAPI-RS build artifacts
+nodejs/*.node
+nodejs/dist/
+nodejs/coverage/

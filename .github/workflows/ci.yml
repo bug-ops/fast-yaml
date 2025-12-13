@@ -23,44 +23,100 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Quick formatting check - fail fast
-  format:
-    name: Format Check
+  # Detect what files changed to skip irrelevant jobs
+  changes:
+    name: Detect Changes
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      python: ${{ steps.filter.outputs.python }}
+      nodejs: ${{ steps.filter.outputs.nodejs }}
+      ci: ${{ steps.filter.outputs.ci }}
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install nightly Rust (required for Edition 2024 formatting)
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+            python:
+              - 'python/**'
+              - 'crates/fast-yaml-core/**'
+              - 'crates/fast-yaml-ffi/**'
+              - 'tests/**/*.py'
+            nodejs:
+              - 'nodejs/**'
+              - 'crates/fast-yaml-core/**'
+              - 'crates/fast-yaml-ffi/**'
+            ci:
+              - '.github/workflows/**'
+
+  # Parallel format checks using matrix
+  format:
+    name: Format (${{ matrix.lang }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: true
+      matrix:
+        lang: [rust, python, nodejs]
+    steps:
+      - uses: actions/checkout@v6
+
+      # Rust formatting
+      - name: Install nightly Rust
+        if: matrix.lang == 'rust'
         uses: dtolnay/rust-toolchain@nightly
         with:
           components: rustfmt
 
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
-
       - name: Check Rust formatting
-        run: cargo make format-check-rust
+        if: matrix.lang == 'rust'
+        run: cargo +nightly fmt --all -- --check
 
+      # Python formatting
       - name: Set up Python
+        if: matrix.lang == 'python'
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
       - name: Install uv
+        if: matrix.lang == 'python'
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
 
       - name: Check Python formatting
-        run: cargo make format-check-python
+        if: matrix.lang == 'python'
+        run: cd python && uv run ruff format --check .
 
-  # Clippy linting
+      # NodeJS formatting
+      - name: Set up Node.js
+        if: matrix.lang == 'nodejs'
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
+
+      - name: Install NodeJS dependencies
+        if: matrix.lang == 'nodejs'
+        run: cd nodejs && npm install
+
+      - name: Check NodeJS formatting
+        if: matrix.lang == 'nodejs'
+        run: cd nodejs && npm run format:check
+
+  # Clippy linting - runs in parallel with format
   lint:
     name: Clippy Lint
-    needs: [format]
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -73,10 +129,6 @@ jobs:
         with:
           components: clippy
 
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -84,19 +136,20 @@ jobs:
           shared-key: "clippy"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Run Clippy
-        run: cargo make clippy
-
-      - name: Install clippy-sarif and sarif-fmt
+      - name: Install SARIF tools
         uses: taiki-e/install-action@v2
         with:
           tool: clippy-sarif,sarif-fmt
 
-      - name: Generate SARIF report for GitHub
+      # Single clippy run with SARIF output
+      - name: Run Clippy with SARIF
         run: |
-          cargo clippy --workspace --all-targets --all-features --message-format=json -- -D warnings | \
+          cargo clippy --workspace --all-targets --all-features --message-format=json -- -D warnings 2>&1 | \
           clippy-sarif | tee clippy-results.sarif | sarif-fmt
         continue-on-error: true
+
+      - name: Verify Clippy passes
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
       - name: Upload SARIF to GitHub
         uses: github/codeql-action/upload-sarif@v4
@@ -105,11 +158,14 @@ jobs:
           wait-for-processing: true
 
       - name: Check documentation
-        run: cargo make doc-check
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 
-  # Security auditing
+
+  # Security auditing - runs in parallel with everything
   security:
     name: Security Audit
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -118,10 +174,10 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-make and security tools
+      - name: Install security tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-make,cargo-deny
+          tool: cargo-deny
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -129,8 +185,8 @@ jobs:
           shared-key: "security"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Run security checks
-        run: cargo make ci-security
+      - name: Run cargo deny
+        run: cargo deny check
 
       - name: Install cargo-semver-checks
         uses: taiki-e/install-action@v2
@@ -138,24 +194,58 @@ jobs:
           tool: cargo-semver-checks
 
       - name: Check SemVer compliance
-        run: cargo make semver-check
-        continue-on-error: true  # Don't fail on pre-release versions
+        run: cargo semver-checks check-release --package fast-yaml-core || true
+
+  # MSRV check - runs in parallel
+  msrv:
+    name: Check MSRV (1.86.0)
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.86.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.86.0"
+
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "msrv"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check with MSRV
+        # Exclude nodejs crate as napi requires Rust 1.88+
+        run: cargo check --workspace --all-targets --exclude fast-yaml-nodejs
+
 
   # Cross-platform Rust tests
   test-rust:
-    name: Test Rust (${{ matrix.os }})
-    needs: [format, lint]
+    name: Test Rust (${{ matrix.os }}${{ matrix.rust == 'beta' && ', beta' || '' }})
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        rust: [stable]
         include:
-          # Test on beta channel on Linux only
+          - os: ubuntu-latest
+            rust: stable
           - os: ubuntu-latest
             rust: beta
+          - os: macos-latest
+            rust: stable
+          - os: windows-latest
+            rust: stable
 
     steps:
       - uses: actions/checkout@v6
@@ -165,12 +255,12 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
-      - name: Install cargo-make and testing tools
+
+      - name: Install nextest
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-make,nextest
+          tool: nextest
 
-      # Platform-specific dependencies
       - name: Install dependencies (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -184,15 +274,22 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build workspace
-        run: cargo make build
+        # Exclude FFI bindings (tested separately with their runtimes)
+        run: cargo build --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs
 
       - name: Run tests
-        run: cargo make test-rust
+        run: cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 
-  # Code coverage (Linux only for efficiency)
+
+  # Code coverage (Linux only)
   coverage:
     name: Code Coverage
-    needs: [format, lint]
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -201,10 +298,11 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-make and coverage tools
+
+      - name: Install coverage tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-make,cargo-llvm-cov,nextest
+          tool: cargo-llvm-cov,nextest
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -213,7 +311,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Generate coverage
-        run: cargo make coverage
+        run: cargo llvm-cov nextest --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --lcov --output-path lcov.info
 
       - name: Upload to codecov
         uses: codecov/codecov-action@v5
@@ -232,51 +330,98 @@ jobs:
           path: lcov.info
           retention-days: 30
 
-  # MSRV check
-  msrv:
-    name: Check MSRV (1.86.0)
-    needs: [format]
+
+  # Python quality checks - runs in parallel
+  python-quality:
+    name: Python Quality Checks
+    needs: [changes]
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust 1.86.0
-        uses: dtolnay/rust-toolchain@master
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          toolchain: "1.86.0"
+          python-version: '3.12'
 
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          tool: cargo-make
+          enable-cache: true
 
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+      - name: Install Python dependencies
+        run: cd python && uv sync
+
+      - name: Run type checking
+        run: cd python && uv run mypy fast_yaml/
+        continue-on-error: true
+
+      - name: Run linting
+        run: cd python && uv run ruff check .
+
+  # NodeJS quality checks - runs in parallel
+  nodejs-quality:
+    name: NodeJS Quality Checks
+    needs: [changes]
+    if: needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
         with:
-          shared-key: "msrv"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
 
-      - name: Check with MSRV
-        run: cargo make check
+      - name: Install NodeJS dependencies
+        run: cd nodejs && npm install
 
-  # Python bindings tests (multi-platform, multi-version matrix)
+      - name: Run linting
+        run: cd nodejs && npm run lint
+        continue-on-error: true
+
+      - name: Run type checking
+        run: cd nodejs && npm run typecheck
+
+  # Python bindings tests (optimized matrix)
   test-python:
-    name: Test Python (${{ matrix.os }}, Python ${{ matrix.python-version }})
-    needs: [format, lint]
+    name: Test Python (${{ matrix.os }}, ${{ matrix.python-version }})
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python-version: ['3.9', '3.10', '3.11', '3.12']
-        exclude:
-          # Reduce matrix size - test all Python versions on Linux, subset on others
+        include:
+          # Linux: test all Python versions
+          - os: ubuntu-latest
+            python-version: '3.9'
+          - os: ubuntu-latest
+            python-version: '3.10'
+          - os: ubuntu-latest
+            python-version: '3.11'
+          - os: ubuntu-latest
+            python-version: '3.12'
+          # macOS: test min + max only
           - os: macos-latest
-            python-version: '3.10'
+            python-version: '3.9'
+          - os: macos-latest
+            python-version: '3.12'
+          # Windows: test min + max only
           - os: windows-latest
-            python-version: '3.10'
+            python-version: '3.9'
+          - os: windows-latest
+            python-version: '3.12'
 
     steps:
       - uses: actions/checkout@v6
@@ -284,15 +429,11 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -306,53 +447,81 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: |
-          cd python
-          uv sync
+        run: cd python && uv sync
 
-      - name: Build and test Python extension
-        run: cargo make python-test
+      - name: Build Python extension
+        run: cd python && uv run maturin develop
 
-  # Python type checking and linting (Linux only)
-  python-quality:
-    name: Python Quality Checks
-    needs: [format]
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+      - name: Run Python tests
+        run: cd python && uv run pytest ../tests/ -v
+
+
+  # NodeJS bindings tests
+  test-nodejs:
+    name: Test NodeJS (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux: both Node versions
+          - os: ubuntu-latest
+            node-version: '20'
+          - os: ubuntu-latest
+            node-version: '22'
+          # macOS: latest only
+          - os: macos-latest
+            node-version: '22'
+          # Windows: latest only
+          - os: windows-latest
+            node-version: '22'
+
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v5
         with:
-          python-version: '3.12'
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
 
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
         with:
-          tool: cargo-make
+          shared-key: "nodejs-${{ matrix.os }}-${{ matrix.node-version }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
+      - name: Install NodeJS dependencies
+        run: cd nodejs && npm install
 
-      - name: Install Python dependencies
-        run: |
-          cd python
-          uv sync
+      - name: Build NodeJS extension
+        run: cd nodejs && npm run build:debug
 
-      - name: Run type checking
-        run: cargo make python-typecheck
-        continue-on-error: true  # Don't fail on type errors yet
+      - name: Run NodeJS tests
+        run: cd nodejs && npm test
 
-      - name: Run linting
-        run: cargo make lint-python
 
   # Python coverage (Linux only)
   python-coverage:
     name: Python Coverage
-    needs: [format, lint]
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -361,15 +530,11 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -383,12 +548,13 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: |
-          cd python
-          uv sync
+        run: cd python && uv sync
+
+      - name: Build Python extension
+        run: cd python && uv run maturin develop
 
       - name: Run tests with coverage
-        run: cargo make python-coverage
+        run: cd python && uv run pytest ../tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
 
       - name: Upload Python coverage to codecov
         uses: codecov/codecov-action@v5
@@ -399,14 +565,104 @@ jobs:
           name: python-coverage
           verbose: true
 
-      - name: Archive Python coverage report
+
+  # NodeJS coverage (Linux only)
+  nodejs-coverage:
+    name: NodeJS Coverage
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "nodejs-coverage"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install NodeJS dependencies
+        run: cd nodejs && npm install
+
+      - name: Build NodeJS extension
+        run: cd nodejs && npm run build:debug
+
+      - name: Run tests with coverage
+        run: cd nodejs && npm run test:coverage
+
+      - name: Upload NodeJS coverage to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: nodejs/coverage/lcov.info
+          flags: nodejs
+          name: nodejs-coverage
+          verbose: true
+
+
+  # NodeJS release build (main branch only)
+  nodejs-build:
+    name: NodeJS Build (${{ matrix.os }})
+    if: github.ref == 'refs/heads/main'
+    needs: [test-nodejs]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "nodejs-build-${{ matrix.os }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install NodeJS dependencies
+        run: cd nodejs && npm install
+
+      - name: Build release
+        run: cd nodejs && npm run build
+
+      - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: python-coverage-report
-          path: python/htmlcov/
-          retention-days: 30
+          name: nodejs-binaries-${{ matrix.os }}
+          path: nodejs/*.node
+          retention-days: 7
 
-  # Release build check (optional, runs on main branch only)
+
+  # Release build check (main branch only)
   release-build:
     name: Release Build Check
     if: github.ref == 'refs/heads/main'
@@ -419,10 +675,6 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install cargo-make
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-make
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -431,32 +683,56 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build release
-        run: cargo make build-release
+        run: cargo build --workspace --release --exclude fast-yaml --exclude fast-yaml-nodejs
 
       - name: Check binary sizes
         run: |
           ls -lh target/release/ | grep -E '\.(so|dylib|dll|a|rlib)$' || true
           du -sh target/release/
 
+
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [format, lint, security, test-rust, coverage, msrv, test-python, python-quality, python-coverage]
+    needs: [format, lint, security, test-rust, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all jobs
         run: |
-          if [[ "${{ needs.format.result }}" != "success" ]] || \
-             [[ "${{ needs.lint.result }}" != "success" ]] || \
-             [[ "${{ needs.security.result }}" != "success" ]] || \
-             [[ "${{ needs.test-rust.result }}" != "success" ]] || \
-             [[ "${{ needs.coverage.result }}" != "success" ]] || \
-             [[ "${{ needs.msrv.result }}" != "success" ]] || \
-             [[ "${{ needs.test-python.result }}" != "success" ]] || \
-             [[ "${{ needs.python-quality.result }}" != "success" ]] || \
-             [[ "${{ needs.python-coverage.result }}" != "success" ]]; then
-            echo "One or more required jobs failed"
-            exit 1
-          fi
-          echo "All CI checks passed successfully!"
+          echo "Format: ${{ needs.format.result }}"
+          echo "Lint: ${{ needs.lint.result }}"
+          echo "Security: ${{ needs.security.result }}"
+          echo "Test Rust: ${{ needs.test-rust.result }}"
+          echo "Coverage: ${{ needs.coverage.result }}"
+          echo "MSRV: ${{ needs.msrv.result }}"
+          echo "Test Python: ${{ needs.test-python.result }}"
+          echo "Python Quality: ${{ needs.python-quality.result }}"
+          echo "Python Coverage: ${{ needs.python-coverage.result }}"
+          echo "Test NodeJS: ${{ needs.test-nodejs.result }}"
+          echo "NodeJS Quality: ${{ needs.nodejs-quality.result }}"
+          echo "NodeJS Coverage: ${{ needs.nodejs-coverage.result }}"
+
+          # Check required jobs (skipped is OK for path-filtered jobs)
+          for job in format; do
+            result="${{ needs.format.result }}"
+            if [[ "$result" != "success" ]]; then
+              echo "❌ $job failed: $result"
+              exit 1
+            fi
+          done
+
+          # These jobs can be skipped if path filter excludes them
+          for result in "${{ needs.lint.result }}" "${{ needs.security.result }}" \
+                        "${{ needs.test-rust.result }}" "${{ needs.coverage.result }}" \
+                        "${{ needs.msrv.result }}" "${{ needs.test-python.result }}" \
+                        "${{ needs.python-quality.result }}" "${{ needs.python-coverage.result }}" \
+                        "${{ needs.test-nodejs.result }}" "${{ needs.nodejs-quality.result }}" \
+                        "${{ needs.nodejs-coverage.result }}"; do
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              echo "❌ A required job failed: $result"
+              exit 1
+            fi
+          done
+
+          echo "✅ All CI checks passed successfully!"
