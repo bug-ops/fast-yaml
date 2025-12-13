@@ -393,7 +393,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cargo make nodejs-deps
+        run: cd nodejs && npm install
 
       - name: Run linting
         run: cargo make lint-nodejs
@@ -440,10 +440,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cargo make nodejs-deps
+        run: cd nodejs && npm install
 
-      - name: Build and test NodeJS extension
-        run: cargo make nodejs-test
+      - name: Build NodeJS extension
+        run: cargo make nodejs-build-debug
+
+      - name: Run NodeJS tests
+        run: cd nodejs && npm test
 
   # Python coverage (Linux only)
   python-coverage:
@@ -533,7 +536,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cargo make nodejs-deps
+        run: cd nodejs && npm install
 
       - name: Build NodeJS extension
         run: cargo make nodejs-build-debug
@@ -594,7 +597,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cargo make nodejs-deps
+        run: cd nodejs && npm install
 
       - name: Build release
         run: cargo make nodejs-build
