@@ -4,10 +4,11 @@
 //! rich error reporting, and configurable linting rules.
 
 use fast_yaml_linter::{
-    Diagnostic as RustDiagnostic, DiagnosticCode as RustDiagnosticCode,
-    DiagnosticContext as RustDiagnosticContext, Formatter as RustFormatter,
-    LintConfig as RustLintConfig, Linter as RustLinter, Location as RustLocation,
-    Severity as RustSeverity, Span as RustSpan, TextFormatter as RustTextFormatter,
+    ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
+    DiagnosticCode as RustDiagnosticCode, DiagnosticContext as RustDiagnosticContext,
+    Formatter as RustFormatter, LintConfig as RustLintConfig, Linter as RustLinter,
+    Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
+    Suggestion as RustSuggestion, TextFormatter as RustTextFormatter,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -35,19 +36,39 @@ pub struct PySeverity {
 impl PySeverity {
     /// Critical error that prevents YAML parsing or violates spec.
     #[classattr]
-    const ERROR: &'static str = "error";
+    #[allow(non_snake_case)] // Python convention for constants
+    const fn ERROR() -> Self {
+        Self {
+            inner: RustSeverity::Error,
+        }
+    }
 
     /// Potential issue that should be addressed.
     #[classattr]
-    const WARNING: &'static str = "warning";
+    #[allow(non_snake_case)] // Python convention for constants
+    const fn WARNING() -> Self {
+        Self {
+            inner: RustSeverity::Warning,
+        }
+    }
 
     /// Informational message about style or best practices.
     #[classattr]
-    const INFO: &'static str = "info";
+    #[allow(non_snake_case)] // Python convention for constants
+    const fn INFO() -> Self {
+        Self {
+            inner: RustSeverity::Info,
+        }
+    }
 
     /// Suggestion for improvement.
     #[classattr]
-    const HINT: &'static str = "hint";
+    #[allow(non_snake_case)] // Python convention for constants
+    const fn HINT() -> Self {
+        Self {
+            inner: RustSeverity::Hint,
+        }
+    }
 
     /// Get the string representation of the severity.
     const fn as_str(&self) -> &str {
@@ -603,8 +624,42 @@ impl PyTextFormatter {
             .iter()
             .map(|item| {
                 let py_diag: PyDiagnostic = item.extract()?;
-                // Convert back to Rust diagnostic
-                // This is a simplified conversion - in production, we should keep the original
+
+                // Convert context back to Rust type
+                let context = py_diag.context.map(|py_ctx| RustDiagnosticContext {
+                    lines: py_ctx
+                        .lines
+                        .into_iter()
+                        .map(|py_line| RustContextLine {
+                            line_number: py_line.line_number,
+                            content: py_line.content,
+                            highlights: py_line.highlights,
+                        })
+                        .collect(),
+                });
+
+                // Convert suggestions back to Rust type
+                let suggestions = py_diag
+                    .suggestions
+                    .into_iter()
+                    .map(|py_suggestion| RustSuggestion {
+                        message: py_suggestion.message,
+                        span: RustSpan::new(
+                            RustLocation::new(
+                                py_suggestion.span.start.line,
+                                py_suggestion.span.start.column,
+                                py_suggestion.span.start.offset,
+                            ),
+                            RustLocation::new(
+                                py_suggestion.span.end.line,
+                                py_suggestion.span.end.column,
+                                py_suggestion.span.end.offset,
+                            ),
+                        ),
+                        replacement: py_suggestion.replacement,
+                    })
+                    .collect();
+
                 Ok(RustDiagnostic {
                     code: RustDiagnosticCode::new(py_diag.code),
                     severity: py_diag.severity.inner,
@@ -621,8 +676,8 @@ impl PyTextFormatter {
                             py_diag.span.end.offset,
                         ),
                     ),
-                    context: None, // Simplified for now
-                    suggestions: Vec::new(),
+                    context,
+                    suggestions,
                 })
             })
             .collect::<PyResult<Vec<_>>>()?;
@@ -654,6 +709,42 @@ impl PyJsonFormatter {
             .iter()
             .map(|item| {
                 let py_diag: PyDiagnostic = item.extract()?;
+
+                // Convert context back to Rust type
+                let context = py_diag.context.map(|py_ctx| RustDiagnosticContext {
+                    lines: py_ctx
+                        .lines
+                        .into_iter()
+                        .map(|py_line| RustContextLine {
+                            line_number: py_line.line_number,
+                            content: py_line.content,
+                            highlights: py_line.highlights,
+                        })
+                        .collect(),
+                });
+
+                // Convert suggestions back to Rust type
+                let suggestions = py_diag
+                    .suggestions
+                    .into_iter()
+                    .map(|py_suggestion| RustSuggestion {
+                        message: py_suggestion.message,
+                        span: RustSpan::new(
+                            RustLocation::new(
+                                py_suggestion.span.start.line,
+                                py_suggestion.span.start.column,
+                                py_suggestion.span.start.offset,
+                            ),
+                            RustLocation::new(
+                                py_suggestion.span.end.line,
+                                py_suggestion.span.end.column,
+                                py_suggestion.span.end.offset,
+                            ),
+                        ),
+                        replacement: py_suggestion.replacement,
+                    })
+                    .collect();
+
                 Ok(RustDiagnostic {
                     code: RustDiagnosticCode::new(py_diag.code),
                     severity: py_diag.severity.inner,
@@ -670,8 +761,8 @@ impl PyJsonFormatter {
                             py_diag.span.end.offset,
                         ),
                     ),
-                    context: None,
-                    suggestions: Vec::new(),
+                    context,
+                    suggestions,
                 })
             })
             .collect::<PyResult<Vec<_>>>()?;

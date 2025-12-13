@@ -36,7 +36,9 @@ pub mod formatter;
 pub mod rules;
 
 pub use context::SourceContext;
-pub use diagnostic::{Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext};
+pub use diagnostic::{
+    ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Suggestion,
+};
 pub use formatter::{Formatter, TextFormatter};
 pub use linter::{LintConfig, LintError, Linter};
 pub use location::{Location, Span};
