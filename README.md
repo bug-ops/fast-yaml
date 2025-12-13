@@ -1,7 +1,7 @@
 # fast-yaml
 
 [![CI Status](https://img.shields.io/github/actions/workflow/status/bug-ops/fast-yaml/ci.yml?branch=main)](https://github.com/bug-ops/fast-yaml/actions)
-[![PyPI](https://img.shields.io/pypi/v/fast-yaml)](https://pypi.org/project/fast-yaml/)
+[![PyPI](https://img.shields.io/pypi/v/fastyaml-rs)](https://pypi.org/project/fastyaml-rs/)
 [![npm](https://img.shields.io/npm/v/@fast-yaml/core)](https://www.npmjs.com/package/@fast-yaml/core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
@@ -52,7 +52,7 @@ Drop-in replacement for PyYAML's `safe_*` functions and js-yaml with **5-10x fas
 ### Python Package
 
 ```bash
-pip install fast-yaml
+pip install fastyaml-rs
 ```
 
 ### Node.js Package
