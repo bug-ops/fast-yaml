@@ -219,7 +219,8 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check with MSRV
-        run: cargo check --workspace --all-targets
+        # Exclude nodejs crate as napi requires Rust 1.88+
+        run: cargo check --workspace --all-targets --exclude fast-yaml-nodejs
 
 
   # Cross-platform Rust tests
@@ -273,10 +274,11 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build workspace
-        run: cargo build --workspace --all-targets
+        # Exclude FFI bindings (tested separately with their runtimes)
+        run: cargo build --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs
 
       - name: Run tests
-        run: cargo nextest run --workspace
+        run: cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 
 
   # Code coverage (Linux only)
@@ -309,7 +311,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Generate coverage
-        run: cargo llvm-cov nextest --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov nextest --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --lcov --output-path lcov.info
 
       - name: Upload to codecov
         uses: codecov/codecov-action@v5
@@ -451,7 +453,7 @@ jobs:
         run: cd python && uv run maturin develop
 
       - name: Run Python tests
-        run: cd python && uv run pytest tests/ -v
+        run: cd python && uv run pytest ../tests/ -v
 
 
   # NodeJS bindings tests
@@ -552,7 +554,7 @@ jobs:
         run: cd python && uv run maturin develop
 
       - name: Run tests with coverage
-        run: cd python && uv run pytest tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
+        run: cd python && uv run pytest ../tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
 
       - name: Upload Python coverage to codecov
         uses: codecov/codecov-action@v5
@@ -681,7 +683,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Build release
-        run: cargo build --workspace --release
+        run: cargo build --workspace --release --exclude fast-yaml --exclude fast-yaml-nodejs
 
       - name: Check binary sizes
         run: |
