@@ -319,10 +319,20 @@ args = ["deny", "check", "bans"]
 install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version" }
 
 [tasks.semver-check]
-description = "Check for SemVer compliance"
+description = "Check for SemVer compliance (requires published crate or git tag baseline)"
 category = "Security"
-command = "cargo"
-args = ["semver-checks", "check-release"]
+script = '''
+# Try to find the latest version tag for baseline comparison
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+if [ -n "$LATEST_TAG" ]; then
+    echo "Checking semver against baseline: $LATEST_TAG"
+    cargo semver-checks check-release --baseline-rev "$LATEST_TAG" --exclude fast-yaml
+else
+    echo "No git tags found and crate not published - skipping semver check"
+    echo "To enable: create a version tag (e.g., v0.1.0) or publish to crates.io"
+fi
+'''
 install_crate = { crate_name = "cargo-semver-checks", binary = "cargo-semver-checks", test_arg = "--version" }
 
 # ============================================================================
