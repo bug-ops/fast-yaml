@@ -556,11 +556,10 @@ impl PyLinter {
     ///
     /// Raises:
     ///     `ValueError`: If YAML cannot be parsed at all
+    #[allow(deprecated)] // allow_threads is still correct for GIL release
     fn lint(&self, py: Python<'_>, source: &str) -> PyResult<Vec<PyDiagnostic>> {
         // Release GIL during CPU-intensive linting
-        let result = py.allow_threads(|| {
-            self.inner.lint(source)
-        });
+        let result = py.allow_threads(|| self.inner.lint(source));
 
         result
             .map(|diagnostics| diagnostics.into_iter().map(Into::into).collect())
@@ -643,6 +642,7 @@ pub struct PyJsonFormatter {
 impl PyJsonFormatter {
     #[new]
     #[pyo3(signature = (pretty=false))]
+    #[allow(clippy::missing_const_for_fn)] // RustJsonFormatter::new is not const
     fn new(pretty: bool) -> Self {
         Self {
             inner: RustJsonFormatter::new(pretty),
@@ -699,6 +699,7 @@ impl PyJsonFormatter {
 ///     error: duplicate key 'key' found
 #[pyfunction]
 #[pyo3(signature = (source, config=None))]
+#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn lint(py: Python<'_>, source: &str, config: Option<PyLintConfig>) -> PyResult<Vec<PyDiagnostic>> {
     // Release GIL during CPU-intensive linting
     let result = py.allow_threads(|| {
@@ -739,7 +740,7 @@ fn format_diagnostics(
         }
         #[cfg(feature = "json-output")]
         "json" => {
-            let formatter = PyJsonFormatter::new();
+            let formatter = PyJsonFormatter::new(false); // default: compact JSON
             formatter.format(diagnostics, source)
         }
         _ => Err(PyValueError::new_err(format!(

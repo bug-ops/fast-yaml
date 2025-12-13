@@ -2,9 +2,10 @@
 //!
 //! Exposes multi-threaded YAML parsing for large multi-document files.
 
+use crate::conversion::value_to_python;
 use fast_yaml_parallel::{
-    parse_parallel as rust_parse_parallel, parse_parallel_with_config,
-    ParallelConfig as RustParallelConfig, ParallelError,
+    ParallelConfig as RustParallelConfig, ParallelError, parse_parallel as rust_parse_parallel,
+    parse_parallel_with_config,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -18,60 +19,6 @@ const ABSOLUTE_MAX_INPUT_SIZE: usize = 1024 * 1024 * 1024; // 1GB
 
 /// Maximum document count (default 100k, can be configured up to 10M).
 const ABSOLUTE_MAX_DOCUMENTS: usize = 10_000_000;
-
-/// Convert `fast_yaml_core::Value` (`yaml_rust2::Yaml`) to Python object.
-fn value_to_python(py: Python<'_>, value: &fast_yaml_core::Value) -> PyResult<Py<PyAny>> {
-    match value {
-        // Null and Alias both map to None (aliases are resolved by yaml-rust2)
-        fast_yaml_core::Value::Null | fast_yaml_core::Value::Alias(_) => Ok(py.None()),
-        fast_yaml_core::Value::Boolean(b) => {
-            let py_bool = b.into_pyobject(py)?;
-            Ok(py_bool.as_any().clone().unbind())
-        }
-        fast_yaml_core::Value::Integer(i) => {
-            let py_int = i.into_pyobject(py)?;
-            Ok(py_int.as_any().clone().unbind())
-        }
-        fast_yaml_core::Value::Real(s) => {
-            // YAML 1.2.2 special float values
-            // Avoid allocation by checking case-insensitively without to_lowercase()
-            let f: f64 = if s.eq_ignore_ascii_case(".inf") || s.eq_ignore_ascii_case("+.inf") {
-                f64::INFINITY
-            } else if s.eq_ignore_ascii_case("-.inf") {
-                f64::NEG_INFINITY
-            } else if s.eq_ignore_ascii_case(".nan") {
-                f64::NAN
-            } else {
-                s.parse().map_err(|e| {
-                    pyo3::exceptions::PyValueError::new_err(format!("Invalid float value '{s}': {e}"))
-                })?
-            };
-            let py_float = f.into_pyobject(py)?;
-            Ok(py_float.as_any().clone().unbind())
-        }
-        fast_yaml_core::Value::String(s) => {
-            let py_str = s.into_pyobject(py)?;
-            Ok(py_str.as_any().clone().unbind())
-        }
-        fast_yaml_core::Value::Array(arr) => {
-            let list = PyList::empty(py);
-            for item in arr {
-                list.append(value_to_python(py, item)?)?;
-            }
-            Ok(list.into_any().unbind())
-        }
-        fast_yaml_core::Value::Hash(map) => {
-            let dict = pyo3::types::PyDict::new(py);
-            for (k, v) in map {
-                let py_key = value_to_python(py, k)?;
-                let py_value = value_to_python(py, v)?;
-                dict.set_item(py_key, py_value)?;
-            }
-            Ok(dict.into_any().unbind())
-        }
-        fast_yaml_core::Value::BadValue => Err(PyValueError::new_err("Invalid YAML value encountered")),
-    }
-}
 
 /// Configuration for parallel YAML processing.
 ///
@@ -153,46 +100,88 @@ impl PyParallelConfig {
     /// - None: Use all available CPU cores (default, capped at 128)
     /// - Some(0): Sequential processing (no parallelism)
     /// - Some(n): Use exactly n threads (max 128)
-    fn with_thread_count(&self, count: Option<usize>) -> Self {
-        Self {
-            inner: self.inner.clone().with_thread_count(count),
+    ///
+    /// Raises:
+    ///     `ValueError`: If thread count exceeds 128
+    fn with_thread_count(&self, count: Option<usize>) -> PyResult<Self> {
+        if let Some(c) = count {
+            if c > MAX_THREADS {
+                return Err(PyValueError::new_err(format!(
+                    "thread_count {c} exceeds maximum allowed {MAX_THREADS}"
+                )));
+            }
         }
+        Ok(Self {
+            inner: self.inner.clone().with_thread_count(count),
+        })
     }
 
     /// Sets maximum total input size in bytes.
     ///
-    /// Default: 100MB
-    fn with_max_input_size(&self, size: usize) -> Self {
-        Self {
-            inner: self.inner.clone().with_max_input_size(size),
+    /// Default: 100MB (max: 1GB)
+    ///
+    /// Raises:
+    ///     `ValueError`: If size is 0 or exceeds 1GB
+    fn with_max_input_size(&self, size: usize) -> PyResult<Self> {
+        if size == 0 || size > ABSOLUTE_MAX_INPUT_SIZE {
+            return Err(PyValueError::new_err(format!(
+                "max_input_size must be between 1 and {ABSOLUTE_MAX_INPUT_SIZE} (1GB)"
+            )));
         }
+        Ok(Self {
+            inner: self.inner.clone().with_max_input_size(size),
+        })
     }
 
     /// Sets maximum number of documents allowed.
     ///
-    /// Default: 100,000
-    fn with_max_documents(&self, count: usize) -> Self {
-        Self {
-            inner: self.inner.clone().with_max_documents(count),
+    /// Default: 100,000 (max: 10M)
+    ///
+    /// Raises:
+    ///     `ValueError`: If count is 0 or exceeds 10M
+    fn with_max_documents(&self, count: usize) -> PyResult<Self> {
+        if count == 0 || count > ABSOLUTE_MAX_DOCUMENTS {
+            return Err(PyValueError::new_err(format!(
+                "max_documents must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
+            )));
         }
+        Ok(Self {
+            inner: self.inner.clone().with_max_documents(count),
+        })
     }
 
     /// Sets minimum chunk size in bytes.
     ///
     /// Default: 4KB
-    fn with_min_chunk_size(&self, size: usize) -> Self {
-        Self {
-            inner: self.inner.clone().with_min_chunk_size(size),
+    ///
+    /// Raises:
+    ///     `ValueError`: If size is 0
+    fn with_min_chunk_size(&self, size: usize) -> PyResult<Self> {
+        if size == 0 {
+            return Err(PyValueError::new_err(
+                "min_chunk_size must be greater than 0",
+            ));
         }
+        Ok(Self {
+            inner: self.inner.clone().with_min_chunk_size(size),
+        })
     }
 
     /// Sets maximum chunk size in bytes.
     ///
     /// Default: 10MB
-    fn with_max_chunk_size(&self, size: usize) -> Self {
-        Self {
-            inner: self.inner.clone().with_max_chunk_size(size),
+    ///
+    /// Raises:
+    ///     `ValueError`: If size is 0
+    fn with_max_chunk_size(&self, size: usize) -> PyResult<Self> {
+        if size == 0 {
+            return Err(PyValueError::new_err(
+                "max_chunk_size must be greater than 0",
+            ));
         }
+        Ok(Self {
+            inner: self.inner.clone().with_max_chunk_size(size),
+        })
     }
 
     #[allow(clippy::unused_self)] // PyO3 requires &self for __repr__
@@ -229,17 +218,16 @@ impl PyParallelConfig {
 ///     3
 #[pyfunction]
 #[pyo3(signature = (source, config=None))]
+#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn parse_parallel(
     py: Python<'_>,
     source: &str,
     config: Option<PyParallelConfig>,
 ) -> PyResult<Py<PyAny>> {
     // Release GIL for parallel processing
-    let result = py.allow_threads(|| {
-        match config {
-            Some(cfg) => parse_parallel_with_config(source, &cfg.inner),
-            None => rust_parse_parallel(source),
-        }
+    let result = py.allow_threads(|| match config {
+        Some(cfg) => parse_parallel_with_config(source, &cfg.inner),
+        None => rust_parse_parallel(source),
     });
 
     let values = result.map_err(|e: ParallelError| PyValueError::new_err(e.to_string()))?;

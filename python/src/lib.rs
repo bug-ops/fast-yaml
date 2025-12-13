@@ -1,5 +1,3 @@
-#![allow(deprecated)] // PyO3 0.27 deprecated downcast in favor of cast, but downcast still works
-
 //! fast-yaml: A fast YAML 1.2.2 parser for Python, powered by Rust
 //!
 //! This module provides Python bindings for yaml-rust2, offering
@@ -21,6 +19,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
+mod conversion;
 mod lint;
 mod parallel;
 
@@ -58,9 +57,8 @@ fn yaml_to_python(py: Python<'_>, yaml: &Yaml) -> PyResult<Py<PyAny>> {
             } else if s.eq_ignore_ascii_case(".nan") {
                 f64::NAN
             } else {
-                s.parse().map_err(|e| {
-                    PyValueError::new_err(format!("Invalid float value '{s}': {e}"))
-                })?
+                s.parse()
+                    .map_err(|e| PyValueError::new_err(format!("Invalid float value '{s}': {e}")))?
             };
             let py_float = f.into_pyobject(py)?;
             Ok(py_float.as_any().clone().unbind())
@@ -103,6 +101,7 @@ fn yaml_to_python(py: Python<'_>, yaml: &Yaml) -> PyResult<Py<PyAny>> {
 ///
 /// Handles Python types including special float values (inf, -inf, nan)
 /// converting them to YAML 1.2.2 compliant representations.
+#[allow(deprecated)] // PyO3 0.27 deprecated downcast in favor of cast, but downcast still works
 fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Yaml> {
     // Check None first
     if obj.is_none() {
@@ -223,6 +222,7 @@ fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Yaml> {
 ///     {'name': 'test', 'value': 123}
 #[pyfunction]
 #[pyo3(signature = (yaml_str))]
+#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
@@ -234,10 +234,9 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
     }
 
     // Release GIL during CPU-intensive parsing
-    let docs = py.allow_threads(|| {
-        YamlLoader::load_from_str(yaml_str)
-    })
-    .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
+    let docs = py
+        .allow_threads(|| YamlLoader::load_from_str(yaml_str))
+        .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     if docs.is_empty() {
         return Ok(py.None());
@@ -269,6 +268,7 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///     [{'foo': 1}, {'bar': 2}]
 #[pyfunction]
 #[pyo3(signature = (yaml_str))]
+#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
@@ -280,10 +280,9 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
     }
 
     // Release GIL during CPU-intensive parsing
-    let docs = py.allow_threads(|| {
-        YamlLoader::load_from_str(yaml_str)
-    })
-    .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
+    let docs = py
+        .allow_threads(|| YamlLoader::load_from_str(yaml_str))
+        .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     // Pre-allocate Python objects vector with known capacity
     let mut py_docs = Vec::with_capacity(docs.len());
@@ -301,7 +300,9 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///
 /// Args:
 ///     data: A Python object to serialize (dict, list, str, int, float, bool, None)
-///     `allow_unicode`: If True, allow unicode characters in output. Default: True
+///     `allow_unicode`: Accepted for `PyYAML` API compatibility. Default: True.
+///         Note: yaml-rust2 always outputs unicode characters; this parameter
+///         is currently ignored but accepted to maintain API compatibility.
 ///     `sort_keys`: If True, sort dictionary keys. Default: False
 ///
 /// Returns:
@@ -316,7 +317,17 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///     'name: test\\nvalue: 123\\n'
 #[pyfunction]
 #[pyo3(signature = (data, allow_unicode=true, sort_keys=false))]
-fn safe_dump(py: Python<'_>, data: &Bound<'_, PyAny>, allow_unicode: bool, sort_keys: bool) -> PyResult<String> {
+#[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
+#[allow(deprecated)] // allow_threads is still correct for GIL release
+fn safe_dump(
+    py: Python<'_>,
+    data: &Bound<'_, PyAny>,
+    allow_unicode: bool,
+    sort_keys: bool,
+) -> PyResult<String> {
+    // Note: allow_unicode is accepted for PyYAML API compatibility but
+    // yaml-rust2 always outputs unicode characters. The parameter is
+    // intentionally unused but kept for API compatibility.
     let yaml = python_to_yaml(data)?;
 
     // Sort keys if requested
@@ -327,22 +338,14 @@ fn safe_dump(py: Python<'_>, data: &Bound<'_, PyAny>, allow_unicode: bool, sort_
     };
 
     // Release GIL during CPU-intensive serialization
-    let mut output = py.allow_threads(|| {
-        let mut output = String::new();
-        let mut emitter = YamlEmitter::new(&mut output);
+    let mut output = py
+        .allow_threads(|| {
+            let mut output = String::new();
+            let mut emitter = YamlEmitter::new(&mut output);
 
-        // Note: yaml-rust2's emitter has limited formatting options
-        // We handle what we can
-        if !allow_unicode {
-            // yaml-rust2 always outputs unicode, so we'd need post-processing
-            // for non-unicode output. For now, we just emit as-is.
-        }
-
-        emitter
-            .dump(&yaml)
-            .map(|()| output)
-    })
-    .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
+            emitter.dump(&yaml).map(|()| output)
+        })
+        .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
     // Remove the leading "---\n" that yaml-rust2 adds
     if let Some(stripped) = output.strip_prefix("---\n") {
@@ -395,12 +398,20 @@ fn yaml_to_sort_key(yaml: &Yaml) -> String {
 /// Returns:
 ///     A YAML string with multiple documents separated by "---"
 ///
+/// Raises:
+///     `TypeError`: If any object cannot be serialized
+///     `ValueError`: If total output size exceeds 100MB limit
+///
+/// Security:
+///     Maximum output size is limited to 100MB to prevent memory exhaustion.
+///
 /// Example:
 ///     >>> import `fast_yaml`
 ///     >>> `fast_yaml.safe_dump_all`([{'a': 1}, {'b': 2}])
 ///     '---\\na: 1\\n---\\nb: 2\\n'
 #[pyfunction]
 #[pyo3(signature = (documents))]
+#[allow(deprecated)] // allow_threads is still correct for GIL release
 fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<String> {
     let iter = documents.try_iter()?;
 
@@ -412,31 +423,46 @@ fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<Strin
     }
 
     // Release GIL during CPU-intensive serialization
-    let output = py.allow_threads(|| {
-        let mut output = String::new();
+    let output = py
+        .allow_threads(|| {
+            let mut output = String::new();
 
-        for (i, yaml) in yamls.iter().enumerate() {
-            if i > 0 {
-                output.push_str("---\n");
+            for (i, yaml) in yamls.iter().enumerate() {
+                if i > 0 {
+                    output.push_str("---\n");
+                }
+
+                let mut doc_output = String::new();
+                let mut emitter = YamlEmitter::new(&mut doc_output);
+                emitter.dump(yaml)?;
+
+                // Remove the leading "---\n" that yaml-rust2 adds
+                if let Some(stripped) = doc_output.strip_prefix("---\n") {
+                    output.push_str(stripped);
+                } else if let Some(stripped) = doc_output.strip_prefix("---") {
+                    output.push_str(stripped.trim_start_matches('\n'));
+                } else {
+                    output.push_str(&doc_output);
+                }
+
+                // Check output size to prevent memory exhaustion
+                if output.len() > MAX_INPUT_SIZE {
+                    return Err(yaml_rust2::EmitError::FmtError(std::fmt::Error));
+                }
             }
 
-            let mut doc_output = String::new();
-            let mut emitter = YamlEmitter::new(&mut doc_output);
-            emitter.dump(yaml)?;
-
-            // Remove the leading "---\n" that yaml-rust2 adds
-            if let Some(stripped) = doc_output.strip_prefix("---\n") {
-                output.push_str(stripped);
-            } else if let Some(stripped) = doc_output.strip_prefix("---") {
-                output.push_str(stripped.trim_start_matches('\n'));
+            Ok::<String, yaml_rust2::EmitError>(output)
+        })
+        .map_err(|e| {
+            // Check if this was our size limit error
+            if matches!(e, yaml_rust2::EmitError::FmtError(_)) {
+                PyValueError::new_err(format!(
+                    "output size exceeds maximum allowed {MAX_INPUT_SIZE} (100MB)"
+                ))
             } else {
-                output.push_str(&doc_output);
+                PyValueError::new_err(format!("YAML emit error: {e}"))
             }
-        }
-
-        Ok::<String, yaml_rust2::EmitError>(output)
-    })
-    .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
+        })?;
 
     Ok(output)
 }
