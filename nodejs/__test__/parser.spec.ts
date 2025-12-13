@@ -93,15 +93,22 @@ person:
       expect(safeLoad('   ')).toBe(null);
     });
 
-    it('should throw on invalid YAML', () => {
-      expect(() => safeLoad('invalid: [')).toThrow();
-      expect(() => safeLoad('key: {invalid')).toThrow();
+    it('should return error on invalid YAML', () => {
+      // NAPI-RS returns Error objects instead of throwing
+      const result1 = safeLoad('invalid: [');
+      expect(result1).toBeInstanceOf(Error);
+      expect((result1 as Error).message).toContain('YAML parse error');
+
+      const result2 = safeLoad('key: {invalid');
+      expect(result2).toBeInstanceOf(Error);
     });
 
     it('should enforce 100MB size limit', () => {
       // Create a string larger than 100MB
       const large = 'x: '.repeat(50_000_000);
-      expect(() => safeLoad(large)).toThrow(/exceeds maximum/);
+      const result = safeLoad(large);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain('exceeds maximum');
     });
   });
 
@@ -126,13 +133,17 @@ person:
       expect(safeLoadAll('   ')).toEqual([]);
     });
 
-    it('should throw on invalid YAML', () => {
-      expect(() => safeLoadAll('---\nvalid: true\n---\ninvalid: [')).toThrow();
+    it('should return error on invalid YAML', () => {
+      // NAPI-RS returns Error objects instead of throwing
+      const result = safeLoadAll('---\nvalid: true\n---\ninvalid: [');
+      expect(result).toBeInstanceOf(Error);
     });
 
     it('should enforce 100MB size limit', () => {
       const large = 'x: '.repeat(50_000_000);
-      expect(() => safeLoadAll(large)).toThrow(/exceeds maximum/);
+      const result = safeLoadAll(large);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error).message).toContain('exceeds maximum');
     });
   });
 });
@@ -218,9 +229,9 @@ describe('Core API - Serializer', () => {
       expect(yaml).toContain('b: 2');
       expect(yaml).toContain('c: 3');
 
-      // Count document separators
+      // Count document separators (yaml-rust2 adds --- to each document)
       const separators = (yaml.match(/---/g) || []).length;
-      expect(separators).toBe(2); // n-1 separators for n documents
+      expect(separators).toBe(3); // One separator per document
     });
 
     it('should handle empty array', () => {

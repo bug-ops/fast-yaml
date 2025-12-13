@@ -157,6 +157,11 @@ pub fn safe_dump_all(
             .dump(yaml)
             .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
 
+        // Ensure previous content ends with newline before adding new doc
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+
         // yaml-rust2 adds "---\n" prefix which we keep for multi-doc
         output.push_str(&doc_output);
 
