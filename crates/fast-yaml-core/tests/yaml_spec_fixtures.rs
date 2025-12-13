@@ -428,9 +428,7 @@ fn test_multi_document_parsing() {
                 }
 
                 // Specific validations for known files
-                if fixture.name() == "2.07-two-documents"
-                    && docs.len() != 2
-                {
+                if fixture.name() == "2.07-two-documents" && docs.len() != 2 {
                     failures.push(format!(
                         "  {} - Expected 2 documents, got {}",
                         fixture.name(),
@@ -811,10 +809,8 @@ fn values_semantically_equal(a: &Value, b: &Value) -> bool {
             if a.len() != b.len() {
                 return false;
             }
-            a.iter().all(|(k, v)| {
-                b.get(k)
-                    .is_some_and(|v2| values_semantically_equal(v, v2))
-            })
+            a.iter()
+                .all(|(k, v)| b.get(k).is_some_and(|v2| values_semantically_equal(v, v2)))
         }
         _ => false,
     }

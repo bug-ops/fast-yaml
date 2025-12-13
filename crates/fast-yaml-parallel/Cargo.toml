@@ -1,0 +1,26 @@
+[package]
+name = "fast-yaml-parallel"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Multi-threaded YAML processing with work-stealing parallelism"
+keywords = ["yaml", "parallel", "rayon", "performance", "parser"]
+categories = ["parsing", "concurrency"]
+
+[dependencies]
+fast-yaml-core = { path = "../fast-yaml-core", version = "0.1.0" }
+rayon = "1.11"
+num_cpus = "1.17"
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "parallel_benchmark"
+harness = false
+
+[lints]
+workspace = true

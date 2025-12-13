@@ -4,6 +4,7 @@ members = [
     "crates/fast-yaml-core",
     "crates/fast-yaml-ffi",
     "crates/fast-yaml-linter",
+    "crates/fast-yaml-parallel",
     "python",
 ]
 
@@ -17,6 +18,8 @@ repository = "https://github.com/bug-ops/fast-yaml"
 yaml-rust2 = "0.10"
 thiserror = "2.0"
 pyo3 = { version = "0.27", features = ["extension-module"] }
+rayon = "1.11"
+num_cpus = "1.17"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
