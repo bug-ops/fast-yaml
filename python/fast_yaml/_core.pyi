@@ -1,6 +1,8 @@
 """Type stubs for fast_yaml._core"""
 
-from typing import Any, Iterator, List, Optional, Set
+from __future__ import annotations
+
+from typing import Any
 
 # Core parsing functions
 def safe_load(yaml_str: str) -> Any:
@@ -17,7 +19,7 @@ def safe_load(yaml_str: str) -> Any:
     """
     ...
 
-def safe_load_all(yaml_str: str) -> List[Any]:
+def safe_load_all(yaml_str: str) -> list[Any]:
     """Parse a YAML string containing multiple documents.
 
     Args:
@@ -73,8 +75,8 @@ def version() -> str:
     """Get the version of the fast-yaml library."""
     ...
 
-# Lint submodule
-class lint:
+# Lint submodule (PyO3 submodule, not a class - noqa: N801)
+class lint:  # noqa: N801
     """YAML linting submodule."""
 
     class Severity:
@@ -105,10 +107,10 @@ class lint:
     class Span:
         """A span of text in the source file."""
 
-        start: "lint.Location"
-        end: "lint.Location"
+        start: lint.Location
+        end: lint.Location
 
-        def __init__(self, start: "lint.Location", end: "lint.Location") -> None: ...
+        def __init__(self, start: lint.Location, end: lint.Location) -> None: ...
         def __repr__(self) -> str: ...
         def __eq__(self, other: object) -> bool: ...
 
@@ -117,30 +119,30 @@ class lint:
 
         line_number: int
         content: str
-        highlights: List[tuple[int, int]]
+        highlights: list[tuple[int, int]]
 
         def __init__(
-            self, line_number: int, content: str, highlights: List[tuple[int, int]]
+            self, line_number: int, content: str, highlights: list[tuple[int, int]]
         ) -> None: ...
         def __repr__(self) -> str: ...
 
     class DiagnosticContext:
         """Source code context for diagnostics."""
 
-        lines: List["lint.ContextLine"]
+        lines: list[lint.ContextLine]
 
-        def __init__(self, lines: List["lint.ContextLine"]) -> None: ...
+        def __init__(self, lines: list[lint.ContextLine]) -> None: ...
         def __repr__(self) -> str: ...
 
     class Suggestion:
         """A suggested fix for a diagnostic."""
 
         message: str
-        span: "lint.Span"
-        replacement: Optional[str]
+        span: lint.Span
+        replacement: str | None
 
         def __init__(
-            self, message: str, span: "lint.Span", replacement: Optional[str] = None
+            self, message: str, span: lint.Span, replacement: str | None = None
         ) -> None: ...
         def __repr__(self) -> str: ...
 
@@ -148,63 +150,63 @@ class lint:
         """A diagnostic message with location and context."""
 
         code: str
-        severity: "lint.Severity"
+        severity: lint.Severity
         message: str
-        span: "lint.Span"
-        context: Optional["lint.DiagnosticContext"]
-        suggestions: List["lint.Suggestion"]
+        span: lint.Span
+        context: lint.DiagnosticContext | None
+        suggestions: list[lint.Suggestion]
 
         def __repr__(self) -> str: ...
 
     class LintConfig:
         """Configuration for the linter."""
 
-        max_line_length: Optional[int]
+        max_line_length: int | None
         indent_size: int
 
         def __init__(
             self,
-            max_line_length: Optional[int] = 80,
+            max_line_length: int | None = 80,
             indent_size: int = 2,
             require_document_start: bool = False,
             require_document_end: bool = False,
             allow_duplicate_keys: bool = False,
-            disabled_rules: Optional[Set[str]] = None,
+            disabled_rules: set[str] | None = None,
         ) -> None: ...
-        def with_max_line_length(self, max: Optional[int]) -> "lint.LintConfig": ...
-        def with_indent_size(self, size: int) -> "lint.LintConfig": ...
-        def with_disabled_rule(self, code: str) -> "lint.LintConfig": ...
+        def with_max_line_length(self, max: int | None) -> lint.LintConfig: ...
+        def with_indent_size(self, size: int) -> lint.LintConfig: ...
+        def with_disabled_rule(self, code: str) -> lint.LintConfig: ...
         def __repr__(self) -> str: ...
 
     class Linter:
         """YAML linter with configurable rules."""
 
-        def __init__(self, config: Optional["lint.LintConfig"] = None) -> None: ...
+        def __init__(self, config: lint.LintConfig | None = None) -> None: ...
         @staticmethod
-        def with_all_rules() -> "lint.Linter": ...
-        def lint(self, source: str) -> List["lint.Diagnostic"]: ...
+        def with_all_rules() -> lint.Linter: ...
+        def lint(self, source: str) -> list[lint.Diagnostic]: ...
         def __repr__(self) -> str: ...
 
     class TextFormatter:
         """Format diagnostics as colored terminal output."""
 
         def __init__(self, use_colors: bool = True) -> None: ...
-        def format(self, diagnostics: List["lint.Diagnostic"], source: str) -> str: ...
+        def format(self, diagnostics: list[lint.Diagnostic], source: str) -> str: ...
 
     class JsonFormatter:
         """Format diagnostics as JSON (requires json-output feature)."""
 
         def __init__(self, pretty: bool = False) -> None: ...
-        def format(self, diagnostics: List["lint.Diagnostic"], source: str) -> str: ...
+        def format(self, diagnostics: list[lint.Diagnostic], source: str) -> str: ...
 
     @staticmethod
-    def lint(source: str, config: Optional["lint.LintConfig"] = None) -> List["lint.Diagnostic"]:
+    def lint(source: str, config: lint.LintConfig | None = None) -> list[lint.Diagnostic]:
         """Lint YAML source with optional configuration."""
         ...
 
     @staticmethod
     def format_diagnostics(
-        diagnostics: List["lint.Diagnostic"],
+        diagnostics: list[lint.Diagnostic],
         source: str,
         format: str = "text",
         use_colors: bool = True,
@@ -212,8 +214,8 @@ class lint:
         """Format diagnostics to string."""
         ...
 
-# Parallel submodule
-class parallel:
+# Parallel submodule (PyO3 submodule, not a class - noqa: N801)
+class parallel:  # noqa: N801
     """Parallel YAML processing submodule."""
 
     class ParallelConfig:
@@ -221,23 +223,23 @@ class parallel:
 
         def __init__(
             self,
-            thread_count: Optional[int] = None,
+            thread_count: int | None = None,
             min_chunk_size: int = 4096,
             max_chunk_size: int = 10 * 1024 * 1024,
             max_input_size: int = 100 * 1024 * 1024,
             max_documents: int = 100_000,
         ) -> None: ...
-        def with_thread_count(self, count: Optional[int]) -> "parallel.ParallelConfig": ...
-        def with_max_input_size(self, size: int) -> "parallel.ParallelConfig": ...
-        def with_max_documents(self, count: int) -> "parallel.ParallelConfig": ...
-        def with_min_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
-        def with_max_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
+        def with_thread_count(self, count: int | None) -> parallel.ParallelConfig: ...
+        def with_max_input_size(self, size: int) -> parallel.ParallelConfig: ...
+        def with_max_documents(self, count: int) -> parallel.ParallelConfig: ...
+        def with_min_chunk_size(self, size: int) -> parallel.ParallelConfig: ...
+        def with_max_chunk_size(self, size: int) -> parallel.ParallelConfig: ...
         def __repr__(self) -> str: ...
 
     @staticmethod
     def parse_parallel(
-        source: str, config: Optional["parallel.ParallelConfig"] = None
-    ) -> List[Any]:
+        source: str, config: parallel.ParallelConfig | None = None
+    ) -> list[Any]:
         """Parse multi-document YAML in parallel.
 
         Args:

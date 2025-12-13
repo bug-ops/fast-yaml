@@ -12,7 +12,9 @@ Example:
     3
 """
 
-from typing import Any, List, Optional
+from __future__ import annotations
+
+from typing import Any
 
 from ._core import parallel as _parallel_module
 
@@ -28,8 +30,8 @@ __all__ = [
 
 def parse_parallel(
     source: str,
-    config: Optional[ParallelConfig] = None,
-) -> List[Any]:
+    config: ParallelConfig | None = None,
+) -> list[Any]:
     """
     Parse multi-document YAML in parallel.
 

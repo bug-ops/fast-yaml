@@ -12,7 +12,7 @@ Example:
     error: duplicate key 'key' found
 """
 
-from typing import List, Optional, Set
+from __future__ import annotations
 
 from ._core import lint as _lint_module
 
@@ -46,7 +46,7 @@ __all__ = [
 ]
 
 
-def lint(source: str, config: Optional[LintConfig] = None) -> List[Diagnostic]:
+def lint(source: str, config: LintConfig | None = None) -> list[Diagnostic]:
     """
     Lint YAML source code.
 
@@ -75,7 +75,7 @@ def lint(source: str, config: Optional[LintConfig] = None) -> List[Diagnostic]:
 
 
 def format_diagnostics(
-    diagnostics: List[Diagnostic],
+    diagnostics: list[Diagnostic],
     source: str,
     format: str = "text",
     use_colors: bool = True,

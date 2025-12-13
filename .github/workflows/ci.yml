@@ -61,6 +61,8 @@ jobs:
     needs: [format]
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      security-events: write
     steps:
       - uses: actions/checkout@v6
 
@@ -230,17 +232,17 @@ jobs:
 
   # MSRV check
   msrv:
-    name: Check MSRV (1.85.0)
+    name: Check MSRV (1.86.0)
     needs: [format]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust 1.85.0
+      - name: Install Rust 1.86.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.86.0"
 
       - name: Install cargo-make
         uses: taiki-e/install-action@v2

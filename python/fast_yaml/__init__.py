@@ -18,18 +18,17 @@ For drop-in replacement of PyYAML:
     {'key': 'value'}
 """
 
-from typing import Any, Iterator, IO, Union, Optional
-from ._core import (
-    safe_load as _safe_load,
-    safe_load_all as _safe_load_all,
-    safe_dump as _safe_dump,
-    safe_dump_all as _safe_dump_all,
-    version as _version,
-)
+from __future__ import annotations
 
-# Import submodules
-from . import lint
-from . import parallel
+from collections.abc import Iterator
+from typing import IO, Any
+
+from . import lint, parallel
+from ._core import safe_dump as _safe_dump
+from ._core import safe_dump_all as _safe_dump_all
+from ._core import safe_load as _safe_load
+from ._core import safe_load_all as _safe_load_all
+from ._core import version as _version
 
 __version__ = _version()
 __all__ = [
@@ -45,7 +44,7 @@ __all__ = [
 ]
 
 
-def safe_load(stream: Union[str, bytes, IO[str], IO[bytes]]) -> Any:
+def safe_load(stream: str | bytes | IO[str] | IO[bytes]) -> Any:
     """
     Parse a YAML document and return a Python object.
 
@@ -80,7 +79,7 @@ def safe_load(stream: Union[str, bytes, IO[str], IO[bytes]]) -> Any:
     return _safe_load(content)
 
 
-def safe_load_all(stream: Union[str, bytes, IO[str], IO[bytes]]) -> Iterator[Any]:
+def safe_load_all(stream: str | bytes | IO[str] | IO[bytes]) -> Iterator[Any]:
     """
     Parse all YAML documents in a stream and return an iterator.
 
@@ -112,13 +111,13 @@ def safe_load_all(stream: Union[str, bytes, IO[str], IO[bytes]]) -> Iterator[Any
 
 def safe_dump(
     data: Any,
-    stream: Optional[IO[str]] = None,
+    stream: IO[str] | None = None,
     *,
     allow_unicode: bool = True,
     sort_keys: bool = False,
-    indent: Optional[int] = None,  # TODO: implement
-    width: Optional[int] = None,  # TODO: implement
-) -> Optional[str]:
+    indent: int | None = None,  # TODO: implement
+    width: int | None = None,  # TODO: implement
+) -> str | None:
     """
     Serialize a Python object to a YAML string.
 
@@ -158,11 +157,11 @@ def safe_dump(
 
 def safe_dump_all(
     documents: Iterator[Any],
-    stream: Optional[IO[str]] = None,
+    stream: IO[str] | None = None,
     *,
     allow_unicode: bool = True,
     sort_keys: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """
     Serialize multiple Python objects to a YAML string with document separators.
 
