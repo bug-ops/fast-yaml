@@ -1,0 +1,29 @@
+# Source files
+src/
+Cargo.toml
+Cargo.lock
+build.rs
+
+# Tests and development
+__test__/
+benchmarks/
+examples/
+*.spec.ts
+*.bench.ts
+
+# Build artifacts
+target/
+dist/
+node_modules/
+
+# Configuration
+tsconfig.json
+vitest.config.ts
+
+# Documentation
+*.md
+!README.md
+
+# Version control
+.git/
+.gitignore

@@ -1,0 +1,54 @@
+[package]
+name = "fast-yaml-nodejs"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fast YAML parser for Node.js, powered by Rust"
+keywords = ["yaml", "parser", "nodejs", "napi", "performance"]
+categories = ["parsing", "encoding"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[features]
+default = ["json-output"]
+json-output = ["fast-yaml-linter/json-output"]
+
+[dependencies]
+# NAPI-RS - Latest stable version
+napi = { version = "3.7", features = ["napi8", "error_anyhow"] }
+napi-derive = "3.4"
+
+# Internal crates
+fast-yaml-core.workspace = true
+fast-yaml-linter = { path = "../crates/fast-yaml-linter", version = "0.1" }
+fast-yaml-parallel = { path = "../crates/fast-yaml-parallel", version = "0.1" }
+
+# External dependencies
+yaml-rust2.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+napi-build = "2.3"
+
+# NAPI-RS modules should not use panic = "abort"
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = true
+
+# Override workspace lints for NAPI-RS (uses unsafe internally)
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "warn"
+pedantic = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
