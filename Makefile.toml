@@ -89,7 +89,7 @@ fi
 # ============================================================================
 
 [tasks.clippy]
-description = "Run Clippy linter on all workspace targets"
+description = "Run Clippy linter on all Rust crates (excludes Python extension)"
 category = "Development"
 command = "cargo"
 args = [
@@ -97,13 +97,14 @@ args = [
     "--workspace",
     "--all-targets",
     "--all-features",
+    "--exclude", "fast-yaml",
     "--",
     "-D", "warnings"
 ]
 install_crate = { rustup_component_name = "clippy", binary = "cargo-clippy", test_arg = "--version" }
 
 [tasks.clippy-fix]
-description = "Run Clippy with automatic fixes"
+description = "Run Clippy with automatic fixes (excludes Python extension)"
 category = "Development"
 command = "cargo"
 args = [
@@ -111,6 +112,7 @@ args = [
     "--workspace",
     "--all-targets",
     "--all-features",
+    "--exclude", "fast-yaml",
     "--fix",
     "--allow-dirty",
     "--allow-staged"
@@ -266,22 +268,22 @@ fi
 # ============================================================================
 
 [tasks.doc]
-description = "Build Rust documentation"
+description = "Build Rust documentation (excludes Python extension)"
 category = "Documentation"
 command = "cargo"
-args = ["doc", "--workspace", "--no-deps", "--all-features"]
+args = ["doc", "--workspace", "--no-deps", "--all-features", "--exclude", "fast-yaml"]
 
 [tasks.doc-open]
 description = "Build and open documentation in browser"
 category = "Documentation"
 command = "cargo"
-args = ["doc", "--workspace", "--no-deps", "--all-features", "--open"]
+args = ["doc", "--workspace", "--no-deps", "--all-features", "--exclude", "fast-yaml", "--open"]
 
 [tasks.doc-check]
-description = "Check documentation for warnings"
+description = "Check documentation for warnings (excludes Python extension)"
 category = "CI"
 command = "cargo"
-args = ["doc", "--workspace", "--no-deps", "--all-features"]
+args = ["doc", "--workspace", "--no-deps", "--all-features", "--exclude", "fast-yaml"]
 env = { RUSTDOCFLAGS = "-D warnings" }
 
 # ============================================================================
@@ -394,22 +396,22 @@ install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test
 # ============================================================================
 
 [tasks.build]
-description = "Build all workspace crates in debug mode"
+description = "Build all Rust crates in debug mode (excludes Python extension)"
 category = "Build"
 command = "cargo"
-args = ["build", "--workspace", "--all-targets"]
+args = ["build", "--workspace", "--all-targets", "--exclude", "fast-yaml"]
 
 [tasks.build-release]
-description = "Build all workspace crates in release mode"
+description = "Build all Rust crates in release mode (excludes Python extension)"
 category = "Build"
 command = "cargo"
-args = ["build", "--workspace", "--all-targets", "--release"]
+args = ["build", "--workspace", "--all-targets", "--release", "--exclude", "fast-yaml"]
 
 [tasks.check]
-description = "Quick check without building"
+description = "Quick check without building (excludes Python extension)"
 category = "Build"
 command = "cargo"
-args = ["check", "--workspace", "--all-targets", "--all-features"]
+args = ["check", "--workspace", "--all-targets", "--all-features", "--exclude", "fast-yaml"]
 
 [tasks.clean]
 description = "Clean build artifacts"
@@ -504,10 +506,10 @@ cargo watch -x "nextest run ${@}"
 # ============================================================================
 
 [tasks.bench]
-description = "Run all benchmarks"
+description = "Run all benchmarks (excludes Python extension)"
 category = "Performance"
 command = "cargo"
-args = ["bench", "--workspace"]
+args = ["bench", "--workspace", "--exclude", "fast-yaml"]
 
 [tasks.bench-fast-yaml-core]
 description = "Run benchmarks for fast-yaml-core"
@@ -520,16 +522,16 @@ args = ["bench", "-p", "fast-yaml-core"]
 # ============================================================================
 
 [tasks.tree]
-description = "Display dependency tree"
+description = "Display dependency tree (excludes Python extension)"
 category = "Utility"
 command = "cargo"
-args = ["tree", "--workspace"]
+args = ["tree", "--workspace", "--exclude", "fast-yaml"]
 
 [tasks.outdated]
-description = "Check for outdated dependencies"
+description = "Check for outdated dependencies (excludes Python extension)"
 category = "Utility"
 command = "cargo"
-args = ["outdated", "--workspace"]
+args = ["outdated", "--workspace", "--exclude", "fast-yaml"]
 install_crate = { crate_name = "cargo-outdated", binary = "cargo-outdated", test_arg = "--version" }
 
 [tasks.bloat]
