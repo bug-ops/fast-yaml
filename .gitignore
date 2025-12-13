@@ -44,3 +44,4 @@ yarn-error.log*
 # NAPI-RS build artifacts
 nodejs/*.node
 nodejs/dist/
+nodejs/coverage/
