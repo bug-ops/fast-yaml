@@ -667,12 +667,213 @@ echo "Documentation:"
 echo "  doc            - Build documentation"
 echo "  doc-open       - Build and open documentation"
 echo ""
+echo "Release:"
+echo "  release-crates           - Publish Rust crates to crates.io"
+echo "  release-crates-dry-run   - Dry run: verify crates can be published"
+echo "  release-python-build     - Build Python wheels for current platform"
+echo "  release-python-publish   - Publish Python package to PyPI"
+echo "  release-nodejs-build     - Build NodeJS native module for release"
+echo "  release-nodejs-publish   - Publish NodeJS package to npm"
+echo "  release-check-version    - Verify version consistency"
+echo ""
 echo "Utility:"
 echo "  clean          - Clean build artifacts"
 echo "  tree           - Show dependency tree"
 echo "  verify-project - Verify project structure"
 echo ""
 echo "Run 'cargo make <task>' to execute a task"
+'''
+
+# ============================================================================
+# Release Tasks
+# ============================================================================
+
+[tasks.release-crates]
+description = "Publish Rust crates to crates.io in dependency order"
+category = "Release"
+script = '''
+#!/bin/bash
+set -e
+
+echo "Publishing Rust crates to crates.io in dependency order..."
+
+# Check if CARGO_REGISTRY_TOKEN is set
+if [ -z "$CARGO_REGISTRY_TOKEN" ]; then
+    echo "Error: CARGO_REGISTRY_TOKEN environment variable not set"
+    exit 1
+fi
+
+# Publish in dependency order (dependencies must be published first)
+echo "Publishing fast-yaml-core..."
+cd crates/fast-yaml-core && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+echo "Waiting 30 seconds for crates.io to index fast-yaml-core..."
+sleep 30
+
+echo "Publishing fast-yaml-ffi..."
+cd ../fast-yaml-ffi && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+echo "Waiting 30 seconds for crates.io to index fast-yaml-ffi..."
+sleep 30
+
+echo "Publishing fast-yaml-linter..."
+cd ../fast-yaml-linter && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+echo "Waiting 30 seconds for crates.io to index fast-yaml-linter..."
+sleep 30
+
+echo "Publishing fast-yaml-parallel..."
+cd ../fast-yaml-parallel && cargo publish --token "$CARGO_REGISTRY_TOKEN"
+
+echo "All crates published successfully!"
+'''
+
+[tasks.release-crates-dry-run]
+description = "Dry run: verify crates can be published"
+category = "Release"
+script = '''
+#!/bin/bash
+set -e
+
+echo "Dry-run: Publishing Rust crates to crates.io in dependency order..."
+
+echo "Checking fast-yaml-core..."
+cd crates/fast-yaml-core && cargo publish --dry-run
+
+echo "Checking fast-yaml-ffi..."
+cd ../fast-yaml-ffi && cargo publish --dry-run
+
+echo "Checking fast-yaml-linter..."
+cd ../fast-yaml-linter && cargo publish --dry-run
+
+echo "Checking fast-yaml-parallel..."
+cd ../fast-yaml-parallel && cargo publish --dry-run
+
+echo "All crates verified for publishing!"
+'''
+
+[tasks.release-python-build]
+description = "Build Python wheels for current platform"
+category = "Release"
+cwd = "${PYTHON_DIR}"
+command = "uv"
+args = ["run", "maturin", "build", "--release"]
+
+[tasks.release-python-publish]
+description = "Publish Python package to PyPI"
+category = "Release"
+cwd = "${PYTHON_DIR}"
+script = '''
+#!/bin/bash
+set -e
+
+if [ -z "$PYPI_API_TOKEN" ]; then
+    echo "Error: PYPI_API_TOKEN environment variable not set"
+    exit 1
+fi
+
+echo "Publishing Python package to PyPI..."
+uv run maturin publish --username __token__ --password "$PYPI_API_TOKEN"
+echo "Python package published successfully!"
+'''
+
+[tasks.release-python-publish-dry-run]
+description = "Dry run: verify Python package can be published"
+category = "Release"
+cwd = "${PYTHON_DIR}"
+command = "uv"
+args = ["run", "maturin", "publish", "--dry-run"]
+
+[tasks.release-nodejs-build]
+description = "Build NodeJS native module for release"
+category = "Release"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["run", "build"]
+
+[tasks.release-nodejs-publish]
+description = "Publish NodeJS package to npm"
+category = "Release"
+cwd = "${NODEJS_DIR}"
+script = '''
+#!/bin/bash
+set -e
+
+if [ -z "$NPM_TOKEN" ]; then
+    echo "Error: NPM_TOKEN environment variable not set"
+    exit 1
+fi
+
+# Configure npm authentication
+echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > .npmrc
+
+echo "Publishing NodeJS package to npm..."
+npm publish --access public
+
+# Clean up
+rm -f .npmrc
+
+echo "NodeJS package published successfully!"
+'''
+
+[tasks.release-nodejs-publish-dry-run]
+description = "Dry run: verify NodeJS package can be published"
+category = "Release"
+cwd = "${NODEJS_DIR}"
+command = "npm"
+args = ["publish", "--dry-run"]
+
+[tasks.release-check-version]
+description = "Verify version consistency across all packages"
+category = "Release"
+script = '''
+#!/bin/bash
+set -e
+
+echo "Checking version consistency..."
+
+# Extract version from workspace Cargo.toml
+WORKSPACE_VERSION=$(grep -A1 '\[workspace.dependencies\]' Cargo.toml | grep 'fast-yaml-core' | sed 's/.*version = "\([^"]*\)".*/\1/')
+
+# Check each crate version
+for crate in crates/fast-yaml-core crates/fast-yaml-ffi crates/fast-yaml-linter crates/fast-yaml-parallel; do
+    CRATE_VERSION=$(grep '^version = ' "$crate/Cargo.toml" | head -1 | sed 's/version = "\([^"]*\)".*/\1/')
+    CRATE_NAME=$(basename "$crate")
+
+    if [ "$CRATE_VERSION" != "$WORKSPACE_VERSION" ]; then
+        echo "Warning: $CRATE_NAME version ($CRATE_VERSION) differs from workspace version ($WORKSPACE_VERSION)"
+    else
+        echo "✓ $CRATE_NAME: $CRATE_VERSION"
+    fi
+done
+
+# Check Python package version
+PYTHON_VERSION=$(grep '^version = ' python/pyproject.toml | sed 's/version = "\([^"]*\)".*/\1/')
+echo "✓ Python package: $PYTHON_VERSION"
+
+# Check NodeJS package version
+NODEJS_VERSION=$(grep '"version":' nodejs/package.json | sed 's/.*"version": "\([^"]*\)".*/\1/')
+echo "✓ NodeJS package: $NODEJS_VERSION"
+
+echo ""
+echo "Version check complete!"
+'''
+
+[tasks.release-tag-check]
+description = "Check if current commit has a version tag"
+category = "Release"
+script = '''
+#!/bin/bash
+
+# Get current git tag (if any)
+CURRENT_TAG=$(git describe --exact-match --tags 2>/dev/null || echo "")
+
+if [ -z "$CURRENT_TAG" ]; then
+    echo "No version tag on current commit"
+    exit 1
+fi
+
+echo "Current tag: $CURRENT_TAG"
 '''
 
 # ============================================================================

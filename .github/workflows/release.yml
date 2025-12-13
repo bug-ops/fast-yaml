@@ -1,0 +1,648 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUST_BACKTRACE: short
+  RUSTUP_MAX_RETRIES: 10
+
+# No concurrent releases
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Extract version from git tag
+  extract-version:
+    name: Extract Version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_no_v: ${{ steps.version.outputs.version_no_v }}
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION_NO_V="${VERSION#v}"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version_no_v=$VERSION_NO_V" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION ($VERSION_NO_V)"
+
+  # Verify all tests pass before release
+  verify-tests:
+    name: Verify Tests Pass
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release-verify"
+
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: Run all workspace tests
+        run: cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
+
+      - name: Check documentation builds
+        run: cargo doc --workspace --no-deps
+
+  # Publish Rust crates to crates.io in dependency order
+  publish-crates:
+    name: Publish Crate (${{ matrix.crate }})
+    needs: [extract-version, verify-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: true
+      matrix:
+        crate:
+          - fast-yaml-core
+          - fast-yaml-ffi
+          - fast-yaml-linter
+          - fast-yaml-parallel
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "publish-${{ matrix.crate }}"
+
+      - name: Verify crate version matches tag
+        run: |
+          CRATE_VERSION=$(grep '^version' crates/${{ matrix.crate }}/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG_VERSION="${{ needs.extract-version.outputs.version_no_v }}"
+          if [[ "$CRATE_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Version mismatch: crates/${{ matrix.crate }}/Cargo.toml has $CRATE_VERSION but tag is $TAG_VERSION"
+            exit 1
+          fi
+
+      - name: Publish ${{ matrix.crate }} to crates.io
+        run: |
+          cd crates/${{ matrix.crate }}
+
+          # Wait for previous crates to be available on crates.io (dependency order)
+          if [[ "${{ matrix.crate }}" != "fast-yaml-core" ]]; then
+            echo "Waiting 60s for previous crates to propagate on crates.io..."
+            sleep 60
+          fi
+
+          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --allow-dirty
+
+  # Build Python wheels for Linux (using manylinux containers)
+  build-python-linux:
+    name: Build Python Wheels (Linux ${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: [extract-version, verify-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
+          manylinux: auto
+          sccache: 'true'
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheels-linux-${{ matrix.target }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # Build Python wheels for Linux musl
+  build-python-linux-musl:
+    name: Build Python Wheels (Linux musl ${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: [extract-version, verify-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
+          manylinux: musllinux_1_2
+          sccache: 'true'
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheels-linux-musl-${{ matrix.target }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # Build Python wheels for macOS
+  build-python-macos:
+    name: Build Python Wheels (macOS ${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: [extract-version, verify-tests]
+    runs-on: macos-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64, aarch64]
+        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
+          sccache: 'true'
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheels-macos-${{ matrix.target }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # Build Python wheels for Windows
+  build-python-windows:
+    name: Build Python Wheels (Windows ${{ matrix.target }}, Python ${{ matrix.python }})
+    needs: [extract-version, verify-tests]
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x64, aarch64]
+        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
+          sccache: 'true'
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheels-windows-${{ matrix.target }}-py${{ matrix.python }}
+          path: dist/*.whl
+          retention-days: 7
+
+  # Build Python source distribution
+  build-python-sdist:
+    name: Build Python Source Distribution
+    needs: [extract-version, verify-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist --manifest-path python/Cargo.toml
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v5
+        with:
+          name: wheels-sdist
+          path: dist/*.tar.gz
+          retention-days: 7
+
+  # Publish Python package to PyPI
+  publish-python:
+    name: Publish Python Package to PyPI
+    needs:
+      - extract-version
+      - build-python-linux
+      - build-python-linux-musl
+      - build-python-macos
+      - build-python-windows
+      - build-python-sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+
+      - name: List all wheels and sdist
+        run: |
+          ls -lh dist/
+          echo "Total artifacts: $(ls -1 dist/ | wc -l)"
+
+      - name: Verify Python package version
+        run: |
+          # Extract version from any wheel filename
+          WHEEL_VERSION=$(ls dist/*.whl | head -1 | grep -oP '(?<=fast_yaml-)\d+\.\d+\.\d+' || echo "unknown")
+          TAG_VERSION="${{ needs.extract-version.outputs.version_no_v }}"
+
+          if [[ "$WHEEL_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Warning: Wheel version $WHEEL_VERSION doesn't match tag $TAG_VERSION"
+          else
+            echo "Version verified: $WHEEL_VERSION"
+          fi
+
+      - name: Publish to PyPI
+        uses: PyO3/maturin-action@v1
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        with:
+          command: upload
+          args: --skip-existing dist/*
+
+  # Build Node.js native binaries
+  build-nodejs:
+    name: Build Node.js Binary (${{ matrix.settings.target }})
+    needs: [extract-version, verify-tests]
+    runs-on: ${{ matrix.settings.host }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          # Linux GNU
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            build: |
+              cd nodejs
+              npm run build -- --target x86_64-unknown-linux-gnu
+              strip *.node
+
+          # Linux musl
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-alpine
+            build: |
+              cd nodejs
+              npm run build -- --target x86_64-unknown-linux-musl
+              strip *.node
+
+          # Linux ARM64
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:lts-debian-aarch64
+            build: |
+              cd nodejs
+              npm run build -- --target aarch64-unknown-linux-gnu
+              aarch64-unknown-linux-gnu-strip *.node
+
+          # macOS x86_64
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            build: |
+              cd nodejs
+              npm run build -- --target x86_64-apple-darwin
+              strip -x *.node
+
+          # macOS ARM64 (Apple Silicon)
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            build: |
+              cd nodejs
+              npm run build -- --target aarch64-apple-darwin
+              strip -x *.node
+
+          # Windows x64
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            build: |
+              cd nodejs
+              npm run build -- --target x86_64-pc-windows-msvc
+
+          # Windows ARM64
+          - host: windows-latest
+            target: aarch64-pc-windows-msvc
+            build: |
+              cd nodejs
+              npm run build -- --target aarch64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "nodejs-${{ matrix.settings.target }}"
+
+      - name: Install dependencies
+        run: cd nodejs && npm install
+
+      # Build with Docker for cross-compilation targets
+      - name: Build in Docker
+        if: matrix.settings.docker
+        uses: addnab/docker-run-action@v3
+        with:
+          image: ${{ matrix.settings.docker }}
+          options: -v ${{ github.workspace }}:/build -w /build
+          run: ${{ matrix.settings.build }}
+
+      # Build natively
+      - name: Build native
+        if: '!matrix.settings.docker'
+        run: ${{ matrix.settings.build }}
+        shell: bash
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: nodejs-binary-${{ matrix.settings.target }}
+          path: nodejs/*.node
+          retention-days: 7
+
+  # Publish Node.js package to npm
+  publish-nodejs:
+    name: Publish Node.js Package to npm
+    needs:
+      - extract-version
+      - build-nodejs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+          cache-dependency-path: nodejs/package-lock.json
+
+      - name: Install dependencies
+        run: cd nodejs && npm install
+
+      - name: Download all binary artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: nodejs-binary-*
+          path: nodejs/artifacts
+
+      - name: List artifacts
+        run: |
+          ls -lhR nodejs/artifacts/
+          echo "Moving artifacts to nodejs directory..."
+          find nodejs/artifacts -name '*.node' -exec mv {} nodejs/ \;
+          ls -lh nodejs/*.node
+
+      - name: Verify Node.js package version
+        run: |
+          cd nodejs
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          TAG_VERSION="${{ needs.extract-version.outputs.version_no_v }}"
+
+          if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Version mismatch: package.json has $PKG_VERSION but tag is $TAG_VERSION"
+            exit 1
+          fi
+          echo "Version verified: $PKG_VERSION"
+
+      - name: Publish to npm
+        run: cd nodejs && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  # Create GitHub Release with all artifacts
+  create-github-release:
+    name: Create GitHub Release
+    needs:
+      - extract-version
+      - publish-crates
+      - publish-python
+      - publish-nodejs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          path: release-artifacts/python
+
+      - name: Download all Node.js binaries
+        uses: actions/download-artifact@v5
+        with:
+          pattern: nodejs-binary-*
+          path: release-artifacts/nodejs
+
+      - name: Organize artifacts
+        run: |
+          # Flatten Python wheels
+          mkdir -p release-artifacts/python-wheels
+          find release-artifacts/python -name '*.whl' -exec mv {} release-artifacts/python-wheels/ \;
+          find release-artifacts/python -name '*.tar.gz' -exec mv {} release-artifacts/python-wheels/ \;
+
+          # Flatten Node.js binaries
+          mkdir -p release-artifacts/nodejs-binaries
+          find release-artifacts/nodejs -name '*.node' -exec mv {} release-artifacts/nodejs-binaries/ \;
+
+          # List all artifacts
+          echo "Python artifacts:"
+          ls -lh release-artifacts/python-wheels/
+          echo ""
+          echo "Node.js artifacts:"
+          ls -lh release-artifacts/nodejs-binaries/
+
+      - name: Generate release notes
+        id: release_notes
+        run: |
+          cat > release_notes.md << 'EOF'
+          # fast-yaml ${{ needs.extract-version.outputs.version }}
+
+          This release includes:
+
+          ## Rust Crates (crates.io)
+          - `fast-yaml-core` ${{ needs.extract-version.outputs.version_no_v }}
+          - `fast-yaml-ffi` ${{ needs.extract-version.outputs.version_no_v }}
+          - `fast-yaml-linter` ${{ needs.extract-version.outputs.version_no_v }}
+          - `fast-yaml-parallel` ${{ needs.extract-version.outputs.version_no_v }}
+
+          ## Python Package (PyPI)
+          ```bash
+          pip install fast-yaml==${{ needs.extract-version.outputs.version_no_v }}
+          ```
+
+          **Supported platforms:**
+          - Linux: x86_64 (glibc/musl), aarch64 (glibc/musl)
+          - macOS: x86_64, Apple Silicon (aarch64)
+          - Windows: x64, ARM64
+
+          **Supported Python versions:** 3.9, 3.10, 3.11, 3.12, 3.13
+
+          ## Node.js Package (npm)
+          ```bash
+          npm install @fast-yaml/core@${{ needs.extract-version.outputs.version_no_v }}
+          ```
+
+          **Supported platforms:**
+          - Linux: x86_64 (glibc/musl), aarch64
+          - macOS: x86_64, Apple Silicon (aarch64)
+          - Windows: x64, ARM64
+
+          **Supported Node.js versions:** 20, 22
+
+          ## Changes
+
+          See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
+
+          ## Checksums
+
+          Python wheel and Node.js binary checksums are available below.
+          EOF
+
+      - name: Generate checksums
+        run: |
+          cd release-artifacts/python-wheels
+          sha256sum * > SHA256SUMS.txt
+          cd ../nodejs-binaries
+          sha256sum * > SHA256SUMS.txt
+          cd ../..
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ needs.extract-version.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: false
+          files: |
+            release-artifacts/python-wheels/*
+            release-artifacts/nodejs-binaries/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+
+  # Post-release verification
+  verify-release:
+    name: Verify Release Published
+    needs:
+      - extract-version
+      - create-github-release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for packages to be available
+        run: |
+          echo "Waiting 2 minutes for packages to propagate..."
+          sleep 120
+
+      - name: Verify crates.io publication
+        run: |
+          for crate in fast-yaml-core fast-yaml-ffi fast-yaml-linter fast-yaml-parallel; do
+            echo "Checking $crate on crates.io..."
+            curl -f "https://crates.io/api/v1/crates/$crate" || echo "Warning: $crate not found yet"
+          done
+
+      - name: Verify PyPI publication
+        run: |
+          echo "Checking fast-yaml on PyPI..."
+          curl -f "https://pypi.org/pypi/fast-yaml/json" || echo "Warning: fast-yaml not found on PyPI yet"
+
+      - name: Verify npm publication
+        run: |
+          echo "Checking @fast-yaml/core on npm..."
+          curl -f "https://registry.npmjs.org/@fast-yaml/core" || echo "Warning: @fast-yaml/core not found on npm yet"
+
+      - name: Release summary
+        run: |
+          echo "Release ${{ needs.extract-version.outputs.version }} completed!"
+          echo ""
+          echo "Rust crates: https://crates.io/search?q=fast-yaml"
+          echo "Python package: https://pypi.org/project/fast-yaml/"
+          echo "Node.js package: https://www.npmjs.com/package/@fast-yaml/core"
+          echo "GitHub release: https://github.com/${{ github.repository }}/releases/tag/${{ needs.extract-version.outputs.version }}"
