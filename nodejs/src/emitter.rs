@@ -150,27 +150,15 @@ pub fn safe_dump_all(
     // Serialize all documents
     let mut output = String::new();
 
-    for (i, yaml) in yamls.iter().enumerate() {
-        if i > 0 {
-            output.push_str("---\n");
-        }
-
+    for yaml in &yamls {
         let mut doc_output = String::new();
         let mut emitter = YamlEmitter::new(&mut doc_output);
         emitter
             .dump(yaml)
             .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
 
-        // Remove the leading "---\n" that yaml-rust2 adds
-        let doc_output = if let Some(stripped) = doc_output.strip_prefix("---\n") {
-            stripped
-        } else if let Some(stripped) = doc_output.strip_prefix("---") {
-            stripped.trim_start_matches('\n')
-        } else {
-            &doc_output
-        };
-
-        output.push_str(doc_output);
+        // yaml-rust2 adds "---\n" prefix which we keep for multi-doc
+        output.push_str(&doc_output);
 
         // Check output size to prevent memory exhaustion
         if output.len() > MAX_OUTPUT_SIZE {
