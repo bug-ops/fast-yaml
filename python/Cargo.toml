@@ -1,6 +1,6 @@
 [package]
 name = "fast-yaml"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ repository.workspace = true
 description = "A fast YAML parser for Python, powered by Rust"
 keywords = ["yaml", "parser", "python", "pyo3"]
 categories = ["parsing", "encoding"]
+publish = false  # Python bindings published to PyPI, not crates.io
 
 [lib]
 name = "fast_yaml"
@@ -19,8 +20,8 @@ json-output = ["fast-yaml-linter/json-output"]
 
 [dependencies]
 fast-yaml-core.workspace = true
-fast-yaml-linter = { path = "../crates/fast-yaml-linter", version = "0.1" }
-fast-yaml-parallel = { path = "../crates/fast-yaml-parallel", version = "0.1" }
+fast-yaml-linter.workspace = true
+fast-yaml-parallel.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
 yaml-rust2.workspace = true
 

@@ -1,6 +1,6 @@
 [package]
 name = "fast-yaml-nodejs"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -8,6 +8,7 @@ repository.workspace = true
 description = "Fast YAML parser for Node.js, powered by Rust"
 keywords = ["yaml", "parser", "nodejs", "napi", "performance"]
 categories = ["parsing", "encoding"]
+publish = false  # Node.js bindings published to npm, not crates.io
 
 [lib]
 crate-type = ["cdylib"]
@@ -23,8 +24,8 @@ napi-derive = "3.4"
 
 # Internal crates
 fast-yaml-core.workspace = true
-fast-yaml-linter = { path = "../crates/fast-yaml-linter", version = "0.1" }
-fast-yaml-parallel = { path = "../crates/fast-yaml-parallel", version = "0.1" }
+fast-yaml-linter.workspace = true
+fast-yaml-parallel.workspace = true
 
 # External dependencies
 yaml-rust2.workspace = true

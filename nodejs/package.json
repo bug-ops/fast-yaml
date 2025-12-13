@@ -1,6 +1,6 @@
 {
   "name": "@fast-yaml/core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fast YAML 1.2.2 parser, linter, and parallel processor for Node.js",
   "main": "index.js",
   "types": "index.d.ts",

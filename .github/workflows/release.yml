@@ -62,20 +62,12 @@ jobs:
       - name: Check documentation builds
         run: cargo doc --workspace --no-deps
 
-  # Publish Rust crates to crates.io in dependency order
+  # Publish all Rust crates to crates.io
   publish-crates:
-    name: Publish Crate (${{ matrix.crate }})
+    name: Publish Rust Crates
     needs: [extract-version, verify-tests]
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    strategy:
-      fail-fast: true
-      matrix:
-        crate:
-          - fast-yaml-core
-          - fast-yaml-ffi
-          - fast-yaml-linter
-          - fast-yaml-parallel
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -85,28 +77,24 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "publish-${{ matrix.crate }}"
+          shared-key: "publish-crates"
 
-      - name: Verify crate version matches tag
+      - name: Verify crate versions match tag
         run: |
-          CRATE_VERSION=$(grep '^version' crates/${{ matrix.crate }}/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
           TAG_VERSION="${{ needs.extract-version.outputs.version_no_v }}"
-          if [[ "$CRATE_VERSION" != "$TAG_VERSION" ]]; then
-            echo "Version mismatch: crates/${{ matrix.crate }}/Cargo.toml has $CRATE_VERSION but tag is $TAG_VERSION"
-            exit 1
-          fi
+          for crate in fast-yaml-core fast-yaml-ffi fast-yaml-linter fast-yaml-parallel; do
+            CRATE_VERSION=$(grep '^version' crates/$crate/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            if [[ "$CRATE_VERSION" != "$TAG_VERSION" ]]; then
+              echo "Version mismatch: crates/$crate/Cargo.toml has $CRATE_VERSION but tag is $TAG_VERSION"
+              exit 1
+            fi
+            echo "✓ $crate version $CRATE_VERSION matches tag"
+          done
 
-      - name: Publish ${{ matrix.crate }} to crates.io
-        run: |
-          cd crates/${{ matrix.crate }}
-
-          # Wait for previous crates to be available on crates.io (dependency order)
-          if [[ "${{ matrix.crate }}" != "fast-yaml-core" ]]; then
-            echo "Waiting 60s for previous crates to propagate on crates.io..."
-            sleep 60
-          fi
-
-          cargo publish --token ${{ secrets.CARGO_REGISTRY_TOKEN }} --allow-dirty
+      - name: Publish all crates to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --workspace
 
   # Build Python wheels for Linux (using manylinux containers)
   build-python-linux:

@@ -1,10 +1,12 @@
 [package]
 name = "fast-yaml-linter"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "YAML linter with rich diagnostics"
+readme = "README.md"
 keywords = ["yaml", "lint", "linter", "validation"]
 categories = ["development-tools", "parsing"]
 

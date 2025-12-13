@@ -1,10 +1,14 @@
 [package]
 name = "fast-yaml-ffi"
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "FFI utilities for fast-yaml bindings"
+readme = "README.md"
+keywords = ["yaml", "ffi", "bindings"]
+categories = ["parsing", "api-bindings"]
 
 [dependencies]
 fast-yaml-core.workspace = true
