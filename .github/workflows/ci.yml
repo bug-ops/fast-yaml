@@ -64,6 +64,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: nodejs/package-lock.json
 
+      - name: Install NodeJS dependencies
+        run: cd nodejs && npm install
+
       - name: Check NodeJS formatting
         run: cargo make format-check-nodejs
 
