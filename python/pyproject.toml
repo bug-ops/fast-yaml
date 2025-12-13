@@ -60,3 +60,7 @@ target-version = "py38"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.ruff.lint.per-file-ignores]
+# UP037: mypy requires quoted forward references for nested classes in stub files
+"*.pyi" = ["UP037"]
