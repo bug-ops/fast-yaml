@@ -1,66 +1,131 @@
 # Codecov configuration
 # https://docs.codecov.com/docs/codecov-yaml
 
+codecov:
+  require_ci_to_pass: true
+  notify:
+    wait_for_ci: true
+
 coverage:
+  precision: 2
+  round: down
+  range: "50...90"
+
   status:
     project:
       default:
-        target: 60%              # Overall project coverage target
-        threshold: 2%            # Allow 2% drop from target
-        informational: false     # Fail if coverage drops below threshold
+        target: 60%
+        threshold: 2%
+        informational: false
+        only_pulls: false
+
+      # Separate targets for Rust and Python
+      rust:
+        target: 65%
+        threshold: 2%
+        flags:
+          - rust
+        paths:
+          - crates/
+
+      python:
+        target: 70%
+        threshold: 2%
+        flags:
+          - python
+        paths:
+          - python/fast_yaml/
+
     patch:
       default:
-        target: 70%              # New code should be better tested
+        target: 70%
         threshold: 5%
         informational: false
 
-  # Combine Rust and Python coverage
-  flags:
-    rust:
+# Flag configuration
+flag_management:
+  default_rules:
+    carryforward: true
+    statuses:
+      - type: project
+        target: auto
+        threshold: 2%
+      - type: patch
+        target: 70%
+
+  individual_flags:
+    - name: rust
       paths:
         - crates/
-      target: 65%
-    python:
+      carryforward: true
+      after_n_builds: 1
+
+    - name: python
       paths:
-        - python/
-      target: 70%
+        - python/fast_yaml/
+      carryforward: true
+      after_n_builds: 1
 
-comment:
-  layout: "reach,diff,flags,files"
-  behavior: default
-  require_changes: false
-  require_base: false
-  require_head: true
-
-# Ignore test files and examples from coverage
-ignore:
-  - "tests/"
-  - "benches/"
-  - "examples/"
-  - "python/tests/"
-  - "**/*_test.rs"
-  - "**/test_*.py"
-
-# Component tracking
+# Component configuration for granular coverage tracking
 component_management:
   default_rules:
     statuses:
       - type: project
         target: 60%
+        threshold: 2%
+
   individual_components:
-    - component_id: rust_core
-      name: "Rust Core"
+    - component_id: core
+      name: "Core Parser"
       paths:
         - crates/fast-yaml-core/**
-    - component_id: rust_linter
-      name: "Rust Linter"
+
+    - component_id: linter
+      name: "Linter Engine"
       paths:
         - crates/fast-yaml-linter/**
-    - component_id: rust_parallel
-      name: "Rust Parallel"
+
+    - component_id: parallel
+      name: "Parallel Processing"
       paths:
         - crates/fast-yaml-parallel/**
-    - component_id: python_bindings
+
+    - component_id: ffi
+      name: "FFI Utilities"
+      paths:
+        - crates/fast-yaml-ffi/**
+
+    - component_id: python
       name: "Python Bindings"
       paths:
         - python/fast_yaml/**
+        - python/src/**
+
+# Ignore test files and generated code
+ignore:
+  - "tests/**"
+  - "benches/**"
+  - "examples/**"
+  - "python/tests/**"
+  - "**/*_test.rs"
+  - "**/test_*.py"
+  - "**/*.pyi"
+  - "target/**"
+
+# PR comment configuration
+comment:
+  layout: "header,diff,flags,components,files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+  hide_project_coverage: false
+
+# Parsers configuration
+parsers:
+  gcov:
+    branch_detection:
+      conditional: true
+      loop: true
+      macro: false
+      method: false
