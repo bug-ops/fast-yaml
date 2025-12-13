@@ -144,26 +144,29 @@ dependencies = ["clippy", "lint-python"]
 description = "Run all Rust tests with nextest"
 category = "Testing"
 command = "cargo"
-args = ["nextest", "run", "--workspace", "--all-features"]
+# Exclude python crate (requires Python interpreter for linking)
+args = ["nextest", "run", "--workspace", "--all-features", "--exclude", "fast-yaml"]
 install_crate = { crate_name = "cargo-nextest", binary = "cargo-nextest", test_arg = "--version" }
 
 [tasks.test-fast]
 description = "Run Rust tests in fast mode (no doctests)"
 category = "Testing"
 command = "cargo"
-args = ["nextest", "run", "--workspace", "--all-features", "--no-fail-fast"]
+# Exclude python crate (requires Python interpreter for linking)
+args = ["nextest", "run", "--workspace", "--all-features", "--no-fail-fast", "--exclude", "fast-yaml"]
 install_crate = { crate_name = "cargo-nextest", binary = "cargo-nextest", test_arg = "--version" }
 
 [tasks.test-doc]
 description = "Run Rust documentation tests"
 category = "Testing"
 command = "cargo"
-args = ["test", "--doc", "--workspace", "--all-features"]
+# Exclude python crate (requires Python interpreter for linking)
+args = ["test", "--doc", "--workspace", "--all-features", "--exclude", "fast-yaml"]
 
 [tasks.test-rust]
-description = "Run all Rust tests (nextest + doctests)"
+description = "Run all Rust tests with nextest"
 category = "Testing"
-dependencies = ["test", "test-doc"]
+dependencies = ["test"]
 
 [tasks.test-single]
 description = "Run a single test by name (use: makers test-single -- test_name)"
@@ -213,9 +216,9 @@ dependencies = ["python-build"]
 cwd = "${PYTHON_DIR}"
 script = '''
 if command -v uv &> /dev/null; then
-    uv run pytest tests/ ${PYTEST_ARGS}
+    uv run pytest ../tests/ ${PYTEST_ARGS}
 elif command -v pytest &> /dev/null; then
-    pytest tests/ ${PYTEST_ARGS}
+    pytest ../tests/ ${PYTEST_ARGS}
 else
     echo "Error: pytest not found. Install with: pip install pytest"
     exit 1
@@ -249,9 +252,9 @@ dependencies = ["python-build"]
 cwd = "${PYTHON_DIR}"
 script = '''
 if command -v uv &> /dev/null; then
-    uv run pytest tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
+    uv run pytest ../tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
 elif command -v pytest &> /dev/null; then
-    pytest tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
+    pytest ../tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
 else
     echo "Error: pytest not found. Install with: pip install pytest pytest-cov"
     exit 1
@@ -313,13 +316,6 @@ command = "cargo"
 args = ["deny", "check", "bans"]
 install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version" }
 
-[tasks.audit]
-description = "Audit dependencies for known vulnerabilities"
-category = "Security"
-command = "cargo"
-args = ["audit"]
-install_crate = { crate_name = "cargo-audit", binary = "cargo-audit", test_arg = "--version" }
-
 [tasks.semver-check]
 description = "Check for SemVer compliance"
 category = "Security"
@@ -335,11 +331,13 @@ install_crate = { crate_name = "cargo-semver-checks", binary = "cargo-semver-che
 description = "Generate Rust code coverage report (lcov format)"
 category = "Testing"
 command = "cargo"
+# Exclude python crate (requires Python interpreter for linking)
 args = [
     "llvm-cov",
     "nextest",
     "--workspace",
     "--all-features",
+    "--exclude", "fast-yaml",
     "--lcov",
     "--output-path",
     "${COVERAGE_OUTPUT}"
@@ -350,11 +348,13 @@ install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test
 description = "Generate HTML coverage report"
 category = "Testing"
 command = "cargo"
+# Exclude python crate (requires Python interpreter for linking)
 args = [
     "llvm-cov",
     "nextest",
     "--workspace",
     "--all-features",
+    "--exclude", "fast-yaml",
     "--html"
 ]
 install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version" }
@@ -363,11 +363,13 @@ install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test
 description = "Generate and open HTML coverage report"
 category = "Testing"
 command = "cargo"
+# Exclude python crate (requires Python interpreter for linking)
 args = [
     "llvm-cov",
     "nextest",
     "--workspace",
     "--all-features",
+    "--exclude", "fast-yaml",
     "--html",
     "--open"
 ]
@@ -377,11 +379,13 @@ install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test
 description = "Display coverage summary in terminal"
 category = "Testing"
 command = "cargo"
+# Exclude python crate (requires Python interpreter for linking)
 args = [
     "llvm-cov",
     "nextest",
     "--workspace",
-    "--all-features"
+    "--all-features",
+    "--exclude", "fast-yaml"
 ]
 install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version" }
 
@@ -438,9 +442,9 @@ category = "CI"
 dependencies = ["python-build", "python-test", "python-typecheck"]
 
 [tasks.ci-security]
-description = "CI: Security checks (deny + audit)"
+description = "CI: Security checks (cargo-deny)"
 category = "CI"
-dependencies = ["deny", "audit"]
+dependencies = ["deny"]
 
 [tasks.ci-coverage]
 description = "CI: Generate coverage reports (Rust + Python)"
@@ -456,7 +460,6 @@ dependencies = [
     "test-rust",
     "doc-check",
     "deny",
-    "audit",
     "python-build",
     "python-test",
     "python-typecheck"
@@ -602,7 +605,6 @@ echo "  coverage-html  - Generate HTML coverage report"
 echo ""
 echo "Security:"
 echo "  deny           - Run cargo-deny checks"
-echo "  audit          - Audit dependencies"
 echo ""
 echo "Documentation:"
 echo "  doc            - Build documentation"

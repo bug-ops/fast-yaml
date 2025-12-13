@@ -73,7 +73,6 @@ def version() -> str:
     """Get the version of the fast-yaml library."""
     ...
 
-
 # Lint submodule
 class lint:
     """YAML linting submodule."""
@@ -190,22 +189,16 @@ class lint:
         """Format diagnostics as colored terminal output."""
 
         def __init__(self, use_colors: bool = True) -> None: ...
-        def format(
-            self, diagnostics: List["lint.Diagnostic"], source: str
-        ) -> str: ...
+        def format(self, diagnostics: List["lint.Diagnostic"], source: str) -> str: ...
 
     class JsonFormatter:
         """Format diagnostics as JSON (requires json-output feature)."""
 
         def __init__(self, pretty: bool = False) -> None: ...
-        def format(
-            self, diagnostics: List["lint.Diagnostic"], source: str
-        ) -> str: ...
+        def format(self, diagnostics: List["lint.Diagnostic"], source: str) -> str: ...
 
     @staticmethod
-    def lint(
-        source: str, config: Optional["lint.LintConfig"] = None
-    ) -> List["lint.Diagnostic"]:
+    def lint(source: str, config: Optional["lint.LintConfig"] = None) -> List["lint.Diagnostic"]:
         """Lint YAML source with optional configuration."""
         ...
 
@@ -218,7 +211,6 @@ class lint:
     ) -> str:
         """Format diagnostics to string."""
         ...
-
 
 # Parallel submodule
 class parallel:

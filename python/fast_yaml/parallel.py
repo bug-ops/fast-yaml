@@ -14,10 +14,11 @@ Example:
 
 from typing import Any, List, Optional
 
-from ._core.parallel import (
-    ParallelConfig,
-    parse_parallel as _parse_parallel,
-)
+from ._core import parallel as _parallel_module
+
+# Re-export from the submodule
+ParallelConfig = _parallel_module.ParallelConfig
+_parse_parallel = _parallel_module.parse_parallel
 
 __all__ = [
     "ParallelConfig",

@@ -14,20 +14,21 @@ Example:
 
 from typing import List, Optional, Set
 
-from ._core.lint import (
-    ContextLine,
-    Diagnostic,
-    DiagnosticContext,
-    LintConfig,
-    Linter,
-    Location,
-    Severity,
-    Span,
-    Suggestion,
-    TextFormatter,
-    format_diagnostics as _format_diagnostics,
-    lint as _lint,
-)
+from ._core import lint as _lint_module
+
+# Re-export from the submodule
+ContextLine = _lint_module.ContextLine
+Diagnostic = _lint_module.Diagnostic
+DiagnosticContext = _lint_module.DiagnosticContext
+LintConfig = _lint_module.LintConfig
+Linter = _lint_module.Linter
+Location = _lint_module.Location
+Severity = _lint_module.Severity
+Span = _lint_module.Span
+Suggestion = _lint_module.Suggestion
+TextFormatter = _lint_module.TextFormatter
+_format_diagnostics = _lint_module.format_diagnostics
+_lint = _lint_module.lint
 
 __all__ = [
     "Severity",

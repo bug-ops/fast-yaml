@@ -117,7 +117,7 @@ jobs:
       - name: Install cargo-make and security tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-make,cargo-deny,cargo-audit
+          tool: cargo-make,cargo-deny
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2

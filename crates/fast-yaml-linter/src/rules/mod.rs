@@ -23,7 +23,8 @@ pub use trailing_whitespace::TrailingWhitespaceRule;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{LintRule, Diagnostic, LintConfig, Severity, DiagnosticCode};
+/// use fast_yaml_linter::{Diagnostic, LintConfig, Severity, DiagnosticCode};
+/// use fast_yaml_linter::rules::LintRule;
 /// use fast_yaml_core::Value;
 ///
 /// struct ExampleRule;

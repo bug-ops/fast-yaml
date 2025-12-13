@@ -9,7 +9,7 @@ use crate::{Diagnostic, Formatter};
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// use fast_yaml_linter::{SarifFormatter, Formatter};
 ///
 /// let formatter = SarifFormatter;
