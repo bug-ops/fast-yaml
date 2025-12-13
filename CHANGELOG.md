@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2025-12-14
+
+### Fixed
+- Fixed invalid keyword `yaml-1.2` → `yaml12` for crates.io compliance
+- Fixed Python sdist build by creating local README.md (maturin doesn't allow `..` paths)
+- Fixed Node.js musl/aarch64 Docker builds by using `stable` images with Node 20+
+
 ## [0.1.1] - 2025-12-13
 
 ### Added
@@ -86,6 +93,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.1...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/bug-ops/fast-yaml/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/bug-ops/fast-yaml/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bug-ops/fast-yaml/releases/tag/v0.1.0

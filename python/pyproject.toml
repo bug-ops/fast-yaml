@@ -1,8 +1,8 @@
 [project]
 name = "fast-yaml"
-version = "0.1.1"
+version = "0.1.2"
 description = "A fast YAML parser and linter for Python, powered by Rust"
-readme = "../README.md"
+readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT OR Apache-2.0" }
 authors = [{ name = "fast-yaml contributors" }]
