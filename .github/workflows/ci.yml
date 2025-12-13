@@ -443,7 +443,7 @@ jobs:
         run: cd nodejs && npm install
 
       - name: Build NodeJS extension
-        run: cargo make nodejs-build-debug
+        run: cd nodejs && npm run build:debug
 
       - name: Run NodeJS tests
         run: cd nodejs && npm test
@@ -539,7 +539,7 @@ jobs:
         run: cd nodejs && npm install
 
       - name: Build NodeJS extension
-        run: cargo make nodejs-build-debug
+        run: cd nodejs && npm run build:debug
 
       - name: Run tests with coverage
         run: cd nodejs && npm run test:coverage
@@ -600,7 +600,7 @@ jobs:
         run: cd nodejs && npm install
 
       - name: Build release
-        run: cargo make nodejs-build
+        run: cd nodejs && npm run build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
