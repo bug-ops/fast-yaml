@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Renamed Python package from `fast-yaml` to `fastyaml-rs` (PyPI name conflict)
+- Renamed Node.js package from `@fast-yaml/core` to `fastyaml-rs` (npm scope not available)
 
 ## [0.1.3] - 2025-12-14
 

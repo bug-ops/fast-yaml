@@ -1,6 +1,6 @@
-# @fast-yaml/core
+# fastyaml-rs
 
-[![npm](https://img.shields.io/npm/v/@fast-yaml/core)](https://www.npmjs.com/package/@fast-yaml/core)
+[![npm](https://img.shields.io/npm/v/fastyaml-rs)](https://www.npmjs.com/package/fastyaml-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](../LICENSE-MIT)
 [![Node.js](https://img.shields.io/badge/node-20+-green.svg)](https://nodejs.org/)
 
@@ -8,19 +8,19 @@
 
 Drop-in replacement for js-yaml with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance with TypeScript definitions included.
 
-> **YAML 1.2.2 Compliance** — Unlike js-yaml (YAML 1.1 by default), `@fast-yaml/core` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
+> **YAML 1.2.2 Compliance** — Unlike js-yaml (YAML 1.1 by default), `fastyaml-rs` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
 
 ## Installation
 
 ```bash
 # npm
-npm install @fast-yaml/core
+npm install fastyaml-rs
 
 # yarn
-yarn add @fast-yaml/core
+yarn add fastyaml-rs
 
 # pnpm
-pnpm add @fast-yaml/core
+pnpm add fastyaml-rs
 ```
 
 **Requirements:** Node.js 20+. TypeScript definitions included.
@@ -28,7 +28,7 @@ pnpm add @fast-yaml/core
 ## Quick Start
 
 ```typescript
-import { safeLoad, safeDump } from '@fast-yaml/core';
+import { safeLoad, safeDump } from 'fastyaml-rs';
 
 // Parse YAML
 const data = safeLoad(`
@@ -55,7 +55,7 @@ console.log(yamlStr);
 ### Parsing
 
 ```typescript
-import { safeLoad, safeLoadAll } from '@fast-yaml/core';
+import { safeLoad, safeLoadAll } from 'fastyaml-rs';
 
 // Parse single document
 const doc = safeLoad('key: value');
@@ -74,7 +74,7 @@ second: 2
 ### Serialization
 
 ```typescript
-import { safeDump, safeDumpAll } from '@fast-yaml/core';
+import { safeDump, safeDumpAll } from 'fastyaml-rs';
 
 // Dump single document
 const yaml = safeDump({ name: 'test', count: 42 });
@@ -102,7 +102,7 @@ interface DumpOptions {
 For js-yaml compatibility, `load` and `dump` are provided as aliases:
 
 ```typescript
-import { load, dump } from '@fast-yaml/core';
+import { load, dump } from 'fastyaml-rs';
 
 const data = load('key: value');
 const yaml = dump(data);
@@ -110,19 +110,19 @@ const yaml = dump(data);
 
 ## YAML 1.2.2 Differences
 
-`@fast-yaml/core` implements **YAML 1.2.2 Core Schema**, which differs from js-yaml's default YAML 1.1:
+`fastyaml-rs` implements **YAML 1.2.2 Core Schema**, which differs from js-yaml's default YAML 1.1:
 
-| Feature        | js-yaml (YAML 1.1) | @fast-yaml/core (YAML 1.2.2) |
-| -------------- | ------------------ | ---------------------------- |
-| `yes/no`       | `true/false`       | `"yes"/"no"` (strings)       |
-| `on/off`       | `true/false`       | `"on"/"off"` (strings)       |
-| `014` (octal)  | `12`               | `14` (decimal)               |
-| `0o14` (octal) | Error              | `12`                         |
+| Feature        | js-yaml (YAML 1.1) | fastyaml-rs (YAML 1.2.2) |
+| -------------- | ------------------ | ------------------------ |
+| `yes/no`       | `true/false`       | `"yes"/"no"` (strings)   |
+| `on/off`       | `true/false`       | `"on"/"off"` (strings)   |
+| `014` (octal)  | `12`               | `14` (decimal)           |
+| `0o14` (octal) | Error              | `12`                     |
 
 ### Examples
 
 ```typescript
-import { safeLoad } from '@fast-yaml/core';
+import { safeLoad } from 'fastyaml-rs';
 
 // Booleans — only true/false
 safeLoad('true'); // true
@@ -168,11 +168,11 @@ Input validation is enforced to prevent denial-of-service attacks:
 
 Benchmarks on typical YAML workloads show **5-10x speedup** over js-yaml for large files:
 
-| File Size     | js-yaml | @fast-yaml/core | Speedup  |
-| ------------- | ------- | --------------- | -------- |
-| Small (100B)  | 15 μs   | 5 μs            | **3x**   |
-| Medium (2KB)  | 200 μs  | 50 μs           | **4x**   |
-| Large (100KB) | 15 ms   | 2 ms            | **7.5x** |
+| File Size     | js-yaml | fastyaml-rs | Speedup  |
+| ------------- | ------- | ----------- | -------- |
+| Small (100B)  | 15 μs   | 5 μs        | **3x**   |
+| Medium (2KB)  | 200 μs  | 50 μs       | **4x**   |
+| Large (100KB) | 15 ms   | 2 ms        | **7.5x** |
 
 Run benchmarks yourself:
 
@@ -241,7 +241,7 @@ npm run bench
 
 ## Related Packages
 
-- [fast-yaml (Python)](https://pypi.org/project/fast-yaml/) — Python bindings for the same Rust core
+- [fastyaml-rs (Python)](https://pypi.org/project/fastyaml-rs/) — Python bindings for the same Rust core
 
 ## License
 

@@ -1,5 +1,5 @@
 {
-  "name": "@fast-yaml/core",
+  "name": "fastyaml-rs",
   "version": "0.1.4",
   "description": "Fast YAML 1.2.2 parser, linter, and parallel processor for Node.js",
   "main": "index.js",
@@ -23,12 +23,11 @@
     "node": ">=20"
   },
   "publishConfig": {
-    "access": "public",
     "registry": "https://registry.npmjs.org/"
   },
   "napi": {
-    "binaryName": "fast-yaml",
-    "packageName": "@fast-yaml/core",
+    "binaryName": "fastyaml-rs",
+    "packageName": "fastyaml-rs",
     "targets": [
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl",
@@ -64,12 +63,12 @@
     "vitest": "^4.0"
   },
   "optionalDependencies": {
-    "@fast-yaml/linux-x64-gnu": "0.1.0",
-    "@fast-yaml/linux-x64-musl": "0.1.0",
-    "@fast-yaml/darwin-x64": "0.1.0",
-    "@fast-yaml/darwin-arm64": "0.1.0",
-    "@fast-yaml/win32-x64-msvc": "0.1.0",
-    "@fast-yaml/linux-arm64-gnu": "0.1.0",
-    "@fast-yaml/win32-arm64-msvc": "0.1.0"
+    "fastyaml-rs-linux-x64-gnu": "0.1.4",
+    "fastyaml-rs-linux-x64-musl": "0.1.4",
+    "fastyaml-rs-darwin-x64": "0.1.4",
+    "fastyaml-rs-darwin-arm64": "0.1.4",
+    "fastyaml-rs-win32-x64-msvc": "0.1.4",
+    "fastyaml-rs-linux-arm64-gnu": "0.1.4",
+    "fastyaml-rs-win32-arm64-msvc": "0.1.4"
   }
 }

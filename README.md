@@ -2,7 +2,7 @@
 
 [![CI Status](https://img.shields.io/github/actions/workflow/status/bug-ops/fast-yaml/ci.yml?branch=main)](https://github.com/bug-ops/fast-yaml/actions)
 [![PyPI](https://img.shields.io/pypi/v/fastyaml-rs)](https://pypi.org/project/fastyaml-rs/)
-[![npm](https://img.shields.io/npm/v/@fast-yaml/core)](https://www.npmjs.com/package/@fast-yaml/core)
+[![npm](https://img.shields.io/npm/v/fastyaml-rs)](https://www.npmjs.com/package/fastyaml-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
 [![Rust](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/bug-ops/fast-yaml/graph/badge.svg?token=E33WB16NUD)](https://codecov.io/gh/bug-ops/fast-yaml)
@@ -59,13 +59,13 @@ pip install fastyaml-rs
 
 ```bash
 # npm
-npm install @fast-yaml/core
+npm install fastyaml-rs
 
 # yarn
-yarn add @fast-yaml/core
+yarn add fastyaml-rs
 
 # pnpm
-pnpm add @fast-yaml/core
+pnpm add fastyaml-rs
 ```
 
 > [!NOTE]
@@ -147,7 +147,7 @@ print(yaml_str)
 ### Node.js Quick Start
 
 ```typescript
-import { safeLoad, safeDump } from '@fast-yaml/core';
+import { safeLoad, safeDump } from 'fastyaml-rs';
 
 // Parse YAML
 const data = safeLoad(`
@@ -168,7 +168,7 @@ console.log(yamlStr);
 ```
 
 > [!TIP]
-> **Migrating from js-yaml?** Just change your import: `import { safeLoad, safeDump } from '@fast-yaml/core';`
+> **Migrating from js-yaml?** Just change your import: `import { safeLoad, safeDump } from 'fastyaml-rs';`
 
 ## API Reference
 
@@ -427,7 +427,7 @@ Note: YAML 1.2.2 has different boolean/octal handling than YAML 1.1.
 Yes. The Node.js API is compatible with js-yaml's `safeLoad` and `safeDump` functions:
 
 ```typescript
-import { safeLoad, safeDump } from '@fast-yaml/core';
+import { safeLoad, safeDump } from 'fastyaml-rs';
 ```
 
 Note: YAML 1.2.2 has different boolean/octal handling than js-yaml's default YAML 1.1.
