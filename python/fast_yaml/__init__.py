@@ -27,15 +27,21 @@ from ._core import (
     version as _version,
 )
 
+# Import submodules
+from . import lint
+from . import parallel
+
 __version__ = _version()
 __all__ = [
     "safe_load",
-    "safe_load_all", 
+    "safe_load_all",
     "safe_dump",
     "safe_dump_all",
     "load",
     "dump",
     "__version__",
+    "lint",
+    "parallel",
 ]
 
 

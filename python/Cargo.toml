@@ -13,8 +13,14 @@ categories = ["parsing", "encoding"]
 name = "fast_yaml"
 crate-type = ["cdylib", "rlib"]
 
+[features]
+default = ["json-output"]
+json-output = ["fast-yaml-linter/json-output"]
+
 [dependencies]
 fast-yaml-core.workspace = true
+fast-yaml-linter = { path = "../crates/fast-yaml-linter", version = "0.1" }
+fast-yaml-parallel = { path = "../crates/fast-yaml-parallel", version = "0.1" }
 pyo3 = { workspace = true, features = ["extension-module"] }
 yaml-rust2.workspace = true
 
@@ -24,6 +30,11 @@ criterion.workspace = true
 [[bench]]
 name = "parse_benchmark"
 harness = false
+
+# Note: This profile is used by maturin when building the extension module.
+# Workspace builds will show a warning that this is ignored, which is expected.
+[profile.release]
+panic = "unwind"  # PyO3 extension modules require this (not "abort")
 
 [lints]
 workspace = true

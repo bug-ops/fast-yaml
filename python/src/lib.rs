@@ -21,6 +21,15 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
+mod lint;
+mod parallel;
+
+/// Maximum input size in bytes for `safe_load/safe_dump` (100MB).
+///
+/// This limit prevents denial-of-service attacks via extremely large inputs.
+/// Inputs exceeding this size will be rejected with a `ValueError`.
+const MAX_INPUT_SIZE: usize = 100 * 1024 * 1024;
+
 /// Convert a Yaml value to a Python object.
 ///
 /// Handles YAML 1.2.2 Core Schema types including special float values
@@ -41,13 +50,17 @@ fn yaml_to_python(py: Python<'_>, yaml: &Yaml) -> PyResult<Py<PyAny>> {
 
         Yaml::Real(s) => {
             // YAML 1.2.2 special float values (Section 10.2.1.4)
-            let f: f64 = match s.to_lowercase().as_str() {
-                ".inf" | "+.inf" => f64::INFINITY,
-                "-.inf" => f64::NEG_INFINITY,
-                ".nan" => f64::NAN,
-                _ => s.parse().map_err(|e| {
+            // Avoid allocation by checking case-insensitively without to_lowercase()
+            let f: f64 = if s.eq_ignore_ascii_case(".inf") || s.eq_ignore_ascii_case("+.inf") {
+                f64::INFINITY
+            } else if s.eq_ignore_ascii_case("-.inf") {
+                f64::NEG_INFINITY
+            } else if s.eq_ignore_ascii_case(".nan") {
+                f64::NAN
+            } else {
+                s.parse().map_err(|e| {
                     PyValueError::new_err(format!("Invalid float value '{s}': {e}"))
-                })?,
+                })?
             };
             let py_float = f.into_pyobject(py)?;
             Ok(py_float.as_any().clone().unbind())
@@ -198,7 +211,10 @@ fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Yaml> {
 ///     The parsed YAML document as Python objects (dict, list, str, int, float, bool, None)
 ///
 /// Raises:
-///     `ValueError`: If the YAML is invalid
+///     `ValueError`: If the YAML is invalid or input exceeds size limit (100MB)
+///
+/// Security:
+///     Maximum input size is limited to 100MB to prevent denial-of-service attacks.
 ///
 /// Example:
 ///     >>> import `fast_yaml`
@@ -208,9 +224,20 @@ fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Yaml> {
 #[pyfunction]
 #[pyo3(signature = (yaml_str))]
 fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
-    // Parse YAML - this can be done without GIL for large inputs
-    let docs = YamlLoader::load_from_str(yaml_str)
-        .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
+    // Validate input size to prevent DoS attacks
+    if yaml_str.len() > MAX_INPUT_SIZE {
+        return Err(PyValueError::new_err(format!(
+            "input size {} exceeds maximum allowed {} (100MB)",
+            yaml_str.len(),
+            MAX_INPUT_SIZE
+        )));
+    }
+
+    // Release GIL during CPU-intensive parsing
+    let docs = py.allow_threads(|| {
+        YamlLoader::load_from_str(yaml_str)
+    })
+    .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     if docs.is_empty() {
         return Ok(py.None());
@@ -229,6 +256,12 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 /// Returns:
 ///     A list of parsed YAML documents
 ///
+/// Raises:
+///     `ValueError`: If the YAML is invalid or input exceeds size limit (100MB)
+///
+/// Security:
+///     Maximum input size is limited to 100MB to prevent denial-of-service attacks.
+///
 /// Example:
 ///     >>> import `fast_yaml`
 ///     >>> docs = `fast_yaml.safe_load_all`("---\\nfoo: 1\\n---\\nbar: 2")
@@ -237,14 +270,28 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 #[pyfunction]
 #[pyo3(signature = (yaml_str))]
 fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
-    let docs = YamlLoader::load_from_str(yaml_str)
-        .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
-
-    let list = PyList::empty(py);
-    for doc in &docs {
-        list.append(yaml_to_python(py, doc)?)?;
+    // Validate input size to prevent DoS attacks
+    if yaml_str.len() > MAX_INPUT_SIZE {
+        return Err(PyValueError::new_err(format!(
+            "input size {} exceeds maximum allowed {} (100MB)",
+            yaml_str.len(),
+            MAX_INPUT_SIZE
+        )));
     }
 
+    // Release GIL during CPU-intensive parsing
+    let docs = py.allow_threads(|| {
+        YamlLoader::load_from_str(yaml_str)
+    })
+    .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
+
+    // Pre-allocate Python objects vector with known capacity
+    let mut py_docs = Vec::with_capacity(docs.len());
+    for doc in &docs {
+        py_docs.push(yaml_to_python(py, doc)?);
+    }
+
+    let list = PyList::new(py, &py_docs)?;
     Ok(list.into_any().unbind())
 }
 
@@ -269,7 +316,7 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///     'name: test\\nvalue: 123\\n'
 #[pyfunction]
 #[pyo3(signature = (data, allow_unicode=true, sort_keys=false))]
-fn safe_dump(data: &Bound<'_, PyAny>, allow_unicode: bool, sort_keys: bool) -> PyResult<String> {
+fn safe_dump(py: Python<'_>, data: &Bound<'_, PyAny>, allow_unicode: bool, sort_keys: bool) -> PyResult<String> {
     let yaml = python_to_yaml(data)?;
 
     // Sort keys if requested
@@ -279,8 +326,9 @@ fn safe_dump(data: &Bound<'_, PyAny>, allow_unicode: bool, sort_keys: bool) -> P
         yaml
     };
 
-    let mut output = String::new();
-    {
+    // Release GIL during CPU-intensive serialization
+    let mut output = py.allow_threads(|| {
+        let mut output = String::new();
         let mut emitter = YamlEmitter::new(&mut output);
 
         // Note: yaml-rust2's emitter has limited formatting options
@@ -292,18 +340,16 @@ fn safe_dump(data: &Bound<'_, PyAny>, allow_unicode: bool, sort_keys: bool) -> P
 
         emitter
             .dump(&yaml)
-            .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
-    }
+            .map(|()| output)
+    })
+    .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
     // Remove the leading "---\n" that yaml-rust2 adds
-    let output = if output.starts_with("---") {
-        output
-            .trim_start_matches("---")
-            .trim_start_matches('\n')
-            .to_string()
-    } else {
-        output
-    };
+    if let Some(stripped) = output.strip_prefix("---\n") {
+        output = stripped.to_string();
+    } else if let Some(stripped) = output.strip_prefix("---") {
+        output = stripped.trim_start_matches('\n').to_string();
+    }
 
     Ok(output)
 }
@@ -355,32 +401,42 @@ fn yaml_to_sort_key(yaml: &Yaml) -> String {
 ///     '---\\na: 1\\n---\\nb: 2\\n'
 #[pyfunction]
 #[pyo3(signature = (documents))]
-fn safe_dump_all(documents: &Bound<'_, PyAny>) -> PyResult<String> {
-    let mut output = String::new();
+fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<String> {
     let iter = documents.try_iter()?;
 
-    for (i, item) in iter.enumerate() {
+    // Convert all Python objects to YAML first
+    let mut yamls = Vec::new();
+    for item in iter {
         let item = item?;
-        let yaml = python_to_yaml(&item)?;
-
-        if i > 0 {
-            output.push_str("---\n");
-        }
-
-        let mut doc_output = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut doc_output);
-            emitter
-                .dump(&yaml)
-                .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
-        }
-
-        // Remove the leading "---\n" that yaml-rust2 adds
-        let doc_output = doc_output
-            .trim_start_matches("---")
-            .trim_start_matches('\n');
-        output.push_str(doc_output);
+        yamls.push(python_to_yaml(&item)?);
     }
+
+    // Release GIL during CPU-intensive serialization
+    let output = py.allow_threads(|| {
+        let mut output = String::new();
+
+        for (i, yaml) in yamls.iter().enumerate() {
+            if i > 0 {
+                output.push_str("---\n");
+            }
+
+            let mut doc_output = String::new();
+            let mut emitter = YamlEmitter::new(&mut doc_output);
+            emitter.dump(yaml)?;
+
+            // Remove the leading "---\n" that yaml-rust2 adds
+            if let Some(stripped) = doc_output.strip_prefix("---\n") {
+                output.push_str(stripped);
+            } else if let Some(stripped) = doc_output.strip_prefix("---") {
+                output.push_str(stripped.trim_start_matches('\n'));
+            } else {
+                output.push_str(&doc_output);
+            }
+        }
+
+        Ok::<String, yaml_rust2::EmitError>(output)
+    })
+    .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
     Ok(output)
 }
@@ -403,11 +459,16 @@ const fn version() -> &'static str {
 ///     'name: test\\n'
 #[pymodule]
 fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // Core parsing functions
     m.add_function(wrap_pyfunction!(safe_load, m)?)?;
     m.add_function(wrap_pyfunction!(safe_load_all, m)?)?;
     m.add_function(wrap_pyfunction!(safe_dump, m)?)?;
     m.add_function(wrap_pyfunction!(safe_dump_all, m)?)?;
     m.add_function(wrap_pyfunction!(version, m)?)?;
+
+    // Register submodules
+    lint::register_lint_module(m.py(), m)?;
+    parallel::register_parallel_module(m.py(), m)?;
 
     Ok(())
 }

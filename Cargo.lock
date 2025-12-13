@@ -211,6 +211,8 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "fast-yaml-core",
+ "fast-yaml-linter",
+ "fast-yaml-parallel",
  "pyo3",
  "yaml-rust2",
 ]
