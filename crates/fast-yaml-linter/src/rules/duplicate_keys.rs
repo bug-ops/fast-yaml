@@ -44,22 +44,21 @@ fn check_value(source: &str, value: &Value, diagnostics: &mut Vec<Diagnostic>) {
             let mut seen_keys: HashMap<String, Location> = HashMap::new();
 
             for (key_yaml, val_yaml) in map {
-                if let Value::String(key_str) = key_yaml {
-                    if let Some(_prev_location) =
+                if let Value::String(key_str) = key_yaml
+                    && let Some(_prev_location) =
                         seen_keys.insert(key_str.clone(), Location::start())
-                    {
-                        let span = Span::new(Location::start(), Location::start());
+                {
+                    let span = Span::new(Location::start(), Location::start());
 
-                        let diagnostic = DiagnosticBuilder::new(
-                            DiagnosticCode::DUPLICATE_KEY,
-                            Severity::Error,
-                            format!("duplicate key '{key_str}' found"),
-                            span,
-                        )
-                        .build(source);
+                    let diagnostic = DiagnosticBuilder::new(
+                        DiagnosticCode::DUPLICATE_KEY,
+                        Severity::Error,
+                        format!("duplicate key '{key_str}' found"),
+                        span,
+                    )
+                    .build(source);
 
-                        diagnostics.push(diagnostic);
-                    }
+                    diagnostics.push(diagnostic);
                 }
 
                 check_value(source, val_yaml, diagnostics);

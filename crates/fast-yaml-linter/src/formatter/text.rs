@@ -141,38 +141,38 @@ impl Formatter for TextFormatter {
             )
             .unwrap();
 
-            if self.show_context {
-                if let Some(context) = &diagnostic.context {
-                    writeln!(output, "   |").unwrap();
+            if self.show_context
+                && let Some(context) = &diagnostic.context
+            {
+                writeln!(output, "   |").unwrap();
 
-                    for line in &context.lines {
-                        let line_num_width = 4;
-                        writeln!(
-                            output,
-                            "{:width$} | {}",
-                            line.line_number,
-                            line.content,
-                            width = line_num_width
-                        )
-                        .unwrap();
+                for line in &context.lines {
+                    let line_num_width = 4;
+                    writeln!(
+                        output,
+                        "{:width$} | {}",
+                        line.line_number,
+                        line.content,
+                        width = line_num_width
+                    )
+                    .unwrap();
 
-                        if !line.highlights.is_empty() {
-                            write!(output, "{:width$} | ", "", width = line_num_width).unwrap();
+                    if !line.highlights.is_empty() {
+                        write!(output, "{:width$} | ", "", width = line_num_width).unwrap();
 
-                            for &(start, end) in &line.highlights {
-                                let padding = start.saturating_sub(1);
-                                let length = end.saturating_sub(start);
+                        for &(start, end) in &line.highlights {
+                            let padding = start.saturating_sub(1);
+                            let length = end.saturating_sub(start);
 
-                                write!(output, "{:padding$}", "", padding = padding).unwrap();
-                                write!(output, "{}", "^".repeat(length)).unwrap();
-                            }
-
-                            writeln!(output).unwrap();
+                            write!(output, "{:padding$}", "", padding = padding).unwrap();
+                            write!(output, "{}", "^".repeat(length)).unwrap();
                         }
-                    }
 
-                    writeln!(output, "   |").unwrap();
+                        writeln!(output).unwrap();
+                    }
                 }
+
+                writeln!(output, "   |").unwrap();
             }
 
             if !diagnostic.suggestions.is_empty() {

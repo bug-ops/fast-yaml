@@ -58,12 +58,13 @@ pub(crate) fn process_parallel(input: &str, config: &ParallelConfig) -> Result<V
     }
 
     // Step 5: Use global thread pool (fast path) or custom pool if explicitly configured
-    if let Some(thread_count) = config.thread_count {
-        if thread_count > 0 && thread_count != rayon::current_num_threads() {
-            // Only create custom pool if explicitly requested AND different from current
-            let pool = configure_thread_pool(config)?;
-            return pool.install(|| parse_chunks_parallel(&chunks));
-        }
+    if let Some(thread_count) = config.thread_count
+        && thread_count > 0
+        && thread_count != rayon::current_num_threads()
+    {
+        // Only create custom pool if explicitly requested AND different from current
+        let pool = configure_thread_pool(config)?;
+        return pool.install(|| parse_chunks_parallel(&chunks));
     }
 
     // Step 6: Parse chunks in parallel using global pool (no creation overhead)

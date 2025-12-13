@@ -51,12 +51,12 @@ impl PyParallelConfig {
         max_documents: usize,
     ) -> PyResult<Self> {
         // Validate thread_count (if specified, must be <= 128)
-        if let Some(count) = thread_count {
-            if count > MAX_THREADS {
-                return Err(PyValueError::new_err(format!(
-                    "thread_count {count} exceeds maximum allowed {MAX_THREADS}"
-                )));
-            }
+        if let Some(count) = thread_count
+            && count > MAX_THREADS
+        {
+            return Err(PyValueError::new_err(format!(
+                "thread_count {count} exceeds maximum allowed {MAX_THREADS}"
+            )));
         }
 
         // Validate chunk sizes
@@ -104,12 +104,12 @@ impl PyParallelConfig {
     /// Raises:
     ///     `ValueError`: If thread count exceeds 128
     fn with_thread_count(&self, count: Option<usize>) -> PyResult<Self> {
-        if let Some(c) = count {
-            if c > MAX_THREADS {
-                return Err(PyValueError::new_err(format!(
-                    "thread_count {c} exceeds maximum allowed {MAX_THREADS}"
-                )));
-            }
+        if let Some(c) = count
+            && c > MAX_THREADS
+        {
+            return Err(PyValueError::new_err(format!(
+                "thread_count {c} exceeds maximum allowed {MAX_THREADS}"
+            )));
         }
         Ok(Self {
             inner: self.inner.clone().with_thread_count(count),

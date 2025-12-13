@@ -224,7 +224,7 @@ impl<'a> SourceContext<'a> {
     /// assert_eq!(ctx.line_count(), 3);
     /// ```
     #[must_use]
-    pub fn line_count(&self) -> usize {
+    pub const fn line_count(&self) -> usize {
         self.line_starts.len()
     }
 }

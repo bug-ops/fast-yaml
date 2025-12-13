@@ -325,12 +325,12 @@ fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         "bool_true_upper",
         "bool_false_upper",
     ] {
-        if let Some(value) = map.get(&Value::String((*key).to_string())) {
-            if !matches!(value, Value::Boolean(_)) {
-                failures.push(format!(
-                    "  {name} - Key '{key}' should be Boolean, got {value:?}"
-                ));
-            }
+        if let Some(value) = map.get(&Value::String((*key).to_string()))
+            && !matches!(value, Value::Boolean(_))
+        {
+            failures.push(format!(
+                "  {name} - Key '{key}' should be Boolean, got {value:?}"
+            ));
         }
     }
 
@@ -343,12 +343,12 @@ fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         "yaml11_y",
         "yaml11_n",
     ] {
-        if let Some(value) = map.get(&Value::String((*key).to_string())) {
-            if !matches!(value, Value::String(_)) {
-                failures.push(format!(
-                    "  {name} - Key '{key}' should be String in YAML 1.2.2, got {value:?}"
-                ));
-            }
+        if let Some(value) = map.get(&Value::String((*key).to_string()))
+            && !matches!(value, Value::String(_))
+        {
+            failures.push(format!(
+                "  {name} - Key '{key}' should be String in YAML 1.2.2, got {value:?}"
+            ));
         }
     }
 }
@@ -363,23 +363,23 @@ fn verify_null_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         "null_empty",
         "null_explicit",
     ] {
-        if let Some(value) = map.get(&Value::String((*key).to_string())) {
-            if !matches!(value, Value::Null) {
-                failures.push(format!(
-                    "  {name} - Key '{key}' should be Null, got {value:?}"
-                ));
-            }
+        if let Some(value) = map.get(&Value::String((*key).to_string()))
+            && !matches!(value, Value::Null)
+        {
+            failures.push(format!(
+                "  {name} - Key '{key}' should be Null, got {value:?}"
+            ));
         }
     }
 
     // In YAML 1.2.2, 'Null' and 'NULL' are strings
     for key in &["null_word_title", "null_word_upper"] {
-        if let Some(value) = map.get(&Value::String((*key).to_string())) {
-            if !matches!(value, Value::String(_)) {
-                failures.push(format!(
-                    "  {name} - Key '{key}' should be String in YAML 1.2.2, got {value:?}"
-                ));
-            }
+        if let Some(value) = map.get(&Value::String((*key).to_string()))
+            && !matches!(value, Value::String(_))
+        {
+            failures.push(format!(
+                "  {name} - Key '{key}' should be String in YAML 1.2.2, got {value:?}"
+            ));
         }
     }
 }

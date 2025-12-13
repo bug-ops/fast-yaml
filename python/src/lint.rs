@@ -449,12 +449,12 @@ impl PyLintConfig {
         }
 
         // Validate max_line_length if provided (must be between 1 and 1000)
-        if let Some(max) = max_line_length {
-            if max == 0 || max > 1000 {
-                return Err(PyValueError::new_err(
-                    "max_line_length must be between 1 and 1000 (inclusive)",
-                ));
-            }
+        if let Some(max) = max_line_length
+            && (max == 0 || max > 1000)
+        {
+            return Err(PyValueError::new_err(
+                "max_line_length must be between 1 and 1000 (inclusive)",
+            ));
         }
 
         let mut disabled_rules_set = HashSet::new();
@@ -480,12 +480,12 @@ impl PyLintConfig {
     /// Sets the maximum line length.
     fn with_max_line_length(&self, max: Option<usize>) -> PyResult<Self> {
         // Validate max_line_length if provided
-        if let Some(max_val) = max {
-            if max_val == 0 || max_val > 1000 {
-                return Err(PyValueError::new_err(
-                    "max_line_length must be between 1 and 1000 (inclusive)",
-                ));
-            }
+        if let Some(max_val) = max
+            && (max_val == 0 || max_val > 1000)
+        {
+            return Err(PyValueError::new_err(
+                "max_line_length must be between 1 and 1000 (inclusive)",
+            ));
         }
         Ok(Self {
             inner: self.inner.clone().with_max_line_length(max),

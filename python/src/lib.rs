@@ -178,19 +178,19 @@ fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Yaml> {
     }
 
     // Try to convert other mappings via items()
-    if let Ok(items) = obj.call_method0("items") {
-        if let Ok(iter) = items.try_iter() {
-            let mut map = yaml_rust2::yaml::Hash::new();
-            for item in iter {
-                let item = item?;
-                if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
-                    let k = tuple.get_item(0)?;
-                    let v = tuple.get_item(1)?;
-                    map.insert(python_to_yaml(&k)?, python_to_yaml(&v)?);
-                }
+    if let Ok(items) = obj.call_method0("items")
+        && let Ok(iter) = items.try_iter()
+    {
+        let mut map = yaml_rust2::yaml::Hash::new();
+        for item in iter {
+            let item = item?;
+            if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+                let k = tuple.get_item(0)?;
+                let v = tuple.get_item(1)?;
+                map.insert(python_to_yaml(&k)?, python_to_yaml(&v)?);
             }
-            return Ok(Yaml::Hash(map));
         }
+        return Ok(Yaml::Hash(map));
     }
 
     Err(PyTypeError::new_err(format!(
@@ -715,12 +715,12 @@ development:
     fn test_yaml_122_literal_block() {
         let yaml = "text: |\n  line1\n  line2\n";
         let docs = YamlLoader::load_from_str(yaml).unwrap();
-        if let Yaml::Hash(map) = &docs[0] {
-            if let Some(Yaml::String(s)) = map.get(&Yaml::String("text".into())) {
-                assert!(s.contains("line1"));
-                assert!(s.contains("line2"));
-                assert!(s.contains('\n'));
-            }
+        if let Yaml::Hash(map) = &docs[0]
+            && let Some(Yaml::String(s)) = map.get(&Yaml::String("text".into()))
+        {
+            assert!(s.contains("line1"));
+            assert!(s.contains("line2"));
+            assert!(s.contains('\n'));
         }
     }
 
@@ -729,11 +729,11 @@ development:
     fn test_yaml_122_folded_block() {
         let yaml = "text: >\n  line1\n  line2\n";
         let docs = YamlLoader::load_from_str(yaml).unwrap();
-        if let Yaml::Hash(map) = &docs[0] {
-            if let Some(Yaml::String(s)) = map.get(&Yaml::String("text".into())) {
-                // Folded style converts newlines to spaces
-                assert!(s.contains("line1") && s.contains("line2"));
-            }
+        if let Yaml::Hash(map) = &docs[0]
+            && let Some(Yaml::String(s)) = map.get(&Yaml::String("text".into()))
+        {
+            // Folded style converts newlines to spaces
+            assert!(s.contains("line1") && s.contains("line2"));
         }
     }
 }
