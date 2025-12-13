@@ -200,9 +200,7 @@ class lint:  # noqa: N801
         def format(self, diagnostics: list["lint.Diagnostic"], source: str) -> str: ...
 
     @staticmethod
-    def lint(
-        source: str, config: "lint.LintConfig | None" = None
-    ) -> list["lint.Diagnostic"]:
+    def lint(source: str, config: "lint.LintConfig | None" = None) -> list["lint.Diagnostic"]:
         """Lint YAML source with optional configuration."""
         ...
 
@@ -239,9 +237,7 @@ class parallel:  # noqa: N801
         def __repr__(self) -> str: ...
 
     @staticmethod
-    def parse_parallel(
-        source: str, config: "parallel.ParallelConfig | None" = None
-    ) -> list[Any]:
+    def parse_parallel(source: str, config: "parallel.ParallelConfig | None" = None) -> list[Any]:
         """Parse multi-document YAML in parallel.
 
         Args:
