@@ -15,11 +15,20 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
-yaml-rust2 = "0.10"
+# Internal crates
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.1" }
+
+# External dependencies 
+criterion = "0.8"
+indoc = "2.0"
+is-terminal = "0.4"
+num_cpus = "1.16"
+pyo3 = "0.27"
+rayon = "1.10"
+serde = "1.0"
+serde_json = "1.0"
 thiserror = "2.0"
-pyo3 = { version = "0.27", features = ["extension-module"] }
-rayon = "1.11"
-num_cpus = "1.17"
+yaml-rust2 = "0.10"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

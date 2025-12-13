@@ -4,8 +4,8 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "A fast YAML parser for Python, powered by Rust"
 repository.workspace = true
+description = "A fast YAML parser for Python, powered by Rust"
 keywords = ["yaml", "parser", "python", "pyo3"]
 categories = ["parsing", "encoding"]
 
@@ -14,16 +14,16 @@ name = "fast_yaml"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3.workspace = true
+fast-yaml-core.workspace = true
+pyo3 = { workspace = true, features = ["extension-module"] }
 yaml-rust2.workspace = true
-fast-yaml-core = { path = "../crates/fast-yaml-core" }
 
 [dev-dependencies]
-criterion = "0.8"
-
-[lints]
-workspace = true
+criterion.workspace = true
 
 [[bench]]
 name = "parse_benchmark"
 harness = false
+
+[lints]
+workspace = true

@@ -7,8 +7,8 @@ license.workspace = true
 description = "Core YAML 1.2.2 parser and emitter"
 
 [dependencies]
-yaml-rust2.workspace = true
 thiserror.workspace = true
+yaml-rust2.workspace = true
 
 [lints]
 workspace = true

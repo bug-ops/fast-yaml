@@ -7,7 +7,7 @@ license.workspace = true
 description = "FFI utilities for fast-yaml bindings"
 
 [dependencies]
-fast-yaml-core = { path = "../fast-yaml-core" }
+fast-yaml-core.workspace = true
 thiserror.workspace = true
 
 [lints]
