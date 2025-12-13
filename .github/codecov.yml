@@ -1,0 +1,66 @@
+# Codecov configuration
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  status:
+    project:
+      default:
+        target: 60%              # Overall project coverage target
+        threshold: 2%            # Allow 2% drop from target
+        informational: false     # Fail if coverage drops below threshold
+    patch:
+      default:
+        target: 70%              # New code should be better tested
+        threshold: 5%
+        informational: false
+
+  # Combine Rust and Python coverage
+  flags:
+    rust:
+      paths:
+        - crates/
+      target: 65%
+    python:
+      paths:
+        - python/
+      target: 70%
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+# Ignore test files and examples from coverage
+ignore:
+  - "tests/"
+  - "benches/"
+  - "examples/"
+  - "python/tests/"
+  - "**/*_test.rs"
+  - "**/test_*.py"
+
+# Component tracking
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: 60%
+  individual_components:
+    - component_id: rust_core
+      name: "Rust Core"
+      paths:
+        - crates/fast-yaml-core/**
+    - component_id: rust_linter
+      name: "Rust Linter"
+      paths:
+        - crates/fast-yaml-linter/**
+    - component_id: rust_parallel
+      name: "Rust Parallel"
+      paths:
+        - crates/fast-yaml-parallel/**
+    - component_id: python_bindings
+      name: "Python Bindings"
+      paths:
+        - python/fast_yaml/**

@@ -1,0 +1,452 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly security audit (Sundays at midnight UTC)
+    - cron: '0 0 * * 0'
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_RETRY: 10
+  RUST_BACKTRACE: short
+  RUSTFLAGS: "-D warnings"
+  RUSTUP_MAX_RETRIES: 10
+
+# Cancel previous runs on new push
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Quick formatting check - fail fast
+  format:
+    name: Format Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install nightly Rust (required for Edition 2024 formatting)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rustfmt
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Check Rust formatting
+        run: cargo make format-check-rust
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Check Python formatting
+        run: cargo make format-check-python
+
+  # Clippy linting
+  lint:
+    name: Clippy Lint
+    needs: [format]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "clippy"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run Clippy
+        run: cargo make clippy
+
+      - name: Install clippy-sarif and sarif-fmt
+        uses: taiki-e/install-action@v2
+        with:
+          tool: clippy-sarif,sarif-fmt
+
+      - name: Generate SARIF report for GitHub
+        run: |
+          cargo clippy --workspace --all-targets --all-features --message-format=json -- -D warnings | \
+          clippy-sarif | tee clippy-results.sarif | sarif-fmt
+        continue-on-error: true
+
+      - name: Upload SARIF to GitHub
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: clippy-results.sarif
+          wait-for-processing: true
+
+      - name: Check documentation
+        run: cargo make doc-check
+
+  # Security auditing
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-make and security tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make,cargo-deny,cargo-audit
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "security"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run security checks
+        run: cargo make ci-security
+
+      - name: Install cargo-semver-checks
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-semver-checks
+
+      - name: Check SemVer compliance
+        run: cargo make semver-check
+        continue-on-error: true  # Don't fail on pre-release versions
+
+  # Cross-platform Rust tests
+  test-rust:
+    name: Test Rust (${{ matrix.os }})
+    needs: [format, lint]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        rust: [stable]
+        include:
+          # Test on beta channel on Linux only
+          - os: ubuntu-latest
+            rust: beta
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust ${{ matrix.rust }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+
+      - name: Install cargo-make and testing tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make,nextest
+
+      # Platform-specific dependencies
+      - name: Install dependencies (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "test-${{ matrix.os }}-${{ matrix.rust }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build workspace
+        run: cargo make build
+
+      - name: Run tests
+        run: cargo make test-rust
+
+  # Code coverage (Linux only for efficiency)
+  coverage:
+    name: Code Coverage
+    needs: [format, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-make and coverage tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make,cargo-llvm-cov,nextest
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "coverage"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Generate coverage
+        run: cargo make coverage
+
+      - name: Upload to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: true
+          flags: rust
+          name: rust-coverage
+          verbose: true
+
+      - name: Archive coverage report
+        uses: actions/upload-artifact@v5
+        with:
+          name: rust-coverage-report
+          path: lcov.info
+          retention-days: 30
+
+  # MSRV check
+  msrv:
+    name: Check MSRV (1.85.0)
+    needs: [format]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust 1.85.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.85.0"
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "msrv"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Check with MSRV
+        run: cargo make check
+
+  # Python bindings tests (multi-platform, multi-version matrix)
+  test-python:
+    name: Test Python (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    needs: [format, lint]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12']
+        exclude:
+          # Reduce matrix size - test all Python versions on Linux, subset on others
+          - os: macos-latest
+            python-version: '3.10'
+          - os: windows-latest
+            python-version: '3.10'
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "python-${{ matrix.os }}-${{ matrix.python-version }}"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          uv sync
+
+      - name: Build and test Python extension
+        run: cargo make python-test
+
+  # Python type checking and linting (Linux only)
+  python-quality:
+    name: Python Quality Checks
+    needs: [format]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          uv sync
+
+      - name: Run type checking
+        run: cargo make python-typecheck
+        continue-on-error: true  # Don't fail on type errors yet
+
+      - name: Run linting
+        run: cargo make lint-python
+
+  # Python coverage (Linux only)
+  python-coverage:
+    name: Python Coverage
+    needs: [format, lint]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "python-coverage"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install Python dependencies
+        run: |
+          cd python
+          uv sync
+
+      - name: Run tests with coverage
+        run: cargo make python-coverage
+
+      - name: Upload Python coverage to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: python/coverage.xml
+          flags: python
+          name: python-coverage
+          verbose: true
+
+      - name: Archive Python coverage report
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-coverage-report
+          path: python/htmlcov/
+          retention-days: 30
+
+  # Release build check (optional, runs on main branch only)
+  release-build:
+    name: Release Build Check
+    if: github.ref == 'refs/heads/main'
+    needs: [test-rust]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "release"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build release
+        run: cargo make build-release
+
+      - name: Check binary sizes
+        run: |
+          ls -lh target/release/ | grep -E '\.(so|dylib|dll|a|rlib)$' || true
+          du -sh target/release/
+
+  # All checks passed - required for branch protection
+  ci-success:
+    name: CI Success
+    needs: [format, lint, security, test-rust, coverage, msrv, test-python, python-quality, python-coverage]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Check all jobs
+        run: |
+          if [[ "${{ needs.format.result }}" != "success" ]] || \
+             [[ "${{ needs.lint.result }}" != "success" ]] || \
+             [[ "${{ needs.security.result }}" != "success" ]] || \
+             [[ "${{ needs.test-rust.result }}" != "success" ]] || \
+             [[ "${{ needs.coverage.result }}" != "success" ]] || \
+             [[ "${{ needs.msrv.result }}" != "success" ]] || \
+             [[ "${{ needs.test-python.result }}" != "success" ]] || \
+             [[ "${{ needs.python-quality.result }}" != "success" ]] || \
+             [[ "${{ needs.python-coverage.result }}" != "success" ]]; then
+            echo "One or more required jobs failed"
+            exit 1
+          fi
+          echo "All CI checks passed successfully!"

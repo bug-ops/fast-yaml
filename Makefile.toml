@@ -1,0 +1,625 @@
+# fast-yaml cargo-make task definitions
+# Version: 1.0.0
+# Rust MSRV: 1.85.0 (Edition 2024)
+# Python: 3.9+
+
+[config]
+default_to_workspace = false
+skip_core_tasks = true
+skip_git_env_info = true
+skip_rust_env_info = false
+skip_crate_env_info = false
+
+[config.modify_core_tasks]
+private = true
+namespace = "core"
+
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+CARGO_TERM_COLOR = "always"
+CARGO_INCREMENTAL = "0"
+RUST_BACKTRACE = "short"
+RUSTFLAGS = "-D warnings"
+
+# Python environment
+PYTHON_DIR = "python"
+PYTEST_ARGS = "-v"
+
+# Coverage output
+COVERAGE_OUTPUT = "lcov.info"
+
+# ============================================================================
+# Formatting Tasks
+# ============================================================================
+
+[tasks.format]
+description = "Format all Rust and Python code"
+category = "Development"
+dependencies = ["format-rust", "format-python"]
+
+[tasks.format-rust]
+description = "Format Rust code with nightly rustfmt (required for Edition 2024)"
+category = "Development"
+command = "cargo"
+args = ["+nightly", "fmt", "--all"]
+install_crate = { rustup_component_name = "rustfmt", binary = "rustfmt", test_arg = "--version" }
+
+[tasks.format-python]
+description = "Format Python code with ruff"
+category = "Development"
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run ruff format .
+elif command -v ruff &> /dev/null; then
+    ruff format .
+else
+    echo "Warning: ruff not found, skipping Python formatting"
+fi
+'''
+
+[tasks.format-check]
+description = "Check code formatting without modifying files"
+category = "CI"
+dependencies = ["format-check-rust", "format-check-python"]
+
+[tasks.format-check-rust]
+description = "Check Rust formatting with nightly rustfmt"
+category = "CI"
+command = "cargo"
+args = ["+nightly", "fmt", "--all", "--", "--check"]
+install_crate = { rustup_component_name = "rustfmt", binary = "rustfmt", test_arg = "--version" }
+
+[tasks.format-check-python]
+description = "Check Python formatting with ruff"
+category = "CI"
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run ruff format --check .
+elif command -v ruff &> /dev/null; then
+    ruff format --check .
+else
+    echo "Warning: ruff not found, skipping Python format check"
+fi
+'''
+
+# ============================================================================
+# Linting Tasks
+# ============================================================================
+
+[tasks.clippy]
+description = "Run Clippy linter on all workspace targets"
+category = "Development"
+command = "cargo"
+args = [
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D", "warnings"
+]
+install_crate = { rustup_component_name = "clippy", binary = "cargo-clippy", test_arg = "--version" }
+
+[tasks.clippy-fix]
+description = "Run Clippy with automatic fixes"
+category = "Development"
+command = "cargo"
+args = [
+    "clippy",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--fix",
+    "--allow-dirty",
+    "--allow-staged"
+]
+install_crate = { rustup_component_name = "clippy", binary = "cargo-clippy", test_arg = "--version" }
+
+[tasks.lint-python]
+description = "Lint Python code with ruff"
+category = "Development"
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run ruff check .
+elif command -v ruff &> /dev/null; then
+    ruff check .
+else
+    echo "Warning: ruff not found, skipping Python linting"
+fi
+'''
+
+[tasks.lint]
+description = "Run all linters (Rust and Python)"
+category = "Development"
+dependencies = ["clippy", "lint-python"]
+
+# ============================================================================
+# Testing Tasks
+# ============================================================================
+
+[tasks.test]
+description = "Run all Rust tests with nextest"
+category = "Testing"
+command = "cargo"
+args = ["nextest", "run", "--workspace", "--all-features"]
+install_crate = { crate_name = "cargo-nextest", binary = "cargo-nextest", test_arg = "--version" }
+
+[tasks.test-fast]
+description = "Run Rust tests in fast mode (no doctests)"
+category = "Testing"
+command = "cargo"
+args = ["nextest", "run", "--workspace", "--all-features", "--no-fail-fast"]
+install_crate = { crate_name = "cargo-nextest", binary = "cargo-nextest", test_arg = "--version" }
+
+[tasks.test-doc]
+description = "Run Rust documentation tests"
+category = "Testing"
+command = "cargo"
+args = ["test", "--doc", "--workspace", "--all-features"]
+
+[tasks.test-rust]
+description = "Run all Rust tests (nextest + doctests)"
+category = "Testing"
+dependencies = ["test", "test-doc"]
+
+[tasks.test-single]
+description = "Run a single test by name (use: makers test-single -- test_name)"
+category = "Testing"
+command = "cargo"
+args = ["nextest", "run", "--workspace", "${@}"]
+install_crate = { crate_name = "cargo-nextest", binary = "cargo-nextest", test_arg = "--version" }
+
+# ============================================================================
+# Python Tasks
+# ============================================================================
+
+[tasks.python-build]
+description = "Build Python extension with maturin"
+category = "Python"
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run maturin develop --release
+elif command -v maturin &> /dev/null; then
+    maturin develop --release
+else
+    echo "Error: maturin not found. Install with: pip install maturin"
+    exit 1
+fi
+'''
+
+[tasks.python-build-debug]
+description = "Build Python extension in debug mode"
+category = "Python"
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run maturin develop
+elif command -v maturin &> /dev/null; then
+    maturin develop
+else
+    echo "Error: maturin not found. Install with: pip install maturin"
+    exit 1
+fi
+'''
+
+[tasks.python-test]
+description = "Run Python test suite with pytest"
+category = "Python"
+dependencies = ["python-build"]
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run pytest tests/ ${PYTEST_ARGS}
+elif command -v pytest &> /dev/null; then
+    pytest tests/ ${PYTEST_ARGS}
+else
+    echo "Error: pytest not found. Install with: pip install pytest"
+    exit 1
+fi
+'''
+
+[tasks.python-test-verbose]
+description = "Run Python tests with verbose output"
+category = "Python"
+env = { PYTEST_ARGS = "-vv -s" }
+run_task = "python-test"
+
+[tasks.python-typecheck]
+description = "Type check Python code with mypy"
+category = "Python"
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run mypy fast_yaml/
+elif command -v mypy &> /dev/null; then
+    mypy fast_yaml/
+else
+    echo "Warning: mypy not found, skipping type checking"
+fi
+'''
+
+[tasks.python-coverage]
+description = "Run Python tests with coverage"
+category = "Python"
+dependencies = ["python-build"]
+cwd = "${PYTHON_DIR}"
+script = '''
+if command -v uv &> /dev/null; then
+    uv run pytest tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
+elif command -v pytest &> /dev/null; then
+    pytest tests/ -v --cov=fast_yaml --cov-report=html --cov-report=xml
+else
+    echo "Error: pytest not found. Install with: pip install pytest pytest-cov"
+    exit 1
+fi
+'''
+
+# ============================================================================
+# Documentation Tasks
+# ============================================================================
+
+[tasks.doc]
+description = "Build Rust documentation"
+category = "Documentation"
+command = "cargo"
+args = ["doc", "--workspace", "--no-deps", "--all-features"]
+
+[tasks.doc-open]
+description = "Build and open documentation in browser"
+category = "Documentation"
+command = "cargo"
+args = ["doc", "--workspace", "--no-deps", "--all-features", "--open"]
+
+[tasks.doc-check]
+description = "Check documentation for warnings"
+category = "CI"
+command = "cargo"
+args = ["doc", "--workspace", "--no-deps", "--all-features"]
+env = { RUSTDOCFLAGS = "-D warnings" }
+
+# ============================================================================
+# Security Tasks
+# ============================================================================
+
+[tasks.deny]
+description = "Run cargo-deny checks (advisories, licenses, bans)"
+category = "Security"
+command = "cargo"
+args = ["deny", "check"]
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version" }
+
+[tasks.deny-advisories]
+description = "Check for security advisories with cargo-deny"
+category = "Security"
+command = "cargo"
+args = ["deny", "check", "advisories"]
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version" }
+
+[tasks.deny-licenses]
+description = "Check license compliance with cargo-deny"
+category = "Security"
+command = "cargo"
+args = ["deny", "check", "licenses"]
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version" }
+
+[tasks.deny-bans]
+description = "Check for banned dependencies with cargo-deny"
+category = "Security"
+command = "cargo"
+args = ["deny", "check", "bans"]
+install_crate = { crate_name = "cargo-deny", binary = "cargo-deny", test_arg = "--version" }
+
+[tasks.audit]
+description = "Audit dependencies for known vulnerabilities"
+category = "Security"
+command = "cargo"
+args = ["audit"]
+install_crate = { crate_name = "cargo-audit", binary = "cargo-audit", test_arg = "--version" }
+
+[tasks.semver-check]
+description = "Check for SemVer compliance"
+category = "Security"
+command = "cargo"
+args = ["semver-checks", "check-release"]
+install_crate = { crate_name = "cargo-semver-checks", binary = "cargo-semver-checks", test_arg = "--version" }
+
+# ============================================================================
+# Code Coverage Tasks
+# ============================================================================
+
+[tasks.coverage]
+description = "Generate Rust code coverage report (lcov format)"
+category = "Testing"
+command = "cargo"
+args = [
+    "llvm-cov",
+    "nextest",
+    "--workspace",
+    "--all-features",
+    "--lcov",
+    "--output-path",
+    "${COVERAGE_OUTPUT}"
+]
+install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version" }
+
+[tasks.coverage-html]
+description = "Generate HTML coverage report"
+category = "Testing"
+command = "cargo"
+args = [
+    "llvm-cov",
+    "nextest",
+    "--workspace",
+    "--all-features",
+    "--html"
+]
+install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version" }
+
+[tasks.coverage-open]
+description = "Generate and open HTML coverage report"
+category = "Testing"
+command = "cargo"
+args = [
+    "llvm-cov",
+    "nextest",
+    "--workspace",
+    "--all-features",
+    "--html",
+    "--open"
+]
+install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version" }
+
+[tasks.coverage-summary]
+description = "Display coverage summary in terminal"
+category = "Testing"
+command = "cargo"
+args = [
+    "llvm-cov",
+    "nextest",
+    "--workspace",
+    "--all-features"
+]
+install_crate = { crate_name = "cargo-llvm-cov", binary = "cargo-llvm-cov", test_arg = "--version" }
+
+# ============================================================================
+# Build Tasks
+# ============================================================================
+
+[tasks.build]
+description = "Build all workspace crates in debug mode"
+category = "Build"
+command = "cargo"
+args = ["build", "--workspace", "--all-targets"]
+
+[tasks.build-release]
+description = "Build all workspace crates in release mode"
+category = "Build"
+command = "cargo"
+args = ["build", "--workspace", "--all-targets", "--release"]
+
+[tasks.check]
+description = "Quick check without building"
+category = "Build"
+command = "cargo"
+args = ["check", "--workspace", "--all-targets", "--all-features"]
+
+[tasks.clean]
+description = "Clean build artifacts"
+category = "Build"
+command = "cargo"
+args = ["clean"]
+
+# ============================================================================
+# CI Composite Tasks
+# ============================================================================
+
+[tasks.ci-format]
+description = "CI: Format checking (Rust + Python)"
+category = "CI"
+dependencies = ["format-check"]
+
+[tasks.ci-lint]
+description = "CI: Linting (Clippy + doc check)"
+category = "CI"
+dependencies = ["clippy", "doc-check"]
+
+[tasks.ci-rust]
+description = "CI: Rust checks (format, clippy, test, doc)"
+category = "CI"
+dependencies = ["format-check-rust", "clippy", "test-rust", "doc-check"]
+
+[tasks.ci-python]
+description = "CI: Python checks (build, test, typecheck)"
+category = "CI"
+dependencies = ["python-build", "python-test", "python-typecheck"]
+
+[tasks.ci-security]
+description = "CI: Security checks (deny + audit)"
+category = "CI"
+dependencies = ["deny", "audit"]
+
+[tasks.ci-coverage]
+description = "CI: Generate coverage reports (Rust + Python)"
+category = "CI"
+dependencies = ["coverage", "python-coverage"]
+
+[tasks.ci-all]
+description = "CI: Run complete pipeline"
+category = "CI"
+dependencies = [
+    "format-check",
+    "clippy",
+    "test-rust",
+    "doc-check",
+    "deny",
+    "audit",
+    "python-build",
+    "python-test",
+    "python-typecheck"
+]
+
+# ============================================================================
+# Developer Workflow Tasks
+# ============================================================================
+
+[tasks.dev]
+description = "Developer workflow: format, lint, test"
+category = "Development"
+dependencies = ["format", "clippy-fix", "test-rust"]
+
+[tasks.pre-commit]
+description = "Pre-commit checks: format-check, clippy, test"
+category = "Development"
+dependencies = ["format-check", "clippy", "test-rust"]
+
+[tasks.pre-push]
+description = "Pre-push checks: full CI pipeline"
+category = "Development"
+dependencies = ["ci-all"]
+
+[tasks.watch]
+description = "Watch for changes and run tests (requires cargo-watch)"
+category = "Development"
+install_crate = { crate_name = "cargo-watch", binary = "cargo-watch", test_arg = "--version" }
+command = "cargo"
+args = ["watch", "-x", "nextest run"]
+
+[tasks.watch-test]
+description = "Watch specific test pattern (use: makers watch-test -- pattern)"
+category = "Development"
+install_crate = { crate_name = "cargo-watch", binary = "cargo-watch", test_arg = "--version" }
+script = '''
+cargo watch -x "nextest run ${@}"
+'''
+
+# ============================================================================
+# Benchmarking Tasks
+# ============================================================================
+
+[tasks.bench]
+description = "Run all benchmarks"
+category = "Performance"
+command = "cargo"
+args = ["bench", "--workspace"]
+
+[tasks.bench-fast-yaml-core]
+description = "Run benchmarks for fast-yaml-core"
+category = "Performance"
+command = "cargo"
+args = ["bench", "-p", "fast-yaml-core"]
+
+# ============================================================================
+# Utility Tasks
+# ============================================================================
+
+[tasks.tree]
+description = "Display dependency tree"
+category = "Utility"
+command = "cargo"
+args = ["tree", "--workspace"]
+
+[tasks.outdated]
+description = "Check for outdated dependencies"
+category = "Utility"
+command = "cargo"
+args = ["outdated", "--workspace"]
+install_crate = { crate_name = "cargo-outdated", binary = "cargo-outdated", test_arg = "--version" }
+
+[tasks.bloat]
+description = "Analyze binary size bloat"
+category = "Utility"
+command = "cargo"
+args = ["bloat", "--release", "--crates"]
+install_crate = { crate_name = "cargo-bloat", binary = "cargo-bloat", test_arg = "--version" }
+
+[tasks.update]
+description = "Update dependencies"
+category = "Utility"
+command = "cargo"
+args = ["update"]
+
+[tasks.verify-project]
+description = "Verify project structure and configuration"
+category = "Utility"
+script = '''
+#!/bin/bash
+set -e
+
+echo "Verifying project structure..."
+
+# Check Rust version
+echo "Checking Rust version..."
+rustc --version | grep -q "1.85" || echo "Warning: Expected Rust 1.85.0 or later"
+
+# Check workspace structure
+echo "Checking workspace members..."
+cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-core" || { echo "Error: fast-yaml-core not found"; exit 1; }
+cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-linter" || { echo "Error: fast-yaml-linter not found"; exit 1; }
+cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-parallel" || { echo "Error: fast-yaml-parallel not found"; exit 1; }
+cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-ffi" || { echo "Error: fast-yaml-ffi not found"; exit 1; }
+
+# Check Python directory
+if [ -d "python" ]; then
+    echo "Python bindings directory found"
+else
+    echo "Warning: Python bindings directory not found"
+fi
+
+echo "Project structure verified successfully!"
+'''
+
+[tasks.help]
+description = "Show available tasks"
+category = "Utility"
+script = '''
+echo "fast-yaml cargo-make tasks"
+echo ""
+echo "Development:"
+echo "  format         - Format Rust and Python code"
+echo "  lint           - Run all linters"
+echo "  test           - Run Rust tests with nextest"
+echo "  dev            - Format + lint + test"
+echo "  watch          - Watch and run tests on changes"
+echo ""
+echo "Python:"
+echo "  python-build   - Build Python extension"
+echo "  python-test    - Run Python tests"
+echo "  python-typecheck - Type check Python code"
+echo ""
+echo "CI/CD:"
+echo "  ci-rust        - Rust CI pipeline"
+echo "  ci-python      - Python CI pipeline"
+echo "  ci-security    - Security checks"
+echo "  ci-all         - Complete CI pipeline"
+echo ""
+echo "Coverage:"
+echo "  coverage       - Generate lcov coverage report"
+echo "  coverage-html  - Generate HTML coverage report"
+echo ""
+echo "Security:"
+echo "  deny           - Run cargo-deny checks"
+echo "  audit          - Audit dependencies"
+echo ""
+echo "Documentation:"
+echo "  doc            - Build documentation"
+echo "  doc-open       - Build and open documentation"
+echo ""
+echo "Utility:"
+echo "  clean          - Clean build artifacts"
+echo "  tree           - Show dependency tree"
+echo "  verify-project - Verify project structure"
+echo ""
+echo "Run 'cargo make <task>' to execute a task"
+'''
+
+# ============================================================================
+# Default Task
+# ============================================================================
+
+[tasks.default]
+description = "Default task: show help"
+run_task = "help"
