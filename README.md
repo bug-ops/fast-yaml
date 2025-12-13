@@ -4,7 +4,7 @@
 [![PyPI](https://img.shields.io/pypi/v/fast-yaml)](https://pypi.org/project/fast-yaml/)
 [![npm](https://img.shields.io/npm/v/@fast-yaml/core)](https://www.npmjs.com/package/@fast-yaml/core)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
-[![Rust](https://img.shields.io/badge/rust-1.86+-orange.svg)](https://www.rust-lang.org)
+[![Rust](https://img.shields.io/badge/rust-1.88+-orange.svg)](https://www.rust-lang.org)
 [![codecov](https://codecov.io/gh/bug-ops/fast-yaml/graph/badge.svg?token=E33WB16NUD)](https://codecov.io/gh/bug-ops/fast-yaml)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe-forbidden-success.svg)](https://github.com/rust-secure-code/safety-dance/)
 
@@ -74,7 +74,7 @@ pnpm add @fast-yaml/core
 ### Build from Source
 
 > [!WARNING]
-> **Requires Rust 1.86+** (2024 edition). Python 3.9+ or Node.js 20+ required for bindings. Install Rust via [rustup.rs](https://rustup.rs/)
+> **Requires Rust 1.88+** (2024 edition). Python 3.9+ or Node.js 20+ required for bindings. Install Rust via [rustup.rs](https://rustup.rs/)
 
 <details>
 <summary><b>Using uv (Recommended)</b></summary>
@@ -377,7 +377,7 @@ fast-yaml/
 **Project Metrics**:
 
 - **Language**: Rust 2024 Edition
-- **MSRV**: 1.86.0
+- **MSRV**: 1.88.0
 - **Python**: 3.9+
 - **Node.js**: 20+
 - **Crates**: 6 (core, linter, parallel, ffi, python, nodejs)

@@ -198,7 +198,7 @@ jobs:
 
   # MSRV check - runs in parallel
   msrv:
-    name: Check MSRV (1.86.0)
+    name: Check MSRV (1.88.0)
     needs: [changes]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
@@ -206,10 +206,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Rust 1.86.0
+      - name: Install Rust 1.88.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.86.0"
+          toolchain: "1.88.0"
 
 
       - name: Cache Cargo
@@ -219,8 +219,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check with MSRV
-        # Exclude nodejs crate as napi requires Rust 1.88+
-        run: cargo check --workspace --all-targets --exclude fast-yaml-nodejs
+        run: cargo check --workspace --all-targets
 
 
   # Cross-platform Rust tests
