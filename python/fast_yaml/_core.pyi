@@ -237,9 +237,7 @@ class parallel:  # noqa: N801
         def __repr__(self) -> str: ...
 
     @staticmethod
-    def parse_parallel(
-        source: str, config: parallel.ParallelConfig | None = None
-    ) -> list[Any]:
+    def parse_parallel(source: str, config: parallel.ParallelConfig | None = None) -> list[Any]:
         """Parse multi-document YAML in parallel.
 
         Args:
