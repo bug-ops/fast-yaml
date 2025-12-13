@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2025-12-14
+
+### Fixed
+- Fixed Node.js cross-compilation by using zig instead of Docker (avoids Node version mismatch)
+- Removed Windows ARM64 Python wheels (cross-compilation not supported by maturin)
+
 ## [0.1.2] - 2025-12-14
 
 ### Fixed
@@ -93,7 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.2...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/bug-ops/fast-yaml/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/bug-ops/fast-yaml/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/bug-ops/fast-yaml/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/bug-ops/fast-yaml/releases/tag/v0.1.0

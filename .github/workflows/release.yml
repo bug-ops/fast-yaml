@@ -206,7 +206,7 @@ jobs:
           path: dist/*.whl
           retention-days: 7
 
-  # Build Python wheels for Windows
+  # Build Python wheels for Windows (x64 only - ARM64 cross-compilation not supported)
   build-python-windows:
     name: Build Python Wheels (Windows ${{ matrix.target }}, Python ${{ matrix.python }})
     needs: [extract-version, verify-tests]
@@ -215,7 +215,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [x64, aarch64]
+        target: [x64]
         python: ['3.9', '3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v6
@@ -335,25 +335,20 @@ jobs:
               npm run build -- --target x86_64-unknown-linux-gnu
               strip *.node
 
-          # Linux musl
+          # Linux musl (uses zig for cross-compilation)
           - host: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:stable-alpine
             build: |
               cd nodejs
-              npm install
-              npm run build -- --target x86_64-unknown-linux-musl
+              npm run build -- --target x86_64-unknown-linux-musl --use-napi-cross
               strip *.node
 
-          # Linux ARM64
+          # Linux ARM64 (uses zig for cross-compilation)
           - host: ubuntu-latest
             target: aarch64-unknown-linux-gnu
-            docker: ghcr.io/napi-rs/napi-rs/nodejs-rust:stable-debian-aarch64
             build: |
               cd nodejs
-              npm install
-              npm run build -- --target aarch64-unknown-linux-gnu
-              aarch64-unknown-linux-gnu-strip *.node
+              npm run build -- --target aarch64-unknown-linux-gnu --use-napi-cross
 
           # macOS x86_64
           - host: macos-latest
@@ -551,7 +546,7 @@ jobs:
           **Supported platforms:**
           - Linux: x86_64 (glibc/musl), aarch64 (glibc/musl)
           - macOS: x86_64, Apple Silicon (aarch64)
-          - Windows: x64, ARM64
+          - Windows: x64
 
           **Supported Python versions:** 3.9, 3.10, 3.11, 3.12, 3.13
 
