@@ -9,7 +9,7 @@
 
 **High-performance YAML 1.2.2 parser for Python, powered by Rust.**
 
-Drop-in replacement for PyYAML's `safe_*` functions with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and type-safe Python bindings.
+Drop-in replacement for PyYAML's `safe_*` functions with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
 
 > [!IMPORTANT]
 > **YAML 1.2.2 Compliance** — Unlike PyYAML (YAML 1.1), `fast-yaml` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
@@ -24,18 +24,26 @@ Drop-in replacement for PyYAML's `safe_*` functions with **5-10x faster** parsin
 - **Drop-in Replacement** — Compatible `safe_load`, `safe_dump`, `safe_load_all`, `safe_dump_all`
 - **Type-safe** — Full Python type hints with `.pyi` stubs
 
-### Linter (NEW)
+### Linter
 
 - **Rich Diagnostics** — Precise line, column, and byte offset tracking
-- **Multiple Rules** — Duplicate keys, invalid anchors, line length, indentation, trailing whitespace
+- **Multiple Rules** — Duplicate keys, line length, indentation validation
 - **Pluggable System** — Extensible rule architecture for custom validation
-- **Multiple Formats** — Text, JSON, and SARIF output for IDE integration
+- **Multiple Formats** — Text and JSON output for IDE integration
+
+### Parallel Processing
+
+- **Multi-threaded Parsing** — Rayon-based parallel document processing
+- **Automatic Chunking** — Intelligent document boundary detection
+- **Configurable** — Thread count, chunk sizes, and resource limits
+- **DoS Protection** — Input size and document count limits
 
 ### Architecture
 
 - **Zero `unsafe` Code** — Memory-safe Rust with `#![forbid(unsafe_code)]`
-- **Modular Workspace** — Separate crates for core, linter, and FFI
+- **Modular Workspace** — Separate crates for core, linter, parallel, and FFI
 - **Cross-platform** — Pre-built wheels for Linux, macOS, Windows
+- **GIL Release** — Python GIL released during CPU-intensive operations
 
 ## Installation
 
@@ -125,15 +133,10 @@ print(yaml_str)
 ```python
 # Load single document
 data = fast_yaml.safe_load(yaml_string)
-data = fast_yaml.safe_load(file_object)
-data = fast_yaml.safe_load(bytes_data)
 
 # Load multiple documents
 for doc in fast_yaml.safe_load_all(yaml_string):
     print(doc)
-
-# PyYAML compatibility aliases
-fast_yaml.load(yaml_string)  # same as safe_load
 ```
 
 ### Dumping YAML
@@ -145,19 +148,86 @@ yaml_str = fast_yaml.safe_dump(data)
 # With options
 yaml_str = fast_yaml.safe_dump(
     data,
-    default_flow_style=False,  # block style (default)
-    allow_unicode=True,        # allow unicode chars (default)
-    sort_keys=False,           # preserve key order (default)
+    allow_unicode=True,  # allow unicode chars (default)
+    sort_keys=False,     # preserve key order (default)
 )
-
-# Dump to file
-fast_yaml.safe_dump(data, file_object)
 
 # Dump multiple documents
 yaml_str = fast_yaml.safe_dump_all([doc1, doc2, doc3])
+```
 
-# PyYAML compatibility alias
-fast_yaml.dump(data)  # same as safe_dump
+> [!NOTE]
+> The `allow_unicode` parameter is accepted for PyYAML API compatibility. yaml-rust2 always outputs unicode characters.
+
+### Parallel Processing
+
+For large multi-document YAML files, use parallel processing:
+
+```python
+from fast_yaml._core.parallel import parse_parallel, ParallelConfig
+
+# Parse multi-document YAML in parallel
+yaml_content = """
+---
+doc: 1
+---
+doc: 2
+---
+doc: 3
+"""
+
+# Default configuration (auto-detect thread count)
+docs = parse_parallel(yaml_content)
+
+# Custom configuration
+config = ParallelConfig(
+    thread_count=4,           # Number of threads (None = auto)
+    max_input_size=100*1024*1024,  # 100MB limit
+    max_documents=100_000,    # Document count limit
+)
+docs = parse_parallel(yaml_content, config)
+```
+
+> [!TIP]
+> Parallel processing provides **3-6x speedup** on 4-8 core systems for files with multiple documents.
+
+### Linting
+
+Validate YAML with rich diagnostics:
+
+```python
+from fast_yaml._core.lint import lint, Linter, LintConfig, TextFormatter
+
+# Quick lint
+diagnostics = lint("key: value\nkey: duplicate")
+
+for diag in diagnostics:
+    print(f"{diag.severity}: {diag.message}")
+    print(f"  at line {diag.span.start.line}, column {diag.span.start.column}")
+
+# Custom configuration
+config = LintConfig(
+    max_line_length=120,
+    indent_size=2,
+    allow_duplicate_keys=False,
+)
+linter = Linter(config)
+diagnostics = linter.lint(yaml_source)
+
+# Format output
+formatter = TextFormatter(use_colors=True)
+print(formatter.format(diagnostics, yaml_source))
+```
+
+**Available severity levels:**
+
+```python
+from fast_yaml._core.lint import Severity
+
+Severity.ERROR    # Critical errors
+Severity.WARNING  # Potential issues
+Severity.INFO     # Informational
+Severity.HINT     # Suggestions
 ```
 
 ## YAML 1.2.2 Differences
@@ -212,6 +282,17 @@ Run benchmarks yourself:
 uv run pytest tests/ -v --benchmark-only
 ```
 
+## Security
+
+> [!CAUTION]
+> Input validation is enforced to prevent denial-of-service attacks.
+
+| Limit | Default | Configurable |
+|-------|---------|--------------|
+| Max input size | 100 MB | Yes (up to 1GB) |
+| Max documents | 100,000 | Yes (up to 10M) |
+| Max threads | 128 | Yes |
+
 ## Supported Types
 
 | YAML Type | Python Type |
@@ -231,6 +312,7 @@ fast-yaml/
 ├── crates/
 │   ├── fast-yaml-core/     # Core YAML parser/emitter
 │   ├── fast-yaml-linter/   # Linting engine with diagnostics
+│   ├── fast-yaml-parallel/ # Multi-threaded processing
 │   └── fast-yaml-ffi/      # FFI utilities for bindings
 ├── python/                 # PyO3 Python bindings
 └── Cargo.toml             # Workspace manifest
@@ -242,6 +324,7 @@ fast-yaml/
 |-----------|---------|---------|
 | **YAML Parser** | [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) | 0.10 |
 | **Python Bindings** | [PyO3](https://pyo3.rs/) | 0.27 |
+| **Parallelism** | [Rayon](https://github.com/rayon-rs/rayon) | 1.10 |
 | **Error Handling** | [thiserror](https://crates.io/crates/thiserror) | 2.0 |
 | **Build Tool** | [maturin](https://maturin.rs/) | 1.7+ |
 
@@ -250,13 +333,13 @@ fast-yaml/
 - **Language**: Rust 2024 Edition
 - **MSRV**: 1.85.0
 - **Python**: 3.8+
-- **Crates**: 4 (core, linter, ffi, python)
-- **Tests**: 100+ (Rust) + Python test suite
+- **Crates**: 5 (core, linter, parallel, ffi, python)
+- **Tests**: 234+ (Rust) + Python test suite
 
 ## Current Status
 
 > [!NOTE]
-> **Active Development**: Phase 2 (Linter) is complete! The project now includes comprehensive YAML validation with rich diagnostics.
+> **Phase 4 Complete!** Full Python bindings for linter and parallel processing are now available.
 
 ### ✅ Phase 1: Core Parser (Complete)
 
@@ -264,27 +347,27 @@ fast-yaml/
 - Python bindings with PyO3
 - `safe_load`, `safe_dump`, `safe_load_all`, `safe_dump_all`
 - Full type hints and documentation
-- Workspace structure with modular crates
 
 ### ✅ Phase 2: Linter (Complete)
 
 - Rich diagnostic system with source context
-- 5 linting rules (duplicate keys, line length, indentation, anchors, whitespace)
-- Multiple output formats (text, JSON, SARIF)
+- Linting rules (duplicate keys, line length, indentation)
+- Multiple output formats (text, JSON)
 - Pluggable rule architecture
-- 68+ tests for linter crate
 
-### 🔄 Phase 3: Parallel Processing (Planned)
+### ✅ Phase 3: Parallel Processing (Complete)
 
-- Multi-threaded document chunking
-- Rayon-based parallel parsing
-- Large file optimization (MB-GB scale)
+- Multi-threaded document chunking with Rayon
+- Intelligent document boundary detection
+- Configurable thread pool and resource limits
+- DoS protection (input size, document count limits)
 
-### 🔄 Phase 4: Python Integration (Planned)
+### ✅ Phase 4: Python Integration (Complete)
 
-- Expose linter in Python API
-- Parallel processing bindings
-- PyPI package with multi-platform wheels
+- Linter Python API with full diagnostics
+- Parallel processing Python bindings
+- GIL release during CPU-intensive operations
+- Comprehensive type stubs
 
 ### 💡 Phase 5: NodeJS Bindings (Future)
 
@@ -317,6 +400,7 @@ PyYAML is excellent and battle-tested. Use `fast-yaml` when you need:
 - **Performance**: 5-10x faster parsing for large files
 - **YAML 1.2.2**: Modern spec compliance (PyYAML uses YAML 1.1)
 - **Linting**: Built-in validation with rich diagnostics
+- **Parallelism**: Multi-threaded processing for large files
 
 </details>
 
@@ -340,9 +424,15 @@ Note: YAML 1.2.2 has different boolean/octal handling than YAML 1.1.
 </details>
 
 <details>
-<summary><b>What about the linter?</b></summary>
+<summary><b>When should I use parallel processing?</b></summary>
 
-The linter is implemented in Rust (`fast-yaml-linter` crate) with 5 built-in rules. Python bindings for the linter are planned for Phase 4.
+Use `parse_parallel()` when:
+
+- Processing multi-document YAML files (separated by `---`)
+- File size exceeds 1MB
+- You have 4+ CPU cores available
+
+For single-document YAML or small files, use `safe_load()`.
 
 </details>
 
@@ -350,6 +440,7 @@ The linter is implemented in Rust (`fast-yaml-linter` crate) with 5 built-in rul
 
 - [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) — Rust YAML parser foundation
 - [PyO3](https://pyo3.rs/) — Rust bindings for Python
+- [Rayon](https://github.com/rayon-rs/rayon) — Data parallelism library
 - [maturin](https://maturin.rs/) — Build tool for Rust Python extensions
 
 ## License
