@@ -528,7 +528,7 @@ jobs:
         id: release_notes
         run: |
           cat > release_notes.md << 'EOF'
-          # fast-yaml ${{ needs.extract-version.outputs.version }}
+          # fastyaml-rs ${{ needs.extract-version.outputs.version }}
 
           This release includes:
 
@@ -540,7 +540,7 @@ jobs:
 
           ## Python Package (PyPI)
           ```bash
-          pip install fast-yaml==${{ needs.extract-version.outputs.version_no_v }}
+          pip install fastyaml-rs==${{ needs.extract-version.outputs.version_no_v }}
           ```
 
           **Supported platforms:**
@@ -552,7 +552,7 @@ jobs:
 
           ## Node.js Package (npm)
           ```bash
-          npm install @fast-yaml/core@${{ needs.extract-version.outputs.version_no_v }}
+          npm install fastyaml-rs@${{ needs.extract-version.outputs.version_no_v }}
           ```
 
           **Supported platforms:**
