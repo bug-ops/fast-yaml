@@ -52,7 +52,7 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [dependency-groups]
-dev = ["pytest>=8.0", "pytest-cov>=4.0,<7.0", "mypy>=1.0", "ruff>=0.8", "maturin>=1.7,<2.0"]
+dev = ["pytest>=8.0", "pytest-cov>=4.0,<8.0", "mypy>=1.0", "ruff>=0.8", "maturin>=1.7,<2.0"]
 
 [tool.ruff]
 line-length = 100
