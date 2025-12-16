@@ -433,6 +433,9 @@ jobs:
       - build-nodejs
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -473,9 +476,7 @@ jobs:
           echo "Version verified: $PKG_VERSION"
 
       - name: Publish to npm
-        run: cd nodejs && npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: cd nodejs && npm publish --provenance --access public
 
   # Create GitHub Release with all artifacts
   create-github-release:

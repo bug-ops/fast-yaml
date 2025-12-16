@@ -23,7 +23,9 @@
     "node": ">=20"
   },
   "publishConfig": {
-    "registry": "https://registry.npmjs.org/"
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true,
+    "access": "public"
   },
   "napi": {
     "binaryName": "fastyaml-rs",
