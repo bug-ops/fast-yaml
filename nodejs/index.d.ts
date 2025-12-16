@@ -3,12 +3,12 @@
 /** Options for YAML serialization. */
 export interface DumpOptions {
   /** If true, sort object keys alphabetically (default: false) */
-  sortKeys?: boolean
+  sortKeys?: boolean;
   /**
    * Allow unicode characters (default: true).
    * Note: yaml-rust2 always outputs unicode; this is accepted for API compatibility.
    */
-  allowUnicode?: boolean
+  allowUnicode?: boolean;
 }
 
 /**
@@ -40,7 +40,10 @@ value: 123
 '
  * ```
  */
-export declare function safeDump(data: unknown, options?: DumpOptions | undefined | null): NapiResult<string>
+export declare function safeDump(
+  data: unknown,
+  options?: DumpOptions | undefined | null
+): NapiResult<string>;
 
 /**
  * Serialize multiple JavaScript objects to a YAML string with document separators.
@@ -79,7 +82,10 @@ b: 2
 '
  * ```
  */
-export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOptions | undefined | null): NapiResult<string>
+export declare function safeDumpAll(
+  documents: Array<unknown>,
+  options?: DumpOptions | undefined | null
+): NapiResult<string>;
 
 /**
  * Parse a YAML string and return a JavaScript object.
@@ -114,7 +120,7 @@ value: 123');
  * console.log(data); // { name: 'test', value: 123 }
  * ```
  */
-export declare function safeLoad(yamlStr: string): NapiResult<unknown>
+export declare function safeLoad(yamlStr: string): NapiResult<unknown>;
 
 /**
  * Parse a YAML string containing multiple documents.
@@ -151,7 +157,7 @@ bar: 2');
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function safeLoadAll(yamlStr: string): NapiResult<Array<unknown>>
+export declare function safeLoadAll(yamlStr: string): NapiResult<Array<unknown>>;
 
 /**
  * Get the library version.
@@ -165,8 +171,8 @@ export declare function safeLoadAll(yamlStr: string): NapiResult<Array<unknown>>
  * console.log(version()); // "0.1.0"
  * ```
  */
-export declare function version(): string
+export declare function version(): string;
 
 // Aliases for js-yaml compatibility
-export declare const load: typeof safeLoad
-export declare const dump: typeof safeDump
+export declare const load: typeof safeLoad;
+export declare const dump: typeof safeDump;
