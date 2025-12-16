@@ -68,6 +68,9 @@ jobs:
     needs: [extract-version, verify-tests]
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
 
@@ -92,8 +95,6 @@ jobs:
           done
 
       - name: Publish all crates to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --workspace
 
   # Build Python wheels for Linux (using manylinux containers)
