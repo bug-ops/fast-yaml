@@ -127,7 +127,7 @@ jobs:
           sccache: 'true'
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-${{ matrix.target }}-py${{ matrix.python }}
           path: dist/*.whl
@@ -164,7 +164,7 @@ jobs:
           sccache: 'true'
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-linux-musl-${{ matrix.target }}-py${{ matrix.python }}
           path: dist/*.whl
@@ -200,7 +200,7 @@ jobs:
           sccache: 'true'
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-macos-${{ matrix.target }}-py${{ matrix.python }}
           path: dist/*.whl
@@ -236,7 +236,7 @@ jobs:
           sccache: 'true'
 
       - name: Upload wheels
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-windows-${{ matrix.target }}-py${{ matrix.python }}
           path: dist/*.whl
@@ -266,7 +266,7 @@ jobs:
           args: --out dist --manifest-path python/Cargo.toml
 
       - name: Upload sdist
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: wheels-sdist
           path: dist/*.tar.gz
@@ -419,7 +419,7 @@ jobs:
         shell: bash
 
       - name: Upload binary artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: nodejs-binary-${{ matrix.settings.target }}
           path: nodejs/*.node
