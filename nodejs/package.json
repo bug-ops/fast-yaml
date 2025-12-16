@@ -22,6 +22,10 @@
   "engines": {
     "node": ">=20"
   },
+  "files": [
+    "index.js",
+    "index.d.ts"
+  ],
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
     "provenance": true,
@@ -63,14 +67,5 @@
     "prettier": "^3.4.2",
     "typescript": "^5.7.2",
     "vitest": "^4.0"
-  },
-  "optionalDependencies": {
-    "fastyaml-rs-linux-x64-gnu": "0.1.6",
-    "fastyaml-rs-linux-x64-musl": "0.1.6",
-    "fastyaml-rs-darwin-x64": "0.1.6",
-    "fastyaml-rs-darwin-arm64": "0.1.6",
-    "fastyaml-rs-win32-x64-msvc": "0.1.6",
-    "fastyaml-rs-linux-arm64-gnu": "0.1.6",
-    "fastyaml-rs-win32-arm64-msvc": "0.1.6"
   }
 }
