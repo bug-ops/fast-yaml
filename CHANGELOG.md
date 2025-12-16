@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6] - 2025-12-16
+
+### Added
+- Copilot code review instructions with path-based rules (`.github/instructions/`)
+- Automatic PR and issue labeling via GitHub Actions
+- 31 repository labels for categorizing issues and PRs
+
+### Changed
+- Configured Trusted Publishing (OIDC) for crates.io, PyPI, and npm
+- Updated GitHub Actions to latest versions (checkout@v6, setup-node@v6, setup-python@v6, upload-artifact@v6)
+- Updated pytest-cov requirement to >=4.0,<8.0
+
+### Fixed
+- Package.json formatting
+- Release notes template to use fastyaml-rs package names
+
 ## [0.1.5] - 2025-12-14
 
 ### Changed
@@ -110,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.5...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.6...HEAD
+[0.1.6]: https://github.com/bug-ops/fast-yaml/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/bug-ops/fast-yaml/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/bug-ops/fast-yaml/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/bug-ops/fast-yaml/compare/v0.1.2...v0.1.3

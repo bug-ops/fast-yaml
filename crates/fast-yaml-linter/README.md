@@ -39,7 +39,7 @@ println!("{}", output);
 ## Python Usage
 
 > [!NOTE]
-> Python bindings are available through the `fast-yaml` package.
+> Python bindings are available through the `fastyaml-rs` package on PyPI.
 
 ```python
 from fast_yaml._core.lint import lint, Linter, LintConfig, TextFormatter, Severity
