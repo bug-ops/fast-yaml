@@ -1,0 +1,117 @@
+# Automatic labeling for PRs based on file paths
+# See https://github.com/actions/labeler
+
+# Component: Core
+component:core:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'crates/fast-yaml-core/**/*'
+      - 'Cargo.toml'  # workspace manifest changes often affect core
+
+# Component: Linter
+component:linter:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'crates/fast-yaml-linter/**/*'
+
+# Component: Parallel
+component:parallel:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'crates/fast-yaml-parallel/**/*'
+
+# Component: FFI
+component:ffi:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'crates/fast-yaml-ffi/**/*'
+
+# Component: Python bindings
+component:python:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'python/**/*'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - '**/*.pyi'  # Type stubs
+
+# Component: Node.js bindings
+component:nodejs:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'nodejs/**/*'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+
+# Component: CI/CD
+component:ci-cd:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '.github/workflows/**/*'
+      - '.github/actions/**/*'
+      - '.github/labeler.yml'
+      - '.github/dependabot.yml'
+      - '.github/codecov.yml'
+      - 'codecov.yml'
+      - 'deny.toml'
+      - 'rust-toolchain.toml'
+      - '.cargo/**/*'
+
+# Documentation
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/*.md'
+      - 'docs/**/*'
+      - 'CLAUDE.md'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      - 'CONTRIBUTING.md'
+      - 'LICENSE*'
+      - '.local/**/*.md'
+
+# Testing
+testing:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/tests/**/*'
+      - '**/benches/**/*'
+      - '**/*_test.rs'
+      - '**/*_tests.rs'
+      - '**/*_bench.rs'
+      - 'tests/**/*'
+      - 'benches/**/*'
+
+# Dependencies
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'yarn.lock'
+      - 'pnpm-lock.yaml'
+
+# Performance
+performance:
+  - changed-files:
+    - any-glob-to-any-file:
+      - '**/benches/**/*'
+      - '**/*_bench.rs'
+      - '**/*benchmark*'
+      - '**/performance/**/*'
+
+# Security
+security:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'deny.toml'
+      - '.github/workflows/security*.yml'
+      - '**/audit*'
