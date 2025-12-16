@@ -17,10 +17,10 @@ repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 # Internal crates (version required for cargo publish --workspace)
-fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.1.6" }
-fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.1.6" }
-fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.1.6" }
-fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.1.6" }
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.1.7" }
+fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.1.7" }
+fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.1.7" }
+fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.1.7" }
 
 # External dependencies 
 criterion = "0.8"

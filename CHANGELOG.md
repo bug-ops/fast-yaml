@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.7] - 2025-12-17
+
+### Fixed
+- npm publishing: regenerated index.js with correct binary names, removed optionalDependencies
+- npm trusted publishing configuration
+- Working-directory paths in npm publish job
+- Replaced sccache with rust-cache in Python wheel builds
+
 ## [0.1.6] - 2025-12-16
 
 ### Added
@@ -126,7 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.6...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/bug-ops/fast-yaml/compare/v0.1.6...v0.1.7
 [0.1.6]: https://github.com/bug-ops/fast-yaml/compare/v0.1.5...v0.1.6
 [0.1.5]: https://github.com/bug-ops/fast-yaml/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/bug-ops/fast-yaml/compare/v0.1.3...v0.1.4
