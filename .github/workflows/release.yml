@@ -545,24 +545,6 @@ jobs:
           pattern: nodejs-binary-*
           path: release-artifacts/nodejs
 
-      - name: Organize artifacts
-        run: |
-          # Flatten Python wheels
-          mkdir -p release-artifacts/python-wheels
-          find release-artifacts/python -name '*.whl' -exec mv {} release-artifacts/python-wheels/ \;
-          find release-artifacts/python -name '*.tar.gz' -exec mv {} release-artifacts/python-wheels/ \;
-
-          # Flatten Node.js binaries
-          mkdir -p release-artifacts/nodejs-binaries
-          find release-artifacts/nodejs -name '*.node' -exec mv {} release-artifacts/nodejs-binaries/ \;
-
-          # List all artifacts
-          echo "Python artifacts:"
-          ls -lh release-artifacts/python-wheels/
-          echo ""
-          echo "Node.js artifacts:"
-          ls -lh release-artifacts/nodejs-binaries/
-
       - name: Generate release notes
         id: release_notes
         run: |
