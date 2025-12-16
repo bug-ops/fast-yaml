@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - "v*.*.*"
 
 env:
   CARGO_TERM_COLOR: always
@@ -94,8 +94,13 @@ jobs:
             echo "✓ $crate version $CRATE_VERSION matches tag"
           done
 
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
       - name: Publish all crates to crates.io
         run: cargo publish --workspace
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Build Python wheels for Linux (using manylinux containers)
   build-python-linux:
@@ -107,7 +112,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [x86_64, aarch64]
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
 
@@ -115,6 +120,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "python-linux-${{ matrix.target }}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -125,7 +138,6 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
           manylinux: auto
-          sccache: 'true'
 
       - name: Upload wheels
         uses: actions/upload-artifact@v6
@@ -144,7 +156,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [x86_64, aarch64]
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
 
@@ -152,6 +164,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "python-linux-musl-${{ matrix.target }}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -162,7 +182,6 @@ jobs:
           target: ${{ matrix.target }}
           args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
           manylinux: musllinux_1_2
-          sccache: 'true'
 
       - name: Upload wheels
         uses: actions/upload-artifact@v6
@@ -181,7 +200,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [x86_64, aarch64]
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
 
@@ -189,6 +208,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "python-macos-${{ matrix.target }}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -198,7 +225,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
-          sccache: 'true'
 
       - name: Upload wheels
         uses: actions/upload-artifact@v6
@@ -217,7 +243,7 @@ jobs:
       fail-fast: false
       matrix:
         target: [x64]
-        python: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v6
 
@@ -225,6 +251,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "python-windows-${{ matrix.target }}"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -234,7 +268,6 @@ jobs:
         with:
           target: ${{ matrix.target }}
           args: --release --out dist --manifest-path python/Cargo.toml -i python${{ matrix.python }}
-          sccache: 'true'
 
       - name: Upload wheels
         uses: actions/upload-artifact@v6
@@ -255,7 +288,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
@@ -286,7 +319,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
-      id-token: write  # Required for OIDC authentication with PyPI
+      id-token: write # Required for OIDC authentication with PyPI
       contents: read
     steps:
       - name: Download all wheel artifacts
@@ -388,8 +421,8 @@ jobs:
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
           cache-dependency-path: nodejs/package-lock.json
 
       - name: Install Rust stable
@@ -416,7 +449,7 @@ jobs:
 
       # Build natively
       - name: Build native
-        if: '!matrix.settings.docker'
+        if: "!matrix.settings.docker"
         run: ${{ matrix.settings.build }}
         shell: bash
 
@@ -444,9 +477,9 @@ jobs:
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
-          node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
-          cache: 'npm'
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+          cache: "npm"
           cache-dependency-path: nodejs/package-lock.json
 
       - name: Install dependencies
