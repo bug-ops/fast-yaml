@@ -26,11 +26,6 @@
     "index.js",
     "index.d.ts"
   ],
-  "publishConfig": {
-    "registry": "https://registry.npmjs.org/",
-    "provenance": true,
-    "access": "public"
-  },
   "napi": {
     "binaryName": "fastyaml-rs",
     "packageName": "fastyaml-rs",

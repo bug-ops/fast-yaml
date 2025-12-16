@@ -471,20 +471,17 @@ jobs:
     permissions:
       id-token: write
       contents: read
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/fastyaml-rs
     steps:
       - uses: actions/checkout@v6
-
-      - name: Set up Node.js 22
-        uses: actions/setup-node@v6
+      - uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: 22
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
           cache-dependency-path: nodejs/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci
-        working-directory: nodejs
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@v5
@@ -511,9 +508,12 @@ jobs:
           fi
           echo "Version verified: $PKG_VERSION"
         working-directory: nodejs
-
+      - run: npm ci
+        working-directory: nodejs
+      - name: Update npm for trusted publishing
+        run: npm install -g npm@latest
       - name: Publish to npm
-        run: npm publish --provenance --access public --ignore-scripts
+        run: npm publish --access public --ignore-scripts
         working-directory: nodejs
 
   # Create GitHub Release with all artifacts
