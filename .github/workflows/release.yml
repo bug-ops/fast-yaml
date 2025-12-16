@@ -483,7 +483,8 @@ jobs:
           cache-dependency-path: nodejs/package-lock.json
 
       - name: Install dependencies
-        run: cd nodejs && npm install
+        run: npm ci
+        working-directory: nodejs
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@v5
@@ -493,14 +494,14 @@ jobs:
 
       - name: List artifacts
         run: |
-          ls -lhR nodejs/artifacts/
-          echo "Moving artifacts to nodejs directory..."
-          find nodejs/artifacts -name '*.node' -exec mv {} nodejs/ \;
-          ls -lh nodejs/*.node
+          ls -lhR artifacts/
+          echo "Moving artifacts to current directory..."
+          find artifacts -name '*.node' -exec mv {} . \;
+          ls -lh *.node
+        working-directory: nodejs
 
       - name: Verify Node.js package version
         run: |
-          cd nodejs
           PKG_VERSION=$(node -p "require('./package.json').version")
           TAG_VERSION="${{ needs.extract-version.outputs.version_no_v }}"
 
@@ -509,9 +510,11 @@ jobs:
             exit 1
           fi
           echo "Version verified: $PKG_VERSION"
+        working-directory: nodejs
 
       - name: Publish to npm
-        run: cd nodejs && npm publish --provenance --access public
+        run: npm publish --provenance --access public
+        working-directory: nodejs
 
   # Create GitHub Release with all artifacts
   create-github-release:
