@@ -1,0 +1,169 @@
+name: Label Issues
+
+on:
+  issues:
+    types: [opened, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  label-issue:
+    name: Apply Labels to Issue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Apply labels based on issue content
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issueTitle = context.payload.issue.title.toLowerCase();
+            const issueBody = (context.payload.issue.body || '').toLowerCase();
+            const labelsToAdd = new Set();
+
+            // Type labels based on title and body keywords
+            if (issueTitle.includes('bug') || issueTitle.includes('error') || issueTitle.includes('crash') ||
+                issueTitle.includes('broken') || issueTitle.includes('fail') || issueTitle.includes('issue:')) {
+              labelsToAdd.add('bug');
+            }
+            if (issueTitle.includes('feature') || issueTitle.includes('enhancement') ||
+                issueTitle.includes('add') || issueTitle.includes('support for')) {
+              labelsToAdd.add('enhancement');
+            }
+            if (issueTitle.includes('question') || issueTitle.includes('how to') || issueTitle.includes('help')) {
+              labelsToAdd.add('question');
+            }
+            if (issueTitle.includes('docs') || issueTitle.includes('documentation') ||
+                issueTitle.includes('readme') || issueTitle.includes('guide')) {
+              labelsToAdd.add('documentation');
+            }
+            if (issueTitle.includes('security') || issueTitle.includes('vulnerability') ||
+                issueTitle.includes('cve') || issueBody.includes('security issue')) {
+              labelsToAdd.add('security');
+            }
+            if (issueTitle.includes('performance') || issueTitle.includes('slow') ||
+                issueTitle.includes('optimize') || issueTitle.includes('speed')) {
+              labelsToAdd.add('performance');
+            }
+            if (issueTitle.includes('test') || issueTitle.includes('testing')) {
+              labelsToAdd.add('testing');
+            }
+
+            // Component labels based on keywords
+            if (issueTitle.includes('core') || issueBody.includes('fast-yaml-core') ||
+                issueBody.includes('parser') || issueBody.includes('emitter')) {
+              labelsToAdd.add('component:core');
+            }
+            if (issueTitle.includes('linter') || issueTitle.includes('lint') ||
+                issueBody.includes('fast-yaml-linter') || issueBody.includes('validation')) {
+              labelsToAdd.add('component:linter');
+            }
+            if (issueTitle.includes('parallel') || issueTitle.includes('multi-thread') ||
+                issueBody.includes('fast-yaml-parallel') || issueBody.includes('performance')) {
+              labelsToAdd.add('component:parallel');
+            }
+            if (issueTitle.includes('python') || issueTitle.includes('pyo3') ||
+                issueBody.includes('python binding') || issueBody.includes('import fast_yaml')) {
+              labelsToAdd.add('component:python');
+            }
+            if (issueTitle.includes('nodejs') || issueTitle.includes('node.js') ||
+                issueTitle.includes('javascript') || issueTitle.includes('typescript') ||
+                issueBody.includes('node binding') || issueBody.includes('npm')) {
+              labelsToAdd.add('component:nodejs');
+            }
+            if (issueTitle.includes('ci') || issueTitle.includes('cd') ||
+                issueTitle.includes('github actions') || issueTitle.includes('workflow') ||
+                issueBody.includes('github actions') || issueBody.includes('workflow')) {
+              labelsToAdd.add('component:ci-cd');
+            }
+
+            // Priority labels based on keywords
+            if (issueTitle.includes('[critical]') || issueTitle.includes('critical:') ||
+                issueBody.includes('critical priority') || issueBody.includes('urgent') ||
+                issueTitle.includes('crash') || issueTitle.includes('data loss')) {
+              labelsToAdd.add('priority:critical');
+            } else if (issueTitle.includes('[high]') || issueTitle.includes('high priority') ||
+                       issueBody.includes('high priority') || issueBody.includes('important')) {
+              labelsToAdd.add('priority:high');
+            } else if (issueTitle.includes('[low]') || issueTitle.includes('low priority') ||
+                       issueBody.includes('low priority') || issueBody.includes('nice to have')) {
+              labelsToAdd.add('priority:low');
+            }
+
+            // Special labels
+            if (issueTitle.includes('breaking') || issueBody.includes('breaking change')) {
+              labelsToAdd.add('breaking-change');
+            }
+            if (issueBody.includes('good first issue') || issueBody.includes('beginner friendly')) {
+              labelsToAdd.add('good-first-issue');
+            }
+            if (issueBody.includes('help wanted') || issueBody.includes('looking for contributors')) {
+              labelsToAdd.add('help-wanted');
+            }
+
+            // Issue template detection
+            if (issueBody.includes('## bug report') || issueBody.includes('### expected behavior')) {
+              labelsToAdd.add('bug');
+            }
+            if (issueBody.includes('## feature request') || issueBody.includes('### proposed solution')) {
+              labelsToAdd.add('enhancement');
+            }
+
+            // Default: add needs-triage if no type label found
+            const typeLabels = ['bug', 'enhancement', 'question', 'documentation', 'security'];
+            const hasTypeLabel = Array.from(labelsToAdd).some(label => typeLabels.includes(label));
+
+            if (!hasTypeLabel) {
+              labelsToAdd.add('status:needs-triage');
+            }
+
+            // Apply all collected labels
+            if (labelsToAdd.size > 0) {
+              const currentLabels = context.payload.issue.labels.map(label => label.name);
+              const newLabels = Array.from(labelsToAdd).filter(label => !currentLabels.includes(label));
+
+              if (newLabels.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.issue.number,
+                  labels: newLabels
+                });
+
+                console.log(`Added labels: ${newLabels.join(', ')}`);
+              } else {
+                console.log('No new labels to add');
+              }
+            }
+
+      - name: Add comment for security issues
+        if: contains(github.event.issue.title, 'security') || contains(github.event.issue.title, 'vulnerability')
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number
+            });
+
+            const botComment = comments.data.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('security issue')
+            );
+
+            if (!botComment) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.issue.number,
+                body: `Thank you for reporting a security issue. Our team will review this with high priority.\n\n` +
+                      `**Important:** If this is a serious security vulnerability, please consider reporting it privately ` +
+                      `through [GitHub Security Advisories](https://github.com/${context.repo.owner}/${context.repo.repo}/security/advisories/new) ` +
+                      `instead of a public issue.`
+              });
+            }

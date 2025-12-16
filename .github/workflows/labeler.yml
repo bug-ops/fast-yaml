@@ -1,0 +1,113 @@
+name: Labeler
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    name: Apply Labels to PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Apply labels based on file changes
+        uses: actions/labeler@v6
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          configuration-path: .github/labeler.yml
+          sync-labels: false  # Don't remove labels not in config
+
+      - name: Apply labels based on PR title
+        uses: actions/github-script@v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const prTitle = context.payload.pull_request.title.toLowerCase();
+            const prBody = (context.payload.pull_request.body || '').toLowerCase();
+            const labelsToAdd = new Set();
+
+            // Type labels based on title keywords
+            if (prTitle.includes('fix:') || prTitle.includes('bug:') || prTitle.includes('[bug]')) {
+              labelsToAdd.add('bug');
+            }
+            if (prTitle.includes('feat:') || prTitle.includes('[feature]') || prTitle.includes('enhancement:')) {
+              labelsToAdd.add('enhancement');
+            }
+            if (prTitle.includes('docs:') || prTitle.includes('[docs]')) {
+              labelsToAdd.add('documentation');
+            }
+            if (prTitle.includes('refactor:') || prTitle.includes('[refactor]')) {
+              labelsToAdd.add('refactoring');
+            }
+            if (prTitle.includes('perf:') || prTitle.includes('[perf]') || prTitle.includes('performance:')) {
+              labelsToAdd.add('performance');
+            }
+            if (prTitle.includes('security:') || prTitle.includes('[security]')) {
+              labelsToAdd.add('security');
+            }
+            if (prTitle.includes('test:') || prTitle.includes('[test]')) {
+              labelsToAdd.add('testing');
+            }
+            if (prTitle.includes('chore(deps)') || prTitle.includes('bump') || prTitle.includes('update dependencies')) {
+              labelsToAdd.add('dependencies');
+            }
+
+            // Priority labels based on title/body
+            if (prTitle.includes('[critical]') || prTitle.includes('critical:') || prBody.includes('critical priority')) {
+              labelsToAdd.add('priority:critical');
+            } else if (prTitle.includes('[high]') || prTitle.includes('high priority')) {
+              labelsToAdd.add('priority:high');
+            } else if (prTitle.includes('[low]') || prTitle.includes('low priority')) {
+              labelsToAdd.add('priority:low');
+            }
+
+            // Breaking change detection
+            if (prTitle.includes('breaking:') || prTitle.includes('[breaking]') ||
+                prBody.includes('breaking change') || prBody.includes('breaking-change')) {
+              labelsToAdd.add('breaking-change');
+            }
+
+            // Component labels from title
+            if (prTitle.includes('(core)') || prTitle.includes('[core]')) {
+              labelsToAdd.add('component:core');
+            }
+            if (prTitle.includes('(linter)') || prTitle.includes('[linter]')) {
+              labelsToAdd.add('component:linter');
+            }
+            if (prTitle.includes('(parallel)') || prTitle.includes('[parallel]')) {
+              labelsToAdd.add('component:parallel');
+            }
+            if (prTitle.includes('(python)') || prTitle.includes('[python]') || prTitle.includes('(pyo3)')) {
+              labelsToAdd.add('component:python');
+            }
+            if (prTitle.includes('(nodejs)') || prTitle.includes('[nodejs]') || prTitle.includes('(node)')) {
+              labelsToAdd.add('component:nodejs');
+            }
+            if (prTitle.includes('(ci)') || prTitle.includes('[ci]') || prTitle.includes('(cd)')) {
+              labelsToAdd.add('component:ci-cd');
+            }
+
+            // Apply all collected labels
+            if (labelsToAdd.size > 0) {
+              const currentLabels = context.payload.pull_request.labels.map(label => label.name);
+              const newLabels = Array.from(labelsToAdd).filter(label => !currentLabels.includes(label));
+
+              if (newLabels.length > 0) {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.payload.pull_request.number,
+                  labels: newLabels
+                });
+
+                console.log(`Added labels: ${newLabels.join(', ')}`);
+              }
+            }
