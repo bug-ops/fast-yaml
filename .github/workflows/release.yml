@@ -594,11 +594,16 @@ jobs:
 
       - name: Generate checksums
         run: |
-          cd release-artifacts/python-wheels
-          sha256sum * > SHA256SUMS.txt
-          cd ../nodejs-binaries
-          sha256sum * > SHA256SUMS.txt
-          cd ../..
+          # Python wheels checksums
+          find release-artifacts/python -type f \( -name '*.whl' -o -name '*.tar.gz' \) -exec sha256sum {} \; > release-artifacts/python-SHA256SUMS.txt
+          # Node.js binaries checksums
+          find release-artifacts/nodejs -type f -name '*.node' -exec sha256sum {} \; > release-artifacts/nodejs-SHA256SUMS.txt
+
+          echo "Python checksums:"
+          cat release-artifacts/python-SHA256SUMS.txt
+          echo ""
+          echo "Node.js checksums:"
+          cat release-artifacts/nodejs-SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -608,8 +613,10 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            release-artifacts/python-wheels/*
-            release-artifacts/nodejs-binaries/*
+            release-artifacts/python/**/*.whl
+            release-artifacts/python/**/*.tar.gz
+            release-artifacts/nodejs/**/*.node
+            release-artifacts/*-SHA256SUMS.txt
           fail_on_unmatched_files: true
           generate_release_notes: true
 
