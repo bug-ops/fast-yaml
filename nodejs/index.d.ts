@@ -287,10 +287,7 @@ export declare function version(): string;
  * console.log(data); // { name: 'test' }
  * ```
  */
-export declare function load(
-  yamlStr: string,
-  options?: LoadOptions | undefined | null
-): unknown;
+export declare function load(yamlStr: string, options?: LoadOptions | undefined | null): unknown;
 
 /**
  * Parse a YAML string containing multiple documents with options (js-yaml compatible).
