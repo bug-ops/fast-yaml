@@ -82,16 +82,24 @@ jobs:
         with:
           shared-key: "publish-crates"
 
-      - name: Verify crate versions match tag
+      - name: Verify workspace version matches tag
         run: |
           TAG_VERSION="${{ needs.extract-version.outputs.version_no_v }}"
-          for crate in fast-yaml-core fast-yaml-ffi fast-yaml-linter fast-yaml-parallel; do
-            CRATE_VERSION=$(grep '^version' crates/$crate/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-            if [[ "$CRATE_VERSION" != "$TAG_VERSION" ]]; then
-              echo "Version mismatch: crates/$crate/Cargo.toml has $CRATE_VERSION but tag is $TAG_VERSION"
+          # Check workspace version in root Cargo.toml
+          WORKSPACE_VERSION=$(grep -A5 '^\[workspace.package\]' Cargo.toml | grep '^version' | sed 's/.*"\(.*\)".*/\1/')
+          if [[ "$WORKSPACE_VERSION" != "$TAG_VERSION" ]]; then
+            echo "Version mismatch: Cargo.toml workspace version is $WORKSPACE_VERSION but tag is $TAG_VERSION"
+            exit 1
+          fi
+          echo "✓ Workspace version $WORKSPACE_VERSION matches tag"
+          # Verify Python and Node.js package versions
+          for pkg in python/Cargo.toml nodejs/Cargo.toml nodejs/package.json; do
+            PKG_VERSION=$(grep '"version"' $pkg 2>/dev/null | head -1 | sed 's/.*"\([0-9.]*\)".*/\1/' || grep '^version' $pkg | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            if [[ "$PKG_VERSION" != "$TAG_VERSION" ]]; then
+              echo "Version mismatch: $pkg has $PKG_VERSION but tag is $TAG_VERSION"
               exit 1
             fi
-            echo "✓ $crate version $CRATE_VERSION matches tag"
+            echo "✓ $pkg version $PKG_VERSION matches tag"
           done
 
       - uses: rust-lang/crates-io-auth-action@v1
