@@ -377,18 +377,16 @@ def dump(
     else:
         dumper_instance = Dumper
 
-    # Build kwargs, only including optional parameters if provided
-    kwargs = {
-        "allow_unicode": allow_unicode,
-        "sort_keys": sort_keys,
-        "explicit_start": explicit_start,
-    }
-    if indent is not None:
-        kwargs["indent"] = indent
-    if width is not None:
-        kwargs["width"] = width
-
-    result = _dump(data, dumper_instance, **kwargs)
+    # Call the underlying _dump function with explicit parameters
+    result: str = _dump(
+        data,
+        dumper_instance,
+        allow_unicode=allow_unicode,
+        sort_keys=sort_keys,
+        indent=indent if indent is not None else 2,
+        width=width if width is not None else 80,
+        explicit_start=explicit_start,
+    )
 
     if stream is not None:
         stream.write(result)
@@ -441,18 +439,16 @@ def dump_all(
     else:
         dumper_instance = Dumper
 
-    # Build kwargs, only including optional parameters if provided
-    kwargs = {
-        "allow_unicode": allow_unicode,
-        "sort_keys": sort_keys,
-        "explicit_start": explicit_start,
-    }
-    if indent is not None:
-        kwargs["indent"] = indent
-    if width is not None:
-        kwargs["width"] = width
-
-    result = _dump_all(list(documents), dumper_instance, **kwargs)
+    # Call the underlying _dump_all function with explicit parameters
+    result: str = _dump_all(
+        list(documents),
+        dumper_instance,
+        allow_unicode=allow_unicode,
+        sort_keys=sort_keys,
+        indent=indent if indent is not None else 2,
+        width=width if width is not None else 80,
+        explicit_start=explicit_start,
+    )
 
     if stream is not None:
         stream.write(result)

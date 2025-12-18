@@ -1,6 +1,7 @@
 """Tests for PyYAML-compatible dumper classes and dump functions."""
 
 import pytest
+
 import fast_yaml
 
 
