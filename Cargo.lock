@@ -58,9 +58,9 @@ checksum = "812e12b5285cc515a9c72a5c1d3b6d46a19dac5acfef5265968c166106e31dd3"
 
 [[package]]
 name = "bumpalo"
-version = "3.19.0"
+version = "3.19.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46c5e41b57b8bba42a04676d81cb89e9ee8e859a1a66f80a5a72e1cb76b34d43"
+checksum = "5dd9dc738b7a8311c7ade152424974d8115f2cdad61e8dab8dac9f2362298510"
 
 [[package]]
 name = "cast"
@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "criterion",
  "fast-yaml-core",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-core"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "thiserror",
  "yaml-rust2",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-ffi"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "fast-yaml-core",
  "thiserror",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-linter"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "fast-yaml-core",
  "indoc",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-nodejs"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "fast-yaml-core",
  "fast-yaml-linter",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-parallel"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "criterion",
  "fast-yaml-core",
@@ -920,9 +920,9 @@ dependencies = [
 
 [[package]]
 name = "target-lexicon"
-version = "0.13.3"
+version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
+checksum = "b1dd07eb858a2067e2f3c7155d54e929265c264e6f37efe3ee7a8d1b5a1dd0ba"
 
 [[package]]
 name = "thiserror"
