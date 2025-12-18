@@ -34,6 +34,27 @@ class Loader:
     ...
 
 # =============================================================================
+# Dumper Classes (PyYAML compatibility)
+# =============================================================================
+
+class SafeDumper:
+    """Safe YAML dumper (recommended).
+
+    This is the default and recommended dumper. It only serializes basic Python
+    types and is safe against arbitrary code execution.
+    """
+
+    ...
+
+class Dumper:
+    """Full YAML dumper (PyYAML compatibility).
+
+    Note: Currently behaves identically to SafeDumper for security.
+    """
+
+    ...
+
+# =============================================================================
 # Exception Hierarchy (PyYAML compatibility)
 # =============================================================================
 
@@ -207,6 +228,54 @@ def load_all(
 
     Raises:
         YAMLError: If the YAML is invalid
+    """
+    ...
+
+def dump(
+    data: Any,
+    dumper: type | None = None,
+    *,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int = 2,
+    width: int = 80,
+    explicit_start: bool = False,
+) -> str:
+    """Serialize a Python object to YAML with an optional Dumper (PyYAML compatible).
+
+    Args:
+        data: A Python object to serialize
+        dumper: Optional dumper class (SafeDumper or Dumper)
+
+    Returns:
+        A YAML string representation of the object
+
+    Raises:
+        TypeError: If the object cannot be serialized
+    """
+    ...
+
+def dump_all(
+    documents: list[Any],
+    dumper: type | None = None,
+    *,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int = 2,
+    width: int = 80,
+    explicit_start: bool = False,
+) -> str:
+    """Serialize multiple Python objects to YAML (PyYAML compatible).
+
+    Args:
+        documents: A list of Python objects to serialize
+        dumper: Optional dumper class (SafeDumper or Dumper)
+
+    Returns:
+        A YAML string with multiple documents separated by '---'
+
+    Raises:
+        TypeError: If any object cannot be serialized
     """
     ...
 

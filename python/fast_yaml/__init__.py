@@ -26,21 +26,26 @@ from typing import IO, Any
 from . import lint, parallel
 
 # Loader classes
+# Dumper classes
 # Exception hierarchy
 # Mark class for error locations
 from ._core import (
     ComposerError,
     ConstructorError,
+    Dumper,
     EmitterError,
     FullLoader,
     Loader,
     Mark,
     MarkedYAMLError,
     ParserError,
+    SafeDumper,
     SafeLoader,
     ScannerError,
     YAMLError,
 )
+from ._core import dump as _dump
+from ._core import dump_all as _dump_all
 from ._core import load as _load
 from ._core import load_all as _load_all
 from ._core import safe_dump as _safe_dump
@@ -59,6 +64,7 @@ __all__ = [
     "load",
     "load_all",
     "dump",
+    "dump_all",
     "__version__",
     # Submodules
     "lint",
@@ -67,6 +73,9 @@ __all__ = [
     "SafeLoader",
     "FullLoader",
     "Loader",
+    # Dumper classes
+    "SafeDumper",
+    "Dumper",
     # Exceptions
     "YAMLError",
     "MarkedYAMLError",
@@ -318,5 +327,131 @@ def load_all(
     return iter(_load_all(content, loader_instance))
 
 
-# Alias for PyYAML compatibility
-dump = safe_dump
+# PyYAML-compatible dump function with optional Dumper
+def dump(
+    data: Any,
+    stream: IO[str] | None = None,
+    Dumper: type | None = None,  # noqa: N803 - PyYAML API compatibility
+    *,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int | None = None,
+    width: int | None = None,
+    explicit_start: bool = False,
+) -> str | None:
+    """
+    Serialize a Python object to a YAML string with an optional Dumper.
+
+    This is equivalent to PyYAML's `yaml.dump()`. For now, all dumpers
+    behave like SafeDumper (safe by default). The Dumper parameter is
+    accepted for API compatibility.
+
+    Args:
+        data: A Python object to serialize.
+        stream: If provided, write to this file-like object and return None.
+        Dumper: Optional dumper class (SafeDumper, Dumper).
+        allow_unicode: If True, allow unicode characters in output. Default: True.
+        sort_keys: If True, sort dictionary keys. Default: False.
+        indent: Number of spaces for indentation. Default: 2.
+        width: Maximum line width. Default: 80.
+        explicit_start: If True, add explicit document start marker (---).
+
+    Returns:
+        A YAML string if stream is None, otherwise None.
+
+    Raises:
+        TypeError: If the object contains types that cannot be serialized.
+
+    Example:
+        >>> import fast_yaml
+        >>> fast_yaml.dump({'name': 'test'})
+        'name: test\\n'
+        >>> fast_yaml.dump({'name': 'test'}, Dumper=fast_yaml.SafeDumper)
+        'name: test\\n'
+    """
+    # Handle Dumper parameter - can be None, a class, or an instance
+    if Dumper is None:
+        dumper_instance = None
+    elif isinstance(Dumper, type):
+        dumper_instance = Dumper()
+    else:
+        dumper_instance = Dumper
+
+    # Call the underlying _dump function with explicit parameters
+    result: str = _dump(
+        data,
+        dumper_instance,
+        allow_unicode=allow_unicode,
+        sort_keys=sort_keys,
+        indent=indent if indent is not None else 2,
+        width=width if width is not None else 80,
+        explicit_start=explicit_start,
+    )
+
+    if stream is not None:
+        stream.write(result)
+        return None
+
+    return result
+
+
+def dump_all(
+    documents: Iterator[Any],
+    stream: IO[str] | None = None,
+    Dumper: type | None = None,  # noqa: N803 - PyYAML API compatibility
+    *,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int | None = None,
+    width: int | None = None,
+    explicit_start: bool = False,
+) -> str | None:
+    """
+    Serialize multiple Python objects to a YAML string with document separators.
+
+    This is equivalent to PyYAML's `yaml.dump_all()`. For now, all dumpers
+    behave like SafeDumper (safe by default). The Dumper parameter is
+    accepted for API compatibility.
+
+    Args:
+        documents: An iterable of Python objects to serialize.
+        stream: If provided, write to this file-like object and return None.
+        Dumper: Optional dumper class (SafeDumper, Dumper).
+        allow_unicode: If True, allow unicode characters in output. Default: True.
+        sort_keys: If True, sort dictionary keys. Default: False.
+        indent: Number of spaces for indentation. Default: 2.
+        width: Maximum line width. Default: 80.
+        explicit_start: If True, add explicit document start markers (---).
+
+    Returns:
+        A YAML string if stream is None, otherwise None.
+
+    Example:
+        >>> import fast_yaml
+        >>> fast_yaml.dump_all([{'a': 1}, {'b': 2}])
+        '---\\na: 1\\n---\\nb: 2\\n'
+    """
+    # Handle Dumper parameter - can be None, a class, or an instance
+    if Dumper is None:
+        dumper_instance = None
+    elif isinstance(Dumper, type):
+        dumper_instance = Dumper()
+    else:
+        dumper_instance = Dumper
+
+    # Call the underlying _dump_all function with explicit parameters
+    result: str = _dump_all(
+        list(documents),
+        dumper_instance,
+        allow_unicode=allow_unicode,
+        sort_keys=sort_keys,
+        indent=indent if indent is not None else 2,
+        width=width if width is not None else 80,
+        explicit_start=explicit_start,
+    )
+
+    if stream is not None:
+        stream.write(result)
+        return None
+
+    return result

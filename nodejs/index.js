@@ -80,12 +80,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-android-arm64');
         const bindingPackageVersion = require('fastyaml-rs-android-arm64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -102,12 +102,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-android-arm-eabi');
         const bindingPackageVersion = require('fastyaml-rs-android-arm-eabi/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -132,12 +132,12 @@ function requireNative() {
           const binding = require('fastyaml-rs-win32-x64-gnu');
           const bindingPackageVersion = require('fastyaml-rs-win32-x64-gnu/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -154,12 +154,12 @@ function requireNative() {
           const binding = require('fastyaml-rs-win32-x64-msvc');
           const bindingPackageVersion = require('fastyaml-rs-win32-x64-msvc/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -177,12 +177,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-win32-ia32-msvc');
         const bindingPackageVersion = require('fastyaml-rs-win32-ia32-msvc/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -199,12 +199,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-win32-arm64-msvc');
         const bindingPackageVersion = require('fastyaml-rs-win32-arm64-msvc/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -224,12 +224,12 @@ function requireNative() {
       const binding = require('fastyaml-rs-darwin-universal');
       const bindingPackageVersion = require('fastyaml-rs-darwin-universal/package.json').version;
       if (
-        bindingPackageVersion !== '0.1.6' &&
+        bindingPackageVersion !== '0.1.9' &&
         process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
         process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
       ) {
         throw new Error(
-          `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+          `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
         );
       }
       return binding;
@@ -246,12 +246,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-darwin-x64');
         const bindingPackageVersion = require('fastyaml-rs-darwin-x64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -268,12 +268,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-darwin-arm64');
         const bindingPackageVersion = require('fastyaml-rs-darwin-arm64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -294,12 +294,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-freebsd-x64');
         const bindingPackageVersion = require('fastyaml-rs-freebsd-x64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -316,12 +316,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-freebsd-arm64');
         const bindingPackageVersion = require('fastyaml-rs-freebsd-arm64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -343,12 +343,12 @@ function requireNative() {
           const binding = require('fastyaml-rs-linux-x64-musl');
           const bindingPackageVersion = require('fastyaml-rs-linux-x64-musl/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -365,12 +365,12 @@ function requireNative() {
           const binding = require('fastyaml-rs-linux-x64-gnu');
           const bindingPackageVersion = require('fastyaml-rs-linux-x64-gnu/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -390,12 +390,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-arm64-musl/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -412,12 +412,12 @@ function requireNative() {
           const binding = require('fastyaml-rs-linux-arm64-gnu');
           const bindingPackageVersion = require('fastyaml-rs-linux-arm64-gnu/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -437,12 +437,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-arm-musleabihf/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -460,12 +460,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-arm-gnueabihf/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -485,12 +485,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-loong64-musl/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -508,12 +508,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-loong64-gnu/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -533,12 +533,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-riscv64-musl/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -556,12 +556,12 @@ function requireNative() {
           const bindingPackageVersion =
             require('fastyaml-rs-linux-riscv64-gnu/package.json').version;
           if (
-            bindingPackageVersion !== '0.1.6' &&
+            bindingPackageVersion !== '0.1.9' &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
             process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
           ) {
             throw new Error(
-              `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+              `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
             );
           }
           return binding;
@@ -579,12 +579,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-linux-ppc64-gnu');
         const bindingPackageVersion = require('fastyaml-rs-linux-ppc64-gnu/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -601,12 +601,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-linux-s390x-gnu');
         const bindingPackageVersion = require('fastyaml-rs-linux-s390x-gnu/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -627,12 +627,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-openharmony-arm64');
         const bindingPackageVersion = require('fastyaml-rs-openharmony-arm64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -649,12 +649,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-openharmony-x64');
         const bindingPackageVersion = require('fastyaml-rs-openharmony-x64/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -671,12 +671,12 @@ function requireNative() {
         const binding = require('fastyaml-rs-openharmony-arm');
         const bindingPackageVersion = require('fastyaml-rs-openharmony-arm/package.json').version;
         if (
-          bindingPackageVersion !== '0.1.6' &&
+          bindingPackageVersion !== '0.1.9' &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK &&
           process.env.NAPI_RS_ENFORCE_VERSION_CHECK !== '0'
         ) {
           throw new Error(
-            `Native binding package version mismatch, expected 0.1.6 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
+            `Native binding package version mismatch, expected 0.1.9 but got ${bindingPackageVersion}. You can reinstall dependencies to fix this issue.`
           );
         }
         return binding;
@@ -742,22 +742,12 @@ if (!nativeBinding) {
 }
 
 module.exports = nativeBinding;
+module.exports.Mark = nativeBinding.Mark;
+module.exports.load = nativeBinding.load;
+module.exports.loadAll = nativeBinding.loadAll;
 module.exports.safeDump = nativeBinding.safeDump;
 module.exports.safeDumpAll = nativeBinding.safeDumpAll;
 module.exports.safeLoad = nativeBinding.safeLoad;
 module.exports.safeLoadAll = nativeBinding.safeLoadAll;
+module.exports.Schema = nativeBinding.Schema;
 module.exports.version = nativeBinding.version;
-
-// Phase 1: js-yaml compatible features
-module.exports.load = nativeBinding.load;
-module.exports.loadAll = nativeBinding.loadAll;
-module.exports.Mark = nativeBinding.Mark;
-
-// Schema constants (js-yaml compatibility)
-module.exports.SAFE_SCHEMA = 'SafeSchema';
-module.exports.JSON_SCHEMA = 'JsonSchema';
-module.exports.CORE_SCHEMA = 'CoreSchema';
-module.exports.FAILSAFE_SCHEMA = 'FailsafeSchema';
-
-// Aliases for js-yaml compatibility
-module.exports.dump = nativeBinding.safeDump;

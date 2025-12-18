@@ -110,6 +110,62 @@ impl Loader {
 }
 
 // ============================================
+// Dumper Classes (PyYAML Compatibility)
+// ============================================
+
+/// SafeDumper - safe YAML output (default behavior)
+///
+/// This dumper produces YAML with only safe data types.
+/// This is the recommended dumper for serialization.
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> dumper = fast_yaml.SafeDumper()
+///     >>> yaml_str = fast_yaml.dump({'key': 'value'}, dumper)
+#[pyclass]
+#[derive(Clone)]
+pub struct SafeDumper;
+
+#[pymethods]
+impl SafeDumper {
+    #[new]
+    const fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::unused_self)]
+    fn __repr__(&self) -> String {
+        "SafeDumper()".to_string()
+    }
+}
+
+/// Dumper - alias for SafeDumper (for PyYAML compatibility)
+///
+/// Provided for compatibility with PyYAML code that uses the Dumper class.
+/// Behaves identically to SafeDumper.
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> dumper = fast_yaml.Dumper()
+///     >>> yaml_str = fast_yaml.dump({'key': 'value'}, dumper)
+#[pyclass]
+#[derive(Clone)]
+pub struct Dumper;
+
+#[pymethods]
+impl Dumper {
+    #[new]
+    const fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::unused_self)]
+    fn __repr__(&self) -> String {
+        "Dumper()".to_string()
+    }
+}
+
+// ============================================
 // Exception Hierarchy (PyYAML Compatibility)
 // ============================================
 
@@ -755,6 +811,147 @@ fn load_all(py: Python<'_>, stream: &str, loader: Option<Py<PyAny>>) -> PyResult
     safe_load_all(py, stream)
 }
 
+/// Serialize a Python object to YAML with an optional dumper.
+///
+/// This is equivalent to PyYAML's `yaml.dump()`. For now, all dumpers
+/// behave like SafeDumper (safe by default). The dumper parameter is
+/// accepted for API compatibility.
+///
+/// Args:
+///     data: A Python object to serialize (dict, list, str, int, float, bool, None)
+///     stream: Reserved for PyYAML compatibility (not currently used)
+///     dumper: Optional dumper instance (SafeDumper, Dumper)
+///     allow_unicode: Allow unicode characters (default: True)
+///     sort_keys: If True, sort dictionary keys (default: False)
+///     indent: Indentation width in spaces (default: 2)
+///     width: Line width for wrapping (default: 80)
+///     default_flow_style: Force flow/block style (default: None)
+///     explicit_start: Add document start marker `---` (default: False)
+///
+/// Returns:
+///     A YAML string representation of the object
+///
+/// Raises:
+///     TypeError: If the object contains types that cannot be serialized
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> fast_yaml.dump({'name': 'test', 'value': 123})
+///     'name: test\\nvalue: 123\\n'
+///     >>> fast_yaml.dump({'key': 'value'}, dumper=fast_yaml.SafeDumper())
+///     'key: value\\n'
+#[pyfunction]
+#[pyo3(signature = (
+    data,
+    stream=None,
+    dumper=None,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false
+))]
+#[allow(unused_variables)] // stream, dumper, allow_unicode accepted for PyYAML API compatibility
+#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
+#[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
+fn dump(
+    py: Python<'_>,
+    data: &Bound<'_, PyAny>,
+    stream: Option<Py<PyAny>>,
+    dumper: Option<Py<PyAny>>,
+    allow_unicode: bool,
+    sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
+) -> PyResult<String> {
+    // For now, all dumpers behave like SafeDumper
+    // The dumper and stream parameters are accepted for PyYAML API compatibility
+    safe_dump(
+        py,
+        data,
+        allow_unicode,
+        sort_keys,
+        indent,
+        width,
+        default_flow_style,
+        explicit_start,
+    )
+}
+
+/// Serialize multiple Python objects to YAML with an optional dumper.
+///
+/// This is equivalent to PyYAML's `yaml.dump_all()`. For now, all dumpers
+/// behave like SafeDumper (safe by default). The dumper parameter is
+/// accepted for API compatibility.
+///
+/// Args:
+///     documents: An iterable of Python objects to serialize
+///     stream: Reserved for PyYAML compatibility (not currently used)
+///     dumper: Optional dumper instance (SafeDumper, Dumper)
+///     allow_unicode: Allow unicode characters (default: True)
+///     sort_keys: If True, sort dictionary keys (default: False)
+///     indent: Indentation width in spaces (default: 2)
+///     width: Line width for wrapping (default: 80)
+///     default_flow_style: Force flow/block style (default: None)
+///     explicit_start: Add document start marker `---` (default: False)
+///
+/// Returns:
+///     A YAML string with multiple documents separated by "---"
+///
+/// Raises:
+///     TypeError: If any object cannot be serialized
+///     ValueError: If total output size exceeds 100MB limit
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> fast_yaml.dump_all([{'a': 1}, {'b': 2}])
+///     '---\\na: 1\\n---\\nb: 2\\n'
+///     >>> fast_yaml.dump_all([{'x': 1}], dumper=fast_yaml.SafeDumper())
+///     '---\\nx: 1\\n'
+#[pyfunction]
+#[pyo3(signature = (
+    documents,
+    stream=None,
+    dumper=None,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false
+))]
+#[allow(unused_variables)] // stream, dumper, allow_unicode accepted for PyYAML API compatibility
+#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
+#[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
+fn dump_all(
+    py: Python<'_>,
+    documents: &Bound<'_, PyAny>,
+    stream: Option<Py<PyAny>>,
+    dumper: Option<Py<PyAny>>,
+    allow_unicode: bool,
+    sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
+) -> PyResult<String> {
+    // For now, all dumpers behave like SafeDumper
+    // The dumper and stream parameters are accepted for PyYAML API compatibility
+    safe_dump_all(
+        py,
+        documents,
+        allow_unicode,
+        sort_keys,
+        indent,
+        width,
+        default_flow_style,
+        explicit_start,
+    )
+}
+
 /// Get the version of the fast-yaml library.
 #[pyfunction]
 const fn version() -> &'static str {
@@ -782,11 +979,17 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // PyYAML compatibility functions
     m.add_function(wrap_pyfunction!(load, m)?)?;
     m.add_function(wrap_pyfunction!(load_all, m)?)?;
+    m.add_function(wrap_pyfunction!(dump, m)?)?;
+    m.add_function(wrap_pyfunction!(dump_all, m)?)?;
 
     // Loader classes
     m.add_class::<SafeLoader>()?;
     m.add_class::<FullLoader>()?;
     m.add_class::<Loader>()?;
+
+    // Dumper classes
+    m.add_class::<SafeDumper>()?;
+    m.add_class::<Dumper>()?;
 
     // Exception hierarchy
     m.add("YAMLError", m.py().get_type::<YAMLError>())?;
