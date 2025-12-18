@@ -211,6 +211,11 @@ impl Emitter {
             };
             let doc = Self::emit_str_with_config(value, &doc_config)?;
             output.push_str(&doc);
+
+            // Ensure document ends with newline for proper separation
+            if !output.ends_with('\n') {
+                output.push('\n');
+            }
         }
 
         Ok(output)

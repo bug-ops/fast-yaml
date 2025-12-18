@@ -229,9 +229,9 @@ describe('Core API - Serializer', () => {
       expect(yaml).toContain('b: 2');
       expect(yaml).toContain('c: 3');
 
-      // Count document separators (yaml-rust2 adds --- to each document)
+      // Count document separators (one before each document except the first)
       const separators = (yaml.match(/---/g) || []).length;
-      expect(separators).toBe(3); // One separator per document
+      expect(separators).toBe(2); // n-1 separators for n documents
     });
 
     it('should handle empty array', () => {
