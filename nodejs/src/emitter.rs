@@ -6,7 +6,7 @@
 use crate::conversion::js_to_yaml;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
-use yaml_rust2::{Yaml, YamlEmitter};
+use yaml_rust2::Yaml;
 
 /// Maximum output size in bytes for `safe_dump`/`safe_dump_all` (100MB).
 ///
@@ -23,6 +23,23 @@ pub struct DumpOptions {
     /// Allow unicode characters (default: true).
     /// Note: yaml-rust2 always outputs unicode; this is accepted for API compatibility.
     pub allow_unicode: Option<bool>,
+
+    /// Indentation width in spaces (default: 2).
+    /// Valid range: 1-9 (values outside this range will be clamped).
+    pub indent: Option<u32>,
+
+    /// Maximum line width for wrapping (default: 80).
+    /// Valid range: 20-1000 (values outside this range will be clamped).
+    pub width: Option<u32>,
+
+    /// Default flow style for collections (default: null).
+    /// - null: Use block style (multi-line)
+    /// - true: Force flow style (inline: [...], {...})
+    /// - false: Force block style (explicit)
+    pub default_flow_style: Option<bool>,
+
+    /// Add explicit document start marker `---` (default: false).
+    pub explicit_start: Option<bool>,
 }
 
 impl Default for DumpOptions {
@@ -30,6 +47,10 @@ impl Default for DumpOptions {
         Self {
             sort_keys: Some(false),
             allow_unicode: Some(true),
+            indent: Some(2),
+            width: Some(80),
+            default_flow_style: None,
+            explicit_start: Some(false),
         }
     }
 }
@@ -75,22 +96,16 @@ pub fn safe_dump(
         yaml = sort_yaml_keys(&yaml);
     }
 
-    // Serialize to string
-    let mut output = String::new();
-    let mut emitter = YamlEmitter::new(&mut output);
+    // Create emitter configuration from options
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(opts.indent.unwrap_or(2) as usize)
+        .with_width(opts.width.unwrap_or(80) as usize)
+        .with_default_flow_style(opts.default_flow_style)
+        .with_explicit_start(opts.explicit_start.unwrap_or(false));
 
-    emitter
-        .dump(&yaml)
+    // Serialize to string using EmitterConfig
+    let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config)
         .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
-
-    // Remove the leading "---\n" that yaml-rust2 adds
-    let output = if let Some(stripped) = output.strip_prefix("---\n") {
-        stripped.to_string()
-    } else if let Some(stripped) = output.strip_prefix("---") {
-        stripped.trim_start_matches('\n').to_string()
-    } else {
-        output
-    };
 
     Ok(output)
 }
@@ -147,30 +162,24 @@ pub fn safe_dump_all(
         yamls.push(yaml);
     }
 
-    // Serialize all documents
-    let mut output = String::new();
+    // Create emitter configuration from options
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(opts.indent.unwrap_or(2) as usize)
+        .with_width(opts.width.unwrap_or(80) as usize)
+        .with_default_flow_style(opts.default_flow_style)
+        .with_explicit_start(opts.explicit_start.unwrap_or(false));
 
-    for yaml in &yamls {
-        let mut doc_output = String::new();
-        let mut emitter = YamlEmitter::new(&mut doc_output);
-        emitter
-            .dump(yaml)
-            .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
+    // Serialize all documents using EmitterConfig
+    let output = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &config)
+        .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
 
-        // Ensure previous content ends with newline before adding new doc
-        if !output.is_empty() && !output.ends_with('\n') {
-            output.push('\n');
-        }
-
-        // yaml-rust2 adds "---\n" prefix which we keep for multi-doc
-        output.push_str(&doc_output);
-
-        // Check output size to prevent memory exhaustion
-        if output.len() > MAX_OUTPUT_SIZE {
-            return Err(napi::Error::from_reason(format!(
-                "output size exceeds maximum allowed {MAX_OUTPUT_SIZE} (100MB)"
-            )));
-        }
+    // Check output size to prevent memory exhaustion
+    if output.len() > MAX_OUTPUT_SIZE {
+        return Err(napi::Error::from_reason(format!(
+            "output size {} exceeds maximum allowed {} (100MB)",
+            output.len(),
+            MAX_OUTPUT_SIZE
+        )));
     }
 
     Ok(output)
@@ -221,6 +230,10 @@ mod tests {
         let opts = DumpOptions::default();
         assert_eq!(opts.sort_keys, Some(false));
         assert_eq!(opts.allow_unicode, Some(true));
+        assert_eq!(opts.indent, Some(2));
+        assert_eq!(opts.width, Some(80));
+        assert_eq!(opts.default_flow_style, None);
+        assert_eq!(opts.explicit_start, Some(false));
     }
 
     #[test]

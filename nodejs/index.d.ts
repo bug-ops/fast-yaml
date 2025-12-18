@@ -100,6 +100,27 @@ export interface DumpOptions {
    * Note: yaml-rust2 always outputs unicode; this is accepted for API compatibility.
    */
   allowUnicode?: boolean;
+  /**
+   * Indentation width in spaces (default: 2).
+   * Valid range: 1-9 (values outside this range will be clamped).
+   */
+  indent?: number;
+  /**
+   * Maximum line width for wrapping (default: 80).
+   * Valid range: 20-1000 (values outside this range will be clamped).
+   */
+  width?: number;
+  /**
+   * Default flow style for collections (default: null).
+   * - null: Use block style (multi-line)
+   * - true: Force flow style (inline: [...], {...})
+   * - false: Force block style (explicit)
+   */
+  defaultFlowStyle?: boolean | null;
+  /**
+   * Add explicit document start marker `---` (default: false).
+   */
+  explicitStart?: boolean;
 }
 
 /**
