@@ -8,7 +8,6 @@ from typing import Any
 # Loader Classes (PyYAML compatibility)
 # =============================================================================
 
-
 class SafeLoader:
     """Safe YAML loader (recommended for untrusted input).
 
@@ -18,7 +17,6 @@ class SafeLoader:
 
     ...
 
-
 class FullLoader:
     """Full YAML loader with most features.
 
@@ -26,7 +24,6 @@ class FullLoader:
     """
 
     ...
-
 
 class Loader:
     """Full YAML loader (PyYAML compatibility).
@@ -36,17 +33,14 @@ class Loader:
 
     ...
 
-
 # =============================================================================
 # Exception Hierarchy (PyYAML compatibility)
 # =============================================================================
-
 
 class YAMLError(Exception):
     """Base exception for all YAML errors."""
 
     ...
-
 
 class MarkedYAMLError(YAMLError):
     """YAML error with source location information."""
@@ -66,41 +60,34 @@ class MarkedYAMLError(YAMLError):
         note: str | None = None,
     ) -> None: ...
 
-
 class ScannerError(MarkedYAMLError):
     """Error during YAML scanning (lexical analysis)."""
 
     ...
-
 
 class ParserError(MarkedYAMLError):
     """Error during YAML parsing (syntax analysis)."""
 
     ...
 
-
 class ComposerError(MarkedYAMLError):
     """Error during YAML composition (building node graph)."""
 
     ...
-
 
 class ConstructorError(MarkedYAMLError):
     """Error during YAML construction (building Python objects)."""
 
     ...
 
-
 class EmitterError(YAMLError):
     """Error during YAML emission."""
 
     ...
 
-
 # =============================================================================
 # Mark Class (error location tracking)
 # =============================================================================
-
 
 class Mark:
     """Represents a position in a YAML source file.
@@ -187,7 +174,6 @@ def version() -> str:
     """Get the version of the fast-yaml library."""
     ...
 
-
 def load(
     yaml_str: str,
     loader: type | None = None,
@@ -206,7 +192,6 @@ def load(
     """
     ...
 
-
 def load_all(
     yaml_str: str,
     loader: type | None = None,
@@ -224,7 +209,6 @@ def load_all(
         YAMLError: If the YAML is invalid
     """
     ...
-
 
 # Lint submodule (PyO3 submodule, not a class - noqa: N801)
 class lint:  # noqa: N801
