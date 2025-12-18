@@ -92,12 +92,12 @@ const multiDoc = safeDumpAll([{ a: 1 }, { b: 2 }]);
 
 ```typescript
 interface DumpOptions {
-  sortKeys?: boolean;         // Sort object keys alphabetically (default: false)
-  allowUnicode?: boolean;     // Allow unicode characters (default: true)
-  indent?: number;            // Indentation width 1-9 (default: 2)
-  width?: number;             // Line width 20-1000 (default: 80)
+  sortKeys?: boolean; // Sort object keys alphabetically (default: false)
+  allowUnicode?: boolean; // Allow unicode characters (default: true)
+  indent?: number; // Indentation width 1-9 (default: 2)
+  width?: number; // Line width 20-1000 (default: 80)
   defaultFlowStyle?: boolean; // Force flow style [...], {...} (default: null/block)
-  explicitStart?: boolean;    // Add '---' document marker (default: false)
+  explicitStart?: boolean; // Add '---' document marker (default: false)
 }
 ```
 
