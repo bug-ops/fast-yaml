@@ -343,8 +343,8 @@ wheels = [
 ]
 
 [[package]]
-name = "fast-yaml"
-version = "0.1.0"
+name = "fastyaml-rs"
+version = "0.1.9"
 source = { editable = "." }
 
 [package.dev-dependencies]
@@ -367,7 +367,7 @@ dev = [
     { name = "maturin", specifier = ">=1.7,<2.0" },
     { name = "mypy", specifier = ">=1.0" },
     { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-cov", specifier = ">=4.0,<7.0" },
+    { name = "pytest-cov", specifier = ">=4.0,<8.0" },
     { name = "ruff", specifier = ">=0.8" },
 ]
 
