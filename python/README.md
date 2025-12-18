@@ -30,6 +30,7 @@ print(yaml_str)  # name: test\nvalue: 123\n
 
 - **YAML 1.2.2 compliant** — Full Core Schema support
 - **Fast** — 5-10x faster than PyYAML
+- **PyYAML compatible** — Drop-in replacement with `load`, `dump`, `Loader`, `Dumper` classes
 - **Linter** — Rich diagnostics with line/column tracking
 - **Parallel processing** — Multi-threaded parsing for large files
 - **Type stubs** — Full IDE support with `.pyi` files

@@ -22,7 +22,7 @@ Drop-in replacement for PyYAML's `safe_*` functions and js-yaml with **5-10x fas
 - **YAML 1.2.2 Core Schema** — Full specification compliance ([yaml.org/spec/1.2.2](https://yaml.org/spec/1.2.2/))
 - **5-10x Faster** — Rust-powered parsing outperforms pure Python PyYAML
 - **2-3x Faster** — Even beats PyYAML with libyaml C extension
-- **Drop-in Replacement** — Compatible `safe_load`, `safe_dump`, `safe_load_all`, `safe_dump_all`
+- **Drop-in Replacement** — Full PyYAML/js-yaml API: `load`, `dump`, `safe_load`, `safe_dump`, Loader/Dumper classes
 - **Type-safe** — Full Python type hints with `.pyi` stubs
 
 ### Linter
@@ -181,7 +181,17 @@ data = fast_yaml.safe_load(yaml_string)
 # Load multiple documents
 for doc in fast_yaml.safe_load_all(yaml_string):
     print(doc)
+
+# PyYAML-compatible load() with optional Loader
+data = fast_yaml.load(yaml_string, Loader=fast_yaml.SafeLoader)
+
+# Load multiple documents with Loader
+for doc in fast_yaml.load_all(yaml_string, Loader=fast_yaml.FullLoader):
+    print(doc)
 ```
+
+> [!TIP]
+> All loader classes (`SafeLoader`, `FullLoader`, `Loader`) currently behave identically for security. The parameter is accepted for PyYAML API compatibility.
 
 ### Dumping YAML
 
@@ -198,6 +208,23 @@ yaml_str = fast_yaml.safe_dump(
 
 # Dump multiple documents
 yaml_str = fast_yaml.safe_dump_all([doc1, doc2, doc3])
+
+# PyYAML-compatible dump() with full options
+yaml_str = fast_yaml.dump(
+    data,
+    Dumper=fast_yaml.SafeDumper,  # optional dumper class
+    indent=2,                      # indentation (default: 2)
+    width=80,                      # line width (default: 80)
+    explicit_start=False,          # add '---' marker
+    sort_keys=False,
+)
+
+# Dump multiple documents with options
+yaml_str = fast_yaml.dump_all(
+    [doc1, doc2, doc3],
+    Dumper=fast_yaml.Dumper,
+    explicit_start=True,
+)
 ```
 
 > [!NOTE]

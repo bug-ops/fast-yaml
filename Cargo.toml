@@ -10,6 +10,7 @@ members = [
 ]
 
 [workspace.package]
+version = "0.1.10"
 edition = "2024"
 rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
@@ -17,12 +18,12 @@ repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 # Internal crates (version required for cargo publish --workspace)
-fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.1.9" }
-fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.1.9" }
-fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.1.9" }
-fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.1.9" }
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.1.10" }
+fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.1.10" }
+fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.1.10" }
+fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.1.10" }
 
-# External dependencies 
+# External dependencies
 criterion = "0.8"
 indoc = "2.0"
 is-terminal = "0.4"

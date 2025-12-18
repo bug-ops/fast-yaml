@@ -1,6 +1,6 @@
 [package]
 name = "fast-yaml"
-version = "0.1.9"
+version.Workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

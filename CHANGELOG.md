@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.10] - 2025-12-19
+
+### Added
+- **Python**: Full PyYAML-compatible `load()` and `load_all()` functions with optional `Loader` parameter
+- **Python**: Full PyYAML-compatible `dump()` and `dump_all()` functions with `Dumper`, `indent`, `width`, `explicit_start` parameters
+- **Python**: Loader classes (`SafeLoader`, `FullLoader`, `Loader`) for PyYAML API compatibility
+- **Python**: Dumper classes (`SafeDumper`, `Dumper`) for PyYAML API compatibility
+- **Python**: Complete type stubs for all new classes and functions in `_core.pyi`
+- **Python**: 24 new tests for Dumper classes and dump functions
+- **Node.js**: Enhanced `DumpOptions` with `indent`, `width`, `defaultFlowStyle`, `explicitStart` parameters
+
+### Fixed
+- **Core**: Multi-document YAML emission now correctly adds trailing newlines between documents
+- **Node.js**: Fixed multi-document round-trip parsing that was concatenating values with separators
+
 ## [0.1.9] - 2025-12-17
 
 ### Fixed
