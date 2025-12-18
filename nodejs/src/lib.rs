@@ -29,7 +29,7 @@ mod parser;
 
 // Re-export public API
 pub use emitter::{DumpOptions, safe_dump, safe_dump_all};
-pub use parser::{safe_load, safe_load_all, load, load_all, LoadOptions};
+pub use parser::{LoadOptions, load, load_all, safe_load, safe_load_all};
 
 // ============================================================================
 // Schema Types (js-yaml compatibility)

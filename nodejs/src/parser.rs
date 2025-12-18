@@ -3,8 +3,8 @@
 //! This module provides safe YAML parsing functions that convert YAML strings
 //! to JavaScript objects.
 
-use crate::conversion::yaml_to_js;
 use crate::Schema;
+use crate::conversion::yaml_to_js;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
 use yaml_rust2::YamlLoader;
