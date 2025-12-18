@@ -4,6 +4,105 @@ from __future__ import annotations
 
 from typing import Any
 
+# =============================================================================
+# Loader Classes (PyYAML compatibility)
+# =============================================================================
+
+class SafeLoader:
+    """Safe YAML loader (recommended for untrusted input).
+
+    This is the default and recommended loader. It only loads basic Python
+    types and is safe against arbitrary code execution.
+    """
+
+    ...
+
+class FullLoader:
+    """Full YAML loader with most features.
+
+    Note: Currently behaves identically to SafeLoader for security.
+    """
+
+    ...
+
+class Loader:
+    """Full YAML loader (PyYAML compatibility).
+
+    Note: Currently behaves identically to SafeLoader for security.
+    """
+
+    ...
+
+# =============================================================================
+# Exception Hierarchy (PyYAML compatibility)
+# =============================================================================
+
+class YAMLError(Exception):
+    """Base exception for all YAML errors."""
+
+    ...
+
+class MarkedYAMLError(YAMLError):
+    """YAML error with source location information."""
+
+    context: str | None
+    context_mark: "Mark | None"
+    problem: str | None
+    problem_mark: "Mark | None"
+    note: str | None
+
+    def __init__(
+        self,
+        context: str | None = None,
+        context_mark: "Mark | None" = None,
+        problem: str | None = None,
+        problem_mark: "Mark | None" = None,
+        note: str | None = None,
+    ) -> None: ...
+
+class ScannerError(MarkedYAMLError):
+    """Error during YAML scanning (lexical analysis)."""
+
+    ...
+
+class ParserError(MarkedYAMLError):
+    """Error during YAML parsing (syntax analysis)."""
+
+    ...
+
+class ComposerError(MarkedYAMLError):
+    """Error during YAML composition (building node graph)."""
+
+    ...
+
+class ConstructorError(MarkedYAMLError):
+    """Error during YAML construction (building Python objects)."""
+
+    ...
+
+class EmitterError(YAMLError):
+    """Error during YAML emission."""
+
+    ...
+
+# =============================================================================
+# Mark Class (error location tracking)
+# =============================================================================
+
+class Mark:
+    """Represents a position in a YAML source file.
+
+    Used to indicate where errors occur during parsing.
+    """
+
+    name: str
+    line: int
+    column: int
+
+    def __init__(self, name: str, line: int, column: int) -> None: ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
+
 # Core parsing functions
 def safe_load(yaml_str: str) -> Any:
     """Parse a YAML string and return a Python object.
@@ -73,6 +172,42 @@ def safe_dump_all(documents: Any) -> str:
 
 def version() -> str:
     """Get the version of the fast-yaml library."""
+    ...
+
+def load(
+    yaml_str: str,
+    loader: type | None = None,
+) -> Any:
+    """Parse a YAML string with an optional Loader (PyYAML compatible).
+
+    Args:
+        yaml_str: A YAML document as a string
+        loader: Optional loader class (SafeLoader, FullLoader, or Loader)
+
+    Returns:
+        The parsed YAML document as Python objects
+
+    Raises:
+        YAMLError: If the YAML is invalid
+    """
+    ...
+
+def load_all(
+    yaml_str: str,
+    loader: type | None = None,
+) -> list[Any]:
+    """Parse multiple YAML documents with an optional Loader (PyYAML compatible).
+
+    Args:
+        yaml_str: A YAML string potentially containing multiple documents
+        loader: Optional loader class (SafeLoader, FullLoader, or Loader)
+
+    Returns:
+        A list of parsed YAML documents
+
+    Raises:
+        YAMLError: If the YAML is invalid
+    """
     ...
 
 # Lint submodule (PyO3 submodule, not a class - noqa: N801)

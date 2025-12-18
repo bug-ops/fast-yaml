@@ -14,14 +14,215 @@
 //! - **Float**: Standard notation, `.inf`, `-.inf`, `.nan`
 //! - **String**: Plain, single-quoted, double-quoted, literal (`|`), folded (`>`)
 
-use pyo3::exceptions::{PyTypeError, PyValueError};
+#![allow(clippy::doc_markdown)] // Python docstrings use different conventions
+
+use pyo3::create_exception;
+use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
-use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
+use yaml_rust2::{Yaml, YamlLoader};
 
 mod conversion;
 mod lint;
 mod parallel;
+
+// ============================================
+// Loader Classes (PyYAML Compatibility)
+// ============================================
+
+/// SafeLoader - only safe YAML types (default behavior)
+///
+/// This loader restricts YAML to safe data types and prevents
+/// arbitrary code execution. This is the recommended loader for
+/// untrusted YAML input.
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> loader = fast_yaml.SafeLoader()
+///     >>> data = fast_yaml.load("key: value", loader)
+#[pyclass]
+#[derive(Clone)]
+pub struct SafeLoader;
+
+#[pymethods]
+impl SafeLoader {
+    #[new]
+    const fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::unused_self)]
+    fn __repr__(&self) -> String {
+        "SafeLoader()".to_string()
+    }
+}
+
+/// FullLoader - safe types + additional Python built-ins
+///
+/// This loader supports additional Python data types beyond the safe
+/// subset. Currently behaves identically to SafeLoader (safe by default).
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> loader = fast_yaml.FullLoader()
+///     >>> data = fast_yaml.load("key: value", loader)
+#[pyclass]
+#[derive(Clone)]
+pub struct FullLoader;
+
+#[pymethods]
+impl FullLoader {
+    #[new]
+    const fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::unused_self)]
+    fn __repr__(&self) -> String {
+        "FullLoader()".to_string()
+    }
+}
+
+/// Loader - alias for SafeLoader (for PyYAML compatibility)
+///
+/// Provided for compatibility with PyYAML code that uses the Loader class.
+/// Behaves identically to SafeLoader.
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> loader = fast_yaml.Loader()
+///     >>> data = fast_yaml.load("key: value", loader)
+#[pyclass]
+#[derive(Clone)]
+pub struct Loader;
+
+#[pymethods]
+impl Loader {
+    #[new]
+    const fn new() -> Self {
+        Self
+    }
+
+    #[allow(clippy::unused_self)]
+    fn __repr__(&self) -> String {
+        "Loader()".to_string()
+    }
+}
+
+// ============================================
+// Exception Hierarchy (PyYAML Compatibility)
+// ============================================
+
+// Base exception for all YAML errors.
+create_exception!(
+    _core,
+    YAMLError,
+    PyException,
+    "Base exception for YAML errors."
+);
+
+// YAML error with source location information (line, column).
+create_exception!(
+    _core,
+    MarkedYAMLError,
+    YAMLError,
+    "YAML error with source location information."
+);
+
+// Error during scanning phase (lexical analysis).
+create_exception!(
+    _core,
+    ScannerError,
+    MarkedYAMLError,
+    "Error during YAML scanning."
+);
+
+// Error during parsing phase (syntax analysis).
+create_exception!(
+    _core,
+    ParserError,
+    MarkedYAMLError,
+    "Error during YAML parsing."
+);
+
+// Error during composition phase (document building).
+create_exception!(
+    _core,
+    ComposerError,
+    MarkedYAMLError,
+    "Error during YAML composition."
+);
+
+// Error during construction phase (object creation).
+create_exception!(
+    _core,
+    ConstructorError,
+    MarkedYAMLError,
+    "Error during YAML construction."
+);
+
+// Error during emission phase (serialization).
+create_exception!(
+    _core,
+    EmitterError,
+    YAMLError,
+    "Error during YAML emission."
+);
+
+/// Mark class for tracking source location in YAML errors.
+///
+/// Stores the name of the input source (e.g., filename or `"<string>"`),
+/// line number (0-indexed), and column number (0-indexed).
+///
+/// Example:
+/// ```python
+/// mark = fast_yaml.Mark("<string>", 5, 10)
+/// mark.line   # 5
+/// mark.column # 10
+/// ```
+#[pyclass]
+#[derive(Clone, Debug)]
+pub struct Mark {
+    /// Name of the input source (e.g., filename or `"<string>"`)
+    #[pyo3(get)]
+    pub name: String,
+
+    /// Line number (0-indexed)
+    #[pyo3(get)]
+    pub line: usize,
+
+    /// Column number (0-indexed)
+    #[pyo3(get)]
+    pub column: usize,
+}
+
+#[pymethods]
+impl Mark {
+    /// Create a new Mark with the given source name, line, and column.
+    ///
+    /// Args:
+    ///     name: Name of the input source (e.g., filename or "<string>")
+    ///     line: Line number (0-indexed)
+    ///     column: Column number (0-indexed)
+    #[new]
+    #[allow(clippy::missing_const_for_fn)] // PyO3 #[new] with String can't be const
+    fn new(name: String, line: usize, column: usize) -> Self {
+        Self { name, line, column }
+    }
+
+    /// String representation of the Mark.
+    fn __repr__(&self) -> String {
+        format!(
+            "Mark(name={:?}, line={}, column={})",
+            self.name, self.line, self.column
+        )
+    }
+
+    /// Human-readable string representation.
+    fn __str__(&self) -> String {
+        format!("{}:{}:{}", self.name, self.line, self.column)
+    }
+}
 
 /// Maximum input size in bytes for `safe_load/safe_dump` (100MB).
 ///
@@ -298,33 +499,48 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///
 /// Args:
 ///     data: A Python object to serialize (dict, list, str, int, float, bool, None)
-///     `allow_unicode`: Accepted for `PyYAML` API compatibility. Default: True.
-///         Note: yaml-rust2 always outputs unicode characters; this parameter
-///         is currently ignored but accepted to maintain API compatibility.
-///     `sort_keys`: If True, sort dictionary keys. Default: False
+///     `allow_unicode`: Accepted for `PyYAML` API compatibility (default: `True`)
+///     `sort_keys`: If `True`, sort dictionary keys (default: `False`)
+///     `indent`: Indentation width in spaces (default: 2)
+///     `width`: Line width for wrapping (default: 80)
+///     `default_flow_style`: Force flow/block style (default: `None`)
+///     `explicit_start`: Add document start marker `---` (default: `False`)
 ///
 /// Returns:
 ///     A YAML string representation of the object
 ///
 /// Raises:
-///     `TypeError`: If the object contains types that cannot be serialized
+///     TypeError: If the object contains types that cannot be serialized
 ///
 /// Example:
-///     >>> import `fast_yaml`
-///     >>> `fast_yaml.safe_dump`({'name': 'test', 'value': 123})
+///     >>> import fast_yaml
+///     >>> fast_yaml.safe_dump({'name': 'test', 'value': 123})
 ///     'name: test\\nvalue: 123\\n'
+///     >>> fast_yaml.safe_dump({'key': 'value'}, explicit_start=True)
+///     '---\\nkey: value\\n'
 #[pyfunction]
-#[pyo3(signature = (data, allow_unicode=true, sort_keys=false))]
+#[pyo3(signature = (
+    data,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false
+))]
 #[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
+#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
 fn safe_dump(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
     allow_unicode: bool,
     sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
 ) -> PyResult<String> {
-    // Note: allow_unicode is accepted for PyYAML API compatibility but
-    // yaml-rust2 always outputs unicode characters. The parameter is
-    // intentionally unused but kept for API compatibility.
+    // Convert Python object to YAML
     let yaml = python_to_yaml(data)?;
 
     // Sort keys if requested
@@ -334,22 +550,17 @@ fn safe_dump(
         yaml
     };
 
+    // Create emitter configuration
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(indent)
+        .with_width(width)
+        .with_default_flow_style(default_flow_style)
+        .with_explicit_start(explicit_start);
+
     // Release GIL during CPU-intensive serialization
-    let mut output = py
-        .detach(|| {
-            let mut output = String::new();
-            let mut emitter = YamlEmitter::new(&mut output);
-
-            emitter.dump(&yaml).map(|()| output)
-        })
+    let output = py
+        .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
         .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
-
-    // Remove the leading "---\n" that yaml-rust2 adds
-    if let Some(stripped) = output.strip_prefix("---\n") {
-        output = stripped.to_string();
-    } else if let Some(stripped) = output.strip_prefix("---") {
-        output = stripped.trim_start_matches('\n').to_string();
-    }
 
     Ok(output)
 }
@@ -391,76 +602,157 @@ fn yaml_to_sort_key(yaml: &Yaml) -> String {
 ///
 /// Args:
 ///     documents: An iterable of Python objects to serialize
+///     `allow_unicode`: Accepted for `PyYAML` API compatibility (default: `True`)
+///     `sort_keys`: If `True`, sort dictionary keys (default: `False`)
+///     `indent`: Indentation width in spaces (default: 2)
+///     `width`: Line width for wrapping (default: 80)
+///     `default_flow_style`: Force flow/block style (default: `None`)
+///     `explicit_start`: Add document start marker `---` (default: `False`)
 ///
 /// Returns:
 ///     A YAML string with multiple documents separated by "---"
 ///
 /// Raises:
-///     `TypeError`: If any object cannot be serialized
-///     `ValueError`: If total output size exceeds 100MB limit
+///     TypeError: If any object cannot be serialized
+///     ValueError: If total output size exceeds 100MB limit
 ///
 /// Security:
 ///     Maximum output size is limited to 100MB to prevent memory exhaustion.
 ///
 /// Example:
-///     >>> import `fast_yaml`
-///     >>> `fast_yaml.safe_dump_all`([{'a': 1}, {'b': 2}])
+///     >>> import fast_yaml
+///     >>> fast_yaml.safe_dump_all([{'a': 1}, {'b': 2}])
 ///     '---\\na: 1\\n---\\nb: 2\\n'
 #[pyfunction]
-#[pyo3(signature = (documents))]
-fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<String> {
+#[pyo3(signature = (
+    documents,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false
+))]
+#[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
+#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
+fn safe_dump_all(
+    py: Python<'_>,
+    documents: &Bound<'_, PyAny>,
+    allow_unicode: bool,
+    sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
+) -> PyResult<String> {
     let iter = documents.try_iter()?;
 
     // Convert all Python objects to YAML first
     let mut yamls = Vec::new();
     for item in iter {
         let item = item?;
-        yamls.push(python_to_yaml(&item)?);
+        let yaml = python_to_yaml(&item)?;
+        let yaml = if sort_keys {
+            sort_yaml_keys(&yaml)
+        } else {
+            yaml
+        };
+        yamls.push(yaml);
     }
+
+    // Create emitter configuration
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(indent)
+        .with_width(width)
+        .with_default_flow_style(default_flow_style)
+        .with_explicit_start(explicit_start);
 
     // Release GIL during CPU-intensive serialization
     let output = py
         .detach(|| {
-            let mut output = String::new();
+            let result = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &config)?;
 
-            for (i, yaml) in yamls.iter().enumerate() {
-                if i > 0 {
-                    output.push_str("---\n");
-                }
-
-                let mut doc_output = String::new();
-                let mut emitter = YamlEmitter::new(&mut doc_output);
-                emitter.dump(yaml)?;
-
-                // Remove the leading "---\n" that yaml-rust2 adds
-                if let Some(stripped) = doc_output.strip_prefix("---\n") {
-                    output.push_str(stripped);
-                } else if let Some(stripped) = doc_output.strip_prefix("---") {
-                    output.push_str(stripped.trim_start_matches('\n'));
-                } else {
-                    output.push_str(&doc_output);
-                }
-
-                // Check output size to prevent memory exhaustion
-                if output.len() > MAX_INPUT_SIZE {
-                    return Err(yaml_rust2::EmitError::FmtError(std::fmt::Error));
-                }
+            // Check output size to prevent memory exhaustion
+            if result.len() > MAX_INPUT_SIZE {
+                return Err(fast_yaml_core::EmitError::Emit(format!(
+                    "output size {} exceeds maximum allowed {} (100MB)",
+                    result.len(),
+                    MAX_INPUT_SIZE
+                )));
             }
 
-            Ok::<String, yaml_rust2::EmitError>(output)
+            Ok(result)
         })
-        .map_err(|e| {
-            // Check if this was our size limit error
-            if matches!(e, yaml_rust2::EmitError::FmtError(_)) {
-                PyValueError::new_err(format!(
-                    "output size exceeds maximum allowed {MAX_INPUT_SIZE} (100MB)"
-                ))
-            } else {
-                PyValueError::new_err(format!("YAML emit error: {e}"))
-            }
-        })?;
+        .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
     Ok(output)
+}
+
+// ============================================
+// PyYAML Compatibility Functions
+// ============================================
+
+/// Parse a YAML string with an optional loader.
+///
+/// This is equivalent to PyYAML's `yaml.load()`. For now, all loaders
+/// behave like SafeLoader (safe by default). The loader parameter is
+/// accepted for API compatibility.
+///
+/// Args:
+///     stream: A YAML document as a string
+///     loader: Optional loader instance (SafeLoader, FullLoader, Loader)
+///
+/// Returns:
+///     The parsed YAML document as Python objects
+///
+/// Raises:
+///     ValueError: If the YAML is invalid or input exceeds size limit (100MB)
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> data = fast_yaml.load("name: test\\nvalue: 123")
+///     >>> data
+///     {'name': 'test', 'value': 123}
+///     >>> data = fast_yaml.load("key: value", fast_yaml.SafeLoader())
+#[pyfunction]
+#[pyo3(signature = (stream, loader=None))]
+#[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
+fn load(py: Python<'_>, stream: &str, loader: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+    // For now, all loaders behave like SafeLoader
+    // The loader parameter is accepted for PyYAML API compatibility
+    let _ = loader; // Explicitly mark as unused
+    safe_load(py, stream)
+}
+
+/// Parse a YAML string containing multiple documents with an optional loader.
+///
+/// This is equivalent to PyYAML's `yaml.load_all()`. For now, all loaders
+/// behave like SafeLoader (safe by default). The loader parameter is
+/// accepted for API compatibility.
+///
+/// Args:
+///     stream: A YAML string potentially containing multiple documents
+///     loader: Optional loader instance (SafeLoader, FullLoader, Loader)
+///
+/// Returns:
+///     A list of parsed YAML documents
+///
+/// Raises:
+///     ValueError: If the YAML is invalid or input exceeds size limit (100MB)
+///
+/// Example:
+///     >>> import fast_yaml
+///     >>> docs = fast_yaml.load_all("---\\nfoo: 1\\n---\\nbar: 2")
+///     >>> list(docs)
+///     [{'foo': 1}, {'bar': 2}]
+#[pyfunction]
+#[pyo3(signature = (stream, loader=None))]
+#[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
+fn load_all(py: Python<'_>, stream: &str, loader: Option<Py<PyAny>>) -> PyResult<Py<PyAny>> {
+    // For now, all loaders behave like SafeLoader
+    // The loader parameter is accepted for PyYAML API compatibility
+    let _ = loader; // Explicitly mark as unused
+    safe_load_all(py, stream)
 }
 
 /// Get the version of the fast-yaml library.
@@ -486,6 +778,29 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(safe_load_all, m)?)?;
     m.add_function(wrap_pyfunction!(safe_dump, m)?)?;
     m.add_function(wrap_pyfunction!(safe_dump_all, m)?)?;
+
+    // PyYAML compatibility functions
+    m.add_function(wrap_pyfunction!(load, m)?)?;
+    m.add_function(wrap_pyfunction!(load_all, m)?)?;
+
+    // Loader classes
+    m.add_class::<SafeLoader>()?;
+    m.add_class::<FullLoader>()?;
+    m.add_class::<Loader>()?;
+
+    // Exception hierarchy
+    m.add("YAMLError", m.py().get_type::<YAMLError>())?;
+    m.add("MarkedYAMLError", m.py().get_type::<MarkedYAMLError>())?;
+    m.add("ScannerError", m.py().get_type::<ScannerError>())?;
+    m.add("ParserError", m.py().get_type::<ParserError>())?;
+    m.add("ComposerError", m.py().get_type::<ComposerError>())?;
+    m.add("ConstructorError", m.py().get_type::<ConstructorError>())?;
+    m.add("EmitterError", m.py().get_type::<EmitterError>())?;
+
+    // Mark class for error location
+    m.add_class::<Mark>()?;
+
+    // Version
     m.add_function(wrap_pyfunction!(version, m)?)?;
 
     // Register submodules

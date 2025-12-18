@@ -748,6 +748,16 @@ module.exports.safeLoad = nativeBinding.safeLoad;
 module.exports.safeLoadAll = nativeBinding.safeLoadAll;
 module.exports.version = nativeBinding.version;
 
+// Phase 1: js-yaml compatible features
+module.exports.load = nativeBinding.load;
+module.exports.loadAll = nativeBinding.loadAll;
+module.exports.Mark = nativeBinding.Mark;
+
+// Schema constants (js-yaml compatibility)
+module.exports.SAFE_SCHEMA = 'SafeSchema';
+module.exports.JSON_SCHEMA = 'JsonSchema';
+module.exports.CORE_SCHEMA = 'CoreSchema';
+module.exports.FAILSAFE_SCHEMA = 'FailsafeSchema';
+
 // Aliases for js-yaml compatibility
-module.exports.load = nativeBinding.safeLoad;
 module.exports.dump = nativeBinding.safeDump;

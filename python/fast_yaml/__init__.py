@@ -24,6 +24,25 @@ from collections.abc import Iterator
 from typing import IO, Any
 
 from . import lint, parallel
+
+# Loader classes
+# Exception hierarchy
+# Mark class for error locations
+from ._core import (
+    ComposerError,
+    ConstructorError,
+    EmitterError,
+    FullLoader,
+    Loader,
+    Mark,
+    MarkedYAMLError,
+    ParserError,
+    SafeLoader,
+    ScannerError,
+    YAMLError,
+)
+from ._core import load as _load
+from ._core import load_all as _load_all
 from ._core import safe_dump as _safe_dump
 from ._core import safe_dump_all as _safe_dump_all
 from ._core import safe_load as _safe_load
@@ -32,15 +51,32 @@ from ._core import version as _version
 
 __version__ = _version()
 __all__ = [
+    # Core functions
     "safe_load",
     "safe_load_all",
     "safe_dump",
     "safe_dump_all",
     "load",
+    "load_all",
     "dump",
     "__version__",
+    # Submodules
     "lint",
     "parallel",
+    # Loader classes
+    "SafeLoader",
+    "FullLoader",
+    "Loader",
+    # Exceptions
+    "YAMLError",
+    "MarkedYAMLError",
+    "ScannerError",
+    "ParserError",
+    "ComposerError",
+    "ConstructorError",
+    "EmitterError",
+    # Mark
+    "Mark",
 ]
 
 
@@ -188,8 +224,99 @@ def safe_dump_all(
     return result
 
 
-# Aliases for PyYAML compatibility
-# Note: These are aliases for safe_* functions only
-# full load/dump with arbitrary Python objects is not supported
-load = safe_load
+# PyYAML-compatible load function with optional Loader
+def load(
+    stream: str | bytes | IO[str] | IO[bytes],
+    Loader: type | None = None,  # noqa: N803 - PyYAML API compatibility
+) -> Any:
+    """
+    Parse a YAML document with an optional Loader.
+
+    This is equivalent to PyYAML's `yaml.load()`. For now, all loaders
+    behave like SafeLoader (safe by default). The Loader parameter is
+    accepted for API compatibility.
+
+    Args:
+        stream: A YAML document as a string, bytes, or file-like object.
+        Loader: Optional loader class (SafeLoader, FullLoader, Loader).
+
+    Returns:
+        The parsed YAML document as Python objects.
+
+    Raises:
+        ValueError: If the YAML is invalid.
+
+    Example:
+        >>> import fast_yaml
+        >>> fast_yaml.load("key: value")
+        {'key': 'value'}
+        >>> fast_yaml.load("key: value", Loader=fast_yaml.SafeLoader)
+        {'key': 'value'}
+    """
+    if hasattr(stream, "read"):
+        content = stream.read()
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+    elif isinstance(stream, bytes):
+        content = stream.decode("utf-8")
+    else:
+        content = stream
+
+    # Handle Loader parameter - can be None, a class, or an instance
+    if Loader is None:
+        loader_instance = None
+    elif isinstance(Loader, type):
+        # It's a class, create an instance
+        loader_instance = Loader()
+    else:
+        # It's already an instance
+        loader_instance = Loader
+    return _load(content, loader_instance)
+
+
+def load_all(
+    stream: str | bytes | IO[str] | IO[bytes],
+    Loader: type | None = None,  # noqa: N803 - PyYAML API compatibility
+) -> Iterator[Any]:
+    """
+    Parse all YAML documents in a stream with an optional Loader.
+
+    This is equivalent to PyYAML's `yaml.load_all()`. For now, all loaders
+    behave like SafeLoader (safe by default). The Loader parameter is
+    accepted for API compatibility.
+
+    Args:
+        stream: A YAML string potentially containing multiple documents.
+        Loader: Optional loader class (SafeLoader, FullLoader, Loader).
+
+    Yields:
+        Parsed YAML documents.
+
+    Example:
+        >>> import fast_yaml
+        >>> list(fast_yaml.load_all("---\\nfoo: 1\\n---\\nbar: 2"))
+        [{'foo': 1}, {'bar': 2}]
+    """
+    if hasattr(stream, "read"):
+        content = stream.read()
+        if isinstance(content, bytes):
+            content = content.decode("utf-8")
+    elif isinstance(stream, bytes):
+        content = stream.decode("utf-8")
+    else:
+        content = stream
+
+    # Handle Loader parameter - can be None, a class, or an instance
+    if Loader is None:
+        loader_instance = None
+    elif isinstance(Loader, type):
+        # It's a class, create an instance
+        loader_instance = Loader()
+    else:
+        # It's already an instance
+        loader_instance = Loader
+    return iter(_load_all(content, loader_instance))
+
+
+# Alias for PyYAML compatibility
 dump = safe_dump
