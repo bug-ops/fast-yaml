@@ -171,19 +171,19 @@ create_exception!(
 
 /// Mark class for tracking source location in YAML errors.
 ///
-/// Stores the name of the input source (e.g., filename or "<string>"),
+/// Stores the name of the input source (e.g., filename or `"<string>"`),
 /// line number (0-indexed), and column number (0-indexed).
 ///
 /// Example:
-///     >>> mark = fast_yaml.Mark("<string>", 5, 10)
-///     >>> mark.line
-///     5
-///     >>> mark.column
-///     10
+/// ```python
+/// mark = fast_yaml.Mark("<string>", 5, 10)
+/// mark.line   # 5
+/// mark.column # 10
+/// ```
 #[pyclass]
 #[derive(Clone, Debug)]
 pub struct Mark {
-    /// Name of the input source (e.g., filename or "<string>")
+    /// Name of the input source (e.g., filename or `"<string>"`)
     #[pyo3(get)]
     pub name: String,
 
