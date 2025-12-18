@@ -231,7 +231,6 @@ def load_all(
     """
     ...
 
-
 def dump(
     data: Any,
     dumper: type | None = None,
@@ -256,7 +255,6 @@ def dump(
     """
     ...
 
-
 def dump_all(
     documents: list[Any],
     dumper: type | None = None,
@@ -280,7 +278,6 @@ def dump_all(
         TypeError: If any object cannot be serialized
     """
     ...
-
 
 # Lint submodule (PyO3 submodule, not a class - noqa: N801)
 class lint:  # noqa: N801
