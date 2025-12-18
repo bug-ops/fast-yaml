@@ -44,7 +44,7 @@ pub mod parser;
 /// Value types representing YAML data structures.
 pub mod value;
 
-pub use emitter::Emitter;
+pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use parser::Parser;
 pub use value::{Array, Map, Value};

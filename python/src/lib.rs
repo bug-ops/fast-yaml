@@ -14,10 +14,12 @@
 //! - **Float**: Standard notation, `.inf`, `-.inf`, `.nan`
 //! - **String**: Plain, single-quoted, double-quoted, literal (`|`), folded (`>`)
 
+#![allow(clippy::doc_markdown)] // Python docstrings use different conventions
+
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
-use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
+use yaml_rust2::{Yaml, YamlLoader};
 
 mod conversion;
 mod lint;
@@ -298,33 +300,48 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 ///
 /// Args:
 ///     data: A Python object to serialize (dict, list, str, int, float, bool, None)
-///     `allow_unicode`: Accepted for `PyYAML` API compatibility. Default: True.
-///         Note: yaml-rust2 always outputs unicode characters; this parameter
-///         is currently ignored but accepted to maintain API compatibility.
-///     `sort_keys`: If True, sort dictionary keys. Default: False
+///     `allow_unicode`: Accepted for `PyYAML` API compatibility (default: `True`)
+///     `sort_keys`: If `True`, sort dictionary keys (default: `False`)
+///     `indent`: Indentation width in spaces (default: 2)
+///     `width`: Line width for wrapping (default: 80)
+///     `default_flow_style`: Force flow/block style (default: `None`)
+///     `explicit_start`: Add document start marker `---` (default: `False`)
 ///
 /// Returns:
 ///     A YAML string representation of the object
 ///
 /// Raises:
-///     `TypeError`: If the object contains types that cannot be serialized
+///     TypeError: If the object contains types that cannot be serialized
 ///
 /// Example:
-///     >>> import `fast_yaml`
-///     >>> `fast_yaml.safe_dump`({'name': 'test', 'value': 123})
+///     >>> import fast_yaml
+///     >>> fast_yaml.safe_dump({'name': 'test', 'value': 123})
 ///     'name: test\\nvalue: 123\\n'
+///     >>> fast_yaml.safe_dump({'key': 'value'}, explicit_start=True)
+///     '---\\nkey: value\\n'
 #[pyfunction]
-#[pyo3(signature = (data, allow_unicode=true, sort_keys=false))]
+#[pyo3(signature = (
+    data,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false
+))]
 #[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
+#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
 fn safe_dump(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
     allow_unicode: bool,
     sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
 ) -> PyResult<String> {
-    // Note: allow_unicode is accepted for PyYAML API compatibility but
-    // yaml-rust2 always outputs unicode characters. The parameter is
-    // intentionally unused but kept for API compatibility.
+    // Convert Python object to YAML
     let yaml = python_to_yaml(data)?;
 
     // Sort keys if requested
@@ -334,22 +351,17 @@ fn safe_dump(
         yaml
     };
 
+    // Create emitter configuration
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(indent)
+        .with_width(width)
+        .with_default_flow_style(default_flow_style)
+        .with_explicit_start(explicit_start);
+
     // Release GIL during CPU-intensive serialization
-    let mut output = py
-        .detach(|| {
-            let mut output = String::new();
-            let mut emitter = YamlEmitter::new(&mut output);
-
-            emitter.dump(&yaml).map(|()| output)
-        })
+    let output = py
+        .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
         .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
-
-    // Remove the leading "---\n" that yaml-rust2 adds
-    if let Some(stripped) = output.strip_prefix("---\n") {
-        output = stripped.to_string();
-    } else if let Some(stripped) = output.strip_prefix("---") {
-        output = stripped.trim_start_matches('\n').to_string();
-    }
 
     Ok(output)
 }
@@ -391,74 +403,88 @@ fn yaml_to_sort_key(yaml: &Yaml) -> String {
 ///
 /// Args:
 ///     documents: An iterable of Python objects to serialize
+///     `allow_unicode`: Accepted for `PyYAML` API compatibility (default: `True`)
+///     `sort_keys`: If `True`, sort dictionary keys (default: `False`)
+///     `indent`: Indentation width in spaces (default: 2)
+///     `width`: Line width for wrapping (default: 80)
+///     `default_flow_style`: Force flow/block style (default: `None`)
+///     `explicit_start`: Add document start marker `---` (default: `False`)
 ///
 /// Returns:
 ///     A YAML string with multiple documents separated by "---"
 ///
 /// Raises:
-///     `TypeError`: If any object cannot be serialized
-///     `ValueError`: If total output size exceeds 100MB limit
+///     TypeError: If any object cannot be serialized
+///     ValueError: If total output size exceeds 100MB limit
 ///
 /// Security:
 ///     Maximum output size is limited to 100MB to prevent memory exhaustion.
 ///
 /// Example:
-///     >>> import `fast_yaml`
-///     >>> `fast_yaml.safe_dump_all`([{'a': 1}, {'b': 2}])
+///     >>> import fast_yaml
+///     >>> fast_yaml.safe_dump_all([{'a': 1}, {'b': 2}])
 ///     '---\\na: 1\\n---\\nb: 2\\n'
 #[pyfunction]
-#[pyo3(signature = (documents))]
-fn safe_dump_all(py: Python<'_>, documents: &Bound<'_, PyAny>) -> PyResult<String> {
+#[pyo3(signature = (
+    documents,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false
+))]
+#[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
+#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
+fn safe_dump_all(
+    py: Python<'_>,
+    documents: &Bound<'_, PyAny>,
+    allow_unicode: bool,
+    sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
+) -> PyResult<String> {
     let iter = documents.try_iter()?;
 
     // Convert all Python objects to YAML first
     let mut yamls = Vec::new();
     for item in iter {
         let item = item?;
-        yamls.push(python_to_yaml(&item)?);
+        let yaml = python_to_yaml(&item)?;
+        let yaml = if sort_keys {
+            sort_yaml_keys(&yaml)
+        } else {
+            yaml
+        };
+        yamls.push(yaml);
     }
+
+    // Create emitter configuration
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(indent)
+        .with_width(width)
+        .with_default_flow_style(default_flow_style)
+        .with_explicit_start(explicit_start);
 
     // Release GIL during CPU-intensive serialization
     let output = py
         .detach(|| {
-            let mut output = String::new();
+            let result = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &config)?;
 
-            for (i, yaml) in yamls.iter().enumerate() {
-                if i > 0 {
-                    output.push_str("---\n");
-                }
-
-                let mut doc_output = String::new();
-                let mut emitter = YamlEmitter::new(&mut doc_output);
-                emitter.dump(yaml)?;
-
-                // Remove the leading "---\n" that yaml-rust2 adds
-                if let Some(stripped) = doc_output.strip_prefix("---\n") {
-                    output.push_str(stripped);
-                } else if let Some(stripped) = doc_output.strip_prefix("---") {
-                    output.push_str(stripped.trim_start_matches('\n'));
-                } else {
-                    output.push_str(&doc_output);
-                }
-
-                // Check output size to prevent memory exhaustion
-                if output.len() > MAX_INPUT_SIZE {
-                    return Err(yaml_rust2::EmitError::FmtError(std::fmt::Error));
-                }
+            // Check output size to prevent memory exhaustion
+            if result.len() > MAX_INPUT_SIZE {
+                return Err(fast_yaml_core::EmitError::Emit(format!(
+                    "output size {} exceeds maximum allowed {} (100MB)",
+                    result.len(),
+                    MAX_INPUT_SIZE
+                )));
             }
 
-            Ok::<String, yaml_rust2::EmitError>(output)
+            Ok(result)
         })
-        .map_err(|e| {
-            // Check if this was our size limit error
-            if matches!(e, yaml_rust2::EmitError::FmtError(_)) {
-                PyValueError::new_err(format!(
-                    "output size exceeds maximum allowed {MAX_INPUT_SIZE} (100MB)"
-                ))
-            } else {
-                PyValueError::new_err(format!("YAML emit error: {e}"))
-            }
-        })?;
+        .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
     Ok(output)
 }
