@@ -151,9 +151,7 @@ person:
     - coding
 """
         result = fast_yaml.load(yaml_str)
-        assert result == {
-            "person": {"name": "John", "hobbies": ["reading", "coding"]}
-        }
+        assert result == {"person": {"name": "John", "hobbies": ["reading", "coding"]}}
 
     def test_load_empty(self):
         """load() returns None for empty document."""

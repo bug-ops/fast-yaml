@@ -115,9 +115,7 @@ class TestConstructorError:
 
     def test_constructor_error_inherits_from_marked_yaml_error(self):
         """ConstructorError inherits from MarkedYAMLError."""
-        assert issubclass(
-            fast_yaml.ConstructorError, fast_yaml.MarkedYAMLError
-        )
+        assert issubclass(fast_yaml.ConstructorError, fast_yaml.MarkedYAMLError)
 
     def test_constructor_error_can_be_raised(self):
         """ConstructorError can be raised and caught."""
