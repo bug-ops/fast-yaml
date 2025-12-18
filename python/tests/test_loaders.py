@@ -1,6 +1,7 @@
 """Tests for PyYAML-compatible loader classes."""
 
 import pytest
+
 import fast_yaml
 
 

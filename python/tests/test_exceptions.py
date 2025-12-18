@@ -1,6 +1,7 @@
 """Tests for PyYAML-compatible exception hierarchy."""
 
 import pytest
+
 import fast_yaml
 
 

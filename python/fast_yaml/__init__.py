@@ -24,30 +24,30 @@ from collections.abc import Iterator
 from typing import IO, Any
 
 from . import lint, parallel
+
+# Loader classes
+# Exception hierarchy
+# Mark class for error locations
+from ._core import (
+    ComposerError,
+    ConstructorError,
+    EmitterError,
+    FullLoader,
+    Loader,
+    Mark,
+    MarkedYAMLError,
+    ParserError,
+    SafeLoader,
+    ScannerError,
+    YAMLError,
+)
+from ._core import load as _load
+from ._core import load_all as _load_all
 from ._core import safe_dump as _safe_dump
 from ._core import safe_dump_all as _safe_dump_all
 from ._core import safe_load as _safe_load
 from ._core import safe_load_all as _safe_load_all
-from ._core import load as _load
-from ._core import load_all as _load_all
 from ._core import version as _version
-
-# Loader classes
-from ._core import SafeLoader, FullLoader, Loader
-
-# Exception hierarchy
-from ._core import (
-    YAMLError,
-    MarkedYAMLError,
-    ScannerError,
-    ParserError,
-    ComposerError,
-    ConstructorError,
-    EmitterError,
-)
-
-# Mark class for error locations
-from ._core import Mark
 
 __version__ = _version()
 __all__ = [
@@ -227,7 +227,7 @@ def safe_dump_all(
 # PyYAML-compatible load function with optional Loader
 def load(
     stream: str | bytes | IO[str] | IO[bytes],
-    Loader: type | None = None,
+    Loader: type | None = None,  # noqa: N803 - PyYAML API compatibility
 ) -> Any:
     """
     Parse a YAML document with an optional Loader.
@@ -276,7 +276,7 @@ def load(
 
 def load_all(
     stream: str | bytes | IO[str] | IO[bytes],
-    Loader: type | None = None,
+    Loader: type | None = None,  # noqa: N803 - PyYAML API compatibility
 ) -> Iterator[Any]:
     """
     Parse all YAML documents in a stream with an optional Loader.
