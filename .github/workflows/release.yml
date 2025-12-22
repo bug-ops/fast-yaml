@@ -329,7 +329,7 @@ jobs:
       contents: read
     steps:
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: wheels-*
           path: dist
@@ -490,7 +490,7 @@ jobs:
           cache-dependency-path: nodejs/package-lock.json
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: nodejs-binary-*
           path: nodejs/artifacts
@@ -540,13 +540,13 @@ jobs:
           fetch-depth: 0
 
       - name: Download all wheel artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: wheels-*
           path: release-artifacts/python
 
       - name: Download all Node.js binaries
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v7
         with:
           pattern: nodejs-binary-*
           path: release-artifacts/nodejs
