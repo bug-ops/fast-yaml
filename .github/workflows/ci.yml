@@ -9,6 +9,10 @@ on:
     # Weekly security audit (Sundays at midnight UTC)
     - cron: '0 0 * * 0'
 
+# Restrict permissions by default (principle of least privilege)
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0

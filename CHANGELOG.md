@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-12-27
+
+### Breaking Changes
+
+- **Python**: Minimum Python version increased from 3.8 to 3.9
+- **Workspace**: FFI crates (python/nodejs) excluded from default `cargo build`. Use specialized build tools:
+  - Python: `uv run maturin develop`
+  - Node.js: `npm run build`
+
+### Changed
+
+- **Workspace**: Added `default-members` to exclude FFI crates from default cargo commands
+- **Build**: Added `manifest-path` to pyproject.toml for maturin configuration
+- **Docs**: Updated documentation with new build commands and `--exclude` flags for workspace operations
+
+### Fixed
+
+- **Build**: `cargo build` no longer fails with Python symbol linking errors
+
 ## [0.1.11] - 2025-12-19
 
 ### Fixed

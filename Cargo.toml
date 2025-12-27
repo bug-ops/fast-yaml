@@ -8,9 +8,17 @@ members = [
     "python",
     "nodejs",
 ]
+# FFI bindings require specialized build tools (maturin for Python, napi for Node.js)
+# Build with: `uv run maturin develop` (Python) or `npm run build` (Node.js)
+default-members = [
+    "crates/fast-yaml-core",
+    "crates/fast-yaml-ffi",
+    "crates/fast-yaml-linter",
+    "crates/fast-yaml-parallel",
+]
 
 [workspace.package]
-version = "0.1.11"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
@@ -18,10 +26,10 @@ repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 # Internal crates (version required for cargo publish --workspace)
-fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.1.11" }
-fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.1.11" }
-fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.1.11" }
-fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.1.11" }
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.2.0" }
+fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.2.0" }
+fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.2.0" }
+fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.2.0" }
 
 # External dependencies
 criterion = "0.8"
@@ -33,7 +41,7 @@ rayon = "1.10"
 serde = "1.0"
 serde_json = "1.0"
 thiserror = "2.0"
-yaml-rust2 = "0.10"
+yaml-rust2 = "0.10.4"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
