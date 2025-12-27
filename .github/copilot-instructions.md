@@ -155,7 +155,7 @@ cargo llvm-cov nextest --workspace --html
 - Pytest tests cover normal and error cases
 - Tests verify error messages are helpful
 - Round-trip tests (serialize → deserialize → compare)
-- Tests run on all supported Python versions (3.8+)
+- Tests run on all supported Python versions (3.9+)
 
 ### Node.js Bindings Review Points
 
@@ -310,7 +310,7 @@ Benchmark results show 25% speedup on 10MB files.
 ```
 docs: update README with installation instructions
 
-BREAKING CHANGE: Minimum Python version increased to 3.8
+BREAKING CHANGE: Minimum Python version increased to 3.9
 ```
 
 ### PR Title Format
