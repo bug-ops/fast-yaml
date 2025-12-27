@@ -5,6 +5,11 @@ on:
     tags:
       - "v*.*.*"
 
+# Restrict permissions by default (principle of least privilege)
+# Jobs that need more permissions declare them explicitly
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
