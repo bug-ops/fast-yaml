@@ -36,6 +36,7 @@ pub mod config;
 pub mod formatter;
 pub mod rules;
 pub mod source;
+pub mod tokenizer;
 
 pub use context::SourceContext;
 pub use diagnostic::{

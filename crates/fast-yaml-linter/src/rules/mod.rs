@@ -3,20 +3,31 @@
 use crate::{Diagnostic, LintConfig, Severity};
 use fast_yaml_core::Value;
 
+mod braces;
+mod brackets;
+mod colons;
+mod commas;
 mod document_end;
 mod document_start;
 mod duplicate_keys;
 mod empty_values;
+pub mod flow_common;
+mod hyphens;
 mod indentation;
 mod invalid_anchors;
 mod line_length;
 mod new_line_at_end_of_file;
 mod trailing_whitespace;
 
+pub use braces::BracesRule;
+pub use brackets::BracketsRule;
+pub use colons::ColonsRule;
+pub use commas::CommasRule;
 pub use document_end::DocumentEndRule;
 pub use document_start::DocumentStartRule;
 pub use duplicate_keys::DuplicateKeysRule;
 pub use empty_values::EmptyValuesRule;
+pub use hyphens::HyphensRule;
 pub use indentation::IndentationRule;
 pub use invalid_anchors::InvalidAnchorsRule;
 pub use line_length::LineLengthRule;
@@ -132,6 +143,11 @@ impl RuleRegistry {
     /// - Document End (WARNING)
     /// - Empty Values (WARNING)
     /// - New Line at End of File (INFO)
+    /// - Braces (WARNING)
+    /// - Brackets (WARNING)
+    /// - Colons (WARNING)
+    /// - Commas (WARNING)
+    /// - Hyphens (WARNING)
     ///
     /// # Examples
     ///
@@ -139,13 +155,13 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 7);
+    /// assert_eq!(registry.rules().len(), 12);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
         let mut registry = Self::new();
 
-        // Implemented rules (7)
+        // Phase 1 rules (7)
         registry.add(Box::new(DuplicateKeysRule));
         registry.add(Box::new(LineLengthRule));
         registry.add(Box::new(TrailingWhitespaceRule));
@@ -154,7 +170,14 @@ impl RuleRegistry {
         registry.add(Box::new(EmptyValuesRule));
         registry.add(Box::new(NewLineAtEndOfFileRule));
 
-        // Not yet implemented - planned for Phase 2
+        // Phase 2 rules (5)
+        registry.add(Box::new(BracesRule));
+        registry.add(Box::new(BracketsRule));
+        registry.add(Box::new(ColonsRule));
+        registry.add(Box::new(CommasRule));
+        registry.add(Box::new(HyphensRule));
+
+        // Not yet implemented - planned for future phases
         // registry.add(Box::new(IndentationRule));
         // registry.add(Box::new(InvalidAnchorsRule));
 
@@ -229,7 +252,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 7);
+        assert_eq!(registry.rules().len(), 12);
     }
 
     #[test]
@@ -256,6 +279,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 7);
+        assert_eq!(registry.rules().len(), 12);
     }
 }

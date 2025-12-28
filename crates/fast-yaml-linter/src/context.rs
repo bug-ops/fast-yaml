@@ -227,6 +227,33 @@ impl<'a> SourceContext<'a> {
     pub const fn line_count(&self) -> usize {
         self.line_starts.len()
     }
+
+    /// Gets the byte offset where a line starts (1-indexed).
+    ///
+    /// Returns 0 for line 1, and the offset of the first character
+    /// of each subsequent line. Returns 0 for invalid line numbers.
+    ///
+    /// Pre-computed during construction for O(1) access.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::SourceContext;
+    ///
+    /// let source = "line 1\nline 2\nline 3";
+    /// let ctx = SourceContext::new(source);
+    ///
+    /// assert_eq!(ctx.get_line_offset(1), 0);
+    /// assert_eq!(ctx.get_line_offset(2), 7);
+    /// assert_eq!(ctx.get_line_offset(3), 14);
+    /// ```
+    #[must_use]
+    pub fn get_line_offset(&self, line_num: usize) -> usize {
+        if line_num == 0 || line_num > self.line_starts.len() {
+            return 0;
+        }
+        self.line_starts[line_num - 1]
+    }
 }
 
 #[cfg(test)]
@@ -355,5 +382,17 @@ mod tests {
         assert_eq!(SourceContext::new("single").line_count(), 1);
         assert_eq!(SourceContext::new("line 1\nline 2").line_count(), 2);
         assert_eq!(SourceContext::new("line 1\nline 2\n").line_count(), 3);
+    }
+
+    #[test]
+    fn test_get_line_offset() {
+        let source = "line 1\nline 2\nline 3";
+        let ctx = SourceContext::new(source);
+
+        assert_eq!(ctx.get_line_offset(1), 0);
+        assert_eq!(ctx.get_line_offset(2), 7);
+        assert_eq!(ctx.get_line_offset(3), 14);
+        assert_eq!(ctx.get_line_offset(0), 0);
+        assert_eq!(ctx.get_line_offset(100), 0);
     }
 }
