@@ -104,4 +104,100 @@ mod tests {
 
         assert!(diagnostics.is_empty());
     }
+
+    #[test]
+    fn test_line_exceeds_limit() {
+        let yaml = "key: this is a very long value that definitely exceeds eighty characters without any doubt whatsoever";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(80));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("exceeds maximum length"));
+        assert!(diagnostics[0].message.contains("80"));
+    }
+
+    #[test]
+    fn test_line_at_exact_limit() {
+        // This line is exactly 77 characters long
+        let yaml = "name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(77));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        // Exactly at limit should not trigger
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_line_one_over_limit() {
+        // This line is 78 characters long
+        let yaml = "name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(77));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        // One over should trigger
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_multiple_long_lines() {
+        let yaml = "first: this is a very long line that exceeds the maximum character limit\n\
+                    second: another extremely long line that also exceeds the character limit\n\
+                    short: ok";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(50));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        assert_eq!(diagnostics.len(), 2);
+    }
+
+    #[test]
+    fn test_utf8_multibyte_characters() {
+        // 5 Japanese characters (日本語日本語日本語日本語日本語) + "key: " = ~29 chars
+        let yaml = "key: 日本語日本語日本語日本語日本語日本語日本語日本語";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(20));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        // Should count characters, not bytes
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_empty_lines_ignored() {
+        let yaml = "key: value\n\n\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(5));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        // Should only report the first line (10 chars), not the empty lines
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_diagnostic_location_accuracy() {
+        let yaml = "first: ok\nvery_long_key_name: this is a very long value that definitely exceeds fifty chars\nthird: ok";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new().with_max_line_length(Some(50));
+        let diagnostics = rule.check(yaml, &value, &config);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span.start.line, 2); // Second line
+    }
 }

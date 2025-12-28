@@ -473,6 +473,7 @@ impl PyLintConfig {
                 require_document_end,
                 allow_duplicate_keys,
                 disabled_rules: disabled_rules_set,
+                rule_configs: std::collections::HashMap::new(),
             },
         })
     }
