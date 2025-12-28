@@ -86,13 +86,19 @@ fn run() -> Result<ExitCode> {
         }
         #[cfg(feature = "linter")]
         Some(Command::Lint {
-            max_line_length: _,
-            indent_size: _,
-            format: _,
+            max_line_length,
+            indent_size,
+            format,
         }) => {
-            // Lint command placeholder - will be implemented in Phase 2
-            eprintln!("Lint command not yet implemented");
-            ExitCode::Success
+            let cmd = commands::lint::LintCommand::new(
+                max_line_length,
+                indent_size,
+                format,
+                use_color,
+                cli.quiet,
+                cli.verbose,
+            );
+            cmd.execute(&input)?
         }
         None => {
             // Default: parse and format (passthrough)

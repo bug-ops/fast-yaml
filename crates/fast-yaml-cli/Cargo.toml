@@ -19,7 +19,7 @@ anyhow.workspace = true
 clap.workspace = true
 colored = { workspace = true, optional = true }
 fast-yaml-core.workspace = true
-fast-yaml-linter = { workspace = true, optional = true }
+fast-yaml-linter = { workspace = true, optional = true, features = ["json-output"] }
 is-terminal = { workspace = true, optional = true }
 serde_json.workspace = true
 

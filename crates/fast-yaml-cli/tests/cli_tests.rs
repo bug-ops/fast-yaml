@@ -115,3 +115,85 @@ fn test_quiet_mode() {
         .assert()
         .success();
 }
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_valid_yaml() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("--quiet")
+        .arg("lint")
+        .write_stdin("name: test\nvalue: 123\n")
+        .assert()
+        .success()
+        .code(0);
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_with_warnings() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg("--max-line-length")
+        .arg("80")
+        .write_stdin("name: this is a very very very very very very very very very very very very very very very very very very long line that exceeds the maximum")
+        .assert()
+        .success()
+        .code(0);
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_invalid_yaml() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .write_stdin("invalid: [unclosed")
+        .assert()
+        .failure()
+        .code(1);
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_json_format() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg("--format")
+        .arg("json")
+        .write_stdin("name: test\nvalue: 123\n")
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::starts_with("["));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_duplicate_keys() {
+    // Duplicate keys are caught at parse level (YAML 1.2 spec violation)
+    // This results in parse error (exit code 1), not lint error
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .write_stdin("key: value1\nkey: value2\n")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("duplicated key"));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_verbose_mode() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("--verbose")
+        .arg("lint")
+        .write_stdin("name: test\n")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Lint time:"));
+}
