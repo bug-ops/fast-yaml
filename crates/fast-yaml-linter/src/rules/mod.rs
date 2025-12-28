@@ -3,16 +3,24 @@
 use crate::{Diagnostic, LintConfig, Severity};
 use fast_yaml_core::Value;
 
+mod document_end;
+mod document_start;
 mod duplicate_keys;
+mod empty_values;
 mod indentation;
 mod invalid_anchors;
 mod line_length;
+mod new_line_at_end_of_file;
 mod trailing_whitespace;
 
+pub use document_end::DocumentEndRule;
+pub use document_start::DocumentStartRule;
 pub use duplicate_keys::DuplicateKeysRule;
+pub use empty_values::EmptyValuesRule;
 pub use indentation::IndentationRule;
 pub use invalid_anchors::InvalidAnchorsRule;
 pub use line_length::LineLengthRule;
+pub use new_line_at_end_of_file::NewLineAtEndOfFileRule;
 pub use trailing_whitespace::TrailingWhitespaceRule;
 
 /// Trait for implementing lint rules.
@@ -118,10 +126,12 @@ impl RuleRegistry {
     ///
     /// Includes:
     /// - Duplicate Keys (ERROR)
-    /// - Invalid Anchors (ERROR)
-    /// - Inconsistent Indentation (WARNING)
-    /// - Line Too Long (WARNING)
-    /// - Trailing Whitespace (INFO)
+    /// - Line Too Long (INFO)
+    /// - Trailing Whitespace (HINT)
+    /// - Document Start (WARNING)
+    /// - Document End (WARNING)
+    /// - Empty Values (WARNING)
+    /// - New Line at End of File (INFO)
     ///
     /// # Examples
     ///
@@ -129,16 +139,25 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 5);
+    /// assert_eq!(registry.rules().len(), 7);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
         let mut registry = Self::new();
+
+        // Implemented rules (7)
         registry.add(Box::new(DuplicateKeysRule));
-        registry.add(Box::new(InvalidAnchorsRule));
-        registry.add(Box::new(IndentationRule));
         registry.add(Box::new(LineLengthRule));
         registry.add(Box::new(TrailingWhitespaceRule));
+        registry.add(Box::new(DocumentStartRule));
+        registry.add(Box::new(DocumentEndRule));
+        registry.add(Box::new(EmptyValuesRule));
+        registry.add(Box::new(NewLineAtEndOfFileRule));
+
+        // Not yet implemented - planned for Phase 2
+        // registry.add(Box::new(IndentationRule));
+        // registry.add(Box::new(InvalidAnchorsRule));
+
         registry
     }
 
@@ -210,7 +229,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 5);
+        assert_eq!(registry.rules().len(), 7);
     }
 
     #[test]
@@ -237,6 +256,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 5);
+        assert_eq!(registry.rules().len(), 7);
     }
 }

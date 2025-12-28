@@ -259,7 +259,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "fast-yaml-core",
@@ -271,7 +271,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-core"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "thiserror",
  "yaml-rust2",
@@ -279,7 +279,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-ffi"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "fast-yaml-core",
  "thiserror",
@@ -287,7 +287,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-linter"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "fast-yaml-core",
  "indoc",
@@ -299,7 +299,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-nodejs"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "fast-yaml-core",
  "fast-yaml-linter",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-parallel"
-version = "0.1.11"
+version = "0.2.0"
 dependencies = [
  "criterion",
  "fast-yaml-core",
@@ -330,9 +330,9 @@ checksum = "645cbb3a84e60b7531617d5ae4e57f7e27308f6445f5abf653209ea76dec8dff"
 
 [[package]]
 name = "foldhash"
-version = "0.1.5"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
 
 [[package]]
 name = "futures"
@@ -436,18 +436,18 @@ dependencies = [
 
 [[package]]
 name = "hashbrown"
-version = "0.15.5"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
+checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 dependencies = [
  "foldhash",
 ]
 
 [[package]]
 name = "hashlink"
-version = "0.10.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
+checksum = "ea0b22561a9c04a7cb1a302c013e0259cd3b4bb619f145b32f72b8b4bcbed230"
 dependencies = [
  "hashbrown",
 ]
@@ -687,15 +687,15 @@ dependencies = [
 
 [[package]]
 name = "portable-atomic"
-version = "1.12.0"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f59e70c4aef1e55797c2e8fd94a4f2a973fc972cfde0e0b05f683667b0cd39dd"
+checksum = "f89776e4d69bb58bc6993e99ffa1d11f228b839984854c7daeb5d37f87cbe950"
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.103"
+version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ee95bc4ef87b8d5ba32e8b7714ccc834865276eab0aed5c9958d00ec45f49e8"
+checksum = "9695f8df41bb4f3d222c95a67532365f569318332d03d5f3f67f37b20e6ebdf0"
 dependencies = [
  "unicode-ident",
 ]
@@ -1079,9 +1079,9 @@ dependencies = [
 
 [[package]]
 name = "yaml-rust2"
-version = "0.10.4"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2462ea039c445496d8793d052e13787f2b90e750b833afee748e601c17621ed9"
+checksum = "631a50d867fafb7093e709d75aaee9e0e0d5deb934021fcea25ac2fe09edc51e"
 dependencies = [
  "arraydeque",
  "encoding_rs",
@@ -1110,6 +1110,6 @@ dependencies = [
 
 [[package]]
 name = "zmij"
-version = "1.0.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e6d6085d62852e35540689d1f97ad663e3971fc19cf5eceab364d62c646ea167"
+checksum = "f5858cd3a46fff31e77adea2935e357e3a2538d870741617bfb7c943e218fee6"

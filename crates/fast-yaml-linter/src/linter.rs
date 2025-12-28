@@ -1,8 +1,8 @@
 //! Main linter engine and configuration.
 
-use crate::{Diagnostic, rules::RuleRegistry};
+use crate::{Diagnostic, Severity, config::RuleConfig, rules::RuleRegistry};
 use fast_yaml_core::{Parser, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// Configuration for the linter.
 ///
@@ -32,6 +32,8 @@ pub struct LintConfig {
     pub allow_duplicate_keys: bool,
     /// Disabled rule codes.
     pub disabled_rules: HashSet<String>,
+    /// Per-rule configurations.
+    pub rule_configs: HashMap<String, RuleConfig>,
 }
 
 impl Default for LintConfig {
@@ -43,6 +45,7 @@ impl Default for LintConfig {
             require_document_end: false,
             allow_duplicate_keys: false,
             disabled_rules: HashSet::new(),
+            rule_configs: HashMap::new(),
         }
     }
 }
@@ -129,6 +132,91 @@ impl LintConfig {
     #[must_use]
     pub fn is_rule_disabled(&self, code: &str) -> bool {
         self.disabled_rules.contains(code)
+    }
+
+    /// Gets the configuration for a specific rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{LintConfig, config::RuleConfig};
+    ///
+    /// let mut config = LintConfig::new();
+    /// let rule_config = RuleConfig::new().with_option("max", 120usize);
+    /// config = config.with_rule_config("line-length", rule_config);
+    ///
+    /// assert!(config.get_rule_config("line-length").is_some());
+    /// ```
+    #[must_use]
+    pub fn get_rule_config(&self, rule_code: &str) -> Option<&RuleConfig> {
+        self.rule_configs.get(rule_code)
+    }
+
+    /// Checks if a rule is enabled (not disabled via config or rule-specific config).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{LintConfig, config::RuleConfig};
+    ///
+    /// let config = LintConfig::new()
+    ///     .with_rule_config("line-length", RuleConfig::disabled());
+    ///
+    /// assert!(!config.is_rule_enabled("line-length"));
+    /// assert!(config.is_rule_enabled("duplicate-key"));
+    /// ```
+    #[must_use]
+    pub fn is_rule_enabled(&self, rule_code: &str) -> bool {
+        !self.is_rule_disabled(rule_code)
+            && self.get_rule_config(rule_code).is_none_or(|rc| rc.enabled)
+    }
+
+    /// Gets the effective severity for a rule (with per-rule override).
+    ///
+    /// Returns the per-rule severity override if set, otherwise the rule's default severity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{LintConfig, Severity, config::RuleConfig};
+    ///
+    /// let config = LintConfig::new()
+    ///     .with_rule_config(
+    ///         "line-length",
+    ///         RuleConfig::new().with_severity(Severity::Error),
+    ///     );
+    ///
+    /// assert_eq!(
+    ///     config.get_effective_severity("line-length", Severity::Warning),
+    ///     Severity::Error
+    /// );
+    /// ```
+    #[must_use]
+    pub fn get_effective_severity(&self, rule_code: &str, default: Severity) -> Severity {
+        self.get_rule_config(rule_code)
+            .and_then(|rc| rc.severity)
+            .unwrap_or(default)
+    }
+
+    /// Adds a rule-specific configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{LintConfig, config::RuleConfig};
+    ///
+    /// let config = LintConfig::new()
+    ///     .with_rule_config(
+    ///         "line-length",
+    ///         RuleConfig::new().with_option("max", 120usize),
+    ///     );
+    ///
+    /// assert!(config.get_rule_config("line-length").is_some());
+    /// ```
+    #[must_use]
+    pub fn with_rule_config(mut self, rule_code: impl Into<String>, config: RuleConfig) -> Self {
+        self.rule_configs.insert(rule_code.into(), config);
+        self
     }
 }
 
@@ -366,7 +454,7 @@ mod tests {
     #[test]
     fn test_linter_with_all_rules() {
         let linter = Linter::with_all_rules();
-        assert_eq!(linter.registry().rules().len(), 5);
+        assert_eq!(linter.registry().rules().len(), 7);
     }
 
     #[test]

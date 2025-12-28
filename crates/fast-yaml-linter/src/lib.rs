@@ -32,8 +32,10 @@ mod linter;
 mod location;
 mod severity;
 
+pub mod config;
 pub mod formatter;
 pub mod rules;
+pub mod source;
 
 pub use context::SourceContext;
 pub use diagnostic::{

@@ -86,6 +86,10 @@ impl DiagnosticCode {
     pub const DOCUMENT_START: &'static str = "document-start";
     /// Predefined code for missing document end marker.
     pub const DOCUMENT_END: &'static str = "document-end";
+    /// Predefined code for empty values.
+    pub const EMPTY_VALUES: &'static str = "empty-values";
+    /// Predefined code for missing newline at end of file.
+    pub const NEW_LINE_AT_END_OF_FILE: &'static str = "new-line-at-end-of-file";
 
     /// Creates a new diagnostic code.
     ///
