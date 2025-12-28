@@ -71,8 +71,11 @@ mod tests {
     #[test]
     fn test_format_error_with_chain() {
         use anyhow::Context;
-        let err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
-        let err = anyhow::Error::from(err).context("Failed to read config");
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        // Context trait applies to Result, not Error directly
+        let err: anyhow::Error = Err::<(), _>(io_err)
+            .context("Failed to read config")
+            .unwrap_err();
         let formatted = format_error(&err, false);
         assert!(formatted.contains("Failed to read config"));
         assert!(formatted.contains("caused by"));

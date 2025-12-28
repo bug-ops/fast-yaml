@@ -1,3 +1,8 @@
+//! Integration tests for the `fy` CLI tool.
+
+#![allow(clippy::missing_docs_in_private_items)]
+#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
+
 use assert_cmd::Command;
 use predicates::prelude::*;
 

@@ -27,8 +27,8 @@ impl FormatCommand {
             .with_width(self.width);
 
         // Emit formatted YAML
-        let formatted = Emitter::emit_str_with_config(&value, &config)
-            .context("Failed to emit YAML")?;
+        let formatted =
+            Emitter::emit_str_with_config(&value, &config).context("Failed to emit YAML")?;
 
         // Write output
         output.write(&formatted)?;
@@ -51,12 +51,8 @@ mod tests {
         };
 
         let temp_file = NamedTempFile::new().unwrap();
-        let output = OutputWriter::from_args(
-            Some(temp_file.path().to_path_buf()),
-            false,
-            None,
-        )
-        .unwrap();
+        let output =
+            OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
 
         let cmd = FormatCommand::new(2, 80);
         assert!(cmd.execute(&input, &output).is_ok());
@@ -87,12 +83,8 @@ mod tests {
         };
 
         let temp_file = NamedTempFile::new().unwrap();
-        let output = OutputWriter::from_args(
-            Some(temp_file.path().to_path_buf()),
-            false,
-            None,
-        )
-        .unwrap();
+        let output =
+            OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
 
         let cmd = FormatCommand::new(4, 80);
         assert!(cmd.execute(&input, &output).is_ok());

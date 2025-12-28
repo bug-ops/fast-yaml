@@ -75,8 +75,8 @@ impl ConvertCommand {
 
 /// Convert `fast_yaml_core::Value` to `serde_json::Value`
 fn value_to_json(value: &Value) -> Result<serde_json::Value> {
-    use serde_json::Value as JValue;
     use Value as YValue;
+    use serde_json::Value as JValue;
 
     Ok(match value {
         YValue::Null => JValue::Null,
@@ -96,7 +96,9 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
         YValue::Hash(map) => {
             let mut json_map = serde_json::Map::new();
             for (k, v) in map {
-                let key = k.as_str().ok_or_else(|| anyhow::anyhow!("Map key must be a string"))?;
+                let key = k
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Map key must be a string"))?;
                 json_map.insert(key.to_string(), value_to_json(v)?);
             }
             JValue::Object(json_map)
@@ -112,9 +114,9 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
 
 /// Convert `serde_json::Value` to `fast_yaml_core::Value`
 fn json_to_value(json: &serde_json::Value) -> Result<Value> {
+    use Value as YValue;
     use fast_yaml_core::Map;
     use serde_json::Value as JValue;
-    use Value as YValue;
 
     Ok(match json {
         JValue::Null => YValue::Null,
@@ -162,17 +164,15 @@ mod tests {
         let cmd = ConvertCommand::new(ConvertFormat::Json, true);
         let result = cmd.execute(&input, &output);
         if let Err(e) = &result {
-            eprintln!("Execute error: {}", e);
+            eprintln!("Execute error: {e}");
         }
         assert!(result.is_ok());
 
         let json_str = std::fs::read_to_string(&temp_path)
-            .unwrap_or_else(|e| panic!("Failed to read {:?}: {}", temp_path, e));
-        if json_str.is_empty() {
-            panic!("Output file is empty!");
-        }
+            .unwrap_or_else(|e| panic!("Failed to read {temp_path:?}: {e}"));
+        assert!(!json_str.is_empty(), "Output file is empty!");
         let json: serde_json::Value = serde_json::from_str(&json_str)
-            .unwrap_or_else(|e| panic!("Failed to parse JSON from '{}': {}", json_str, e));
+            .unwrap_or_else(|e| panic!("Failed to parse JSON from '{json_str}': {e}"));
         assert_eq!(json["name"], "test");
         assert_eq!(json["value"], 123);
     }

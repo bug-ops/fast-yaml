@@ -25,8 +25,8 @@ impl OutputWriter {
     ) -> Result<Self> {
         let destination = if in_place {
             // In-place editing requires input file
-            let path = input_file
-                .ok_or_else(|| anyhow::anyhow!("--in-place requires a file argument"))?;
+            let path =
+                input_file.ok_or_else(|| anyhow::anyhow!("--in-place requires a file argument"))?;
             OutputDestination::File(path.to_path_buf())
         } else if let Some(out_path) = output {
             OutputDestination::File(out_path)
@@ -39,7 +39,7 @@ impl OutputWriter {
 
     /// Create stdout writer for tests
     #[cfg(test)]
-    pub fn stdout() -> Self {
+    pub const fn stdout() -> Self {
         Self {
             destination: OutputDestination::Stdout,
         }
@@ -79,7 +79,6 @@ impl OutputWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write as _;
     use tempfile::NamedTempFile;
 
     #[test]
@@ -94,7 +93,7 @@ mod tests {
         let writer = OutputWriter::from_args(Some(output_path.clone()), false, None).unwrap();
         match writer.destination {
             OutputDestination::File(path) => assert_eq!(path, output_path),
-            _ => panic!("Expected File destination"),
+            OutputDestination::Stdout => panic!("Expected File destination"),
         }
     }
 
@@ -104,7 +103,7 @@ mod tests {
         let writer = OutputWriter::from_args(None, true, Some(&input_path)).unwrap();
         match writer.destination {
             OutputDestination::File(path) => assert_eq!(path, input_path),
-            _ => panic!("Expected File destination"),
+            OutputDestination::Stdout => panic!("Expected File destination"),
         }
     }
 
@@ -112,10 +111,12 @@ mod tests {
     fn test_from_args_in_place_without_file() {
         let result = OutputWriter::from_args(None, true, None);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("--in-place requires a file argument"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("--in-place requires a file argument")
+        );
     }
 
     #[test]

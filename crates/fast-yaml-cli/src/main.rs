@@ -24,6 +24,12 @@
 //! - Optional linting with diagnostics (requires `linter` feature)
 //! - Colored output support (requires `colors` feature)
 
+// Forbid panic/unwrap in production code - use proper error handling instead
+// These lints are allowed in test code via cfg_attr
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(not(test), deny(clippy::expect_used))]
+#![cfg_attr(not(test), deny(clippy::panic))]
+
 use anyhow::Result;
 use clap::Parser;
 
@@ -33,7 +39,7 @@ mod error;
 mod io;
 
 use cli::{Cli, Command};
-use error::{format_error, ExitCode};
+use error::{ExitCode, format_error};
 use io::{InputSource, OutputWriter};
 
 fn main() {

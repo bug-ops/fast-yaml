@@ -130,17 +130,19 @@ mod tests {
     #[test]
     fn test_parse_empty_yaml() {
         let input = InputSource {
-            content: "".to_string(),
+            content: String::new(),
             origin: InputOrigin::Stdin,
         };
 
         let cmd = ParseCommand::new(false, false, true);
         let result = cmd.execute(&input);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Empty YAML document"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Empty YAML document")
+        );
     }
 
     #[test]
