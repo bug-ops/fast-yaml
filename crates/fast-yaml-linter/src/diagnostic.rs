@@ -110,6 +110,14 @@ impl DiagnosticCode {
     pub const NEW_LINES: &'static str = "new-lines";
     /// Predefined code for octal values.
     pub const OCTAL_VALUES: &'static str = "octal-values";
+    /// Predefined code for truthy values.
+    pub const TRUTHY: &'static str = "truthy";
+    /// Predefined code for quoted strings.
+    pub const QUOTED_STRINGS: &'static str = "quoted-strings";
+    /// Predefined code for key ordering.
+    pub const KEY_ORDERING: &'static str = "key-ordering";
+    /// Predefined code for float values.
+    pub const FLOAT_VALUES: &'static str = "float-values";
 
     /// Creates a new diagnostic code.
     ///

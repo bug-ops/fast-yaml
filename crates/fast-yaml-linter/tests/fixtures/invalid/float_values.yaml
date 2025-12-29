@@ -1,0 +1,23 @@
+# Test file for float-values rule violations
+
+# Missing numeral before decimal point
+value1: .5
+value2: .123
+value3: -.75
+
+# Scientific notation
+large: 1.5e10
+small: 3.14e-5
+negative: -2.5e3
+
+# Special float values
+not_a_number: .nan
+infinity: .inf
+neg_infinity: -.inf
+pos_infinity: +.inf
+
+# Valid floats (should be OK)
+valid1: 0.5
+valid2: 3.14
+valid3: -1.23
+valid4: 100.0

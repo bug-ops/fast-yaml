@@ -1,0 +1,18 @@
+# Test file for quoted-strings rule violations
+
+# Unnecessary quotes (only-when-needed mode)
+name: 'simple'
+value: "test"
+
+# Mixed quote styles
+single: 'text'
+double: "text"
+
+# Strings that need quotes (should be OK)
+number_string: '123'
+bool_string: 'true'
+url: 'http://example.com'
+
+# Unquoted strings (should be OK in only-when-needed mode)
+plain: simple
+text: hello
