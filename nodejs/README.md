@@ -33,7 +33,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.3.0
+version: 0.3.1
 features:
   - fast
   - safe
@@ -41,7 +41,7 @@ features:
 `);
 
 console.log(data);
-// { name: 'fast-yaml', version: '0.1.0', features: ['fast', 'safe', 'yaml-1.2.2'] }
+// { name: 'fast-yaml', version: '0.3.1', features: ['fast', 'safe', 'yaml-1.2.2'] }
 
 // Serialize to YAML
 const yamlStr = safeDump(data);
