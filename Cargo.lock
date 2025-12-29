@@ -383,6 +383,7 @@ dependencies = [
  "fast-yaml-linter",
  "fast-yaml-parallel",
  "pyo3",
+ "saphyr",
 ]
 
 [[package]]
@@ -444,6 +445,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "saphyr",
  "thiserror",
 ]
 

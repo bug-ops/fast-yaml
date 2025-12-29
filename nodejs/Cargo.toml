@@ -29,6 +29,7 @@ fast-yaml-parallel.workspace = true
 
 # External dependencies
 thiserror.workspace = true
+saphyr.workspace = true
 
 [build-dependencies]
 napi-build = "2.3"
