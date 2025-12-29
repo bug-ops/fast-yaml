@@ -9,16 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.1] - 2025-12-29
 
+### Added
+
+- **Node.js**: Comprehensive test suites with 70%+ code coverage (up from 10%)
+  - `api-coverage.spec.ts` — 91 tests covering all API functions
+  - `edge-cases.spec.ts` — Edge case handling and error conditions
+  - `mark.spec.ts` — Mark class for error location tracking
+  - `options.spec.ts` — Parser and emitter options
+  - `schema.spec.ts` — Schema validation tests
+- **Python**: Stream processing tests (`test_streams.py`)
+- **CI**: npm audit security check for Node.js dependencies
+
 ### Changed
 
 - **Node.js**: Migrated from Prettier to Biome v2.3.10 for formatting and linting
 - **Node.js**: Updated devDependencies with Biome replacing Prettier
 - **Node.js**: Added biome.json configuration with VCS integration and recommended rules
+- **CI**: Updated Node.js versions (20→22 LTS, 22→23 Current)
+- **CI**: Fixed codecov flags for proper coverage reporting
+
+### Fixed
+
+- **Node.js**: Test assertions corrected for YAML 1.2.2 compliance
+- **Node.js**: Memory-intensive tests optimized to prevent OOM in CI
+- **CI**: Python test paths corrected for accurate coverage reporting
 
 ### Internal
 
 - Removed unused root pyproject.toml and uv.lock files (Python tooling is in python/ directory)
 - CI lint step now enforces quality (removed continue-on-error)
+- Vitest configured with sequential execution to prevent memory pressure
 
 ## [0.3.0] - 2025-12-29
 

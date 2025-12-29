@@ -1,6 +1,6 @@
 [project]
 name = "fastyaml-rs"
-version = "0.3.0"
+version = "0.3.1"
 description = "A fast YAML parser and linter for Python, powered by Rust"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -126,7 +126,7 @@ import fast_yaml
 # Parse YAML
 data = fast_yaml.safe_load("""
 name: fast-yaml
-version: 0.3.0
+version: 0.3.1
 features:
   - fast
   - safe
@@ -134,7 +134,7 @@ features:
 """)
 
 print(data)
-# {'name': 'fast-yaml', 'version': '0.1.0', 'features': ['fast', 'safe', 'yaml-1.2.2']}
+# {'name': 'fast-yaml', 'version': '0.3.1', 'features': ['fast', 'safe', 'yaml-1.2.2']}
 
 # Serialize to YAML
 yaml_str = fast_yaml.safe_dump(data)
@@ -152,7 +152,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.3.0
+version: 0.3.1
 features:
   - fast
   - safe
@@ -160,7 +160,7 @@ features:
 `);
 
 console.log(data);
-// { name: 'fast-yaml', version: '0.1.0', features: ['fast', 'safe', 'yaml-1.2.2'] }
+// { name: 'fast-yaml', version: '0.3.1', features: ['fast', 'safe', 'yaml-1.2.2'] }
 
 // Serialize to YAML
 const yamlStr = safeDump(data);
@@ -431,7 +431,7 @@ fast-yaml/
 - **Python**: 3.9+
 - **Node.js**: 20+
 - **Crates**: 6 (core, linter, parallel, ffi, python, nodejs)
-- **Tests**: 234+ (Rust) + Python + Node.js test suites
+- **Tests**: 234+ (Rust) + 94%+ Python coverage + 70%+ Node.js coverage
 
 ## Contributing
 
