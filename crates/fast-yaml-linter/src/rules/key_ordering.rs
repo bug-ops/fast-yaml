@@ -90,18 +90,9 @@ impl KeyOrderingRule {
         diagnostics: &mut Vec<Diagnostic>,
     ) {
         match value {
-            Value::Hash(hash) => {
+            Value::Mapping(hash) => {
                 // Pre-build HashSet of hash keys for O(1) lookup
-                let hash_keys: HashSet<&str> = hash
-                    .keys()
-                    .filter_map(|v| {
-                        if let Value::String(s) = v {
-                            Some(s.as_str())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let hash_keys: HashSet<&str> = hash.keys().filter_map(|v| v.as_str()).collect();
 
                 // Build a mapping of keys to their line numbers from the source
                 let mut key_positions: Vec<(String, usize)> = Vec::new();
@@ -213,7 +204,7 @@ impl KeyOrderingRule {
                     );
                 }
             }
-            Value::Array(arr) => {
+            Value::Sequence(arr) => {
                 // Recursively check array elements
                 for item in arr {
                     self.check_value(item, context, source, case_sensitive, config, diagnostics);

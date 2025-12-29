@@ -113,8 +113,10 @@ mod tests {
 
     #[test]
     fn test_empty_file() {
+        use fast_yaml_core::Parser;
+
         let yaml = "";
-        let value = Value::Null;
+        let value = Parser::parse_str("null").unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);

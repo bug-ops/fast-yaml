@@ -1,10 +1,10 @@
 use crate::error::ParseResult;
 use crate::value::Value;
-use yaml_rust2::YamlLoader;
+use saphyr::LoadableYamlNode;
 
 /// Parser for YAML documents.
 ///
-/// Wraps yaml-rust2's `YamlLoader` to provide a consistent API.
+/// Wraps saphyr's YAML loading to provide a consistent API.
 #[derive(Debug)]
 pub struct Parser;
 
@@ -26,7 +26,7 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_str(input: &str) -> ParseResult<Option<Value>> {
-        let docs = YamlLoader::load_from_str(input)?;
+        let docs = Value::load_from_str(input)?;
         Ok(docs.into_iter().next())
     }
 
@@ -48,7 +48,7 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all(input: &str) -> ParseResult<Vec<Value>> {
-        Ok(YamlLoader::load_from_str(input)?)
+        Ok(Value::load_from_str(input)?)
     }
 }
 

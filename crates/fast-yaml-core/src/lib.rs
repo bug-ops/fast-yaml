@@ -1,7 +1,7 @@
 //! fast-yaml-core: Core YAML 1.2.2 parser and emitter.
 //!
 //! This crate provides the core functionality for parsing and emitting YAML documents,
-//! wrapping the yaml-rust2 library with a consistent, stable API.
+//! wrapping the saphyr library with a consistent, stable API.
 //!
 //! # YAML 1.2.2 Compliance
 //!
@@ -28,9 +28,9 @@
 //! Emitting YAML:
 //!
 //! ```
-//! use fast_yaml_core::{Emitter, Value};
+//! use fast_yaml_core::{Emitter, Value, ScalarOwned};
 //!
-//! let value = Value::String("test".to_string());
+//! let value = Value::Value(ScalarOwned::String("test".to_string()));
 //! let yaml = Emitter::emit_str(&value)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -47,4 +47,4 @@ pub mod value;
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use parser::Parser;
-pub use value::{Array, Map, Value};
+pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

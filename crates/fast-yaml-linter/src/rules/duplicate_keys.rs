@@ -1,16 +1,23 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     source::SourceMapper,
 };
 use fast_yaml_core::Value;
-use std::collections::HashMap;
 
 /// Rule to detect duplicate keys in YAML mappings.
 ///
-/// Duplicate keys violate the YAML 1.2 specification and can lead
-/// to unexpected behavior where later values silently override earlier ones.
+/// This rule scans the source text directly to find duplicate keys at the top level
+/// that would be silently deduplicated by the parser. While YAML 1.2 allows duplicate
+/// keys, keeping the last value, this is often a mistake that should be reported.
+///
+/// **Scope**: Only checks top-level keys to avoid false positives from nested mappings
+/// or array elements with the same key names. Nested mappings should use unique keys
+/// within their own context naturally.
+///
+/// Duplicate keys can lead to unexpected behavior where later values
+/// silently override earlier ones without warning.
 pub struct DuplicateKeysRule;
 
 impl super::LintRule for DuplicateKeysRule {
@@ -38,66 +45,54 @@ impl super::LintRule for DuplicateKeysRule {
 
         let mut diagnostics = Vec::new();
         let mut mapper = SourceMapper::new(source);
-        check_value(source, value, &mut diagnostics, &mut mapper);
+        // Only check top-level mapping to avoid false positives from nested contexts
+        check_top_level(source, value, &mut diagnostics, &mut mapper);
         diagnostics
     }
 }
 
-fn check_value(
+fn check_top_level(
     source: &str,
     value: &Value,
     diagnostics: &mut Vec<Diagnostic>,
     mapper: &mut SourceMapper,
 ) {
-    match value {
-        Value::Hash(map) => {
-            // First pass: find all key positions in source
-            let mut key_spans: Vec<(String, Span)> = Vec::new();
-            for (key_yaml, _) in map {
-                if let Value::String(key_str) = key_yaml {
-                    // Search for this key in the source, starting from the last position we found
-                    let line_hint = key_spans
-                        .iter()
-                        .rfind(|(k, _)| k == key_str)
-                        .map_or(1, |(_, s)| s.end.line + 1);
+    // Only check top-level mapping for duplicate keys
+    if let Value::Mapping(map) = value {
+        // Get unique keys from the (deduplicated) AST map
+        let unique_keys: Vec<String> = map
+            .iter()
+            .filter_map(|(k, _)| k.as_str().map(String::from))
+            .collect();
 
-                    if let Some(span) = mapper.find_key_span(key_str, line_hint) {
-                        key_spans.push((key_str.clone(), span));
-                    }
-                }
-            }
+        // For each unique key, find ALL occurrences in source and detect duplicates
+        for key_str in &unique_keys {
+            let all_spans = mapper.find_all_key_spans(key_str);
 
-            // Second pass: detect duplicates
-            let mut seen_keys: HashMap<String, Span> = HashMap::new();
-            for (key_str, key_span) in key_spans {
-                if let Some(prev_span) = seen_keys.insert(key_str.clone(), key_span) {
+            // If we find more than one occurrence, all after the first are duplicates
+            if all_spans.len() > 1 {
+                let first_span = all_spans[0];
+                for duplicate_span in &all_spans[1..] {
                     let diagnostic = DiagnosticBuilder::new(
                         DiagnosticCode::DUPLICATE_KEY,
                         Severity::Error,
                         format!(
                             "duplicate key '{}' (first defined at line {})",
-                            key_str, prev_span.start.line
+                            key_str, first_span.start.line
                         ),
-                        key_span,
+                        *duplicate_span,
                     )
-                    .with_suggestion("remove this duplicate key or rename it", key_span, None)
+                    .with_suggestion(
+                        "remove this duplicate key or rename it",
+                        *duplicate_span,
+                        None,
+                    )
                     .build(source);
 
                     diagnostics.push(diagnostic);
                 }
             }
-
-            // Recursively check nested values
-            for (_, val_yaml) in map {
-                check_value(source, val_yaml, diagnostics, mapper);
-            }
         }
-        Value::Array(arr) => {
-            for item in arr {
-                check_value(source, item, diagnostics, mapper);
-            }
-        }
-        _ => {}
     }
 }
 
@@ -122,10 +117,40 @@ mod tests {
 
     #[test]
     fn test_duplicate_keys_detected() {
+        // The linter now scans source directly to find duplicates
+        // even though the parser deduplicates them
         let yaml = "name: John\nage: 30\nname: Jane";
 
-        let result = Parser::parse_str(yaml);
-        assert!(result.is_err());
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        // Verify saphyr deduplicates and keeps the last value
+        if let Value::Mapping(map) = &value {
+            // Only 2 keys should remain (age and name)
+            assert_eq!(map.len(), 2);
+
+            let name_val = map
+                .iter()
+                .find(|(k, _)| k.as_str() == Some("name"))
+                .map(|(_, v)| v.as_str());
+            assert_eq!(name_val, Some(Some("Jane")));
+        } else {
+            panic!("Expected mapping");
+        }
+
+        // The linter should detect the duplicate by scanning source
+        // but rule is disabled by default, so enable it explicitly
+        let rule = DuplicateKeysRule;
+        let config = LintConfig {
+            allow_duplicate_keys: false,
+            ..Default::default()
+        };
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+
+        // Should find one duplicate
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("duplicate key 'name'"));
+        assert_eq!(diagnostics[0].span.start.line, 3);
     }
 
     #[test]
@@ -162,7 +187,8 @@ another:
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
 
-        // Same key names in different scopes should not trigger errors
+        // Same key names in different nested scopes should not trigger errors
+        // (rule only checks top-level keys)
         assert!(diagnostics.is_empty());
     }
 

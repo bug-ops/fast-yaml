@@ -12,7 +12,12 @@ categories = ["parsing", "encoding"]
 
 [dependencies]
 thiserror.workspace = true
-yaml-rust2.workspace = true
+saphyr.workspace = true
+saphyr-parser.workspace = true
+ordered-float.workspace = true
+
+[dev-dependencies]
+indoc.workspace = true
 
 [lints]
 workspace = true

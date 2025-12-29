@@ -23,7 +23,6 @@ fast-yaml-core.workspace = true
 fast-yaml-linter.workspace = true
 fast-yaml-parallel.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
-yaml-rust2.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true
