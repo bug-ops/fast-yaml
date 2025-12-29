@@ -2,8 +2,8 @@
  * Unit tests for edge cases and error handling
  */
 
-import { describe, it, expect } from 'vitest';
-import { safeLoad, safeLoadAll, safeDump, safeDumpAll } from '../index';
+import { describe, expect, it } from 'vitest';
+import { safeDump, safeDumpAll, safeLoad, safeLoadAll } from '../index';
 
 describe('Edge Cases - Parser', () => {
   describe('empty and whitespace input', () => {
@@ -421,7 +421,7 @@ describe('Edge Cases - Emitter', () => {
       const manyKeys = Object.fromEntries(
         Array(1000)
           .fill(null)
-          .map((_, i) => [`key${i}`, `value${i}`]),
+          .map((_, i) => [`key${i}`, `value${i}`])
       );
       const yaml = safeDump(manyKeys);
       expect(yaml).toContain('key0');
@@ -473,7 +473,7 @@ describe('Edge Cases - Emitter', () => {
     });
 
     it('should serialize float', () => {
-      const yaml = safeDump(3.14159);
+      const yaml = safeDump(Math.PI);
       expect(yaml).toContain('3.14159');
     });
 

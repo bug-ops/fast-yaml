@@ -2,7 +2,7 @@
  * Integration tests for fast-yaml-nodejs module
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import * as fastYaml from '../index';
 
 describe('Module Exports', () => {

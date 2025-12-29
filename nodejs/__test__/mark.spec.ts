@@ -2,7 +2,7 @@
  * Unit tests for Mark class (error location tracking)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { Mark } from '../index';
 
 describe('Mark Class', () => {
@@ -228,7 +228,7 @@ describe('Mark Class', () => {
     });
 
     it('should handle very long filename', () => {
-      const longName = 'a'.repeat(1000) + '.yaml';
+      const longName = `${'a'.repeat(1000)}.yaml`;
       const mark = new Mark(longName, 5, 10);
       expect(mark.name).toBe(longName);
       expect(mark.name.length).toBe(1005);

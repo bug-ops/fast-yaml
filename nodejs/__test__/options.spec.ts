@@ -2,15 +2,15 @@
  * Unit tests for YAML parser and emitter options
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
+  type DumpOptions,
+  type LoadOptions,
   load,
   loadAll,
+  Schema,
   safeDump,
   safeDumpAll,
-  Schema,
-  type LoadOptions,
-  type DumpOptions,
 } from '../index';
 
 describe('Parser Options - LoadOptions', () => {
@@ -289,7 +289,13 @@ describe('Emitter Options - DumpOptions', () => {
   describe('safeDumpAll() with options', () => {
     it('should apply sortKeys to all documents', () => {
       const options: DumpOptions = { sortKeys: true };
-      const yaml = safeDumpAll([{ z: 1, a: 2 }, { y: 3, b: 4 }], options);
+      const yaml = safeDumpAll(
+        [
+          { z: 1, a: 2 },
+          { y: 3, b: 4 },
+        ],
+        options
+      );
       expect(yaml).toContain('a: 2');
       expect(yaml).toContain('b: 4');
     });

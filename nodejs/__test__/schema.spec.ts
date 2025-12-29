@@ -2,7 +2,7 @@
  * Unit tests for Schema enum and schema behavior
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { load, loadAll, Schema } from '../index';
 
 describe('Schema Enum', () => {
@@ -235,7 +235,12 @@ matrix:
   - [4, 5, 6]
 `;
       const result = load(yaml, { schema: Schema.SafeSchema });
-      expect(result).toEqual({ matrix: [[1, 2, 3], [4, 5, 6]] });
+      expect(result).toEqual({
+        matrix: [
+          [1, 2, 3],
+          [4, 5, 6],
+        ],
+      });
     });
 
     it('should parse empty array', () => {

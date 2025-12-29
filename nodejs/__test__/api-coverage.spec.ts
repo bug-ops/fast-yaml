@@ -3,19 +3,19 @@
  * Ensures all exported functions and their combinations are tested
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  version,
-  safeLoad,
-  safeLoadAll,
+  type DumpOptions,
+  type LoadOptions,
   load,
   loadAll,
-  safeDump,
-  safeDumpAll,
   Mark,
   Schema,
-  type LoadOptions,
-  type DumpOptions,
+  safeDump,
+  safeDumpAll,
+  safeLoad,
+  safeLoadAll,
+  version,
 } from '../index';
 
 describe('API Coverage - All Functions', () => {
@@ -153,10 +153,7 @@ describe('API Coverage - All Functions', () => {
 
     it('should parse documents with separators', () => {
       expect(safeLoadAll('---\nfoo: bar')).toEqual([{ foo: 'bar' }]);
-      expect(safeLoadAll('---\nfoo: bar\n---\nbaz: qux')).toEqual([
-        { foo: 'bar' },
-        { baz: 'qux' },
-      ]);
+      expect(safeLoadAll('---\nfoo: bar\n---\nbaz: qux')).toEqual([{ foo: 'bar' }, { baz: 'qux' }]);
     });
 
     it('should parse mixed types', () => {
@@ -378,7 +375,13 @@ describe('API Coverage - All Functions', () => {
         width: 80,
         explicit_start: true,
       };
-      const yaml = safeDumpAll([{ z: 1, a: 2 }, { y: 3, b: 4 }], options);
+      const yaml = safeDumpAll(
+        [
+          { z: 1, a: 2 },
+          { y: 3, b: 4 },
+        ],
+        options
+      );
       expect(yaml).toBeTruthy();
     });
   });
@@ -465,9 +468,9 @@ describe('API Coverage - Data Type Combinations', () => {
     });
 
     it('should handle special numeric values', () => {
-      expect((safeLoad('.inf') as any)).toBe(Infinity);
-      expect((safeLoad('-.inf') as any)).toBe(-Infinity);
-      expect((safeLoad('.nan') as any)).toBeNaN();
+      expect(safeLoad('.inf') as any).toBe(Infinity);
+      expect(safeLoad('-.inf') as any).toBe(-Infinity);
+      expect(safeLoad('.nan') as any).toBeNaN();
       expect(safeLoad('0x10')).toBe(16);
       expect(safeLoad('0o10')).toBe(8);
     });
@@ -507,7 +510,7 @@ describe('API Coverage - Data Type Combinations', () => {
       { name: 'boolean false', value: false },
       { name: 'integer', value: 42 },
       { name: 'negative integer', value: -100 },
-      { name: 'float', value: 3.14159 },
+      { name: 'float', value: Math.PI },
       { name: 'string', value: 'hello world' },
       { name: 'empty string', value: '' },
       { name: 'empty array', value: [] },
@@ -517,7 +520,13 @@ describe('API Coverage - Data Type Combinations', () => {
       { name: 'array of mixed', value: [1, 'two', true, null] },
       { name: 'simple object', value: { a: 1, b: 2 } },
       { name: 'nested object', value: { outer: { inner: 'value' } } },
-      { name: 'nested array', value: [[1, 2], [3, 4]] },
+      {
+        name: 'nested array',
+        value: [
+          [1, 2],
+          [3, 4],
+        ],
+      },
       { name: 'complex structure', value: { users: [{ name: 'Alice' }, { name: 'Bob' }] } },
     ];
 
