@@ -1,6 +1,6 @@
 //! Rule to check indentation consistency.
 
-use crate::{Diagnostic, DiagnosticCode, LintConfig, Severity};
+use crate::{Diagnostic, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Rule to check indentation consistency.
@@ -23,7 +23,12 @@ impl super::LintRule for IndentationRule {
         Severity::Warning
     }
 
-    fn check(&self, _source: &str, _value: &Value, _config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(
+        &self,
+        _context: &LintContext,
+        _value: &Value,
+        _config: &LintConfig,
+    ) -> Vec<Diagnostic> {
         Vec::new()
     }
 }

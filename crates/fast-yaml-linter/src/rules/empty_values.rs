@@ -1,8 +1,8 @@
 //! Rule to check for empty (implicit null) values.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, Span,
-    source::SourceMapper,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
+    Span, source::SourceMapper,
 };
 use fast_yaml_core::Value;
 
@@ -46,7 +46,8 @@ impl super::LintRule for EmptyValuesRule {
         Severity::Warning
     }
 
-    fn check(&self, source: &str, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
         let forbid_block = config
             .get_rule_config(self.code())
             .and_then(|rc| rc.options.get_bool("forbid_in_block_mappings"))
@@ -262,7 +263,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("empty value"));
@@ -274,7 +276,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         assert!(diagnostics.is_empty());
     }
@@ -285,7 +288,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         assert!(diagnostics.is_empty());
     }
@@ -301,7 +305,8 @@ mod tests {
             RuleConfig::new().with_option("forbid_in_block_mappings", false),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -311,7 +316,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         // Should detect empty value for 'child'
         assert!(!diagnostics.is_empty());
@@ -323,7 +329,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         assert!(diagnostics.is_empty());
     }
@@ -334,7 +341,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         // Should detect empty value in flow mapping
         assert_eq!(diagnostics.len(), 1);
@@ -352,7 +360,8 @@ mod tests {
             RuleConfig::new().with_option("forbid_in_flow_mappings", false),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Should not detect when forbid_in_flow_mappings is false
         assert!(diagnostics.is_empty());
     }
@@ -363,7 +372,8 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
-        let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         // Block sequences with implicit nulls are allowed by default
         // (is_in_block_sequence_with_implicit_null returns false)
@@ -381,7 +391,8 @@ mod tests {
             RuleConfig::new().with_option("forbid_in_block_sequences", true),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Currently no detection due to is_in_block_sequence_with_implicit_null
         // returning false (implementation limitation noted in code)
         assert!(diagnostics.is_empty());

@@ -2,8 +2,10 @@
 
 use crate::{
     Location, Span,
+    comment_parser::{Comment, CommentParser},
     diagnostic::{ContextLine, DiagnosticContext},
 };
+use std::sync::OnceLock;
 
 /// Extracts source code context for diagnostics.
 ///
@@ -394,5 +396,311 @@ mod tests {
         assert_eq!(ctx.get_line_offset(3), 14);
         assert_eq!(ctx.get_line_offset(0), 0);
         assert_eq!(ctx.get_line_offset(100), 0);
+    }
+}
+
+/// Pre-computed metadata about a line for efficient access.
+///
+/// Used by [`LintContext`] to provide cached line analysis results
+/// that multiple linting rules may need.
+#[derive(Debug, Clone)]
+pub struct LineMetadata {
+    /// Number of leading spaces
+    pub indent: usize,
+    /// true if line is empty or only whitespace
+    pub is_empty: bool,
+    /// true if line starts with '#' (after trimming)
+    pub is_comment: bool,
+}
+
+/// Shared caching layer for linting operations.
+///
+/// Provides efficient access to source analysis results that are expensive
+/// to compute but shared across multiple linting rules. All cached data is
+/// lazily initialized on first access and reused for subsequent calls.
+///
+/// This is the foundation for LSP integration, as it enables incremental
+/// invalidation when source changes.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::LintContext;
+///
+/// let source = "key: value  # comment\n";
+/// let context = LintContext::new(source);
+///
+/// // Access source and cached data
+/// assert_eq!(context.source(), source);
+/// assert_eq!(context.source_context().line_count(), 2);
+/// assert_eq!(context.lines().len(), 2);
+/// assert_eq!(context.comments().len(), 1);
+/// ```
+pub struct LintContext<'a> {
+    source: &'a str,
+    source_context: SourceContext<'a>,
+    comments: OnceLock<Vec<Comment>>,
+    lines: OnceLock<Vec<&'a str>>,
+    line_metadata: OnceLock<Vec<LineMetadata>>,
+}
+
+impl<'a> LintContext<'a> {
+    /// Creates a new lint context for the given source.
+    ///
+    /// The context immediately builds line offset indexes but defers
+    /// parsing comments and computing line metadata until first access.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let source = "key: value";
+    /// let context = LintContext::new(source);
+    /// ```
+    #[must_use]
+    pub fn new(source: &'a str) -> Self {
+        Self {
+            source,
+            source_context: SourceContext::new(source),
+            comments: OnceLock::new(),
+            lines: OnceLock::new(),
+            line_metadata: OnceLock::new(),
+        }
+    }
+
+    /// Returns the original source text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let source = "key: value";
+    /// let context = LintContext::new(source);
+    /// assert_eq!(context.source(), source);
+    /// ```
+    #[must_use]
+    pub const fn source(&self) -> &'a str {
+        self.source
+    }
+
+    /// Returns the source context for line-based operations.
+    ///
+    /// Provides efficient access to line offsets and location mapping.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let source = "line 1\nline 2";
+    /// let context = LintContext::new(source);
+    /// assert_eq!(context.source_context().line_count(), 2);
+    /// assert_eq!(context.source_context().get_line(1), Some("line 1"));
+    /// ```
+    #[must_use]
+    pub const fn source_context(&self) -> &SourceContext<'a> {
+        &self.source_context
+    }
+
+    /// Returns all comments found in the source.
+    ///
+    /// Comments are parsed and cached on first access. Subsequent calls
+    /// return the same cached reference with no additional parsing.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let source = "key: value  # comment";
+    /// let context = LintContext::new(source);
+    /// let comments = context.comments();
+    /// assert_eq!(comments.len(), 1);
+    /// assert_eq!(comments[0].content, " comment");
+    /// ```
+    #[must_use]
+    pub fn comments(&self) -> &[Comment] {
+        self.comments.get_or_init(|| {
+            let parser = CommentParser::new(self.source, &self.source_context);
+            parser.find_all().to_vec()
+        })
+    }
+
+    /// Returns all lines in the source as a slice of string slices.
+    ///
+    /// Lines are split and cached on first access. Subsequent calls
+    /// return the same cached reference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let source = "line 1\nline 2\nline 3";
+    /// let context = LintContext::new(source);
+    /// let lines = context.lines();
+    /// assert_eq!(lines.len(), 3);
+    /// assert_eq!(lines[0], "line 1");
+    /// assert_eq!(lines[1], "line 2");
+    /// ```
+    #[must_use]
+    pub fn lines(&self) -> &[&'a str] {
+        self.lines.get_or_init(|| self.source.lines().collect())
+    }
+
+    /// Returns pre-computed metadata for each line.
+    ///
+    /// Line metadata (indent level, empty status, comment status) is
+    /// computed and cached on first access. Subsequent calls return
+    /// the same cached reference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let source = "  indented\n\n# comment";
+    /// let context = LintContext::new(source);
+    /// let metadata = context.line_metadata();
+    ///
+    /// assert_eq!(metadata.len(), 3);
+    /// assert_eq!(metadata[0].indent, 2);
+    /// assert!(!metadata[0].is_empty);
+    /// assert!(!metadata[0].is_comment);
+    ///
+    /// assert!(metadata[1].is_empty);
+    ///
+    /// assert!(metadata[2].is_comment);
+    /// ```
+    #[must_use]
+    pub fn line_metadata(&self) -> &[LineMetadata] {
+        self.line_metadata.get_or_init(|| {
+            self.lines()
+                .iter()
+                .map(|line| {
+                    let trimmed = line.trim_start();
+                    LineMetadata {
+                        indent: line.chars().take_while(|&c| c == ' ').count(),
+                        is_empty: trimmed.is_empty(),
+                        is_comment: trimmed.starts_with('#'),
+                    }
+                })
+                .collect()
+        })
+    }
+}
+
+#[cfg(test)]
+mod lint_context_tests {
+    use super::*;
+
+    #[test]
+    fn test_lint_context_creation() {
+        let source = "key: value\n# comment";
+        let ctx = LintContext::new(source);
+
+        assert_eq!(ctx.source(), source);
+        assert_eq!(ctx.source_context().line_count(), 2);
+    }
+
+    #[test]
+    fn test_comments_cached() {
+        let source = "key: value  # comment";
+        let ctx = LintContext::new(source);
+
+        // First access computes
+        let comments1 = ctx.comments();
+        assert_eq!(comments1.len(), 1);
+
+        // Second access should return same reference
+        let comments2 = ctx.comments();
+        assert_eq!(comments1.as_ptr(), comments2.as_ptr());
+    }
+
+    #[test]
+    fn test_lines_cached() {
+        let source = "line 1\nline 2\nline 3";
+        let ctx = LintContext::new(source);
+
+        let lines1 = ctx.lines();
+        assert_eq!(lines1.len(), 3);
+
+        let lines2 = ctx.lines();
+        assert_eq!(lines1.as_ptr(), lines2.as_ptr());
+    }
+
+    #[test]
+    fn test_line_metadata_computed() {
+        let source = "  indented\n\n# comment";
+        let ctx = LintContext::new(source);
+
+        let metadata = ctx.line_metadata();
+        assert_eq!(metadata.len(), 3);
+
+        assert_eq!(metadata[0].indent, 2);
+        assert!(!metadata[0].is_empty);
+        assert!(!metadata[0].is_comment);
+
+        assert!(metadata[1].is_empty);
+
+        assert!(metadata[2].is_comment);
+    }
+
+    #[test]
+    fn test_line_metadata_cached() {
+        let source = "key: value";
+        let ctx = LintContext::new(source);
+
+        let meta1 = ctx.line_metadata();
+        let meta2 = ctx.line_metadata();
+        assert_eq!(meta1.as_ptr(), meta2.as_ptr());
+    }
+
+    #[test]
+    fn test_multiple_comments() {
+        let source = "# Comment 1\nkey: value  # Comment 2\n# Comment 3";
+        let ctx = LintContext::new(source);
+
+        let comments = ctx.comments();
+        assert_eq!(comments.len(), 3);
+        assert_eq!(comments[0].content, " Comment 1");
+        assert_eq!(comments[1].content, " Comment 2");
+        assert_eq!(comments[2].content, " Comment 3");
+    }
+
+    #[test]
+    fn test_lines_no_trailing_newline() {
+        let source = "line 1\nline 2";
+        let ctx = LintContext::new(source);
+
+        let lines = ctx.lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "line 1");
+        assert_eq!(lines[1], "line 2");
+    }
+
+    #[test]
+    fn test_empty_source() {
+        let source = "";
+        let ctx = LintContext::new(source);
+
+        assert_eq!(ctx.source(), "");
+        assert_eq!(ctx.lines().len(), 0);
+        assert_eq!(ctx.comments().len(), 0);
+        assert_eq!(ctx.line_metadata().len(), 0);
+    }
+
+    #[test]
+    fn test_only_whitespace() {
+        let source = "  \n\t\n  ";
+        let ctx = LintContext::new(source);
+
+        let metadata = ctx.line_metadata();
+        assert_eq!(metadata.len(), 3);
+        assert!(metadata[0].is_empty);
+        assert!(metadata[1].is_empty);
+        assert!(metadata[2].is_empty);
     }
 }

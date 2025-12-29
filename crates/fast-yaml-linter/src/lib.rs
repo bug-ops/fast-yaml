@@ -32,13 +32,14 @@ mod linter;
 mod location;
 mod severity;
 
+pub mod comment_parser;
 pub mod config;
 pub mod formatter;
 pub mod rules;
 pub mod source;
 pub mod tokenizer;
 
-pub use context::SourceContext;
+pub use context::{LineMetadata, LintContext, SourceContext};
 pub use diagnostic::{
     ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Suggestion,
 };

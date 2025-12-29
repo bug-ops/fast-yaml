@@ -1,0 +1,23 @@
+# Test: indentation rule (expecting consistent 2-space indentation)
+# Expected violations: 4
+
+name: fast-yaml
+version: 0.2.0
+
+server:
+  host: localhost
+   port: 8080  # violation: 3 spaces instead of 2
+  config:
+    timeout: 30
+     max_connections: 100  # violation: 5 spaces instead of 4
+
+database:
+  primary:
+    host: db.example.com
+  replica:
+      host: replica.example.com  # violation: 6 spaces instead of 4
+
+features:
+  - enabled_feature_1
+   - enabled_feature_2  # violation: inconsistent list indentation
+  - enabled_feature_3

@@ -1,6 +1,9 @@
 //! Rule to check for document start marker (---).
 
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, Span};
+use crate::{
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
+    Span,
+};
 use fast_yaml_core::Value;
 
 /// Linting rule for document start marker.
@@ -44,7 +47,8 @@ impl super::LintRule for DocumentStartRule {
         Severity::Warning
     }
 
-    fn check(&self, source: &str, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
         let presence = config
             .get_rule_config(self.code())
             .and_then(|rc| rc.options.get_string("present"))
@@ -152,7 +156,8 @@ mod tests {
             RuleConfig::new().with_option("present", "required"),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -167,7 +172,8 @@ mod tests {
             RuleConfig::new().with_option("present", "required"),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
             diagnostics[0].message,
@@ -186,7 +192,8 @@ mod tests {
             RuleConfig::new().with_option("present", "forbidden"),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
             diagnostics[0].message,
@@ -205,7 +212,8 @@ mod tests {
             RuleConfig::new().with_option("present", "required"),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -218,11 +226,13 @@ mod tests {
         let config = LintConfig::new(); // Default is "allowed"
 
         let value_with = Parser::parse_str(yaml_with).unwrap().unwrap();
-        let diag_with = rule.check(yaml_with, &value_with, &config);
+        let context_with = LintContext::new(yaml_with);
+        let diag_with = rule.check(&context_with, &value_with, &config);
         assert!(diag_with.is_empty());
 
         let value_without = Parser::parse_str(yaml_without).unwrap().unwrap();
-        let diag_without = rule.check(yaml_without, &value_without, &config);
+        let context_without = LintContext::new(yaml_without);
+        let diag_without = rule.check(&context_without, &value_without, &config);
         assert!(diag_without.is_empty());
     }
 
@@ -248,7 +258,8 @@ mod tests {
                 .with_severity(Severity::Error),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }

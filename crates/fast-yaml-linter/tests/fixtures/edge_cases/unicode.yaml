@@ -1,0 +1,28 @@
+# Test: Unicode characters in YAML
+# Expected violations: 0
+
+name: "fast-yaml 🚀"
+description: "高性能 YAML パーサー"
+
+greetings:
+  english: "Hello, World!"
+  japanese: "こんにちは、世界！"
+  chinese: "你好，世界！"
+  russian: "Привет, мир!"
+  arabic: "مرحبا بالعالم!"
+  emoji: "👋 🌍"
+
+symbols:
+  currency: "€ £ ¥ ₹ ₽"
+  math: "∑ ∫ ∂ √ ∞"
+  arrows: "← → ↑ ↓ ⇒ ⇔"
+
+special_cases:
+  zero_width: "test​test"  # Contains zero-width space
+  rtl_text: "مختلط English نص"
+  combining: "é vs é"  # e + combining accent vs precomposed
+
+paths:
+  - "/usr/local/café"
+  - "C:\\Users\\用户\\Documents"
+  - "~/文档/проекты"

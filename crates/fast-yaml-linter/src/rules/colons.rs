@@ -1,7 +1,7 @@
 //! Rule to check spacing around colons.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, SourceContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
     tokenizer::{FlowTokenizer, TokenType},
 };
@@ -54,9 +54,10 @@ impl super::LintRule for ColonsRule {
         Severity::Warning
     }
 
-    fn check(&self, source: &str, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let context = SourceContext::new(source);
-        let tokenizer = FlowTokenizer::new(source, &context);
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
+        let source_context = context.source_context();
+        let tokenizer = FlowTokenizer::new(source, source_context);
 
         let rule_config = config.get_rule_config(self.code());
         let max_spaces_before = rule_config
@@ -264,7 +265,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -276,7 +278,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("too many spaces before"));
     }
@@ -289,7 +292,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("too many spaces after"));
     }
@@ -305,7 +309,8 @@ mod tests {
             RuleConfig::new().with_option("max-spaces-after", 2i64),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -317,7 +322,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Should only flag the mapping colon, not the one in the URL
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
@@ -330,7 +336,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
 
@@ -342,7 +349,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Should only flag the mapping colon, not the ones in the time
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
@@ -355,7 +363,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -367,7 +376,8 @@ mod tests {
         let rule = ColonsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // At least 2 violations (spaces before colons)
         assert!(diagnostics.len() >= 2);
     }

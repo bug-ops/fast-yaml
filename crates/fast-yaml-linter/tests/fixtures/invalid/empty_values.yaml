@@ -1,0 +1,25 @@
+# Test: empty_values rule
+# Expected violations: 4 (keys with null/empty values where not allowed)
+
+name: fast-yaml
+version: 0.2.0
+description:  # violation: empty value
+
+server:
+  host: localhost
+  port:  # violation: empty value
+  config:
+    timeout: 30
+    max_connections:  # violation: empty value
+
+database:
+  primary:
+    host:  # violation: empty value
+    port: 5432
+  replica:
+    host: replica.example.com
+    port: 5432
+
+features:
+  - feature_1
+  -  # empty list item allowed in some contexts

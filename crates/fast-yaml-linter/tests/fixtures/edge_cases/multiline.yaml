@@ -1,0 +1,82 @@
+# Test: Multiline strings and complex YAML features
+# Expected violations: 0
+
+# Literal style block scalar (preserves newlines)
+literal_block: |
+  This is a literal block scalar.
+  Newlines are preserved.
+  Leading spaces are preserved.
+    Even indented lines.
+
+# Folded style block scalar (folds newlines)
+folded_block: >
+  This is a folded block scalar.
+  Newlines are folded into spaces.
+  But blank lines are preserved.
+
+  Like this one above.
+
+# Literal with indentation indicator
+literal_with_indent: |2
+    Two spaces indentation.
+    Preserved for all lines.
+
+# Literal with strip chomping
+literal_strip: |-
+  No trailing newline
+  After this block
+
+# Literal with keep chomping
+literal_keep: |+
+  Trailing newlines
+  Are preserved
+
+
+# Complex nested multiline
+documentation:
+  description: >
+    This is a long description that spans multiple lines.
+    It will be folded into a single line with spaces.
+
+  usage: |
+    # Usage Example
+
+    ```rust
+    let parser = YamlParser::new();
+    let result = parser.parse(input)?;
+    ```
+
+  notes: |-
+    Important notes:
+    - Item 1
+    - Item 2
+    - Item 3
+
+# Multiline in lists
+commands:
+  - name: build
+    script: |
+      cargo build --release
+      cargo test
+      cargo clippy
+  - name: deploy
+    script: |
+      docker build -t app:latest .
+      docker push app:latest
+
+# Multiline in nested structures
+server:
+  config: |
+    [server]
+    host = "0.0.0.0"
+    port = 8080
+
+  nginx_conf: |
+    server {
+        listen 80;
+        server_name example.com;
+
+        location / {
+            proxy_pass http://localhost:8080;
+        }
+    }

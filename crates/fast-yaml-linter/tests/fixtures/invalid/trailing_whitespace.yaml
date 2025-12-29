@@ -1,0 +1,17 @@
+# Test: trailing_whitespace rule
+# Expected violations: 5
+
+name: fast-yaml   
+version: 0.2.0
+
+server:  
+  host: localhost
+  port: 8080
+
+database:
+  host: db.example.com  
+  port: 5432  
+
+features:
+  - feature_1  
+  - feature_2

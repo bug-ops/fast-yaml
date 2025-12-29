@@ -1,0 +1,47 @@
+# Test: Valid YAML with proper comment formatting
+# Expected violations: 0
+
+# Application configuration
+# Version: 1.0.0
+
+# Server settings
+server:
+  # Bind to all interfaces
+  host: 0.0.0.0
+
+  # Standard HTTP port
+  port: 8080
+
+  # Worker configuration
+  workers:
+    # Number of worker threads
+    count: 4
+
+    # Worker timeout in seconds
+    timeout: 60
+
+# Database configuration
+database:
+  # Primary database connection
+  primary:
+    url: postgresql://localhost/app
+    pool_size: 10
+
+  # Read replica for queries
+  replica:
+    url: postgresql://replica/app
+    pool_size: 20
+
+# Feature toggles
+features:
+  # Enable new authentication system
+  new_auth: true
+
+  # Enable experimental caching layer
+  cache_layer: false
+
+  # Beta features for testing
+  beta:
+    - feature_a
+    - feature_b
+    - feature_c
