@@ -66,8 +66,8 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &YamlOwned) -> NapiResult<Unknown<
         // Tagged values - extract the inner value
         YamlOwned::Tagged(_, inner) => yaml_to_js(env, inner),
 
-        // Representation values - extract the value (first element)
-        YamlOwned::Representation(value, _, _) => yaml_to_js(env, value),
+        // Representation values - the first element is the raw string representation
+        YamlOwned::Representation(repr, _, _) => repr.as_str().into_unknown(env),
     }
 }
 

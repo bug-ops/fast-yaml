@@ -346,8 +346,11 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
         // Tagged values - extract the inner value
         YamlOwned::Tagged(_, inner) => yaml_to_python(py, inner),
 
-        // Representation values - extract the value (first element)
-        YamlOwned::Representation(value, _, _) => yaml_to_python(py, value),
+        // Representation values - the first element is the raw string representation
+        YamlOwned::Representation(repr, _, _) => {
+            let py_str = repr.into_pyobject(py)?;
+            Ok(py_str.as_any().clone().unbind())
+        }
     }
 }
 

@@ -71,8 +71,11 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
         // Tagged values - extract the inner value
         Value::Tagged(_, inner) => value_to_python(py, inner),
 
-        // Representation values - extract the value (first element)
-        Value::Representation(value, _, _) => value_to_python(py, value),
+        // Representation values - the first element is the raw string representation
+        Value::Representation(repr, _, _) => {
+            let py_str = repr.into_pyobject(py)?;
+            Ok(py_str.as_any().clone().unbind())
+        }
     }
 }
 
