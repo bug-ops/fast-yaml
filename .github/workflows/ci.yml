@@ -368,7 +368,7 @@ jobs:
   nodejs-quality:
     name: NodeJS Quality Checks
     needs: [changes]
-    if: needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true'
+    if: needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -381,8 +381,27 @@ jobs:
           cache: 'npm'
           cache-dependency-path: nodejs/package-lock.json
 
+      - name: Verify package-lock.json is up to date
+        run: |
+          cd nodejs
+          npm install --package-lock-only
+          git diff --exit-code package-lock.json || {
+            echo "Error: package-lock.json is out of date. Run 'npm install' locally and commit the changes."
+            exit 1
+          }
+
       - name: Install NodeJS dependencies
         run: cd nodejs && npm install
+
+      - name: Run security audit
+        run: |
+          cd nodejs
+          # Fail on high and critical vulnerabilities
+          npm audit --audit-level=high || {
+            echo "Security vulnerabilities found. Run 'npm audit' locally to see details."
+            echo "To fix automatically: npm audit fix"
+            exit 1
+          }
 
       - name: Run linting
         run: cd nodejs && npm run lint
