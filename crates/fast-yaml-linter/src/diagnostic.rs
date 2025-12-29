@@ -90,6 +90,16 @@ impl DiagnosticCode {
     pub const EMPTY_VALUES: &'static str = "empty-values";
     /// Predefined code for missing newline at end of file.
     pub const NEW_LINE_AT_END_OF_FILE: &'static str = "new-line-at-end-of-file";
+    /// Predefined code for braces formatting.
+    pub const BRACES: &'static str = "braces";
+    /// Predefined code for brackets formatting.
+    pub const BRACKETS: &'static str = "brackets";
+    /// Predefined code for colons spacing.
+    pub const COLONS: &'static str = "colons";
+    /// Predefined code for commas spacing.
+    pub const COMMAS: &'static str = "commas";
+    /// Predefined code for hyphens spacing.
+    pub const HYPHENS: &'static str = "hyphens";
 
     /// Creates a new diagnostic code.
     ///
