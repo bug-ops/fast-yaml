@@ -108,8 +108,8 @@ person:
     });
 
     it('should enforce 100MB size limit', () => {
-      // Create a string larger than 100MB
-      const large = 'x: '.repeat(50_000_000);
+      // Create a string larger than 100MB (~105MB)
+      const large = 'x: '.repeat(35_000_000);
       const result = safeLoad(large);
       expect(result).toBeInstanceOf(Error);
       expect((result as Error).message).toContain('exceeds maximum');
@@ -144,7 +144,7 @@ person:
     });
 
     it('should enforce 100MB size limit', () => {
-      const large = 'x: '.repeat(50_000_000);
+      const large = 'x: '.repeat(35_000_000); // ~105MB, exceeds 100MB limit
       const result = safeLoadAll(large);
       expect(result).toBeInstanceOf(Error);
       expect((result as Error).message).toContain('exceeds maximum');

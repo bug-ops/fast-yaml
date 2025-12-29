@@ -36,6 +36,15 @@ coverage:
         paths:
           - python/fast_yaml/
 
+      nodejs:
+        target: 50%
+        threshold: 5%
+        informational: true
+        flags:
+          - nodejs
+        paths:
+          - nodejs/
+
     patch:
       default:
         target: 70%
@@ -66,9 +75,13 @@ flag_management:
       carryforward: true
       after_n_builds: 1
 
-    # Note: nodejs coverage is not collected because the source is Rust (NAPI-RS)
-    # The Rust code in nodejs/src/ is compiled to a native module
-    # JS/TS coverage via vitest only covers JavaScript files, which are generated stubs
+    - name: nodejs
+      paths:
+        - nodejs/
+      carryforward: true
+      after_n_builds: 1
+      # Note: nodejs coverage only covers JS/TS wrapper code
+      # The actual implementation is Rust (NAPI-RS) which is covered by the rust flag
 
 # Component configuration for granular coverage tracking
 component_management:
@@ -105,7 +118,10 @@ component_management:
         - python/fast_yaml/**
         - python/src/**
 
-    # Note: nodejs component removed - source is Rust (NAPI-RS), not JS/TS
+    - component_id: nodejs
+      name: "NodeJS Bindings"
+      paths:
+        - nodejs/**
 
 # Ignore test files and generated code
 ignore:

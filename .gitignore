@@ -19,6 +19,7 @@ build/
 *.egg
 .venv/
 venv/
+.coverage
 
 # IDE
 .idea/

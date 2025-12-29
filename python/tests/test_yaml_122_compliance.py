@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import math
 
-import pytest
-
 import fast_yaml
 
 
@@ -382,13 +380,7 @@ class TestYAML122RoundTrip:
 
     def test_roundtrip_nested(self):
         """Test nested round-trip."""
-        original = {
-            "level1": {
-                "level2": {
-                    "value": "deep"
-                }
-            }
-        }
+        original = {"level1": {"level2": {"value": "deep"}}}
         yaml_str = fast_yaml.safe_dump(original)
         parsed = fast_yaml.safe_load(yaml_str)
         assert parsed == original

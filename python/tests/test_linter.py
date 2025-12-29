@@ -4,9 +4,6 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
-import fast_yaml
 from fast_yaml._core import lint
 
 
@@ -186,8 +183,10 @@ key: value2
         yaml_content = "key: this is a very long value that exceeds the limit\n"
         diagnostics = linter.lint(yaml_content)
         # Should detect long line
-        assert any("line" in d.message.lower() or "length" in d.message.lower()
-                   for d in diagnostics) or len(diagnostics) == 0  # Rule may not be enabled
+        assert (
+            any("line" in d.message.lower() or "length" in d.message.lower() for d in diagnostics)
+            or len(diagnostics) == 0
+        )  # Rule may not be enabled
 
     def test_linter_repr(self):
         """Test Linter repr."""
