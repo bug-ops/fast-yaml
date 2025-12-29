@@ -107,7 +107,11 @@ impl super::LintRule for BracesRule {
                 // Check if mapping is non-empty
                 for (i, open) in open_braces.iter().enumerate() {
                     if let Some(close) = close_braces.get(i)
-                        && !is_empty_collection(source, open.span.end.offset, close.span.start.offset)
+                        && !is_empty_collection(
+                            source,
+                            open.span.end.offset,
+                            close.span.start.offset,
+                        )
                     {
                         let severity =
                             config.get_effective_severity(self.code(), self.default_severity());
