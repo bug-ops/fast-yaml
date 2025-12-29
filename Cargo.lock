@@ -382,6 +382,7 @@ dependencies = [
  "fast-yaml-core",
  "fast-yaml-linter",
  "fast-yaml-parallel",
+ "ordered-float",
  "pyo3",
  "saphyr",
 ]
@@ -445,6 +446,7 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
+ "ordered-float",
  "saphyr",
  "thiserror",
 ]

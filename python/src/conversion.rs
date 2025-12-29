@@ -67,6 +67,12 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
         }
 
         Value::BadValue => Err(PyValueError::new_err("Invalid YAML value encountered")),
+
+        // Tagged values - extract the inner value
+        Value::Tagged(_, inner) => value_to_python(py, inner),
+
+        // Representation values - extract the value (first element)
+        Value::Representation(value, _, _) => value_to_python(py, value),
     }
 }
 

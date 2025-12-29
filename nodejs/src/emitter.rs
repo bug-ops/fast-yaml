@@ -6,6 +6,7 @@
 use crate::conversion::js_to_yaml;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
+use ordered_float::OrderedFloat;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
 /// Maximum output size in bytes for `safe_dump`/`safe_dump_all` (100MB).

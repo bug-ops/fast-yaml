@@ -16,6 +16,7 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
+use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -341,6 +342,12 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
         }
 
         YamlOwned::BadValue => Err(PyValueError::new_err("Invalid YAML value encountered")),
+
+        // Tagged values - extract the inner value
+        YamlOwned::Tagged(_, inner) => yaml_to_python(py, inner),
+
+        // Representation values - extract the value (first element)
+        YamlOwned::Representation(value, _, _) => yaml_to_python(py, value),
     }
 }
 
@@ -370,7 +377,9 @@ fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
     // Check float - handle special values per YAML 1.2.2 spec
     if obj.is_instance_of::<PyFloat>() {
         let f: f64 = obj.extract()?;
-        return Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(f)));
+        return Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(OrderedFloat(
+            f,
+        ))));
     }
 
     // Check string

@@ -24,6 +24,7 @@ fast-yaml-linter.workspace = true
 fast-yaml-parallel.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
 saphyr.workspace = true
+ordered-float.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

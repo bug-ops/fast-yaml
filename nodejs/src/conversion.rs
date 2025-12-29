@@ -4,6 +4,7 @@
 //! between saphyr's `YamlOwned` type and NAPI-RS JavaScript values.
 
 use napi::{Result as NapiResult, bindgen_prelude::*};
+use ordered_float::OrderedFloat;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
 /// Convert a YAML value to a JavaScript value.
@@ -61,6 +62,12 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &YamlOwned) -> NapiResult<Unknown<
         YamlOwned::Alias(_) => Null.into_unknown(env),
 
         YamlOwned::BadValue => Err(napi::Error::from_reason("invalid YAML value encountered")),
+
+        // Tagged values - extract the inner value
+        YamlOwned::Tagged(_, inner) => yaml_to_js(env, inner),
+
+        // Representation values - extract the value (first element)
+        YamlOwned::Representation(value, _, _) => yaml_to_js(env, value),
     }
 }
 
@@ -125,7 +132,9 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
             }
 
             // Float value (including inf, -inf, nan)
-            Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(num)))
+            Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(OrderedFloat(
+                num,
+            ))))
         }
 
         ValueType::String => {
