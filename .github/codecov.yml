@@ -66,11 +66,9 @@ flag_management:
       carryforward: true
       after_n_builds: 1
 
-    - name: nodejs
-      paths:
-        - nodejs/__test__/
-      carryforward: true
-      after_n_builds: 1
+    # Note: nodejs coverage is not collected because the source is Rust (NAPI-RS)
+    # The Rust code in nodejs/src/ is compiled to a native module
+    # JS/TS coverage via vitest only covers JavaScript files, which are generated stubs
 
 # Component configuration for granular coverage tracking
 component_management:
@@ -107,11 +105,7 @@ component_management:
         - python/fast_yaml/**
         - python/src/**
 
-    - component_id: nodejs
-      name: "NodeJS Bindings"
-      paths:
-        - nodejs/__test__/**
-        - nodejs/src/**
+    # Note: nodejs component removed - source is Rust (NAPI-RS), not JS/TS
 
 # Ignore test files and generated code
 ignore:
