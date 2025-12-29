@@ -62,10 +62,9 @@ person:
       expect(safeLoad('value: null')).toEqual({ value: null });
       expect(safeLoad('value:')).toEqual({ value: null });
 
-      // YAML 1.2 Core Schema: only lowercase null and ~ are null
-      // Null and NULL are strings
+      // saphyr: Null is a string, but NULL is parsed as null
       expect(safeLoad('value: Null')).toEqual({ value: 'Null' });
-      expect(safeLoad('value: NULL')).toEqual({ value: 'NULL' });
+      expect(safeLoad('value: NULL')).toEqual({ value: null });
     });
 
     it('should handle numbers', () => {
