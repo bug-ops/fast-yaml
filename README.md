@@ -170,6 +170,29 @@ console.log(yamlStr);
 > [!TIP]
 > **Migrating from js-yaml?** Just change your import: `import { safeLoad, safeDump } from 'fastyaml-rs';`
 
+### Command Line Tool
+
+For YAML processing from the terminal, use the `fy` CLI:
+
+```bash
+# Install
+cargo install fast-yaml-cli
+
+# Parse and validate
+fy parse config.yaml
+
+# Format YAML
+fy format --indent 4 config.yaml
+
+# Convert to JSON
+fy convert json config.yaml
+
+# Lint with style checks
+fy lint config.yaml
+```
+
+See [CLI documentation](crates/fast-yaml-cli/README.md) for details.
+
 ## API Reference
 
 ### Loading YAML

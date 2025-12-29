@@ -26,17 +26,12 @@ cd fast-yaml
 cargo install --path crates/fast-yaml-cli
 ```
 
-### Pre-built binaries
+### Verify installation
 
-Download from [GitHub Releases](https://github.com/bug-ops/fast-yaml/releases/latest):
-
-| Platform | Architecture | Download |
-|----------|--------------|----------|
-| Linux | x86_64 | [fy-x86_64-unknown-linux-gnu.tar.gz](https://github.com/bug-ops/fast-yaml/releases/latest) |
-| Linux | aarch64 | [fy-aarch64-unknown-linux-gnu.tar.gz](https://github.com/bug-ops/fast-yaml/releases/latest) |
-| macOS | x86_64 | [fy-x86_64-apple-darwin.tar.gz](https://github.com/bug-ops/fast-yaml/releases/latest) |
-| macOS | aarch64 | [fy-aarch64-apple-darwin.tar.gz](https://github.com/bug-ops/fast-yaml/releases/latest) |
-| Windows | x86_64 | [fy-x86_64-pc-windows-msvc.zip](https://github.com/bug-ops/fast-yaml/releases/latest) |
+```bash
+fy --version
+fy --help
+```
 
 ## Usage
 
