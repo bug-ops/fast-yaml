@@ -14,7 +14,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fast-yaml-parallel = "0.1"
+fast-yaml-parallel = "0.3"
 ```
 
 Or with cargo-add:

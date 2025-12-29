@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-12-29
+
+### Breaking Changes
+
+- **Parser**: Migrated from `yaml-rust2` to `saphyr` as the YAML parser foundation
+- **YAML 1.2 Core Schema**: Stricter compliance with YAML 1.2 specification:
+  - Only lowercase `true`/`false` are parsed as booleans (not `True`/`False`/`TRUE`/`FALSE`)
+  - Only lowercase `null` and `~` are parsed as null (not `Null`/`NULL`)
+  - Special float values now emit as `.inf`/`-.inf`/`.nan` (YAML 1.2 compliant)
+
+### Changed
+
+- **Core**: Replaced `yaml-rust2 0.10.x` with `saphyr 0.0.6` for YAML parsing
+- **Core**: Updated `Value` type to use `saphyr::YamlOwned` internally
+- **Core**: Float values now use `OrderedFloat<f64>` wrapper from saphyr
+- **Emitter**: Added `fix_special_floats()` post-processing to ensure YAML 1.2 compliant output
+- **Python**: Updated bindings to use saphyr types (`YamlOwned`, `ScalarOwned`, `MappingOwned`)
+- **Node.js**: Updated bindings to use saphyr types
+- **Docs**: Updated README, CLAUDE.md to reference saphyr instead of yaml-rust2
+- **Docs**: Updated Technology Stack section with saphyr 0.0.6
+
+### Fixed
+
+- **Emitter**: Special float values (`inf`, `-inf`, `NaN`) now correctly emit as `.inf`, `-.inf`, `.nan` per YAML 1.2 spec
+
+### Internal
+
+- Updated internal type conversions for saphyr's nested value structure (`YamlOwned::Value(ScalarOwned::*)`)
+- Added handling for `YamlOwned::Tagged` and `YamlOwned::Representation` variants
+- Updated benchmark code to use saphyr API
+
 ## [0.2.0] - 2025-12-27
 
 ### Breaking Changes
@@ -183,7 +214,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.1.11...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/bug-ops/fast-yaml/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/bug-ops/fast-yaml/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/bug-ops/fast-yaml/compare/v0.1.10...v0.1.11
 [0.1.10]: https://github.com/bug-ops/fast-yaml/compare/v0.1.9...v0.1.10
 [0.1.9]: https://github.com/bug-ops/fast-yaml/compare/v0.1.8...v0.1.9

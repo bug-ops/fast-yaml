@@ -14,7 +14,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fast-yaml-ffi = "0.1"
+fast-yaml-ffi = "0.3"
 ```
 
 Or with cargo-add:

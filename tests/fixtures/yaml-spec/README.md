@@ -69,5 +69,7 @@ These files can be used for:
 ## YAML 1.2.2 vs 1.1 Key Differences
 
 - `yes`, `no`, `on`, `off` are **strings** (not booleans)
+- `True`, `False`, `TRUE`, `FALSE` are **strings** (only lowercase `true`/`false` are booleans)
+- `Null`, `NULL` are **strings** (only lowercase `null` and `~` are null)
 - Octal numbers require `0o` prefix (`0o14` not `014`)
-- Only `true`/`false` are boolean values
+- Special floats use `.inf`, `-.inf`, `.nan` format

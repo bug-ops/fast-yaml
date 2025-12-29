@@ -14,7 +14,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fast-yaml-core = "0.1"
+fast-yaml-core = "0.3"
 ```
 
 Or with cargo-add:
@@ -52,8 +52,8 @@ This library implements the YAML 1.2.2 specification with the Core Schema:
 
 | Type | Supported Values |
 |------|------------------|
-| Null | `~`, `null`, `Null`, `NULL`, empty |
-| Boolean | `true`/`false` (case-insensitive) |
+| Null | `~`, `null`, empty |
+| Boolean | `true`/`false` (lowercase only per YAML 1.2 Core Schema) |
 | Integer | Decimal, `0o` octal, `0x` hex |
 | Float | Standard, `.inf`, `-.inf`, `.nan` |
 | String | Plain, single/double-quoted, literal (`\|`), folded (`>`) |
