@@ -1,0 +1,16 @@
+# Test: long_lines rule (assuming 80 character limit)
+# Expected violations: 3
+
+name: fast-yaml
+version: 0.2.0
+
+# This line is exactly 80 characters long and should be OK..................
+description: "This is a very long description that exceeds the maximum line length limit of 80 characters and should trigger a violation"  # violation: line too long
+
+config:
+  short_value: ok
+  long_value: "Another extremely long value string that goes way beyond the acceptable line length limit and should be flagged by the linter as a violation of the line length rule"  # violation: line too long
+
+urls:
+  - https://example.com/api/v1/users
+  - https://example.com/api/v1/organizations/with/a/very/long/path/that/exceeds/the/maximum/allowed/line/length/limit  # violation: line too long

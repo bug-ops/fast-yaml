@@ -1,0 +1,21 @@
+# Test: comment formatting rules
+# Expected violations: 4
+
+#violation: no space after hash
+name: fast-yaml
+
+# Proper comment
+version: 0.2.0
+
+server:
+  host: localhost  #violation: no space before comment
+  port: 8080
+
+  #violation: no space after hash in middle
+  config:
+    timeout: 30
+    max_connections: 100  #violation: no space before inline comment
+
+database:
+  host: db.example.com
+  port: 5432

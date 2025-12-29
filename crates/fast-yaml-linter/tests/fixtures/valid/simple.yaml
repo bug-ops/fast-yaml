@@ -1,0 +1,21 @@
+# Test: Valid simple YAML document
+# Expected violations: 0
+
+name: fast-yaml
+version: 0.2.0
+description: High-performance YAML parser with linting capabilities
+license: MIT OR Apache-2.0
+
+features:
+  - YAML 1.2.2 compliant
+  - Multi-threaded processing
+  - Cross-language bindings
+  - Comprehensive linting
+
+author:
+  name: Fast YAML Contributors
+  email: contributors@fast-yaml.org
+
+enabled: true
+max_threads: 8
+timeout_ms: 5000

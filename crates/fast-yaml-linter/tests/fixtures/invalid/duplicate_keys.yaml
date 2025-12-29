@@ -1,0 +1,22 @@
+# Test: duplicate_keys rule
+# Expected violations: 3 (duplicate 'name', 'id', and 'port')
+
+name: first
+version: 1.0.0
+id: 1
+name: second  # violation: duplicate key 'name'
+
+server:
+  host: localhost
+  port: 8080
+  id: server1
+  id: server2  # violation: duplicate key 'id' in nested object
+
+database:
+  primary:
+    host: db1.example.com
+    port: 5432
+    port: 3306  # violation: duplicate key 'port'
+  replica:
+    host: db2.example.com
+    port: 5432

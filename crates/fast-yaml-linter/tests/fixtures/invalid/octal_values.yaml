@@ -1,0 +1,17 @@
+# Test: octal_values rule (implicit octals can cause confusion)
+# Expected violations: 3 (YAML 1.2 doesn't support implicit octals, but 1.1 did)
+
+name: fast-yaml
+version: 0.2.0
+
+permissions:
+  file_mode: 0644  # violation: looks like octal but is decimal in YAML 1.2
+  dir_mode: 0755   # violation: potentially confusing octal-like value
+
+server:
+  port: 8080
+  timeout: 030  # violation: leading zero suggests octal intent
+
+config:
+  retry_count: 0  # OK: single zero is fine
+  max_attempts: 10  # OK: no leading zero

@@ -1,0 +1,49 @@
+# Test: Valid complex YAML with nested structures
+# Expected violations: 0
+
+database:
+  host: localhost
+  port: 5432
+  credentials:
+    username: admin
+    password: secure_password
+  pool:
+    min_size: 5
+    max_size: 20
+    timeout_seconds: 30
+
+server:
+  bind_address: 0.0.0.0
+  port: 8080
+  tls:
+    enabled: true
+    cert_path: /etc/ssl/certs/server.crt
+    key_path: /etc/ssl/private/server.key
+  routes:
+    - path: /api/v1/users
+      methods: [GET, POST, PUT, DELETE]
+      auth_required: true
+    - path: /api/v1/public
+      methods: [GET]
+      auth_required: false
+
+logging:
+  level: info
+  format: json
+  outputs:
+    - type: console
+      enabled: true
+    - type: file
+      enabled: true
+      path: /var/log/app.log
+      max_size_mb: 100
+      max_backups: 5
+
+features:
+  feature_flags:
+    new_ui: true
+    beta_api: false
+    analytics: true
+  experiments:
+    recommendation_engine: 0.5
+    new_algorithm: 0.1
