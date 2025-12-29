@@ -19,11 +19,11 @@
  */
 export declare class Mark {
   /** The name of the source (e.g., filename or '<input>'). */
-  readonly name: string;
+  readonly name: string
   /** The line number (0-indexed). */
-  readonly line: number;
+  readonly line: number
   /** The column number (0-indexed). */
-  readonly column: number;
+  readonly column: number
   /**
    * Create a new Mark instance.
    *
@@ -33,43 +33,43 @@ export declare class Mark {
    * * `line` - The line number (0-indexed)
    * * `column` - The column number (0-indexed)
    */
-  constructor(name: string, line: number, column: number);
+  constructor(name: string, line: number, column: number)
   /**
    * Get a string representation of the mark.
    *
    * Returns format: "name:line:column"
    */
-  toString(): string;
+  toString(): string
 }
 
 /** Options for YAML serialization. */
 export interface DumpOptions {
   /** If true, sort object keys alphabetically (default: false) */
-  sortKeys?: boolean;
+  sortKeys?: boolean
   /**
    * Allow unicode characters (default: true).
    * Note: yaml-rust2 always outputs unicode; this is accepted for API compatibility.
    */
-  allowUnicode?: boolean;
+  allowUnicode?: boolean
   /**
    * Indentation width in spaces (default: 2).
    * Valid range: 1-9 (values outside this range will be clamped).
    */
-  indent?: number;
+  indent?: number
   /**
    * Maximum line width for wrapping (default: 80).
    * Valid range: 20-1000 (values outside this range will be clamped).
    */
-  width?: number;
+  width?: number
   /**
    * Default flow style for collections (default: null).
    * - null: Use block style (multi-line)
    * - true: Force flow style (inline: [...], {...})
    * - false: Force block style (explicit)
    */
-  defaultFlowStyle?: boolean;
+  defaultFlowStyle?: boolean
   /** Add explicit document start marker `---` (default: false). */
-  explicitStart?: boolean;
+  explicitStart?: boolean
 }
 
 /**
@@ -102,10 +102,7 @@ export interface DumpOptions {
  * console.log(data); // { name: 'test' }
  * ```
  */
-export declare function load(
-  yamlStr: string,
-  options?: LoadOptions | undefined | null
-): NapiResult<unknown>;
+export declare function load(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<unknown>
 
 /**
  * Parse a YAML string containing multiple documents with options (js-yaml compatible).
@@ -140,10 +137,7 @@ bar: 2', { schema: 'SafeSchema' });
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function loadAll(
-  yamlStr: string,
-  options?: LoadOptions | undefined | null
-): NapiResult<Array<unknown>>;
+export declare function loadAll(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<Array<unknown>>
 
 /** Options for YAML parsing (js-yaml compatible). */
 export interface LoadOptions {
@@ -151,14 +145,14 @@ export interface LoadOptions {
    * YAML schema to use for parsing (default: `SafeSchema`).
    * Currently all schemas behave as `SafeSchema` (safe by default).
    */
-  schema?: Schema;
+  schema?: Schema
   /** Filename or source name for error messages (default: `<input>`). */
-  filename?: string;
+  filename?: string
   /**
    * Allow duplicate keys in mappings (default: true).
    * Note: fast-yaml always allows duplicates; this is for API compatibility.
    */
-  allowDuplicateKeys?: boolean;
+  allowDuplicateKeys?: boolean
 }
 
 /**
@@ -190,10 +184,7 @@ value: 123
 '
  * ```
  */
-export declare function safeDump(
-  data: unknown,
-  options?: DumpOptions | undefined | null
-): NapiResult<string>;
+export declare function safeDump(data: unknown, options?: DumpOptions | undefined | null): NapiResult<string>
 
 /**
  * Serialize multiple JavaScript objects to a YAML string with document separators.
@@ -232,10 +223,7 @@ b: 2
 '
  * ```
  */
-export declare function safeDumpAll(
-  documents: Array<unknown>,
-  options?: DumpOptions | undefined | null
-): NapiResult<string>;
+export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOptions | undefined | null): NapiResult<string>
 
 /**
  * Parse a YAML string and return a JavaScript object.
@@ -270,7 +258,7 @@ value: 123');
  * console.log(data); // { name: 'test', value: 123 }
  * ```
  */
-export declare function safeLoad(yamlStr: string): NapiResult<unknown>;
+export declare function safeLoad(yamlStr: string): NapiResult<unknown>
 
 /**
  * Parse a YAML string containing multiple documents.
@@ -307,7 +295,7 @@ bar: 2');
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function safeLoadAll(yamlStr: string): NapiResult<Array<unknown>>;
+export declare function safeLoadAll(yamlStr: string): NapiResult<Array<unknown>>
 
 /**
  * YAML schema types for parsing behavior (js-yaml compatible).
@@ -326,7 +314,7 @@ export declare const enum Schema {
   /** Core schema - YAML 1.2.2 Core Schema. */
   CoreSchema = 'CoreSchema',
   /** Failsafe schema - minimal safe subset. */
-  FailsafeSchema = 'FailsafeSchema',
+  FailsafeSchema = 'FailsafeSchema'
 }
 
 /**
@@ -341,4 +329,4 @@ export declare const enum Schema {
  * console.log(version()); // "0.1.0"
  * ```
  */
-export declare function version(): string;
+export declare function version(): string
