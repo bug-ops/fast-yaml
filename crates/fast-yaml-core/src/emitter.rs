@@ -266,7 +266,7 @@ impl Emitter {
 
         // Fix special float values for YAML 1.2 Core Schema compliance
         // saphyr outputs "inf"/"-inf"/"NaN", but YAML 1.2 requires ".inf"/"-.inf"/".nan"
-        output = Self::fix_special_floats(output);
+        output = Self::fix_special_floats(&output);
 
         // TODO: Apply indent transformation if config.indent != 2
         // This would require parsing indentation patterns and adjusting them
@@ -283,7 +283,7 @@ impl Emitter {
     /// - `inf` → `.inf`
     /// - `-inf` → `-.inf`
     /// - `NaN` → `.nan`
-    fn fix_special_floats(output: String) -> String {
+    fn fix_special_floats(output: &str) -> String {
         // We need to be careful to only replace standalone values, not parts of words.
         // The regex approach would be safer, but for simplicity we'll use line-by-line
         // processing with word boundary checks.
@@ -294,19 +294,18 @@ impl Emitter {
                 let trimmed = line.trim_end();
                 if let Some(prefix) = trimmed.strip_suffix("inf") {
                     // Check if it's "-inf" or standalone "inf"
-                    if prefix.ends_with('-') {
-                        // Already has minus, check if it's at value position (after : or at line start)
-                        let before_minus = &prefix[..prefix.len() - 1];
+                    if let Some(before_minus) = prefix.strip_suffix('-') {
+                        // Already has minus, check if it's at value position
                         if Self::is_value_position(before_minus) {
                             return format!("{before_minus}-.inf");
                         }
                     } else if Self::is_value_position(prefix) {
                         return format!("{prefix}.inf");
                     }
-                } else if let Some(prefix) = trimmed.strip_suffix("NaN") {
-                    if Self::is_value_position(prefix) {
-                        return format!("{prefix}.nan");
-                    }
+                } else if let Some(prefix) = trimmed.strip_suffix("NaN")
+                    && Self::is_value_position(prefix)
+                {
+                    return format!("{prefix}.nan");
                 }
                 line.to_string()
             })
