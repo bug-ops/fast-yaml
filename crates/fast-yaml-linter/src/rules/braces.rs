@@ -55,6 +55,7 @@ impl super::LintRule for BracesRule {
         Severity::Warning
     }
 
+    #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let source_context = context.source_context();

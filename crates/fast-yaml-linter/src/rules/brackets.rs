@@ -1,7 +1,7 @@
 //! Rule to check flow sequence brackets `[]` formatting.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, LintContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     rules::flow_common::{
         check_spaces_after_opening, check_spaces_before_closing, is_empty_collection,
     },
@@ -55,6 +55,7 @@ impl super::LintRule for BracketsRule {
         Severity::Warning
     }
 
+    #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let source_context = context.source_context();

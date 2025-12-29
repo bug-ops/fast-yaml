@@ -1,6 +1,6 @@
 //! Integration tests using YAML fixtures.
 
-use fast_yaml_linter::{DiagnosticCode, LintConfig, Linter};
+use fast_yaml_linter::{DiagnosticCode, LintConfig, Linter, Severity};
 
 #[cfg(test)]
 mod valid_fixtures {
@@ -12,17 +12,9 @@ mod valid_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        // Filter out info-level diagnostics (like missing document-start)
-        let errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| d.severity == fast_yaml_linter::Severity::Error)
-            .collect();
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
 
-        assert!(
-            errors.is_empty(),
-            "Expected no errors in valid/simple.yaml, found: {:?}",
-            errors
-        );
+        assert!(!has_errors, "Expected no errors in valid/simple.yaml");
     }
 
     #[test]
@@ -31,16 +23,9 @@ mod valid_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| d.severity == fast_yaml_linter::Severity::Error)
-            .collect();
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
 
-        assert!(
-            errors.is_empty(),
-            "Expected no errors in valid/complex.yaml, found: {:?}",
-            errors
-        );
+        assert!(!has_errors, "Expected no errors in valid/complex.yaml");
     }
 
     #[test]
@@ -49,16 +34,9 @@ mod valid_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| d.severity == fast_yaml_linter::Severity::Error)
-            .collect();
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
 
-        assert!(
-            errors.is_empty(),
-            "Expected no errors in valid/comments.yaml, found: {:?}",
-            errors
-        );
+        assert!(!has_errors, "Expected no errors in valid/comments.yaml");
     }
 }
 
@@ -67,7 +45,6 @@ mod invalid_fixtures {
     use super::*;
 
     // Note: duplicate_keys test skipped because yaml-rust2 rejects duplicate keys at parser level
-    // The DuplicateKeysRule works for cases where yaml-rust2 allows duplicates (e.g., some edge cases)
 
     #[test]
     fn test_invalid_long_lines() {
@@ -78,15 +55,11 @@ mod invalid_fixtures {
 
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let long_line_errors: Vec<_> = diagnostics
+        let has_long_lines = diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == DiagnosticCode::LINE_LENGTH)
-            .collect();
+            .any(|d| d.code.as_str() == DiagnosticCode::LINE_LENGTH);
 
-        assert!(
-            !long_line_errors.is_empty(),
-            "Expected long line violations, found none"
-        );
+        assert!(has_long_lines, "Expected long line violations");
     }
 
     #[test]
@@ -95,15 +68,11 @@ mod invalid_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let empty_value_errors: Vec<_> = diagnostics
+        let has_empty_values = diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == DiagnosticCode::EMPTY_VALUES)
-            .collect();
+            .any(|d| d.code.as_str() == DiagnosticCode::EMPTY_VALUES);
 
-        assert!(
-            !empty_value_errors.is_empty(),
-            "Expected empty value violations, found none"
-        );
+        assert!(has_empty_values, "Expected empty value violations");
     }
 
     #[test]
@@ -112,18 +81,12 @@ mod invalid_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let comment_errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| {
-                d.code.as_str() == DiagnosticCode::COMMENTS
-                    || d.code.as_str() == DiagnosticCode::COMMENTS_INDENTATION
-            })
-            .collect();
+        let has_comment_errors = diagnostics.iter().any(|d| {
+            d.code.as_str() == DiagnosticCode::COMMENTS
+                || d.code.as_str() == DiagnosticCode::COMMENTS_INDENTATION
+        });
 
-        assert!(
-            !comment_errors.is_empty(),
-            "Expected comment formatting violations, found none"
-        );
+        assert!(has_comment_errors, "Expected comment formatting violations");
     }
 
     #[test]
@@ -132,15 +95,11 @@ mod invalid_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let octal_errors: Vec<_> = diagnostics
+        let has_octal_errors = diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == DiagnosticCode::OCTAL_VALUES)
-            .collect();
+            .any(|d| d.code.as_str() == DiagnosticCode::OCTAL_VALUES);
 
-        assert!(
-            !octal_errors.is_empty(),
-            "Expected octal value violations, found none"
-        );
+        assert!(has_octal_errors, "Expected octal value violations");
     }
 }
 
@@ -154,7 +113,6 @@ mod edge_case_fixtures {
         let linter = Linter::with_all_rules();
         let result = linter.lint(yaml);
 
-        // Empty or comment-only YAML should parse without errors
         assert!(result.is_ok(), "Should parse empty/comment YAML");
     }
 
@@ -164,16 +122,9 @@ mod edge_case_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| d.severity == fast_yaml_linter::Severity::Error)
-            .collect();
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
 
-        assert!(
-            errors.is_empty(),
-            "Expected no errors in unicode.yaml, found: {:?}",
-            errors
-        );
+        assert!(!has_errors, "Expected no errors in unicode.yaml");
     }
 
     #[test]
@@ -182,16 +133,9 @@ mod edge_case_fixtures {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
 
-        let errors: Vec<_> = diagnostics
-            .iter()
-            .filter(|d| d.severity == fast_yaml_linter::Severity::Error)
-            .collect();
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
 
-        assert!(
-            errors.is_empty(),
-            "Expected no errors in multiline.yaml, found: {:?}",
-            errors
-        );
+        assert!(!has_errors, "Expected no errors in multiline.yaml");
     }
 }
 
@@ -201,7 +145,6 @@ mod integration_tests {
 
     #[test]
     fn test_linter_with_disabled_rules() {
-        // Use a valid YAML file to test rule disabling
         let yaml = include_str!("fixtures/valid/simple.yaml");
         let config = LintConfig::new().with_disabled_rule(DiagnosticCode::LINE_LENGTH);
         let mut linter = Linter::with_config(config);
@@ -209,11 +152,13 @@ mod integration_tests {
 
         let diagnostics = linter.lint(yaml).unwrap();
 
+        let has_line_length = diagnostics
+            .iter()
+            .any(|d| d.code.as_str() == DiagnosticCode::LINE_LENGTH);
+
         assert!(
-            diagnostics
-                .iter()
-                .all(|d| d.code.as_str() != DiagnosticCode::LINE_LENGTH),
-            "No diagnostics should be for line-length rule when disabled"
+            !has_line_length,
+            "No diagnostics should be for line-length when disabled"
         );
     }
 
@@ -240,27 +185,28 @@ mod integration_tests {
 
     #[test]
     fn test_all_valid_fixtures_pass() {
-        let fixtures = vec![
-            ("valid/simple.yaml", include_str!("fixtures/valid/simple.yaml")),
-            ("valid/complex.yaml", include_str!("fixtures/valid/complex.yaml")),
-            ("valid/comments.yaml", include_str!("fixtures/valid/comments.yaml")),
+        let fixtures = [
+            (
+                "valid/simple.yaml",
+                include_str!("fixtures/valid/simple.yaml"),
+            ),
+            (
+                "valid/complex.yaml",
+                include_str!("fixtures/valid/complex.yaml"),
+            ),
+            (
+                "valid/comments.yaml",
+                include_str!("fixtures/valid/comments.yaml"),
+            ),
         ];
 
         let linter = Linter::with_all_rules();
 
         for (name, yaml) in fixtures {
             let diagnostics = linter.lint(yaml).unwrap();
-            let errors: Vec<_> = diagnostics
-                .iter()
-                .filter(|d| d.severity == fast_yaml_linter::Severity::Error)
-                .collect();
+            let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
 
-            assert!(
-                errors.is_empty(),
-                "Expected no errors in {}, found: {:?}",
-                name,
-                errors
-            );
+            assert!(!has_errors, "Expected no errors in {name}");
         }
     }
 }
