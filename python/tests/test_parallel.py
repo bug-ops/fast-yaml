@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-import fast_yaml
 from fast_yaml._core import parallel
 
 
@@ -211,7 +210,7 @@ class TestParseParallelLimits:
         """Test that max_documents limit is enforced."""
         config = parallel.ParallelConfig(max_documents=5)
         # Create more documents than allowed
-        docs = ["---\nid: {}\n".format(i) for i in range(10)]
+        docs = [f"---\nid: {i}\n" for i in range(10)]
         yaml_content = "".join(docs)
 
         with pytest.raises((ValueError, Exception)):
@@ -220,7 +219,7 @@ class TestParseParallelLimits:
     def test_within_document_limit(self):
         """Test parsing within document limit."""
         config = parallel.ParallelConfig(max_documents=10)
-        docs = ["---\nid: {}\n".format(i) for i in range(5)]
+        docs = [f"---\nid: {i}\n" for i in range(5)]
         yaml_content = "".join(docs)
 
         result = parallel.parse_parallel(yaml_content, config)
@@ -266,7 +265,7 @@ class TestParseParallelEdgeCases:
         """Test parsing unicode content."""
         yaml_content = """---
 chinese: \u4e2d\u6587
-emoji: \U0001F600
+emoji: \U0001f600
 russian: \u041f\u0440\u0438\u0432\u0435\u0442
 ---
 japanese: \u3053\u3093\u306b\u3061\u306f
@@ -348,6 +347,7 @@ not_a_number: .nan
         result = parallel.parse_parallel(yaml_content)
         assert len(result) == 1
         import math
+
         assert math.isinf(result[0]["infinity"])
         assert result[0]["infinity"] > 0
         assert math.isinf(result[0]["neg_infinity"])
