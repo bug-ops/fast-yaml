@@ -1,8 +1,7 @@
 //! Rule to check comment indentation.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, SourceContext,
-    comment_parser::CommentParser,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, LintContext,
 };
 use fast_yaml_core::Value;
 
@@ -55,12 +54,12 @@ impl super::LintRule for CommentsIndentationRule {
         Severity::Info
     }
 
-    fn check(&self, source: &str, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let context = SourceContext::new(source);
-        let parser = CommentParser::new(source, &context);
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
+        let comments = context.comments();
 
         let mut diagnostics = Vec::new();
-        let comments = parser.find_all();
+        
         let lines: Vec<&str> = source.lines().collect();
 
         // Pre-compute line metadata to avoid O(n²) complexity
@@ -160,7 +159,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -172,7 +172,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(
             diagnostics[0]
@@ -189,7 +190,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Inline comments are not checked for indentation
         assert!(diagnostics.is_empty());
     }
@@ -202,7 +204,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -214,7 +217,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
     }
 
@@ -226,7 +230,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -238,7 +243,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -250,7 +256,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -270,7 +277,8 @@ mod tests {
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 }

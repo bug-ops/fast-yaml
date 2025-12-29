@@ -1,6 +1,6 @@
 //! Lint rules and rule registry.
 
-use crate::{Diagnostic, LintConfig, Severity};
+use crate::{Diagnostic, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 mod braces;
@@ -75,7 +75,7 @@ pub use trailing_whitespace::TrailingWhitespaceRule;
 ///         Severity::Warning
 ///     }
 ///
-///     fn check(&self, source: &str, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+///     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
 ///         Vec::new()
 ///     }
 /// }
@@ -101,14 +101,14 @@ pub trait LintRule: Send + Sync {
     ///
     /// # Parameters
     ///
-    /// - `source`: The original YAML source text
+    /// - `context`: The lint context providing access to source, comments, and metadata
     /// - `value`: The parsed YAML value tree
     /// - `config`: Linter configuration
     ///
     /// # Returns
     ///
     /// A vector of diagnostics found by this rule. Empty if no issues.
-    fn check(&self, source: &str, value: &Value, config: &LintConfig) -> Vec<Diagnostic>;
+    fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic>;
 }
 
 /// Registry of all available lint rules.

@@ -1,6 +1,6 @@
 //! Main linter engine and configuration.
 
-use crate::{Diagnostic, Severity, config::RuleConfig, rules::RuleRegistry};
+use crate::{Diagnostic, LintContext, Severity, config::RuleConfig, rules::RuleRegistry};
 use fast_yaml_core::{Parser, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -351,6 +351,7 @@ impl Linter {
     /// ```
     #[must_use]
     pub fn lint_value(&self, source: &str, value: &Value) -> Vec<Diagnostic> {
+        let context = LintContext::new(source);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
@@ -358,7 +359,7 @@ impl Linter {
                 continue;
             }
 
-            let mut rule_diagnostics = rule.check(source, value, &self.config);
+            let mut rule_diagnostics = rule.check(&context, value, &self.config);
             diagnostics.append(&mut rule_diagnostics);
         }
 

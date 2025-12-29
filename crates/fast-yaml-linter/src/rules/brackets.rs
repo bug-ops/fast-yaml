@@ -1,7 +1,7 @@
 //! Rule to check flow sequence brackets `[]` formatting.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, SourceContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, LintContext,
     rules::flow_common::{
         check_spaces_after_opening, check_spaces_before_closing, is_empty_collection,
     },
@@ -55,9 +55,10 @@ impl super::LintRule for BracketsRule {
         Severity::Warning
     }
 
-    fn check(&self, source: &str, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let context = SourceContext::new(source);
-        let tokenizer = FlowTokenizer::new(source, &context);
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
+        let source_context = context.source_context();
+        let tokenizer = FlowTokenizer::new(source, source_context);
 
         let rule_config = config.get_rule_config(self.code());
         let forbid = rule_config
@@ -191,7 +192,8 @@ mod tests {
         let rule = BracketsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -204,7 +206,8 @@ mod tests {
         let config = LintConfig::new()
             .with_rule_config("brackets", RuleConfig::new().with_option("forbid", "all"));
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("forbidden"));
     }
@@ -220,7 +223,8 @@ mod tests {
             RuleConfig::new().with_option("forbid", "non-empty"),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("non-empty"));
     }
@@ -236,7 +240,8 @@ mod tests {
             RuleConfig::new().with_option("forbid", "non-empty"),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -251,7 +256,8 @@ mod tests {
             RuleConfig::new().with_option("min-spaces-inside", 1i64),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("too few spaces"));
     }
@@ -267,7 +273,8 @@ mod tests {
             RuleConfig::new().with_option("max-spaces-inside", 0i64),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("too many spaces"));
     }
@@ -285,7 +292,8 @@ mod tests {
                 .with_option("max-spaces-inside", 1i64),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -297,7 +305,8 @@ mod tests {
         let rule = BracketsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -314,7 +323,8 @@ mod tests {
                 .with_option("max-spaces-inside-empty", 1i64),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -326,7 +336,8 @@ mod tests {
         let rule = BracketsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 }

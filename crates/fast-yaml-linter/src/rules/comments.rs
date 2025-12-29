@@ -1,8 +1,7 @@
 //! Rule to check comment formatting.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, SourceContext,
-    comment_parser::CommentParser,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
 };
 use fast_yaml_core::Value;
 
@@ -51,9 +50,9 @@ impl super::LintRule for CommentsRule {
         Severity::Info
     }
 
-    fn check(&self, source: &str, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let context = SourceContext::new(source);
-        let parser = CommentParser::new(source, &context);
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
+        let comments = context.comments();
 
         let rule_config = config.get_rule_config(self.code());
         let require_starting_space = rule_config
@@ -69,7 +68,6 @@ impl super::LintRule for CommentsRule {
             .unwrap_or(2);
 
         let mut diagnostics = Vec::new();
-        let comments = parser.find_all();
 
         for comment in comments {
             // Skip shebangs if configured
@@ -99,7 +97,7 @@ impl super::LintRule for CommentsRule {
             if comment.is_inline && min_spaces_from_content > 0 {
                 // Find the line and check spacing before '#'
                 let line_num = comment.span.start.line;
-                let line_offset = context.get_line_offset(line_num);
+                let line_offset = context.source_context().get_line_offset(line_num);
                 if let Some(line) = source.lines().nth(line_num - 1) {
                     let comment_col = comment.span.start.offset - line_offset;
 
@@ -160,7 +158,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -172,7 +171,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -184,7 +184,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("should start with a space"));
     }
@@ -200,7 +201,8 @@ mod tests {
             RuleConfig::new().with_option("require-starting-space", false),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -212,7 +214,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(
             diagnostics[0]
@@ -232,7 +235,8 @@ mod tests {
             RuleConfig::new().with_option("min-spaces-from-content", 1i64),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -244,7 +248,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -259,7 +264,8 @@ mod tests {
             RuleConfig::new().with_option("ignore-shebangs", false),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("should start with a space"));
     }
@@ -272,7 +278,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Empty comment is valid (no content to check)
         assert!(diagnostics.is_empty());
     }
@@ -285,7 +292,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         // Should find: 1) "#No space" (no space after #), 2) "#one space" (no space after #), 3) "value #one" (too few spaces before comment)
         assert_eq!(diagnostics.len(), 3);
     }
@@ -298,7 +306,8 @@ mod tests {
         let rule = CommentsRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 }

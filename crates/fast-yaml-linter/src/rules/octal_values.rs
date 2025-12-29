@@ -1,7 +1,7 @@
 //! Rule to check octal value representations.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, SourceContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, LintContext,
     Span,
 };
 use fast_yaml_core::Value;
@@ -49,7 +49,8 @@ impl super::LintRule for OctalValuesRule {
         Severity::Warning
     }
 
-    fn check(&self, source: &str, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
         let rule_config = config.get_rule_config(self.code());
         let forbid_implicit = rule_config
             .and_then(|rc| rc.options.get_bool("forbid-implicit-octal"))
@@ -64,12 +65,12 @@ impl super::LintRule for OctalValuesRule {
         }
 
         let mut diagnostics = Vec::new();
-        let context = SourceContext::new(source);
+        let _source_context = context.source_context();
 
         // Pattern: value part after colon or hyphen
         for (line_idx, line) in source.lines().enumerate() {
             let line_num = line_idx + 1;
-            let line_offset = context.get_line_offset(line_num);
+            let line_offset = context.source_context().get_line_offset(line_num);
 
             // Find value parts (after : or -)
             let parts: Vec<_> = line.find(':').map_or_else(
@@ -187,7 +188,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -199,7 +201,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
@@ -212,7 +215,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("explicit octal"));
     }
@@ -228,7 +232,8 @@ mod tests {
             RuleConfig::new().with_option("forbid-implicit-octal", false),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -243,7 +248,8 @@ mod tests {
             RuleConfig::new().with_option("forbid-explicit-octal", false),
         );
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -255,7 +261,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -267,7 +274,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -279,7 +287,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(diagnostics.is_empty());
     }
 
@@ -291,7 +300,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         // 089 is not valid octal (8 and 9 are not octal digits), so should be allowed
         assert!(diagnostics.is_empty());
     }
@@ -304,7 +314,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
@@ -317,7 +328,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert!(!diagnostics.is_empty());
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
@@ -330,7 +342,8 @@ mod tests {
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
-        let diagnostics = rule.check(yaml, &value, &config);
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 }

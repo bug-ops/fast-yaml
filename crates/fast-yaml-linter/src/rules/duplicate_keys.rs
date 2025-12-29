@@ -1,7 +1,7 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, Span, source::SourceMapper,
+    Diagnostic, LintContext, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, Span, source::SourceMapper,
 };
 use fast_yaml_core::Value;
 use std::collections::HashMap;
@@ -29,7 +29,8 @@ impl super::LintRule for DuplicateKeysRule {
         Severity::Error
     }
 
-    fn check(&self, source: &str, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let source = context.source();
         if config.allow_duplicate_keys {
             return Vec::new();
         }
@@ -112,7 +113,8 @@ mod tests {
 
         let rule = DuplicateKeysRule;
         let config = LintConfig::default();
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
 
         assert!(diagnostics.is_empty());
     }
@@ -135,7 +137,8 @@ mod tests {
             allow_duplicate_keys: true,
             ..Default::default()
         };
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
 
         assert!(diagnostics.is_empty());
     }
@@ -155,7 +158,8 @@ another:
 
         let rule = DuplicateKeysRule;
         let config = LintConfig::default();
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
 
         // Same key names in different scopes should not trigger errors
         assert!(diagnostics.is_empty());
@@ -175,7 +179,8 @@ user2:
 
         let rule = DuplicateKeysRule;
         let config = LintConfig::default();
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
 
         // Keys 'id' and 'email' appear in different mappings, which is valid
         assert!(diagnostics.is_empty());
@@ -196,7 +201,8 @@ users:
 
         let rule = DuplicateKeysRule;
         let config = LintConfig::default();
-        let diagnostics = rule.check(yaml, &value, &config);
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
 
         // Same keys in array items are valid
         assert!(diagnostics.is_empty());

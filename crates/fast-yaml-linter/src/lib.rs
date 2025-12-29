@@ -39,7 +39,7 @@ pub mod rules;
 pub mod source;
 pub mod tokenizer;
 
-pub use context::SourceContext;
+pub use context::{LintContext, LineMetadata, SourceContext};
 pub use diagnostic::{
     ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Suggestion,
 };
