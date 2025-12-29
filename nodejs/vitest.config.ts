@@ -6,8 +6,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov', 'html'],
       reportsDirectory: './coverage',
-      include: ['__test__/**/*.ts'],
-      exclude: ['node_modules', 'dist', '*.config.*'],
+      include: ['index.js'],
+      exclude: ['node_modules', 'dist', '*.config.*', '__test__'],
     },
   },
 });
