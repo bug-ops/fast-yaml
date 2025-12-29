@@ -1,0 +1,39 @@
+[package]
+name = "fast-yaml-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fast YAML command-line processor with validation and linting"
+readme = "README.md"
+keywords = ["yaml", "cli", "parser", "linter", "converter"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "fy"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+colored = { workspace = true, optional = true }
+fast-yaml-core.workspace = true
+fast-yaml-linter = { workspace = true, optional = true, features = ["json-output"] }
+is-terminal = { workspace = true, optional = true }
+serde_json.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+indoc.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+
+[features]
+default = ["colors", "linter"]
+colors = ["dep:colored", "dep:is-terminal"]
+linter = ["dep:fast-yaml-linter"]
+all = ["colors", "linter"]
+
+[lints]
+workspace = true
