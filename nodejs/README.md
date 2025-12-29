@@ -245,7 +245,9 @@ npm run bench
 | `npm run build:debug` | Build debug native module    |
 | `npm test`            | Run test suite               |
 | `npm run bench`       | Run benchmarks               |
-| `npm run format`      | Format code with Prettier    |
+| `npm run format`      | Format code with Biome       |
+| `npm run lint`        | Lint code with Biome         |
+| `npm run check`       | Format and lint with Biome   |
 | `npm run typecheck`   | Run TypeScript type checking |
 
 ## Technology Stack
@@ -253,6 +255,7 @@ npm run bench
 - **YAML Parser**: [saphyr](https://github.com/saphyr-rs/saphyr) — Rust YAML 1.2.2 parser
 - **Node.js Bindings**: [NAPI-RS](https://napi.rs/) — Zero-cost Node.js bindings
 - **Test Framework**: [Vitest](https://vitest.dev/) — Fast test runner
+- **Linter/Formatter**: [Biome](https://biomejs.dev/) — Fast all-in-one toolchain
 
 ## Related Packages
 

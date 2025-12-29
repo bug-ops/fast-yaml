@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-12-29
+
+### Changed
+
+- **Node.js**: Migrated from Prettier to Biome v2.3.10 for formatting and linting
+- **Node.js**: Updated devDependencies with Biome replacing Prettier
+- **Node.js**: Added biome.json configuration with VCS integration and recommended rules
+
+### Internal
+
+- Removed unused root pyproject.toml and uv.lock files (Python tooling is in python/ directory)
+- CI lint step now enforces quality (removed continue-on-error)
+
 ## [0.3.0] - 2025-12-29
 
 ### Breaking Changes
@@ -214,7 +227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.0...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/bug-ops/fast-yaml/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/bug-ops/fast-yaml/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bug-ops/fast-yaml/compare/v0.1.11...v0.2.0
 [0.1.11]: https://github.com/bug-ops/fast-yaml/compare/v0.1.10...v0.1.11
