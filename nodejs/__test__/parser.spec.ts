@@ -2,8 +2,8 @@
  * Unit tests for YAML parser functions
  */
 
-import { describe, it, expect } from 'vitest';
-import { safeLoad, safeLoadAll, safeDump, safeDumpAll, version } from '../index';
+import { describe, expect, it } from 'vitest';
+import { safeDump, safeDumpAll, safeLoad, safeLoadAll, version } from '../index';
 
 describe('Core API - Parser', () => {
   describe('version', () => {
@@ -77,14 +77,14 @@ person:
     });
 
     it('should handle special float values', () => {
-      const infResult = safeLoad('value: .inf');
-      expect((infResult as any).value).toBe(Infinity);
+      const infResult = safeLoad('value: .inf') as { value: number };
+      expect(infResult.value).toBe(Number.POSITIVE_INFINITY);
 
-      const negInfResult = safeLoad('value: -.inf');
-      expect((negInfResult as any).value).toBe(-Infinity);
+      const negInfResult = safeLoad('value: -.inf') as { value: number };
+      expect(negInfResult.value).toBe(Number.NEGATIVE_INFINITY);
 
-      const nanResult = safeLoad('value: .nan');
-      expect((nanResult as any).value).toBeNaN();
+      const nanResult = safeLoad('value: .nan') as { value: number };
+      expect(nanResult.value).toBeNaN();
     });
 
     it('should handle arrays', () => {
@@ -193,7 +193,11 @@ describe('Core API - Serializer', () => {
     });
 
     it('should handle special float values', () => {
-      const yaml = safeDump({ inf: Infinity, negInf: -Infinity, nan: NaN });
+      const yaml = safeDump({
+        inf: Number.POSITIVE_INFINITY,
+        negInf: Number.NEGATIVE_INFINITY,
+        nan: Number.NaN,
+      });
       expect(yaml).toContain('.inf');
       expect(yaml).toContain('-.inf');
       expect(yaml).toContain('.nan');

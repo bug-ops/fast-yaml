@@ -405,7 +405,6 @@ jobs:
 
       - name: Run linting
         run: cd nodejs && npm run lint
-        continue-on-error: true
 
       - name: Run type checking
         run: cd nodejs && npm run typecheck
