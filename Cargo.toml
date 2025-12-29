@@ -5,6 +5,7 @@ members = [
     "crates/fast-yaml-ffi",
     "crates/fast-yaml-linter",
     "crates/fast-yaml-parallel",
+    "crates/fast-yaml-cli",
     "python",
     "nodejs",
 ]
@@ -15,6 +16,7 @@ default-members = [
     "crates/fast-yaml-ffi",
     "crates/fast-yaml-linter",
     "crates/fast-yaml-parallel",
+    "crates/fast-yaml-cli",
 ]
 
 [workspace.package]
@@ -25,21 +27,27 @@ license = "MIT OR Apache-2.0"
 repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
-# Internal crates (version required for cargo publish --workspace)
+# Internal crates
 fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.2.0" }
 fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.2.0" }
 fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.2.0" }
 fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.2.0" }
 
 # External dependencies
+anyhow = "1"
+assert_cmd = "2.0"
+clap = { version = "4.5", features = ["derive", "cargo", "env", "wrap_help"] }
+colored = "3.0"
 criterion = "0.8"
 indoc = "2.0"
 is-terminal = "0.4"
 num_cpus = "1.16"
+predicates = "3.1"
 pyo3 = "0.27"
 rayon = "1.10"
 serde = "1.0"
 serde_json = "1.0"
+tempfile = "3.14"
 thiserror = "2.0"
 yaml-rust2 = "0.11"
 
