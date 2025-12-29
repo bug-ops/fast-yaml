@@ -1,6 +1,6 @@
 use crate::error::{EmitError, EmitResult};
 use crate::value::Value;
-use yaml_rust2::YamlEmitter;
+use saphyr::YamlEmitter;
 
 /// Configuration for YAML emission.
 ///
@@ -12,7 +12,7 @@ pub struct EmitterConfig {
     /// Controls the number of spaces used for each indentation level.
     /// Valid range: 1-9 (values outside this range will be clamped).
     ///
-    /// Note: yaml-rust2 currently uses fixed 2-space indentation.
+    /// Note: saphyr currently uses fixed 2-space indentation.
     /// This parameter is accepted for `PyYAML` API compatibility but
     /// may require post-processing to fully support custom values.
     pub indent: usize,
@@ -22,7 +22,7 @@ pub struct EmitterConfig {
     /// When lines exceed this width, the emitter will attempt to wrap them.
     /// Valid range: 20-1000 (values outside this range will be clamped).
     ///
-    /// Note: yaml-rust2 has limited control over line wrapping.
+    /// Note: saphyr has limited control over line wrapping.
     /// This parameter is accepted for `PyYAML` API compatibility.
     pub width: usize,
 
@@ -40,7 +40,7 @@ pub struct EmitterConfig {
 
     /// Enable compact inline notation (default: true).
     ///
-    /// Controls whether yaml-rust2 uses compact notation for
+    /// Controls whether saphyr uses compact notation for
     /// inline sequences and mappings.
     pub compact: bool,
 
@@ -115,7 +115,7 @@ impl EmitterConfig {
 
 /// Emitter for YAML documents.
 ///
-/// Wraps yaml-rust2's `YamlEmitter` to provide a consistent API.
+/// Wraps saphyr's `YamlEmitter` to provide a consistent API.
 #[derive(Debug)]
 pub struct Emitter;
 
@@ -141,12 +141,14 @@ impl Emitter {
         {
             let mut emitter = YamlEmitter::new(&mut output);
 
-            // Apply yaml-rust2 native configuration
+            // Apply saphyr native configuration
             emitter.compact(config.compact);
             emitter.multiline_strings(config.multiline_strings);
 
+            // Convert YamlOwned to Yaml for emission
+            let yaml_borrowed: saphyr::Yaml = value.into();
             emitter
-                .dump(value)
+                .dump(&yaml_borrowed)
                 .map_err(|e| EmitError::Emit(e.to_string()))?;
         }
 
@@ -262,6 +264,10 @@ impl Emitter {
             }
         }
 
+        // Fix special float values for YAML 1.2 Core Schema compliance
+        // saphyr outputs "inf"/"-inf"/"NaN", but YAML 1.2 requires ".inf"/"-.inf"/".nan"
+        output = Self::fix_special_floats(&output);
+
         // TODO: Apply indent transformation if config.indent != 2
         // This would require parsing indentation patterns and adjusting them
 
@@ -270,22 +276,67 @@ impl Emitter {
 
         output
     }
+
+    /// Fix special float values for YAML 1.2 Core Schema compliance.
+    ///
+    /// Converts saphyr's output format to YAML 1.2 compliant format:
+    /// - `inf` → `.inf`
+    /// - `-inf` → `-.inf`
+    /// - `NaN` → `.nan`
+    fn fix_special_floats(output: &str) -> String {
+        // We need to be careful to only replace standalone values, not parts of words.
+        // The regex approach would be safer, but for simplicity we'll use line-by-line
+        // processing with word boundary checks.
+        output
+            .lines()
+            .map(|line| {
+                // Check if line ends with special float value (with optional whitespace)
+                let trimmed = line.trim_end();
+                if let Some(prefix) = trimmed.strip_suffix("inf") {
+                    // Check if it's "-inf" or standalone "inf"
+                    if let Some(before_minus) = prefix.strip_suffix('-') {
+                        // Already has minus, check if it's at value position
+                        if Self::is_value_position(before_minus) {
+                            return format!("{before_minus}-.inf");
+                        }
+                    } else if Self::is_value_position(prefix) {
+                        return format!("{prefix}.inf");
+                    }
+                } else if let Some(prefix) = trimmed.strip_suffix("NaN")
+                    && Self::is_value_position(prefix)
+                {
+                    return format!("{prefix}.nan");
+                }
+                line.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Check if the prefix indicates this is a value position (after `: ` or start of line).
+    fn is_value_position(prefix: &str) -> bool {
+        prefix.is_empty()
+            || prefix.ends_with(": ")
+            || prefix.ends_with("- ")
+            || prefix.ends_with('\n')
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use saphyr::ScalarOwned;
 
     #[test]
     fn test_emit_str_string() {
-        let value = Value::String("test".to_string());
+        let value = Value::Value(ScalarOwned::String("test".to_string()));
         let result = Emitter::emit_str(&value).unwrap();
         assert!(result.contains("test"));
     }
 
     #[test]
     fn test_emit_str_integer() {
-        let value = Value::Integer(42);
+        let value = Value::Value(ScalarOwned::Integer(42));
         let result = Emitter::emit_str(&value).unwrap();
         assert!(result.contains("42"));
     }
@@ -293,8 +344,8 @@ mod tests {
     #[test]
     fn test_emit_all_multiple() {
         let values = vec![
-            Value::String("first".to_string()),
-            Value::String("second".to_string()),
+            Value::Value(ScalarOwned::String("first".to_string())),
+            Value::Value(ScalarOwned::String("second".to_string())),
         ];
         let result = Emitter::emit_all(&values).unwrap();
         assert!(result.contains("first"));
@@ -304,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_emit_all_single() {
-        let values = vec![Value::String("only".to_string())];
+        let values = vec![Value::Value(ScalarOwned::String("only".to_string()))];
         let result = Emitter::emit_all(&values).unwrap();
         assert!(result.contains("only"));
         assert!(!result.starts_with("---"));
@@ -355,7 +406,7 @@ mod tests {
 
     #[test]
     fn test_emit_with_explicit_start() {
-        let value = Value::String("test".to_string());
+        let value = Value::Value(ScalarOwned::String("test".to_string()));
         let config = EmitterConfig::new().with_explicit_start(true);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         assert!(result.starts_with("---"));
@@ -363,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_emit_without_explicit_start() {
-        let value = Value::String("test".to_string());
+        let value = Value::Value(ScalarOwned::String("test".to_string()));
         let config = EmitterConfig::new().with_explicit_start(false);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         assert!(!result.starts_with("---"));
@@ -372,8 +423,8 @@ mod tests {
     #[test]
     fn test_emit_all_with_explicit_start() {
         let values = vec![
-            Value::String("first".to_string()),
-            Value::String("second".to_string()),
+            Value::Value(ScalarOwned::String("first".to_string())),
+            Value::Value(ScalarOwned::String("second".to_string())),
         ];
         let config = EmitterConfig::new().with_explicit_start(true);
         let result = Emitter::emit_all_with_config(&values, &config).unwrap();
@@ -383,16 +434,19 @@ mod tests {
 
     #[test]
     fn test_emit_with_compact_false() {
-        let value = Value::Array(vec![Value::Integer(1), Value::Integer(2)]);
+        let value = Value::Sequence(vec![
+            Value::Value(ScalarOwned::Integer(1)),
+            Value::Value(ScalarOwned::Integer(2)),
+        ]);
         let config = EmitterConfig::new().with_compact(false);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
-        // Should contain formatting (exact format depends on yaml-rust2)
+        // Should contain formatting (exact format depends on saphyr)
         assert!(result.contains('1') && result.contains('2'));
     }
 
     #[test]
     fn test_emit_with_multiline_strings() {
-        let value = Value::String("line1\nline2".to_string());
+        let value = Value::Value(ScalarOwned::String("line1\nline2".to_string()));
         let config = EmitterConfig::new().with_multiline_strings(true);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         // Should use literal block scalar notation (|)

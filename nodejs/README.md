@@ -6,7 +6,7 @@
 
 **High-performance YAML 1.2.2 parser for Node.js, powered by Rust.**
 
-Drop-in replacement for js-yaml with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance with TypeScript definitions included.
+Drop-in replacement for js-yaml with **5-10x faster** parsing through Rust's `saphyr` library. Full YAML 1.2.2 Core Schema compliance with TypeScript definitions included.
 
 > **YAML 1.2.2 Compliance** — Unlike js-yaml (YAML 1.1 by default), `fastyaml-rs` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
 
@@ -33,7 +33,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.1.0
+version: 0.3.0
 features:
   - fast
   - safe
@@ -250,7 +250,7 @@ npm run bench
 
 ## Technology Stack
 
-- **YAML Parser**: [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) — Rust YAML 1.2.2 parser
+- **YAML Parser**: [saphyr](https://github.com/saphyr-rs/saphyr) — Rust YAML 1.2.2 parser
 - **Node.js Bindings**: [NAPI-RS](https://napi.rs/) — Zero-cost Node.js bindings
 - **Test Framework**: [Vitest](https://vitest.dev/) — Fast test runner
 

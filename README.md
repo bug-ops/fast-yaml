@@ -10,7 +10,7 @@
 
 **High-performance YAML 1.2.2 parser for Python and Node.js, powered by Rust.**
 
-Drop-in replacement for PyYAML's `safe_*` functions and js-yaml with **5-10x faster** parsing through Rust's `yaml-rust2` library. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
+Drop-in replacement for PyYAML's `safe_*` functions and js-yaml with **5-10x faster** parsing through Rust's `saphyr` library. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
 
 > [!IMPORTANT]
 > **YAML 1.2.2 Compliance** — Unlike PyYAML (YAML 1.1), `fast-yaml` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
@@ -126,7 +126,7 @@ import fast_yaml
 # Parse YAML
 data = fast_yaml.safe_load("""
 name: fast-yaml
-version: 0.1.0
+version: 0.3.0
 features:
   - fast
   - safe
@@ -152,7 +152,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.1.0
+version: 0.3.0
 features:
   - fast
   - safe
@@ -251,7 +251,7 @@ yaml_str = fast_yaml.dump_all(
 ```
 
 > [!NOTE]
-> The `allow_unicode` parameter is accepted for PyYAML API compatibility. yaml-rust2 always outputs unicode characters.
+> The `allow_unicode` parameter is accepted for PyYAML API compatibility. saphyr always outputs unicode characters.
 
 ### Parallel Processing
 
@@ -417,7 +417,7 @@ fast-yaml/
 
 | Component | Library | Version |
 |-----------|---------|---------|
-| **YAML Parser** | [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) | 0.10 |
+| **YAML Parser** | [saphyr](https://github.com/saphyr-rs/saphyr) | 0.0.6 |
 | **Python Bindings** | [PyO3](https://pyo3.rs/) | 0.27 |
 | **Node.js Bindings** | [NAPI-RS](https://napi.rs/) | 3.7 |
 | **Parallelism** | [Rayon](https://github.com/rayon-rs/rayon) | 1.10 |
@@ -509,7 +509,7 @@ For single-document YAML or small files, use `safe_load()`.
 
 ## Acknowledgments
 
-- [yaml-rust2](https://github.com/Ethiraric/yaml-rust2) — Rust YAML parser foundation
+- [saphyr](https://github.com/saphyr-rs/saphyr) — Modern Rust YAML 1.2 parser foundation
 - [PyO3](https://pyo3.rs/) — Rust bindings for Python
 - [NAPI-RS](https://napi.rs/) — Node.js native addon framework
 - [Rayon](https://github.com/rayon-rs/rayon) — Data parallelism library

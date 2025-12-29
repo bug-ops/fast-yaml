@@ -6,7 +6,7 @@
 use crate::conversion::js_to_yaml;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
-use yaml_rust2::Yaml;
+use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
 /// Maximum output size in bytes for `safe_dump`/`safe_dump_all` (100MB).
 ///
@@ -186,32 +186,36 @@ pub fn safe_dump_all(
 }
 
 /// Helper function to recursively sort dictionary keys in YAML
-fn sort_yaml_keys(yaml: &Yaml) -> Yaml {
+fn sort_yaml_keys(yaml: &YamlOwned) -> YamlOwned {
     match yaml {
-        Yaml::Hash(map) => {
+        YamlOwned::Mapping(map) => {
             let mut sorted: Vec<_> = map.iter().collect();
             sorted.sort_by(|(k1, _), (k2, _)| {
                 let s1 = yaml_to_sort_key(k1);
                 let s2 = yaml_to_sort_key(k2);
                 s1.cmp(&s2)
             });
-            let mut new_map = yaml_rust2::yaml::Hash::new();
+            let mut new_map = MappingOwned::new();
             for (k, v) in sorted {
                 new_map.insert(k.clone(), sort_yaml_keys(v));
             }
-            Yaml::Hash(new_map)
+            YamlOwned::Mapping(new_map)
         }
-        Yaml::Array(arr) => Yaml::Array(arr.iter().map(sort_yaml_keys).collect()),
+        YamlOwned::Sequence(arr) => YamlOwned::Sequence(arr.iter().map(sort_yaml_keys).collect()),
         other => other.clone(),
     }
 }
 
 /// Convert YAML value to a sortable string key
-fn yaml_to_sort_key(yaml: &Yaml) -> String {
+fn yaml_to_sort_key(yaml: &YamlOwned) -> String {
     match yaml {
-        Yaml::String(s) | Yaml::Real(s) => s.clone(),
-        Yaml::Integer(i) => i.to_string(),
-        Yaml::Boolean(b) => b.to_string(),
+        YamlOwned::Value(scalar) => match scalar {
+            ScalarOwned::String(s) => s.clone(),
+            ScalarOwned::Integer(i) => i.to_string(),
+            ScalarOwned::FloatingPoint(f) => f.to_string(),
+            ScalarOwned::Boolean(b) => b.to_string(),
+            ScalarOwned::Null => String::new(),
+        },
         _ => String::new(),
     }
 }
@@ -238,26 +242,44 @@ mod tests {
 
     #[test]
     fn test_yaml_to_sort_key() {
-        assert_eq!(yaml_to_sort_key(&Yaml::String("test".to_string())), "test");
-        assert_eq!(yaml_to_sort_key(&Yaml::Integer(42)), "42");
-        assert_eq!(yaml_to_sort_key(&Yaml::Boolean(true)), "true");
+        assert_eq!(
+            yaml_to_sort_key(&YamlOwned::Value(ScalarOwned::String("test".to_string()))),
+            "test"
+        );
+        assert_eq!(
+            yaml_to_sort_key(&YamlOwned::Value(ScalarOwned::Integer(42))),
+            "42"
+        );
+        assert_eq!(
+            yaml_to_sort_key(&YamlOwned::Value(ScalarOwned::Boolean(true))),
+            "true"
+        );
     }
 
     #[test]
     fn test_sort_yaml_keys() {
-        let mut map = yaml_rust2::yaml::Hash::new();
-        map.insert(Yaml::String("z".to_string()), Yaml::Integer(1));
-        map.insert(Yaml::String("a".to_string()), Yaml::Integer(2));
-        map.insert(Yaml::String("m".to_string()), Yaml::Integer(3));
+        let mut map = MappingOwned::new();
+        map.insert(
+            YamlOwned::Value(ScalarOwned::String("z".to_string())),
+            YamlOwned::Value(ScalarOwned::Integer(1)),
+        );
+        map.insert(
+            YamlOwned::Value(ScalarOwned::String("a".to_string())),
+            YamlOwned::Value(ScalarOwned::Integer(2)),
+        );
+        map.insert(
+            YamlOwned::Value(ScalarOwned::String("m".to_string())),
+            YamlOwned::Value(ScalarOwned::Integer(3)),
+        );
 
-        let yaml = Yaml::Hash(map);
+        let yaml = YamlOwned::Mapping(map);
         let sorted = sort_yaml_keys(&yaml);
 
-        if let Yaml::Hash(sorted_map) = sorted {
+        if let YamlOwned::Mapping(sorted_map) = sorted {
             let keys: Vec<String> = sorted_map
                 .keys()
                 .map(|k| {
-                    if let Yaml::String(s) = k {
+                    if let YamlOwned::Value(ScalarOwned::String(s)) = k {
                         s.clone()
                     } else {
                         String::new()
@@ -267,7 +289,7 @@ mod tests {
 
             assert_eq!(keys, vec!["a", "m", "z"]);
         } else {
-            panic!("Expected Hash");
+            panic!("Expected Mapping");
         }
     }
 }

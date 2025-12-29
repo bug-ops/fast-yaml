@@ -1,10 +1,11 @@
 //! Type conversion between Rust YAML values and JavaScript objects.
 //!
 //! This module provides bidirectional conversion utilities for translating
-//! between yaml-rust2's `Yaml` type and NAPI-RS JavaScript values.
+//! between saphyr's `YamlOwned` type and NAPI-RS JavaScript values.
 
 use napi::{Result as NapiResult, bindgen_prelude::*};
-use yaml_rust2::Yaml;
+use ordered_float::OrderedFloat;
+use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
 /// Convert a YAML value to a JavaScript value.
 ///
@@ -12,44 +13,28 @@ use yaml_rust2::Yaml;
 ///
 /// # Type Mapping
 ///
-/// - `Yaml::Null` → `null`
-/// - `Yaml::Boolean` → `boolean`
-/// - `Yaml::Integer` → `number`
-/// - `Yaml::Real` → `number` (handles `.inf`, `-.inf`, `.nan`)
-/// - `Yaml::String` → `string`
-/// - `Yaml::Array` → `Array`
-/// - `Yaml::Hash` → `Object`
+/// - `YamlOwned::Value(ScalarOwned::Null)` → `null`
+/// - `YamlOwned::Value(ScalarOwned::Boolean)` → `boolean`
+/// - `YamlOwned::Value(ScalarOwned::Integer)` → `number`
+/// - `YamlOwned::Value(ScalarOwned::FloatingPoint)` → `number`
+/// - `YamlOwned::Value(ScalarOwned::String)` → `string`
+/// - `YamlOwned::Sequence` → `Array`
+/// - `YamlOwned::Mapping` → `Object`
 ///
 /// # Errors
 ///
 /// Returns an error if conversion fails or encounters invalid YAML values.
-pub fn yaml_to_js<'env>(env: &'env Env, yaml: &Yaml) -> NapiResult<Unknown<'env>> {
+pub fn yaml_to_js<'env>(env: &'env Env, yaml: &YamlOwned) -> NapiResult<Unknown<'env>> {
     match yaml {
-        Yaml::Null => Null.into_unknown(env),
+        YamlOwned::Value(scalar) => match scalar {
+            ScalarOwned::Null => Null.into_unknown(env),
+            ScalarOwned::Boolean(b) => (*b).into_unknown(env),
+            ScalarOwned::Integer(i) => (*i).into_unknown(env),
+            ScalarOwned::FloatingPoint(f) => (*f).into_unknown(env),
+            ScalarOwned::String(s) => s.as_str().into_unknown(env),
+        },
 
-        Yaml::Boolean(b) => (*b).into_unknown(env),
-
-        Yaml::Integer(i) => (*i).into_unknown(env),
-
-        Yaml::Real(s) => {
-            // YAML 1.2.2 special float values (Section 10.2.1.4)
-            let f: f64 = if s.eq_ignore_ascii_case(".inf") || s.eq_ignore_ascii_case("+.inf") {
-                f64::INFINITY
-            } else if s.eq_ignore_ascii_case("-.inf") {
-                f64::NEG_INFINITY
-            } else if s.eq_ignore_ascii_case(".nan") {
-                f64::NAN
-            } else {
-                s.parse().map_err(|e| {
-                    napi::Error::from_reason(format!("invalid float value '{s}': {e}"))
-                })?
-            };
-            f.into_unknown(env)
-        }
-
-        Yaml::String(s) => s.as_str().into_unknown(env),
-
-        Yaml::Array(arr) => {
+        YamlOwned::Sequence(arr) => {
             let arr_len = u32::try_from(arr.len()).map_err(|_| {
                 napi::Error::from_reason("array too large for JavaScript (max 2^32 elements)")
             })?;
@@ -63,7 +48,7 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &Yaml) -> NapiResult<Unknown<'env>
             js_array.into_unknown(env)
         }
 
-        Yaml::Hash(map) => {
+        YamlOwned::Mapping(map) => {
             let mut js_obj = Object::new(env)?;
             for (k, v) in map {
                 let key_str = yaml_key_to_string(k)?;
@@ -73,22 +58,31 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &Yaml) -> NapiResult<Unknown<'env>
             js_obj.into_unknown(env)
         }
 
-        // Aliases are automatically resolved by yaml-rust2
-        Yaml::Alias(_) => yaml_to_js(env, &Yaml::Null),
+        // Aliases are automatically resolved by saphyr
+        YamlOwned::Alias(_) => Null.into_unknown(env),
 
-        Yaml::BadValue => Err(napi::Error::from_reason("invalid YAML value encountered")),
+        YamlOwned::BadValue => Err(napi::Error::from_reason("invalid YAML value encountered")),
+
+        // Tagged values - extract the inner value
+        YamlOwned::Tagged(_, inner) => yaml_to_js(env, inner),
+
+        // Representation values - the first element is the raw string representation
+        YamlOwned::Representation(repr, _, _) => repr.as_str().into_unknown(env),
     }
 }
 
 /// Convert a YAML key to a string for use as JavaScript object property.
 ///
 /// YAML keys can be any type, but JavaScript object keys must be strings.
-fn yaml_key_to_string(yaml: &Yaml) -> NapiResult<String> {
+fn yaml_key_to_string(yaml: &YamlOwned) -> NapiResult<String> {
     match yaml {
-        Yaml::String(s) | Yaml::Real(s) => Ok(s.clone()),
-        Yaml::Integer(i) => Ok(i.to_string()),
-        Yaml::Boolean(b) => Ok(b.to_string()),
-        Yaml::Null => Ok("null".to_string()),
+        YamlOwned::Value(scalar) => match scalar {
+            ScalarOwned::String(s) => Ok(s.clone()),
+            ScalarOwned::Integer(i) => Ok(i.to_string()),
+            ScalarOwned::FloatingPoint(f) => Ok(f.to_string()),
+            ScalarOwned::Boolean(b) => Ok(b.to_string()),
+            ScalarOwned::Null => Ok("null".to_string()),
+        },
         _ => Err(napi::Error::from_reason(format!(
             "unsupported YAML key type: {yaml:?}"
         ))),
@@ -101,44 +95,30 @@ fn yaml_key_to_string(yaml: &Yaml) -> NapiResult<String> {
 ///
 /// # Type Mapping
 ///
-/// - `null`, `undefined` → `Yaml::Null`
-/// - `boolean` → `Yaml::Boolean`
-/// - `number` (integer) → `Yaml::Integer`
-/// - `number` (float) → `Yaml::Real`
-/// - `string` → `Yaml::String`
-/// - `Array` → `Yaml::Array`
-/// - `Object` → `Yaml::Hash`
+/// - `null`, `undefined` → `YamlOwned::Value(ScalarOwned::Null)`
+/// - `boolean` → `YamlOwned::Value(ScalarOwned::Boolean)`
+/// - `number` (integer) → `YamlOwned::Value(ScalarOwned::Integer)`
+/// - `number` (float) → `YamlOwned::Value(ScalarOwned::FloatingPoint)`
+/// - `string` → `YamlOwned::Value(ScalarOwned::String)`
+/// - `Array` → `YamlOwned::Sequence`
+/// - `Object` → `YamlOwned::Mapping`
 ///
 /// # Errors
 ///
 /// Returns an error if the JavaScript value contains non-serializable types.
-pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<Yaml> {
+pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
     let js_type = js_value.get_type()?;
 
     match js_type {
-        ValueType::Null | ValueType::Undefined => Ok(Yaml::Null),
+        ValueType::Null | ValueType::Undefined => Ok(YamlOwned::Value(ScalarOwned::Null)),
 
         ValueType::Boolean => {
             let b: bool = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
-            Ok(Yaml::Boolean(b))
+            Ok(YamlOwned::Value(ScalarOwned::Boolean(b)))
         }
 
         ValueType::Number => {
             let num: f64 = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
-
-            // Handle special float values per YAML 1.2.2 spec
-            if num.is_infinite() {
-                let s = if num.is_sign_positive() {
-                    ".inf".to_string()
-                } else {
-                    "-.inf".to_string()
-                };
-                return Ok(Yaml::Real(s));
-            }
-
-            if num.is_nan() {
-                return Ok(Yaml::Real(".nan".to_string()));
-            }
 
             // Check if it's an integer that can be represented exactly
             if num.fract() == 0.0 && num.is_finite() {
@@ -147,23 +127,19 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<Yaml> {
                 #[allow(clippy::cast_possible_truncation)]
                 if num.abs() <= MAX_SAFE_INTEGER {
                     let i = num as i64;
-                    return Ok(Yaml::Integer(i));
+                    return Ok(YamlOwned::Value(ScalarOwned::Integer(i)));
                 }
             }
 
-            // Float value
-            let formatted = format!("{num}");
-            let s = if !formatted.contains('.') && !formatted.contains('e') {
-                format!("{formatted}.0")
-            } else {
-                formatted
-            };
-            Ok(Yaml::Real(s))
+            // Float value (including inf, -inf, nan)
+            Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(OrderedFloat(
+                num,
+            ))))
         }
 
         ValueType::String => {
             let s: String = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
-            Ok(Yaml::String(s))
+            Ok(YamlOwned::Value(ScalarOwned::String(s)))
         }
 
         ValueType::Object => {
@@ -180,14 +156,14 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<Yaml> {
                     arr.push(js_to_yaml(env, elem)?);
                 }
 
-                return Ok(Yaml::Array(arr));
+                return Ok(YamlOwned::Sequence(arr));
             }
 
             // It's a plain object
             let property_names = js_obj.get_property_names()?;
             let len = property_names.get_array_length()?;
 
-            let mut map = yaml_rust2::yaml::Hash::with_capacity(len as usize);
+            let mut map = MappingOwned::with_capacity(len as usize);
 
             for i in 0..len {
                 let key: Unknown = property_names.get_element(i)?;
@@ -196,10 +172,13 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<Yaml> {
 
                 let value: Unknown = js_obj.get_named_property(&key_str)?;
 
-                map.insert(Yaml::String(key_str), js_to_yaml(env, value)?);
+                map.insert(
+                    YamlOwned::Value(ScalarOwned::String(key_str)),
+                    js_to_yaml(env, value)?,
+                );
             }
 
-            Ok(Yaml::Hash(map))
+            Ok(YamlOwned::Mapping(map))
         }
 
         _ => Err(napi::Error::from_reason(format!(
@@ -215,11 +194,20 @@ mod tests {
     #[test]
     fn test_yaml_key_to_string() {
         assert_eq!(
-            yaml_key_to_string(&Yaml::String("test".to_string())).unwrap(),
+            yaml_key_to_string(&YamlOwned::Value(ScalarOwned::String("test".to_string()))).unwrap(),
             "test"
         );
-        assert_eq!(yaml_key_to_string(&Yaml::Integer(42)).unwrap(), "42");
-        assert_eq!(yaml_key_to_string(&Yaml::Boolean(true)).unwrap(), "true");
-        assert_eq!(yaml_key_to_string(&Yaml::Null).unwrap(), "null");
+        assert_eq!(
+            yaml_key_to_string(&YamlOwned::Value(ScalarOwned::Integer(42))).unwrap(),
+            "42"
+        );
+        assert_eq!(
+            yaml_key_to_string(&YamlOwned::Value(ScalarOwned::Boolean(true))).unwrap(),
+            "true"
+        );
+        assert_eq!(
+            yaml_key_to_string(&YamlOwned::Value(ScalarOwned::Null)).unwrap(),
+            "null"
+        );
     }
 }

@@ -72,7 +72,7 @@ fn count_keys_and_depth(value: &fast_yaml_core::Value, current_depth: usize) -> 
     use fast_yaml_core::Value;
 
     match value {
-        Value::Hash(map) => {
+        Value::Mapping(map) => {
             let mut total_keys = map.len();
             let mut max_depth = current_depth + 1;
 
@@ -84,7 +84,7 @@ fn count_keys_and_depth(value: &fast_yaml_core::Value, current_depth: usize) -> 
 
             (total_keys, max_depth)
         }
-        Value::Array(arr) => {
+        Value::Sequence(arr) => {
             let mut max_depth = current_depth + 1;
             let mut total_keys = 0;
 

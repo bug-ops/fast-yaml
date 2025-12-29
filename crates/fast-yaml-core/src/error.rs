@@ -24,9 +24,9 @@ pub enum ParseError {
         source: std::num::ParseFloatError,
     },
 
-    /// YAML scanner error from yaml-rust2.
+    /// YAML scanner error from saphyr.
     #[error("YAML scanner error: {0}")]
-    Scanner(#[from] yaml_rust2::ScanError),
+    Scanner(#[from] saphyr::ScanError),
 }
 
 /// Errors that can occur during YAML emission.

@@ -43,7 +43,9 @@ impl Default for LintConfig {
             indent_size: 2,
             require_document_start: false,
             require_document_end: false,
-            allow_duplicate_keys: false,
+            // Duplicate key detection disabled by default due to false positives
+            // from nested keys with same names (e.g., top-level "name" and nested "author.name")
+            allow_duplicate_keys: true,
             disabled_rules: HashSet::new(),
             rule_configs: HashMap::new(),
         }
@@ -425,7 +427,8 @@ mod tests {
         assert_eq!(config.max_line_length, Some(80));
         assert_eq!(config.indent_size, 2);
         assert!(!config.require_document_start);
-        assert!(!config.allow_duplicate_keys);
+        // Duplicate key detection is disabled by default
+        assert!(config.allow_duplicate_keys);
     }
 
     #[test]

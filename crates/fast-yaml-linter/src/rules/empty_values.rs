@@ -99,10 +99,10 @@ fn check_value_for_empty(
     forbid_block_sequences: bool,
 ) {
     match value {
-        Value::Hash(hash) => {
+        Value::Mapping(hash) => {
             for (key, val) in hash {
                 // Check if value is null and has no explicit null in source
-                if matches!(val, Value::Null)
+                if val.is_null()
                     && let Some(key_str) = key.as_str()
                     && !has_explicit_null_value(source, key_str, mapper)
                 {
@@ -140,10 +140,10 @@ fn check_value_for_empty(
                 );
             }
         }
-        Value::Array(arr) => {
+        Value::Sequence(arr) => {
             for (idx, item) in arr.iter().enumerate() {
                 // Check for null items in sequences
-                if matches!(item, Value::Null) && forbid_block_sequences {
+                if item.is_null() && forbid_block_sequences {
                     // Check if this is an implicit null in a block sequence
                     if is_in_block_sequence_with_implicit_null(source, idx) {
                         let severity = config.get_effective_severity(code, Severity::Warning);

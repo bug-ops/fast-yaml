@@ -76,24 +76,24 @@ impl ConvertCommand {
 /// Convert `fast_yaml_core::Value` to `serde_json::Value`
 fn value_to_json(value: &Value) -> Result<serde_json::Value> {
     use Value as YValue;
+    use fast_yaml_core::value::ScalarOwned;
     use serde_json::Value as JValue;
 
     Ok(match value {
-        YValue::Null => JValue::Null,
-        YValue::Boolean(b) => JValue::Bool(*b),
-        YValue::Integer(i) => JValue::Number((*i).into()),
-        YValue::Real(s) => {
-            let f: f64 = s.parse().context("Failed to parse float")?;
-            serde_json::Number::from_f64(f)
+        YValue::Value(scalar) => match scalar {
+            ScalarOwned::Null => JValue::Null,
+            ScalarOwned::Boolean(b) => JValue::Bool(*b),
+            ScalarOwned::Integer(i) => JValue::Number((*i).into()),
+            ScalarOwned::FloatingPoint(f) => serde_json::Number::from_f64(f.0)
                 .map(JValue::Number)
-                .ok_or_else(|| anyhow::anyhow!("Invalid float value: {s}"))?
-        }
-        YValue::String(s) => JValue::String(s.clone()),
-        YValue::Array(arr) => {
+                .ok_or_else(|| anyhow::anyhow!("Invalid float value: {f}"))?,
+            ScalarOwned::String(s) => JValue::String(s.clone()),
+        },
+        YValue::Sequence(arr) => {
             let json_arr: Result<Vec<_>> = arr.iter().map(value_to_json).collect();
             JValue::Array(json_arr?)
         }
-        YValue::Hash(map) => {
+        YValue::Mapping(map) => {
             let mut json_map = serde_json::Map::new();
             for (k, v) in map {
                 let key = k
@@ -109,6 +109,14 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
         YValue::BadValue => {
             anyhow::bail!("Invalid YAML value encountered");
         }
+        YValue::Representation(s, _, _) => {
+            // Try to convert the representation string to appropriate JSON type
+            JValue::String(s.clone())
+        }
+        YValue::Tagged(_, inner) => {
+            // Ignore the tag and convert the inner value
+            value_to_json(inner)?
+        }
     })
 }
 
@@ -116,31 +124,38 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
 fn json_to_value(json: &serde_json::Value) -> Result<Value> {
     use Value as YValue;
     use fast_yaml_core::Map;
+    use fast_yaml_core::value::ScalarOwned;
     use serde_json::Value as JValue;
 
     Ok(match json {
-        JValue::Null => YValue::Null,
-        JValue::Bool(b) => YValue::Boolean(*b),
+        JValue::Null => YValue::Value(ScalarOwned::Null),
+        JValue::Bool(b) => YValue::Value(ScalarOwned::Boolean(*b)),
         JValue::Number(n) => {
             if let Some(i) = n.as_i64() {
-                YValue::Integer(i)
+                YValue::Value(ScalarOwned::Integer(i))
             } else if let Some(f) = n.as_f64() {
-                YValue::Real(f.to_string())
+                // We need to use ordered_float::OrderedFloat which is a transitive dependency via saphyr
+                // Since it's not re-exported, we construct it using the From trait
+                use ordered_float::OrderedFloat;
+                YValue::Value(ScalarOwned::FloatingPoint(OrderedFloat(f)))
             } else {
                 anyhow::bail!("Unsupported number type: {n}");
             }
         }
-        JValue::String(s) => YValue::String(s.clone()),
+        JValue::String(s) => YValue::Value(ScalarOwned::String(s.clone())),
         JValue::Array(arr) => {
             let yaml_arr: Result<Vec<_>> = arr.iter().map(json_to_value).collect();
-            YValue::Array(yaml_arr?)
+            YValue::Sequence(yaml_arr?)
         }
         JValue::Object(map) => {
             let mut yaml_map = Map::new();
             for (k, v) in map {
-                yaml_map.insert(YValue::String(k.clone()), json_to_value(v)?);
+                yaml_map.insert(
+                    YValue::Value(ScalarOwned::String(k.clone())),
+                    json_to_value(v)?,
+                );
             }
-            YValue::Hash(yaml_map)
+            YValue::Mapping(yaml_map)
         }
     })
 }
@@ -212,10 +227,10 @@ mod tests {
         let yaml = json_to_value(&json).unwrap();
 
         match yaml {
-            Value::Hash(map) => {
+            Value::Mapping(map) => {
                 assert_eq!(map.len(), 1);
             }
-            _ => panic!("Expected Hash"),
+            _ => panic!("Expected Mapping"),
         }
     }
 

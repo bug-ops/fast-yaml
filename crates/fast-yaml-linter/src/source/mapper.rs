@@ -84,6 +84,31 @@ impl<'a> SourceMapper<'a> {
             .copied()
     }
 
+    /// Finds all occurrences of a key in the source code.
+    ///
+    /// Returns a vector of all spans where the key appears.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::source::SourceMapper;
+    ///
+    /// let yaml = "name: John\nage: 30\nname: Jane";
+    /// let mut mapper = SourceMapper::new(yaml);
+    ///
+    /// let spans = mapper.find_all_key_spans("name");
+    /// assert_eq!(spans.len(), 2);
+    /// ```
+    pub fn find_all_key_spans(&mut self, key: &str) -> Vec<Span> {
+        // Populate cache if needed by calling find_key_span with line hint 1
+        if !self.key_positions.contains_key(key) {
+            let _ = self.find_key_span(key, 1);
+        }
+
+        // Return cloned vector from cache
+        self.key_positions.get(key).cloned().unwrap_or_default()
+    }
+
     /// Finds a key in a line, accounting for YAML syntax.
     fn find_key_in_line(line: &str, key: &str) -> Option<usize> {
         // Skip leading whitespace

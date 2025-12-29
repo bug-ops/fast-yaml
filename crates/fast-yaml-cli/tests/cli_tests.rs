@@ -172,17 +172,17 @@ fn test_lint_json_format() {
 
 #[test]
 #[cfg(feature = "linter")]
-fn test_lint_duplicate_keys() {
-    // Duplicate keys are caught at parse level (YAML 1.2 spec violation)
-    // This results in parse error (exit code 1), not lint error
+fn test_lint_duplicate_keys_disabled_by_default() {
+    // Duplicate key detection is disabled by default to avoid false positives
+    // from nested keys with the same name in different contexts
     Command::cargo_bin("fy")
         .unwrap()
         .arg("lint")
         .write_stdin("key: value1\nkey: value2\n")
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("duplicated key"));
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("0 errors, 0 warnings"));
 }
 
 #[test]

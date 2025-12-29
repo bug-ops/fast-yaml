@@ -28,8 +28,9 @@ fast-yaml-linter.workspace = true
 fast-yaml-parallel.workspace = true
 
 # External dependencies
-yaml-rust2.workspace = true
 thiserror.workspace = true
+saphyr.workspace = true
+ordered-float.workspace = true
 
 [build-dependencies]
 napi-build = "2.3"

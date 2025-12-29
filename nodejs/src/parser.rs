@@ -7,7 +7,7 @@ use crate::Schema;
 use crate::conversion::yaml_to_js;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
-use yaml_rust2::YamlLoader;
+use saphyr::{LoadableYamlNode, ScalarOwned, YamlOwned};
 
 /// Maximum input size in bytes for `safe_load`/`safe_load_all` (100MB).
 ///
@@ -74,12 +74,12 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
     }
 
     // Parse YAML string
-    let docs = YamlLoader::load_from_str(&yaml_str)
+    let docs: Vec<YamlOwned> = YamlOwned::load_from_str(&yaml_str)
         .map_err(|e| napi::Error::from_reason(format!("YAML parse error: {e}")))?;
 
     // Convert first document to JavaScript (or null if empty)
     let result = if docs.is_empty() {
-        yaml_to_js(&env, &yaml_rust2::Yaml::Null)
+        yaml_to_js(&env, &YamlOwned::Value(ScalarOwned::Null))
     } else {
         yaml_to_js(&env, &docs[0])
     }?;
@@ -135,7 +135,7 @@ pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'stat
     }
 
     // Parse YAML string
-    let docs = YamlLoader::load_from_str(&yaml_str)
+    let docs: Vec<YamlOwned> = YamlOwned::load_from_str(&yaml_str)
         .map_err(|e| napi::Error::from_reason(format!("YAML parse error: {e}")))?;
 
     // Convert all documents to JavaScript
@@ -250,21 +250,21 @@ mod tests {
     #[test]
     fn test_parse_simple() {
         let yaml = "name: test\nvalue: 123";
-        let docs = YamlLoader::load_from_str(yaml).unwrap();
+        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
         assert_eq!(docs.len(), 1);
     }
 
     #[test]
     fn test_parse_multi_document() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let docs = YamlLoader::load_from_str(yaml).unwrap();
+        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
         assert_eq!(docs.len(), 2);
     }
 
     #[test]
     fn test_parse_invalid() {
         let yaml = "invalid: [\n";
-        let result = YamlLoader::load_from_str(yaml);
+        let result = YamlOwned::load_from_str(yaml);
         assert!(result.is_err());
     }
 
