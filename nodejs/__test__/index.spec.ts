@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 // Note: This is a placeholder test that will be expanded once the module builds
 // The actual module will be loaded from the compiled .node file
