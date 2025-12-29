@@ -1068,10 +1068,7 @@ development:
         // saphyr only recognizes lowercase true/false as booleans
         for (input, expected) in &[("true", true), ("false", false)] {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
-            assert!(
-                docs[0].as_bool() == Some(*expected),
-                "Failed for: {input}"
-            );
+            assert!(docs[0].as_bool() == Some(*expected), "Failed for: {input}");
         }
     }
 
@@ -1142,7 +1139,10 @@ development:
         for inf_str in &[".inf", ".Inf", ".INF"] {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(inf_str).unwrap();
             if let Some(f) = docs[0].as_f64() {
-                assert!(f.is_infinite() && f.is_sign_positive(), "Expected +inf for: {inf_str}");
+                assert!(
+                    f.is_infinite() && f.is_sign_positive(),
+                    "Expected +inf for: {inf_str}"
+                );
             }
         }
 
@@ -1150,7 +1150,10 @@ development:
         for neg_inf_str in &["-.inf", "-.Inf", "-.INF"] {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(neg_inf_str).unwrap();
             if let Some(f) = docs[0].as_f64() {
-                assert!(f.is_infinite() && f.is_sign_negative(), "Expected -inf for: {neg_inf_str}");
+                assert!(
+                    f.is_infinite() && f.is_sign_negative(),
+                    "Expected -inf for: {neg_inf_str}"
+                );
             }
         }
 
