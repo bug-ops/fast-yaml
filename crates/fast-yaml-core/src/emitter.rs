@@ -264,6 +264,10 @@ impl Emitter {
             }
         }
 
+        // Fix special float values for YAML 1.2 Core Schema compliance
+        // saphyr outputs "inf"/"-inf"/"NaN", but YAML 1.2 requires ".inf"/"-.inf"/".nan"
+        output = Self::fix_special_floats(output);
+
         // TODO: Apply indent transformation if config.indent != 2
         // This would require parsing indentation patterns and adjusting them
 
@@ -271,6 +275,51 @@ impl Emitter {
         // This would require line wrapping logic
 
         output
+    }
+
+    /// Fix special float values for YAML 1.2 Core Schema compliance.
+    ///
+    /// Converts saphyr's output format to YAML 1.2 compliant format:
+    /// - `inf` → `.inf`
+    /// - `-inf` → `-.inf`
+    /// - `NaN` → `.nan`
+    fn fix_special_floats(output: String) -> String {
+        // We need to be careful to only replace standalone values, not parts of words.
+        // The regex approach would be safer, but for simplicity we'll use line-by-line
+        // processing with word boundary checks.
+        output
+            .lines()
+            .map(|line| {
+                // Check if line ends with special float value (with optional whitespace)
+                let trimmed = line.trim_end();
+                if let Some(prefix) = trimmed.strip_suffix("inf") {
+                    // Check if it's "-inf" or standalone "inf"
+                    if prefix.ends_with('-') {
+                        // Already has minus, check if it's at value position (after : or at line start)
+                        let before_minus = &prefix[..prefix.len() - 1];
+                        if Self::is_value_position(before_minus) {
+                            return format!("{before_minus}-.inf");
+                        }
+                    } else if Self::is_value_position(prefix) {
+                        return format!("{prefix}.inf");
+                    }
+                } else if let Some(prefix) = trimmed.strip_suffix("NaN") {
+                    if Self::is_value_position(prefix) {
+                        return format!("{prefix}.nan");
+                    }
+                }
+                line.to_string()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// Check if the prefix indicates this is a value position (after `: ` or start of line).
+    fn is_value_position(prefix: &str) -> bool {
+        prefix.is_empty()
+            || prefix.ends_with(": ")
+            || prefix.ends_with("- ")
+            || prefix.ends_with('\n')
     }
 }
 
