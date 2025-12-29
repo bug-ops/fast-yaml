@@ -1,7 +1,7 @@
 //! Rule to check line length limits.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, LintContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
 };
 use fast_yaml_core::Value;

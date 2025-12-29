@@ -2,8 +2,8 @@
 
 use crate::{
     Location, Span,
-    diagnostic::{ContextLine, DiagnosticContext},
     comment_parser::{Comment, CommentParser},
+    diagnostic::{ContextLine, DiagnosticContext},
 };
 use std::sync::OnceLock;
 
@@ -547,9 +547,7 @@ impl<'a> LintContext<'a> {
     /// ```
     #[must_use]
     pub fn lines(&self) -> &[&'a str] {
-        self.lines.get_or_init(|| {
-            self.source.lines().collect()
-        })
+        self.lines.get_or_init(|| self.source.lines().collect())
     }
 
     /// Returns pre-computed metadata for each line.

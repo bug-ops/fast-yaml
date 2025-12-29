@@ -1,7 +1,8 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
 use crate::{
-    Diagnostic, LintContext, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, Span, source::SourceMapper,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
+    source::SourceMapper,
 };
 use fast_yaml_core::Value;
 use std::collections::HashMap;

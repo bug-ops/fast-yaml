@@ -1,6 +1,9 @@
 //! Rule to check for document start marker (---).
 
-use crate::{Diagnostic, LintContext, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, Span};
+use crate::{
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
+    Span,
+};
 use fast_yaml_core::Value;
 
 /// Linting rule for document start marker.

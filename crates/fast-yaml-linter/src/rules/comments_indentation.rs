@@ -1,8 +1,6 @@
 //! Rule to check comment indentation.
 
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, LintContext,
-};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Metadata about a line for efficient indentation checking.
@@ -59,7 +57,7 @@ impl super::LintRule for CommentsIndentationRule {
         let comments = context.comments();
 
         let mut diagnostics = Vec::new();
-        
+
         let lines: Vec<&str> = source.lines().collect();
 
         // Pre-compute line metadata to avoid O(n²) complexity

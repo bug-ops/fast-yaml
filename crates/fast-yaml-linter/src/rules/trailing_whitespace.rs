@@ -1,7 +1,7 @@
 //! Rule to detect trailing whitespace.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, LintContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
 };
 use fast_yaml_core::Value;
@@ -26,7 +26,12 @@ impl super::LintRule for TrailingWhitespaceRule {
         Severity::Hint
     }
 
-    fn check(&self, context: &LintContext, _value: &Value, _config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(
+        &self,
+        context: &LintContext,
+        _value: &Value,
+        _config: &LintConfig,
+    ) -> Vec<Diagnostic> {
         let source = context.source();
         let mut diagnostics = Vec::new();
         let ctx = context.source_context();

@@ -1,7 +1,7 @@
 //! Rule to check spacing around colons.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, LintContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
     tokenizer::{FlowTokenizer, TokenType},
 };

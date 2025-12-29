@@ -23,7 +23,12 @@ impl super::LintRule for IndentationRule {
         Severity::Warning
     }
 
-    fn check(&self, _context: &LintContext, _value: &Value, _config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(
+        &self,
+        _context: &LintContext,
+        _value: &Value,
+        _config: &LintConfig,
+    ) -> Vec<Diagnostic> {
         Vec::new()
     }
 }

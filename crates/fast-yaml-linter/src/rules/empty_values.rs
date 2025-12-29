@@ -1,8 +1,8 @@
 //! Rule to check for empty (implicit null) values.
 
 use crate::{
-    Diagnostic, LintContext, DiagnosticBuilder, DiagnosticCode, LintConfig, Location, Severity, Span,
-    source::SourceMapper,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
+    Span, source::SourceMapper,
 };
 use fast_yaml_core::Value;
 
