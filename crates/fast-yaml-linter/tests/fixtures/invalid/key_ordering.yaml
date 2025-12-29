@@ -1,0 +1,18 @@
+# Test file for key-ordering rule violations
+
+# Keys not in alphabetical order
+name: John
+age: 30
+city: NYC
+
+# Nested mapping with unsorted keys
+person:
+  zip: 12345
+  name: Jane
+  age: 25
+
+# Another level of nesting
+config:
+  zebra: value
+  apple: value
+  mango: value

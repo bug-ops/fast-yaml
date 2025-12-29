@@ -14,15 +14,19 @@ mod document_start;
 mod duplicate_keys;
 mod empty_lines;
 mod empty_values;
+mod float_values;
 pub mod flow_common;
 mod hyphens;
 mod indentation;
 mod invalid_anchors;
+mod key_ordering;
 mod line_length;
 mod new_line_at_end_of_file;
 mod new_lines;
 mod octal_values;
+mod quoted_strings;
 mod trailing_whitespace;
+mod truthy;
 
 pub use braces::BracesRule;
 pub use brackets::BracketsRule;
@@ -35,14 +39,18 @@ pub use document_start::DocumentStartRule;
 pub use duplicate_keys::DuplicateKeysRule;
 pub use empty_lines::EmptyLinesRule;
 pub use empty_values::EmptyValuesRule;
+pub use float_values::FloatValuesRule;
 pub use hyphens::HyphensRule;
 pub use indentation::IndentationRule;
 pub use invalid_anchors::InvalidAnchorsRule;
+pub use key_ordering::KeyOrderingRule;
 pub use line_length::LineLengthRule;
 pub use new_line_at_end_of_file::NewLineAtEndOfFileRule;
 pub use new_lines::NewLinesRule;
 pub use octal_values::OctalValuesRule;
+pub use quoted_strings::QuotedStringsRule;
 pub use trailing_whitespace::TrailingWhitespaceRule;
+pub use truthy::TruthyRule;
 
 /// Trait for implementing lint rules.
 ///
@@ -163,6 +171,10 @@ impl RuleRegistry {
     /// - Empty Lines (INFO)
     /// - New Lines (WARNING)
     /// - Octal Values (WARNING)
+    /// - Truthy (WARNING)
+    /// - Quoted Strings (WARNING)
+    /// - Key Ordering (INFO)
+    /// - Float Values (WARNING)
     ///
     /// # Examples
     ///
@@ -170,7 +182,7 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 17);
+    /// assert_eq!(registry.rules().len(), 21);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
@@ -198,6 +210,12 @@ impl RuleRegistry {
         registry.add(Box::new(EmptyLinesRule));
         registry.add(Box::new(NewLinesRule));
         registry.add(Box::new(OctalValuesRule));
+
+        // Phase 4 rules (4)
+        registry.add(Box::new(TruthyRule));
+        registry.add(Box::new(QuotedStringsRule));
+        registry.add(Box::new(KeyOrderingRule));
+        registry.add(Box::new(FloatValuesRule));
 
         // Not yet implemented - planned for future phases
         // registry.add(Box::new(IndentationRule));
@@ -274,7 +292,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 17);
+        assert_eq!(registry.rules().len(), 21);
     }
 
     #[test]
@@ -301,6 +319,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 17);
+        assert_eq!(registry.rules().len(), 21);
     }
 }

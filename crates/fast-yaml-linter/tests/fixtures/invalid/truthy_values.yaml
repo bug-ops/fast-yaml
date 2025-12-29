@@ -1,0 +1,35 @@
+# Test file for truthy rule violations
+
+# Non-standard boolean representations
+enabled: yes
+disabled: no
+
+# Capitalized variants
+feature1: Yes
+feature2: No
+feature3: YES
+feature4: NO
+
+# On/Off variants
+switch1: on
+switch2: off
+switch3: On
+switch4: Off
+
+# Single letter variants
+flag1: y
+flag2: n
+
+# Mixed case True/False
+value1: True
+value2: False
+value3: TRUE
+value4: FALSE
+
+# These should be OK (standard values)
+correct1: true
+correct2: false
+
+# Quoted values should be OK
+quoted1: "yes"
+quoted2: 'no'
