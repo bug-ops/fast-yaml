@@ -456,7 +456,7 @@ jobs:
         run: cd python && uv run maturin develop
 
       - name: Run Python tests
-        run: cd python && uv run pytest ../tests/ -v
+        run: cd python && uv run pytest ../tests/ tests/ -v
 
 
   # NodeJS bindings tests
@@ -557,7 +557,7 @@ jobs:
         run: cd python && uv run maturin develop
 
       - name: Run tests with coverage
-        run: cd python && uv run pytest ../tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
+        run: cd python && uv run pytest ../tests/ tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
 
       - name: Upload Python coverage to codecov
         uses: codecov/codecov-action@v5
