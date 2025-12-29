@@ -32,6 +32,7 @@ mod linter;
 mod location;
 mod severity;
 
+pub mod comment_parser;
 pub mod config;
 pub mod formatter;
 pub mod rules;

@@ -100,6 +100,16 @@ impl DiagnosticCode {
     pub const COMMAS: &'static str = "commas";
     /// Predefined code for hyphens spacing.
     pub const HYPHENS: &'static str = "hyphens";
+    /// Predefined code for comment formatting.
+    pub const COMMENTS: &'static str = "comments";
+    /// Predefined code for comment indentation.
+    pub const COMMENTS_INDENTATION: &'static str = "comments-indentation";
+    /// Predefined code for empty lines.
+    pub const EMPTY_LINES: &'static str = "empty-lines";
+    /// Predefined code for line endings.
+    pub const NEW_LINES: &'static str = "new-lines";
+    /// Predefined code for octal values.
+    pub const OCTAL_VALUES: &'static str = "octal-values";
 
     /// Creates a new diagnostic code.
     ///
