@@ -606,8 +606,17 @@ jobs:
       - name: Build NodeJS extension
         run: cd nodejs && npm run build:debug
 
-      - name: Run tests
-        run: cd nodejs && npm test
+      - name: Run tests with coverage
+        run: cd nodejs && npm run test:coverage
+
+      - name: Upload NodeJS coverage to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: nodejs/coverage/lcov.info
+          flags: nodejs
+          name: nodejs-coverage
+          verbose: true
 
 
   # NodeJS release build (main branch only)
