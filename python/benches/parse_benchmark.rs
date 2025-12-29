@@ -1,9 +1,9 @@
 //! Benchmarks for YAML parsing performance.
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use saphyr::{LoadableYamlNode, YamlOwned};
 use std::fmt::Write;
 use std::hint::black_box;
-use yaml_rust2::YamlLoader;
 
 const SMALL_YAML: &str = r"
 name: test
@@ -78,7 +78,7 @@ fn generate_large_yaml(num_items: usize) -> String {
 fn bench_parse_small(c: &mut Criterion) {
     c.bench_function("parse_small", |b| {
         b.iter(|| {
-            let docs = YamlLoader::load_from_str(black_box(SMALL_YAML)).unwrap();
+            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(SMALL_YAML)).unwrap();
             black_box(docs);
         });
     });
@@ -87,7 +87,7 @@ fn bench_parse_small(c: &mut Criterion) {
 fn bench_parse_medium(c: &mut Criterion) {
     c.bench_function("parse_medium", |b| {
         b.iter(|| {
-            let docs = YamlLoader::load_from_str(black_box(MEDIUM_YAML)).unwrap();
+            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(MEDIUM_YAML)).unwrap();
             black_box(docs);
         });
     });
@@ -98,7 +98,7 @@ fn bench_parse_large(c: &mut Criterion) {
 
     c.bench_function("parse_large_1000", |b| {
         b.iter(|| {
-            let docs = YamlLoader::load_from_str(black_box(&large_yaml)).unwrap();
+            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(&large_yaml)).unwrap();
             black_box(docs);
         });
     });
@@ -112,7 +112,7 @@ fn bench_parse_scaling(c: &mut Criterion) {
 
         group.bench_with_input(BenchmarkId::from_parameter(size), &yaml, |b, yaml| {
             b.iter(|| {
-                let docs = YamlLoader::load_from_str(black_box(yaml)).unwrap();
+                let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(yaml)).unwrap();
                 black_box(docs);
             });
         });
@@ -126,7 +126,7 @@ fn bench_parse_multi_document(c: &mut Criterion) {
 
     c.bench_function("parse_multi_document", |b| {
         b.iter(|| {
-            let docs = YamlLoader::load_from_str(black_box(&multi_doc)).unwrap();
+            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(&multi_doc)).unwrap();
             black_box(docs);
         });
     });
@@ -162,7 +162,7 @@ integers:
 
     c.bench_function("parse_special_values", |b| {
         b.iter(|| {
-            let docs = YamlLoader::load_from_str(black_box(special)).unwrap();
+            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(special)).unwrap();
             black_box(docs);
         });
     });
@@ -190,7 +190,7 @@ staging:
 
     c.bench_function("parse_anchors", |b| {
         b.iter(|| {
-            let docs = YamlLoader::load_from_str(black_box(anchors)).unwrap();
+            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(black_box(anchors)).unwrap();
             black_box(docs);
         });
     });

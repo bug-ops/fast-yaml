@@ -1113,10 +1113,11 @@ development:
 
         for (input, expected) in test_cases {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
-            assert!(
-                docs[0].as_i64() == Some(expected),
-                "Failed for: {input} (expected {expected})"
-            );
+            if let YamlOwned::Value(ScalarOwned::Integer(i)) = &docs[0] {
+                assert_eq!(*i, expected, "Failed for: {input} (expected {expected})");
+            } else {
+                panic!("Expected integer for: {input}");
+            }
         }
     }
 
@@ -1133,10 +1134,11 @@ development:
 
         for (input, expected) in test_cases {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
-            if let Some(f) = docs[0].as_f64() {
+            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
+                let f_val: f64 = **f;
                 assert!(
-                    (f - expected).abs() < 1e-10,
-                    "Failed for: {input} (expected {expected}, got {f})"
+                    (f_val - expected).abs() < 1e-10,
+                    "Failed for: {input} (expected {expected}, got {f_val})"
                 );
             } else {
                 panic!("Expected float for: {input}");
@@ -1150,9 +1152,10 @@ development:
         // Positive infinity
         for inf_str in &[".inf", ".Inf", ".INF"] {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(inf_str).unwrap();
-            if let Some(f) = docs[0].as_f64() {
+            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
+                let f_val: f64 = **f;
                 assert!(
-                    f.is_infinite() && f.is_sign_positive(),
+                    f_val.is_infinite() && f_val.is_sign_positive(),
                     "Expected +inf for: {inf_str}"
                 );
             }
@@ -1161,9 +1164,10 @@ development:
         // Negative infinity
         for neg_inf_str in &["-.inf", "-.Inf", "-.INF"] {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(neg_inf_str).unwrap();
-            if let Some(f) = docs[0].as_f64() {
+            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
+                let f_val: f64 = **f;
                 assert!(
-                    f.is_infinite() && f.is_sign_negative(),
+                    f_val.is_infinite() && f_val.is_sign_negative(),
                     "Expected -inf for: {neg_inf_str}"
                 );
             }
@@ -1172,8 +1176,9 @@ development:
         // NaN
         for nan_str in &[".nan", ".NaN", ".NAN"] {
             let docs: Vec<YamlOwned> = YamlOwned::load_from_str(nan_str).unwrap();
-            if let Some(f) = docs[0].as_f64() {
-                assert!(f.is_nan(), "Expected NaN for: {nan_str}");
+            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
+                let f_val: f64 = **f;
+                assert!(f_val.is_nan(), "Expected NaN for: {nan_str}");
             }
         }
     }
@@ -1183,15 +1188,19 @@ development:
     fn test_yaml_122_octal_format() {
         // 0o prefix is the YAML 1.2 octal format
         let docs: Vec<YamlOwned> = YamlOwned::load_from_str("0o14").unwrap();
-        assert!(docs[0].as_i64() == Some(12));
+        if let YamlOwned::Value(ScalarOwned::Integer(i)) = &docs[0] {
+            assert_eq!(*i, 12);
+        } else {
+            panic!("Expected integer for 0o14");
+        }
 
         // Leading zero without 'o' should be decimal or string in YAML 1.2
         // (saphyr behavior may vary - this documents expected behavior)
         let docs: Vec<YamlOwned> = YamlOwned::load_from_str("014").unwrap();
         // In strict YAML 1.2, this should be decimal 14, not octal 12
-        if let Some(i) = docs[0].as_i64() {
+        if let YamlOwned::Value(ScalarOwned::Integer(i)) = &docs[0] {
             // saphyr treats this as decimal 14 (YAML 1.2 compliant)
-            assert!(i == 14 || i == 12, "Got: {i}");
+            assert!(*i == 14 || *i == 12, "Got: {i}");
         }
     }
 

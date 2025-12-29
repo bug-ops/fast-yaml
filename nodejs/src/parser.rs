@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn test_parse_invalid() {
         let yaml = "invalid: [\n";
-        let result: Result<Vec<YamlOwned>, _> = YamlOwned::load_from_str(yaml);
+        let result = YamlOwned::load_from_str(yaml);
         assert!(result.is_err());
     }
 
