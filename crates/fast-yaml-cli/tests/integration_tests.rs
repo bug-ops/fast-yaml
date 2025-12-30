@@ -942,3 +942,111 @@ fn test_roundtrip_yaml_json_yaml() {
         .stdout(predicate::str::contains("name:"))
         .stdout(predicate::str::contains("value:"));
 }
+
+// =============================================================================
+// FILE ARGUMENT POSITION TESTS
+// =============================================================================
+// Tests that file argument works both before and after subcommand
+
+#[test]
+fn test_parse_file_after_subcommand() {
+    let file = create_temp_yaml("name: test\nvalue: 123");
+
+    // New syntax: fy parse file.yaml
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("parse")
+        .arg(file.path())
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("YAML is valid"));
+}
+
+#[test]
+fn test_parse_file_before_subcommand() {
+    let file = create_temp_yaml("name: test\nvalue: 123");
+
+    // Old syntax: fy file.yaml parse
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg(file.path())
+        .arg("parse")
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("YAML is valid"));
+}
+
+#[test]
+fn test_format_file_after_subcommand() {
+    let file = create_temp_yaml("name:   test\nvalue:    123");
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .arg(file.path())
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("name:"));
+}
+
+#[test]
+fn test_convert_file_after_subcommand() {
+    let file = create_temp_yaml("name: test\nvalue: 123");
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .arg(file.path())
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("\"name\""));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_file_after_subcommand() {
+    let file = create_temp_yaml("name: test\nvalue: 123\n");
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg(file.path())
+        .assert()
+        .success()
+        .code(0);
+}
+
+#[test]
+fn test_format_file_with_flags_after_subcommand() {
+    let file = create_temp_yaml("parent:\n  child: value");
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .arg("--indent")
+        .arg("4")
+        .arg(file.path())
+        .assert()
+        .success()
+        .code(0);
+}
+
+#[test]
+fn test_parse_file_with_stats_after_subcommand() {
+    let file = create_temp_yaml("name: test\nvalue: 123");
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("parse")
+        .arg("--stats")
+        .arg(file.path())
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("Statistics:"));
+}
