@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-12-30
+
+### Added
+
+- **CLI**: Comprehensive integration test suite (59 tests)
+  - Parse, format, convert, lint command tests
+  - Global flags and error handling tests
+  - Edge cases and special scenarios
+
+### Fixed
+
+- **CLI**: Global flags (`-i`, `-o`, `-q`, `-v`, `--no-color`) now work after subcommands
+  - Before: `fy --quiet parse input.yaml` (flags only before subcommand)
+  - After: `fy parse --quiet input.yaml` (flags work in either position)
+- **CLI**: `--pretty=false` flag now accepts explicit boolean values
+
+### Documentation
+
+- Add crates.io badge for `fast-yaml-cli`
+- Add docs.rs badge for `fast-yaml-core`
+- Expand CLI section with all commands and examples
+- Add `cargo binstall` installation option
+
 ## [0.3.1] - 2025-12-29
 
 ### Added
@@ -247,7 +270,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.1...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/bug-ops/fast-yaml/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/bug-ops/fast-yaml/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/bug-ops/fast-yaml/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/bug-ops/fast-yaml/compare/v0.1.11...v0.2.0
