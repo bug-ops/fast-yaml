@@ -15,14 +15,14 @@ use tempfile::{NamedTempFile, TempDir};
 // Helper function to create a temporary YAML file
 fn create_temp_yaml(content: &str) -> NamedTempFile {
     let mut file = NamedTempFile::new().unwrap();
-    write!(file, "{}", content).unwrap();
+    write!(file, "{content}").unwrap();
     file
 }
 
 // Helper function to create a temporary JSON file
 fn create_temp_json(content: &str) -> NamedTempFile {
     let mut file = NamedTempFile::new().unwrap();
-    write!(file, "{}", content).unwrap();
+    write!(file, "{content}").unwrap();
     file
 }
 
@@ -110,7 +110,7 @@ fn test_parse_empty_document() {
 
 #[test]
 fn test_parse_complex_nested_yaml() {
-    let yaml = indoc! {r#"
+    let yaml = indoc! {"
         server:
           host: localhost
           port: 8080
@@ -123,7 +123,7 @@ fn test_parse_complex_nested_yaml() {
               port: 5432
             - host: db2
               port: 5432
-    "#};
+    "};
 
     Command::cargo_bin("fy")
         .unwrap()
@@ -381,7 +381,7 @@ fn test_convert_with_pretty_flag_false() {
 
 #[test]
 fn test_convert_complex_yaml_to_json() {
-    let yaml = indoc! {r#"
+    let yaml = indoc! {"
         server:
           host: localhost
           port: 8080
@@ -389,7 +389,7 @@ fn test_convert_complex_yaml_to_json() {
           - authentication
           - logging
           - monitoring
-    "#};
+    "};
 
     Command::cargo_bin("fy")
         .unwrap()
@@ -818,7 +818,7 @@ fn test_unicode_content() {
 
 #[test]
 fn test_multiline_strings() {
-    let yaml = indoc! {r#"
+    let yaml = indoc! {"
         description: |
           This is a multiline
           string with multiple
@@ -826,7 +826,7 @@ fn test_multiline_strings() {
         folded: >
           This is a folded
           string.
-    "#};
+    "};
 
     Command::cargo_bin("fy")
         .unwrap()
@@ -871,13 +871,13 @@ fn test_special_yaml_values() {
 
 #[test]
 fn test_empty_collections() {
-    let yaml = indoc! {r#"
+    let yaml = indoc! {"
         empty_map: {}
         empty_array: []
         empty_nested:
           map: {}
           array: []
-    "#};
+    "};
 
     Command::cargo_bin("fy")
         .unwrap()
