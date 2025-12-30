@@ -12,11 +12,12 @@ use std::path::PathBuf;
 )]
 #[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
-    /// Input file (default: stdin)
-    pub file: Option<PathBuf>,
-
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Input file (default: stdin) - used when no subcommand specified
+    #[arg(global = true)]
+    pub file: Option<PathBuf>,
 
     /// Edit file in-place (requires file argument)
     #[arg(short = 'i', long, global = true)]
@@ -47,6 +48,9 @@ pub struct Cli {
 pub enum Command {
     /// Parse and validate YAML
     Parse {
+        /// Input file (default: stdin)
+        file: Option<PathBuf>,
+
         /// Show parse statistics
         #[arg(long)]
         stats: bool,
@@ -54,6 +58,9 @@ pub enum Command {
 
     /// Format YAML with consistent style
     Format {
+        /// Input file (default: stdin)
+        file: Option<PathBuf>,
+
         /// Indentation width (2-8 spaces)
         #[arg(long, default_value = "2", value_parser = clap::value_parser!(u8).range(2..=8))]
         indent: u8,
@@ -69,6 +76,9 @@ pub enum Command {
         #[arg(value_enum)]
         to: ConvertFormat,
 
+        /// Input file (default: stdin)
+        file: Option<PathBuf>,
+
         /// Pretty-print JSON output
         #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         pretty: bool,
@@ -77,6 +87,9 @@ pub enum Command {
     #[cfg(feature = "linter")]
     /// Lint YAML with diagnostics
     Lint {
+        /// Input file (default: stdin)
+        file: Option<PathBuf>,
+
         /// Maximum line length
         #[arg(long, default_value = "120")]
         max_line_length: usize,
