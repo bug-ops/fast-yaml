@@ -1,6 +1,8 @@
 # fast-yaml
 
 [![CI Status](https://img.shields.io/github/actions/workflow/status/bug-ops/fast-yaml/ci.yml?branch=main)](https://github.com/bug-ops/fast-yaml/actions)
+[![Crates.io](https://img.shields.io/crates/v/fast-yaml-cli)](https://crates.io/crates/fast-yaml-cli)
+[![docs.rs](https://img.shields.io/docsrs/fast-yaml-core)](https://docs.rs/fast-yaml-core)
 [![PyPI](https://img.shields.io/pypi/v/fastyaml-rs)](https://pypi.org/project/fastyaml-rs/)
 [![npm](https://img.shields.io/npm/v/fastyaml-rs)](https://www.npmjs.com/package/fastyaml-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](LICENSE-MIT)
@@ -172,26 +174,41 @@ console.log(yamlStr);
 
 ### Command Line Tool
 
-For YAML processing from the terminal, use the `fy` CLI:
+The `fy` CLI provides fast YAML processing from the terminal:
 
 ```bash
-# Install
+# Install from crates.io
 cargo install fast-yaml-cli
 
-# Parse and validate
-fy parse config.yaml
-
-# Format YAML
-fy format --indent 4 config.yaml
-
-# Convert to JSON
-fy convert json config.yaml
-
-# Lint with style checks
-fy lint config.yaml
+# Or with cargo-binstall (faster, no compilation)
+cargo binstall fast-yaml-cli
 ```
 
-See [CLI documentation](crates/fast-yaml-cli/README.md) for details.
+**Commands:**
+
+```bash
+# Parse and validate YAML syntax
+fy parse config.yaml
+fy parse --stats large.yaml    # Show parse statistics
+
+# Format YAML with consistent style
+fy format config.yaml          # Output to stdout
+fy format -i config.yaml       # Edit in-place
+fy format --indent 4 app.yaml  # Custom indentation
+
+# Convert between formats
+fy convert json config.yaml    # YAML → JSON
+fy convert yaml data.json      # JSON → YAML
+
+# Lint with diagnostics
+fy lint config.yaml            # Text output (rustc-style)
+fy lint --format json app.yaml # JSON output for IDE integration
+```
+
+> [!TIP]
+> Use `fy --help` for all options. The CLI supports stdin input: `cat config.yaml | fy parse`
+
+See [CLI documentation](crates/fast-yaml-cli/README.md) for full reference.
 
 ## API Reference
 
