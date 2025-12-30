@@ -19,11 +19,11 @@ pub struct Cli {
     pub command: Option<Command>,
 
     /// Edit file in-place (requires file argument)
-    #[arg(short = 'i', long, requires = "file")]
+    #[arg(short = 'i', long, global = true)]
     pub in_place: bool,
 
     /// Output file (default: stdout)
-    #[arg(short, long, value_name = "FILE")]
+    #[arg(short, long, global = true, value_name = "FILE")]
     pub output: Option<PathBuf>,
 
     /// Output format
@@ -31,15 +31,15 @@ pub struct Cli {
     pub format: OutputFormat,
 
     /// Disable colored output
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub no_color: bool,
 
     /// Quiet mode (errors only)
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     pub quiet: bool,
 
     /// Verbose output
-    #[arg(short, long)]
+    #[arg(short, long, global = true)]
     pub verbose: bool,
 }
 
@@ -70,7 +70,7 @@ pub enum Command {
         to: ConvertFormat,
 
         /// Pretty-print JSON output
-        #[arg(long, default_value = "true")]
+        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         pretty: bool,
     },
 
