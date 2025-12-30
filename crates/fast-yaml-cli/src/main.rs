@@ -61,31 +61,43 @@ fn run() -> Result<ExitCode> {
     // Determine color usage
     let use_color = !cli.no_color && should_use_color();
 
+    // Get file path from subcommand or global argument
+    let file_path = get_file_path(&cli);
+
     // Read input
-    let input = InputSource::from_args(cli.file.clone())?;
+    let input = InputSource::from_args(file_path)?;
 
     // Create output writer
     let output = OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
 
     // Execute command
     let exit_code = match cli.command {
-        Some(Command::Parse { stats }) => {
+        Some(Command::Parse { file: _, stats }) => {
             let cmd = commands::parse::ParseCommand::new(stats, use_color, cli.quiet);
             cmd.execute(&input)?;
             ExitCode::Success
         }
-        Some(Command::Format { indent, width }) => {
+        Some(Command::Format {
+            file: _,
+            indent,
+            width,
+        }) => {
             let cmd = commands::format::FormatCommand::new(indent, width);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
-        Some(Command::Convert { to, pretty }) => {
+        Some(Command::Convert {
+            to,
+            file: _,
+            pretty,
+        }) => {
             let cmd = commands::convert::ConvertCommand::new(to, pretty);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
         #[cfg(feature = "linter")]
         Some(Command::Lint {
+            file: _,
             max_line_length,
             indent_size,
             format,
@@ -109,6 +121,19 @@ fn run() -> Result<ExitCode> {
     };
 
     Ok(exit_code)
+}
+
+/// Get file path from subcommand argument or global argument
+fn get_file_path(cli: &Cli) -> Option<std::path::PathBuf> {
+    match &cli.command {
+        Some(Command::Parse { file, .. }) => file.clone(),
+        Some(Command::Format { file, .. }) => file.clone(),
+        Some(Command::Convert { file, .. }) => file.clone(),
+        #[cfg(feature = "linter")]
+        Some(Command::Lint { file, .. }) => file.clone(),
+        None => cli.file.clone(),
+    }
+    .or_else(|| cli.file.clone())
 }
 
 /// Determine if colored output should be used
