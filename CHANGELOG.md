@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CLI**: File argument now works after subcommand (intuitive syntax)
+  - Before: `fy file.yaml parse` (file before subcommand only)
+  - After: `fy parse file.yaml` (both syntaxes work)
 - **CLI**: Global flags (`-i`, `-o`, `-q`, `-v`, `--no-color`) now work after subcommands
   - Before: `fy --quiet parse input.yaml` (flags only before subcommand)
   - After: `fy parse --quiet input.yaml` (flags work in either position)
