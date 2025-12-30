@@ -77,12 +77,20 @@ fn run() -> Result<ExitCode> {
             cmd.execute(&input)?;
             ExitCode::Success
         }
-        Some(Command::Format { file: _, indent, width }) => {
+        Some(Command::Format {
+            file: _,
+            indent,
+            width,
+        }) => {
             let cmd = commands::format::FormatCommand::new(indent, width);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
-        Some(Command::Convert { to, file: _, pretty }) => {
+        Some(Command::Convert {
+            to,
+            file: _,
+            pretty,
+        }) => {
             let cmd = commands::convert::ConvertCommand::new(to, pretty);
             cmd.execute(&input, &output)?;
             ExitCode::Success
