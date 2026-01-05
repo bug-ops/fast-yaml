@@ -19,8 +19,8 @@ json-output = ["fast-yaml-linter/json-output"]
 
 [dependencies]
 # NAPI-RS - Latest stable version
-napi = { version = "3.7", features = ["napi8", "error_anyhow"] }
-napi-derive = "3.4"
+napi = { version = "3.8", features = ["napi8", "error_anyhow"] }
+napi-derive = "3.5"
 
 # Internal crates
 fast-yaml-core.workspace = true
