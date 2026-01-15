@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2025-01-15
+
+### Breaking Changes
+
+- **Python**: Minimum Python version increased from 3.9 to 3.10
+
+### Added
+
+- **Python**: Added support for Python 3.13 and 3.14
+
+### Changed
+
+- **Dependencies**: Updated all dependencies across ecosystems
+  - Python: coverage, maturin, mypy, ruff, pathspec, librt
+  - Node.js: Updated devDependencies
+- **Documentation**: Refreshed all README files with latest project state
+- **CI**: Updated Python test matrix and release builds (3.10-3.14)
+
 ## [0.3.2] - 2025-12-30
 
 ### Added
@@ -273,7 +291,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.2...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/bug-ops/fast-yaml/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/bug-ops/fast-yaml/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/bug-ops/fast-yaml/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/bug-ops/fast-yaml/compare/v0.2.0...v0.3.0

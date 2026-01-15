@@ -33,7 +33,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.3.1
+version: 0.3.3
 features:
   - fast
   - safe
