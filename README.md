@@ -76,7 +76,7 @@ pnpm add fastyaml-rs
 ### Build from Source
 
 > [!WARNING]
-> **Requires Rust 1.88+** (2024 edition). Python 3.9+ or Node.js 20+ required for bindings. Install Rust via [rustup.rs](https://rustup.rs/)
+> **Requires Rust 1.88+** (2024 edition). Python 3.10+ or Node.js 20+ required for bindings. Install Rust via [rustup.rs](https://rustup.rs/)
 
 <details>
 <summary><b>Using uv (Recommended)</b></summary>
@@ -128,7 +128,7 @@ import fast_yaml
 # Parse YAML
 data = fast_yaml.safe_load("""
 name: fast-yaml
-version: 0.3.1
+version: 0.3.3
 features:
   - fast
   - safe
@@ -154,7 +154,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.3.1
+version: 0.3.3
 features:
   - fast
   - safe
@@ -445,7 +445,7 @@ fast-yaml/
 
 - **Language**: Rust 2024 Edition
 - **MSRV**: 1.88.0
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Node.js**: 20+
 - **Crates**: 6 (core, linter, parallel, ffi, python, nodejs)
 - **Tests**: 234+ (Rust) + 94%+ Python coverage + 70%+ Node.js coverage

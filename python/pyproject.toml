@@ -1,9 +1,9 @@
 [project]
 name = "fastyaml-rs"
-version = "0.3.2"
+version = "0.3.3"
 description = "A fast YAML parser and linter for Python, powered by Rust"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT OR Apache-2.0" }
 authors = [{ name = "fast-yaml contributors" }]
 keywords = ["yaml", "parser", "linter", "rust", "performance"]
@@ -13,10 +13,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Text Processing :: Markup",
@@ -45,23 +46,23 @@ python_classes = "Test*"
 python_functions = "test_*"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0",
+    "pytest>=9.0",
     "pytest-cov>=7.0.0",
     "mypy>=1.0",
-    "ruff>=0.8",
-    "maturin>=1.7,<2.0"
+    "ruff>=0.14",
+    "maturin>=1.10,<2.0"
 ]
 
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]

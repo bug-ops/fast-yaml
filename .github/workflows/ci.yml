@@ -420,23 +420,25 @@ jobs:
         include:
           # Linux: test all Python versions
           - os: ubuntu-latest
-            python-version: '3.9'
-          - os: ubuntu-latest
             python-version: '3.10'
           - os: ubuntu-latest
             python-version: '3.11'
           - os: ubuntu-latest
             python-version: '3.12'
+          - os: ubuntu-latest
+            python-version: '3.13'
+          - os: ubuntu-latest
+            python-version: '3.14'
           # macOS: test min + max only
           - os: macos-latest
-            python-version: '3.9'
+            python-version: '3.10'
           - os: macos-latest
-            python-version: '3.12'
+            python-version: '3.14'
           # Windows: test min + max only
           - os: windows-latest
-            python-version: '3.9'
+            python-version: '3.10'
           - os: windows-latest
-            python-version: '3.12'
+            python-version: '3.14'
 
     steps:
       - uses: actions/checkout@v6

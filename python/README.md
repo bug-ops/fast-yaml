@@ -6,6 +6,9 @@
 
 A fast YAML 1.2.2 parser and linter for Python, powered by Rust.
 
+> [!IMPORTANT]
+> Requires Python 3.10 or later.
+
 ## Installation
 
 ```bash
