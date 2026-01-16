@@ -395,6 +395,61 @@ impl Emitter {
             || prefix.ends_with("- ")
             || prefix.ends_with('\n')
     }
+
+    /// Format a YAML string with configuration.
+    ///
+    /// Uses streaming formatter for large files when the `streaming` feature is enabled,
+    /// falling back to DOM-based formatting for small files or complex cases.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Emitter, EmitterConfig};
+    ///
+    /// let yaml = "key: value\nlist:\n  - item1\n  - item2\n";
+    /// let config = EmitterConfig::default();
+    /// let formatted = Emitter::format_with_config(yaml, &config)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+        #[cfg(feature = "streaming")]
+        {
+            if crate::streaming::is_streaming_suitable(input) {
+                return crate::streaming::format_streaming(input, config);
+            }
+        }
+
+        // Fall back to DOM-based formatting
+        let value = crate::Parser::parse_str(input)
+            .map_err(|e| EmitError::Emit(e.to_string()))?
+            .ok_or_else(|| EmitError::Emit("Empty document".to_string()))?;
+        Self::emit_str_with_config(&value, config)
+    }
+
+    /// Format a YAML string with default configuration.
+    ///
+    /// Uses streaming formatter for large files when the `streaming` feature is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Emitter;
+    ///
+    /// let yaml = "key: value\nlist:\n  - item1\n  - item2\n";
+    /// let formatted = Emitter::format(yaml)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn format(input: &str) -> EmitResult<String> {
+        Self::format_with_config(input, &EmitterConfig::default())
+    }
 }
 
 #[cfg(test)]
