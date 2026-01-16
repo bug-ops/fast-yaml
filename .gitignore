@@ -1,8 +1,11 @@
 # Local working files
 .local/
 .claude/
-benches/comparison/
 CLAUDE.md
+
+# Benchmark artifacts (keep scripts and README)
+benches/comparison/results/
+benches/comparison/corpus/generated/
 
 # Rust
 target/
