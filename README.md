@@ -393,6 +393,19 @@ Run benchmarks yourself:
 uv run pytest tests/ -v --benchmark-only
 ```
 
+### CLI Performance vs yamlfmt
+
+The `fy` CLI tool competes with google/yamlfmt for YAML formatting:
+
+| File Size | fast-yaml (fy) | yamlfmt | Winner |
+|-----------|----------------|---------|--------|
+| Small (480B) | **1.9 ms** | 2.6 ms | fast-yaml (1.4x faster) |
+| Medium (45KB) | 3.2 ms | **2.7 ms** | yamlfmt (1.2x faster) |
+| Large (459KB) | 13.1 ms | **2.8 ms** | yamlfmt (4.7x faster) |
+
+> [!NOTE]
+> Benchmarks run on Apple M3 Pro. yamlfmt uses streaming I/O optimized for large files. Phase 1-3 optimizations are in progress to improve fast-yaml's large file performance.
+
 ## Security
 
 > [!CAUTION]
