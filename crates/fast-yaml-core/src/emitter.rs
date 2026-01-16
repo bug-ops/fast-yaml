@@ -1,5 +1,6 @@
 use crate::error::{EmitError, EmitResult};
 use crate::value::Value;
+use memchr::memmem;
 use saphyr::{ScalarOwned, YamlEmitter};
 
 /// Configuration for YAML emission.
@@ -245,20 +246,27 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_all_with_config(values: &[Value], config: &EmitterConfig) -> EmitResult<String> {
-        let mut output = String::new();
+        // Pre-calculate total estimated size for all documents
+        let total_size: usize =
+            values.iter().map(Self::estimate_output_size).sum::<usize>() + values.len() * 5; // Account for "---\n" separators
+
+        let mut output = String::with_capacity(total_size);
+
+        // Create single config variant for non-first documents (avoids cloning per document)
+        let inner_config = EmitterConfig {
+            explicit_start: false,
+            ..*config
+        };
 
         for (i, value) in values.iter().enumerate() {
-            // Add document separator before each document (except first if explicit_start is true)
+            // Add document separator before each document (except first if explicit_start is false)
             if i > 0 || config.explicit_start {
                 output.push_str("---\n");
             }
 
-            // Emit document without explicit_start (we handle it above)
-            let doc_config = EmitterConfig {
-                explicit_start: false,
-                ..config.clone()
-            };
-            let doc = Self::emit_str_with_config(value, &doc_config)?;
+            // Always use inner_config (with explicit_start=false) since we handle
+            // document separators explicitly above
+            let doc = Self::emit_str_with_config(value, &inner_config)?;
             output.push_str(&doc);
 
             // Ensure document ends with newline for proper separation
@@ -339,14 +347,14 @@ impl Emitter {
     }
 
     /// Quick check if output might contain special float patterns.
-    /// Uses byte scanning for speed - no regex or allocation.
+    /// Uses SIMD-accelerated memchr for speed - no regex or allocation.
     #[inline]
     fn might_contain_special_floats(output: &str) -> bool {
         let bytes = output.as_bytes();
 
-        // Look for "inf" or "NaN" substrings
+        // Use SIMD-accelerated memmem for fast substring search
         // These are the only special float indicators in saphyr output
-        bytes.windows(3).any(|w| w == b"inf" || w == b"NaN")
+        memmem::find(bytes, b"inf").is_some() || memmem::find(bytes, b"NaN").is_some()
     }
 
     /// Slow path for `fix_special_floats`: processes line-by-line.
@@ -550,12 +558,11 @@ mod tests {
 
         // Test Float
         let float_size =
-            Emitter::estimate_scalar_size(&ScalarOwned::FloatingPoint(OrderedFloat(3.14159)));
+            Emitter::estimate_scalar_size(&ScalarOwned::FloatingPoint(OrderedFloat(1.23456)));
         assert_eq!(float_size, 20); // Conservative estimate
 
         // Test String
-        let string_size =
-            Emitter::estimate_scalar_size(&ScalarOwned::String("hello".to_string()));
+        let string_size = Emitter::estimate_scalar_size(&ScalarOwned::String("hello".to_string()));
         assert_eq!(string_size, 7); // 5 chars + 2 for possible quotes
     }
 
@@ -579,13 +586,16 @@ mod tests {
 
         // Should be > 0 and account for both key-value pairs
         // Each pair has ~11 base overhead + key size + value size
-        assert!(size > 20, "Mapping estimate should be significant: got {size}");
+        assert!(
+            size > 20,
+            "Mapping estimate should be significant: got {size}"
+        );
 
         // Test nested mapping
         let mut nested_map = MappingOwned::new();
         nested_map.insert(
             Value::Value(ScalarOwned::String("outer".to_string())),
-            mapping.clone(),
+            mapping,
         );
 
         let nested_size = Emitter::estimate_value_size(&Value::Mapping(nested_map));
@@ -607,7 +617,9 @@ mod tests {
         // Direct "NaN" patterns
         assert!(Emitter::might_contain_special_floats("NaN"));
         assert!(Emitter::might_contain_special_floats("key: NaN"));
-        assert!(Emitter::might_contain_special_floats("values:\n  - NaN\n  - inf"));
+        assert!(Emitter::might_contain_special_floats(
+            "values:\n  - NaN\n  - inf"
+        ));
 
         // Mixed content
         assert!(Emitter::might_contain_special_floats(

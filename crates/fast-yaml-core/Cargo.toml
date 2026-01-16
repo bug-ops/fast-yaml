@@ -11,10 +11,11 @@ keywords = ["yaml", "parser", "yaml12", "emitter"]
 categories = ["parsing", "encoding"]
 
 [dependencies]
-thiserror.workspace = true
+memchr.workspace = true
+ordered-float.workspace = true
 saphyr.workspace = true
 saphyr-parser.workspace = true
-ordered-float.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true
