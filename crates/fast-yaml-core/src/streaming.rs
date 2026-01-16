@@ -435,8 +435,7 @@ impl<'a> StreamingEmitter<'a> {
     fn write_indent(&mut self) {
         if self.indent_level > 1 {
             // Use saturating_mul to prevent integer overflow
-            let indent_str =
-                " ".repeat((self.indent_level - 1).saturating_mul(self.config.indent));
+            let indent_str = " ".repeat((self.indent_level - 1).saturating_mul(self.config.indent));
             self.output.push_str(&indent_str);
         }
     }
@@ -656,9 +655,11 @@ double: "quoted""#;
     #[test]
     fn test_is_streaming_suitable_heavy_anchors() {
         // Create input with many anchors
-        let heavy_anchors = (0..100)
-            .map(|i| format!("key{i}: &anchor{i} value{i}\n"))
-            .collect::<String>();
+        use std::fmt::Write;
+        let mut heavy_anchors = String::new();
+        for i in 0..100 {
+            writeln!(heavy_anchors, "key{i}: &anchor{i} value{i}").unwrap();
+        }
         // Heavy anchor usage should prefer DOM
         assert!(
             !is_streaming_suitable(&heavy_anchors),
@@ -708,7 +709,7 @@ double: "quoted""#;
         let yaml = "key: null";
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
-        assert!(result.contains("null") || result.contains("~"));
+        assert!(result.contains("null") || result.contains('~'));
     }
 
     #[test]

@@ -22,8 +22,8 @@ impl FormatCommand {
             .with_width(self.width);
 
         // Use format_with_config which automatically selects streaming for large files
-        let formatted =
-            Emitter::format_with_config(input.as_str(), &config).context("Failed to format YAML")?;
+        let formatted = Emitter::format_with_config(input.as_str(), &config)
+            .context("Failed to format YAML")?;
 
         // Write output
         output.write(&formatted)?;
