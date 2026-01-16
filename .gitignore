@@ -1,6 +1,7 @@
 # Local working files
 .local/
 .claude/
+benches/comparison/
 CLAUDE.md
 
 # Rust

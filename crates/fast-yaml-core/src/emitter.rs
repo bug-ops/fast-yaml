@@ -1,6 +1,6 @@
 use crate::error::{EmitError, EmitResult};
 use crate::value::Value;
-use saphyr::YamlEmitter;
+use saphyr::{ScalarOwned, YamlEmitter};
 
 /// Configuration for YAML emission.
 ///
@@ -137,7 +137,8 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_str_with_config(value: &Value, config: &EmitterConfig) -> EmitResult<String> {
-        let mut output = String::new();
+        let estimated_size = Self::estimate_output_size(value);
+        let mut output = String::with_capacity(estimated_size);
         {
             let mut emitter = YamlEmitter::new(&mut output);
 
@@ -156,6 +157,52 @@ impl Emitter {
         output = Self::apply_formatting(output, config);
 
         Ok(output)
+    }
+
+    /// Estimate output size based on input value structure.
+    fn estimate_output_size(value: &Value) -> usize {
+        Self::estimate_value_size(value)
+    }
+
+    fn estimate_value_size(value: &Value) -> usize {
+        match value {
+            Value::Value(scalar) => Self::estimate_scalar_size(scalar),
+            Value::Sequence(seq) => {
+                // "- " prefix (2) + newline (1) per item + recursive content
+                seq.iter().map(|v| 3 + Self::estimate_value_size(v)).sum()
+            }
+            Value::Mapping(map) => {
+                // "key: " (~10) + newline (1) + recursive content
+                map.iter()
+                    .map(|(k, v)| 11 + Self::estimate_value_size(k) + Self::estimate_value_size(v))
+                    .sum()
+            }
+            Value::Representation(s, _, _) => s.len() + 2,
+            Value::Tagged(_, inner) => 10 + Self::estimate_value_size(inner),
+            Value::Alias(_) => 10,
+            Value::BadValue => 4,
+        }
+    }
+
+    fn estimate_scalar_size(scalar: &ScalarOwned) -> usize {
+        match scalar {
+            ScalarOwned::Null => 4,       // "null"
+            ScalarOwned::Boolean(_) => 5, // "false"
+            ScalarOwned::Integer(i) => {
+                // Decimal digits + sign (max 20 for i64)
+                if *i == 0 {
+                    1
+                } else {
+                    // Use checked_ilog10 for precise digit count without float conversion
+                    i.unsigned_abs()
+                        .checked_ilog10()
+                        .map_or(1, |d| d as usize + 1)
+                        + 1
+                }
+            }
+            ScalarOwned::FloatingPoint(_) => 20, // Conservative estimate
+            ScalarOwned::String(s) => s.len() + 2, // Possible quotes
+        }
     }
 
     /// Emit a single YAML document to a string with default configuration.
@@ -253,15 +300,14 @@ impl Emitter {
         // Handle explicit_start
         if config.explicit_start {
             if !output.starts_with("---") {
-                output = format!("---\n{output}");
+                output.insert_str(0, "---\n");
             }
-        } else {
-            // Remove leading "---\n" (current behavior)
-            if let Some(stripped) = output.strip_prefix("---\n") {
-                output = stripped.to_string();
-            } else if let Some(stripped) = output.strip_prefix("---") {
-                output = stripped.trim_start_matches('\n').to_string();
-            }
+        } else if output.starts_with("---\n") {
+            output.drain(..4);
+        } else if output.starts_with("---") {
+            // Find where content starts after "---"
+            let skip = 3 + output[3..].chars().take_while(|c| *c == '\n').count();
+            output.drain(..skip);
         }
 
         // Fix special float values for YAML 1.2 Core Schema compliance
@@ -284,6 +330,27 @@ impl Emitter {
     /// - `-inf` → `-.inf`
     /// - `NaN` → `.nan`
     fn fix_special_floats(output: &str) -> String {
+        if !Self::might_contain_special_floats(output) {
+            return output.to_string();
+        }
+
+        // Slow path: line-by-line transformation
+        Self::fix_special_floats_slow(output)
+    }
+
+    /// Quick check if output might contain special float patterns.
+    /// Uses byte scanning for speed - no regex or allocation.
+    #[inline]
+    fn might_contain_special_floats(output: &str) -> bool {
+        let bytes = output.as_bytes();
+
+        // Look for "inf" or "NaN" substrings
+        // These are the only special float indicators in saphyr output
+        bytes.windows(3).any(|w| w == b"inf" || w == b"NaN")
+    }
+
+    /// Slow path for `fix_special_floats`: processes line-by-line.
+    fn fix_special_floats_slow(output: &str) -> String {
         // We need to be careful to only replace standalone values, not parts of words.
         // The regex approach would be safer, but for simplicity we'll use line-by-line
         // processing with word boundary checks.
