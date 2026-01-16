@@ -392,6 +392,7 @@ impl Emitter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ordered_float::OrderedFloat;
     use saphyr::ScalarOwned;
 
     #[test]
@@ -518,5 +519,198 @@ mod tests {
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         // Should use literal block scalar notation (|)
         assert!(result.contains("line1") && result.contains("line2"));
+    }
+
+    #[test]
+    fn test_estimate_scalar_size_all_types() {
+        // Test Null
+        let null_size = Emitter::estimate_scalar_size(&ScalarOwned::Null);
+        assert_eq!(null_size, 4); // "null"
+
+        // Test Boolean
+        let bool_size = Emitter::estimate_scalar_size(&ScalarOwned::Boolean(true));
+        assert_eq!(bool_size, 5); // "false" (conservative estimate)
+
+        // Test Integer - edge cases
+        // Zero case (special handling)
+        let zero_size = Emitter::estimate_scalar_size(&ScalarOwned::Integer(0));
+        assert_eq!(zero_size, 1);
+
+        // Single digit
+        let single_digit = Emitter::estimate_scalar_size(&ScalarOwned::Integer(5));
+        assert!(single_digit >= 1);
+
+        // Multi-digit positive
+        let multi_digit = Emitter::estimate_scalar_size(&ScalarOwned::Integer(12345));
+        assert!(multi_digit >= 5);
+
+        // Negative number
+        let negative = Emitter::estimate_scalar_size(&ScalarOwned::Integer(-42));
+        assert!(negative >= 2); // "-" + digits
+
+        // Test Float
+        let float_size =
+            Emitter::estimate_scalar_size(&ScalarOwned::FloatingPoint(OrderedFloat(3.14159)));
+        assert_eq!(float_size, 20); // Conservative estimate
+
+        // Test String
+        let string_size =
+            Emitter::estimate_scalar_size(&ScalarOwned::String("hello".to_string()));
+        assert_eq!(string_size, 7); // 5 chars + 2 for possible quotes
+    }
+
+    #[test]
+    fn test_estimate_value_size_mapping() {
+        use saphyr::MappingOwned;
+
+        // Create a mapping with string keys and integer values
+        let mut map = MappingOwned::new();
+        map.insert(
+            Value::Value(ScalarOwned::String("key1".to_string())),
+            Value::Value(ScalarOwned::Integer(100)),
+        );
+        map.insert(
+            Value::Value(ScalarOwned::String("key2".to_string())),
+            Value::Value(ScalarOwned::Integer(200)),
+        );
+
+        let mapping = Value::Mapping(map);
+        let size = Emitter::estimate_value_size(&mapping);
+
+        // Should be > 0 and account for both key-value pairs
+        // Each pair has ~11 base overhead + key size + value size
+        assert!(size > 20, "Mapping estimate should be significant: got {size}");
+
+        // Test nested mapping
+        let mut nested_map = MappingOwned::new();
+        nested_map.insert(
+            Value::Value(ScalarOwned::String("outer".to_string())),
+            mapping.clone(),
+        );
+
+        let nested_size = Emitter::estimate_value_size(&Value::Mapping(nested_map));
+        assert!(
+            nested_size > size,
+            "Nested mapping should have larger estimate"
+        );
+    }
+
+    #[test]
+    fn test_might_contain_special_floats_positive() {
+        // Direct "inf" patterns
+        assert!(Emitter::might_contain_special_floats("inf"));
+        assert!(Emitter::might_contain_special_floats("key: inf"));
+        assert!(Emitter::might_contain_special_floats("-inf"));
+        assert!(Emitter::might_contain_special_floats("key: -inf"));
+        assert!(Emitter::might_contain_special_floats("- inf\n- -inf"));
+
+        // Direct "NaN" patterns
+        assert!(Emitter::might_contain_special_floats("NaN"));
+        assert!(Emitter::might_contain_special_floats("key: NaN"));
+        assert!(Emitter::might_contain_special_floats("values:\n  - NaN\n  - inf"));
+
+        // Mixed content
+        assert!(Emitter::might_contain_special_floats(
+            "---\npi: 3.14\nspecial: inf\n"
+        ));
+    }
+
+    #[test]
+    fn test_might_contain_special_floats_false_positives() {
+        // Words containing "inf" substring that will trigger the fast-path check
+        // (but won't be converted because they're not in value positions)
+        assert!(
+            Emitter::might_contain_special_floats("information"),
+            "'information' contains 'inf' substring"
+        );
+        assert!(
+            Emitter::might_contain_special_floats("infinity"),
+            "'infinity' contains 'inf' substring"
+        );
+        assert!(
+            Emitter::might_contain_special_floats("infinite"),
+            "'infinite' contains 'inf' substring"
+        );
+        assert!(
+            Emitter::might_contain_special_floats("reinforce"),
+            "'reinforce' contains 'inf' substring"
+        );
+
+        // Strings that should NOT trigger the check (no "inf" or "NaN" substring)
+        assert!(!Emitter::might_contain_special_floats("hello world"));
+        assert!(!Emitter::might_contain_special_floats("key: value"));
+        assert!(!Emitter::might_contain_special_floats("number: 42"));
+        assert!(!Emitter::might_contain_special_floats("pi: 3.14159"));
+        assert!(!Emitter::might_contain_special_floats("config")); // "config" does NOT contain "inf"
+        assert!(!Emitter::might_contain_special_floats("nan")); // lowercase "nan" != "NaN"
+        assert!(!Emitter::might_contain_special_floats("INF")); // uppercase "INF" != "inf"
+    }
+
+    #[test]
+    fn test_fix_special_floats_inf() {
+        // Test standalone inf conversion
+        let result = Emitter::fix_special_floats("inf");
+        assert_eq!(result, ".inf");
+
+        // Test inf in a mapping value position
+        let result = Emitter::fix_special_floats("key: inf");
+        assert_eq!(result, "key: .inf");
+
+        // Test -inf conversion
+        let result = Emitter::fix_special_floats("-inf");
+        assert_eq!(result, "-.inf");
+
+        // Test -inf in a mapping value position
+        let result = Emitter::fix_special_floats("key: -inf");
+        assert_eq!(result, "key: -.inf");
+
+        // Test inf in a sequence
+        let result = Emitter::fix_special_floats("- inf");
+        assert_eq!(result, "- .inf");
+
+        // Test -inf in a sequence
+        let result = Emitter::fix_special_floats("- -inf");
+        assert_eq!(result, "- -.inf");
+
+        // Test mixed document with multiple inf values
+        let input = "positive: inf\nnegative: -inf\nlist:\n  - inf\n  - -inf";
+        let result = Emitter::fix_special_floats(input);
+        assert!(result.contains("positive: .inf"));
+        assert!(result.contains("negative: -.inf"));
+        assert!(result.contains("- .inf"));
+        assert!(result.contains("- -.inf"));
+    }
+
+    #[test]
+    fn test_fix_special_floats_nan() {
+        // Test standalone NaN conversion
+        let result = Emitter::fix_special_floats("NaN");
+        assert_eq!(result, ".nan");
+
+        // Test NaN in a mapping value position
+        let result = Emitter::fix_special_floats("value: NaN");
+        assert_eq!(result, "value: .nan");
+
+        // Test NaN in a sequence
+        let result = Emitter::fix_special_floats("- NaN");
+        assert_eq!(result, "- .nan");
+
+        // Test document with multiple NaN values
+        let input = "nan_value: NaN\nlist:\n  - NaN";
+        let result = Emitter::fix_special_floats(input);
+        assert!(result.contains("nan_value: .nan"));
+        assert!(result.contains("- .nan"));
+
+        // Test that strings containing "NaN" as part of word are not converted
+        // (this relies on is_value_position check)
+        let result = Emitter::fix_special_floats("name: BaNaNa");
+        assert_eq!(result, "name: BaNaNa", "BaNaNa should not be modified");
+
+        // Test mixed special floats
+        let input = "inf_val: inf\nnan_val: NaN\nneg_inf: -inf";
+        let result = Emitter::fix_special_floats(input);
+        assert!(result.contains("inf_val: .inf"));
+        assert!(result.contains("nan_val: .nan"));
+        assert!(result.contains("neg_inf: -.inf"));
     }
 }
