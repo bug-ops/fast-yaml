@@ -45,6 +45,10 @@ const MAX_ANCHOR_ID: usize = 4096;
 /// 256 levels of nesting is far beyond any practical use case.
 const MAX_DEPTH: usize = 256;
 
+/// Static 64-space string for fast indent generation via slicing.
+/// Avoids allocation for nesting depths up to 32 levels with 2-space indent.
+static INDENT_SPACES: &str = "                                                                ";
+
 /// Context for tracking the current position within YAML structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Context {
@@ -74,14 +78,24 @@ struct StreamingEmitter<'a> {
 }
 
 impl<'a> StreamingEmitter<'a> {
-    fn new(config: &'a EmitterConfig, capacity: usize) -> Self {
+    fn new(config: &'a EmitterConfig, input_len: usize) -> Self {
+        // Output is typically 10-20% larger than input due to formatting
+        let output_capacity = input_len + (input_len / 5);
+
+        // Pre-allocate for typical nesting depth (16 levels handles 99% of cases)
+        let mut context_stack = Vec::with_capacity(16);
+        context_stack.push(Context::Root);
+
+        // Pre-allocate for a reasonable number of anchors (~4 anchors per KB)
+        let anchor_capacity = input_len.min(1024) / 256;
+
         Self {
             config,
-            output: String::with_capacity(capacity),
+            output: String::with_capacity(output_capacity),
             indent_level: 0,
-            context_stack: vec![Context::Root],
+            context_stack,
             pending_newline: false,
-            anchor_names: Vec::new(),
+            anchor_names: Vec::with_capacity(anchor_capacity.max(1)),
         }
     }
 
@@ -245,24 +259,12 @@ impl<'a> StreamingEmitter<'a> {
             ScalarStyle::Literal => {
                 self.output.push_str("|-");
                 self.output.push('\n');
-                // Use saturating_mul to prevent integer overflow
-                let indent = " ".repeat(self.indent_level.saturating_mul(self.config.indent));
-                for line in value.lines() {
-                    self.output.push_str(&indent);
-                    self.output.push_str(line);
-                    self.output.push('\n');
-                }
+                self.write_block_scalar_lines(value);
             }
             ScalarStyle::Folded => {
                 self.output.push_str(">-");
                 self.output.push('\n');
-                // Use saturating_mul to prevent integer overflow
-                let indent = " ".repeat(self.indent_level.saturating_mul(self.config.indent));
-                for line in value.lines() {
-                    self.output.push_str(&indent);
-                    self.output.push_str(line);
-                    self.output.push('\n');
-                }
+                self.write_block_scalar_lines(value);
             }
         }
     }
@@ -432,11 +434,30 @@ impl<'a> StreamingEmitter<'a> {
         }
     }
 
+    /// Write indentation for block scalar content (literal/folded styles).
+    fn write_block_scalar_lines(&mut self, value: &str) {
+        let indent_chars = self.indent_level.saturating_mul(self.config.indent);
+
+        for line in value.lines() {
+            if indent_chars <= INDENT_SPACES.len() {
+                self.output.push_str(&INDENT_SPACES[..indent_chars]);
+            } else {
+                self.output.push_str(&" ".repeat(indent_chars));
+            }
+            self.output.push_str(line);
+            self.output.push('\n');
+        }
+    }
+
     fn write_indent(&mut self) {
         if self.indent_level > 1 {
-            // Use saturating_mul to prevent integer overflow
-            let indent_str = " ".repeat((self.indent_level - 1).saturating_mul(self.config.indent));
-            self.output.push_str(&indent_str);
+            let indent_chars = (self.indent_level - 1).saturating_mul(self.config.indent);
+
+            if indent_chars <= INDENT_SPACES.len() {
+                self.output.push_str(&INDENT_SPACES[..indent_chars]);
+            } else {
+                self.output.push_str(&" ".repeat(indent_chars));
+            }
         }
     }
 
@@ -735,5 +756,108 @@ double: "quoted""#;
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
         assert!(result.contains("text:"));
+    }
+
+    #[test]
+    fn test_format_streaming_large_input_preallocation() {
+        // Test with large input to verify buffer pre-allocation works correctly
+        let large_yaml = (0..100)
+            .map(|i| format!("key{i}: value{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let config = EmitterConfig::default();
+        let result = format_streaming(&large_yaml, &config).unwrap();
+
+        // Verify content is preserved
+        assert!(result.contains("key0:"));
+        assert!(result.contains("key99:"));
+        assert!(result.contains("value50:") || result.contains("value50\n"));
+    }
+
+    #[test]
+    fn test_format_streaming_deeply_nested() {
+        // Test deep nesting to verify context stack pre-allocation
+        let yaml = r"level1:
+  level2:
+    level3:
+      level4:
+        level5:
+          key: deeply_nested_value";
+
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+
+        assert!(result.contains("deeply_nested_value"));
+        assert!(result.contains("level5:"));
+    }
+
+    #[test]
+    fn test_streaming_emitter_capacity_estimation() {
+        // Verify that capacity estimation provides reasonable values
+        let config = EmitterConfig::default();
+
+        // Small input - verify it doesn't allocate excessively
+        let small_emitter = StreamingEmitter::new(&config, 100);
+        assert!(
+            small_emitter.output.capacity() >= 100,
+            "Should pre-allocate at least input size"
+        );
+        assert!(
+            small_emitter.output.capacity() < 1000,
+            "Should not over-allocate for small input"
+        );
+
+        // Large input
+        let large_emitter = StreamingEmitter::new(&config, 10000);
+        assert!(
+            large_emitter.output.capacity() >= 10000,
+            "Should pre-allocate for large input"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_folded_style() {
+        let yaml = "text: >-\n  folded\n  block\n  scalar";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(result.contains("text:"));
+    }
+
+    #[test]
+    fn test_format_streaming_many_anchors() {
+        // Test with multiple anchors to verify anchor_names pre-allocation
+        let yaml = r"anchor1: &a1 value1
+anchor2: &a2 value2
+anchor3: &a3 value3
+ref1: *a1
+ref2: *a2
+ref3: *a3";
+
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+
+        assert!(result.contains('&'), "Should preserve anchors");
+        assert!(result.contains('*'), "Should preserve aliases");
+    }
+
+    #[test]
+    fn test_streaming_context_stack_depth() {
+        // Test with nesting that requires context stack growth beyond initial 16
+        use std::fmt::Write;
+
+        let mut yaml = String::new();
+        for i in 0..20 {
+            let indent = "  ".repeat(i);
+            writeln!(yaml, "{indent}level{i}:").unwrap();
+        }
+        let indent = "  ".repeat(20);
+        writeln!(yaml, "{indent}value: deep").unwrap();
+
+        let config = EmitterConfig::default();
+        let result = format_streaming(&yaml, &config).unwrap();
+
+        assert!(result.contains("value:"));
+        assert!(result.contains("level19:"));
     }
 }

@@ -18,6 +18,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
+fast-yaml-core = { workspace = true }
 
 [[bench]]
 name = "parallel_benchmark"
