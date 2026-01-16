@@ -44,6 +44,13 @@ pub mod parser;
 /// Value types representing YAML data structures.
 pub mod value;
 
+/// Streaming YAML formatter module.
+///
+/// Provides high-performance formatting by processing parser events directly
+/// without building an intermediate DOM representation.
+#[cfg(feature = "streaming")]
+pub mod streaming;
+
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use parser::Parser;

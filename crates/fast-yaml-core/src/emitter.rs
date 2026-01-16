@@ -1,6 +1,7 @@
 use crate::error::{EmitError, EmitResult};
 use crate::value::Value;
-use saphyr::YamlEmitter;
+use memchr::memmem;
+use saphyr::{ScalarOwned, YamlEmitter};
 
 /// Configuration for YAML emission.
 ///
@@ -137,7 +138,8 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_str_with_config(value: &Value, config: &EmitterConfig) -> EmitResult<String> {
-        let mut output = String::new();
+        let estimated_size = Self::estimate_output_size(value);
+        let mut output = String::with_capacity(estimated_size);
         {
             let mut emitter = YamlEmitter::new(&mut output);
 
@@ -156,6 +158,52 @@ impl Emitter {
         output = Self::apply_formatting(output, config);
 
         Ok(output)
+    }
+
+    /// Estimate output size based on input value structure.
+    fn estimate_output_size(value: &Value) -> usize {
+        Self::estimate_value_size(value)
+    }
+
+    fn estimate_value_size(value: &Value) -> usize {
+        match value {
+            Value::Value(scalar) => Self::estimate_scalar_size(scalar),
+            Value::Sequence(seq) => {
+                // "- " prefix (2) + newline (1) per item + recursive content
+                seq.iter().map(|v| 3 + Self::estimate_value_size(v)).sum()
+            }
+            Value::Mapping(map) => {
+                // "key: " (~10) + newline (1) + recursive content
+                map.iter()
+                    .map(|(k, v)| 11 + Self::estimate_value_size(k) + Self::estimate_value_size(v))
+                    .sum()
+            }
+            Value::Representation(s, _, _) => s.len() + 2,
+            Value::Tagged(_, inner) => 10 + Self::estimate_value_size(inner),
+            Value::Alias(_) => 10,
+            Value::BadValue => 4,
+        }
+    }
+
+    fn estimate_scalar_size(scalar: &ScalarOwned) -> usize {
+        match scalar {
+            ScalarOwned::Null => 4,       // "null"
+            ScalarOwned::Boolean(_) => 5, // "false"
+            ScalarOwned::Integer(i) => {
+                // Decimal digits + sign (max 20 for i64)
+                if *i == 0 {
+                    1
+                } else {
+                    // Use checked_ilog10 for precise digit count without float conversion
+                    i.unsigned_abs()
+                        .checked_ilog10()
+                        .map_or(1, |d| d as usize + 1)
+                        + 1
+                }
+            }
+            ScalarOwned::FloatingPoint(_) => 20, // Conservative estimate
+            ScalarOwned::String(s) => s.len() + 2, // Possible quotes
+        }
     }
 
     /// Emit a single YAML document to a string with default configuration.
@@ -198,20 +246,27 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_all_with_config(values: &[Value], config: &EmitterConfig) -> EmitResult<String> {
-        let mut output = String::new();
+        // Pre-calculate total estimated size for all documents
+        let total_size: usize =
+            values.iter().map(Self::estimate_output_size).sum::<usize>() + values.len() * 5; // Account for "---\n" separators
+
+        let mut output = String::with_capacity(total_size);
+
+        // Create single config variant for non-first documents (avoids cloning per document)
+        let inner_config = EmitterConfig {
+            explicit_start: false,
+            ..*config
+        };
 
         for (i, value) in values.iter().enumerate() {
-            // Add document separator before each document (except first if explicit_start is true)
+            // Add document separator before each document (except first if explicit_start is false)
             if i > 0 || config.explicit_start {
                 output.push_str("---\n");
             }
 
-            // Emit document without explicit_start (we handle it above)
-            let doc_config = EmitterConfig {
-                explicit_start: false,
-                ..config.clone()
-            };
-            let doc = Self::emit_str_with_config(value, &doc_config)?;
+            // Always use inner_config (with explicit_start=false) since we handle
+            // document separators explicitly above
+            let doc = Self::emit_str_with_config(value, &inner_config)?;
             output.push_str(&doc);
 
             // Ensure document ends with newline for proper separation
@@ -253,15 +308,14 @@ impl Emitter {
         // Handle explicit_start
         if config.explicit_start {
             if !output.starts_with("---") {
-                output = format!("---\n{output}");
+                output.insert_str(0, "---\n");
             }
-        } else {
-            // Remove leading "---\n" (current behavior)
-            if let Some(stripped) = output.strip_prefix("---\n") {
-                output = stripped.to_string();
-            } else if let Some(stripped) = output.strip_prefix("---") {
-                output = stripped.trim_start_matches('\n').to_string();
-            }
+        } else if output.starts_with("---\n") {
+            output.drain(..4);
+        } else if output.starts_with("---") {
+            // Find where content starts after "---"
+            let skip = 3 + output[3..].chars().take_while(|c| *c == '\n').count();
+            output.drain(..skip);
         }
 
         // Fix special float values for YAML 1.2 Core Schema compliance
@@ -284,6 +338,27 @@ impl Emitter {
     /// - `-inf` → `-.inf`
     /// - `NaN` → `.nan`
     fn fix_special_floats(output: &str) -> String {
+        if !Self::might_contain_special_floats(output) {
+            return output.to_string();
+        }
+
+        // Slow path: line-by-line transformation
+        Self::fix_special_floats_slow(output)
+    }
+
+    /// Quick check if output might contain special float patterns.
+    /// Uses SIMD-accelerated memchr for speed - no regex or allocation.
+    #[inline]
+    fn might_contain_special_floats(output: &str) -> bool {
+        let bytes = output.as_bytes();
+
+        // Use SIMD-accelerated memmem for fast substring search
+        // These are the only special float indicators in saphyr output
+        memmem::find(bytes, b"inf").is_some() || memmem::find(bytes, b"NaN").is_some()
+    }
+
+    /// Slow path for `fix_special_floats`: processes line-by-line.
+    fn fix_special_floats_slow(output: &str) -> String {
         // We need to be careful to only replace standalone values, not parts of words.
         // The regex approach would be safer, but for simplicity we'll use line-by-line
         // processing with word boundary checks.
@@ -320,11 +395,67 @@ impl Emitter {
             || prefix.ends_with("- ")
             || prefix.ends_with('\n')
     }
+
+    /// Format a YAML string with configuration.
+    ///
+    /// Uses streaming formatter for large files when the `streaming` feature is enabled,
+    /// falling back to DOM-based formatting for small files or complex cases.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Emitter, EmitterConfig};
+    ///
+    /// let yaml = "key: value\nlist:\n  - item1\n  - item2\n";
+    /// let config = EmitterConfig::default();
+    /// let formatted = Emitter::format_with_config(yaml, &config)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+        #[cfg(feature = "streaming")]
+        {
+            if crate::streaming::is_streaming_suitable(input) {
+                return crate::streaming::format_streaming(input, config);
+            }
+        }
+
+        // Fall back to DOM-based formatting
+        let value = crate::Parser::parse_str(input)
+            .map_err(|e| EmitError::Emit(e.to_string()))?
+            .ok_or_else(|| EmitError::Emit("Empty document".to_string()))?;
+        Self::emit_str_with_config(&value, config)
+    }
+
+    /// Format a YAML string with default configuration.
+    ///
+    /// Uses streaming formatter for large files when the `streaming` feature is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Emitter;
+    ///
+    /// let yaml = "key: value\nlist:\n  - item1\n  - item2\n";
+    /// let formatted = Emitter::format(yaml)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn format(input: &str) -> EmitResult<String> {
+        Self::format_with_config(input, &EmitterConfig::default())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ordered_float::OrderedFloat;
     use saphyr::ScalarOwned;
 
     #[test]
@@ -451,5 +582,202 @@ mod tests {
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         // Should use literal block scalar notation (|)
         assert!(result.contains("line1") && result.contains("line2"));
+    }
+
+    #[test]
+    fn test_estimate_scalar_size_all_types() {
+        // Test Null
+        let null_size = Emitter::estimate_scalar_size(&ScalarOwned::Null);
+        assert_eq!(null_size, 4); // "null"
+
+        // Test Boolean
+        let bool_size = Emitter::estimate_scalar_size(&ScalarOwned::Boolean(true));
+        assert_eq!(bool_size, 5); // "false" (conservative estimate)
+
+        // Test Integer - edge cases
+        // Zero case (special handling)
+        let zero_size = Emitter::estimate_scalar_size(&ScalarOwned::Integer(0));
+        assert_eq!(zero_size, 1);
+
+        // Single digit
+        let single_digit = Emitter::estimate_scalar_size(&ScalarOwned::Integer(5));
+        assert!(single_digit >= 1);
+
+        // Multi-digit positive
+        let multi_digit = Emitter::estimate_scalar_size(&ScalarOwned::Integer(12345));
+        assert!(multi_digit >= 5);
+
+        // Negative number
+        let negative = Emitter::estimate_scalar_size(&ScalarOwned::Integer(-42));
+        assert!(negative >= 2); // "-" + digits
+
+        // Test Float
+        let float_size =
+            Emitter::estimate_scalar_size(&ScalarOwned::FloatingPoint(OrderedFloat(1.23456)));
+        assert_eq!(float_size, 20); // Conservative estimate
+
+        // Test String
+        let string_size = Emitter::estimate_scalar_size(&ScalarOwned::String("hello".to_string()));
+        assert_eq!(string_size, 7); // 5 chars + 2 for possible quotes
+    }
+
+    #[test]
+    fn test_estimate_value_size_mapping() {
+        use saphyr::MappingOwned;
+
+        // Create a mapping with string keys and integer values
+        let mut map = MappingOwned::new();
+        map.insert(
+            Value::Value(ScalarOwned::String("key1".to_string())),
+            Value::Value(ScalarOwned::Integer(100)),
+        );
+        map.insert(
+            Value::Value(ScalarOwned::String("key2".to_string())),
+            Value::Value(ScalarOwned::Integer(200)),
+        );
+
+        let mapping = Value::Mapping(map);
+        let size = Emitter::estimate_value_size(&mapping);
+
+        // Should be > 0 and account for both key-value pairs
+        // Each pair has ~11 base overhead + key size + value size
+        assert!(
+            size > 20,
+            "Mapping estimate should be significant: got {size}"
+        );
+
+        // Test nested mapping
+        let mut nested_map = MappingOwned::new();
+        nested_map.insert(
+            Value::Value(ScalarOwned::String("outer".to_string())),
+            mapping,
+        );
+
+        let nested_size = Emitter::estimate_value_size(&Value::Mapping(nested_map));
+        assert!(
+            nested_size > size,
+            "Nested mapping should have larger estimate"
+        );
+    }
+
+    #[test]
+    fn test_might_contain_special_floats_positive() {
+        // Direct "inf" patterns
+        assert!(Emitter::might_contain_special_floats("inf"));
+        assert!(Emitter::might_contain_special_floats("key: inf"));
+        assert!(Emitter::might_contain_special_floats("-inf"));
+        assert!(Emitter::might_contain_special_floats("key: -inf"));
+        assert!(Emitter::might_contain_special_floats("- inf\n- -inf"));
+
+        // Direct "NaN" patterns
+        assert!(Emitter::might_contain_special_floats("NaN"));
+        assert!(Emitter::might_contain_special_floats("key: NaN"));
+        assert!(Emitter::might_contain_special_floats(
+            "values:\n  - NaN\n  - inf"
+        ));
+
+        // Mixed content
+        assert!(Emitter::might_contain_special_floats(
+            "---\npi: 3.14\nspecial: inf\n"
+        ));
+    }
+
+    #[test]
+    fn test_might_contain_special_floats_false_positives() {
+        // Words containing "inf" substring that will trigger the fast-path check
+        // (but won't be converted because they're not in value positions)
+        assert!(
+            Emitter::might_contain_special_floats("information"),
+            "'information' contains 'inf' substring"
+        );
+        assert!(
+            Emitter::might_contain_special_floats("infinity"),
+            "'infinity' contains 'inf' substring"
+        );
+        assert!(
+            Emitter::might_contain_special_floats("infinite"),
+            "'infinite' contains 'inf' substring"
+        );
+        assert!(
+            Emitter::might_contain_special_floats("reinforce"),
+            "'reinforce' contains 'inf' substring"
+        );
+
+        // Strings that should NOT trigger the check (no "inf" or "NaN" substring)
+        assert!(!Emitter::might_contain_special_floats("hello world"));
+        assert!(!Emitter::might_contain_special_floats("key: value"));
+        assert!(!Emitter::might_contain_special_floats("number: 42"));
+        assert!(!Emitter::might_contain_special_floats("pi: 3.14159"));
+        assert!(!Emitter::might_contain_special_floats("config")); // "config" does NOT contain "inf"
+        assert!(!Emitter::might_contain_special_floats("nan")); // lowercase "nan" != "NaN"
+        assert!(!Emitter::might_contain_special_floats("INF")); // uppercase "INF" != "inf"
+    }
+
+    #[test]
+    fn test_fix_special_floats_inf() {
+        // Test standalone inf conversion
+        let result = Emitter::fix_special_floats("inf");
+        assert_eq!(result, ".inf");
+
+        // Test inf in a mapping value position
+        let result = Emitter::fix_special_floats("key: inf");
+        assert_eq!(result, "key: .inf");
+
+        // Test -inf conversion
+        let result = Emitter::fix_special_floats("-inf");
+        assert_eq!(result, "-.inf");
+
+        // Test -inf in a mapping value position
+        let result = Emitter::fix_special_floats("key: -inf");
+        assert_eq!(result, "key: -.inf");
+
+        // Test inf in a sequence
+        let result = Emitter::fix_special_floats("- inf");
+        assert_eq!(result, "- .inf");
+
+        // Test -inf in a sequence
+        let result = Emitter::fix_special_floats("- -inf");
+        assert_eq!(result, "- -.inf");
+
+        // Test mixed document with multiple inf values
+        let input = "positive: inf\nnegative: -inf\nlist:\n  - inf\n  - -inf";
+        let result = Emitter::fix_special_floats(input);
+        assert!(result.contains("positive: .inf"));
+        assert!(result.contains("negative: -.inf"));
+        assert!(result.contains("- .inf"));
+        assert!(result.contains("- -.inf"));
+    }
+
+    #[test]
+    fn test_fix_special_floats_nan() {
+        // Test standalone NaN conversion
+        let result = Emitter::fix_special_floats("NaN");
+        assert_eq!(result, ".nan");
+
+        // Test NaN in a mapping value position
+        let result = Emitter::fix_special_floats("value: NaN");
+        assert_eq!(result, "value: .nan");
+
+        // Test NaN in a sequence
+        let result = Emitter::fix_special_floats("- NaN");
+        assert_eq!(result, "- .nan");
+
+        // Test document with multiple NaN values
+        let input = "nan_value: NaN\nlist:\n  - NaN";
+        let result = Emitter::fix_special_floats(input);
+        assert!(result.contains("nan_value: .nan"));
+        assert!(result.contains("- .nan"));
+
+        // Test that strings containing "NaN" as part of word are not converted
+        // (this relies on is_value_position check)
+        let result = Emitter::fix_special_floats("name: BaNaNa");
+        assert_eq!(result, "name: BaNaNa", "BaNaNa should not be modified");
+
+        // Test mixed special floats
+        let input = "inf_val: inf\nnan_val: NaN\nneg_inf: -inf";
+        let result = Emitter::fix_special_floats(input);
+        assert!(result.contains("inf_val: .inf"));
+        assert!(result.contains("nan_val: .nan"));
+        assert!(result.contains("neg_inf: -.inf"));
     }
 }

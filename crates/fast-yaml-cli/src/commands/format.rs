@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use fast_yaml_core::{Emitter, EmitterConfig, Parser};
+use fast_yaml_core::{Emitter, EmitterConfig};
 
 use crate::io::{InputSource, OutputWriter};
 
@@ -16,19 +16,14 @@ impl FormatCommand {
 
     /// Execute format command
     pub fn execute(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
-        // Parse YAML
-        let value = Parser::parse_str(input.as_str())
-            .context("Failed to parse YAML")?
-            .ok_or_else(|| anyhow::anyhow!("Empty YAML document"))?;
-
         // Create emitter config
         let config = EmitterConfig::new()
             .with_indent(self.indent as usize)
             .with_width(self.width);
 
-        // Emit formatted YAML
-        let formatted =
-            Emitter::emit_str_with_config(&value, &config).context("Failed to emit YAML")?;
+        // Use format_with_config which automatically selects streaming for large files
+        let formatted = Emitter::format_with_config(input.as_str(), &config)
+            .context("Failed to format YAML")?;
 
         // Write output
         output.write(&formatted)?;
