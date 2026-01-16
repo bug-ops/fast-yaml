@@ -37,6 +37,14 @@ use saphyr_parser::{Event, Parser, ScalarStyle, Span, Tag};
 use crate::emitter::EmitterConfig;
 use crate::error::{EmitError, EmitResult};
 
+/// Maximum allowed anchor ID to prevent memory exhaustion attacks.
+/// 4096 anchors is more than sufficient for any legitimate YAML file.
+const MAX_ANCHOR_ID: usize = 4096;
+
+/// Maximum nesting depth to prevent stack/memory exhaustion.
+/// 256 levels of nesting is far beyond any practical use case.
+const MAX_DEPTH: usize = 256;
+
 /// Context for tracking the current position within YAML structure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Context {
@@ -77,6 +85,12 @@ impl<'a> StreamingEmitter<'a> {
         }
     }
 
+    /// Returns the current YAML structure context.
+    ///
+    /// # Invariant
+    /// The `context_stack` is initialized with `Context::Root` in `new()` and is
+    /// never fully emptied (pop operations are bounded by corresponding push).
+    /// The `unwrap_or` is a defensive fallback that should never be reached.
     fn current_context(&self) -> Context {
         *self.context_stack.last().unwrap_or(&Context::Root)
     }
@@ -153,8 +167,8 @@ impl<'a> StreamingEmitter<'a> {
             Context::Root | Context::MappingValue => {}
         }
 
-        // Handle anchor if present
-        if anchor_id > 0 {
+        // Handle anchor if present (with bounds check for security)
+        if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
             let anchor_name = format!("anchor{anchor_id}");
             self.output.push('&');
             self.output.push_str(&anchor_name);
@@ -231,7 +245,8 @@ impl<'a> StreamingEmitter<'a> {
             ScalarStyle::Literal => {
                 self.output.push_str("|-");
                 self.output.push('\n');
-                let indent = " ".repeat(self.indent_level * self.config.indent);
+                // Use saturating_mul to prevent integer overflow
+                let indent = " ".repeat(self.indent_level.saturating_mul(self.config.indent));
                 for line in value.lines() {
                     self.output.push_str(&indent);
                     self.output.push_str(line);
@@ -241,7 +256,8 @@ impl<'a> StreamingEmitter<'a> {
             ScalarStyle::Folded => {
                 self.output.push_str(">-");
                 self.output.push('\n');
-                let indent = " ".repeat(self.indent_level * self.config.indent);
+                // Use saturating_mul to prevent integer overflow
+                let indent = " ".repeat(self.indent_level.saturating_mul(self.config.indent));
                 for line in value.lines() {
                     self.output.push_str(&indent);
                     self.output.push_str(line);
@@ -277,8 +293,8 @@ impl<'a> StreamingEmitter<'a> {
             Context::Root => {}
         }
 
-        // Handle anchor
-        if anchor_id > 0 {
+        // Handle anchor (with bounds check for security)
+        if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
             let anchor_name = format!("anchor{anchor_id}");
             self.output.push('&');
             self.output.push_str(&anchor_name);
@@ -296,9 +312,11 @@ impl<'a> StreamingEmitter<'a> {
             *last = Context::MappingKey;
         }
 
-        // Push sequence context and increase indent
-        self.context_stack.push(Context::Sequence);
-        self.indent_level += 1;
+        // Push sequence context and increase indent (with depth limit)
+        if self.context_stack.len() < MAX_DEPTH {
+            self.context_stack.push(Context::Sequence);
+            self.indent_level += 1;
+        }
     }
 
     fn end_sequence(&mut self) {
@@ -332,8 +350,8 @@ impl<'a> StreamingEmitter<'a> {
             Context::Root => {}
         }
 
-        // Handle anchor
-        if anchor_id > 0 {
+        // Handle anchor (with bounds check for security)
+        if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
             let anchor_name = format!("anchor{anchor_id}");
             self.output.push('&');
             self.output.push_str(&anchor_name);
@@ -351,9 +369,11 @@ impl<'a> StreamingEmitter<'a> {
             *last = Context::MappingKey;
         }
 
-        // Push mapping context and increase indent
-        self.context_stack.push(Context::MappingKey);
-        self.indent_level += 1;
+        // Push mapping context and increase indent (with depth limit)
+        if self.context_stack.len() < MAX_DEPTH {
+            self.context_stack.push(Context::MappingKey);
+            self.indent_level += 1;
+        }
     }
 
     fn end_mapping(&mut self) {
@@ -414,7 +434,9 @@ impl<'a> StreamingEmitter<'a> {
 
     fn write_indent(&mut self) {
         if self.indent_level > 1 {
-            let indent_str = " ".repeat((self.indent_level - 1) * self.config.indent);
+            // Use saturating_mul to prevent integer overflow
+            let indent_str =
+                " ".repeat((self.indent_level - 1).saturating_mul(self.config.indent));
             self.output.push_str(&indent_str);
         }
     }
