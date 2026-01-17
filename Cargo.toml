@@ -37,6 +37,7 @@ fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.3.3" }
 anyhow = "1"
 bumpalo = "3.19"
 memchr = "2.7"
+memmap2 = "0.9"
 assert_cmd = "2.1"
 clap = "4.5"
 colored = "3.1"
@@ -49,6 +50,7 @@ is-terminal = "0.4"
 num_cpus = "1.17"
 ordered-float = "5"
 predicates = "3.1"
+proptest = "1.6"
 pyo3 = "0.27"
 rayon = "1.11"
 serde = "1.0"
@@ -59,7 +61,9 @@ saphyr = "0.0.6"
 saphyr-parser = "0.0.6"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# Use "deny" instead of "forbid" to allow local #[allow(unsafe_code)] where necessary
+# Unsafe code is still denied by default but can be explicitly allowed with documentation
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [workspace.lints.clippy]

@@ -24,7 +24,10 @@ glob.workspace = true
 globset.workspace = true
 ignore.workspace = true
 is-terminal = { workspace = true, optional = true }
+memmap2.workspace = true
+num_cpus.workspace = true
 ordered-float.workspace = true
+rayon.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
@@ -33,6 +36,7 @@ assert_cmd.workspace = true
 criterion.workspace = true
 indoc.workspace = true
 predicates.workspace = true
+proptest.workspace = true
 tempfile.workspace = true
 
 [features]
@@ -44,6 +48,10 @@ all = ["colors", "linter", "arena"]
 
 [[bench]]
 name = "discovery_bench"
+harness = false
+
+[[bench]]
+name = "processor_bench"
 harness = false
 
 [lints]

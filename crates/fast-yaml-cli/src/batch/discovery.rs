@@ -694,7 +694,8 @@ mod tests {
 
         let mut input = String::new();
         for _ in 0..=MAX_STDIN_PATHS {
-            input.push_str(&format!("{}\n", file.display()));
+            use std::fmt::Write;
+            writeln!(&mut input, "{}", file.display()).unwrap();
         }
         let reader = std::io::Cursor::new(input);
 

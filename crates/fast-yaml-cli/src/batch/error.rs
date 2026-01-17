@@ -72,3 +72,32 @@ pub enum DiscoveryError {
         max: usize,
     },
 }
+
+/// Errors that can occur during file processing.
+#[derive(Debug, Error)]
+#[allow(clippy::enum_variant_names)]
+pub enum ProcessingError {
+    /// Failed to read file
+    #[error("failed to read file: {0}")]
+    ReadError(#[source] std::io::Error),
+
+    /// File is not valid UTF-8
+    #[error("file is not valid UTF-8: {0}")]
+    Utf8Error(#[source] std::str::Utf8Error),
+
+    /// Failed to parse YAML
+    #[error("failed to parse YAML: {0}")]
+    ParseError(String),
+
+    /// Failed to format YAML
+    #[error("failed to format YAML: {0}")]
+    FormatError(String),
+
+    /// Failed to write file
+    #[error("failed to write file: {0}")]
+    WriteError(#[source] std::io::Error),
+
+    /// Failed to memory-map file
+    #[error("failed to memory-map file: {0}")]
+    MmapError(#[source] std::io::Error),
+}
