@@ -1,28 +1,28 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::{Emitter, EmitterConfig};
 
+use crate::config::CommonConfig;
 use crate::io::{InputSource, OutputWriter};
 
 /// Format command implementation
 pub struct FormatCommand {
-    indent: u8,
-    width: usize,
+    config: CommonConfig,
 }
 
 impl FormatCommand {
-    pub const fn new(indent: u8, width: usize) -> Self {
-        Self { indent, width }
+    pub const fn new(config: CommonConfig) -> Self {
+        Self { config }
     }
 
     /// Execute format command
     pub fn execute(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
-        // Create emitter config
-        let config = EmitterConfig::new()
-            .with_indent(self.indent as usize)
-            .with_width(self.width);
+        // Create emitter config from formatter settings
+        let emitter_config = EmitterConfig::new()
+            .with_indent(self.config.formatter.indent() as usize)
+            .with_width(self.config.formatter.width());
 
         // Use format_with_config which automatically selects streaming for large files
-        let formatted = Emitter::format_with_config(input.as_str(), &config)
+        let formatted = Emitter::format_with_config(input.as_str(), &emitter_config)
             .context("Failed to format YAML")?;
 
         // Write output
@@ -35,6 +35,7 @@ impl FormatCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::FormatterConfig;
     use crate::io::input::InputOrigin;
     use tempfile::NamedTempFile;
 
@@ -49,7 +50,9 @@ mod tests {
         let output =
             OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
 
-        let cmd = FormatCommand::new(2, 80);
+        let config = CommonConfig::new()
+            .with_formatter(FormatterConfig::new().with_indent(2).with_width(80));
+        let cmd = FormatCommand::new(config);
         assert!(cmd.execute(&input, &output).is_ok());
 
         let formatted = std::fs::read_to_string(temp_file.path()).unwrap();
@@ -66,7 +69,9 @@ mod tests {
 
         let output = OutputWriter::stdout();
 
-        let cmd = FormatCommand::new(2, 80);
+        let config = CommonConfig::new()
+            .with_formatter(FormatterConfig::new().with_indent(2).with_width(80));
+        let cmd = FormatCommand::new(config);
         assert!(cmd.execute(&input, &output).is_err());
     }
 
@@ -81,7 +86,9 @@ mod tests {
         let output =
             OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
 
-        let cmd = FormatCommand::new(4, 80);
+        let config = CommonConfig::new()
+            .with_formatter(FormatterConfig::new().with_indent(4).with_width(80));
+        let cmd = FormatCommand::new(config);
         assert!(cmd.execute(&input, &output).is_ok());
 
         let formatted = std::fs::read_to_string(temp_file.path()).unwrap();

@@ -29,6 +29,9 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
+#![allow(clippy::too_many_lines)]
+#![allow(clippy::redundant_clone)]
+#![allow(clippy::cast_possible_truncation)]
 
 use anyhow::Result;
 use clap::Parser;
@@ -36,8 +39,10 @@ use clap::Parser;
 mod batch;
 mod cli;
 mod commands;
+mod config;
 mod error;
 mod io;
+mod reporter;
 
 use cli::{Cli, Command};
 use error::{ExitCode, format_error};
@@ -47,8 +52,11 @@ fn main() {
     let exit_code = match run() {
         Ok(code) => code,
         Err(err) => {
-            let use_color = should_use_color();
-            eprintln!("{}", format_error(&err, use_color));
+            // Use OutputConfig to determine color usage
+            let cli = Cli::parse();
+            let output_config =
+                config::OutputConfig::from_cli(cli.quiet, cli.verbose, cli.no_color);
+            eprintln!("{}", format_error(&err, output_config.use_color()));
             ExitCode::ParseError
         }
     };
@@ -59,14 +67,14 @@ fn main() {
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    // Determine color usage
-    let use_color = !cli.no_color && should_use_color();
+    // Create common config early to avoid borrow issues
+    let common_config = config::CommonConfig::from_cli(&cli);
 
     // Execute command
     let exit_code = match cli.command {
         Some(Command::Parse { file, stats }) => {
             let input = InputSource::from_args(file)?;
-            let cmd = commands::parse::ParseCommand::new(stats, use_color, cli.quiet);
+            let cmd = commands::parse::ParseCommand::new(common_config, stats);
             cmd.execute(&input)?;
             ExitCode::Success
         }
@@ -85,21 +93,40 @@ fn run() -> Result<ExitCode> {
             let is_batch = is_batch_mode(&paths, stdin_files, &include, &exclude, jobs);
 
             if is_batch {
-                // BATCH MODE - new behavior
-                let config = commands::format_batch::BatchFormatConfig {
-                    indent,
-                    width,
-                    in_place: cli.in_place,
-                    dry_run,
-                    jobs,
-                    include,
-                    exclude,
-                    recursive: !no_recursive,
-                    quiet: cli.quiet,
-                    verbose: cli.verbose,
-                    use_color,
-                };
-                commands::format_batch::execute_batch(&config, &paths, stdin_files)?
+                // BATCH MODE - using composed BatchConfig
+                let mut discovery_config = batch::DiscoveryConfig::new();
+
+                // Apply include patterns if provided
+                if !include.is_empty() {
+                    discovery_config = discovery_config.with_include_patterns(include);
+                }
+
+                // Apply exclude patterns if provided
+                if !exclude.is_empty() {
+                    discovery_config = discovery_config.with_exclude_patterns(exclude);
+                }
+
+                // Set recursion depth
+                if no_recursive {
+                    discovery_config = discovery_config.with_max_depth(Some(1));
+                }
+
+                // Build batch config from common config
+                let batch_config = commands::format_batch::BatchConfig::new(
+                    common_config
+                        .clone()
+                        .with_formatter(
+                            config::FormatterConfig::new()
+                                .with_indent(indent)
+                                .with_width(width),
+                        )
+                        .with_parallel(config::ParallelConfig::new().with_workers(jobs)),
+                )
+                .with_discovery(discovery_config)
+                .with_dry_run(dry_run)
+                .with_in_place(cli.in_place);
+
+                commands::format_batch::execute_batch(&batch_config, &paths, stdin_files)?
             } else if paths.is_empty() {
                 // STDIN MODE - backward compatible
                 if cli.in_place {
@@ -107,7 +134,12 @@ fn run() -> Result<ExitCode> {
                 }
                 let input = InputSource::from_stdin()?;
                 let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
-                let cmd = commands::format::FormatCommand::new(indent, width);
+                let format_config = common_config.clone().with_formatter(
+                    config::FormatterConfig::new()
+                        .with_indent(indent)
+                        .with_width(width),
+                );
+                let cmd = commands::format::FormatCommand::new(format_config);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
             } else {
@@ -116,7 +148,12 @@ fn run() -> Result<ExitCode> {
                 let input = InputSource::from_file(file_path)?;
                 let output =
                     OutputWriter::from_args(cli.output.clone(), cli.in_place, Some(file_path))?;
-                let cmd = commands::format::FormatCommand::new(indent, width);
+                let format_config = common_config.clone().with_formatter(
+                    config::FormatterConfig::new()
+                        .with_indent(indent)
+                        .with_width(width),
+                );
+                let cmd = commands::format::FormatCommand::new(format_config);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
             }
@@ -125,7 +162,7 @@ fn run() -> Result<ExitCode> {
             let input = InputSource::from_args(file)?;
             let output =
                 OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
-            let cmd = commands::convert::ConvertCommand::new(to, pretty);
+            let cmd = commands::convert::ConvertCommand::new(common_config, to, pretty);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
@@ -137,21 +174,20 @@ fn run() -> Result<ExitCode> {
             format,
         }) => {
             let input = InputSource::from_args(file)?;
-            let cmd = commands::lint::LintCommand::new(
-                max_line_length,
-                indent_size,
-                format,
-                use_color,
-                cli.quiet,
-                cli.verbose,
-            );
+            let lint_config = common_config
+                .clone()
+                .with_formatter(config::FormatterConfig::new().with_indent(indent_size as u8));
+            let cmd = commands::lint::LintCommand::new(lint_config, max_line_length, format);
             cmd.execute(&input)?
         }
         None => {
             // Default: parse and format (passthrough) from stdin
             let input = InputSource::from_stdin()?;
             let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
-            let cmd = commands::format::FormatCommand::new(2, 80);
+            let format_config = common_config
+                .clone()
+                .with_formatter(config::FormatterConfig::new().with_indent(2).with_width(80));
+            let cmd = commands::format::FormatCommand::new(format_config);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
@@ -204,22 +240,4 @@ fn is_batch_path(path: &std::path::Path) -> bool {
 /// Checks if path contains glob special characters.
 fn contains_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
-}
-
-/// Determine if colored output should be used
-fn should_use_color() -> bool {
-    // Respect NO_COLOR environment variable
-    if std::env::var("NO_COLOR").is_ok() {
-        return false;
-    }
-
-    #[cfg(feature = "colors")]
-    {
-        use is_terminal::IsTerminal;
-        // Check if stdout is a terminal
-        std::io::stdout().is_terminal()
-    }
-
-    #[cfg(not(feature = "colors"))]
-    false
 }

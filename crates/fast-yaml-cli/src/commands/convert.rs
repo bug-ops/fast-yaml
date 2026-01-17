@@ -3,17 +3,20 @@ use fast_yaml_core::{Emitter, Parser, Value};
 use serde_json;
 
 use crate::cli::ConvertFormat;
+use crate::config::CommonConfig;
 use crate::io::{InputSource, OutputWriter};
 
 /// Convert command implementation
 pub struct ConvertCommand {
+    config: CommonConfig,
     target_format: ConvertFormat,
     pretty: bool,
 }
 
 impl ConvertCommand {
-    pub const fn new(target_format: ConvertFormat, pretty: bool) -> Self {
+    pub const fn new(config: CommonConfig, target_format: ConvertFormat, pretty: bool) -> Self {
         Self {
+            config,
             target_format,
             pretty,
         }
@@ -163,6 +166,7 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::CommonConfig;
     use crate::io::input::InputOrigin;
 
     #[test]
@@ -176,7 +180,8 @@ mod tests {
         let temp_path = temp_dir.path().join("output.json");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Json, true);
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Json, true);
         let result = cmd.execute(&input, &output);
         if let Err(e) = &result {
             eprintln!("Execute error: {e}");
@@ -203,7 +208,8 @@ mod tests {
         let temp_path = temp_dir.path().join("output.yaml");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Yaml, true);
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Yaml, true);
         assert!(cmd.execute(&input, &output).is_ok());
 
         let yaml_str = std::fs::read_to_string(&temp_path).unwrap();
@@ -243,7 +249,8 @@ mod tests {
 
         let output = OutputWriter::stdout();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Json, true);
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Json, true);
         assert!(cmd.execute(&input, &output).is_err());
     }
 
@@ -256,7 +263,8 @@ mod tests {
 
         let output = OutputWriter::stdout();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Yaml, true);
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Yaml, true);
         assert!(cmd.execute(&input, &output).is_err());
     }
 }
