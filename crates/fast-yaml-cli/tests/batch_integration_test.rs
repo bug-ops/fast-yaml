@@ -38,7 +38,9 @@ fn test_batch_end_to_end_success() {
     // Step 1: Discovery phase
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     assert_eq!(discovered.len(), 3, "Should discover 3 YAML files");
 
@@ -68,7 +70,9 @@ fn test_batch_mixed_valid_invalid_files() {
     // Discovery
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     assert_eq!(discovered.len(), 3);
 
@@ -99,7 +103,9 @@ fn test_batch_in_place_modification() {
     // Discovery
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     // Processing with in_place=true
     let proc_config = ProcessingConfig::new()
@@ -134,7 +140,9 @@ fn test_batch_dry_run_no_modification() {
     // Discovery
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     // Process with dry_run=true and in_place=true
     let proc_config = ProcessingConfig::new()
@@ -174,7 +182,9 @@ fn test_batch_large_file_mmap_integration() {
     // Discovery
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     // Process - should use mmap internally
     let proc_config = ProcessingConfig::new();
@@ -198,7 +208,9 @@ fn test_batch_parallel_workers() {
     // Discovery
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     assert_eq!(discovered.len(), 20);
 
@@ -222,7 +234,9 @@ fn test_batch_empty_directory() {
     // Discovery should find no files
     let config = DiscoveryConfig::new();
     let discovery = FileDiscovery::new(config).unwrap();
-    let discovered = discovery.discover(&[temp_dir.path().to_path_buf()]).unwrap();
+    let discovered = discovery
+        .discover(&[temp_dir.path().to_path_buf()])
+        .unwrap();
 
     assert_eq!(discovered.len(), 0);
 

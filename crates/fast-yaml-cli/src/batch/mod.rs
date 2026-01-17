@@ -51,8 +51,13 @@ pub mod discovery;
 pub mod error;
 pub mod processor;
 pub mod reader;
+pub mod reporter;
 pub mod result;
 
 // Phase 1: Discovery exports
 
 // Phase 2: Processing exports
+
+// Phase 3: Reporter exports
+#[allow(unused_imports)] // Will be used in Phase 4: CLI integration
+pub use reporter::{BatchReporter, ReporterConfig};
