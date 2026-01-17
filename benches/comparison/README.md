@@ -30,6 +30,8 @@ cargo build --release -p fast-yaml-cli
 
 ## Corpus
 
+### Single-file corpus
+
 The benchmark corpus consists of three YAML files of varying sizes:
 
 | File | Size | Description |
@@ -37,6 +39,17 @@ The benchmark corpus consists of three YAML files of varying sizes:
 | `small_0.yaml` | 480 B | Simple key-value pairs |
 | `medium_0.yaml` | 45 KB | Nested structures, lists |
 | `large_0.yaml` | 459 KB | Complex document with deep nesting |
+
+### Multi-file corpus
+
+For parallel processing benchmarks, additional corpus directories simulate real projects:
+
+| Directory | Files | Size per file | Total | Use case |
+|-----------|-------|---------------|-------|----------|
+| `multifile_small/` | 50 | 500 B | ~25 KB | Small project |
+| `multifile_medium/` | 200 | 1 KB | ~200 KB | Medium project |
+| `multifile_large/` | 500 | 2 KB | ~1 MB | Large project |
+| `multifile_xl/` | 1000 | 1 KB | ~1 MB | Enterprise project |
 
 ### Generate corpus
 
@@ -114,14 +127,31 @@ if __name__ == "__main__":
 
 ## Running benchmarks
 
-### Quick benchmark
+### Single-file benchmark
 
-Run all benchmarks with default settings:
+Run single-file benchmarks with default settings:
 
 ```bash
 cd benches/comparison
 ./scripts/run_benchmark.sh
 ```
+
+### Multi-file benchmark (parallel processing)
+
+Run multi-file benchmarks to compare parallel vs sequential processing:
+
+```bash
+cd benches/comparison
+./scripts/run_multifile_benchmark.sh
+```
+
+This benchmark demonstrates fast-yaml's key advantage: **parallel file processing**.
+yamlfmt processes files sequentially, while fast-yaml leverages all CPU cores.
+
+Expected speedup on multi-core systems:
+- **4 cores**: ~3-3.5x faster
+- **8 cores**: ~6-7x faster
+- **16 cores**: ~10-12x faster
 
 ### Manual benchmark
 
@@ -301,20 +331,26 @@ echo "Results saved to $RESULTS/"
 
 ```
 benches/comparison/
-├── README.md              # This file
+├── README.md                    # This file
 ├── corpus/
-│   └── generated/         # Benchmark input files
-│       ├── small_0.yaml
+│   └── generated/               # Benchmark input files
+│       ├── small_0.yaml         # Single-file corpus
 │       ├── medium_0.yaml
-│       └── large_0.yaml
-├── results/               # Benchmark output
-│   ├── small.json
-│   ├── medium.json
-│   ├── large.json
+│       ├── large_0.yaml
+│       ├── multifile_small/     # Multi-file corpus (50 files)
+│       ├── multifile_medium/    # Multi-file corpus (200 files)
+│       ├── multifile_large/     # Multi-file corpus (500 files)
+│       └── multifile_xl/        # Multi-file corpus (1000 files)
+├── results/                     # Benchmark output
+│   ├── small_*.json
+│   ├── medium_*.json
+│   ├── large_*.json
+│   ├── multifile_*_*.json       # Multi-file results
 │   └── *.md
 └── scripts/
-    ├── generate_corpus.py
-    └── run_benchmark.sh
+    ├── generate_corpus.py       # Generates both single and multi-file corpus
+    ├── run_benchmark.sh         # Single-file benchmarks
+    └── run_multifile_benchmark.sh  # Multi-file parallel benchmarks
 ```
 
 ## Contributing

@@ -76,17 +76,28 @@ const yamlStr = safeDump(data);
 ### CLI
 
 ```bash
+# Single file operations
 fy parse config.yaml           # Validate syntax
 fy format -i config.yaml       # Format in-place
 fy convert json config.yaml    # YAML → JSON
 fy lint config.yaml            # Lint with diagnostics
+
+# Batch mode (directories, globs, multiple files)
+fy format -i src/              # Format entire directory
+fy format -i "**/*.yaml"       # Format with glob pattern
+fy format -i -j 8 project/     # Parallel processing (8 workers)
+fy lint --exclude "tests/**" . # Lint all except tests
 ```
+
+> [!TIP]
+> Batch mode activates automatically for directories, globs, or multiple files. Supports parallel processing, include/exclude patterns, and respects `.gitignore`.
 
 ## Features
 
 - **5-10x Faster** — Rust-powered parsing outperforms PyYAML
 - **YAML 1.2.2** — Full Core Schema compliance
 - **Drop-in API** — Compatible with PyYAML/js-yaml
+- **Batch Processing** — Multi-file operations with parallel workers, glob patterns, .gitignore support
 - **Linting** — Rich diagnostics with line/column tracking
 - **Parallel** — Multi-threaded processing for large files
 - **Safe** — Zero `unsafe` code, memory-safe Rust

@@ -6,12 +6,15 @@
 //! - Scalability across document counts
 //! - Thread pool creation vs global pool performance
 //! - Large file processing efficiency
+//! - Multi-file parallel processing (batch operations)
 
 use std::fmt::Write;
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use fast_yaml_core::Parser;
 use fast_yaml_parallel::{ParallelConfig, parse_parallel, parse_parallel_with_config};
+use rayon::prelude::*;
 
 /// Generate multi-document YAML with specified document count and size per document.
 fn generate_yaml_docs(doc_count: usize, bytes_per_doc: usize) -> String {
@@ -198,6 +201,197 @@ fn bench_chunking(c: &mut Criterion) {
     group.finish();
 }
 
+/// Generate a collection of separate YAML "files" for multi-file benchmarks.
+///
+/// Simulates a directory of YAML configuration files.
+fn generate_yaml_files(file_count: usize, bytes_per_file: usize) -> Vec<String> {
+    (0..file_count)
+        .map(|i| {
+            let mut yaml = String::with_capacity(bytes_per_file + 50);
+            let _ = writeln!(yaml, "# File {i}");
+            let _ = writeln!(yaml, "metadata:");
+            let _ = writeln!(yaml, "  name: config_{i}");
+            let _ = writeln!(yaml, "  version: 1.0.{i}");
+            yaml.push_str("settings:\n");
+
+            // Fill to approximate size
+            let remaining = bytes_per_file.saturating_sub(100);
+            let lines = remaining / 25;
+
+            for j in 0..lines {
+                let _ = writeln!(yaml, "  option_{j}: value_{j}");
+            }
+
+            yaml
+        })
+        .collect()
+}
+
+/// Benchmark: Multi-file parallel processing.
+///
+/// Compares sequential vs parallel processing of multiple separate YAML files.
+/// This is the key differentiator vs yamlfmt which processes files sequentially.
+///
+/// Expected speedup: Near-linear with core count for I/O-bound workloads.
+fn bench_multifile_parallel(c: &mut Criterion) {
+    let mut group = c.benchmark_group("multifile");
+
+    for file_count in [10, 50, 100, 500] {
+        let files = generate_yaml_files(file_count, 500);
+
+        // Sequential processing (like yamlfmt)
+        group.bench_with_input(
+            BenchmarkId::new("sequential", file_count),
+            &files,
+            |b, files| {
+                b.iter(|| {
+                    files
+                        .iter()
+                        .map(|f| Parser::parse_str(black_box(f)))
+                        .collect::<Vec<_>>()
+                });
+            },
+        );
+
+        // Parallel processing with Rayon
+        group.bench_with_input(
+            BenchmarkId::new("parallel", file_count),
+            &files,
+            |b, files| {
+                b.iter(|| {
+                    files
+                        .par_iter()
+                        .map(|f| Parser::parse_str(black_box(f)))
+                        .collect::<Vec<_>>()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark: Multi-file with varying file sizes.
+///
+/// Tests parallel speedup across different file sizes.
+/// Larger files = more CPU work = better parallel efficiency.
+fn bench_multifile_sizes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("multifile_sizes");
+
+    let file_count = 100;
+
+    for bytes_per_file in [100, 500, 2000, 10000] {
+        let files = generate_yaml_files(file_count, bytes_per_file);
+        let label = format!("{file_count}x{bytes_per_file}b");
+
+        group.bench_with_input(
+            BenchmarkId::new("sequential", &label),
+            &files,
+            |b, files| {
+                b.iter(|| {
+                    files
+                        .iter()
+                        .map(|f| Parser::parse_str(black_box(f)))
+                        .collect::<Vec<_>>()
+                });
+            },
+        );
+
+        group.bench_with_input(BenchmarkId::new("parallel", &label), &files, |b, files| {
+            b.iter(|| {
+                files
+                    .par_iter()
+                    .map(|f| Parser::parse_str(black_box(f)))
+                    .collect::<Vec<_>>()
+            });
+        });
+    }
+
+    group.finish();
+}
+
+/// Benchmark: Multi-file linting simulation.
+///
+/// Simulates linting a codebase: parse + validate each file.
+/// This is the typical CI/CD use case where fast-yaml excels.
+fn bench_multifile_lint(c: &mut Criterion) {
+    let mut group = c.benchmark_group("multifile_lint");
+    group.sample_size(20);
+
+    // Simulate a medium project: 200 YAML files, ~1KB each
+    let files = generate_yaml_files(200, 1000);
+
+    group.bench_function("sequential_200files", |b| {
+        b.iter(|| {
+            files
+                .iter()
+                .filter_map(|f| Parser::parse_str(f).ok())
+                .count()
+        });
+    });
+
+    group.bench_function("parallel_200files", |b| {
+        b.iter(|| {
+            files
+                .par_iter()
+                .filter_map(|f| Parser::parse_str(f).ok())
+                .count()
+        });
+    });
+
+    // Large project: 1000 YAML files
+    let large_files = generate_yaml_files(1000, 500);
+
+    group.bench_function("sequential_1000files", |b| {
+        b.iter(|| {
+            large_files
+                .iter()
+                .filter_map(|f| Parser::parse_str(f).ok())
+                .count()
+        });
+    });
+
+    group.bench_function("parallel_1000files", |b| {
+        b.iter(|| {
+            large_files
+                .par_iter()
+                .filter_map(|f| Parser::parse_str(f).ok())
+                .count()
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark: Thread count scaling for multi-file.
+///
+/// Tests how speedup scales with thread count for batch file processing.
+fn bench_multifile_thread_scaling(c: &mut Criterion) {
+    let mut group = c.benchmark_group("multifile_threads");
+
+    let files = generate_yaml_files(200, 1000);
+
+    for threads in [1, 2, 4, 8] {
+        group.bench_with_input(BenchmarkId::from_parameter(threads), &files, |b, files| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+
+            b.iter(|| {
+                pool.install(|| {
+                    files
+                        .par_iter()
+                        .map(|f| Parser::parse_str(black_box(f)))
+                        .collect::<Vec<_>>()
+                })
+            });
+        });
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parallel_overhead,
@@ -206,6 +400,11 @@ criterion_group!(
     bench_document_sizes,
     bench_large_files,
     bench_chunking,
+    // Multi-file parallel processing benchmarks (key differentiator vs yamlfmt)
+    bench_multifile_parallel,
+    bench_multifile_sizes,
+    bench_multifile_lint,
+    bench_multifile_thread_scaling,
 );
 
 criterion_main!(benches);

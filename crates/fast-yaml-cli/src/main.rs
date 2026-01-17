@@ -33,6 +33,7 @@
 use anyhow::Result;
 use clap::Parser;
 
+mod batch;
 mod cli;
 mod commands;
 mod error;
@@ -61,47 +62,81 @@ fn run() -> Result<ExitCode> {
     // Determine color usage
     let use_color = !cli.no_color && should_use_color();
 
-    // Get file path from subcommand or global argument
-    let file_path = get_file_path(&cli);
-
-    // Read input
-    let input = InputSource::from_args(file_path)?;
-
-    // Create output writer
-    let output = OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
-
     // Execute command
     let exit_code = match cli.command {
-        Some(Command::Parse { file: _, stats }) => {
+        Some(Command::Parse { file, stats }) => {
+            let input = InputSource::from_args(file)?;
             let cmd = commands::parse::ParseCommand::new(stats, use_color, cli.quiet);
             cmd.execute(&input)?;
             ExitCode::Success
         }
         Some(Command::Format {
-            file: _,
+            paths,
             indent,
             width,
+            jobs,
+            stdin_files,
+            include,
+            exclude,
+            no_recursive,
+            dry_run,
         }) => {
-            let cmd = commands::format::FormatCommand::new(indent, width);
-            cmd.execute(&input, &output)?;
-            ExitCode::Success
+            // Determine if this is batch mode
+            let is_batch = is_batch_mode(&paths, stdin_files, &include, &exclude, jobs);
+
+            if is_batch {
+                // BATCH MODE - new behavior
+                let config = commands::format_batch::BatchFormatConfig {
+                    indent,
+                    width,
+                    in_place: cli.in_place,
+                    dry_run,
+                    jobs,
+                    include,
+                    exclude,
+                    recursive: !no_recursive,
+                    quiet: cli.quiet,
+                    verbose: cli.verbose,
+                    use_color,
+                };
+                commands::format_batch::execute_batch(&config, &paths, stdin_files)?
+            } else if paths.is_empty() {
+                // STDIN MODE - backward compatible
+                if cli.in_place {
+                    anyhow::bail!("--in-place (-i) requires a file argument");
+                }
+                let input = InputSource::from_stdin()?;
+                let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
+                let cmd = commands::format::FormatCommand::new(indent, width);
+                cmd.execute(&input, &output)?;
+                ExitCode::Success
+            } else {
+                // SINGLE FILE MODE - backward compatible
+                let file_path = &paths[0];
+                let input = InputSource::from_file(file_path)?;
+                let output =
+                    OutputWriter::from_args(cli.output.clone(), cli.in_place, Some(file_path))?;
+                let cmd = commands::format::FormatCommand::new(indent, width);
+                cmd.execute(&input, &output)?;
+                ExitCode::Success
+            }
         }
-        Some(Command::Convert {
-            to,
-            file: _,
-            pretty,
-        }) => {
+        Some(Command::Convert { to, file, pretty }) => {
+            let input = InputSource::from_args(file)?;
+            let output =
+                OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
             let cmd = commands::convert::ConvertCommand::new(to, pretty);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
         #[cfg(feature = "linter")]
         Some(Command::Lint {
-            file: _,
+            file,
             max_line_length,
             indent_size,
             format,
         }) => {
+            let input = InputSource::from_args(file)?;
             let cmd = commands::lint::LintCommand::new(
                 max_line_length,
                 indent_size,
@@ -113,7 +148,9 @@ fn run() -> Result<ExitCode> {
             cmd.execute(&input)?
         }
         None => {
-            // Default: parse and format (passthrough)
+            // Default: parse and format (passthrough) from stdin
+            let input = InputSource::from_stdin()?;
+            let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
             let cmd = commands::format::FormatCommand::new(2, 80);
             cmd.execute(&input, &output)?;
             ExitCode::Success
@@ -123,17 +160,50 @@ fn run() -> Result<ExitCode> {
     Ok(exit_code)
 }
 
-/// Get file path from subcommand argument or global argument
-fn get_file_path(cli: &Cli) -> Option<std::path::PathBuf> {
-    match &cli.command {
-        Some(Command::Parse { file, .. }) => file.clone(),
-        Some(Command::Format { file, .. }) => file.clone(),
-        Some(Command::Convert { file, .. }) => file.clone(),
-        #[cfg(feature = "linter")]
-        Some(Command::Lint { file, .. }) => file.clone(),
-        None => cli.file.clone(),
+/// Determines if format command should use batch mode.
+fn is_batch_mode(
+    paths: &[std::path::PathBuf],
+    stdin_files: bool,
+    include: &[String],
+    exclude: &[String],
+    jobs: usize,
+) -> bool {
+    // stdin-files flag explicitly requests batch mode
+    if stdin_files {
+        return true;
     }
-    .or_else(|| cli.file.clone())
+
+    // Multiple paths = batch mode
+    if paths.len() > 1 {
+        return true;
+    }
+
+    // Single path that is a directory or glob = batch mode
+    if paths.len() == 1 && is_batch_path(&paths[0]) {
+        return true;
+    }
+
+    // Include/exclude patterns = batch mode
+    if !include.is_empty() || !exclude.is_empty() {
+        return true;
+    }
+
+    // Explicit job count > 0 suggests batch mode
+    if jobs > 0 {
+        return true;
+    }
+
+    false
+}
+
+/// Determines if a path should trigger batch mode.
+fn is_batch_path(path: &std::path::Path) -> bool {
+    path.is_dir() || contains_glob_chars(&path.to_string_lossy())
+}
+
+/// Checks if path contains glob special characters.
+fn contains_glob_chars(s: &str) -> bool {
+    s.contains('*') || s.contains('?') || s.contains('[')
 }
 
 /// Determine if colored output should be used

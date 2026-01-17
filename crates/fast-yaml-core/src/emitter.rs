@@ -358,34 +358,43 @@ impl Emitter {
     }
 
     /// Slow path for `fix_special_floats`: processes line-by-line.
+    /// Pre-allocates output buffer to avoid reallocations.
     fn fix_special_floats_slow(output: &str) -> String {
-        // We need to be careful to only replace standalone values, not parts of words.
-        // The regex approach would be safer, but for simplicity we'll use line-by-line
-        // processing with word boundary checks.
-        output
-            .lines()
-            .map(|line| {
-                // Check if line ends with special float value (with optional whitespace)
-                let trimmed = line.trim_end();
-                if let Some(prefix) = trimmed.strip_suffix("inf") {
-                    // Check if it's "-inf" or standalone "inf"
-                    if let Some(before_minus) = prefix.strip_suffix('-') {
-                        // Already has minus, check if it's at value position
-                        if Self::is_value_position(before_minus) {
-                            return format!("{before_minus}-.inf");
-                        }
-                    } else if Self::is_value_position(prefix) {
-                        return format!("{prefix}.inf");
+        // Pre-allocate output (same size as input since patterns are similar length)
+        let mut result = String::with_capacity(output.len());
+
+        for (i, line) in output.lines().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+
+            // Check if line ends with special float value (with optional whitespace)
+            let trimmed = line.trim_end();
+            if let Some(prefix) = trimmed.strip_suffix("inf") {
+                // Check if it's "-inf" or standalone "inf"
+                if let Some(before_minus) = prefix.strip_suffix('-') {
+                    // Already has minus, check if it's at value position
+                    if Self::is_value_position(before_minus) {
+                        result.push_str(before_minus);
+                        result.push_str("-.inf");
+                        continue;
                     }
-                } else if let Some(prefix) = trimmed.strip_suffix("NaN")
-                    && Self::is_value_position(prefix)
-                {
-                    return format!("{prefix}.nan");
+                } else if Self::is_value_position(prefix) {
+                    result.push_str(prefix);
+                    result.push_str(".inf");
+                    continue;
                 }
-                line.to_string()
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
+            } else if let Some(prefix) = trimmed.strip_suffix("NaN")
+                && Self::is_value_position(prefix)
+            {
+                result.push_str(prefix);
+                result.push_str(".nan");
+                continue;
+            }
+            result.push_str(line);
+        }
+
+        result
     }
 
     /// Check if the prefix indicates this is a value position (after `: ` or start of line).
@@ -419,7 +428,15 @@ impl Emitter {
         #[cfg(feature = "streaming")]
         {
             if crate::streaming::is_streaming_suitable(input) {
-                return crate::streaming::format_streaming(input, config);
+                // Prefer arena allocation when available
+                #[cfg(feature = "arena")]
+                {
+                    return crate::streaming::format_streaming_arena(input, config);
+                }
+                #[cfg(not(feature = "arena"))]
+                {
+                    return crate::streaming::format_streaming(input, config);
+                }
             }
         }
 
@@ -779,5 +796,123 @@ mod tests {
         assert!(result.contains("inf_val: .inf"));
         assert!(result.contains("nan_val: .nan"));
         assert!(result.contains("neg_inf: -.inf"));
+    }
+
+    #[test]
+    fn test_estimate_value_size_sequence() {
+        let seq = Value::Sequence(vec![
+            Value::Value(ScalarOwned::Integer(1)),
+            Value::Value(ScalarOwned::Integer(2)),
+            Value::Value(ScalarOwned::String("hello".to_string())),
+        ]);
+
+        let size = Emitter::estimate_value_size(&seq);
+
+        // Each item: 3 (prefix "- " + newline) + scalar size
+        // Item 1: 3 + 2 (digit + overhead) = 5
+        // Item 2: 3 + 2 = 5
+        // Item 3: 3 + 7 (5 chars + 2 quotes) = 10
+        assert!(
+            size >= 10,
+            "Sequence estimate should be significant: got {size}"
+        );
+    }
+
+    #[test]
+    fn test_estimate_value_size_all_variants() {
+        use saphyr_parser::{ScalarStyle, Tag};
+
+        // Test Representation variant
+        let repr = Value::Representation("custom".to_string(), ScalarStyle::Plain, None);
+        let repr_size = Emitter::estimate_value_size(&repr);
+        assert_eq!(repr_size, 8); // 6 chars + 2
+
+        // Test Tagged variant
+        let tag = Tag {
+            handle: "!".to_string(),
+            suffix: "custom".to_string(),
+        };
+        let tagged = Value::Tagged(tag, Box::new(Value::Value(ScalarOwned::Integer(42))));
+        let tagged_size = Emitter::estimate_value_size(&tagged);
+        // 10 (tag overhead) + inner value size
+        assert!(tagged_size >= 10, "Tagged value should have tag overhead");
+
+        // Test Alias variant (usize anchor ID)
+        let alias = Value::Alias(1);
+        let alias_size = Emitter::estimate_value_size(&alias);
+        assert_eq!(alias_size, 10);
+
+        // Test BadValue variant
+        let bad = Value::BadValue;
+        let bad_size = Emitter::estimate_value_size(&bad);
+        assert_eq!(bad_size, 4);
+    }
+
+    #[test]
+    fn test_emit_all_empty_slice() {
+        let empty: Vec<Value> = vec![];
+        let config = EmitterConfig::default();
+
+        let result = Emitter::emit_all_with_config(&empty, &config).unwrap();
+        assert!(result.is_empty(), "Empty input should produce empty output");
+    }
+
+    #[test]
+    fn test_emit_all_buffer_preallocation() {
+        // Create multiple documents to test buffer pre-allocation
+        let docs: Vec<Value> = (0..10)
+            .map(|i| Value::Value(ScalarOwned::String(format!("document_{i}"))))
+            .collect();
+
+        let config = EmitterConfig::default();
+        let result = Emitter::emit_all_with_config(&docs, &config).unwrap();
+
+        // Verify all documents are present
+        for i in 0..10 {
+            assert!(
+                result.contains(&format!("document_{i}")),
+                "Should contain document_{i}"
+            );
+        }
+
+        // Verify document separators (9 separators for 10 documents)
+        assert_eq!(
+            result.matches("---").count(),
+            9,
+            "Should have 9 document separators"
+        );
+    }
+
+    #[test]
+    fn test_estimate_scalar_size_large_integer() {
+        // Test max i64
+        let max_int = Emitter::estimate_scalar_size(&ScalarOwned::Integer(i64::MAX));
+        // i64::MAX = 9223372036854775807 (19 digits + potential sign)
+        assert!(max_int >= 19, "Max i64 should have at least 19 chars");
+
+        // Test min i64
+        let min_int = Emitter::estimate_scalar_size(&ScalarOwned::Integer(i64::MIN));
+        // i64::MIN = -9223372036854775808 (19 digits + sign)
+        assert!(min_int >= 19, "Min i64 should have at least 19 chars");
+
+        // Test powers of 10
+        let thousand = Emitter::estimate_scalar_size(&ScalarOwned::Integer(1000));
+        assert!(thousand >= 4, "1000 should have at least 4 chars");
+
+        let million = Emitter::estimate_scalar_size(&ScalarOwned::Integer(1_000_000));
+        assert!(million >= 7, "1000000 should have at least 7 chars");
+    }
+
+    #[test]
+    fn test_might_contain_special_floats_empty() {
+        assert!(!Emitter::might_contain_special_floats(""));
+    }
+
+    #[test]
+    fn test_fix_special_floats_no_changes() {
+        // Test output that doesn't contain special floats (fast path)
+        let input = "key: value\nlist:\n  - item1\n  - item2\nnumber: 42\n";
+        let result = Emitter::fix_special_floats(input);
+        assert_eq!(result, input, "No changes should be made for normal YAML");
     }
 }
