@@ -52,12 +52,20 @@ impl Reporter {
     #[allow(clippy::needless_pass_by_value)]
     pub fn report(&self, event: ReportEvent<'_>) -> io::Result<()> {
         match event {
-            ReportEvent::Progress { current, total, path } => {
+            ReportEvent::Progress {
+                current,
+                total,
+                path,
+            } => {
                 if self.config.is_verbose() && !self.config.is_quiet() {
                     self.write_progress(current, total, path)?;
                 }
             }
-            ReportEvent::FileResult { path, outcome, duration } => {
+            ReportEvent::FileResult {
+                path,
+                outcome,
+                duration,
+            } => {
                 if self.config.is_verbose() && !self.config.is_quiet() {
                     self.write_file_result(path, outcome, duration)?;
                 }
@@ -80,7 +88,10 @@ impl Reporter {
                     self.write_success(message)?;
                 }
             }
-            ReportEvent::Timing { operation, duration } => {
+            ReportEvent::Timing {
+                operation,
+                duration,
+            } => {
                 if self.config.show_timing() && !self.config.is_quiet() {
                     self.write_timing(operation, duration)?;
                 }
@@ -137,7 +148,13 @@ impl Reporter {
         if self.config.use_color() {
             use colored::Colorize;
             if let Some(p) = path {
-                return writeln!(lock, "{} {}: {}", "error:".red().bold(), p.display(), message);
+                return writeln!(
+                    lock,
+                    "{} {}: {}",
+                    "error:".red().bold(),
+                    p.display(),
+                    message
+                );
             }
             return writeln!(lock, "{} {}", "error:".red().bold(), message);
         }

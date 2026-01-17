@@ -57,8 +57,8 @@ pub fn execute_batch(
     stdin_files: bool,
 ) -> Result<ExitCode> {
     // Create file discovery
-    let discovery =
-        FileDiscovery::new(config.discovery.clone()).context("Failed to initialize file discovery")?;
+    let discovery = FileDiscovery::new(config.discovery.clone())
+        .context("Failed to initialize file discovery")?;
 
     // Discover files
     let files = if stdin_files {

@@ -83,7 +83,10 @@ mod tests {
     fn test_default_config() {
         let config = ParallelConfig::default();
         assert_eq!(config.workers(), 0);
-        assert_eq!(config.mmap_threshold(), ParallelConfig::DEFAULT_MMAP_THRESHOLD);
+        assert_eq!(
+            config.mmap_threshold(),
+            ParallelConfig::DEFAULT_MMAP_THRESHOLD
+        );
     }
 
     #[test]

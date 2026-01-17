@@ -145,8 +145,7 @@ mod tests {
 
     #[test]
     fn test_validate_output_path_only() {
-        let config = IoConfig::new()
-            .with_output_path(Some(PathBuf::from("out.yaml")));
+        let config = IoConfig::new().with_output_path(Some(PathBuf::from("out.yaml")));
         assert!(config.validate().is_ok());
     }
 
@@ -166,9 +165,7 @@ mod tests {
 
     #[test]
     fn test_validate_dry_run_compatible() {
-        let config = IoConfig::new()
-            .with_in_place(true)
-            .with_dry_run(true);
+        let config = IoConfig::new().with_in_place(true).with_dry_run(true);
 
         assert!(config.validate().is_ok());
     }

@@ -54,7 +54,8 @@ fn main() {
         Err(err) => {
             // Use OutputConfig to determine color usage
             let cli = Cli::parse();
-            let output_config = config::OutputConfig::from_cli(cli.quiet, cli.verbose, cli.no_color);
+            let output_config =
+                config::OutputConfig::from_cli(cli.quiet, cli.verbose, cli.no_color);
             eprintln!("{}", format_error(&err, output_config.use_color()));
             ExitCode::ParseError
         }
@@ -114,8 +115,12 @@ fn run() -> Result<ExitCode> {
                 let batch_config = commands::format_batch::BatchConfig::new(
                     common_config
                         .clone()
-                        .with_formatter(config::FormatterConfig::new().with_indent(indent).with_width(width))
-                        .with_parallel(config::ParallelConfig::new().with_workers(jobs))
+                        .with_formatter(
+                            config::FormatterConfig::new()
+                                .with_indent(indent)
+                                .with_width(width),
+                        )
+                        .with_parallel(config::ParallelConfig::new().with_workers(jobs)),
                 )
                 .with_discovery(discovery_config)
                 .with_dry_run(dry_run)
@@ -129,9 +134,11 @@ fn run() -> Result<ExitCode> {
                 }
                 let input = InputSource::from_stdin()?;
                 let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
-                let format_config = common_config
-                    .clone()
-                    .with_formatter(config::FormatterConfig::new().with_indent(indent).with_width(width));
+                let format_config = common_config.clone().with_formatter(
+                    config::FormatterConfig::new()
+                        .with_indent(indent)
+                        .with_width(width),
+                );
                 let cmd = commands::format::FormatCommand::new(format_config);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
@@ -141,9 +148,11 @@ fn run() -> Result<ExitCode> {
                 let input = InputSource::from_file(file_path)?;
                 let output =
                     OutputWriter::from_args(cli.output.clone(), cli.in_place, Some(file_path))?;
-                let format_config = common_config
-                    .clone()
-                    .with_formatter(config::FormatterConfig::new().with_indent(indent).with_width(width));
+                let format_config = common_config.clone().with_formatter(
+                    config::FormatterConfig::new()
+                        .with_indent(indent)
+                        .with_width(width),
+                );
                 let cmd = commands::format::FormatCommand::new(format_config);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
@@ -165,9 +174,9 @@ fn run() -> Result<ExitCode> {
             format,
         }) => {
             let input = InputSource::from_args(file)?;
-            let lint_config = common_config.clone().with_formatter(
-                config::FormatterConfig::new().with_indent(indent_size as u8),
-            );
+            let lint_config = common_config
+                .clone()
+                .with_formatter(config::FormatterConfig::new().with_indent(indent_size as u8));
             let cmd = commands::lint::LintCommand::new(lint_config, max_line_length, format);
             cmd.execute(&input)?
         }
@@ -232,4 +241,3 @@ fn is_batch_path(path: &std::path::Path) -> bool {
 fn contains_glob_chars(s: &str) -> bool {
     s.contains('*') || s.contains('?') || s.contains('[')
 }
-

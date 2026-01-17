@@ -118,8 +118,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config = CommonConfig::new()
-            .with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config =
+            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
         let cmd = ParseCommand::new(config, false);
         assert!(cmd.execute(&input).is_ok());
     }
@@ -131,8 +131,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config = CommonConfig::new()
-            .with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config =
+            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
         let cmd = ParseCommand::new(config, false);
         assert!(cmd.execute(&input).is_err());
     }
@@ -144,8 +144,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config = CommonConfig::new()
-            .with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config =
+            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
         let cmd = ParseCommand::new(config, false);
         let result = cmd.execute(&input);
         assert!(result.is_err());

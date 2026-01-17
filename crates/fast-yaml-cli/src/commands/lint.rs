@@ -14,11 +14,7 @@ pub struct LintCommand {
 }
 
 impl LintCommand {
-    pub const fn new(
-        config: CommonConfig,
-        max_line_length: usize,
-        format: LintFormat,
-    ) -> Self {
+    pub const fn new(config: CommonConfig, max_line_length: usize, format: LintFormat) -> Self {
         Self {
             config,
             max_line_length,

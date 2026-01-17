@@ -72,7 +72,6 @@ impl CommonConfig {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +129,9 @@ mod tests {
 
         assert!(config.output.is_verbose());
         assert_eq!(config.formatter.indent(), 4);
-        assert_eq!(config.io.output_path(), Some(PathBuf::from("out.yaml").as_path()));
+        assert_eq!(
+            config.io.output_path(),
+            Some(PathBuf::from("out.yaml").as_path())
+        );
     }
 }

@@ -129,9 +129,7 @@ mod tests {
 
     #[test]
     fn test_builder_chaining() {
-        let config = FormatterConfig::new()
-            .with_indent(4)
-            .with_width(100);
+        let config = FormatterConfig::new().with_indent(4).with_width(100);
 
         assert_eq!(config.indent(), 4);
         assert_eq!(config.width(), 100);
@@ -139,9 +137,7 @@ mod tests {
 
     #[test]
     fn test_to_emitter_config() {
-        let config = FormatterConfig::new()
-            .with_indent(4)
-            .with_width(120);
+        let config = FormatterConfig::new().with_indent(4).with_width(120);
 
         let _emitter_config = config.to_emitter_config();
     }
@@ -149,8 +145,7 @@ mod tests {
     #[cfg(feature = "linter")]
     #[test]
     fn test_to_lint_config() {
-        let config = FormatterConfig::new()
-            .with_indent(4);
+        let config = FormatterConfig::new().with_indent(4);
 
         let _lint_config = config.to_lint_config(100);
     }
