@@ -1,0 +1,273 @@
+name: Performance Issue
+description: Report performance problems or regressions in fast-yaml
+title: "[Performance]: "
+labels: ["performance", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a performance issue in fast-yaml.
+
+        This template helps us understand performance problems and regressions.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component has the performance issue?
+      options:
+        - Core Parser
+        - Linter
+        - Parallel Processing
+        - Python Bindings
+        - NodeJS Bindings
+        - Memory Usage
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: Issue Type
+      description: What kind of performance issue is this?
+      options:
+        - Slow parsing
+        - High memory usage
+        - Performance regression
+        - Suboptimal parallelization
+        - Inefficient algorithm
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Performance Issue Description
+      description: Describe the performance problem you're experiencing
+      placeholder: |
+        When parsing a YAML file with X documents, it takes Y seconds...
+        Memory usage grows to Z GB when...
+    validations:
+      required: true
+
+  - type: textarea
+    id: benchmark
+    attributes:
+      label: Benchmark Results
+      description: Provide timing or memory measurements
+      render: shell
+      placeholder: |
+        # Current performance
+        Time: 5.23s
+        Memory: 2.1 GB
+        CPU: 85% (single core)
+
+        # Expected performance
+        Time: <1s (based on file size)
+        Memory: <500 MB
+
+  - type: textarea
+    id: profiling
+    attributes:
+      label: Profiling Data
+      description: If you've profiled the code, include results
+      render: shell
+      placeholder: |
+        # Using cargo flamegraph, perf, or similar
+        Top functions:
+        1. function_name: 45% CPU
+        2. another_function: 30% CPU
+
+  - type: textarea
+    id: yaml_characteristics
+    attributes:
+      label: YAML File Characteristics
+      description: Describe the YAML input that causes the performance issue
+      placeholder: |
+        - File size: 100 MB
+        - Number of documents: 1000
+        - Structure: deeply nested (10+ levels)
+        - Special features: many anchors/aliases, long strings, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How to reproduce the performance issue
+      placeholder: |
+        1. Create a YAML file with...
+        2. Run command: time fast_yaml_cli parse large.yaml
+        3. Observe slow performance / high memory
+    validations:
+      required: true
+
+  - type: textarea
+    id: code_sample
+    attributes:
+      label: Code Sample
+      description: Minimal code that reproduces the performance issue
+      render: python
+      placeholder: |
+        import fast_yaml
+        import time
+
+        start = time.time()
+        with open('large.yaml') as f:
+            data = fast_yaml.safe_load(f.read())
+        print(f"Took {time.time() - start:.2f}s")
+
+  - type: textarea
+    id: comparison
+    attributes:
+      label: Performance Comparison
+      description: Compare with other YAML libraries (if applicable)
+      render: shell
+      placeholder: |
+        # fast-yaml
+        Time: 5.2s
+        Memory: 2.1 GB
+
+        # PyYAML
+        Time: 15.8s
+        Memory: 3.5 GB
+
+        # ruamel.yaml
+        Time: 12.3s
+        Memory: 2.8 GB
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: Is this a regression?
+      description: Did this work better in a previous version?
+      options:
+        - "No - never worked well"
+        - "Yes - worked better in previous version"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: input
+    id: last_good_version
+    attributes:
+      label: Last Known Good Version
+      description: If regression, which version worked well?
+      placeholder: "0.3.0"
+
+  - type: input
+    id: version
+    attributes:
+      label: fast-yaml Version
+      description: Which version shows the performance issue?
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language_binding
+    attributes:
+      label: Language Binding
+      description: Which language binding?
+      options:
+        - Python
+        - NodeJS
+        - Rust (direct)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: Which OS?
+      options:
+        - Linux
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Windows
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware Specifications
+      description: CPU, RAM, and other relevant specs
+      placeholder: |
+        - CPU: AMD Ryzen 9 5950X (16 cores)
+        - RAM: 64 GB
+        - Storage: NVMe SSD
+        - Running in: Docker container / bare metal / VM
+    validations:
+      required: true
+
+  - type: dropdown
+    id: parallelization
+    attributes:
+      label: Parallel Processing
+      description: Are you using parallel processing features?
+      options:
+        - "No - sequential processing"
+        - "Yes - using parse_parallel"
+        - "Not applicable"
+
+  - type: input
+    id: thread_count
+    attributes:
+      label: Thread Count
+      description: If using parallelization, how many threads?
+      placeholder: "8"
+
+  - type: textarea
+    id: expected_performance
+    attributes:
+      label: Expected Performance
+      description: What performance do you expect?
+      placeholder: |
+        Based on the file size and system specs, I expect:
+        - Parse time: <1s
+        - Memory usage: <500 MB
+        - CPU utilization: 80%+ across all cores (if parallel)
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Have you found any workaround?
+      placeholder: |
+        - Splitting files into smaller chunks helps
+        - Using parallel processing mode improves performance
+        - Reducing nesting depth helps
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other relevant information
+      placeholder: |
+        - This affects production workloads
+        - Performance is critical for our use case
+        - Related issues: #123
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing performance issues
+          required: true
+        - label: I have tested with the latest version
+          required: false
+        - label: I have provided benchmark measurements
+          required: false
+        - label: I can provide a sample YAML file for testing
+          required: false

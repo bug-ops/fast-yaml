@@ -49,19 +49,29 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
         },
 
         Value::Sequence(arr) => {
-            let list = PyList::empty(py);
-            for item in arr {
-                list.append(value_to_python(py, item)?)?;
-            }
+            // Pre-convert all items to avoid list resize operations
+            let items: Vec<Py<PyAny>> = arr
+                .iter()
+                .map(|item| value_to_python(py, item))
+                .collect::<PyResult<Vec<_>>>()?;
+            let list = PyList::new(py, &items)?;
             Ok(list.into_any().unbind())
         }
 
         Value::Mapping(map) => {
+            // Pre-convert all key-value pairs to minimize dict resize operations
+            let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
+                .iter()
+                .map(|(k, v)| {
+                    let py_key = value_to_python(py, k)?;
+                    let py_value = value_to_python(py, v)?;
+                    Ok((py_key, py_value))
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+
             let dict = PyDict::new(py);
-            for (k, v) in map {
-                let py_key = value_to_python(py, k)?;
-                let py_value = value_to_python(py, v)?;
-                dict.set_item(py_key, py_value)?;
+            for (key, value) in pairs {
+                dict.set_item(key, value)?;
             }
             Ok(dict.into_any().unbind())
         }

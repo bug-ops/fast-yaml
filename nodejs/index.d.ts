@@ -156,6 +156,108 @@ export interface LoadOptions {
 }
 
 /**
+ * Configuration for parallel YAML processing.
+ *
+ * Controls thread pool size, chunking thresholds, and resource limits.
+ *
+ * # Example
+ *
+ * ```javascript
+ * const { parseParallel, ParallelConfig } = require('fastyaml-rs');
+ *
+ * const config = {
+ *   threadCount: 8,
+ *   maxInputSize: 200 * 1024 * 1024
+ * };
+ * const docs = parseParallel(yamlString, config);
+ * ```
+ */
+export interface ParallelConfig {
+  /** Thread pool size (null = CPU count, 0 = sequential). */
+  threadCount?: number
+  /** Minimum bytes per chunk (default: 4096). */
+  minChunkSize?: number
+  /** Maximum bytes per chunk (default: 10MB). */
+  maxChunkSize?: number
+  /** Maximum total input size in bytes (default: 100MB, max: 1GB). */
+  maxInputSize?: number
+  /** Maximum number of documents allowed (default: 100k, max: 10M). */
+  maxDocuments?: number
+}
+
+/**
+ * Parse multi-document YAML in parallel (synchronous).
+ *
+ * Automatically splits YAML documents at '---' boundaries and
+ * processes them in parallel using Rayon thread pool.
+ *
+ * # Arguments
+ *
+ * * `yaml_str` - YAML source potentially containing multiple documents
+ * * `config` - Optional parallel processing configuration
+ *
+ * # Returns
+ *
+ * Array of parsed YAML documents
+ *
+ * # Errors
+ *
+ * Throws if parsing fails or limits exceeded
+ *
+ * # Performance
+ *
+ * - Single document: Falls back to sequential parsing
+ * - Multi-document: 2-3x faster on 4-8 core systems
+ * - Use for files > 1MB with multiple documents
+ *
+ * # Example
+ *
+ * ```javascript
+ * const { parseParallel } = require('fastyaml-rs');
+ *
+ * const yaml = '---
+foo: 1
+---
+bar: 2
+---
+baz: 3';
+ * const docs = parseParallel(yaml);
+ * console.log(docs.length); // 3
+ * ```
+ */
+export declare function parseParallel(yamlStr: string, config?: ParallelConfig | undefined | null): NapiResult<Array<unknown>>
+
+/**
+ * Parse multi-document YAML in parallel (asynchronous).
+ *
+ * Non-blocking version that runs parsing on Node.js worker thread pool.
+ * Useful for keeping the event loop responsive during large file parsing.
+ *
+ * # Arguments
+ *
+ * * `yaml_str` - YAML source potentially containing multiple documents
+ * * `config` - Optional parallel processing configuration
+ *
+ * # Returns
+ *
+ * Promise resolving to array of parsed YAML documents
+ *
+ * # Example
+ *
+ * ```javascript
+ * const { parseParallelAsync } = require('fastyaml-rs');
+ *
+ * const yaml = '---
+foo: 1
+---
+bar: 2';
+ * const docs = await parseParallelAsync(yaml);
+ * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
+ * ```
+ */
+export declare function parseParallelAsync(yamlStr: string, config?: ParallelConfig | undefined | null): Promise<Array<unknown>>
+
+/**
  * Serialize a JavaScript object to a YAML string.
  *
  * This is equivalent to js-yaml's `safeDump()` and `PyYAML`'s `safe_dump()`.

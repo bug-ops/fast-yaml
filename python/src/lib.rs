@@ -318,19 +318,30 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
         },
 
         YamlOwned::Sequence(arr) => {
-            let list = PyList::empty(py);
-            for item in arr {
-                list.append(yaml_to_python(py, item)?)?;
-            }
+            // Pre-convert all items to avoid list resize operations
+            let items: Vec<Py<PyAny>> = arr
+                .iter()
+                .map(|item| yaml_to_python(py, item))
+                .collect::<PyResult<Vec<_>>>()?;
+            let list = PyList::new(py, &items)?;
             Ok(list.into_any().unbind())
         }
 
         YamlOwned::Mapping(map) => {
+            // Pre-convert all key-value pairs to minimize dict resize operations
+            let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
+                .iter()
+                .map(|(k, v)| {
+                    let py_key = yaml_to_python(py, k)?;
+                    let py_value = yaml_to_python(py, v)?;
+                    Ok((py_key, py_value))
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+
+            // Create dict and set all items (PyDict doesn't have from_iter)
             let dict = PyDict::new(py);
-            for (k, v) in map {
-                let py_key = yaml_to_python(py, k)?;
-                let py_value = yaml_to_python(py, v)?;
-                dict.set_item(py_key, py_value)?;
+            for (key, value) in pairs {
+                dict.set_item(key, value)?;
             }
             Ok(dict.into_any().unbind())
         }
