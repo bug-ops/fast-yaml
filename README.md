@@ -1,6 +1,7 @@
 # fast-yaml
 
 [![CI Status](https://img.shields.io/github/actions/workflow/status/bug-ops/fast-yaml/ci.yml?branch=main)](https://github.com/bug-ops/fast-yaml/actions)
+[![codecov](https://codecov.io/gh/bug-ops/fast-yaml/graph/badge.svg?token=E33WB16NUD)](https://codecov.io/gh/bug-ops/fast-yaml)
 [![Crates.io](https://img.shields.io/crates/v/fast-yaml-cli)](https://crates.io/crates/fast-yaml-cli)
 [![docs.rs](https://img.shields.io/docsrs/fast-yaml-core)](https://docs.rs/fast-yaml-core)
 [![PyPI](https://img.shields.io/pypi/v/fastyaml-rs)](https://pypi.org/project/fastyaml-rs/)
