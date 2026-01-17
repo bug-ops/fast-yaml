@@ -170,7 +170,7 @@ uv run pytest tests/ -v --benchmark-only  # Python API
 bash benches/comparison/scripts/run_batch_benchmark.sh  # CLI batch mode
 ```
 
-**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.3.3, yamlfmt 0.21.0
+**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.4.0, yamlfmt 0.21.0
 
 </details>
 

@@ -7,6 +7,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-01-17
+
+### Added
+
+- **CLI**: Unified configuration system for consistent command-line behavior
+  - `CommonConfig` aggregates output, formatter, I/O, and parallel configs
+  - `OutputConfig` handles verbosity, color detection with NO_COLOR support
+  - `ParallelConfig` manages worker threads and mmap thresholds
+  - Consistent builder pattern across all configuration types
+- **CLI**: Universal `Reporter` for centralized output formatting
+  - Zero-copy event design using lifetimes (`ReportEvent`)
+  - Proper stdout/stderr stream handling with locking
+  - Consistent colored output across all commands
+- **Benchmarks**: Comprehensive performance comparison vs google/yamlfmt 0.21.0
+  - Single-file benchmarks (small/medium/large files)
+  - Batch mode benchmarks (50-1000 files)
+  - Reproducible benchmark scripts with hyperfine
+  - Results documented in README and benches/comparison/
+
+### Changed
+
+- **CLI**: Refactored all commands to use unified `CommonConfig`
+  - `parse`, `format`, `convert`, `lint` commands migrated
+  - `format_batch` uses `BatchConfig` composition pattern
+- **CLI**: Replaced `BatchFormatConfig` (11 flat fields) with `BatchConfig` composition
+  - Composes `CommonConfig`, `DiscoveryConfig`, and batch-specific options
+  - Cleaner separation of concerns
+- **CLI**: Color detection centralized in `OutputConfig::from_cli()`
+  - Automatic detection via `is_terminal` crate
+  - Respects `NO_COLOR` environment variable
+  - Deleted `should_use_color()` helper (replaced with config method)
+
+### Removed
+
+- **CLI**: Deleted `batch/reporter.rs` (428 lines) — replaced with unified `Reporter`
+- **CLI**: Removed ~450 lines of duplicate code through refactoring
+  - Eliminated field duplication across config types
+  - Removed redundant color handling logic
+  - Deleted obsolete constructors
+
+### Performance
+
+- **CLI Batch Mode**: 6-15x faster than yamlfmt on multi-file operations
+  - 50 files: **2.40x faster**
+  - 200 files: **6.63x faster**
+  - 500 files: **15.77x faster** ⚡
+  - 1000 files: **13.80x faster** ⚡
+- **CLI Single-File**: 1.19-1.80x faster than yamlfmt on small/medium files
+  - Small (502 bytes): **1.80x faster**
+  - Medium (45 KB): **1.19x faster**
+  - Large (460 KB): yamlfmt 2.88x faster (yamlfmt optimized for large files)
+- **Streaming**: Phase 2 arena allocator improvements
+  - 3-11% performance gains in streaming benchmarks
+  - Reduced allocations through bumpalo arena
+
+### Documentation
+
+- **README**: Added comprehensive performance section with benchmark tables
+  - CLI single-file vs yamlfmt comparison
+  - CLI batch mode performance (key differentiator)
+  - Test environment details and reproducibility instructions
+- **Benchmarks**: Added `benches/comparison/README.md` with detailed methodology
+  - Benchmark configuration and fairness criteria
+  - Multi-file corpus descriptions
+  - Latest results from Apple M3 Pro (12 cores)
+- **Benchmarks**: Added `run_batch_benchmark.sh` for native batch mode testing
+  - Compares parallel (-j N) vs sequential (-j 0) processing
+  - Demonstrates 6-15x speedup with parallel workers
+
+### Internal
+
+- **CLI**: 100% test coverage on all config modules (common, output, parallel)
+- **CLI**: Overall test coverage: 94.38% (exceeds 60% target)
+- **CLI**: 912 tests passing, 0 failures
+- **CI**: Zero clippy warnings with `-D warnings`
+- **Security**: Zero vulnerabilities (cargo audit, cargo deny)
+- **Code Quality**: Consistent builder pattern with `#[must_use]` and `const fn`
+
 ## [0.3.3] - 2025-01-15
 
 ### Breaking Changes
