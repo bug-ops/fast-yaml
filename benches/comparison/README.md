@@ -136,22 +136,23 @@ cd benches/comparison
 ./scripts/run_benchmark.sh
 ```
 
-### Multi-file benchmark (parallel processing)
+### Batch mode benchmark (native parallel processing)
 
-Run multi-file benchmarks to compare parallel vs sequential processing:
+Run batch mode benchmarks to compare fast-yaml's native batch processing vs yamlfmt:
 
 ```bash
 cd benches/comparison
-./scripts/run_multifile_benchmark.sh
+./scripts/run_batch_benchmark.sh
 ```
 
-This benchmark demonstrates fast-yaml's key advantage: **parallel file processing**.
-yamlfmt processes files sequentially, while fast-yaml leverages all CPU cores.
+This benchmark demonstrates fast-yaml's key advantage: **native batch mode with parallel workers**.
+- fast-yaml uses built-in batch mode with `-j` flag for parallel processing
+- yamlfmt processes files sequentially
 
 Expected speedup on multi-core systems:
-- **4 cores**: ~3-3.5x faster
-- **8 cores**: ~6-7x faster
-- **16 cores**: ~10-12x faster
+- **50-200 files**: ~2-6x faster
+- **500-1000 files**: ~13-16x faster
+- **Scales with CPU cores**: More cores = higher speedup
 
 ### Manual benchmark
 
@@ -251,18 +252,34 @@ Results may vary based on:
 
 ## Latest results
 
-**Platform:** Apple M3 Pro, macOS 26.2
-**Date:** 2026-01-16
+**Platform:** Apple M3 Pro (12 cores), macOS 25.2
+**Date:** 2026-01-17
 **Versions:** fast-yaml 0.3.3, yamlfmt 0.21.0
 
-| File Size | fast-yaml | yamlfmt | Winner |
+### Single-file benchmarks
+
+| File Size | fast-yaml | yamlfmt | Result |
 |-----------|-----------|---------|--------|
-| Small (480B) | **1.8 ms** | 2.9 ms | fast-yaml (1.6x) |
-| Medium (45KB) | **2.7 ms** | 2.9 ms | fast-yaml (1.1x) |
-| Large (459KB) | 9.1 ms | **3.0 ms** | yamlfmt (3.0x) |
+| Small (502 bytes) | **1.7 ms** | 3.1 ms | **fast-yaml 1.80x faster** ✓ |
+| Medium (45 KB) | **2.5 ms** | 2.9 ms | **fast-yaml 1.19x faster** ✓ |
+| Large (460 KB) | 8.4 ms | **2.9 ms** | yamlfmt 2.88x faster |
 
 > [!NOTE]
-> fast-yaml uses streaming formatter for files >1KB. Large file performance improved from 4.7x to 3.0x slower through Phase 1-3 optimizations.
+> yamlfmt is optimized for large single files. fast-yaml excels at batch processing multiple files.
+
+### Batch mode benchmarks (native parallel processing)
+
+> [!TIP]
+> Batch mode is where fast-yaml truly shines with parallel workers.
+
+| Workload | fast-yaml (parallel -j 12) | yamlfmt (sequential) | Speedup |
+|----------|---------------------------|----------------------|---------|
+| 50 files (26 KB total) | **4.3 ms** | 10.3 ms | **2.40x faster** ✓ |
+| 200 files (204 KB total) | **8.0 ms** | 52.7 ms | **6.63x faster** ✓ |
+| 500 files (1 MB total) | **15.5 ms** | 244.7 ms | **15.77x faster** ⚡ |
+| 1000 files (1 MB total) | **23.4 ms** | 323.4 ms | **13.80x faster** ⚡ |
+
+**Key takeaway:** Native batch mode with parallel workers provides 6-15x speedup on multi-file operations, making fast-yaml ideal for formatting entire codebases.
 
 ## Scripts
 
@@ -350,7 +367,8 @@ benches/comparison/
 └── scripts/
     ├── generate_corpus.py       # Generates both single and multi-file corpus
     ├── run_benchmark.sh         # Single-file benchmarks
-    └── run_multifile_benchmark.sh  # Multi-file parallel benchmarks
+    ├── run_batch_benchmark.sh   # Batch mode benchmarks (native parallel processing)
+    └── run_multifile_benchmark.sh  # Multi-file benchmarks (xargs parallelization)
 ```
 
 ## Contributing

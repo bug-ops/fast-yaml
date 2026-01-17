@@ -142,18 +142,35 @@ docs = parse_parallel(multi_doc_yaml, config)
 | Medium (2KB) | 2 ms | 400 μs | 150 μs | **13x / 2.7x** |
 | Large (500KB) | 500 ms | 100 ms | 35 ms | **14x / 2.9x** |
 
-### CLI vs yamlfmt (Apple M3 Pro)
+### CLI Single-File vs yamlfmt (Apple M3 Pro, 12 cores)
 
-| File Size | fast-yaml (fy) | yamlfmt | Winner |
-|-----------|----------------|---------|--------|
-| Small (480B) | **1.8 ms** | 2.9 ms | fast-yaml (1.6x faster) |
-| Medium (45KB) | **2.7 ms** | 2.9 ms | fast-yaml (1.1x faster) |
-| Large (459KB) | 9.1 ms | **3.0 ms** | yamlfmt (3.0x faster) |
+| File Size | fast-yaml | yamlfmt | Result |
+|-----------|-----------|---------|--------|
+| Small (502 bytes) | **1.7 ms** | 3.1 ms | **1.80x faster** ✓ |
+| Medium (45 KB) | **2.5 ms** | 2.9 ms | **1.19x faster** ✓ |
+| Large (460 KB) | 8.4 ms | **2.9 ms** | yamlfmt 2.88x faster |
+
+### CLI Batch Mode vs yamlfmt (Apple M3 Pro, 12 cores)
+
+> [!TIP]
+> Batch mode is where fast-yaml excels with parallel processing. Use `-j` to specify worker count.
+
+| Workload | fast-yaml (parallel) | yamlfmt (sequential) | Speedup |
+|----------|---------------------|----------------------|---------|
+| 50 files (26 KB) | **4.3 ms** | 10.3 ms | **2.40x faster** ✓ |
+| 200 files (204 KB) | **8.0 ms** | 52.7 ms | **6.63x faster** ✓ |
+| 500 files (1 MB) | **15.5 ms** | 244.7 ms | **15.77x faster** ⚡ |
+| 1000 files (1 MB) | **23.4 ms** | 323.4 ms | **13.80x faster** ⚡ |
+
+**Key takeaway:** Batch mode with parallel workers provides 6-15x speedup on multi-file operations, making it ideal for formatting entire codebases.
 
 ```bash
 # Run benchmarks
-uv run pytest tests/ -v --benchmark-only
+uv run pytest tests/ -v --benchmark-only  # Python API
+bash benches/comparison/scripts/run_batch_benchmark.sh  # CLI batch mode
 ```
+
+**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.3.3, yamlfmt 0.21.0
 
 </details>
 
