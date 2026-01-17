@@ -4,39 +4,61 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 
-use crate::batch::{
-    BatchProcessor, BatchReporter, DiscoveryConfig, FileDiscovery, ProcessingConfig, ReporterConfig,
-};
+use crate::batch::{BatchProcessor, DiscoveryConfig, FileDiscovery, ProcessingConfig};
+use crate::config::CommonConfig;
 use crate::error::ExitCode;
+use crate::reporter::{ReportEvent, Reporter};
 
-/// Configuration for batch format execution.
-#[allow(clippy::struct_excessive_bools)]
-pub struct BatchFormatConfig {
-    pub indent: u8,
-    pub width: usize,
-    pub in_place: bool,
+/// Configuration for batch format execution using composed configs.
+#[derive(Debug, Clone)]
+pub struct BatchConfig {
+    /// Common configuration (formatter, output, parallel settings)
+    pub common: CommonConfig,
+    /// Discovery-specific configuration
+    pub discovery: DiscoveryConfig,
+    /// Batch-specific settings
     pub dry_run: bool,
-    pub jobs: usize,
-    pub include: Vec<String>,
-    pub exclude: Vec<String>,
-    pub recursive: bool,
-    pub quiet: bool,
-    pub verbose: bool,
-    pub use_color: bool,
+    pub in_place: bool,
+}
+
+impl BatchConfig {
+    pub fn new(common: CommonConfig) -> Self {
+        Self {
+            common,
+            discovery: DiscoveryConfig::new(),
+            dry_run: false,
+            in_place: false,
+        }
+    }
+
+    #[must_use]
+    pub fn with_discovery(mut self, discovery: DiscoveryConfig) -> Self {
+        self.discovery = discovery;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_dry_run(mut self, dry_run: bool) -> Self {
+        self.dry_run = dry_run;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_in_place(mut self, in_place: bool) -> Self {
+        self.in_place = in_place;
+        self
+    }
 }
 
 /// Execute batch formatting on multiple files.
 pub fn execute_batch(
-    config: &BatchFormatConfig,
+    config: &BatchConfig,
     paths: &[PathBuf],
     stdin_files: bool,
 ) -> Result<ExitCode> {
-    // Build discovery config
-    let discovery_config = build_discovery_config(config);
-
     // Create file discovery
     let discovery =
-        FileDiscovery::new(discovery_config).context("Failed to initialize file discovery")?;
+        FileDiscovery::new(config.discovery.clone()).context("Failed to initialize file discovery")?;
 
     // Discover files
     let files = if stdin_files {
@@ -51,29 +73,46 @@ pub fn execute_batch(
 
     // Handle empty result
     if files.is_empty() {
-        if !config.quiet {
+        if !config.common.output.is_quiet() {
             eprintln!("No YAML files found");
         }
         return Ok(ExitCode::Success);
     }
 
-    // Build processing config
+    // Create reporter
+    let reporter = Reporter::new(config.common.output.clone());
+
+    // Build processing config from common config
     let processing_config = ProcessingConfig::new()
-        .with_indent(config.indent)
-        .with_width(config.width)
+        .with_indent(config.common.formatter.indent())
+        .with_width(config.common.formatter.width())
         .with_in_place(config.in_place)
         .with_dry_run(config.dry_run)
-        .with_workers(config.jobs)
-        .with_verbose(config.verbose);
+        .with_workers(config.common.parallel.workers())
+        .with_mmap_threshold(config.common.parallel.mmap_threshold())
+        .with_verbose(config.common.output.is_verbose());
 
     // Process files
     let processor = BatchProcessor::new(processing_config);
     let result = processor.process(&files);
 
-    // Report results
-    let reporter_config = ReporterConfig::new(config.use_color, config.quiet, config.verbose);
-    let reporter = BatchReporter::new(reporter_config);
-    reporter.report(&result)?;
+    // Report results using BatchSummary event
+    reporter.report(ReportEvent::BatchSummary {
+        total: result.total,
+        formatted: result.formatted,
+        unchanged: result.unchanged,
+        skipped: result.skipped,
+        failed: result.failed,
+        duration: result.duration,
+    })?;
+
+    // Report errors
+    for (path, error) in &result.errors {
+        reporter.report(ReportEvent::Error {
+            path: Some(path),
+            message: &error.to_string(),
+        })?;
+    }
 
     // Return appropriate exit code
     if result.failed > 0 {
@@ -81,25 +120,4 @@ pub fn execute_batch(
     } else {
         Ok(ExitCode::Success)
     }
-}
-
-fn build_discovery_config(config: &BatchFormatConfig) -> DiscoveryConfig {
-    let mut discovery = DiscoveryConfig::new();
-
-    // Use custom include patterns if provided, otherwise use defaults
-    if !config.include.is_empty() {
-        discovery = discovery.with_include_patterns(config.include.clone());
-    }
-
-    // Apply exclude patterns
-    if !config.exclude.is_empty() {
-        discovery = discovery.with_exclude_patterns(config.exclude.clone());
-    }
-
-    // Set recursion depth
-    if !config.recursive {
-        discovery = discovery.with_max_depth(Some(1));
-    }
-
-    discovery
 }

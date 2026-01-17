@@ -1,69 +1,75 @@
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use anyhow::{Context, Result};
 use fast_yaml_core::Parser;
 
-#[cfg(feature = "colors")]
-use colored::Colorize;
-
+use crate::config::CommonConfig;
 use crate::io::InputSource;
+use crate::reporter::{ReportEvent, Reporter};
 
 /// Parse command implementation
 pub struct ParseCommand {
     show_stats: bool,
-    use_color: bool,
-    quiet: bool,
+    config: CommonConfig,
 }
 
 impl ParseCommand {
-    pub const fn new(show_stats: bool, use_color: bool, quiet: bool) -> Self {
-        Self {
-            show_stats,
-            use_color,
-            quiet,
-        }
+    pub const fn new(config: CommonConfig, show_stats: bool) -> Self {
+        Self { show_stats, config }
     }
 
     /// Execute parse command
     pub fn execute(&self, input: &InputSource) -> Result<()> {
-        // Parse YAML
+        let mut reporter = Reporter::new(self.config.output.clone());
+        reporter.start_timing();
+
         let value = Parser::parse_str(input.as_str())
             .context("Failed to parse YAML")?
             .ok_or_else(|| anyhow::anyhow!("Empty YAML document"))?;
 
-        if !self.quiet {
-            #[cfg(feature = "colors")]
-            if self.use_color {
-                println!("{} YAML is valid", "✓".green().bold());
-            } else {
-                println!("✓ YAML is valid");
-            }
+        reporter
+            .report(ReportEvent::Success {
+                message: "YAML is valid",
+            })
+            .ok();
 
-            #[cfg(not(feature = "colors"))]
-            println!("✓ YAML is valid");
+        if self.show_stats {
+            self.print_statistics(&value, &reporter);
+        }
 
-            if self.show_stats {
-                self.print_statistics(&value);
-            }
+        if let Some(duration) = reporter.elapsed() {
+            reporter
+                .report(ReportEvent::Timing {
+                    operation: "parse",
+                    duration,
+                })
+                .ok();
         }
 
         Ok(())
     }
 
     /// Print parsing statistics
-    fn print_statistics(&self, value: &fast_yaml_core::Value) {
+    fn print_statistics(&self, value: &fast_yaml_core::Value, reporter: &Reporter) {
         let (key_count, max_depth) = count_keys_and_depth(value, 0);
 
         #[cfg(feature = "colors")]
-        if self.use_color {
+        if self.config.output.use_color() {
+            use colored::Colorize;
             println!("\n{}", "Statistics:".bold());
             println!("  Keys: {}", key_count.to_string().cyan());
             println!("  Max depth: {}", max_depth.to_string().cyan());
             return;
         }
+        #[cfg(not(feature = "colors"))]
+        {
+            let _ = self.config.output.use_color();
+        }
 
-        // Fallback for no-color or when colors feature is disabled
         println!("\nStatistics:");
         println!("  Keys: {key_count}");
         println!("  Max depth: {max_depth}");
+        let _ = reporter;
     }
 }
 
@@ -112,7 +118,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = ParseCommand::new(false, false, true);
+        let config = CommonConfig::new()
+            .with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let cmd = ParseCommand::new(config, false);
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -123,7 +131,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = ParseCommand::new(false, false, true);
+        let config = CommonConfig::new()
+            .with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let cmd = ParseCommand::new(config, false);
         assert!(cmd.execute(&input).is_err());
     }
 
@@ -134,7 +144,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = ParseCommand::new(false, false, true);
+        let config = CommonConfig::new()
+            .with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let cmd = ParseCommand::new(config, false);
         let result = cmd.execute(&input);
         assert!(result.is_err());
         assert!(

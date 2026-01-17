@@ -2,35 +2,27 @@ use anyhow::{Context, Result};
 use fast_yaml_linter::{Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter};
 
 use crate::cli::LintFormat;
+use crate::config::CommonConfig;
 use crate::error::ExitCode;
 use crate::io::InputSource;
 
 /// Lint command implementation
 pub struct LintCommand {
+    config: CommonConfig,
     max_line_length: usize,
-    indent_size: usize,
     format: LintFormat,
-    use_color: bool,
-    quiet: bool,
-    verbose: bool,
 }
 
 impl LintCommand {
     pub const fn new(
+        config: CommonConfig,
         max_line_length: usize,
-        indent_size: usize,
         format: LintFormat,
-        use_color: bool,
-        quiet: bool,
-        verbose: bool,
     ) -> Self {
         Self {
+            config,
             max_line_length,
-            indent_size,
             format,
-            use_color,
-            quiet,
-            verbose,
         }
     }
 
@@ -42,13 +34,13 @@ impl LintCommand {
     pub fn execute(&self, input: &InputSource) -> Result<ExitCode> {
         let start_time = std::time::Instant::now();
 
-        // Configure linter
-        let config = LintConfig::new()
+        // Configure linter using formatter indent from config
+        let lint_config = LintConfig::new()
             .with_max_line_length(Some(self.max_line_length))
-            .with_indent_size(self.indent_size);
+            .with_indent_size(self.config.formatter.indent() as usize);
 
         // Create linter with all rules
-        let mut linter = Linter::with_config(config);
+        let mut linter = Linter::with_config(lint_config);
 
         // Add all default rules
         linter
@@ -64,7 +56,7 @@ impl LintCommand {
         let diagnostics = linter.lint(input.as_str()).context("Failed to lint YAML")?;
 
         // Filter diagnostics based on quiet mode (errors only)
-        let filtered_diagnostics: Vec<_> = if self.quiet {
+        let filtered_diagnostics: Vec<_> = if self.config.output.is_quiet() {
             diagnostics
                 .into_iter()
                 .filter(|d| d.severity == Severity::Error)
@@ -77,7 +69,7 @@ impl LintCommand {
         let output = match self.format {
             LintFormat::Text => {
                 let mut formatter = TextFormatter::new();
-                formatter.use_color = self.use_color;
+                formatter.use_color = self.config.output.use_color();
                 formatter.format(&filtered_diagnostics, input.as_str())
             }
             LintFormat::Json => {
@@ -90,7 +82,7 @@ impl LintCommand {
         print!("{output}");
 
         // Print verbose info
-        if self.verbose && !matches!(self.format, LintFormat::Json) {
+        if self.config.output.is_verbose() && !matches!(self.format, LintFormat::Json) {
             let elapsed = start_time.elapsed();
             if let Some(path) = input.file_path() {
                 eprintln!("\nFile: {}", path.display());
@@ -114,7 +106,19 @@ impl LintCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{FormatterConfig, OutputConfig};
     use crate::io::input::InputOrigin;
+
+    fn create_test_config(quiet: bool, verbose: bool, use_color: bool, indent: u8) -> CommonConfig {
+        CommonConfig::new()
+            .with_output(
+                OutputConfig::new()
+                    .with_quiet(quiet)
+                    .with_verbose(verbose)
+                    .with_color(use_color),
+            )
+            .with_formatter(FormatterConfig::new().with_indent(indent))
+    }
 
     #[test]
     fn test_lint_valid_yaml() {
@@ -123,7 +127,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = LintCommand::new(120, 2, LintFormat::Text, false, true, false);
+        let config = create_test_config(true, false, false, 2);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text);
         let result = cmd.execute(&input);
 
         assert!(result.is_ok());
@@ -137,7 +142,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = LintCommand::new(80, 2, LintFormat::Text, false, true, false);
+        let config = create_test_config(true, false, false, 2);
+        let cmd = LintCommand::new(config, 80, LintFormat::Text);
         let result = cmd.execute(&input);
 
         // Should succeed (warnings don't cause failure)
@@ -152,7 +158,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = LintCommand::new(120, 2, LintFormat::Text, false, true, false);
+        let config = create_test_config(true, false, false, 2);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text);
         let result = cmd.execute(&input);
 
         // Should fail with parse error
@@ -166,7 +173,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = LintCommand::new(120, 2, LintFormat::Text, false, true, false);
+        let config = create_test_config(true, false, false, 2);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text);
         let result = cmd.execute(&input);
 
         assert!(result.is_ok());
@@ -180,7 +188,8 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let cmd = LintCommand::new(120, 2, LintFormat::Json, false, false, false);
+        let config = create_test_config(false, false, false, 2);
+        let cmd = LintCommand::new(config, 120, LintFormat::Json);
         let result = cmd.execute(&input);
 
         assert!(result.is_ok());

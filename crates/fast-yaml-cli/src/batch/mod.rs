@@ -51,12 +51,9 @@ pub mod discovery;
 pub mod error;
 pub mod processor;
 pub mod reader;
-pub mod reporter;
 pub mod result;
 
 pub use config::ProcessingConfig;
 pub use discovery::{DiscoveryConfig, FileDiscovery};
 
 pub use processor::BatchProcessor;
-
-pub use reporter::{BatchReporter, ReporterConfig};
