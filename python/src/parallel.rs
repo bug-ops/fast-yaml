@@ -18,7 +18,6 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Maximum thread count allowed (capped by Rust implementation).
 const MAX_THREADS: usize = 128;
@@ -383,7 +382,7 @@ fn dump_parallel(
     // Determine thread count
     let thread_count = config.map_or(1, |cfg| {
         // If explicit thread_count is set, use it (takes precedence)
-        if let Some(explicit) = cfg.inner.thread_count {
+        if let Some(explicit) = cfg.inner.thread_count() {
             return explicit.min(128);
         }
 

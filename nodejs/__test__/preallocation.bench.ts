@@ -40,7 +40,7 @@ describe('Pre-allocation Optimizations', () => {
 
   // Benchmark nested structure (1MB+ serialized)
   bench('safeDump - Deeply nested structure', () => {
-    const createNestedStructure = (depth: number): any => {
+    const createNestedStructure = (depth: number): Record<string, unknown> | unknown[] => {
       if (depth === 0) {
         return Array.from({ length: 100 }, (_, i) => ({ id: i, value: `data${i}` }));
       }
@@ -93,23 +93,17 @@ describe('Pre-allocation Optimizations', () => {
 
   // Verify linear scaling for objects (should not be O(n^2))
   bench('safeDump - Object scaling: 1K properties', () => {
-    const obj = Object.fromEntries(
-      Array.from({ length: 1000 }, (_, i) => [`key${i}`, i])
-    );
+    const obj = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`key${i}`, i]));
     safeDump(obj);
   });
 
   bench('safeDump - Object scaling: 5K properties', () => {
-    const obj = Object.fromEntries(
-      Array.from({ length: 5000 }, (_, i) => [`key${i}`, i])
-    );
+    const obj = Object.fromEntries(Array.from({ length: 5000 }, (_, i) => [`key${i}`, i]));
     safeDump(obj);
   });
 
   bench('safeDump - Object scaling: 10K properties', () => {
-    const obj = Object.fromEntries(
-      Array.from({ length: 10000 }, (_, i) => [`key${i}`, i])
-    );
+    const obj = Object.fromEntries(Array.from({ length: 10000 }, (_, i) => [`key${i}`, i]));
     safeDump(obj);
   });
 });

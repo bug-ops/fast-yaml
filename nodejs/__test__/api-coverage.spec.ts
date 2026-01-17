@@ -468,9 +468,9 @@ describe('API Coverage - Data Type Combinations', () => {
     });
 
     it('should handle special numeric values', () => {
-      expect(safeLoad('.inf') as any).toBe(Infinity);
-      expect(safeLoad('-.inf') as any).toBe(-Infinity);
-      expect(safeLoad('.nan') as any).toBeNaN();
+      expect(safeLoad('.inf') as number).toBe(Infinity);
+      expect(safeLoad('-.inf') as number).toBe(-Infinity);
+      expect(safeLoad('.nan') as number).toBeNaN();
       expect(safeLoad('0x10')).toBe(16);
       expect(safeLoad('0o10')).toBe(8);
     });
@@ -497,9 +497,9 @@ describe('API Coverage - Data Type Combinations', () => {
             age: 25
             active: false
       `;
-      const result = safeLoad(yaml);
+      const result = safeLoad(yaml) as Record<string, unknown[]>;
       expect(result).toHaveProperty('users');
-      expect((result as any).users).toHaveLength(2);
+      expect(result.users).toHaveLength(2);
     });
   });
 

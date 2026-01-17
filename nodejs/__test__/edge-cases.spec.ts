@@ -73,9 +73,9 @@ describe('Edge Cases - Parser', () => {
     });
 
     it('should handle control characters in strings', () => {
-      const result = safeLoad('control: "line1\\nline2\\ttab"');
-      expect((result as any).control).toContain('line1');
-      expect((result as any).control).toContain('line2');
+      const result = safeLoad('control: "line1\\nline2\\ttab"') as Record<string, string>;
+      expect(result.control).toContain('line1');
+      expect(result.control).toContain('line2');
     });
   });
 
@@ -129,13 +129,13 @@ level1:
     });
 
     it('should handle very small float', () => {
-      const result = safeLoad('num: -1.7976931348623157e+308');
-      expect((result as any).num).toBeCloseTo(-1.7976931348623157e308);
+      const result = safeLoad('num: -1.7976931348623157e+308') as Record<string, number>;
+      expect(result.num).toBeCloseTo(-1.7976931348623157e308);
     });
 
     it('should handle very large float', () => {
-      const result = safeLoad('num: 1.7976931348623157e+308');
-      expect((result as any).num).toBeCloseTo(1.7976931348623157e308);
+      const result = safeLoad('num: 1.7976931348623157e+308') as Record<string, number>;
+      expect(result.num).toBeCloseTo(1.7976931348623157e308);
     });
 
     it('should handle very small positive number', () => {
@@ -144,11 +144,11 @@ level1:
     });
 
     it('should handle zero in various forms', () => {
-      const result = safeLoad('a: 0\nb: 0.0\nc: -0\nd: +0');
-      expect((result as any).a).toBe(0);
-      expect((result as any).b).toBe(0);
-      expect((result as any).c).toBe(0);
-      expect((result as any).d).toBe(0);
+      const result = safeLoad('a: 0\nb: 0.0\nc: -0\nd: +0') as Record<string, number>;
+      expect(result.a).toBe(0);
+      expect(result.b).toBe(0);
+      expect(result.c).toBe(0);
+      expect(result.d).toBe(0);
     });
   });
 
@@ -197,8 +197,8 @@ level1:
 
     it('should handle extremely long value', () => {
       const longValue = 'v'.repeat(10000);
-      const result = safeLoad(`key: ${longValue}`);
-      expect((result as any).key).toBe(longValue);
+      const result = safeLoad(`key: ${longValue}`) as Record<string, string>;
+      expect(result.key).toBe(longValue);
     });
 
     it('should handle array with single item', () => {
@@ -304,7 +304,7 @@ level1:
       const yaml = `items:\n${items}`;
       const result = safeLoad(yaml);
       if (typeof result === 'object' && result !== null) {
-        expect((result as any).items.length).toBe(10000);
+        expect((result as Record<string, unknown[]>).items.length).toBe(10000);
       }
     });
   });
@@ -556,7 +556,7 @@ describe('Edge Cases - Emitter', () => {
     });
 
     it('should handle circular references gracefully', () => {
-      const circular: any = { a: 1 };
+      const circular: Record<string, unknown> = { a: 1 };
       circular.self = circular;
       const yaml = safeDump(circular);
       expect(yaml).toBeTruthy();
