@@ -219,8 +219,10 @@ Security-critical code areas requiring extra scrutiny:
 ### Current Protections
 
 **Memory Safety:**
-- Written in Rust with `unsafe_code = "forbid"` (zero unsafe blocks)
-- No manual memory management
+- Written in Rust with `unsafe_code = "deny"` (minimal unsafe limited to FFI boundaries)
+- All unsafe code explicitly documented with SAFETY comments
+- Core parsing and linting logic is 100% safe Rust
+- No manual memory management in safe code
 - Automatic bounds checking
 
 **Input Validation:**

@@ -25,6 +25,8 @@ fast-yaml-parallel.workspace = true
 pyo3 = { workspace = true, features = ["extension-module"] }
 saphyr.workspace = true
 ordered-float.workspace = true
+rayon.workspace = true
+num_cpus.workspace = true
 
 [dev-dependencies]
 criterion.workspace = true

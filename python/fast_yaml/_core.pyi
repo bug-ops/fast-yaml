@@ -157,6 +157,10 @@ def safe_dump(
     data: Any,
     allow_unicode: bool = True,
     sort_keys: bool = False,
+    indent: int = 2,
+    width: int = 80,
+    default_flow_style: bool | None = None,
+    explicit_start: bool = False,
 ) -> str:
     """Serialize a Python object to a YAML string.
 
@@ -164,6 +168,10 @@ def safe_dump(
         data: A Python object to serialize
         allow_unicode: If True, allow unicode in output (currently always enabled)
         sort_keys: If True, sort dictionary keys
+        indent: Number of spaces for indentation (default: 2)
+        width: Maximum line width (default: 80)
+        default_flow_style: Force flow style for collections (default: None)
+        explicit_start: Add explicit document start marker (default: False)
 
     Returns:
         A YAML string representation of the object
@@ -188,6 +196,46 @@ def safe_dump_all(documents: Any) -> str:
 
     Raises:
         TypeError: If any object cannot be serialized
+    """
+    ...
+
+def safe_dump_to(
+    data: Any,
+    stream: Any,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int = 2,
+    width: int = 80,
+    default_flow_style: bool | None = None,
+    explicit_start: bool = False,
+    chunk_size: int = 8192,
+) -> int:
+    """Dump YAML directly to a stream without intermediate string.
+
+    This function is memory-efficient for large documents as it streams
+    YAML output in chunks rather than building the entire string in memory.
+
+    Args:
+        data: Python object to serialize
+        stream: File-like object with write() method
+        allow_unicode: Allow unicode characters (default: True)
+        sort_keys: Sort dictionary keys (default: False)
+        indent: Number of spaces for indentation (default: 2)
+        width: Maximum line width (default: 80)
+        default_flow_style: Force flow style for collections (default: None)
+        explicit_start: Add explicit document start marker (default: False)
+        chunk_size: Size of write chunks in bytes (default: 8KB)
+
+    Returns:
+        Number of bytes written
+
+    Raises:
+        TypeError: If object cannot be serialized or stream invalid
+        IOError: If write fails
+
+    Example:
+        >>> with open('output.yaml', 'w') as f:
+        ...     bytes_written = fast_yaml.safe_dump_to({'key': 'value'}, f)
     """
     ...
 
@@ -432,12 +480,14 @@ class parallel:  # noqa: N801
             max_chunk_size: int = 10 * 1024 * 1024,
             max_input_size: int = 100 * 1024 * 1024,
             max_documents: int = 100_000,
+            auto_tune: bool = True,
         ) -> None: ...
         def with_thread_count(self, count: int | None) -> "parallel.ParallelConfig": ...
         def with_max_input_size(self, size: int) -> "parallel.ParallelConfig": ...
         def with_max_documents(self, count: int) -> "parallel.ParallelConfig": ...
         def with_min_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
         def with_max_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
+        def with_auto_tune(self, auto_tune: bool) -> "parallel.ParallelConfig": ...
         def __repr__(self) -> str: ...
 
     @staticmethod
@@ -453,5 +503,42 @@ class parallel:  # noqa: N801
 
         Raises:
             ValueError: If parsing fails or limits exceeded
+        """
+        ...
+
+    @staticmethod
+    def dump_parallel(
+        documents: Any,
+        config: "parallel.ParallelConfig | None" = None,
+        allow_unicode: bool = True,
+        sort_keys: bool = False,
+        indent: int = 2,
+        width: int = 80,
+        default_flow_style: bool | None = None,
+        explicit_start: bool = False,
+    ) -> str:
+        """Dump multiple YAML documents in parallel.
+
+        Args:
+            documents: List or iterable of Python objects to serialize
+            config: Optional parallel processing configuration
+            allow_unicode: Allow unicode characters (default: True)
+            sort_keys: If True, sort dictionary keys (default: False)
+            indent: Number of spaces for indentation (default: 2)
+            width: Maximum line width (default: 80)
+            default_flow_style: Force flow style for collections (default: None)
+            explicit_start: Add explicit document start marker (default: False)
+
+        Returns:
+            A YAML string with multiple documents separated by '---'
+
+        Raises:
+            TypeError: If any object cannot be serialized
+            ValueError: If document count exceeds 100,000
+
+        Example:
+            >>> import fast_yaml
+            >>> docs = [{'a': i} for i in range(1000)]
+            >>> yaml_str = fast_yaml.parallel.dump_parallel(docs)
         """
         ...

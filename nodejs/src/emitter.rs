@@ -103,7 +103,9 @@ pub fn safe_dump(
         .with_default_flow_style(opts.default_flow_style)
         .with_explicit_start(opts.explicit_start.unwrap_or(false));
 
-    // Serialize to string using EmitterConfig
+    // Serialize to string using EmitterConfig.
+    // Note: fast_yaml_core::Emitter already estimates output size and pre-allocates
+    // the output String buffer to minimize allocations during YAML emission.
     let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config)
         .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
 
@@ -149,7 +151,8 @@ pub fn safe_dump_all(
 ) -> NapiResult<String> {
     let opts = options.unwrap_or_default();
 
-    // Convert all JavaScript objects to YAML first
+    // Pre-allocate Vec for converted documents to avoid reallocation.
+    // For multi-document YAML files, this prevents Vec capacity doubling.
     let mut yamls = Vec::with_capacity(documents.len());
     for doc in documents {
         let mut yaml = js_to_yaml(&env, doc)?;

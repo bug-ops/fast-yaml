@@ -101,7 +101,7 @@ fy lint --exclude "tests/**" . # Lint all except tests
 - **Batch Processing** — Multi-file operations with parallel workers, glob patterns, .gitignore support
 - **Linting** — Rich diagnostics with line/column tracking
 - **Parallel** — Multi-threaded processing for large files
-- **Safe** — Zero `unsafe` code, memory-safe Rust
+- **Safe** — Memory-safe Rust with minimal `unsafe` (FFI boundaries only, explicitly documented)
 
 <details>
 <summary><b>Feature details</b></summary>

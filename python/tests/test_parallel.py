@@ -407,3 +407,206 @@ just a string
         assert result[0] == ["item1", "item2"]
         assert result[1] == {"key": "value"}
         assert result[2] == "just a string"
+
+
+class TestDumpParallel:
+    """Tests for dump_parallel function."""
+
+    def test_dump_single_document(self):
+        """Test dumping a single document."""
+        docs = [{"key": "value"}]
+        result = parallel.dump_parallel(docs)
+        assert isinstance(result, str)
+        assert "key: value" in result
+
+    def test_dump_multiple_documents(self):
+        """Test dumping multiple documents."""
+        docs = [{"doc": 1}, {"doc": 2}, {"doc": 3}]
+        result = parallel.dump_parallel(docs)
+        assert isinstance(result, str)
+        assert result.count("---") >= 2
+        assert "doc: 1" in result
+        assert "doc: 2" in result
+        assert "doc: 3" in result
+
+    def test_dump_empty_list(self):
+        """Test dumping empty list."""
+        result = parallel.dump_parallel([])
+        assert isinstance(result, str)
+        assert result.strip() == ""
+
+    def test_dump_with_config(self):
+        """Test dumping with custom config."""
+        config = parallel.ParallelConfig(thread_count=2)
+        docs = [{"a": 1}, {"b": 2}]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+        assert "a: 1" in result
+        assert "b: 2" in result
+
+    def test_dump_with_sort_keys(self):
+        """Test dumping with sorted keys."""
+        docs = [{"z": 1, "a": 2, "m": 3}]
+        result = parallel.dump_parallel(docs, sort_keys=True)
+        lines = [line.strip() for line in result.split("\n") if line.strip()]
+        key_lines = [line for line in lines if ":" in line and not line.startswith("---")]
+        assert key_lines[0].startswith("a:")
+        assert key_lines[2].startswith("z:")
+
+    def test_dump_various_document_counts(self):
+        """Test dumping various document counts."""
+        for count in [1, 10, 100, 1000]:
+            docs = [{"id": i} for i in range(count)]
+            result = parallel.dump_parallel(docs)
+            assert isinstance(result, str)
+            assert result.count("id:") == count
+
+    def test_dump_complex_documents(self):
+        """Test dumping complex documents."""
+        docs = [
+            {
+                "name": "doc1",
+                "nested": {"key": "value", "list": ["item1", "item2"]},
+            },
+            {"name": "doc2", "data": ["a", "b", "c"]},
+        ]
+        result = parallel.dump_parallel(docs)
+        assert "name: doc1" in result
+        assert "item1" in result
+        assert "data:" in result
+
+    def test_dump_with_auto_tune_disabled(self):
+        """Test dumping with auto_tune disabled."""
+        config = parallel.ParallelConfig(thread_count=1, auto_tune=False)
+        docs = [{"id": i} for i in range(10)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+        assert result.count("id:") == 10
+
+    def test_dump_with_auto_tune_enabled(self):
+        """Test dumping with auto_tune enabled (default)."""
+        config = parallel.ParallelConfig(auto_tune=True)
+        docs = [{"id": i} for i in range(100)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+        assert result.count("id:") == 100
+
+    def test_dump_preserves_order(self):
+        """Test that document order is preserved."""
+        docs = [{"id": i, "value": f"test_{i}"} for i in range(50)]
+        result = parallel.dump_parallel(docs)
+        result_docs = result.split("---\n")
+        doc_index = 0
+        for doc_str in result_docs:
+            if doc_str.strip() and "id:" in doc_str:
+                assert f"id: {doc_index}" in doc_str
+                doc_index += 1
+
+    def test_dump_unicode_content(self):
+        """Test dumping unicode content."""
+        docs = [
+            {"chinese": "\u4e2d\u6587", "emoji": "\U0001f600"},
+            {"russian": "\u041f\u0440\u0438\u0432\u0435\u0442"},
+        ]
+        result = parallel.dump_parallel(docs)
+        assert "\u4e2d\u6587" in result or "chinese:" in result
+
+    def test_dump_various_types(self):
+        """Test dumping various YAML types."""
+        docs = [
+            {
+                "string": "hello",
+                "number": 42,
+                "float": 3.14,
+                "boolean": True,
+                "null_value": None,
+                "list": [1, 2, 3],
+            }
+        ]
+        result = parallel.dump_parallel(docs)
+        assert "string: hello" in result
+        assert "number: 42" in result
+        assert "boolean: true" in result
+
+    def test_dump_max_documents_limit(self):
+        """Test that max_documents limit is enforced (100,000 hardcoded limit)."""
+        docs = [{"id": i} for i in range(100001)]
+        with pytest.raises((ValueError, Exception)):
+            parallel.dump_parallel(docs)
+
+    def test_dump_within_document_limit(self):
+        """Test dumping within document limit."""
+        config = parallel.ParallelConfig(max_documents=100)
+        docs = [{"id": i} for i in range(50)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+
+    def test_dump_with_explicit_start(self):
+        """Test dumping with explicit start markers."""
+        docs = [{"id": i} for i in range(3)]
+        result = parallel.dump_parallel(docs, explicit_start=True)
+        assert isinstance(result, str)
+        assert result.count("---") >= 3
+
+    def test_dump_with_custom_formatting(self):
+        """Test dumping with custom formatting options."""
+        docs = [{"nested": {"key": "value"}}]
+        result = parallel.dump_parallel(docs, indent=4, width=120)
+        assert isinstance(result, str)
+
+    def test_dump_large_number_of_small_documents(self):
+        """Test dumping many small documents."""
+        docs = [{"id": i, "value": f"test_{i}"} for i in range(1000)]
+        result = parallel.dump_parallel(docs)
+        assert isinstance(result, str)
+        assert result.count("id:") == 1000
+
+    def test_dump_small_number_of_large_documents(self):
+        """Test dumping few large documents."""
+        docs = [{"data": list(range(1000)), "nested": {"key": "value"}} for _ in range(5)]
+        result = parallel.dump_parallel(docs)
+        assert isinstance(result, str)
+
+    def test_dump_with_builder_pattern(self):
+        """Test dumping with config builder pattern."""
+        config = (
+            parallel.ParallelConfig()
+            .with_thread_count(4)
+            .with_max_documents(200)
+            .with_auto_tune(False)
+        )
+        docs = [{"id": i} for i in range(50)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+
+
+class TestAutoTune:
+    """Tests for auto_tune functionality."""
+
+    def test_auto_tune_small_workload(self):
+        """Test auto_tune with small workload (should use 1 thread)."""
+        config = parallel.ParallelConfig(auto_tune=True)
+        docs = [{"id": i} for i in range(2)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+
+    def test_auto_tune_medium_workload(self):
+        """Test auto_tune with medium workload."""
+        config = parallel.ParallelConfig(auto_tune=True)
+        docs = [{"id": i} for i in range(50)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+
+    def test_auto_tune_large_workload(self):
+        """Test auto_tune with large workload."""
+        config = parallel.ParallelConfig(auto_tune=True)
+        docs = [{"id": i, "data": list(range(100))} for i in range(500)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
+
+    def test_manual_thread_count_overrides_auto_tune(self):
+        """Test that explicit thread_count works with auto_tune enabled."""
+        config = parallel.ParallelConfig(thread_count=2, auto_tune=True)
+        docs = [{"id": i} for i in range(100)]
+        result = parallel.dump_parallel(docs, config)
+        assert isinstance(result, str)
