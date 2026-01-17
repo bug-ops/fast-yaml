@@ -255,7 +255,7 @@ bar: 2';
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function parseParallelAsync(yamlStr: string, config?: ParallelConfig | undefined | null): Promise<Array<unknown>>
+export declare function parseParallelAsync(yamlStr: string, config?: ParallelConfig | undefined | null): Promise<unknown>
 
 /**
  * Serialize a JavaScript object to a YAML string.
