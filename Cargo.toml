@@ -35,6 +35,7 @@ fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.3.3" }
 
 # External dependencies
 anyhow = "1"
+bumpalo = { version = "3.19", features = ["collections"] }
 memchr = "2.7"
 assert_cmd = "2.1"
 clap = { version = "4.5", features = ["derive", "cargo", "env", "wrap_help"] }

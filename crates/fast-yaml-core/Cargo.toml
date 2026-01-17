@@ -13,8 +13,10 @@ categories = ["parsing", "encoding"]
 [features]
 default = []
 streaming = []
+arena = ["bumpalo"]
 
 [dependencies]
+bumpalo = { workspace = true, optional = true }
 memchr.workspace = true
 ordered-float.workspace = true
 saphyr.workspace = true
@@ -22,7 +24,13 @@ saphyr-parser.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 indoc.workspace = true
+
+[[bench]]
+name = "arena_benchmark"
+harness = false
+required-features = ["streaming"]
 
 [lints]
 workspace = true

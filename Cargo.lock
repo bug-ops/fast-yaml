@@ -409,6 +409,8 @@ dependencies = [
 name = "fast-yaml-core"
 version = "0.3.3"
 dependencies = [
+ "bumpalo",
+ "criterion",
  "indoc",
  "memchr",
  "ordered-float",

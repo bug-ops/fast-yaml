@@ -428,7 +428,15 @@ impl Emitter {
         #[cfg(feature = "streaming")]
         {
             if crate::streaming::is_streaming_suitable(input) {
-                return crate::streaming::format_streaming(input, config);
+                // Prefer arena allocation when available
+                #[cfg(feature = "arena")]
+                {
+                    return crate::streaming::format_streaming_arena(input, config);
+                }
+                #[cfg(not(feature = "arena"))]
+                {
+                    return crate::streaming::format_streaming(input, config);
+                }
             }
         }
 
