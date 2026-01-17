@@ -16,25 +16,35 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["derive", "cargo", "env", "wrap_help"] }
 colored = { workspace = true, optional = true }
 fast-yaml-core = { workspace = true, features = ["streaming"] }
 fast-yaml-linter = { workspace = true, optional = true, features = ["json-output"] }
+glob.workspace = true
+globset.workspace = true
+ignore.workspace = true
 is-terminal = { workspace = true, optional = true }
 ordered-float.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 assert_cmd.workspace = true
+criterion.workspace = true
 indoc.workspace = true
 predicates.workspace = true
 tempfile.workspace = true
 
 [features]
-default = ["colors", "linter"]
+default = ["colors", "linter", "arena"]
 colors = ["dep:colored", "dep:is-terminal"]
 linter = ["dep:fast-yaml-linter"]
-all = ["colors", "linter"]
+arena = ["fast-yaml-core/arena"]
+all = ["colors", "linter", "arena"]
+
+[[bench]]
+name = "discovery_bench"
+harness = false
 
 [lints]
 workspace = true

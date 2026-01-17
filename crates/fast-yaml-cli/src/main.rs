@@ -33,6 +33,7 @@
 use anyhow::Result;
 use clap::Parser;
 
+mod batch;
 mod cli;
 mod commands;
 mod error;
