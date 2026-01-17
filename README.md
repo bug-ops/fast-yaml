@@ -138,7 +138,7 @@ docs = parse_parallel(multi_doc_yaml, config)
 > [!NOTE]
 > Two separate benchmark suites: **Python API** (single-file parsing vs PyYAML) and **CLI Batch Mode** (multi-file processing vs yamlfmt).
 
-### Python API vs PyYAML (Apple M3 Pro, 12 cores)
+### Python API vs PyYAML
 
 > [!NOTE]
 > Process startup overhead (~15ms) affects small file benchmarks. For in-process repeated parsing, speedups are higher.
@@ -166,7 +166,7 @@ docs = parse_parallel(multi_doc_yaml, config)
 
 Full benchmarks: [benches/comparison](benches/comparison/)
 
-### CLI Single-File vs yamlfmt (Apple M3 Pro, 12 cores)
+### CLI Single-File vs yamlfmt
 
 | File Size | fast-yaml | yamlfmt | Result |
 |-----------|-----------|---------|--------|
@@ -174,7 +174,7 @@ Full benchmarks: [benches/comparison](benches/comparison/)
 | Medium (45 KB) | **2.5 ms** | 2.9 ms | **1.19x faster** ✓ |
 | Large (460 KB) | 8.4 ms | **2.9 ms** | yamlfmt 2.88x faster |
 
-### CLI Batch Mode vs yamlfmt (Apple M3 Pro, 12 cores)
+### CLI Batch Mode vs yamlfmt
 
 > [!TIP]
 > Batch mode is where fast-yaml excels with parallel processing. Use `-j` to specify worker count.
