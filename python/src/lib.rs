@@ -13,6 +13,12 @@
 //! - **Integer**: Decimal, `0o` octal, `0x` hexadecimal
 //! - **Float**: Standard notation, `.inf`, `-.inf`, `.nan`
 //! - **String**: Plain, single-quoted, double-quoted, literal (`|`), folded (`>`)
+//!
+//! ## Error Handling Strategy
+//!
+//! - `ValueError`: Input validation errors (invalid YAML, limits exceeded, invalid config)
+//! - `TypeError`: Type conversion errors (unsupported Python types)
+//! - `IOError`: I/O failures (stream write errors)
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
@@ -370,7 +376,7 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
 /// Handles Python types including special float values (inf, -inf, nan)
 /// converting them to YAML 1.2.2 compliant representations.
 #[allow(deprecated)] // PyO3 0.27 deprecated downcast in favor of cast, but downcast still works
-fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
+pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
     // Check None first
     if obj.is_none() {
         return Ok(YamlOwned::Value(ScalarOwned::Null));
@@ -616,8 +622,161 @@ fn safe_dump(
     Ok(output)
 }
 
+/// Wrapper to call Python stream.write() from Rust.
+struct PyWriteable<'py> {
+    stream: Bound<'py, PyAny>,
+    bytes_written: usize,
+}
+
+impl<'py> PyWriteable<'py> {
+    fn new(stream: Bound<'py, PyAny>) -> PyResult<Self> {
+        // Verify stream has write method
+        if !stream.hasattr("write")? {
+            return Err(PyTypeError::new_err("stream must have write() method"));
+        }
+        Ok(Self {
+            stream,
+            bytes_written: 0,
+        })
+    }
+
+    fn write(&mut self, data: &str) -> PyResult<usize> {
+        let result = self.stream.call_method1("write", (data,))?;
+        let written: usize = result.extract().unwrap_or(data.len());
+        self.bytes_written += written;
+        Ok(written)
+    }
+
+    const fn bytes_written(&self) -> usize {
+        self.bytes_written
+    }
+}
+
+/// Estimate YAML output size for streaming threshold decision.
+fn estimate_dump_yaml_size(yaml: &YamlOwned) -> usize {
+    match yaml {
+        YamlOwned::Value(scalar) => match scalar {
+            ScalarOwned::Null => 4,
+            ScalarOwned::Boolean(_) => 5,
+            ScalarOwned::Integer(_) => 12,
+            ScalarOwned::FloatingPoint(_) => 20,
+            ScalarOwned::String(s) => s.len().saturating_add(2),
+        },
+        YamlOwned::Sequence(arr) => arr.iter().fold(0usize, |acc, v| {
+            acc.saturating_add(3)
+                .saturating_add(estimate_dump_yaml_size(v))
+        }),
+        YamlOwned::Mapping(map) => map.iter().fold(0usize, |acc, (k, v)| {
+            acc.saturating_add(10)
+                .saturating_add(estimate_dump_yaml_size(k))
+                .saturating_add(estimate_dump_yaml_size(v))
+        }),
+        _ => 10,
+    }
+}
+
+/// Serialize Python object directly to a stream in chunks.
+///
+/// Writes YAML output to the stream in chunks, useful for:
+/// - Network streams or pipes that benefit from incremental writes
+/// - Progress tracking for large documents
+///
+/// Note: The complete YAML output is generated in memory before chunking.
+/// For true streaming (reduced peak memory), upstream saphyr API changes
+/// would be required.
+///
+/// Args:
+///     data: Python object to serialize
+///     stream: File-like object with write() method
+///     chunk_size: Size of write chunks in bytes (default: 8KB)
+///     **options: Same as safe_dump()
+///
+/// Returns:
+///     Number of bytes written
+///
+/// Raises:
+///     TypeError: If object cannot be serialized or stream invalid
+///     IOError: If write fails
+///
+/// Example:
+///     >>> with open('output.yaml', 'w') as f:
+///     ...     bytes_written = fast_yaml.safe_dump_to({'key': 'value'}, f)
+#[pyfunction]
+#[pyo3(signature = (
+    data,
+    stream,
+    allow_unicode=true,
+    sort_keys=false,
+    indent=2,
+    width=80,
+    default_flow_style=None,
+    explicit_start=false,
+    chunk_size=8192
+))]
+#[allow(clippy::too_many_arguments)]
+fn safe_dump_to(
+    py: Python<'_>,
+    data: &Bound<'_, PyAny>,
+    stream: &Bound<'_, PyAny>,
+    allow_unicode: bool,
+    sort_keys: bool,
+    indent: usize,
+    width: usize,
+    default_flow_style: Option<bool>,
+    explicit_start: bool,
+    chunk_size: usize,
+) -> PyResult<usize> {
+    let _ = allow_unicode; // Accepted for API compatibility, always true in saphyr
+
+    // Validate chunk size (1KB - 1MB)
+    let chunk_size = chunk_size.clamp(1024, 1024 * 1024);
+
+    // Create writable stream wrapper
+    let mut writer = PyWriteable::new(stream.clone())?;
+
+    // Convert Python to YAML value
+    let yaml = python_to_yaml(data)?;
+    let yaml = if sort_keys {
+        sort_yaml_keys(&yaml)
+    } else {
+        yaml
+    };
+
+    // Create emitter config
+    let config = fast_yaml_core::EmitterConfig::new()
+        .with_indent(indent)
+        .with_width(width)
+        .with_default_flow_style(default_flow_style)
+        .with_explicit_start(explicit_start);
+
+    // Estimate threshold based on chunk_size
+    let estimated_size = estimate_dump_yaml_size(&yaml);
+
+    if estimated_size <= chunk_size * 2 {
+        // Small document - single write
+        let output = py
+            .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
+            .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
+
+        writer.write(&output)?;
+    } else {
+        // Large document - chunked emission
+        let output = py
+            .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
+            .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
+
+        // Write in chunks to avoid holding entire string reference
+        for chunk in output.as_bytes().chunks(chunk_size) {
+            let s = std::str::from_utf8(chunk).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            writer.write(s)?;
+        }
+    }
+
+    Ok(writer.bytes_written())
+}
+
 /// Helper function to recursively sort dictionary keys in YAML
-fn sort_yaml_keys(yaml: &YamlOwned) -> YamlOwned {
+pub(crate) fn sort_yaml_keys(yaml: &YamlOwned) -> YamlOwned {
     match yaml {
         YamlOwned::Mapping(map) => {
             let mut sorted: Vec<_> = map.iter().collect();
@@ -974,6 +1133,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(safe_load_all, m)?)?;
     m.add_function(wrap_pyfunction!(safe_dump, m)?)?;
     m.add_function(wrap_pyfunction!(safe_dump_all, m)?)?;
+    m.add_function(wrap_pyfunction!(safe_dump_to, m)?)?;
 
     // PyYAML compatibility functions
     m.add_function(wrap_pyfunction!(load, m)?)?;

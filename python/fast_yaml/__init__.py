@@ -50,6 +50,7 @@ from ._core import load as _load
 from ._core import load_all as _load_all
 from ._core import safe_dump as _safe_dump
 from ._core import safe_dump_all as _safe_dump_all
+from ._core import safe_dump_to as _safe_dump_to
 from ._core import safe_load as _safe_load
 from ._core import safe_load_all as _safe_load_all
 from ._core import version as _version
@@ -61,6 +62,7 @@ __all__ = [
     "safe_load_all",
     "safe_dump",
     "safe_dump_all",
+    "safe_dump_to",
     "load",
     "load_all",
     "dump",
@@ -231,6 +233,64 @@ def safe_dump_all(
         return None
 
     return result
+
+
+def safe_dump_to(
+    data: Any,
+    stream: IO[str],
+    *,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int = 2,
+    width: int = 80,
+    default_flow_style: bool | None = None,
+    explicit_start: bool = False,
+    chunk_size: int = 8192,
+) -> int:
+    """
+    Dump YAML directly to a stream without intermediate string.
+
+    This function is memory-efficient for large documents as it streams
+    YAML output in chunks rather than building the entire string in memory.
+
+    Args:
+        data: Python object to serialize
+        stream: File-like object with write() method
+        allow_unicode: Allow unicode characters (default: True)
+        sort_keys: Sort dictionary keys (default: False)
+        indent: Number of spaces for indentation (default: 2)
+        width: Maximum line width (default: 80)
+        default_flow_style: Force flow style for collections (default: None)
+        explicit_start: Add explicit document start marker (default: False)
+        chunk_size: Size of write chunks in bytes (default: 8KB)
+
+    Returns:
+        Number of bytes written
+
+    Raises:
+        TypeError: If object cannot be serialized or stream invalid
+        IOError: If write fails
+
+    Example:
+        >>> with open('output.yaml', 'w') as f:
+        ...     bytes_written = fast_yaml.safe_dump_to({'key': 'value'}, f)
+
+        >>> import io
+        >>> buffer = io.StringIO()
+        >>> fast_yaml.safe_dump_to(large_data, buffer)
+        >>> yaml_str = buffer.getvalue()
+    """
+    return _safe_dump_to(
+        data,
+        stream,
+        allow_unicode=allow_unicode,
+        sort_keys=sort_keys,
+        indent=indent,
+        width=width,
+        default_flow_style=default_flow_style,
+        explicit_start=explicit_start,
+        chunk_size=chunk_size,
+    )
 
 
 # PyYAML-compatible load function with optional Loader

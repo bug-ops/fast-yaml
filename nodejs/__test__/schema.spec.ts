@@ -192,33 +192,33 @@ d: NULL
 
   describe('schema with special float values', () => {
     it('should parse .inf as Infinity', () => {
-      const result = load('val: .inf', { schema: Schema.SafeSchema });
-      expect((result as any).val).toBe(Infinity);
+      const result = load('val: .inf', { schema: Schema.SafeSchema }) as Record<string, number>;
+      expect(result.val).toBe(Infinity);
     });
 
     it('should parse -.inf as -Infinity', () => {
-      const result = load('val: -.inf', { schema: Schema.SafeSchema });
-      expect((result as any).val).toBe(-Infinity);
+      const result = load('val: -.inf', { schema: Schema.SafeSchema }) as Record<string, number>;
+      expect(result.val).toBe(-Infinity);
     });
 
     it('should parse .nan as NaN', () => {
-      const result = load('val: .nan', { schema: Schema.SafeSchema });
-      expect((result as any).val).toBeNaN();
+      const result = load('val: .nan', { schema: Schema.SafeSchema }) as Record<string, number>;
+      expect(result.val).toBeNaN();
     });
 
     it('should parse .Inf (capitalized) as Infinity', () => {
-      const result = load('val: .Inf', { schema: Schema.SafeSchema });
-      expect((result as any).val).toBe(Infinity);
+      const result = load('val: .Inf', { schema: Schema.SafeSchema }) as Record<string, number>;
+      expect(result.val).toBe(Infinity);
     });
 
     it('should parse .INF (uppercase) as Infinity', () => {
-      const result = load('val: .INF', { schema: Schema.SafeSchema });
-      expect((result as any).val).toBe(Infinity);
+      const result = load('val: .INF', { schema: Schema.SafeSchema }) as Record<string, number>;
+      expect(result.val).toBe(Infinity);
     });
 
     it('should parse .NaN (capitalized) as NaN', () => {
-      const result = load('val: .NaN', { schema: Schema.SafeSchema });
-      expect((result as any).val).toBeNaN();
+      const result = load('val: .NaN', { schema: Schema.SafeSchema }) as Record<string, number>;
+      expect(result.val).toBeNaN();
     });
   });
 
@@ -390,9 +390,9 @@ folded: >
   This is a
   folded block
 `;
-      const result = load(yaml, { schema: Schema.SafeSchema });
-      expect((result as any).literal).toContain('This is a\nliteral block');
-      expect((result as any).folded).toContain('This is a folded block');
+      const result = load(yaml, { schema: Schema.SafeSchema }) as Record<string, string>;
+      expect(result.literal).toContain('This is a\nliteral block');
+      expect(result.folded).toContain('This is a folded block');
     });
   });
 

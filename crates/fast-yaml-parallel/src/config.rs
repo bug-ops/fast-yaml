@@ -198,13 +198,25 @@ impl ParallelConfig {
         count.min(MAX_THREADS)
     }
 
+    /// Returns thread count setting.
+    ///
+    /// - `None`: Auto-detect (use CPU count, capped at 128)
+    /// - `Some(0)`: Sequential processing
+    /// - `Some(n)`: Use exactly `n` threads (capped at 128)
+    #[must_use]
+    pub const fn thread_count(&self) -> Option<usize> {
+        self.thread_count
+    }
+
     /// Returns maximum input size limit.
-    pub(crate) const fn max_input_size(&self) -> usize {
+    #[must_use]
+    pub const fn max_input_size(&self) -> usize {
         self.max_input_size
     }
 
     /// Returns maximum document count limit.
-    pub(crate) const fn max_documents(&self) -> usize {
+    #[must_use]
+    pub const fn max_documents(&self) -> usize {
         self.max_documents
     }
 }

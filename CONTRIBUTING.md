@@ -150,7 +150,7 @@ cargo clippy --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-n
 
 The project uses workspace-level lint configuration in root `Cargo.toml`:
 
-- `unsafe_code = "forbid"` - No unsafe code allowed
+- `unsafe_code = "deny"` - Unsafe code denied by default, must be explicitly allowed with `#[allow(unsafe_code)]` and SAFETY documentation
 - `missing_docs = "warn"` - Public items should be documented
 - Clippy: `all`, `pedantic`, `nursery`, `cargo` warnings enabled
 
@@ -465,7 +465,7 @@ cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 ### Core Principles
 
 - **Performance First**: Optimize for speed and memory efficiency
-- **Zero Unsafe Code**: `unsafe_code = "forbid"` in workspace lints
+- **Minimal Unsafe Code**: `unsafe_code = "deny"` with explicit documentation for FFI boundaries
 - **Comprehensive Testing**: Maintain ≥60% overall coverage
 - **Clear Documentation**: Document all public APIs
 - **Security by Default**: All dependencies audited

@@ -38,7 +38,7 @@ cargo llvm-cov nextest --workspace --html
 
 **Error handling**: Use `thiserror` in library crates, `anyhow` in bindings.
 
-**Unsafe code is forbidden**: `#![forbid(unsafe_code)]` in all crates. The workspace enforces this via `[workspace.lints.rust]`.
+**Unsafe code is denied by default**: `unsafe_code = "deny"` in workspace lints. Use `#[allow(unsafe_code)]` only for FFI boundaries (NAPI-RS, memory-mapping) with mandatory SAFETY documentation.
 
 **YAML 1.2.2 compliance**: Unlike PyYAML (1.1), `yes/no/on/off` are strings, not booleans. Octal requires `0o` prefix.
 
@@ -118,8 +118,9 @@ cargo llvm-cov nextest --workspace --html
   - `clippy::unnecessary_wraps` — remove `Result` if error path is impossible
 
 **Memory safety:**
-- No `unsafe` code blocks (forbidden by workspace lints)
-- If FFI requires unsafe (PyO3, NAPI-RS), ensure proper encapsulation
+- Minimize `unsafe` code (denied by default in workspace lints)
+- FFI requires unsafe (NAPI-RS, memory-mapping) - ensure proper encapsulation and SAFETY comments
+- All unsafe code must have `#[allow(unsafe_code)]` and SAFETY documentation
 - Verify bounds checking on slice operations
 - Check for potential panics (`unwrap`, `expect`, indexing)
 
@@ -389,7 +390,7 @@ Closes #67
 ### Automatic Check Priorities
 
 **High priority (always flag):**
-1. **Unsafe code**: Flag any `unsafe` blocks (forbidden by workspace lints)
+1. **Unsafe code**: Flag any `unsafe` blocks without `#[allow(unsafe_code)]` and SAFETY documentation (denied by workspace lints)
 2. **Unwrap/expect in library code**: Suggest `?` operator or `match`
 3. **Missing error documentation**: Public functions returning `Result` need `# Errors` section
 4. **Missing tests**: New functions without corresponding tests

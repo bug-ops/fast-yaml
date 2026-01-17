@@ -9,7 +9,8 @@ applyTo:
 ## General Rules
 - Use `thiserror` for error types in library crates
 - Use `anyhow` with context in bindings
-- No `unsafe` code - workspace forbids it via `#![forbid(unsafe_code)]`
+- Minimize `unsafe` code - workspace denies it by default via `unsafe_code = "deny"`
+- Use `#[allow(unsafe_code)]` only for FFI boundaries with mandatory SAFETY comments
 - No `unwrap()` or `expect()` in library code - use `?` operator
 - All public items must have documentation with examples
 

@@ -147,7 +147,7 @@ describe('Module Integration', () => {
       { name: 'object', value: { o: { nested: 'value' } } },
     ];
 
-    testCases.forEach(({ name, value }) => {
+    testCases.forEach(({ value }) => {
       const yaml = fastYaml.safeDump(value);
       const parsed = fastYaml.safeLoad(yaml);
       expect(parsed).toEqual(value);
@@ -221,7 +221,7 @@ describe('Module Performance Characteristics', () => {
   });
 
   it('should handle deeply nested structures', () => {
-    let deep: any = { value: 'end' };
+    let deep: Record<string, unknown> = { value: 'end' };
     for (let i = 0; i < 20; i++) {
       deep = { level: deep };
     }

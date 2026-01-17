@@ -397,8 +397,10 @@ dependencies = [
  "fast-yaml-core",
  "fast-yaml-linter",
  "fast-yaml-parallel",
+ "num_cpus",
  "ordered-float",
  "pyo3",
+ "rayon",
  "saphyr",
 ]
 

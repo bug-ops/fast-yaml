@@ -38,6 +38,10 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &YamlOwned) -> NapiResult<Unknown<
             let arr_len = u32::try_from(arr.len()).map_err(|_| {
                 napi::Error::from_reason("array too large for JavaScript (max 2^32 elements)")
             })?;
+
+            // Pre-allocate JavaScript array with known capacity to avoid reallocation.
+            // NAPI-RS env.create_array(len) hints to V8 the final array size, enabling
+            // efficient memory allocation and reducing overhead for large arrays.
             let mut js_array = env.create_array(arr_len)?;
             for (i, item) in arr.iter().enumerate() {
                 let js_value = yaml_to_js(env, item)?;
@@ -149,6 +153,10 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
             // Check if it's an array
             if js_obj.is_array()? {
                 let len: u32 = js_obj.get_array_length()?;
+
+                // Pre-allocate Vec with known capacity to avoid O(n) reallocation overhead.
+                // For large arrays (10K+ elements), this prevents multiple capacity doublings
+                // and associated memory copies, reducing conversion time significantly.
                 let mut arr = Vec::with_capacity(len as usize);
 
                 for i in 0..len {
@@ -163,6 +171,9 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
             let property_names = js_obj.get_property_names()?;
             let len = property_names.get_array_length()?;
 
+            // Pre-allocate MappingOwned with known property count to avoid rehashing.
+            // For large objects (1K+ properties), this reduces HashMap resize operations
+            // from O(n log n) to O(1), improving conversion performance.
             let mut map = MappingOwned::with_capacity(len as usize);
 
             for i in 0..len {
