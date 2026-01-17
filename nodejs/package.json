@@ -1,6 +1,6 @@
 {
   "name": "fastyaml-rs",
-  "version": "0.3.3",
+  "version": "0.4.0",
   "description": "Fast YAML 1.2.2 parser, linter, and parallel processor for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
