@@ -10,7 +10,7 @@
 
 **High-performance YAML 1.2.2 parser for Python and Node.js, powered by Rust.**
 
-Drop-in replacement for PyYAML and js-yaml with **5-10x faster** parsing. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
+Drop-in replacement for PyYAML and js-yaml. Matches or beats PyYAML C performance on small/medium files, **2-4x faster** than pure Python. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
 
 > [!IMPORTANT]
 > **YAML 1.2.2 Compliance** — Unlike PyYAML (YAML 1.1), `fast-yaml` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans.
@@ -95,7 +95,7 @@ fy lint --exclude "tests/**" . # Lint all except tests
 
 ## Features
 
-- **5-10x Faster** — Rust-powered parsing outperforms PyYAML
+- **High Performance** — Matches PyYAML C on small/medium files, 2-4x faster than pure Python
 - **YAML 1.2.2** — Full Core Schema compliance
 - **Drop-in API** — Compatible with PyYAML/js-yaml
 - **Batch Processing** — Multi-file operations with parallel workers, glob patterns, .gitignore support
@@ -135,13 +135,36 @@ docs = parse_parallel(multi_doc_yaml, config)
 <details>
 <summary><b>Benchmark results</b></summary>
 
-### Python API vs PyYAML (Apple M2)
+> [!NOTE]
+> Two separate benchmark suites: **Python API** (single-file parsing vs PyYAML) and **CLI Batch Mode** (multi-file processing vs yamlfmt).
 
-| File Size | PyYAML (pure) | PyYAML + libyaml | fast-yaml | Speedup |
-|-----------|---------------|------------------|-----------|---------|
-| Small (30B) | 50 μs | 10 μs | 5 μs | **10x / 2x** |
-| Medium (2KB) | 2 ms | 400 μs | 150 μs | **13x / 2.7x** |
-| Large (500KB) | 500 ms | 100 ms | 35 ms | **14x / 2.9x** |
+### Python API vs PyYAML (Apple M3 Pro, 12 cores)
+
+> [!NOTE]
+> Process startup overhead (~15ms) affects small file benchmarks. For in-process repeated parsing, speedups are higher.
+
+**Parse (loading):**
+
+| File Size | fast-yaml | PyYAML (C) | PyYAML (pure) | vs C | vs pure |
+|-----------|-----------|------------|---------------|------|---------|
+| Small (502B) | **15.5 ms** | 20.2 ms | 20.8 ms | **1.30x** | **1.34x** |
+| Medium (44KB) | **26.3 ms** | 26.4 ms | 61.2 ms | **1.00x** | **2.33x** |
+| Large (449KB) | 130.3 ms | **79.3 ms** | 429.6 ms | 0.61x | **3.30x** |
+
+**Dump (serialization):**
+
+| File Size | fast-yaml | PyYAML (C) | PyYAML (pure) | vs C | vs pure |
+|-----------|-----------|------------|---------------|------|---------|
+| Small (502B) | **15.7 ms** | 20.8 ms | 21.2 ms | **1.33x** | **1.35x** |
+| Medium (44KB) | **31.6 ms** | 31.7 ms | 82.7 ms | **1.00x** | **2.62x** |
+| Large (449KB) | 177.6 ms | **131.1 ms** | 653.8 ms | 0.74x | **3.68x** |
+
+**Key findings:**
+- **Small/Medium files**: fast-yaml matches or beats PyYAML C (1.0-1.3x speedup)
+- **Pure Python**: fast-yaml consistently 1.3-3.7x faster across all sizes
+- **Large files**: PyYAML C optimized for single large files; use fast-yaml's parallel mode for multi-document streams
+
+Full benchmarks: [benches/comparison](benches/comparison/)
 
 ### CLI Single-File vs yamlfmt (Apple M3 Pro, 12 cores)
 
@@ -167,11 +190,11 @@ docs = parse_parallel(multi_doc_yaml, config)
 
 ```bash
 # Run benchmarks
-uv run pytest tests/ -v --benchmark-only  # Python API
-bash benches/comparison/scripts/run_batch_benchmark.sh  # CLI batch mode
+bash benches/comparison/scripts/run_python_benchmark.sh  # Python API
+bash benches/comparison/scripts/run_batch_benchmark.sh   # CLI batch mode
 ```
 
-**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.4.1, yamlfmt 0.21.0
+**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.4.1, PyYAML 6.0.3, yamlfmt 0.21.0
 
 </details>
 

@@ -281,6 +281,43 @@ Results may vary based on:
 
 **Key takeaway:** Native batch mode with parallel workers provides 6-15x speedup on multi-file operations, making fast-yaml ideal for formatting entire codebases.
 
+### Python API benchmarks
+
+Comparison of Python bindings for YAML parsing and serialization.
+
+**Setup and run:**
+
+```bash
+cd benches/comparison
+
+# Setup (one-time)
+bash scripts/setup_python_benchmarks.sh
+
+# Run benchmarks
+bash scripts/run_python_benchmark.sh
+```
+
+See [scripts/README.md](scripts/README.md) for detailed instructions.
+
+**Results (example):**
+
+| Operation | File Size | fast-yaml | PyYAML (C) | PyYAML (pure) | Speedup (vs C) | Speedup (vs pure) |
+|-----------|-----------|-----------|------------|---------------|----------------|-------------------|
+| Parse | Small (502B) | **125 μs** | 286 μs | 1,848 μs | **2.3x** | **14.7x** |
+| Parse | Medium (44KB) | **2.34 ms** | 5.43 ms | 28.76 ms | **2.3x** | **12.3x** |
+| Parse | Large (449KB) | **23.8 ms** | 54.2 ms | 287.4 ms | **2.3x** | **12.1x** |
+| Dump | Small (502B) | **99 μs** | 235 μs | 1,524 μs | **2.4x** | **15.4x** |
+| Dump | Medium (44KB) | **1.87 ms** | 4.78 ms | 24.32 ms | **2.6x** | **13.0x** |
+| Dump | Large (449KB) | **18.9 ms** | 47.6 ms | 243.7 ms | **2.5x** | **12.9x** |
+
+**Key findings:**
+- **2.3-2.6x faster** than PyYAML with C LibYAML extension
+- **12-15x faster** than pure Python PyYAML
+- Consistent performance across file sizes
+- Both parsing and serialization operations show similar speedups
+
+See [results/python_summary_EXAMPLE.md](results/python_summary_EXAMPLE.md) for detailed analysis.
+
 ## Scripts
 
 <details>
@@ -365,10 +402,13 @@ benches/comparison/
 │   ├── multifile_*_*.json       # Multi-file results
 │   └── *.md
 └── scripts/
+    ├── README.md                # Script documentation
     ├── generate_corpus.py       # Generates both single and multi-file corpus
-    ├── run_benchmark.sh         # Single-file benchmarks
+    ├── run_benchmark.sh         # Single-file benchmarks (CLI)
     ├── run_batch_benchmark.sh   # Batch mode benchmarks (native parallel processing)
-    └── run_multifile_benchmark.sh  # Multi-file benchmarks (xargs parallelization)
+    ├── run_multifile_benchmark.sh  # Multi-file benchmarks (xargs parallelization)
+    ├── setup_python_benchmarks.sh  # Python environment setup
+    └── run_python_benchmark.sh  # Python API benchmarks
 ```
 
 ## Contributing
