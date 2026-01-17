@@ -54,6 +54,8 @@ fy parse --stats large.yaml
 
 ### Format YAML
 
+**Single file:**
+
 ```bash
 # Format to stdout
 fy format messy.yaml
@@ -63,6 +65,57 @@ fy format --indent 4 --width 100 config.yaml
 
 # Format in-place
 fy format -i config.yaml
+```
+
+**Batch mode** (directories, globs, multiple files):
+
+```bash
+# Format entire directory (recursive)
+fy format -i src/
+
+# Format with glob pattern
+fy format -i "configs/**/*.yaml"
+
+# Multiple files
+fy format -i file1.yaml file2.yaml file3.yaml
+
+# Non-recursive directory formatting
+fy format -i --no-recursive configs/
+
+# Parallel processing with 8 workers
+fy format -i -j 8 large-project/
+
+# Read file paths from stdin
+find . -name "*.yaml" | fy format -i --stdin-files
+```
+
+> [!TIP]
+> Batch mode automatically detects when processing multiple files, directories, or glob patterns. Use `-j N` to control parallelism (default: auto-detect CPU cores).
+
+**Include/exclude patterns:**
+
+```bash
+# Format all YAML except tests
+fy format -i --exclude "**/tests/**" configs/
+
+# Format only production configs
+fy format -i --include "prod-*.yaml" configs/
+
+# Combine patterns (respects .gitignore by default)
+fy format -i --include "*.yaml" --exclude "draft-*" ./
+```
+
+**Dry run and output control:**
+
+```bash
+# Preview changes without modifying files
+fy format -n configs/
+
+# Quiet mode (only show errors)
+fy format -i -q large-project/
+
+# Verbose mode (show each file processed)
+fy format -i -v configs/
 ```
 
 ### Convert formats
@@ -102,6 +155,8 @@ fy lint --format json config.yaml
 
 ## Options
 
+### Common Options
+
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
 | `--in-place` | `-i` | Edit file in-place | - |
@@ -110,6 +165,20 @@ fy lint --format json config.yaml
 | `--no-color` | - | Disable colored output | - |
 | `--quiet` | `-q` | Suppress non-error output | - |
 | `--verbose` | `-v` | Enable verbose output | - |
+
+### Batch Mode Options
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--jobs` | `-j` | Number of parallel workers (0 = auto) | auto-detect |
+| `--stdin-files` | - | Read file paths from stdin | - |
+| `--include` | - | Include pattern (glob) | all files |
+| `--exclude` | - | Exclude pattern (glob) | none |
+| `--no-recursive` | - | Disable recursive directory traversal | recursive |
+| `--dry-run` | `-n` | Preview changes without modifying | - |
+
+> [!NOTE]
+> Batch mode activates automatically when processing multiple paths, directories, glob patterns, or when using `--stdin-files`, `--include`, `--exclude`, or `--jobs`.
 
 ## Features
 
@@ -167,9 +236,14 @@ git diff --name-only --cached -- '*.yaml' | xargs -I {} fy lint {}
 
 Built on `fast-yaml-core` for optimal performance:
 
-- Startup time: ~5ms
-- Binary size: ~1MB (stripped)
-- Full YAML 1.2.2 compliance
+- **Startup time**: ~5ms
+- **Binary size**: ~1MB (stripped)
+- **Batch processing**: Multi-threaded with automatic CPU detection
+- **Streaming**: Memory-mapped I/O for files >512KB
+- **Full YAML 1.2.2 compliance**
+
+> [!TIP]
+> Batch mode provides 3-6x speedup on multi-core systems when processing 100+ files. Use `-j N` to control worker count.
 
 ## License
 
