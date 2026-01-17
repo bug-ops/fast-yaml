@@ -57,27 +57,30 @@ impl ParallelConfig {
     fn to_rust_config(&self) -> NapiResult<RustParallelConfig> {
         // Validate thread_count
         if let Some(count) = self.thread_count
-            && count > MAX_THREADS {
-                return Err(napi::Error::from_reason(format!(
-                    "threadCount {count} exceeds maximum allowed {MAX_THREADS}"
-                )));
-            }
+            && count > MAX_THREADS
+        {
+            return Err(napi::Error::from_reason(format!(
+                "threadCount {count} exceeds maximum allowed {MAX_THREADS}"
+            )));
+        }
 
         // Validate input size
         if let Some(size) = self.max_input_size
-            && (size == 0 || size > ABSOLUTE_MAX_INPUT_SIZE) {
-                return Err(napi::Error::from_reason(format!(
-                    "maxInputSize must be between 1 and {ABSOLUTE_MAX_INPUT_SIZE} (1GB)"
-                )));
-            }
+            && (size == 0 || size > ABSOLUTE_MAX_INPUT_SIZE)
+        {
+            return Err(napi::Error::from_reason(format!(
+                "maxInputSize must be between 1 and {ABSOLUTE_MAX_INPUT_SIZE} (1GB)"
+            )));
+        }
 
         // Validate document count
         if let Some(count) = self.max_documents
-            && (count == 0 || count > ABSOLUTE_MAX_DOCUMENTS) {
-                return Err(napi::Error::from_reason(format!(
-                    "maxDocuments must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
-                )));
-            }
+            && (count == 0 || count > ABSOLUTE_MAX_DOCUMENTS)
+        {
+            return Err(napi::Error::from_reason(format!(
+                "maxDocuments must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
+            )));
+        }
 
         // Validate chunk sizes
         let min_chunk = self.min_chunk_size.unwrap_or(4096);
