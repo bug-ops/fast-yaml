@@ -1,0 +1,186 @@
+name: Documentation Issue
+description: Report issues or suggest improvements for documentation
+title: "[Docs]: "
+labels: ["documentation", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve fast-yaml documentation.
+
+        Please describe the documentation issue or improvement you'd like to see.
+
+  - type: dropdown
+    id: doc_type
+    attributes:
+      label: Documentation Type
+      description: Which type of documentation needs improvement?
+      options:
+        - API Reference
+        - User Guide / Tutorial
+        - README
+        - Code Examples
+        - Architecture Documentation
+        - Contributing Guide
+        - Installation Guide
+        - Migration Guide
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component's documentation?
+      options:
+        - Core Parser (Rust)
+        - Linter
+        - Parallel Processing
+        - Python Bindings
+        - NodeJS Bindings
+        - CLI Tool
+        - General / Project-wide
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: issue_category
+    attributes:
+      label: Issue Category
+      description: What kind of documentation issue is this?
+      options:
+        - Missing documentation
+        - Incorrect information
+        - Unclear explanation
+        - Outdated content
+        - Broken links
+        - Missing examples
+        - Typo / Grammar
+        - Code example doesn't work
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Describe the documentation issue in detail
+      placeholder: |
+        The API documentation for X doesn't explain...
+        The example in the README shows Y but it should...
+        The installation guide is missing steps for...
+    validations:
+      required: true
+
+  - type: textarea
+    id: location
+    attributes:
+      label: Documentation Location
+      description: Where is the issue located?
+      placeholder: |
+        - File: README.md, section "Installation"
+        - URL: https://docs.rs/fast-yaml-core/latest/
+        - Line: Line 45 of CONTRIBUTING.md
+        - Code example: Python API docs, safe_load function
+    validations:
+      required: true
+
+  - type: textarea
+    id: current_content
+    attributes:
+      label: Current Content
+      description: Quote the current documentation (if applicable)
+      render: markdown
+      placeholder: |
+        Currently the docs say:
+        ```
+        To install fast-yaml, run...
+        ```
+
+  - type: textarea
+    id: suggested_content
+    attributes:
+      label: Suggested Improvement
+      description: How should the documentation be improved?
+      render: markdown
+      placeholder: |
+        It should say:
+        ```
+        To install fast-yaml:
+        1. Install Rust toolchain
+        2. Run pip install fastyaml-rs
+        ```
+
+  - type: textarea
+    id: examples_needed
+    attributes:
+      label: Examples Needed
+      description: What code examples would help?
+      render: python
+      placeholder: |
+        # Example showing how to use the new feature
+        import fast_yaml
+
+        result = fast_yaml.safe_load_all(multi_doc_yaml)
+        for doc in result:
+            print(doc)
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context / Use Case
+      description: Why is this documentation important?
+      placeholder: |
+        I was trying to...
+        New users would benefit from...
+        This is confusing because...
+
+  - type: dropdown
+    id: audience
+    attributes:
+      label: Target Audience
+      description: Who would benefit from this improvement?
+      options:
+        - New users / beginners
+        - Python developers
+        - NodeJS developers
+        - Rust developers
+        - Contributors
+        - All users
+    validations:
+      required: true
+
+  - type: textarea
+    id: related_docs
+    attributes:
+      label: Related Documentation
+      description: Links to related docs or issues
+      placeholder: |
+        - Related to issue #123
+        - See also: https://yaml.org/spec/1.2.2/
+        - Similar to docs in: other-yaml-library
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to submit a PR to fix this
+        - label: I can help review documentation changes
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing documentation issues
+          required: true
+        - label: I have checked the latest documentation
+          required: false
+        - label: I have identified the specific location of the issue
+          required: false

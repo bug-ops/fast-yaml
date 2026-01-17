@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or Discussion
+    url: https://github.com/bug-ops/fast-yaml/discussions
+    about: Ask questions or discuss ideas with the community
+  - name: Security Vulnerability
+    url: https://github.com/bug-ops/fast-yaml/security/advisories/new
+    about: Report security vulnerabilities privately (DO NOT use public issues)
+  - name: Documentation
+    url: https://docs.rs/fast-yaml-core/latest/
+    about: View the API documentation on docs.rs

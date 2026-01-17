@@ -1,0 +1,198 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in fast-yaml
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug in fast-yaml.
+
+        Please fill out the information below to help us diagnose and fix the issue.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component is affected?
+      options:
+        - Core Parser (Rust)
+        - Linter
+        - Parallel Processing
+        - Python Bindings
+        - NodeJS Bindings
+        - CLI Tool
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is.
+      placeholder: When I parse a YAML file with..., I expect... but instead...
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior
+      placeholder: |
+        1. Create a YAML file with content: ...
+        2. Run command: ...
+        3. See error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+      placeholder: The parser should...
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened?
+      placeholder: Instead, the parser...
+    validations:
+      required: true
+
+  - type: textarea
+    id: yaml_sample
+    attributes:
+      label: YAML Sample
+      description: Minimal YAML input that reproduces the issue (if applicable)
+      render: yaml
+      placeholder: |
+        # Your YAML content here
+        key: value
+
+  - type: textarea
+    id: code_sample
+    attributes:
+      label: Code Sample
+      description: Minimal code that reproduces the issue
+      render: python
+      placeholder: |
+        import fast_yaml
+
+        yaml_content = """
+        key: value
+        """
+
+        result = fast_yaml.safe_load(yaml_content)
+
+  - type: textarea
+    id: error_output
+    attributes:
+      label: Error Output
+      description: Full error message or stack trace
+      render: shell
+      placeholder: |
+        Error: ...
+        Traceback: ...
+
+  - type: input
+    id: version
+    attributes:
+      label: fast-yaml Version
+      description: Which version are you using?
+      placeholder: "0.4.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: language_binding
+    attributes:
+      label: Language Binding
+      description: Which language binding are you using?
+      options:
+        - Python
+        - NodeJS
+        - Rust (direct)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: language_version
+    attributes:
+      label: Language Version
+      description: Python/NodeJS/Rust version
+      placeholder: "Python 3.11, NodeJS 20.10, or Rust 1.88.0"
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      description: Which OS are you using?
+      options:
+        - Linux (Ubuntu/Debian)
+        - Linux (Fedora/RHEL)
+        - Linux (Arch)
+        - Linux (Other)
+        - macOS (Intel)
+        - macOS (Apple Silicon)
+        - Windows (WSL)
+        - Windows (Native)
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: os_version
+    attributes:
+      label: OS Version
+      description: Specific OS version
+      placeholder: "Ubuntu 22.04, macOS 14.2, Windows 11"
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Additional Environment Details
+      description: Any other relevant environment information
+      placeholder: |
+        - Installation method: pip, cargo, npm
+        - Virtual environment: conda, venv
+        - Container: Docker, Podman
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Workaround
+      description: Have you found any workaround for this issue?
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other context about the problem
+      placeholder: |
+        - Related issues: #123
+        - Started happening after: ...
+        - Frequency: always, sometimes, rarely
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues to ensure this is not a duplicate
+          required: true
+        - label: I have provided a minimal reproduction case
+          required: false
+        - label: I am using the latest version of fast-yaml
+          required: false
+        - label: This is not a security vulnerability (use SECURITY.md for those)
+          required: true

@@ -1,0 +1,198 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for fast-yaml
+title: "[Feature]: "
+labels: ["enhancement", "needs-triage"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature for fast-yaml.
+
+        Please describe the feature you'd like to see and why it would be valuable.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component would this feature affect?
+      options:
+        - Core Parser (Rust)
+        - Linter
+        - Parallel Processing
+        - Python Bindings
+        - NodeJS Bindings
+        - CLI Tool
+        - Documentation
+        - Build/CI
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: feature_type
+    attributes:
+      label: Feature Type
+      description: What type of feature is this?
+      options:
+        - New API
+        - Performance Improvement
+        - Developer Experience
+        - Language Binding
+        - Documentation
+        - Tooling
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve?
+      placeholder: |
+        I'm frustrated when...
+        It would be helpful if...
+        Currently there is no way to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like to solve this problem?
+      placeholder: |
+        Add a new API that...
+        Modify the existing behavior to...
+        Provide a configuration option for...
+    validations:
+      required: true
+
+  - type: textarea
+    id: api_design
+    attributes:
+      label: API Design (if applicable)
+      description: How would the API look?
+      render: python
+      placeholder: |
+        # Python example
+        import fast_yaml
+
+        result = fast_yaml.safe_load(
+            yaml_content,
+            new_option=True
+        )
+
+        # Rust example
+        use fast_yaml_core::parse_with_options;
+
+        let result = parse_with_options(input, options)?;
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches have you considered?
+      placeholder: |
+        1. Alternative approach 1: ...
+        2. Alternative approach 2: ...
+        3. Current workaround: ...
+
+  - type: textarea
+    id: use_cases
+    attributes:
+      label: Use Cases
+      description: Describe real-world scenarios where this feature would be useful
+      placeholder: |
+        1. When parsing configuration files, users need to...
+        2. For large-scale YAML processing, it would help to...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this feature to you?
+      options:
+        - Critical (blocking my work)
+        - High (significant impact)
+        - Medium (nice to have)
+        - Low (minor improvement)
+    validations:
+      required: true
+
+  - type: textarea
+    id: implementation
+    attributes:
+      label: Implementation Notes
+      description: Technical details or suggestions for implementation
+      placeholder: |
+        - This could be implemented by...
+        - Dependencies might include...
+        - Breaking changes: ...
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Breaking Change
+      description: Would this be a breaking change?
+      options:
+        - "No"
+        - "Yes - but necessary"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: documentation
+    attributes:
+      label: Documentation Impact
+      description: What documentation would need to be updated?
+      placeholder: |
+        - API reference
+        - User guide
+        - Migration guide (if breaking)
+
+  - type: textarea
+    id: testing
+    attributes:
+      label: Testing Strategy
+      description: How should this feature be tested?
+      placeholder: |
+        - Unit tests for...
+        - Integration tests for...
+        - Performance benchmarks for...
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Links to related issues, discussions, or external resources
+      placeholder: |
+        - Related to #123
+        - Similar feature in other library: https://...
+        - YAML spec section: https://yaml.org/spec/1.2.2/#...
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to implement this feature myself
+        - label: I can help with testing
+        - label: I can help with documentation
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I have searched existing issues and discussions for similar requests
+          required: true
+        - label: This feature aligns with the project goals (performance, YAML 1.2.2 compliance)
+          required: true
+        - label: I have considered backward compatibility
+          required: false
