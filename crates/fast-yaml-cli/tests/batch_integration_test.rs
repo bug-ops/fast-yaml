@@ -1,9 +1,9 @@
 //! Integration tests for batch processing pipeline (discovery + processor).
 //!
 //! These tests verify end-to-end functionality:
-//! - FileDiscovery finds YAML files
-//! - BatchProcessor processes them with proper configuration
-//! - BatchResult aggregates results correctly
+//! - `FileDiscovery` finds YAML files
+//! - `BatchProcessor` processes them with proper configuration
+//! - `BatchResult` aggregates results correctly
 //! - In-place modification works atomically
 
 use fast_yaml_cli::batch::{
@@ -162,13 +162,15 @@ fn test_batch_dry_run_no_modification() {
 
 #[test]
 fn test_batch_large_file_mmap_integration() {
+    use std::fmt::Write;
+
     // Create file > 512KB to trigger mmap path
     let temp_dir = TempDir::new().unwrap();
 
-    let large_yaml = "items:\n".to_string()
-        + &(0..50_000)
-            .map(|i| format!("  - item{i}\n"))
-            .collect::<String>();
+    let large_yaml = (0..50_000).fold("items:\n".to_string(), |mut acc, i| {
+        writeln!(&mut acc, "  - item{i}").unwrap();
+        acc
+    });
 
     let file = create_yaml_file(&temp_dir, "large.yaml", &large_yaml);
 

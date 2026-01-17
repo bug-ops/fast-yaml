@@ -385,7 +385,7 @@ mod tests {
             total in 0usize..1000,
             failed in 0usize..1000,
         ) {
-            let success = if total > failed { total - failed } else { 0 };
+            let success = total.saturating_sub(failed);
             let batch = BatchResult {
                 total,
                 formatted: success / 2,

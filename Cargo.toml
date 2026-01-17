@@ -65,6 +65,8 @@ saphyr-parser = "0.0.6"
 # Unsafe code is still denied by default but can be explicitly allowed with documentation
 unsafe_code = "deny"
 missing_docs = "warn"
+# Temporarily allow dead_code during batch mode implementation (Phase 1-3 complete, Phase 4 pending)
+dead_code = "allow"
 
 [workspace.lints.clippy]
 # Lint groups with lower priority so individual lints can override

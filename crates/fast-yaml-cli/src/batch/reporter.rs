@@ -232,7 +232,7 @@ mod tests {
             errors: vec![],
         };
 
-        let output = capture_output(|_buf| reporter.report(&result).and_then(|_| Ok(())));
+        let output = capture_output(|_buf| reporter.report(&result));
         assert_eq!(output, "");
     }
 
@@ -325,7 +325,7 @@ mod tests {
 
     #[test]
     fn test_write_errors_format() {
-        let _reporter = BatchReporter::from_flags(false, false, false);
+        let reporter = BatchReporter::from_flags(false, false, false);
         let errors = vec![
             (
                 PathBuf::from("test/file.yaml"),
@@ -340,7 +340,7 @@ mod tests {
             ),
         ];
 
-        let output = capture_output(|buf| _reporter.write_errors(buf, &errors));
+        let output = capture_output(|buf| reporter.write_errors(buf, &errors));
 
         assert!(output.contains("error: test/file.yaml: failed to parse YAML: syntax error"));
         assert!(output.contains("error: data/doc.yaml: failed to read file: file not found"));
