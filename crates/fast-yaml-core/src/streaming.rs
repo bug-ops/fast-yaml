@@ -78,6 +78,9 @@ struct StreamingEmitter<'a> {
     pending_newline: bool,
     /// Tracks anchor names for alias resolution
     anchor_names: Vec<String>,
+    /// Tracks whether the last character written was a newline.
+    /// Avoids O(n) `ends_with` scans by maintaining state.
+    last_char_newline: bool,
 }
 
 impl<'a> StreamingEmitter<'a> {
@@ -99,6 +102,7 @@ impl<'a> StreamingEmitter<'a> {
             context_stack,
             pending_newline: false,
             anchor_names: Vec::with_capacity(anchor_capacity.max(1)),
+            last_char_newline: true, // Empty buffer conceptually "ends with" newline
         }
     }
 
@@ -118,12 +122,14 @@ impl<'a> StreamingEmitter<'a> {
                 if explicit || self.config.explicit_start {
                     self.output.push_str("---");
                     self.pending_newline = true;
+                    self.last_char_newline = false;
                 }
             }
 
             Event::DocumentEnd => {
-                if !self.output.ends_with('\n') && !self.output.is_empty() {
+                if !self.last_char_newline && !self.output.is_empty() {
                     self.output.push('\n');
+                    self.last_char_newline = true;
                 }
             }
 
@@ -169,6 +175,7 @@ impl<'a> StreamingEmitter<'a> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         // Write indentation and prefix based on context
@@ -176,6 +183,7 @@ impl<'a> StreamingEmitter<'a> {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 self.write_indent();
@@ -185,16 +193,20 @@ impl<'a> StreamingEmitter<'a> {
         }
 
         // Handle anchor if present (with bounds check for security)
+        // Optimization: write directly to anchor_names storage, reuse for output
         if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-            let anchor_name = format!("anchor{anchor_id}");
-            self.output.push('&');
-            self.output.push_str(&anchor_name);
-            self.output.push(' ');
-            // Store anchor name for later alias resolution
             if self.anchor_names.len() <= anchor_id {
                 self.anchor_names.resize(anchor_id + 1, String::new());
             }
-            self.anchor_names[anchor_id] = anchor_name;
+            // Generate name directly into storage if empty
+            if self.anchor_names[anchor_id].is_empty() {
+                let _ = write!(self.anchor_names[anchor_id], "anchor{anchor_id}");
+            }
+            // Write to output from storage
+            self.output.push('&');
+            self.output.push_str(&self.anchor_names[anchor_id]);
+            self.output.push(' ');
+            self.last_char_newline = false;
         }
 
         // Emit value with appropriate style
@@ -210,9 +222,11 @@ impl<'a> StreamingEmitter<'a> {
                 }
                 // Add space after colon for simple values
                 self.output.push(' ');
+                self.last_char_newline = false;
             }
             Context::MappingValue => {
                 self.output.push('\n');
+                self.last_char_newline = true;
                 // Transition back to expecting key
                 if let Some(last) = self.context_stack.last_mut() {
                     *last = Context::MappingKey;
@@ -220,6 +234,7 @@ impl<'a> StreamingEmitter<'a> {
             }
             Context::Sequence | Context::Root => {
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
         }
     }
@@ -230,6 +245,7 @@ impl<'a> StreamingEmitter<'a> {
                 // Fix special floats for YAML 1.2 compliance
                 let fixed = fix_special_float_value(value);
                 self.output.push_str(fixed);
+                self.last_char_newline = false;
             }
             ScalarStyle::SingleQuoted => {
                 self.output.push('\'');
@@ -242,6 +258,7 @@ impl<'a> StreamingEmitter<'a> {
                     }
                 }
                 self.output.push('\'');
+                self.last_char_newline = false;
             }
             ScalarStyle::DoubleQuoted => {
                 self.output.push('"');
@@ -258,16 +275,21 @@ impl<'a> StreamingEmitter<'a> {
                     }
                 }
                 self.output.push('"');
+                self.last_char_newline = false;
             }
             ScalarStyle::Literal => {
                 self.output.push_str("|-");
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
+                // write_block_scalar_lines always ends with newline
+                self.last_char_newline = true;
             }
             ScalarStyle::Folded => {
                 self.output.push_str(">-");
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
+                // write_block_scalar_lines always ends with newline
+                self.last_char_newline = true;
             }
         }
     }
@@ -279,6 +301,7 @@ impl<'a> StreamingEmitter<'a> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         // Write prefix based on context
@@ -286,6 +309,7 @@ impl<'a> StreamingEmitter<'a> {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 // Sequence as mapping key - unusual but valid
@@ -294,20 +318,26 @@ impl<'a> StreamingEmitter<'a> {
             Context::MappingValue => {
                 // Value position - newline and indent for nested sequence
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
             Context::Root => {}
         }
 
         // Handle anchor (with bounds check for security)
+        // Optimization: write directly to anchor_names storage, reuse for output
         if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-            let anchor_name = format!("anchor{anchor_id}");
-            self.output.push('&');
-            self.output.push_str(&anchor_name);
-            self.output.push(' ');
             if self.anchor_names.len() <= anchor_id {
                 self.anchor_names.resize(anchor_id + 1, String::new());
             }
-            self.anchor_names[anchor_id] = anchor_name;
+            // Generate name directly into storage if empty
+            if self.anchor_names[anchor_id].is_empty() {
+                let _ = write!(self.anchor_names[anchor_id], "anchor{anchor_id}");
+            }
+            // Write to output from storage
+            self.output.push('&');
+            self.output.push_str(&self.anchor_names[anchor_id]);
+            self.output.push(' ');
+            self.last_char_newline = false;
         }
 
         // Update context for mapping value -> key transition
@@ -336,6 +366,7 @@ impl<'a> StreamingEmitter<'a> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         // Write prefix based on context
@@ -343,6 +374,7 @@ impl<'a> StreamingEmitter<'a> {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 // Mapping as mapping key - unusual but valid (complex key)
@@ -351,20 +383,26 @@ impl<'a> StreamingEmitter<'a> {
             Context::MappingValue => {
                 // Value position - newline for nested mapping
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
             Context::Root => {}
         }
 
         // Handle anchor (with bounds check for security)
+        // Optimization: write directly to anchor_names storage, reuse for output
         if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-            let anchor_name = format!("anchor{anchor_id}");
-            self.output.push('&');
-            self.output.push_str(&anchor_name);
-            self.output.push('\n');
             if self.anchor_names.len() <= anchor_id {
                 self.anchor_names.resize(anchor_id + 1, String::new());
             }
-            self.anchor_names[anchor_id] = anchor_name;
+            // Generate name directly into storage if empty
+            if self.anchor_names[anchor_id].is_empty() {
+                let _ = write!(self.anchor_names[anchor_id], "anchor{anchor_id}");
+            }
+            // Write to output from storage
+            self.output.push('&');
+            self.output.push_str(&self.anchor_names[anchor_id]);
+            self.output.push('\n');
+            self.last_char_newline = true;
         }
 
         // Update context for mapping value -> key transition
@@ -393,6 +431,7 @@ impl<'a> StreamingEmitter<'a> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         // Write prefix based on context
@@ -400,6 +439,7 @@ impl<'a> StreamingEmitter<'a> {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 self.write_indent();
@@ -415,6 +455,7 @@ impl<'a> StreamingEmitter<'a> {
             // Use write! macro to avoid format! allocation
             let _ = write!(self.output, "anchor{anchor_id}");
         }
+        self.last_char_newline = false;
 
         // Handle context transitions
         match ctx {
@@ -424,15 +465,18 @@ impl<'a> StreamingEmitter<'a> {
                     *last = Context::MappingValue;
                 }
                 self.output.push(' ');
+                // last_char_newline remains false
             }
             Context::MappingValue => {
                 self.output.push('\n');
+                self.last_char_newline = true;
                 if let Some(last) = self.context_stack.last_mut() {
                     *last = Context::MappingKey;
                 }
             }
             Context::Sequence | Context::Root => {
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
         }
     }
@@ -461,12 +505,13 @@ impl<'a> StreamingEmitter<'a> {
             } else {
                 self.output.push_str(&" ".repeat(indent_chars));
             }
+            self.last_char_newline = false;
         }
     }
 
     fn finish(mut self) -> String {
         // Ensure output ends with newline
-        if !self.output.is_empty() && !self.output.ends_with('\n') {
+        if !self.output.is_empty() && !self.last_char_newline {
             self.output.push('\n');
         }
         self.output
@@ -489,6 +534,9 @@ struct ArenaStreamingEmitter<'a, 'bump> {
     anchor_names: bumpalo::collections::Vec<'bump, bumpalo::collections::String<'bump>>,
     /// Reference to the arena for additional allocations
     arena: &'bump Bump,
+    /// Tracks whether the last character written was a newline.
+    /// Avoids O(n) `ends_with` scans by maintaining state.
+    last_char_newline: bool,
 }
 
 #[cfg(feature = "arena")]
@@ -509,6 +557,7 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
             pending_newline: false,
             anchor_names: bumpalo::collections::Vec::new_in(arena),
             arena,
+            last_char_newline: true, // Empty buffer conceptually "ends with" newline
         }
     }
 
@@ -533,12 +582,14 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
                 if explicit || self.config.explicit_start {
                     self.output.push_str("---");
                     self.pending_newline = true;
+                    self.last_char_newline = false;
                 }
             }
 
             Event::DocumentEnd => {
-                if !self.output.ends_with('\n') && !self.output.is_empty() {
+                if !self.last_char_newline && !self.output.is_empty() {
                     self.output.push('\n');
+                    self.last_char_newline = true;
                 }
             }
 
@@ -582,12 +633,14 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         match ctx {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 self.write_indent();
@@ -596,15 +649,19 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
         }
 
         // Handle anchor with arena allocation
+        // Optimization: generate name into storage, reuse for output
         if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-            let anchor_name = bumpalo::format!(in self.arena, "anchor{}", anchor_id);
-            self.output.push('&');
-            self.output.push_str(anchor_name.as_str());
-            self.output.push(' ');
-
-            // Store anchor name for later alias resolution
             self.ensure_anchor_capacity(anchor_id);
-            self.anchor_names[anchor_id] = anchor_name;
+            // Generate name directly into storage if empty
+            if self.anchor_names[anchor_id].is_empty() {
+                use std::fmt::Write as _;
+                let _ = write!(self.anchor_names[anchor_id], "anchor{anchor_id}");
+            }
+            // Write to output from storage
+            self.output.push('&');
+            self.output.push_str(self.anchor_names[anchor_id].as_str());
+            self.output.push(' ');
+            self.last_char_newline = false;
         }
 
         self.emit_value_with_style(value, style);
@@ -616,15 +673,18 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
                     *last = Context::MappingValue;
                 }
                 self.output.push(' ');
+                self.last_char_newline = false;
             }
             Context::MappingValue => {
                 self.output.push('\n');
+                self.last_char_newline = true;
                 if let Some(last) = self.context_stack.last_mut() {
                     *last = Context::MappingKey;
                 }
             }
             Context::Sequence | Context::Root => {
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
         }
     }
@@ -634,6 +694,7 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
             ScalarStyle::Plain => {
                 let fixed = fix_special_float_value(value);
                 self.output.push_str(fixed);
+                self.last_char_newline = false;
             }
             ScalarStyle::SingleQuoted => {
                 self.output.push('\'');
@@ -645,6 +706,7 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
                     }
                 }
                 self.output.push('\'');
+                self.last_char_newline = false;
             }
             ScalarStyle::DoubleQuoted => {
                 self.output.push('"');
@@ -660,16 +722,21 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
                     }
                 }
                 self.output.push('"');
+                self.last_char_newline = false;
             }
             ScalarStyle::Literal => {
                 self.output.push_str("|-");
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
+                // write_block_scalar_lines always ends with newline
+                self.last_char_newline = true;
             }
             ScalarStyle::Folded => {
                 self.output.push_str(">-");
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
+                // write_block_scalar_lines always ends with newline
+                self.last_char_newline = true;
             }
         }
     }
@@ -680,18 +747,21 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         match ctx {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 self.write_indent();
             }
             Context::MappingValue => {
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
             Context::Root => {}
         }
@@ -701,6 +771,7 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
             self.output.push('&');
             self.output.push_str(anchor_name.as_str());
             self.output.push(' ');
+            self.last_char_newline = false;
             self.ensure_anchor_capacity(anchor_id);
             self.anchor_names[anchor_id] = anchor_name;
         }
@@ -728,18 +799,21 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         match ctx {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 self.write_indent();
             }
             Context::MappingValue => {
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
             Context::Root => {}
         }
@@ -749,6 +823,7 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
             self.output.push('&');
             self.output.push_str(anchor_name.as_str());
             self.output.push('\n');
+            self.last_char_newline = true;
             self.ensure_anchor_capacity(anchor_id);
             self.anchor_names[anchor_id] = anchor_name;
         }
@@ -776,12 +851,14 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
         if self.pending_newline {
             self.output.push('\n');
             self.pending_newline = false;
+            self.last_char_newline = true;
         }
 
         match ctx {
             Context::Sequence => {
                 self.write_indent();
                 self.output.push_str("- ");
+                self.last_char_newline = false;
             }
             Context::MappingKey => {
                 self.write_indent();
@@ -795,6 +872,7 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
         } else {
             let _ = write!(self.output, "anchor{anchor_id}");
         }
+        self.last_char_newline = false;
 
         match ctx {
             Context::MappingKey => {
@@ -803,15 +881,18 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
                     *last = Context::MappingValue;
                 }
                 self.output.push(' ');
+                // last_char_newline remains false
             }
             Context::MappingValue => {
                 self.output.push('\n');
+                self.last_char_newline = true;
                 if let Some(last) = self.context_stack.last_mut() {
                     *last = Context::MappingKey;
                 }
             }
             Context::Sequence | Context::Root => {
                 self.output.push('\n');
+                self.last_char_newline = true;
             }
         }
     }
@@ -839,11 +920,12 @@ impl<'a, 'bump> ArenaStreamingEmitter<'a, 'bump> {
             } else {
                 self.output.push_str(&" ".repeat(indent_chars));
             }
+            self.last_char_newline = false;
         }
     }
 
     fn finish(mut self) -> String {
-        if !self.output.is_empty() && !self.output.ends_with('\n') {
+        if !self.output.is_empty() && !self.last_char_newline {
             self.output.push('\n');
         }
         self.output
