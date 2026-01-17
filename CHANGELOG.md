@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-01-17
+
+### Added
+
+- **Python**: Parallel dump functionality for multi-document YAML emission
+  - `dump_parallel()` function with configurable thread pool
+  - Auto-tuning algorithm for optimal thread count based on workload
+  - Pre-allocates output buffer to minimize reallocations
+- **Python**: Streaming dump API for direct I/O without intermediate string
+  - `safe_dump_to()` writes directly to file-like objects
+  - Configurable chunk size (default 8KB) for efficient buffer flushing
+  - Supports any object with `write()` method (files, StringIO, BytesIO)
+- **Python**: Comprehensive type stubs for new parallel and streaming APIs
+- **Python**: 34 new tests for streaming functionality (`test_streaming.py`)
+- **Core**: Public getter methods for `ParallelConfig` (`thread_count()`, `max_documents()`)
+- **Node.js**: Pre-allocation benchmarks to verify linear scaling
+
+### Performance
+
+- **Python**: Parallel dump shows linear scaling with document count
+  - Auto-tuning reduces overhead for small workloads (<4 documents)
+  - Conservative thread allocation (uses half of CPU cores for small documents)
+- **Node.js**: Pre-allocation optimizations maintain linear time complexity
+  - Arrays and objects scale linearly with size (no O(n²) growth)
+
+### Fixed
+
+- **Python**: Auto-tune algorithm now handles low CPU count edge cases (macOS CI)
+  - Previously panicked with `assertion failed: min <= max` on single-core systems
+  - Now ensures `max_threads >= 2` before calling `.clamp()`
+
+### Documentation
+
+- Updated API documentation with new parallel and streaming functions
+- Added inline examples for `dump_parallel()` and `safe_dump_to()`
+- Documented thread count auto-tuning behavior and thresholds
+
+### Internal
+
+- **Security**: Dual licensing added (MIT OR Apache-2.0)
+- **Documentation**: Updated unsafe code usage points in project docs
+- All CI checks passing: 912 Rust tests, 344 Python tests, 283 Node.js tests
+- Code coverage: 94% maintained
+
 ## [0.4.0] - 2026-01-17
 
 ### Added
@@ -369,7 +413,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.3.3...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/bug-ops/fast-yaml/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/bug-ops/fast-yaml/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/bug-ops/fast-yaml/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/bug-ops/fast-yaml/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/bug-ops/fast-yaml/compare/v0.3.0...v0.3.1
