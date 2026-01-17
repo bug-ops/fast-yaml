@@ -28,11 +28,11 @@ npm install fastyaml-rs
 cargo install fast-yaml-cli
 ```
 
-<details>
-<summary><b>Build from source</b></summary>
-
 > [!WARNING]
 > Requires Rust 1.88+, Python 3.10+ or Node.js 20+
+
+<details>
+<summary><b>Build from source</b></summary>
 
 ```bash
 git clone https://github.com/bug-ops/fast-yaml.git
@@ -103,6 +103,9 @@ fy lint --exclude "tests/**" . # Lint all except tests
 - **Parallel** — Multi-threaded processing for large files
 - **Safe** — Memory-safe Rust with minimal `unsafe` (FFI boundaries only, explicitly documented)
 
+> [!TIP]
+> Parallel processing provides 3-6x speedup on 4-8 core systems for multi-document files.
+
 <details>
 <summary><b>Feature details</b></summary>
 
@@ -125,23 +128,23 @@ config = ParallelConfig(thread_count=4, max_input_size=100*1024*1024)
 docs = parse_parallel(multi_doc_yaml, config)
 ```
 
-> [!TIP]
-> Parallel processing provides 3-6x speedup on 4-8 core systems for multi-document files.
-
 </details>
 
 ## Performance
 
-<details>
-<summary><b>Benchmark results</b></summary>
-
 > [!NOTE]
 > Three separate benchmark suites: **Python API** (vs PyYAML), **Node.js API** (vs js-yaml), and **CLI Batch Mode** (vs yamlfmt).
 
-### Python API vs PyYAML
-
 > [!NOTE]
-> Process startup overhead (~15ms) affects small file benchmarks. For in-process repeated parsing, speedups are higher.
+> Process startup overhead (~15ms for Python, ~20-25ms for Node.js) affects small file benchmarks. In long-running servers (persistent processes), speedups would be 2-4x higher.
+
+> [!TIP]
+> Batch mode is where fast-yaml excels with parallel processing. Use `-j` to specify worker count.
+
+<details>
+<summary><b>Benchmark results</b></summary>
+
+### Python API vs PyYAML
 
 **Parse (loading):**
 
@@ -167,9 +170,6 @@ docs = parse_parallel(multi_doc_yaml, config)
 Full benchmarks: [benches/comparison](benches/comparison/)
 
 ### Node.js API vs js-yaml (Apple M3 Pro, 12 cores)
-
-> [!NOTE]
-> Process startup overhead (~20-25ms) affects measurements. In long-running servers (persistent processes), speedup would be 2-4x higher.
 
 **Parse (loading):**
 
@@ -202,9 +202,6 @@ Full benchmarks: [benches/comparison](benches/comparison/)
 | Large (460 KB) | 8.4 ms | **2.9 ms** | yamlfmt 2.88x faster |
 
 ### CLI Batch Mode vs yamlfmt
-
-> [!TIP]
-> Batch mode is where fast-yaml excels with parallel processing. Use `-j` to specify worker count.
 
 | Workload | fast-yaml (parallel) | yamlfmt (sequential) | Speedup |
 |----------|---------------------|----------------------|---------|
