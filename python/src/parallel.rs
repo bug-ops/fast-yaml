@@ -224,7 +224,7 @@ impl PyParallelConfig {
 
 /// Auto-tune thread count based on document count and average size.
 fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> usize {
-    let cpu_count = num_cpus::get();
+    let cpu_count = num_cpus::get().max(1); // Ensure at least 1 CPU
 
     // At least 4 documents to justify parallelism
     if doc_count < 4 {
@@ -233,11 +233,13 @@ fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> usize {
 
     // Small documents: limit threads to reduce overhead
     if avg_doc_size < 1024 {
-        return (doc_count / 10).clamp(2, cpu_count / 2).max(2);
+        let max_threads = (cpu_count / 2).max(2); // Ensure max >= 2
+        return (doc_count / 10).clamp(2, max_threads).max(2);
     }
 
     // Normal case: scale with document count
-    let optimal = (doc_count / 4).clamp(2, cpu_count);
+    let max_threads = cpu_count.max(2); // Ensure max >= 2
+    let optimal = (doc_count / 4).clamp(2, max_threads);
     optimal.min(128)
 }
 
