@@ -57,7 +57,7 @@ fn test_process_1000_files_concurrent() {
 }
 
 #[test]
-#[ignore] // Performance test - flaky in CI due to system variability
+#[ignore = "Performance test - flaky in CI due to system variability"]
 fn test_worker_scaling_performance() {
     // Create 200 files for scaling test
     let temp_dir = TempDir::new().unwrap();

@@ -261,9 +261,7 @@ fn end_to_end_batch_pipeline(c: &mut Criterion) {
             // Discovery phase
             let config = DiscoveryConfig::default();
             let discovery = FileDiscovery::new(config).unwrap();
-            let discovered = discovery
-                .discover(&[black_box(path.clone())])
-                .unwrap();
+            let discovered = discovery.discover(&[black_box(path.clone())]).unwrap();
 
             // Processing phase
             let config = ProcessingConfig::new();
