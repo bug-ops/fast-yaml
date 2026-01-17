@@ -48,8 +48,8 @@ fn test_parse_valid_yaml_file() {
 
     Command::cargo_bin("fy")
         .unwrap()
-        .arg(file.path())
         .arg("parse")
+        .arg(file.path())
         .assert()
         .success()
         .code(0)
@@ -159,8 +159,8 @@ fn test_format_file_to_stdout() {
 
     Command::cargo_bin("fy")
         .unwrap()
-        .arg(file.path())
         .arg("format")
+        .arg(file.path())
         .assert()
         .success()
         .code(0)
@@ -202,9 +202,9 @@ fn test_format_in_place_flag() {
 
     Command::cargo_bin("fy")
         .unwrap()
-        .arg(&path)
         .arg("format")
         .arg("-i")
+        .arg(&path)
         .assert()
         .success()
         .code(0)
@@ -328,9 +328,9 @@ fn test_convert_yaml_to_json_file_input() {
 
     Command::cargo_bin("fy")
         .unwrap()
-        .arg(file.path())
         .arg("convert")
         .arg("json")
+        .arg(file.path())
         .assert()
         .success()
         .code(0)
@@ -343,9 +343,9 @@ fn test_convert_json_to_yaml_file_input() {
 
     Command::cargo_bin("fy")
         .unwrap()
-        .arg(file.path())
         .arg("convert")
         .arg("yaml")
+        .arg(file.path())
         .assert()
         .success()
         .code(0)
@@ -585,8 +585,8 @@ fn test_lint_file_input() {
 
     Command::cargo_bin("fy")
         .unwrap()
-        .arg(file.path())
         .arg("lint")
+        .arg(file.path())
         .assert()
         .success()
         .code(0);
@@ -620,18 +620,19 @@ fn test_default_command_formats() {
         .stdout(predicate::str::contains("name:"));
 }
 
-#[test]
-fn test_default_command_with_file() {
-    let file = create_temp_yaml("name: test");
-
-    Command::cargo_bin("fy")
-        .unwrap()
-        .arg(file.path())
-        .assert()
-        .success()
-        .code(0)
-        .stdout(predicate::str::contains("name:"));
-}
+// Default command no longer supports file argument - use `fy format <file>` instead
+// #[test]
+// fn test_default_command_with_file() {
+//     let file = create_temp_yaml("name: test");
+//
+//     Command::cargo_bin("fy")
+//         .unwrap()
+//         .arg(file.path())
+//         .assert()
+//         .success()
+//         .code(0)
+//         .stdout(predicate::str::contains("name:"));
+// }
 
 // =============================================================================
 // GLOBAL FLAGS TESTS
@@ -745,8 +746,8 @@ fn test_lint_help() {
 fn test_file_not_found() {
     Command::cargo_bin("fy")
         .unwrap()
-        .arg("/nonexistent/file.yaml")
         .arg("parse")
+        .arg("/nonexistent/file.yaml")
         .assert()
         .failure()
         .code(1)
@@ -963,20 +964,22 @@ fn test_parse_file_after_subcommand() {
         .stdout(predicate::str::contains("YAML is valid"));
 }
 
-#[test]
-fn test_parse_file_before_subcommand() {
-    let file = create_temp_yaml("name: test\nvalue: 123");
-
-    // Old syntax: fy file.yaml parse
-    Command::cargo_bin("fy")
-        .unwrap()
-        .arg(file.path())
-        .arg("parse")
-        .assert()
-        .success()
-        .code(0)
-        .stdout(predicate::str::contains("YAML is valid"));
-}
+// Old syntax (file before subcommand) is no longer supported
+// Use: fy parse file.yaml instead
+// #[test]
+// fn test_parse_file_before_subcommand() {
+//     let file = create_temp_yaml("name: test\nvalue: 123");
+//
+//     // Old syntax: fy file.yaml parse
+//     Command::cargo_bin("fy")
+//         .unwrap()
+//         .arg(file.path())
+//         .arg("parse")
+//         .assert()
+//         .success()
+//         .code(0)
+//         .stdout(predicate::str::contains("YAML is valid"));
+// }
 
 #[test]
 fn test_format_file_after_subcommand() {

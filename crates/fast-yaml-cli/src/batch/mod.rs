@@ -54,10 +54,9 @@ pub mod reader;
 pub mod reporter;
 pub mod result;
 
-// Phase 1: Discovery exports
+pub use config::ProcessingConfig;
+pub use discovery::{DiscoveryConfig, FileDiscovery};
 
-// Phase 2: Processing exports
+pub use processor::BatchProcessor;
 
-// Phase 3: Reporter exports
-#[allow(unused_imports)] // Will be used in Phase 4: CLI integration
 pub use reporter::{BatchReporter, ReporterConfig};

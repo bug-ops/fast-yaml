@@ -15,10 +15,6 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
 
-    /// Input file (default: stdin) - used when no subcommand specified
-    #[arg(global = true)]
-    pub file: Option<PathBuf>,
-
     /// Edit file in-place (requires file argument)
     #[arg(short = 'i', long, global = true)]
     pub in_place: bool,
@@ -58,8 +54,10 @@ pub enum Command {
 
     /// Format YAML with consistent style
     Format {
-        /// Input file (default: stdin)
-        file: Option<PathBuf>,
+        /// Input paths (files, directories, or glob patterns).
+        /// If empty and no --stdin-files, reads from stdin
+        #[arg(value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Indentation width (2-8 spaces)
         #[arg(long, default_value = "2", value_parser = clap::value_parser!(u8).range(2..=8))]
@@ -68,6 +66,30 @@ pub enum Command {
         /// Maximum line width
         #[arg(long, default_value = "80")]
         width: usize,
+
+        /// Number of parallel jobs (0 = auto-detect)
+        #[arg(short = 'j', long, default_value = "0")]
+        jobs: usize,
+
+        /// Read file paths from stdin (one per line)
+        #[arg(long, conflicts_with = "paths")]
+        stdin_files: bool,
+
+        /// Include files matching glob pattern (can be repeated)
+        #[arg(long)]
+        include: Vec<String>,
+
+        /// Exclude files matching glob pattern (can be repeated)
+        #[arg(long)]
+        exclude: Vec<String>,
+
+        /// Don't recurse into subdirectories
+        #[arg(long)]
+        no_recursive: bool,
+
+        /// Show what would be changed without modifying files
+        #[arg(short = 'n', long)]
+        dry_run: bool,
     },
 
     /// Convert between YAML and JSON
