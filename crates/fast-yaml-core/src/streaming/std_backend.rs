@@ -1,7 +1,7 @@
 //! Standard heap allocation backend for streaming formatter.
 //!
 //! This module provides the default backend implementation using standard
-//! Rust collections (Vec<T>, String) for context tracking and anchor storage.
+//! Rust collections (`Vec<T>`, `String`) for context tracking and anchor storage.
 
 use std::fmt::Write as FmtWrite;
 
