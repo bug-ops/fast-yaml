@@ -323,8 +323,7 @@ fast-yaml/
 ├── crates/
 │   ├── fast-yaml-core/     # Core YAML parser/emitter
 │   ├── fast-yaml-linter/   # Linting engine
-│   ├── fast-yaml-parallel/ # Multi-threaded processing
-│   └── fast-yaml-ffi/      # FFI utilities
+│   └── fast-yaml-parallel/ # Multi-threaded processing
 ├── python/                 # PyO3 Python bindings
 ├── nodejs/                 # NAPI-RS Node.js bindings
 └── Cargo.toml             # Workspace manifest

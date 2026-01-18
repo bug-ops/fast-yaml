@@ -20,12 +20,6 @@ component:parallel:
     - any-glob-to-any-file:
       - 'crates/fast-yaml-parallel/**/*'
 
-# Component: FFI
-component:ffi:
-  - changed-files:
-    - any-glob-to-any-file:
-      - 'crates/fast-yaml-ffi/**/*'
-
 # Component: Python bindings
 component:python:
   - changed-files:

@@ -128,11 +128,6 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
-      - name: Publish fast-yaml-ffi
-        run: cargo publish -p fast-yaml-ffi --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-
       - name: Wait for crates.io index update
         run: sleep 30
 
@@ -594,7 +589,6 @@ jobs:
 
           ## Rust Crates (crates.io)
           - `fast-yaml-core` ${{ needs.extract-version.outputs.version_no_v }}
-          - `fast-yaml-ffi` ${{ needs.extract-version.outputs.version_no_v }}
           - `fast-yaml-linter` ${{ needs.extract-version.outputs.version_no_v }}
           - `fast-yaml-parallel` ${{ needs.extract-version.outputs.version_no_v }}
           - `fast-yaml-cli` ${{ needs.extract-version.outputs.version_no_v }} (CLI tool `fy`)
@@ -682,7 +676,7 @@ jobs:
 
       - name: Verify crates.io publication
         run: |
-          for crate in fast-yaml-core fast-yaml-ffi fast-yaml-linter fast-yaml-parallel fast-yaml-cli; do
+          for crate in fast-yaml-core fast-yaml-linter fast-yaml-parallel fast-yaml-cli; do
             echo "Checking $crate on crates.io..."
             curl -f "https://crates.io/api/v1/crates/$crate" || echo "Warning: $crate not found yet"
           done

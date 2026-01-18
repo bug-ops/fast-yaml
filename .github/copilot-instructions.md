@@ -4,15 +4,14 @@ High-performance YAML 1.2.2 parser with Rust core and Python/Node.js bindings.
 
 ## Architecture
 
-**Workspace structure** with 4 Rust crates + 2 binding packages:
-- `crates/fast-yaml-core/` — Core parser/emitter wrapping yaml-rust2
+**Workspace structure** with 3 Rust crates + 2 binding packages:
+- `crates/fast-yaml-core/` — Core parser/emitter wrapping saphyr
 - `crates/fast-yaml-linter/` — Linting engine with pluggable rules and rich diagnostics
 - `crates/fast-yaml-parallel/` — Rayon-based multi-threaded document processing
-- `crates/fast-yaml-ffi/` — Shared FFI utilities for bindings
 - `python/` — PyO3 bindings (maturin build)
 - `nodejs/` — NAPI-RS bindings
 
-**Data flow**: Python/Node.js → FFI bindings → core crates → yaml-rust2
+**Data flow**: Python/Node.js → FFI bindings → core crates → saphyr
 
 ## Critical Commands
 
@@ -273,7 +272,6 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/) format:
 - `core`: fast-yaml-core crate
 - `linter`: fast-yaml-linter crate
 - `parallel`: fast-yaml-parallel crate
-- `ffi`: fast-yaml-ffi crate
 - `python`: Python bindings
 - `nodejs`: Node.js bindings
 - `ci`: CI/CD workflows

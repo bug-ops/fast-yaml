@@ -67,7 +67,6 @@ This crate is part of the [fast-yaml](https://github.com/bug-ops/fast-yaml) work
 
 - `fast-yaml-linter` — YAML linting with rich diagnostics
 - `fast-yaml-parallel` — Multi-threaded YAML processing
-- `fast-yaml-ffi` — FFI utilities for language bindings
 
 ## License
 

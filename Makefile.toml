@@ -613,7 +613,6 @@ echo "Checking workspace members..."
 cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-core" || { echo "Error: fast-yaml-core not found"; exit 1; }
 cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-linter" || { echo "Error: fast-yaml-linter not found"; exit 1; }
 cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-parallel" || { echo "Error: fast-yaml-parallel not found"; exit 1; }
-cargo metadata --format-version 1 --no-deps | grep -q "fast-yaml-ffi" || { echo "Error: fast-yaml-ffi not found"; exit 1; }
 
 # Check Python directory
 if [ -d "python" ]; then
@@ -710,12 +709,6 @@ cd crates/fast-yaml-core && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 echo "Waiting 30 seconds for crates.io to index fast-yaml-core..."
 sleep 30
 
-echo "Publishing fast-yaml-ffi..."
-cd ../fast-yaml-ffi && cargo publish --token "$CARGO_REGISTRY_TOKEN"
-
-echo "Waiting 30 seconds for crates.io to index fast-yaml-ffi..."
-sleep 30
-
 echo "Publishing fast-yaml-linter..."
 cd ../fast-yaml-linter && cargo publish --token "$CARGO_REGISTRY_TOKEN"
 
@@ -739,9 +732,6 @@ echo "Dry-run: Publishing Rust crates to crates.io in dependency order..."
 
 echo "Checking fast-yaml-core..."
 cd crates/fast-yaml-core && cargo publish --dry-run
-
-echo "Checking fast-yaml-ffi..."
-cd ../fast-yaml-ffi && cargo publish --dry-run
 
 echo "Checking fast-yaml-linter..."
 cd ../fast-yaml-linter && cargo publish --dry-run
@@ -836,7 +826,7 @@ echo "Checking version consistency..."
 WORKSPACE_VERSION=$(grep -A1 '\[workspace.dependencies\]' Cargo.toml | grep 'fast-yaml-core' | sed 's/.*version = "\([^"]*\)".*/\1/')
 
 # Check each crate version
-for crate in crates/fast-yaml-core crates/fast-yaml-ffi crates/fast-yaml-linter crates/fast-yaml-parallel; do
+for crate in crates/fast-yaml-core crates/fast-yaml-linter crates/fast-yaml-parallel; do
     CRATE_VERSION=$(grep '^version = ' "$crate/Cargo.toml" | head -1 | sed 's/version = "\([^"]*\)".*/\1/')
     CRATE_NAME=$(basename "$crate")
 

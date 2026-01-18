@@ -94,7 +94,6 @@ This crate is part of the [fast-yaml](https://github.com/bug-ops/fast-yaml) work
 
 - `fast-yaml-core` — Core YAML 1.2.2 parser and emitter
 - `fast-yaml-linter` — YAML linting with rich diagnostics
-- `fast-yaml-ffi` — FFI utilities for language bindings
 
 ## License
 
