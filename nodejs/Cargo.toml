@@ -18,22 +18,17 @@ default = ["json-output"]
 json-output = ["fast-yaml-linter/json-output"]
 
 [dependencies]
-# NAPI-RS - Latest stable version
-napi = { version = "3.8", features = ["napi8", "error_anyhow"] }
-napi-derive = "3.5"
-
-# Internal crates
-fast-yaml-core.workspace = true
-fast-yaml-linter.workspace = true
-fast-yaml-parallel.workspace = true
-
-# External dependencies
-thiserror.workspace = true
-saphyr.workspace = true
-ordered-float.workspace = true
+fast-yaml-core = { workspace = true }
+fast-yaml-linter = { workspace = true }
+fast-yaml-parallel = { workspace = true }
+napi = { workspace = true, features = ["napi8", "error_anyhow"] }
+napi-derive = { workspace = true }
+ordered-float = { workspace = true }
+saphyr = { workspace = true }
+thiserror = { workspace = true }
 
 [build-dependencies]
-napi-build = "2.3"
+napi-build = { workspace = true }
 
 # NAPI-RS modules should not use panic = "abort"
 [profile.release]
