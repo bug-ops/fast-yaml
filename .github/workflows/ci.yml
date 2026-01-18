@@ -50,12 +50,10 @@ jobs:
             python:
               - 'python/**'
               - 'crates/fast-yaml-core/**'
-              - 'crates/fast-yaml-ffi/**'
               - 'tests/**/*.py'
             nodejs:
               - 'nodejs/**'
               - 'crates/fast-yaml-core/**'
-              - 'crates/fast-yaml-ffi/**'
             ci:
               - '.github/workflows/**'
 

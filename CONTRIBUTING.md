@@ -367,7 +367,6 @@ Follow conventional commit format:
 - `core`: fast-yaml-core crate
 - `linter`: fast-yaml-linter crate
 - `parallel`: fast-yaml-parallel crate
-- `ffi`: fast-yaml-ffi crate
 - `python`: Python bindings
 - `nodejs`: NodeJS bindings
 - `ci`: CI/CD configuration
@@ -439,8 +438,7 @@ fast-yaml/
 ├── crates/
 │   ├── fast-yaml-core/      # Core YAML parser/emitter
 │   ├── fast-yaml-linter/    # Linting engine
-│   ├── fast-yaml-parallel/  # Multi-threaded processing
-│   └── fast-yaml-ffi/       # FFI utilities
+│   └── fast-yaml-parallel/  # Multi-threaded processing
 ├── python/                  # PyO3 Python bindings
 ├── nodejs/                  # NAPI-RS NodeJS bindings
 ├── tests/                   # Integration tests

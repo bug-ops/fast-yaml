@@ -11,10 +11,10 @@ keywords = ["yaml", "parallel", "rayon", "performance", "parser"]
 categories = ["parsing", "concurrency"]
 
 [dependencies]
-fast-yaml-core.workspace = true
-num_cpus.workspace = true
-rayon.workspace = true
-thiserror.workspace = true
+fast-yaml-core = { workspace = true }
+num_cpus = { workspace = true }
+rayon = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

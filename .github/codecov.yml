@@ -107,11 +107,6 @@ component_management:
       paths:
         - crates/fast-yaml-parallel/**
 
-    - component_id: ffi
-      name: "FFI Utilities"
-      paths:
-        - crates/fast-yaml-ffi/**
-
     - component_id: python
       name: "Python Bindings"
       paths:

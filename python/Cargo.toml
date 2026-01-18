@@ -19,17 +19,17 @@ default = ["json-output"]
 json-output = ["fast-yaml-linter/json-output"]
 
 [dependencies]
-fast-yaml-core.workspace = true
-fast-yaml-linter.workspace = true
-fast-yaml-parallel.workspace = true
+fast-yaml-core = { workspace = true }
+fast-yaml-linter = { workspace = true }
+fast-yaml-parallel = { workspace = true }
+num_cpus = { workspace = true }
+ordered-float = { workspace = true }
 pyo3 = { workspace = true, features = ["extension-module"] }
-saphyr.workspace = true
-ordered-float.workspace = true
-rayon.workspace = true
-num_cpus.workspace = true
+rayon = { workspace = true }
+saphyr = { workspace = true }
 
 [dev-dependencies]
-criterion.workspace = true
+criterion = { workspace = true }
 
 [[bench]]
 name = "parse_benchmark"

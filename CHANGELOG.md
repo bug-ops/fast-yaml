@@ -337,7 +337,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2025-12-13
 
 ### Added
-- README.md files for workspace crates (fast-yaml-core, fast-yaml-ffi, fast-yaml-parallel)
+- README.md files for workspace crates (fast-yaml-core, fast-yaml-parallel)
 - Workspace-level publishing support for `cargo publish --workspace`
 
 ### Changed
@@ -375,10 +375,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Rayon-based parallel processing
   - Order-preserving result aggregation
   - Optimized for large multi-document YAML files
-- **fast-yaml-ffi**: Shared FFI utilities for language bindings
-  - Type conversion traits
-  - FFI-safe error representation
-  - Memory management helpers
+- **fast-yaml-ffi**: Shared FFI utilities (removed in v0.5.0 - not used by bindings)
 - **Python bindings** (fast-yaml-python):
   - PyO3-based native extension
   - `safe_load()` and `safe_dump()` functions

@@ -41,7 +41,6 @@ Fixes #
 - [ ] fast-yaml-core (Core parser)
 - [ ] fast-yaml-linter (Linter)
 - [ ] fast-yaml-parallel (Parallel processing)
-- [ ] fast-yaml-ffi (FFI utilities)
 - [ ] Python bindings
 - [ ] NodeJS bindings
 - [ ] CLI tool

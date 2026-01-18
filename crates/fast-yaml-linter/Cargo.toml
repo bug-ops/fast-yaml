@@ -11,14 +11,14 @@ keywords = ["yaml", "lint", "linter", "validation"]
 categories = ["development-tools", "parsing"]
 
 [dependencies]
-fast-yaml-core.workspace = true
-is-terminal.workspace = true
-serde = { workspace = true, features = ["derive"], optional = true }
+fast-yaml-core = { workspace = true }
+is-terminal = { workspace = true }
+serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
-thiserror.workspace = true
+thiserror = { workspace = true }
 
 [dev-dependencies]
-indoc.workspace = true
+indoc = { workspace = true }
 
 [features]
 default = []

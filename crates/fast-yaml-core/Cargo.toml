@@ -17,15 +17,15 @@ arena = ["bumpalo"]
 
 [dependencies]
 bumpalo = { workspace = true, optional = true, features = ["collections"] }
-memchr.workspace = true
-ordered-float.workspace = true
-saphyr.workspace = true
-saphyr-parser.workspace = true
-thiserror.workspace = true
+memchr = { workspace = true }
+ordered-float = { workspace = true }
+saphyr = { workspace = true }
+saphyr-parser = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
-criterion.workspace = true
-indoc.workspace = true
+criterion = { workspace = true }
+indoc = { workspace = true }
 
 [[bench]]
 name = "arena_benchmark"

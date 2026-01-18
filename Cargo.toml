@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/fast-yaml-core",
-    "crates/fast-yaml-ffi",
     "crates/fast-yaml-linter",
     "crates/fast-yaml-parallel",
     "crates/fast-yaml-cli",
@@ -13,7 +12,6 @@ members = [
 # Build with: `uv run maturin develop` (Python) or `npm run build` (Node.js)
 default-members = [
     "crates/fast-yaml-core",
-    "crates/fast-yaml-ffi",
     "crates/fast-yaml-linter",
     "crates/fast-yaml-parallel",
     "crates/fast-yaml-cli",
@@ -29,36 +27,40 @@ repository = "https://github.com/bug-ops/fast-yaml"
 [workspace.dependencies]
 # Internal crates
 fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.4.1" }
-fast-yaml-ffi = { path = "crates/fast-yaml-ffi", version = "0.4.1" }
 fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.4.1" }
 fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.4.1" }
 
-# External dependencies
-anyhow = "1"
-bumpalo = "3.19"
-memchr = "2.7"
-memmap2 = "0.9"
-assert_cmd = "2.1"
-clap = "4.5"
-colored = "3.1"
-criterion = "0.8"
-glob = "0.3"
-globset = "0.4"
-ignore = "0.4"
-indoc = "2.0"
-is-terminal = "0.4"
-num_cpus = "1.17"
-ordered-float = "5"
-predicates = "3.1"
-proptest = "1.6"
-pyo3 = "0.27"
-rayon = "1.11"
-serde = "1.0"
-serde_json = "1.0"
-tempfile = "3.24"
-thiserror = "2.0"
-saphyr = "0.0.6"
-saphyr-parser = "0.0.6"
+# External dependencies - production
+anyhow = { version = "1" }
+bumpalo = { version = "3.19" }
+clap = { version = "4.5" }
+colored = { version = "3.1" }
+glob = { version = "0.3" }
+globset = { version = "0.4" }
+ignore = { version = "0.4" }
+is-terminal = { version = "0.4" }
+memchr = { version = "2.7" }
+memmap2 = { version = "0.9" }
+napi = { version = "3.8" }
+napi-build = { version = "2.3" }
+napi-derive = { version = "3.5" }
+num_cpus = { version = "1.17" }
+ordered-float = { version = "5" }
+pyo3 = { version = "0.27" }
+rayon = { version = "1.11" }
+saphyr = { version = "0.0.6" }
+saphyr-parser = { version = "0.0.6" }
+serde = { version = "1.0" }
+serde_json = { version = "1.0" }
+thiserror = { version = "2.0" }
+
+# External dependencies - dev/test
+assert_cmd = { version = "2.1" }
+criterion = { version = "0.8" }
+indoc = { version = "2.0" }
+predicates = { version = "3.1" }
+proptest = { version = "1.9" }
+tempfile = { version = "3.24" }
 
 [workspace.lints.rust]
 # Use "deny" instead of "forbid" to allow local #[allow(unsafe_code)] where necessary

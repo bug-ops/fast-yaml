@@ -47,6 +47,53 @@ cd nodejs && npm install && npm run build
 
 </details>
 
+## Architecture
+
+fast-yaml is organized as a modular Rust workspace with clear separation of concerns:
+
+```
+fast-yaml/
+├── crates/fast-yaml-core/     # Parser + Emitter + Streaming Formatter
+├── crates/fast-yaml-linter/   # Linter + Diagnostic Formatters
+├── crates/fast-yaml-parallel/ # Multi-threaded processing
+├── python/                    # PyO3 bindings
+└── nodejs/                    # NAPI-RS bindings
+```
+
+### Core Components
+
+| Component | Location | Input | Output | Use Case |
+|-----------|----------|-------|--------|----------|
+| **Parser** | `fast-yaml-core` | YAML text | `Value` (DOM) | Deserialize YAML to data structures |
+| **Emitter** | `fast-yaml-core` | `Value` (DOM) | YAML text | Serialize data structures to YAML |
+| **Streaming Formatter** | `fast-yaml-core` | Parser events | YAML text | Format YAML without building DOM (faster, less memory) |
+| **Linter** | `fast-yaml-linter` | YAML text | `Vec<Diagnostic>` | Validate YAML against rules (duplicate keys, line length, etc.) |
+| **Diagnostic Formatter** | `fast-yaml-linter` | `Vec<Diagnostic>` | Text/JSON/SARIF | Format linter output for humans or tools |
+| **Parallel Processor** | `fast-yaml-parallel` | Multi-doc YAML file | `Vec<Value>` | Parse multiple documents inside one file in parallel (document-level parallelism) |
+
+> [!TIP]
+> **Parser vs Streaming Formatter**: Parser builds a full DOM (use for data manipulation), Streaming Formatter processes events directly (use for formatting/conversion).
+
+> [!TIP]
+> **Linter vs Diagnostic Formatter**: Linter validates YAML and produces diagnostics, Diagnostic Formatter renders them for display (rustc-style text, JSON, SARIF).
+
+### Two Types of Parallelism
+
+fast-yaml provides two independent parallelism strategies:
+
+**1. Document-level parallelism** (`fast-yaml-parallel` crate):
+- Parses multiple `---` separated documents **inside one file** in parallel
+- Used by Python/Node.js `parse_parallel()` API
+- Example: Parse a 10MB log file with 5,000 YAML documents
+
+**2. File-level parallelism** (CLI batch mode):
+- Processes multiple separate files in parallel
+- Uses Rayon directly (not the parallel crate)
+- Example: `fy format -i -j 8 src/` processes 8 files simultaneously
+
+> [!NOTE]
+> These can be combined: CLI batch mode processing multiple files, where each file contains multiple documents parsed in parallel.
+
 ## Quick Start
 
 ### Python
@@ -119,14 +166,19 @@ for diag in diagnostics:
     print(f"{diag.severity}: {diag.message} at line {diag.span.start.line}")
 ```
 
-### Parallel Processing
+### Parallel Processing (Document-Level)
 
 ```python
 from fast_yaml._core.parallel import parse_parallel, ParallelConfig
 
+# Parse ONE file with MULTIPLE documents in parallel
+multi_doc_yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3"
 config = ParallelConfig(thread_count=4, max_input_size=100*1024*1024)
-docs = parse_parallel(multi_doc_yaml, config)
+docs = parse_parallel(multi_doc_yaml, config)  # 3 documents parsed in parallel
 ```
+
+> [!NOTE]
+> This is document-level parallelism (parsing documents inside one file). For file-level parallelism (processing multiple files), use CLI batch mode: `fy format -i -j 8 directory/`
 
 </details>
 
@@ -323,8 +375,7 @@ fast-yaml/
 ├── crates/
 │   ├── fast-yaml-core/     # Core YAML parser/emitter
 │   ├── fast-yaml-linter/   # Linting engine
-│   ├── fast-yaml-parallel/ # Multi-threaded processing
-│   └── fast-yaml-ffi/      # FFI utilities
+│   └── fast-yaml-parallel/ # Multi-threaded processing
 ├── python/                 # PyO3 Python bindings
 ├── nodejs/                 # NAPI-RS Node.js bindings
 └── Cargo.toml             # Workspace manifest
@@ -375,7 +426,16 @@ For `safe_*` functions, yes. Just change `import yaml` to `import fast_yaml as y
 <details>
 <summary><b>When should I use parallel processing?</b></summary>
 
-Use `parse_parallel()` for multi-document YAML files (separated by `---`) larger than 1MB with 4+ CPU cores. For single documents, use `safe_load()`.
+**Document-level parallelism** (`parse_parallel()` in Python/Node.js):
+- Use for single large files with multiple `---` separated documents
+- File size > 1MB with dozens/hundreds of documents
+- Example: Log files, data dumps
+
+**File-level parallelism** (CLI batch mode):
+- Use for processing multiple separate files
+- Example: `fy format -i -j 8 src/` for entire directories
+
+For single-document files, use `safe_load()`.
 
 </details>
 

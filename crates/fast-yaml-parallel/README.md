@@ -6,7 +6,48 @@
 [![MSRV](https://img.shields.io/crates/msrv/fast-yaml-parallel)](https://github.com/bug-ops/fast-yaml)
 [![License](https://img.shields.io/crates/l/fast-yaml-parallel)](LICENSE-MIT)
 
-Multi-threaded YAML processing with work-stealing parallelism.
+Multi-threaded YAML processing with work-stealing parallelism for **multi-document streams**.
+
+> [!IMPORTANT]
+> This crate provides **document-level parallelism** (parsing multiple documents inside a single YAML file). For **file-level parallelism** (processing multiple files), see CLI batch mode below.
+
+## Use Cases
+
+**This crate (document-level)**:
+```rust
+// Parse ONE file with MULTIPLE documents in parallel
+let yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3";
+let docs = parse_parallel(yaml)?; // 3 documents parsed in parallel
+```
+
+**CLI batch mode (file-level)**:
+```bash
+# Process MULTIPLE files in parallel (uses Rayon directly, not this crate)
+fy format -i -j 8 src/  # 8 workers processing different files
+```
+
+## How It Works
+
+Splits multi-document YAML streams at `---` boundaries and parses each document in parallel:
+
+```
+Input: Single YAML file with multiple documents
+     ↓
+[Document Chunker] — Split at `---` boundaries into chunks
+     ↓
+[Rayon Thread Pool] — Parse each chunk (document) in parallel
+     ↓
+[Result Merger] — Preserve document order
+     ↓
+Vec<Value> (parsed documents in original order)
+```
+
+**Strategy**: Work-stealing parallelism with Rayon thread pool for optimal CPU utilization.
+
+**Document order preservation**: Results are merged in original order despite parallel execution.
+
+> [!NOTE]
+> This crate is used internally by Python and Node.js bindings for `parse_parallel()` API. The CLI uses a different parallelism strategy (file-level with Rayon directly).
 
 ## Installation
 
@@ -68,15 +109,35 @@ Expected speedup on multi-document YAML files:
 
 ## When to Use
 
-**Use parallel processing when:**
-- Processing multi-document YAML streams (logs, configs, data dumps)
+### Use This Crate (Document-Level Parallelism)
+
+**Ideal for**:
+- Multi-document YAML streams (logs, configs, data dumps)
+- Single large file with many `---` separated documents
 - Input size > 1MB with multiple documents
 - Running on multi-core hardware (4+ cores recommended)
 
-**Use sequential processing when:**
+**Example**: Parsing a 10MB log file containing 5,000 YAML documents separated by `---`
+
+### Use Sequential Processing (fast-yaml-core)
+
+**Ideal for**:
 - Single document files
 - Small files (<100KB)
+- Files with only 1-2 documents
 - Memory constrained environments
+
+### Use CLI Batch Mode (File-Level Parallelism)
+
+**Ideal for**:
+- Processing multiple separate YAML files
+- Formatting entire directories
+- CI/CD pipelines processing many config files
+
+**Example**: `fy format -i -j 8 configs/` processes 8 files simultaneously
+
+> [!TIP]
+> Document-level (this crate) and file-level (CLI) parallelism can be combined: CLI batch mode can use this crate for files that contain multiple documents.
 
 ## Configuration Options
 
@@ -94,7 +155,6 @@ This crate is part of the [fast-yaml](https://github.com/bug-ops/fast-yaml) work
 
 - `fast-yaml-core` — Core YAML 1.2.2 parser and emitter
 - `fast-yaml-linter` — YAML linting with rich diagnostics
-- `fast-yaml-ffi` — FFI utilities for language bindings
 
 ## License
 
