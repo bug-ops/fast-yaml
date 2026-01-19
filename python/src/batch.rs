@@ -26,7 +26,7 @@ pub enum PyFileOutcome {
 
 #[pymethods]
 impl PyFileOutcome {
-    fn __repr__(&self) -> &'static str {
+    const fn __repr__(&self) -> &'static str {
         match self {
             Self::Success => "FileOutcome.Success",
             Self::Changed => "FileOutcome.Changed",
@@ -39,7 +39,7 @@ impl PyFileOutcome {
         std::mem::discriminant(self) == std::mem::discriminant(other)
     }
 
-    fn __hash__(&self) -> u64 {
+    const fn __hash__(&self) -> u64 {
         match self {
             Self::Success => 0,
             Self::Changed => 1,
@@ -64,11 +64,11 @@ pub struct PyFileResult {
 
 #[pymethods]
 impl PyFileResult {
-    fn is_success(&self) -> bool {
+    const fn is_success(&self) -> bool {
         !matches!(self.outcome, PyFileOutcome::Error)
     }
 
-    fn was_changed(&self) -> bool {
+    const fn was_changed(&self) -> bool {
         matches!(self.outcome, PyFileOutcome::Changed)
     }
 
@@ -117,10 +117,11 @@ pub struct PyBatchResult {
 
 #[pymethods]
 impl PyBatchResult {
-    fn is_success(&self) -> bool {
+    const fn is_success(&self) -> bool {
         self.failed == 0
     }
 
+    #[allow(clippy::cast_precision_loss)]
     fn files_per_second(&self) -> f64 {
         let secs = self.duration_ms / 1000.0;
         if secs > 0.0 {
@@ -198,8 +199,7 @@ impl PyBatchConfig {
             && w > MAX_WORKERS
         {
             return Err(PyValueError::new_err(format!(
-                "workers {} exceeds maximum {}",
-                w, MAX_WORKERS
+                "workers {w} exceeds maximum {MAX_WORKERS}"
             )));
         }
         if max_input_size > MAX_INPUT_SIZE {
@@ -225,8 +225,7 @@ impl PyBatchConfig {
             && w > MAX_WORKERS
         {
             return Err(PyValueError::new_err(format!(
-                "workers {} exceeds maximum {}",
-                w, MAX_WORKERS
+                "workers {w} exceeds maximum {MAX_WORKERS}"
             )));
         }
         Ok(Self {
@@ -295,6 +294,7 @@ impl PyBatchConfig {
 ///     >>> print(f"Processed {result.total} files, {result.failed} failed")
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
+#[allow(clippy::needless_pass_by_value, clippy::doc_link_with_quotes, clippy::unnecessary_wraps)]
 fn process_files(
     py: Python<'_>,
     paths: Vec<String>,
@@ -334,6 +334,7 @@ fn process_files(
 ///     ...         print(content)
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
+#[allow(clippy::needless_pass_by_value, clippy::doc_link_with_quotes, clippy::unnecessary_wraps, clippy::type_complexity)]
 fn format_files(
     py: Python<'_>,
     paths: Vec<String>,
@@ -381,6 +382,7 @@ fn format_files(
 ///     >>> print(f"Changed {result.changed} files")
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
+#[allow(clippy::needless_pass_by_value, clippy::doc_link_with_quotes, clippy::unnecessary_wraps)]
 fn format_files_in_place(
     py: Python<'_>,
     paths: Vec<String>,

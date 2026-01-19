@@ -103,11 +103,7 @@ class TestBatchConfig:
     def test_builder_chaining(self):
         """Test chaining builder methods."""
         config = (
-            batch.BatchConfig()
-            .with_workers(4)
-            .with_indent(4)
-            .with_width(120)
-            .with_sort_keys(True)
+            batch.BatchConfig().with_workers(4).with_indent(4).with_width(120).with_sort_keys(True)
         )
         assert config is not None
 

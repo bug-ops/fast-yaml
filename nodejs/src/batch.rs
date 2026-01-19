@@ -94,6 +94,7 @@ pub struct BatchResult {
 
 impl From<RustBatchResult> for BatchResult {
     fn from(result: RustBatchResult) -> Self {
+        #[allow(clippy::cast_possible_truncation)]
         Self {
             total: result.total as u32,
             success: result.success as u32,
@@ -141,8 +142,7 @@ impl BatchConfig {
             && w > MAX_WORKERS
         {
             return Err(napi::Error::from_reason(format!(
-                "workers {} exceeds maximum {}",
-                w, MAX_WORKERS
+                "workers {w} exceeds maximum {MAX_WORKERS}"
             )));
         }
         if let Some(size) = self.max_input_size
@@ -200,7 +200,7 @@ pub struct FormatResult {
 ///
 /// # Returns
 ///
-/// BatchResult with processing statistics
+/// `BatchResult` with processing statistics
 ///
 /// # Example
 ///
@@ -210,6 +210,7 @@ pub struct FormatResult {
 /// console.log(`Processed ${result.total} files, ${result.failed} failed`);
 /// ```
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiResult<BatchResult> {
     let config = config.unwrap_or_default();
     config.validate()?;
@@ -234,7 +235,7 @@ pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiRes
 ///
 /// # Returns
 ///
-/// Array of FormatResult objects
+/// Array of `FormatResult` objects
 ///
 /// # Example
 ///
@@ -246,6 +247,7 @@ pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiRes
 /// });
 /// ```
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn format_files(
     paths: Vec<String>,
     config: Option<BatchConfig>,
@@ -292,7 +294,7 @@ pub fn format_files(
 ///
 /// # Returns
 ///
-/// BatchResult with changed/unchanged counts
+/// `BatchResult` with changed/unchanged counts
 ///
 /// # Example
 ///
@@ -302,6 +304,7 @@ pub fn format_files(
 /// console.log(`Changed ${result.changed} files`);
 /// ```
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn format_files_in_place(
     paths: Vec<String>,
     config: Option<BatchConfig>,
