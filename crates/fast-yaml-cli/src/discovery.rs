@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use super::error::DiscoveryError;
+use crate::error::DiscoveryError;
 
 /// Maximum number of paths that can be read from stdin.
 const MAX_STDIN_PATHS: usize = 100_000;

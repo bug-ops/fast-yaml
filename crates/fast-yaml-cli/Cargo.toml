@@ -20,11 +20,11 @@ clap = { workspace = true, features = ["derive", "cargo", "env", "wrap_help"] }
 colored = { workspace = true, optional = true }
 fast-yaml-core = { workspace = true, features = ["streaming"] }
 fast-yaml-linter = { workspace = true, optional = true, features = ["json-output"] }
+fast-yaml-parallel = { workspace = true }
 glob = { workspace = true }
 globset = { workspace = true }
 ignore = { workspace = true }
 is-terminal = { workspace = true, optional = true }
-memmap2 = { workspace = true }
 num_cpus = { workspace = true }
 ordered-float = { workspace = true }
 rayon = { workspace = true }
@@ -48,10 +48,6 @@ all = ["colors", "linter", "arena"]
 
 [[bench]]
 name = "discovery_bench"
-harness = false
-
-[[bench]]
-name = "processor_bench"
 harness = false
 
 [lints]
