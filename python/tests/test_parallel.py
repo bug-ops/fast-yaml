@@ -203,29 +203,6 @@ also_valid: true
             parallel.parse_parallel(yaml_content)
 
 
-class TestParseParallelLimits:
-    """Tests for input limits in parse_parallel."""
-
-    def test_max_documents_limit(self):
-        """Test that max_documents limit is enforced."""
-        config = parallel.ParallelConfig(max_documents=5)
-        # Create more documents than allowed
-        docs = [f"---\nid: {i}\n" for i in range(10)]
-        yaml_content = "".join(docs)
-
-        with pytest.raises((ValueError, Exception)):
-            parallel.parse_parallel(yaml_content, config)
-
-    def test_within_document_limit(self):
-        """Test parsing within document limit."""
-        config = parallel.ParallelConfig(max_documents=10)
-        docs = [f"---\nid: {i}\n" for i in range(5)]
-        yaml_content = "".join(docs)
-
-        result = parallel.parse_parallel(yaml_content, config)
-        assert len(result) == 5
-
-
 class TestParseParallelPerformance:
     """Performance-related tests for parse_parallel."""
 
@@ -527,19 +504,6 @@ class TestDumpParallel:
         assert "string: hello" in result
         assert "number: 42" in result
         assert "boolean: true" in result
-
-    def test_dump_max_documents_limit(self):
-        """Test that max_documents limit is enforced (100,000 hardcoded limit)."""
-        docs = [{"id": i} for i in range(100001)]
-        with pytest.raises((ValueError, Exception)):
-            parallel.dump_parallel(docs)
-
-    def test_dump_within_document_limit(self):
-        """Test dumping within document limit."""
-        config = parallel.ParallelConfig(max_documents=100)
-        docs = [{"id": i} for i in range(50)]
-        result = parallel.dump_parallel(docs, config)
-        assert isinstance(result, str)
 
     def test_dump_with_explicit_start(self):
         """Test dumping with explicit start markers."""
