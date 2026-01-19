@@ -6,56 +6,22 @@
 [![MSRV](https://img.shields.io/crates/msrv/fast-yaml-parallel)](https://github.com/bug-ops/fast-yaml)
 [![License](https://img.shields.io/crates/l/fast-yaml-parallel)](LICENSE-MIT)
 
-Multi-threaded YAML processing with work-stealing parallelism for **multi-document streams**.
+Multi-threaded YAML processing with work-stealing parallelism.
 
-> [!IMPORTANT]
-> This crate provides **document-level parallelism** (parsing multiple documents inside a single YAML file). For **file-level parallelism** (processing multiple files), see CLI batch mode below.
+## Features
 
-## Use Cases
+This crate provides two types of parallelism:
 
-**This crate (document-level)**:
-```rust
-// Parse ONE file with MULTIPLE documents in parallel
-let yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3";
-let docs = parse_parallel(yaml)?; // 3 documents parsed in parallel
-```
-
-**CLI batch mode (file-level)**:
-```bash
-# Process MULTIPLE files in parallel (uses Rayon directly, not this crate)
-fy format -i -j 8 src/  # 8 workers processing different files
-```
-
-## How It Works
-
-Splits multi-document YAML streams at `---` boundaries and parses each document in parallel:
-
-```
-Input: Single YAML file with multiple documents
-     ↓
-[Document Chunker] — Split at `---` boundaries into chunks
-     ↓
-[Rayon Thread Pool] — Parse each chunk (document) in parallel
-     ↓
-[Result Merger] — Preserve document order
-     ↓
-Vec<Value> (parsed documents in original order)
-```
-
-**Strategy**: Work-stealing parallelism with Rayon thread pool for optimal CPU utilization.
-
-**Document order preservation**: Results are merged in original order despite parallel execution.
-
-> [!NOTE]
-> This crate is used internally by Python and Node.js bindings for `parse_parallel()` API. The CLI uses a different parallelism strategy (file-level with Rayon directly).
+| Type | API | Use Case |
+|------|-----|----------|
+| **Document-level** | `parse_parallel()` | Parse multi-document YAML streams (single file with `---` separators) |
+| **File-level** | `FileProcessor` | Process multiple YAML files in parallel |
 
 ## Installation
 
-Add to your `Cargo.toml`:
-
 ```toml
 [dependencies]
-fast-yaml-parallel = "0.3"
+fast-yaml-parallel = "0.5"
 ```
 
 Or with cargo-add:
@@ -69,7 +35,9 @@ cargo add fast-yaml-parallel
 
 ## Usage
 
-### Basic Usage
+### Document-Level Parallelism
+
+Parse a single file containing multiple `---` separated documents:
 
 ```rust
 use fast_yaml_parallel::parse_parallel;
@@ -80,74 +48,143 @@ assert_eq!(docs.len(), 3);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### Custom Configuration
+With custom configuration:
 
 ```rust
-use fast_yaml_parallel::{parse_parallel_with_config, ParallelConfig};
+use fast_yaml_parallel::{parse_parallel_with_config, Config};
 
-let config = ParallelConfig::new()
-    .with_thread_count(Some(8))
-    .with_min_chunk_size(2048);
+let config = Config::new()
+    .with_workers(Some(8))              // 8 threads
+    .with_sequential_threshold(2048);   // Skip parallelism for small inputs
 
 let yaml = "---\nfoo: 1\n---\nbar: 2";
 let docs = parse_parallel_with_config(yaml, &config)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-## Performance
+### File-Level Parallelism
 
-Expected speedup on multi-document YAML files:
+Process multiple YAML files in parallel:
 
-| Cores | Speedup |
-|-------|---------|
-| 4 | 3-3.5x |
-| 8 | 6-6.5x |
-| 16 | 10-12x |
+```rust
+use std::path::PathBuf;
+use fast_yaml_parallel::{FileProcessor, Config, BatchResult};
 
-> [!TIP]
-> Run benchmarks with `cargo bench -p fast-yaml-parallel` to measure performance on your hardware.
+let files = vec![
+    PathBuf::from("config1.yaml"),
+    PathBuf::from("config2.yaml"),
+    PathBuf::from("config3.yaml"),
+];
 
-## When to Use
+// Parse all files
+let result: BatchResult = FileProcessor::new().parse_files(&files);
+println!("Processed {} files, {} failed", result.total, result.failed);
 
-### Use This Crate (Document-Level Parallelism)
+// With custom configuration
+let config = Config::new().with_workers(Some(4));
+let processor = FileProcessor::with_config(config);
+let result = processor.parse_files(&files);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
-**Ideal for**:
-- Multi-document YAML streams (logs, configs, data dumps)
-- Single large file with many `---` separated documents
-- Input size > 1MB with multiple documents
-- Running on multi-core hardware (4+ cores recommended)
+Format files in place:
 
-**Example**: Parsing a 10MB log file containing 5,000 YAML documents separated by `---`
+```rust
+use std::path::PathBuf;
+use fast_yaml_parallel::FileProcessor;
+use fast_yaml_core::emitter::EmitterConfig;
 
-### Use Sequential Processing (fast-yaml-core)
+let files = vec![PathBuf::from("config.yaml")];
+let emitter_config = EmitterConfig::new().with_indent(2).with_width(80);
 
-**Ideal for**:
-- Single document files
-- Small files (<100KB)
-- Files with only 1-2 documents
-- Memory constrained environments
+let processor = FileProcessor::new();
+let result = processor.format_in_place(&files, &emitter_config);
 
-### Use CLI Batch Mode (File-Level Parallelism)
+println!("Changed {} files", result.changed);
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
 
-**Ideal for**:
-- Processing multiple separate YAML files
-- Formatting entire directories
-- CI/CD pipelines processing many config files
+### Convenience Function
 
-**Example**: `fy format -i -j 8 configs/` processes 8 files simultaneously
+Quick file processing without creating a processor:
 
-> [!TIP]
-> Document-level (this crate) and file-level (CLI) parallelism can be combined: CLI batch mode can use this crate for files that contain multiple documents.
+```rust
+use std::path::PathBuf;
+use fast_yaml_parallel::process_files;
 
-## Configuration Options
+let files = vec![PathBuf::from("config.yaml")];
+let result = process_files(&files);
+assert!(result.is_success());
+```
+
+## Configuration
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `thread_count` | Auto (CPU cores) | Number of worker threads |
-| `min_chunk_size` | 4KB | Minimum bytes per chunk |
-| `max_chunk_size` | 10MB | Maximum bytes per chunk |
-| `max_input_size` | 100MB | Maximum total input size |
-| `max_documents` | 100,000 | Maximum documents to parse |
+| `workers` | Auto (CPU cores) | Number of worker threads. `None` = auto, `Some(0)` = sequential |
+| `mmap_threshold` | 512 KB | Use memory-mapped I/O for files larger than this |
+| `max_input_size` | 100 MB | Maximum input size (DoS protection) |
+| `sequential_threshold` | 4 KB | Skip parallelism for inputs smaller than this |
+
+### Configuration Example
+
+```rust
+use fast_yaml_parallel::Config;
+
+let config = Config::new()
+    .with_workers(Some(8))              // 8 threads
+    .with_mmap_threshold(1024 * 1024)   // 1 MB mmap threshold
+    .with_max_input_size(50 * 1024 * 1024) // 50 MB max
+    .with_sequential_threshold(8192);   // 8 KB sequential threshold
+```
+
+## Result Types
+
+### BatchResult
+
+Aggregated result from file processing:
+
+```rust
+pub struct BatchResult {
+    pub total: usize,      // Total files processed
+    pub success: usize,    // Successfully processed
+    pub changed: usize,    // Files modified (for format_in_place)
+    pub failed: usize,     // Failed files
+    pub duration: Duration, // Processing time
+    pub errors: Vec<(PathBuf, Error)>, // Error details
+}
+
+impl BatchResult {
+    pub fn is_success(&self) -> bool;
+    pub fn files_per_second(&self) -> f64;
+}
+```
+
+### FileOutcome
+
+Outcome for individual file:
+
+```rust
+pub enum FileOutcome {
+    Success { duration: Duration },
+    Changed { duration: Duration },
+    Unchanged { duration: Duration },
+    Error { error: Error, duration: Duration },
+}
+```
+
+## Performance
+
+Expected speedup on multi-core systems:
+
+| Cores | Document-Level | File-Level |
+|-------|----------------|------------|
+| 4 | 3-3.5x | 3-4x |
+| 8 | 6-6.5x | 6-8x |
+| 16 | 10-12x | 12-15x |
+
+> [!TIP]
+> Run benchmarks with `cargo bench -p fast-yaml-parallel` to measure on your hardware.
 
 ## Related Crates
 

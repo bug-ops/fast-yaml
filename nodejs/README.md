@@ -123,6 +123,75 @@ const data = load('key: value');
 const yaml = dump(data);
 ```
 
+## Batch Processing
+
+Process multiple YAML files in parallel:
+
+```typescript
+import { processFiles, formatFilesInPlace, BatchConfig } from 'fastyaml-rs';
+
+// Parse multiple files
+const result = processFiles([
+  'config1.yaml',
+  'config2.yaml',
+  'config3.yaml',
+]);
+console.log(`Processed ${result.total} files, ${result.failed} failed`);
+
+// With configuration
+const config: BatchConfig = { workers: 4, indent: 2 };
+const result = processFiles(paths, config);
+```
+
+### Format Files
+
+```typescript
+import { formatFiles, formatFilesInPlace } from 'fastyaml-rs';
+
+// Dry-run: get formatted content without writing
+const results = formatFiles(['config.yaml']);
+for (const { path, content, error } of results) {
+  if (content) {
+    console.log(`${path}: ${content.length} bytes`);
+  }
+}
+
+// In-place: format and write back
+const result = formatFilesInPlace(['config.yaml']);
+console.log(`Changed ${result.changed} files`);
+```
+
+### BatchConfig Options
+
+```typescript
+interface BatchConfig {
+  workers?: number;           // Worker threads (null = auto)
+  mmapThreshold?: number;     // Mmap threshold (default: 512KB)
+  maxInputSize?: number;      // Max file size (default: 100MB)
+  indent?: number;            // Indentation (default: 2)
+  width?: number;             // Line width (default: 80)
+  sortKeys?: boolean;         // Sort keys (default: false)
+}
+```
+
+### BatchResult
+
+```typescript
+interface BatchResult {
+  total: number;              // Total files processed
+  success: number;            // Successfully processed
+  changed: number;            // Files modified
+  failed: number;             // Failed files
+  durationMs: number;         // Processing time in ms
+  errors: BatchError[];       // Error details
+}
+
+interface BatchError {
+  path: string;
+  message: string;
+}
+```
+
 ## YAML 1.2.2 Differences
 
 `fastyaml-rs` implements **YAML 1.2.2 Core Schema**, which differs from js-yaml's default YAML 1.1:
