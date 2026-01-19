@@ -294,7 +294,11 @@ impl PyBatchConfig {
 ///     >>> print(f"Processed {result.total} files, {result.failed} failed")
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
-#[allow(clippy::needless_pass_by_value, clippy::doc_link_with_quotes, clippy::unnecessary_wraps)]
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::doc_link_with_quotes,
+    clippy::unnecessary_wraps
+)]
 fn process_files(
     py: Python<'_>,
     paths: Vec<String>,
@@ -334,7 +338,12 @@ fn process_files(
 ///     ...         print(content)
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
-#[allow(clippy::needless_pass_by_value, clippy::doc_link_with_quotes, clippy::unnecessary_wraps, clippy::type_complexity)]
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::doc_link_with_quotes,
+    clippy::unnecessary_wraps,
+    clippy::type_complexity
+)]
 fn format_files(
     py: Python<'_>,
     paths: Vec<String>,
@@ -382,7 +391,11 @@ fn format_files(
 ///     >>> print(f"Changed {result.changed} files")
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
-#[allow(clippy::needless_pass_by_value, clippy::doc_link_with_quotes, clippy::unnecessary_wraps)]
+#[allow(
+    clippy::needless_pass_by_value,
+    clippy::doc_link_with_quotes,
+    clippy::unnecessary_wraps
+)]
 fn format_files_in_place(
     py: Python<'_>,
     paths: Vec<String>,
