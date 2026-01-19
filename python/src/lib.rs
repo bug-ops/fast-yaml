@@ -29,6 +29,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use saphyr::{LoadableYamlNode, MappingOwned, ScalarOwned, YamlOwned};
 
+mod batch;
 mod conversion;
 mod lint;
 mod parallel;
@@ -1166,6 +1167,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(version, m)?)?;
 
     // Register submodules
+    batch::register_batch_module(m.py(), m)?;
     lint::register_lint_module(m.py(), m)?;
     parallel::register_parallel_module(m.py(), m)?;
 

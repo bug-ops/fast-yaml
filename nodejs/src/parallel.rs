@@ -4,9 +4,12 @@
 
 use crate::conversion::yaml_to_js;
 use fast_yaml_parallel::{
-    ParallelConfig as RustParallelConfig, ParallelError, parse_parallel_with_config,
+    Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config,
 };
-use napi::{Env, Result as NapiResult, Task, bindgen_prelude::*};
+use napi::{
+    Env, Result as NapiResult, Task,
+    bindgen_prelude::{AsyncTask, Unknown},
+};
 use napi_derive::napi;
 
 /// Maximum thread count allowed.
@@ -97,23 +100,19 @@ impl ParallelConfig {
             ));
         }
 
-        // Build config
+        // Build config with new simplified API
         let mut config = RustParallelConfig::new();
 
         if let Some(count) = self.thread_count {
-            config = config.with_thread_count(Some(count as usize));
-        }
-        if let Some(size) = self.min_chunk_size {
-            config = config.with_min_chunk_size(size as usize);
-        }
-        if let Some(size) = self.max_chunk_size {
-            config = config.with_max_chunk_size(size as usize);
+            config = config.with_workers(Some(count as usize));
         }
         if let Some(size) = self.max_input_size {
             config = config.with_max_input_size(size as usize);
         }
-        if let Some(count) = self.max_documents {
-            config = config.with_max_documents(count as usize);
+        // Note: min_chunk_size and max_chunk_size are no longer supported in the new API
+        // The new API uses sequential_threshold instead
+        if let Some(size) = self.min_chunk_size {
+            config = config.with_sequential_threshold(size as usize);
         }
 
         Ok(config)

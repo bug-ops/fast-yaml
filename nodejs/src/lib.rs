@@ -23,12 +23,17 @@
 
 use napi_derive::napi;
 
+mod batch;
 mod conversion;
 mod emitter;
 mod parallel;
 mod parser;
 
 // Re-export public API
+pub use batch::{
+    BatchConfig, BatchError, BatchResult, FileOutcome, FileResult, FormatResult, format_files,
+    format_files_in_place, process_files,
+};
 pub use emitter::{DumpOptions, safe_dump, safe_dump_all};
 pub use parallel::{ParallelConfig, parse_parallel, parse_parallel_async};
 pub use parser::{LoadOptions, load, load_all, safe_load, safe_load_all};

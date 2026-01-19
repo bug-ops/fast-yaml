@@ -577,10 +577,14 @@ if (!nativeBinding) {
 
 module.exports = nativeBinding
 module.exports.Mark = nativeBinding.Mark
+module.exports.FileOutcome = nativeBinding.FileOutcome
+module.exports.formatFiles = nativeBinding.formatFiles
+module.exports.formatFilesInPlace = nativeBinding.formatFilesInPlace
 module.exports.load = nativeBinding.load
 module.exports.loadAll = nativeBinding.loadAll
 module.exports.parseParallel = nativeBinding.parseParallel
 module.exports.parseParallelAsync = nativeBinding.parseParallelAsync
+module.exports.processFiles = nativeBinding.processFiles
 module.exports.safeDump = nativeBinding.safeDump
 module.exports.safeDumpAll = nativeBinding.safeDumpAll
 module.exports.safeLoad = nativeBinding.safeLoad
