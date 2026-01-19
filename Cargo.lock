@@ -478,8 +478,11 @@ version = "0.4.1"
 dependencies = [
  "criterion",
  "fast-yaml-core",
+ "memmap2",
  "num_cpus",
+ "proptest",
  "rayon",
+ "tempfile",
  "thiserror",
 ]
 

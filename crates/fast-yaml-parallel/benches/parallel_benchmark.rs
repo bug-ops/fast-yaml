@@ -13,7 +13,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fast_yaml_core::Parser;
-use fast_yaml_parallel::{ParallelConfig, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use rayon::prelude::*;
 
 /// Generate multi-document YAML with specified document count and size per document.
@@ -48,7 +48,7 @@ fn bench_parallel_overhead(c: &mut Criterion) {
     let yaml_small = generate_yaml_docs(2, 50);
 
     group.bench_function("small_2docs_sequential", |b| {
-        let config = ParallelConfig::new().with_thread_count(Some(0));
+        let config = Config::new().with_workers(Some(0));
         b.iter(|| parse_parallel_with_config(black_box(&yaml_small), black_box(&config)));
     });
 
@@ -60,7 +60,7 @@ fn bench_parallel_overhead(c: &mut Criterion) {
     let yaml_medium = generate_yaml_docs(10, 200);
 
     group.bench_function("medium_10docs_sequential", |b| {
-        let config = ParallelConfig::new().with_thread_count(Some(0));
+        let config = Config::new().with_workers(Some(0));
         b.iter(|| parse_parallel_with_config(black_box(&yaml_medium), black_box(&config)));
     });
 
@@ -85,7 +85,7 @@ fn bench_scalability(c: &mut Criterion) {
             BenchmarkId::new("sequential", doc_count),
             &yaml,
             |b, yaml| {
-                let config = ParallelConfig::new().with_thread_count(Some(0));
+                let config = Config::new().with_workers(Some(0));
                 b.iter(|| parse_parallel_with_config(black_box(yaml), black_box(&config)));
             },
         );
@@ -113,13 +113,13 @@ fn bench_thread_pool_strategies(c: &mut Criterion) {
 
     group.bench_function("custom_pool_same_size", |b| {
         // Forces custom pool creation (but same thread count)
-        let config = ParallelConfig::new().with_thread_count(Some(num_cpus::get()));
+        let config = Config::new().with_workers(Some(num_cpus::get()));
         b.iter(|| parse_parallel_with_config(black_box(&yaml), black_box(&config)));
     });
 
     group.bench_function("custom_pool_4threads", |b| {
         // Custom pool with 4 threads
-        let config = ParallelConfig::new().with_thread_count(Some(4));
+        let config = Config::new().with_workers(Some(4));
         b.iter(|| parse_parallel_with_config(black_box(&yaml), black_box(&config)));
     });
 
@@ -158,7 +158,7 @@ fn bench_large_files(c: &mut Criterion) {
     let yaml_1mb = generate_yaml_docs(10000, 100);
 
     group.bench_function("1mb_sequential", |b| {
-        let config = ParallelConfig::new().with_thread_count(Some(0));
+        let config = Config::new().with_workers(Some(0));
         b.iter(|| parse_parallel_with_config(black_box(&yaml_1mb), black_box(&config)));
     });
 
@@ -170,7 +170,7 @@ fn bench_large_files(c: &mut Criterion) {
     let yaml_5mb = generate_yaml_docs(50000, 100);
 
     group.bench_function("5mb_sequential", |b| {
-        let config = ParallelConfig::new().with_thread_count(Some(0));
+        let config = Config::new().with_workers(Some(0));
         b.iter(|| parse_parallel_with_config(black_box(&yaml_5mb), black_box(&config)));
     });
 

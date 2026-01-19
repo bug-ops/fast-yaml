@@ -1,6 +1,6 @@
 //! Stress tests for parallel processing with large inputs and high concurrency.
 
-use fast_yaml_parallel::{ParallelConfig, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 
 #[test]
@@ -109,7 +109,7 @@ fn test_maximum_thread_count() {
     let yaml = "---\ntest: 1\n---\ntest: 2\n---\ntest: 3\n---\ntest: 4";
 
     // Test with very high thread count (should be capped by Rayon)
-    let config = ParallelConfig::new().with_thread_count(Some(128));
+    let config = Config::new().with_workers(Some(128));
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 4);
 }
@@ -125,11 +125,11 @@ fn test_single_thread_vs_multi_thread() {
     }
 
     // Parse with single thread
-    let config_single = ParallelConfig::new().with_thread_count(Some(1));
+    let config_single = Config::new().with_workers(Some(1));
     let docs_single = parse_parallel_with_config(&yaml, &config_single).unwrap();
 
     // Parse with multiple threads
-    let config_multi = ParallelConfig::new().with_thread_count(Some(8));
+    let config_multi = Config::new().with_workers(Some(8));
     let docs_multi = parse_parallel_with_config(&yaml, &config_multi).unwrap();
 
     // Results should be identical
@@ -215,7 +215,7 @@ fn test_input_size_validation_within_limit() {
 fn test_input_size_validation_custom_limit() {
     // Set very small limit and test it's enforced
     let yaml = "x".repeat(2000); // 2KB
-    let config = ParallelConfig::new().with_max_input_size(1000); // 1KB limit
+    let config = Config::new().with_max_input_size(1000); // 1KB limit
 
     let result = parse_parallel_with_config(&yaml, &config);
     assert!(result.is_err());
@@ -248,14 +248,14 @@ fn test_document_count_validation_custom_limit() {
         let _ = writeln!(yaml, "---\nid: {i}");
     }
 
-    let config = ParallelConfig::new().with_max_documents(100);
+    // max_documents removed - test with max_input_size instead
+    let config = Config::new().with_max_input_size(1000);
     let result = parse_parallel_with_config(&yaml, &config);
     assert!(result.is_err());
 
     if let Err(e) = result {
         let error_msg = format!("{e}");
-        assert!(error_msg.contains("document count"));
-        assert!(error_msg.contains("exceeds maximum"));
+        assert!(error_msg.contains("input size") || error_msg.contains("exceeds maximum"));
     }
 }
 
@@ -263,7 +263,7 @@ fn test_document_count_validation_custom_limit() {
 fn test_thread_count_capping() {
     // Request excessive threads (should be capped at 128 internally)
     let yaml = "---\nfoo: 1\n---\nbar: 2";
-    let config = ParallelConfig::new().with_thread_count(Some(10_000));
+    let config = Config::new().with_workers(Some(10_000));
 
     // Should not crash or create 10k threads - capping happens internally
     let result = parse_parallel_with_config(yaml, &config);

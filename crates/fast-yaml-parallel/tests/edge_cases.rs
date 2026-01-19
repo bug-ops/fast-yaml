@@ -1,6 +1,6 @@
 //! Edge case tests for unusual inputs and boundary conditions.
 
-use fast_yaml_parallel::{ParallelConfig, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 
 #[test]
 fn test_only_whitespace() {
@@ -251,17 +251,17 @@ fn test_config_edge_cases() {
     let yaml = "---\ntest: 1";
 
     // Zero thread count (sequential mode)
-    let config = ParallelConfig::new().with_thread_count(Some(0));
+    let config = Config::new().with_workers(Some(0));
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 1);
 
     // Very small min chunk size
-    let config = ParallelConfig::new().with_min_chunk_size(1);
+    let config = Config::new().with_sequential_threshold(1);
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 1);
 
     // Very large max chunk size
-    let config = ParallelConfig::new().with_max_chunk_size(usize::MAX);
+    let config = Config::new().with_max_input_size(usize::MAX);
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 1);
 }

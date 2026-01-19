@@ -3,31 +3,17 @@
 #![allow(clippy::redundant_pub_crate)]
 
 use crate::chunker::{Chunk, chunk_documents};
-use crate::config::ParallelConfig;
-use crate::error::{ParallelError, Result};
+use crate::config::Config;
+use crate::error::{Error, Result};
 use fast_yaml_core::{Parser, Value};
 use rayon::prelude::*;
 
 /// Validate input size against configured limit.
-fn validate_input_size(input: &str, config: &ParallelConfig) -> Result<()> {
+const fn validate_input_size(input: &str, config: &Config) -> Result<()> {
     let size = input.len();
     let max = config.max_input_size();
     if size > max {
-        return Err(ParallelError::ConfigError(format!(
-            "input size {size} exceeds maximum allowed {max}"
-        )));
-    }
-    Ok(())
-}
-
-/// Validate document count against configured limit.
-fn validate_document_count(chunks: &[Chunk<'_>], config: &ParallelConfig) -> Result<()> {
-    let count = chunks.len();
-    let max = config.max_documents();
-    if count > max {
-        return Err(ParallelError::ConfigError(format!(
-            "document count {count} exceeds maximum allowed {max}"
-        )));
+        return Err(Error::InputTooLarge { size, max });
     }
     Ok(())
 }
@@ -40,34 +26,30 @@ fn validate_document_count(chunks: &[Chunk<'_>], config: &ParallelConfig) -> Res
 ///
 /// Returns error if:
 /// - Input size exceeds configured maximum
-/// - Document count exceeds configured maximum
 /// - Any document fails to parse
-pub(crate) fn process_parallel(input: &str, config: &ParallelConfig) -> Result<Vec<Value>> {
+pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value>> {
     // Step 1: Validate input size
     validate_input_size(input, config)?;
 
     // Step 2: Chunk documents
     let chunks = chunk_documents(input);
 
-    // Step 3: Validate document count
-    validate_document_count(&chunks, config)?;
-
-    // Step 4: Check if parallelism is worthwhile
+    // Step 3: Check if parallelism is worthwhile
     if should_use_sequential(&chunks, config) {
         return parse_sequential(&chunks);
     }
 
-    // Step 5: Use global thread pool (fast path) or custom pool if explicitly configured
-    if let Some(thread_count) = config.thread_count
-        && thread_count > 0
-        && thread_count != rayon::current_num_threads()
+    // Step 4: Use global thread pool (fast path) or custom pool if explicitly configured
+    if let Some(workers) = config.workers()
+        && workers > 0
+        && workers != rayon::current_num_threads()
     {
         // Only create custom pool if explicitly requested AND different from current
         let pool = configure_thread_pool(config)?;
         return pool.install(|| parse_chunks_parallel(&chunks));
     }
 
-    // Step 6: Parse chunks in parallel using global pool (no creation overhead)
+    // Step 5: Parse chunks in parallel using global pool (no creation overhead)
     parse_chunks_parallel(&chunks)
 }
 
@@ -76,9 +58,9 @@ pub(crate) fn process_parallel(input: &str, config: &ParallelConfig) -> Result<V
 /// Returns true when:
 /// - Single document (no parallelism benefit)
 /// - Total size is very small AND few documents (overhead exceeds benefit)
-/// - Thread count explicitly set to 0
-fn should_use_sequential(chunks: &[Chunk<'_>], config: &ParallelConfig) -> bool {
-    if config.thread_count == Some(0) {
+/// - Workers explicitly set to 0
+fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
+    if config.workers() == Some(0) {
         return true; // User requested sequential
     }
 
@@ -91,7 +73,7 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &ParallelConfig) -> bool 
     let total_bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
 
     // Use sequential only if both small total size AND few documents
-    total_bytes < config.min_chunk_size && chunks.len() < 4
+    total_bytes < config.sequential_threshold() && chunks.len() < 4
 }
 
 /// Parse chunks sequentially (fallback for small inputs).
@@ -100,25 +82,23 @@ fn parse_sequential(chunks: &[Chunk<'_>]) -> Result<Vec<Value>> {
         .iter()
         .map(|chunk| {
             Parser::parse_str(chunk.content)
-                .map_err(|source| ParallelError::ParseError {
+                .map_err(|source| Error::Parse {
                     index: chunk.index,
                     source,
                 })?
-                .ok_or_else(|| {
-                    ParallelError::ChunkingError(format!("empty document at index {}", chunk.index))
-                })
+                .ok_or_else(|| Error::Chunking(format!("empty document at index {}", chunk.index)))
         })
         .collect()
 }
 
 /// Configure Rayon thread pool based on config.
-fn configure_thread_pool(config: &ParallelConfig) -> Result<rayon::ThreadPool> {
-    let num_threads = config.effective_thread_count();
+fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
+    let num_threads = config.effective_workers();
 
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build()
-        .map_err(|e| ParallelError::ThreadPoolError(e.to_string()))
+        .map_err(|e| Error::ThreadPool(e.to_string()))
 }
 
 /// Parse chunks in parallel using Rayon.
@@ -130,13 +110,11 @@ fn parse_chunks_parallel(chunks: &[Chunk<'_>]) -> Result<Vec<Value>> {
         .map(|chunk| {
             // Parse each chunk independently
             Parser::parse_str(chunk.content)
-                .map_err(|source| ParallelError::ParseError {
+                .map_err(|source| Error::Parse {
                     index: chunk.index,
                     source,
                 })?
-                .ok_or_else(|| {
-                    ParallelError::ChunkingError(format!("empty document at index {}", chunk.index))
-                })
+                .ok_or_else(|| Error::Chunking(format!("empty document at index {}", chunk.index)))
         })
         .collect()
 }
@@ -148,7 +126,7 @@ mod tests {
     #[test]
     fn test_process_parallel_multi_document() {
         let yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3";
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 3);
@@ -157,7 +135,7 @@ mod tests {
     #[test]
     fn test_process_parallel_single_document_fallback() {
         let yaml = "single: document";
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 1);
@@ -166,12 +144,12 @@ mod tests {
     #[test]
     fn test_process_parallel_error_propagation() {
         let yaml = "---\nvalid: true\n---\ninvalid: [unclosed";
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         let result = process_parallel(yaml, &config);
         assert!(result.is_err());
 
-        if let Err(ParallelError::ParseError { index, .. }) = result {
+        if let Err(Error::Parse { index, .. }) = result {
             assert_eq!(index, 1); // Second document failed
         } else {
             panic!("Expected ParseError");
@@ -181,7 +159,7 @@ mod tests {
     #[test]
     fn test_process_parallel_with_thread_limit() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let config = ParallelConfig::new().with_thread_count(Some(2));
+        let config = Config::new().with_workers(Some(2));
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 2);
@@ -190,7 +168,7 @@ mod tests {
     #[test]
     fn test_process_sequential_mode() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let config = ParallelConfig::new().with_thread_count(Some(0));
+        let config = Config::new().with_workers(Some(0));
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 2);
@@ -203,7 +181,7 @@ mod tests {
             content: "foo: 1",
             offset: 0,
         }];
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         assert!(should_use_sequential(&chunks, &config));
     }
@@ -222,7 +200,7 @@ mod tests {
                 offset: 4,
             },
         ];
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         assert!(should_use_sequential(&chunks, &config));
     }
@@ -241,14 +219,14 @@ mod tests {
                 offset: 6,
             },
         ];
-        let config = ParallelConfig::new().with_thread_count(Some(0));
+        let config = Config::new().with_workers(Some(0));
 
         assert!(should_use_sequential(&chunks, &config));
     }
 
     #[test]
     fn test_should_not_use_sequential_large_input() {
-        // Create chunks with total size > min_chunk_size
+        // Create chunks with total size > sequential_threshold
         let large_content = "x".repeat(2048);
         let chunks = vec![
             Chunk {
@@ -262,7 +240,7 @@ mod tests {
                 offset: 2048,
             },
         ];
-        let config = ParallelConfig::default(); // min_chunk_size = 1024
+        let config = Config::default(); // sequential_threshold = 4096
 
         assert!(!should_use_sequential(&chunks, &config));
     }
@@ -285,7 +263,7 @@ mod tests {
         let result = parse_sequential(&chunks);
         assert!(result.is_err());
 
-        if let Err(ParallelError::ParseError { index, .. }) = result {
+        if let Err(Error::Parse { index, .. }) = result {
             assert_eq!(index, 1);
         } else {
             panic!("Expected ParseError");
@@ -294,14 +272,14 @@ mod tests {
 
     #[test]
     fn test_configure_thread_pool_default() {
-        let config = ParallelConfig::default();
+        let config = Config::default();
         let pool = configure_thread_pool(&config);
         assert!(pool.is_ok());
     }
 
     #[test]
     fn test_configure_thread_pool_custom_threads() {
-        let config = ParallelConfig::new().with_thread_count(Some(4));
+        let config = Config::new().with_workers(Some(4));
         let pool = configure_thread_pool(&config);
         assert!(pool.is_ok());
     }
@@ -353,7 +331,7 @@ mod tests {
         let result = parse_chunks_parallel(&chunks);
         assert!(result.is_err());
 
-        if let Err(ParallelError::ParseError { index, .. }) = result {
+        if let Err(Error::Parse { index, .. }) = result {
             assert_eq!(index, 1);
         } else {
             panic!("Expected ParseError with index");
@@ -363,7 +341,7 @@ mod tests {
     #[test]
     fn test_process_parallel_empty_input() {
         let yaml = "";
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 0);
@@ -372,7 +350,7 @@ mod tests {
     #[test]
     fn test_process_parallel_whitespace_only() {
         let yaml = "   \n\n\t  ";
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         let result = process_parallel(yaml, &config);
         // Whitespace-only may return empty vec or be treated as no documents
@@ -382,7 +360,7 @@ mod tests {
     #[test]
     fn test_should_use_sequential_empty_chunks() {
         let chunks: Vec<Chunk> = vec![];
-        let config = ParallelConfig::default();
+        let config = Config::default();
 
         // Empty chunks list should use sequential (edge case)
         assert!(should_use_sequential(&chunks, &config));
@@ -390,87 +368,29 @@ mod tests {
 
     #[test]
     fn test_validate_input_size_ok() {
-        let config = ParallelConfig::new().with_max_input_size(100);
+        let config = Config::new().with_max_input_size(100);
         let result = validate_input_size("small", &config);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_input_size_exceeded() {
-        let config = ParallelConfig::new().with_max_input_size(5);
+        let config = Config::new().with_max_input_size(5);
         let result = validate_input_size("large input", &config);
         assert!(result.is_err());
 
-        if let Err(ParallelError::ConfigError(msg)) = result {
-            assert!(msg.contains("input size"));
-            assert!(msg.contains("exceeds maximum"));
+        if let Err(Error::InputTooLarge { size, max }) = result {
+            assert_eq!(size, 11);
+            assert_eq!(max, 5);
         } else {
-            panic!("Expected ConfigError");
-        }
-    }
-
-    #[test]
-    fn test_validate_document_count_ok() {
-        let chunks = vec![
-            Chunk {
-                index: 0,
-                content: "a: 1",
-                offset: 0,
-            },
-            Chunk {
-                index: 1,
-                content: "b: 2",
-                offset: 4,
-            },
-        ];
-        let config = ParallelConfig::new().with_max_documents(10);
-        let result = validate_document_count(&chunks, &config);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_validate_document_count_exceeded() {
-        let chunks = vec![
-            Chunk {
-                index: 0,
-                content: "a: 1",
-                offset: 0,
-            },
-            Chunk {
-                index: 1,
-                content: "b: 2",
-                offset: 4,
-            },
-            Chunk {
-                index: 2,
-                content: "c: 3",
-                offset: 8,
-            },
-        ];
-        let config = ParallelConfig::new().with_max_documents(2);
-        let result = validate_document_count(&chunks, &config);
-        assert!(result.is_err());
-
-        if let Err(ParallelError::ConfigError(msg)) = result {
-            assert!(msg.contains("document count"));
-            assert!(msg.contains("exceeds maximum"));
-        } else {
-            panic!("Expected ConfigError");
+            panic!("Expected InputTooLarge");
         }
     }
 
     #[test]
     fn test_process_parallel_input_size_limit() {
-        let config = ParallelConfig::new().with_max_input_size(5);
+        let config = Config::new().with_max_input_size(5);
         let result = process_parallel("---\nlarge content", &config);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_process_parallel_document_count_limit() {
-        let yaml = "---\na: 1\n---\nb: 2\n---\nc: 3";
-        let config = ParallelConfig::new().with_max_documents(2);
-        let result = process_parallel(yaml, &config);
         assert!(result.is_err());
     }
 }

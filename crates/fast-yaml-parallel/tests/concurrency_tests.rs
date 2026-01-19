@@ -1,6 +1,6 @@
 //! Thread safety and concurrency tests.
 
-use fast_yaml_parallel::{ParallelConfig, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 use std::sync::Arc;
 use std::thread;
@@ -52,7 +52,7 @@ fn test_concurrent_with_different_configs() {
         .map(|thread_count| {
             let yaml_clone = Arc::clone(&yaml);
             thread::spawn(move || {
-                let config = ParallelConfig::new().with_thread_count(Some(thread_count));
+                let config = Config::new().with_workers(Some(thread_count));
                 let docs = parse_parallel_with_config(&yaml_clone, &config).unwrap();
                 assert_eq!(docs.len(), 4);
             })
@@ -79,7 +79,7 @@ fn test_parse_parallel_is_send() {
 #[test]
 fn test_config_is_send_sync() {
     // Verify config can be shared across threads
-    let config = Arc::new(ParallelConfig::new().with_thread_count(Some(4)));
+    let config = Arc::new(Config::new().with_workers(Some(4)));
 
     let handles: Vec<_> = (0..5)
         .map(|i| {
@@ -265,10 +265,10 @@ fn test_config_builder_concurrent() {
     let handles: Vec<_> = (1..=10)
         .map(|i| {
             thread::spawn(move || {
-                let config = ParallelConfig::new()
-                    .with_thread_count(Some(i))
-                    .with_min_chunk_size(1024 * i)
-                    .with_max_chunk_size(10 * 1024 * 1024);
+                let config = Config::new()
+                    .with_workers(Some(i))
+                    .with_sequential_threshold(1024 * i)
+                    .with_max_input_size(10 * 1024 * 1024);
 
                 let yaml = format!("---\nthread: {i}");
                 let docs = parse_parallel_with_config(&yaml, &config).unwrap();

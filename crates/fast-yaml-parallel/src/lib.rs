@@ -1,7 +1,8 @@
 //! fast-yaml-parallel: Multi-threaded YAML processing.
 //!
-//! This crate provides parallel parsing for multi-document YAML streams,
-//! leveraging Rayon for work-stealing parallelism.
+//! Provides parallel processing for:
+//! - Multi-document YAML streams (document-level parallelism)
+//! - Multiple YAML files (file-level parallelism)
 //!
 //! # Performance
 //!
@@ -14,6 +15,7 @@
 //!
 //! Use parallel processing when:
 //! - Processing multi-document YAML streams (logs, configs, data dumps)
+//! - Batch processing multiple YAML files
 //! - Input size > 1MB with multiple documents
 //! - Running on multi-core hardware (4+ cores recommended)
 //!
@@ -24,7 +26,7 @@
 //!
 //! # Examples
 //!
-//! Basic usage:
+//! Document-level parallelism:
 //!
 //! ```
 //! use fast_yaml_parallel::parse_parallel;
@@ -35,21 +37,35 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
+//! File-level parallelism:
+//!
+//! ```no_run
+//! use fast_yaml_parallel::{FileProcessor, Config};
+//! use std::path::PathBuf;
+//!
+//! let processor = FileProcessor::new();
+//! let paths = vec![PathBuf::from("file1.yaml"), PathBuf::from("file2.yaml")];
+//! let result = processor.parse_files(&paths);
+//!
+//! println!("Processed {} files, {} successful, {} failed",
+//!          result.total, result.success, result.failed);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
 //! Custom configuration:
 //!
 //! ```
-//! use fast_yaml_parallel::{parse_parallel_with_config, ParallelConfig};
+//! use fast_yaml_parallel::{parse_parallel_with_config, Config};
 //!
-//! let config = ParallelConfig::new()
-//!     .with_thread_count(Some(8))
-//!     .with_min_chunk_size(2048);
+//! let config = Config::new()
+//!     .with_workers(Some(8))
+//!     .with_sequential_threshold(2048);
 //!
 //! let yaml = "---\nfoo: 1\n---\nbar: 2";
 //! let docs = parse_parallel_with_config(yaml, &config)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod chunker;
@@ -57,9 +73,20 @@ mod config;
 mod error;
 mod processor;
 
-pub use config::ParallelConfig;
-pub use error::{ParallelError, Result};
+// New modules
+mod files;
+mod io;
+mod result;
+
+// Core public API
+pub use config::Config;
+pub use error::{Error, Result};
 pub use fast_yaml_core::Value;
+
+// File-level parallelism
+pub use files::FileProcessor;
+pub use io::{FileContent, SmartReader};
+pub use result::{BatchResult, FileOutcome, FileResult};
 
 /// Parse multi-document YAML stream in parallel.
 ///
@@ -69,7 +96,7 @@ pub use fast_yaml_core::Value;
 ///
 /// # Errors
 ///
-/// Returns `ParallelError::ParseError` if any document fails to parse.
+/// Returns `Error::Parse` if any document fails to parse.
 /// The error includes the document index for debugging.
 ///
 /// # Examples
@@ -83,7 +110,7 @@ pub use fast_yaml_core::Value;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn parse_parallel(input: &str) -> Result<Vec<Value>> {
-    let config = ParallelConfig::default();
+    let config = Config::default();
     processor::process_parallel(input, &config)
 }
 
@@ -94,22 +121,42 @@ pub fn parse_parallel(input: &str) -> Result<Vec<Value>> {
 ///
 /// # Errors
 ///
-/// Returns `ParallelError` if parsing or configuration fails.
+/// Returns `Error` if parsing or configuration fails.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_parallel::{parse_parallel_with_config, ParallelConfig};
+/// use fast_yaml_parallel::{parse_parallel_with_config, Config};
 ///
-/// let config = ParallelConfig::new()
-///     .with_thread_count(Some(4));
+/// let config = Config::new()
+///     .with_workers(Some(4));
 ///
 /// let yaml = "---\nfoo: 1\n---\nbar: 2";
 /// let docs = parse_parallel_with_config(yaml, &config)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn parse_parallel_with_config(input: &str, config: &ParallelConfig) -> Result<Vec<Value>> {
+pub fn parse_parallel_with_config(input: &str, config: &Config) -> Result<Vec<Value>> {
     processor::process_parallel(input, config)
+}
+
+/// Process multiple YAML files in parallel.
+///
+/// Convenience function for batch file processing with default config.
+///
+/// # Examples
+///
+/// ```no_run
+/// use fast_yaml_parallel::process_files;
+/// use std::path::PathBuf;
+///
+/// let paths = vec![PathBuf::from("file1.yaml"), PathBuf::from("file2.yaml")];
+/// let result = process_files(&paths);
+///
+/// println!("Processed {} files", result.total);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn process_files(paths: &[std::path::PathBuf]) -> BatchResult {
+    FileProcessor::new().parse_files(paths)
 }
 
 #[cfg(test)]
@@ -139,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_parse_parallel_with_config() {
-        let config = ParallelConfig::new().with_thread_count(Some(2));
+        let config = Config::new().with_workers(Some(2));
         let yaml = "---\nfoo: 1\n---\nbar: 2";
         let docs = parse_parallel_with_config(yaml, &config).unwrap();
         assert_eq!(docs.len(), 2);
@@ -163,5 +210,12 @@ mod tests {
 
         let docs = parse_parallel(&yaml).unwrap();
         assert_eq!(docs.len(), 100);
+    }
+
+    #[test]
+    fn test_process_files_empty() {
+        let result = process_files(&[]);
+        assert_eq!(result.total, 0);
+        assert!(result.is_success());
     }
 }

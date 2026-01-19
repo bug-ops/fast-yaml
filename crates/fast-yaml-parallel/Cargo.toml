@@ -12,13 +12,17 @@ categories = ["parsing", "concurrency"]
 
 [dependencies]
 fast-yaml-core = { workspace = true }
+memmap2 = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
+tempfile = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 fast-yaml-core = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "parallel_benchmark"

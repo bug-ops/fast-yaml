@@ -3,60 +3,50 @@
 /// Maximum number of threads allowed (security limit).
 const MAX_THREADS: usize = 128;
 
-/// Maximum input size in bytes (100MB default).
-const DEFAULT_MAX_INPUT_SIZE: usize = 100 * 1024 * 1024;
-
-/// Maximum number of documents allowed (denial-of-service protection).
-const DEFAULT_MAX_DOCUMENTS: usize = 100_000;
-
 /// Configuration for parallel processing behavior.
 ///
-/// Controls thread pool size, chunking thresholds, resource limits,
-/// and performance tuning parameters.
+/// Simplified configuration with essential fields for both document-level
+/// and file-level parallelism.
 ///
 /// # Security Limits
 ///
-/// To prevent denial-of-service attacks and resource exhaustion, the following limits are enforced:
+/// To prevent denial-of-service attacks and resource exhaustion:
 /// - Maximum threads: 128
-/// - Maximum input size: 100MB (configurable)
-/// - Maximum document count: 100,000 (configurable)
+/// - Maximum input size: 100MB (configurable via `max_input_size`)
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_parallel::ParallelConfig;
+/// use fast_yaml_parallel::Config;
 ///
-/// let config = ParallelConfig::new()
-///     .with_thread_count(Some(8))
-///     .with_min_chunk_size(2048);
+/// let config = Config::new()
+///     .with_workers(Some(8))
+///     .with_sequential_threshold(2048);
 /// ```
 #[derive(Debug, Clone)]
-pub struct ParallelConfig {
-    /// Thread pool size (None = CPU count, Some(0) = sequential).
-    pub(crate) thread_count: Option<usize>,
+pub struct Config {
+    /// Worker count: None = auto (CPU count), Some(0) = sequential, Some(n) = n threads
+    pub(crate) workers: Option<usize>,
 
-    /// Minimum bytes per chunk (prevents over-chunking small files).
-    pub(crate) min_chunk_size: usize,
+    /// Mmap threshold for large file reading (default: 512KB)
+    pub(crate) mmap_threshold: usize,
 
-    /// Maximum bytes per chunk (prevents memory spikes).
-    pub(crate) max_chunk_size: usize,
-
-    /// Maximum total input size in bytes (denial-of-service protection).
+    /// Maximum input size (`DoS` protection, default: 100MB)
     pub(crate) max_input_size: usize,
 
-    /// Maximum number of documents allowed (denial-of-service protection).
-    pub(crate) max_documents: usize,
+    /// Sequential threshold: use sequential for small inputs (default: 4KB)
+    pub(crate) sequential_threshold: usize,
 }
 
-impl ParallelConfig {
-    /// Creates default configuration (auto thread count).
+impl Config {
+    /// Creates default configuration.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_parallel::ParallelConfig;
+    /// use fast_yaml_parallel::Config;
     ///
-    /// let config = ParallelConfig::new();
+    /// let config = Config::new();
     /// ```
     #[inline]
     #[must_use]
@@ -64,33 +54,66 @@ impl ParallelConfig {
         Self::default()
     }
 
-    /// Sets thread pool size.
+    /// Sets worker count.
     ///
-    /// - `None`: Use all available CPU cores (default, capped at 128)
+    /// - `None`: Auto-detect CPU count (default, capped at 128)
     /// - `Some(0)`: Sequential processing (no parallelism)
-    /// - `Some(n)`: Use exactly `n` threads (max 128)
+    /// - `Some(n)`: Use exactly `n` threads (capped at 128)
     ///
     /// # Security
     ///
     /// Thread count is capped at 128 to prevent resource exhaustion.
-    /// Values exceeding this limit will be clamped at runtime.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_parallel::ParallelConfig;
+    /// use fast_yaml_parallel::Config;
     ///
-    /// let config = ParallelConfig::new().with_thread_count(Some(4));
+    /// let config = Config::new().with_workers(Some(4));
     /// ```
     #[must_use]
-    pub const fn with_thread_count(mut self, count: Option<usize>) -> Self {
-        self.thread_count = count;
+    pub const fn with_workers(mut self, workers: Option<usize>) -> Self {
+        self.workers = workers;
         self
     }
 
-    /// Sets maximum total input size in bytes.
+    /// Sets memory-map threshold for file reading.
     ///
-    /// Input exceeding this size will be rejected with `ConfigError`.
+    /// Files larger than this threshold will use memory-mapped I/O.
+    /// Default: 512KB
+    ///
+    /// # Tuning Guidance
+    ///
+    /// The optimal threshold depends on your workload:
+    ///
+    /// - **Lower (256KB-512KB)**: Better for many medium files (100KB-1MB)
+    ///   - Pros: Less virtual memory pressure, faster for small-to-medium files
+    ///   - Cons: More heap allocations for files just above threshold
+    ///
+    /// - **Higher (1MB-2MB)**: Better for fewer large files (>2MB)
+    ///   - Pros: Fewer mmaps, better for very large files
+    ///   - Cons: More heap usage for medium files
+    ///
+    /// Consider your typical file size distribution and available memory.
+    /// Profile with real data before changing the default.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_parallel::Config;
+    ///
+    /// let config = Config::new()
+    ///     .with_mmap_threshold(1024 * 1024); // 1MB
+    /// ```
+    #[must_use]
+    pub const fn with_mmap_threshold(mut self, threshold: usize) -> Self {
+        self.mmap_threshold = threshold;
+        self
+    }
+
+    /// Sets maximum input size in bytes.
+    ///
+    /// Input exceeding this size will be rejected.
     /// Default: 100MB
     ///
     /// # Security
@@ -100,11 +123,10 @@ impl ParallelConfig {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_parallel::ParallelConfig;
+    /// use fast_yaml_parallel::Config;
     ///
-    /// // Allow up to 200MB
-    /// let config = ParallelConfig::new()
-    ///     .with_max_input_size(200 * 1024 * 1024);
+    /// let config = Config::new()
+    ///     .with_max_input_size(200 * 1024 * 1024); // 200MB
     /// ```
     #[must_use]
     pub const fn with_max_input_size(mut self, size: usize) -> Self {
@@ -112,112 +134,70 @@ impl ParallelConfig {
         self
     }
 
-    /// Sets maximum number of documents allowed.
+    /// Sets sequential processing threshold.
     ///
-    /// Input with more documents than this will be rejected with `ConfigError`.
-    /// Default: 100,000
-    ///
-    /// # Security
-    ///
-    /// This limit prevents denial-of-service attacks via excessive document counts.
+    /// Inputs smaller than this threshold will use sequential processing
+    /// to avoid parallelism overhead. Default: 4KB
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_parallel::ParallelConfig;
+    /// use fast_yaml_parallel::Config;
     ///
-    /// // Allow up to 1 million documents
-    /// let config = ParallelConfig::new()
-    ///     .with_max_documents(1_000_000);
+    /// let config = Config::new()
+    ///     .with_sequential_threshold(2048);
     /// ```
     #[must_use]
-    pub const fn with_max_documents(mut self, count: usize) -> Self {
-        self.max_documents = count;
+    pub const fn with_sequential_threshold(mut self, threshold: usize) -> Self {
+        self.sequential_threshold = threshold;
         self
     }
 
-    /// Sets minimum total size in bytes for parallel processing.
-    ///
-    /// If total input size is below this threshold AND fewer than 4 documents,
-    /// sequential processing will be used to avoid parallelism overhead.
-    /// Default: 4KB
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_parallel::ParallelConfig;
-    ///
-    /// let config = ParallelConfig::new().with_min_chunk_size(2048);
-    /// ```
+    /// Returns worker count setting.
     #[must_use]
-    pub const fn with_min_chunk_size(mut self, size: usize) -> Self {
-        self.min_chunk_size = size;
-        self
+    pub const fn workers(&self) -> Option<usize> {
+        self.workers
     }
 
-    /// Sets maximum chunk size in bytes.
-    ///
-    /// Large documents exceeding this will be processed sequentially.
-    /// Default: 10MB (prevents memory spikes)
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_parallel::ParallelConfig;
-    ///
-    /// let config = ParallelConfig::new().with_max_chunk_size(5 * 1024 * 1024);
-    /// ```
+    /// Returns mmap threshold.
     #[must_use]
-    pub const fn with_max_chunk_size(mut self, size: usize) -> Self {
-        self.max_chunk_size = size;
-        self
-    }
-}
-
-impl Default for ParallelConfig {
-    fn default() -> Self {
-        Self {
-            thread_count: None,                     // Auto-detect CPU count
-            min_chunk_size: 4096,                   // 4KB minimum total size
-            max_chunk_size: 10 * 1024 * 1024,       // 10MB maximum
-            max_input_size: DEFAULT_MAX_INPUT_SIZE, // 100MB maximum input
-            max_documents: DEFAULT_MAX_DOCUMENTS,   // 100k maximum documents
-        }
-    }
-}
-
-impl ParallelConfig {
-    /// Returns the effective thread count, capped at security limit.
-    ///
-    /// # Security
-    ///
-    /// Thread count is capped at 128 to prevent resource exhaustion,
-    /// even if user requests more or CPU count exceeds this.
-    pub(crate) fn effective_thread_count(&self) -> usize {
-        let count = self.thread_count.unwrap_or_else(num_cpus::get);
-        count.min(MAX_THREADS)
+    pub const fn mmap_threshold(&self) -> usize {
+        self.mmap_threshold
     }
 
-    /// Returns thread count setting.
-    ///
-    /// - `None`: Auto-detect (use CPU count, capped at 128)
-    /// - `Some(0)`: Sequential processing
-    /// - `Some(n)`: Use exactly `n` threads (capped at 128)
-    #[must_use]
-    pub const fn thread_count(&self) -> Option<usize> {
-        self.thread_count
-    }
-
-    /// Returns maximum input size limit.
+    /// Returns maximum input size.
     #[must_use]
     pub const fn max_input_size(&self) -> usize {
         self.max_input_size
     }
 
-    /// Returns maximum document count limit.
+    /// Returns sequential threshold.
     #[must_use]
-    pub const fn max_documents(&self) -> usize {
-        self.max_documents
+    pub const fn sequential_threshold(&self) -> usize {
+        self.sequential_threshold
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            workers: None,                     // Auto-detect CPU count
+            mmap_threshold: 512 * 1024,        // 512KB
+            max_input_size: 100 * 1024 * 1024, // 100MB
+            sequential_threshold: 4096,        // 4KB
+        }
+    }
+}
+
+impl Config {
+    /// Returns the effective worker count, capped at security limit.
+    ///
+    /// # Security
+    ///
+    /// Worker count is capped at 128 to prevent resource exhaustion.
+    pub(crate) fn effective_workers(&self) -> usize {
+        let count = self.workers.unwrap_or_else(num_cpus::get);
+        count.min(MAX_THREADS)
     }
 }
 
@@ -227,52 +207,74 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = ParallelConfig::default();
-        assert_eq!(config.thread_count, None);
-        assert_eq!(config.min_chunk_size, 4096);
-        assert_eq!(config.max_chunk_size, 10 * 1024 * 1024);
+        let config = Config::default();
+        assert_eq!(config.workers, None);
+        assert_eq!(config.mmap_threshold, 512 * 1024);
         assert_eq!(config.max_input_size, 100 * 1024 * 1024);
-        assert_eq!(config.max_documents, 100_000);
+        assert_eq!(config.sequential_threshold, 4096);
     }
 
     #[test]
     fn test_config_builder() {
-        let config = ParallelConfig::new()
-            .with_thread_count(Some(4))
-            .with_min_chunk_size(2048)
-            .with_max_chunk_size(5 * 1024 * 1024)
+        let config = Config::new()
+            .with_workers(Some(4))
+            .with_mmap_threshold(1024 * 1024)
             .with_max_input_size(50 * 1024 * 1024)
-            .with_max_documents(50_000);
+            .with_sequential_threshold(2048);
 
-        assert_eq!(config.thread_count, Some(4));
-        assert_eq!(config.min_chunk_size, 2048);
-        assert_eq!(config.max_chunk_size, 5 * 1024 * 1024);
+        assert_eq!(config.workers, Some(4));
+        assert_eq!(config.mmap_threshold, 1024 * 1024);
         assert_eq!(config.max_input_size, 50 * 1024 * 1024);
-        assert_eq!(config.max_documents, 50_000);
+        assert_eq!(config.sequential_threshold, 2048);
     }
 
     #[test]
     fn test_sequential_mode() {
-        let config = ParallelConfig::new().with_thread_count(Some(0));
-        assert_eq!(config.thread_count, Some(0));
+        let config = Config::new().with_workers(Some(0));
+        assert_eq!(config.workers, Some(0));
     }
 
     #[test]
-    fn test_effective_thread_count_capping() {
+    fn test_effective_workers_capping() {
         // Normal case
-        let config = ParallelConfig::new().with_thread_count(Some(4));
-        assert_eq!(config.effective_thread_count(), 4);
+        let config = Config::new().with_workers(Some(4));
+        assert_eq!(config.effective_workers(), 4);
 
-        // Excessive thread count (should be capped)
-        let config = ParallelConfig::new().with_thread_count(Some(10_000));
-        assert_eq!(config.effective_thread_count(), MAX_THREADS);
+        // Excessive worker count (should be capped)
+        let config = Config::new().with_workers(Some(10_000));
+        assert_eq!(config.effective_workers(), MAX_THREADS);
 
         // Auto-detect (should be capped if CPU count > MAX_THREADS)
-        let config = ParallelConfig::new();
-        assert!(config.effective_thread_count() <= MAX_THREADS);
+        let config = Config::new();
+        assert!(config.effective_workers() <= MAX_THREADS);
 
         // Sequential mode
-        let config = ParallelConfig::new().with_thread_count(Some(0));
-        assert_eq!(config.effective_thread_count(), 0);
+        let config = Config::new().with_workers(Some(0));
+        assert_eq!(config.effective_workers(), 0);
+    }
+
+    #[test]
+    fn test_getters() {
+        let config = Config::new()
+            .with_workers(Some(8))
+            .with_mmap_threshold(2048)
+            .with_max_input_size(50_000_000)
+            .with_sequential_threshold(8192);
+
+        assert_eq!(config.workers(), Some(8));
+        assert_eq!(config.mmap_threshold(), 2048);
+        assert_eq!(config.max_input_size(), 50_000_000);
+        assert_eq!(config.sequential_threshold(), 8192);
+    }
+
+    #[test]
+    fn test_new_equals_default() {
+        let config1 = Config::new();
+        let config2 = Config::default();
+
+        assert_eq!(config1.workers, config2.workers);
+        assert_eq!(config1.mmap_threshold, config2.mmap_threshold);
+        assert_eq!(config1.max_input_size, config2.max_input_size);
+        assert_eq!(config1.sequential_threshold, config2.sequential_threshold);
     }
 }
