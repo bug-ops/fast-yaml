@@ -1,15 +1,85 @@
+use std::path::PathBuf;
+use thiserror::Error;
+
 /// Exit codes for CLI application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+// Not all exit codes are currently used, but they form a complete set for CLI error handling
 #[allow(dead_code)]
 pub enum ExitCode {
+    /// Operation completed successfully
     Success = 0,
+    /// YAML parsing failed
     ParseError = 1,
+    /// Linter found errors
     LintErrors = 2,
+    /// I/O operation failed
     IoError = 3,
+    /// Invalid command-line arguments
     InvalidArgs = 4,
 }
 
+/// Errors that can occur during file discovery.
+#[derive(Debug, Error)]
+pub enum DiscoveryError {
+    /// Invalid globset pattern (from include/exclude patterns)
+    #[error("invalid glob pattern '{pattern}': {source}")]
+    InvalidPattern {
+        /// The pattern that was invalid
+        pattern: String,
+        /// The underlying error
+        #[source]
+        source: globset::Error,
+    },
+
+    /// IO error during directory traversal
+    #[error("failed to read '{path}': {source}")]
+    IoError {
+        /// The path that caused the error
+        path: PathBuf,
+        /// The underlying IO error
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Permission denied
+    #[error("permission denied: '{path}'")]
+    PermissionDenied {
+        /// The path where permission was denied
+        path: PathBuf,
+    },
+
+    /// Broken symbolic link
+    #[error("broken symbolic link: '{path}'")]
+    BrokenSymlink {
+        /// The path to the broken symlink
+        path: PathBuf,
+    },
+
+    /// Path does not exist
+    #[error("path does not exist: '{path}'")]
+    PathNotFound {
+        /// The path that was not found
+        path: PathBuf,
+    },
+
+    /// Error reading from stdin
+    #[error("failed to read file list from stdin: {source}")]
+    StdinError {
+        /// The underlying IO error
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Too many paths provided
+    #[error("exceeded maximum of {max} paths")]
+    TooManyPaths {
+        /// The maximum allowed
+        max: usize,
+    },
+}
+
 impl ExitCode {
+    /// Converts exit code to i32 for use with `std::process::exit`
     pub const fn as_i32(self) -> i32 {
         self as i32
     }

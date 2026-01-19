@@ -542,3 +542,133 @@ class parallel:  # noqa: N801
             >>> yaml_str = fast_yaml.parallel.dump_parallel(docs)
         """
         ...
+
+# Batch submodule (PyO3 submodule, not a class - noqa: N801)
+class batch:  # noqa: N801
+    """Batch file processing submodule."""
+
+    class FileOutcome:
+        """Outcome of processing a single file."""
+
+        Success: "batch.FileOutcome"
+        Changed: "batch.FileOutcome"
+        Unchanged: "batch.FileOutcome"
+        Error: "batch.FileOutcome"
+
+        def __repr__(self) -> str: ...
+        def __eq__(self, other: object) -> bool: ...
+        def __hash__(self) -> int: ...
+
+    class FileResult:
+        """Result for a single file with path context."""
+
+        path: str
+        outcome: "batch.FileOutcome"
+        duration_ms: float
+        error: str | None
+
+        def is_success(self) -> bool:
+            """Returns True if processing was successful."""
+            ...
+
+        def was_changed(self) -> bool:
+            """Returns True if file content was changed."""
+            ...
+
+        def __repr__(self) -> str: ...
+
+    class BatchResult:
+        """Aggregated results from batch processing."""
+
+        total: int
+        success: int
+        changed: int
+        failed: int
+        duration_ms: float
+
+        def is_success(self) -> bool:
+            """Returns True if all files processed successfully."""
+            ...
+
+        def files_per_second(self) -> float:
+            """Returns processing throughput."""
+            ...
+
+        def errors(self) -> list[tuple[str, str]]:
+            """Returns list of (path, error_message) tuples."""
+            ...
+
+        def __repr__(self) -> str: ...
+
+    class BatchConfig:
+        """Configuration for batch file processing."""
+
+        def __init__(
+            self,
+            workers: int | None = None,
+            mmap_threshold: int = 512 * 1024,
+            max_input_size: int = 100 * 1024 * 1024,
+            sequential_threshold: int = 4096,
+            indent: int = 2,
+            width: int = 80,
+            sort_keys: bool = False,
+        ) -> None: ...
+        def with_workers(self, workers: int | None) -> "batch.BatchConfig": ...
+        def with_indent(self, indent: int) -> "batch.BatchConfig": ...
+        def with_width(self, width: int) -> "batch.BatchConfig": ...
+        def with_sort_keys(self, sort_keys: bool) -> "batch.BatchConfig": ...
+        def __repr__(self) -> str: ...
+
+    @staticmethod
+    def process_files(
+        paths: list[str],
+        config: "batch.BatchConfig | None" = None,
+    ) -> "batch.BatchResult":
+        """Process files and return batch result.
+
+        Parses and validates YAML files in parallel.
+
+        Args:
+            paths: List of file paths to process
+            config: Optional batch processing configuration
+
+        Returns:
+            BatchResult with processing statistics
+        """
+        ...
+
+    @staticmethod
+    def format_files(
+        paths: list[str],
+        config: "batch.BatchConfig | None" = None,
+    ) -> list[tuple[str, str | None, str | None]]:
+        """Format files and return formatted content (dry-run).
+
+        Formats YAML files without writing changes back.
+
+        Args:
+            paths: List of file paths to format
+            config: Optional batch processing configuration
+
+        Returns:
+            List of (path, content, error) tuples
+        """
+        ...
+
+    @staticmethod
+    def format_files_in_place(
+        paths: list[str],
+        config: "batch.BatchConfig | None" = None,
+    ) -> "batch.BatchResult":
+        """Format files in place (write changes back).
+
+        Formats YAML files and writes changes atomically.
+
+        Args:
+            paths: List of file paths to format
+            config: Optional batch processing configuration
+
+        Returns:
+            BatchResult with changed/unchanged counts
+        """
+        ...

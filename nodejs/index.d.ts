@@ -42,6 +42,48 @@ export declare class Mark {
   toString(): string
 }
 
+/** Configuration for batch file processing. */
+export interface BatchConfig {
+  /** Worker count (null = auto, 0 = sequential) */
+  workers?: number
+  /** Mmap threshold for large file reading (default: 512KB) */
+  mmapThreshold?: number
+  /** Maximum input size in bytes (default: 100MB) */
+  maxInputSize?: number
+  /** Sequential threshold (default: 4KB) */
+  sequentialThreshold?: number
+  /** Indentation width in spaces (default: 2) */
+  indent?: number
+  /** Maximum line width (default: 80) */
+  width?: number
+  /** Sort dictionary keys alphabetically (default: false) */
+  sortKeys?: boolean
+}
+
+/** Error entry for batch result. */
+export interface BatchError {
+  /** Path to the failed file */
+  path: string
+  /** Error message */
+  message: string
+}
+
+/** Aggregated results from batch processing. */
+export interface BatchResult {
+  /** Total number of files processed */
+  total: number
+  /** Number of files successfully processed */
+  success: number
+  /** Number of files changed */
+  changed: number
+  /** Number of files that failed */
+  failed: number
+  /** Total processing duration in milliseconds */
+  durationMs: number
+  /** List of errors with file paths */
+  errors: Array<BatchError>
+}
+
 /** Options for YAML serialization. */
 export interface DumpOptions {
   /** If true, sort object keys alphabetically (default: false) */
@@ -70,6 +112,91 @@ export interface DumpOptions {
   defaultFlowStyle?: boolean
   /** Add explicit document start marker `---` (default: false). */
   explicitStart?: boolean
+}
+
+/** Outcome of processing a single file. */
+export declare const enum FileOutcome {
+  /** File processed successfully */
+  Success = 'Success',
+  /** File formatted and content changed */
+  Changed = 'Changed',
+  /** File unchanged (already formatted) */
+  Unchanged = 'Unchanged',
+  /** Processing failed */
+  Error = 'Error'
+}
+
+/** Result for a single file with path context. */
+export interface FileResult {
+  /** Path to the processed file */
+  path: string
+  /** Processing outcome */
+  outcome: FileOutcome
+  /** Processing duration in milliseconds */
+  durationMs: number
+  /** Error message if outcome is Error */
+  error?: string
+}
+
+/**
+ * Format files and return formatted content (dry-run).
+ *
+ * Formats YAML files without writing changes back.
+ *
+ * # Arguments
+ *
+ * * `paths` - Array of file paths to format
+ * * `config` - Optional batch processing configuration
+ *
+ * # Returns
+ *
+ * Array of FormatResult objects
+ *
+ * # Example
+ *
+ * ```javascript
+ * const { formatFiles } = require('fastyaml-rs');
+ * const results = formatFiles(['file1.yaml']);
+ * results.forEach(r => {
+ *   if (r.content) console.log(r.content);
+ * });
+ * ```
+ */
+export declare function formatFiles(paths: Array<string>, config?: BatchConfig | undefined | null): NapiResult<Array<FormatResult>>
+
+/**
+ * Format files in place (write changes back).
+ *
+ * Formats YAML files and writes changes atomically.
+ * Only modified files are written.
+ *
+ * # Arguments
+ *
+ * * `paths` - Array of file paths to format
+ * * `config` - Optional batch processing configuration
+ *
+ * # Returns
+ *
+ * BatchResult with changed/unchanged counts
+ *
+ * # Example
+ *
+ * ```javascript
+ * const { formatFilesInPlace } = require('fastyaml-rs');
+ * const result = formatFilesInPlace(['file1.yaml', 'file2.yaml']);
+ * console.log(`Changed ${result.changed} files`);
+ * ```
+ */
+export declare function formatFilesInPlace(paths: Array<string>, config?: BatchConfig | undefined | null): NapiResult<BatchResult>
+
+/** Formatted file result. */
+export interface FormatResult {
+  /** Path to the file */
+  path: string
+  /** Formatted content (null if error) */
+  content?: string
+  /** Error message (null if success) */
+  error?: string
 }
 
 /**
@@ -256,6 +383,30 @@ bar: 2';
  * ```
  */
 export declare function parseParallelAsync(yamlStr: string, config?: ParallelConfig | undefined | null): Promise<unknown>
+
+/**
+ * Process files and return batch result.
+ *
+ * Parses and validates YAML files in parallel.
+ *
+ * # Arguments
+ *
+ * * `paths` - Array of file paths to process
+ * * `config` - Optional batch processing configuration
+ *
+ * # Returns
+ *
+ * BatchResult with processing statistics
+ *
+ * # Example
+ *
+ * ```javascript
+ * const { processFiles } = require('fastyaml-rs');
+ * const result = processFiles(['file1.yaml', 'file2.yaml']);
+ * console.log(`Processed ${result.total} files, ${result.failed} failed`);
+ * ```
+ */
+export declare function processFiles(paths: Array<string>, config?: BatchConfig | undefined | null): NapiResult<BatchResult>
 
 /**
  * Serialize a JavaScript object to a YAML string.

@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-01-19
+
+### Breaking Changes
+
+- **Parallel**: `ParallelConfig` renamed to `Config` with simplified 4-field API
+- **Parallel**: Removed `min_chunk_size`, `max_chunk_size`, `max_documents` fields
+- **Parallel**: `with_thread_count()` renamed to `with_workers()`
+- **CLI**: Batch module removed (functionality preserved, implementation changed)
+
+### Added
+
+- **Parallel**: File-level parallelism with `FileProcessor` struct
+  - `parse_files()` for batch validation
+  - `format_files()` for dry-run formatting
+  - `format_in_place()` for in-place formatting with atomic writes
+- **Parallel**: `SmartReader` for automatic mmap/read selection
+- **Parallel**: Result types: `BatchResult`, `FileResult`, `FileOutcome`
+- **Parallel**: Convenience function `process_files()`
+- **Parallel**: New config field `mmap_threshold` for file reading strategy
+- **Parallel**: New config field `sequential_threshold` for small input optimization
+- **Python**: Batch processing submodule (`fast_yaml._core.batch`)
+  - `process_files()` for parallel file validation
+  - `format_files()` for dry-run formatting
+  - `format_files_in_place()` for in-place formatting
+  - `BatchConfig` for configuration
+  - `BatchResult` for aggregated results
+  - `FileOutcome` enum for per-file outcomes
+- **Node.js**: Batch processing functions
+  - `processFiles()` for parallel file validation
+  - `formatFiles()` for dry-run formatting
+  - `formatFilesInPlace()` for in-place formatting
+  - `BatchConfig` interface for configuration
+  - `BatchResult` interface for results
+
+### Changed
+
+- **CLI**: Batch processing now uses `fast-yaml-parallel` crate directly
+- **CLI**: Removed ~2339 lines of duplicate code
+- **Parallel**: Unified error type (single `Error` enum for all operations)
+
+### Fixed
+
+- **Security**: Fixed mmap TOCTOU race condition with file locking
+- **Security**: Added symlink security checks on Unix platforms
+- **Security**: Improved UTF-8 validation for memory-mapped files
+
+### Performance
+
+- **Parallel**: Automatic mmap/read selection reduces syscall overhead
+- **Parallel**: Sequential fallback for small files (<4KB) avoids thread overhead
+- **Parallel**: Smart file reading with configurable thresholds
+
+### Documentation
+
+- Updated fast-yaml-parallel README with new APIs
+- Updated Python and Node.js READMEs with batch processing examples
+
+### Internal
+
+- Workspace tests: 866 passing
+- Python tests: 38 batch tests passing
+- Node.js tests: 23/25 batch tests passing
+- Zero clippy warnings
+
 ## [0.4.1] - 2026-01-17
 
 ### Added
@@ -410,7 +474,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.4.1...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/bug-ops/fast-yaml/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/bug-ops/fast-yaml/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bug-ops/fast-yaml/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/bug-ops/fast-yaml/compare/v0.3.2...v0.3.3

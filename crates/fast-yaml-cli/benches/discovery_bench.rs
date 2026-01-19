@@ -5,7 +5,7 @@
 #![allow(clippy::cast_sign_loss)]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fast_yaml_cli::batch::discovery::{DiscoveryConfig, FileDiscovery};
+use fast_yaml_cli::discovery::{DiscoveryConfig, FileDiscovery};
 use std::fs;
 use std::hint::black_box;
 use tempfile::TempDir;

@@ -3,9 +3,11 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use fast_yaml_core::emitter::EmitterConfig;
+use fast_yaml_parallel::{BatchResult as ParallelBatchResult, FileProcessor};
 
-use crate::batch::{BatchProcessor, DiscoveryConfig, FileDiscovery, ProcessingConfig};
 use crate::config::CommonConfig;
+use crate::discovery::{DiscoveryConfig, FileDiscovery};
 use crate::error::ExitCode;
 use crate::reporter::{ReportEvent, Reporter};
 
@@ -82,26 +84,41 @@ pub fn execute_batch(
     // Create reporter
     let reporter = Reporter::new(config.common.output.clone());
 
-    // Build processing config from common config
-    let processing_config = ProcessingConfig::new()
-        .with_indent(config.common.formatter.indent())
-        .with_width(config.common.formatter.width())
-        .with_in_place(config.in_place)
-        .with_dry_run(config.dry_run)
-        .with_workers(config.common.parallel.workers())
-        .with_mmap_threshold(config.common.parallel.mmap_threshold())
-        .with_verbose(config.common.output.is_verbose());
+    // Extract paths from discovered files
+    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 
-    // Process files
-    let processor = BatchProcessor::new(processing_config);
-    let result = processor.process(&files);
+    // Create emitter config
+    let emitter_config = EmitterConfig::new()
+        .with_indent(config.common.formatter.indent() as usize)
+        .with_width(config.common.formatter.width());
+
+    // Create processor with config from CLI settings
+    let processor = FileProcessor::with_config(config.common.parallel.clone());
+
+    // Process files based on mode
+    let result = if config.dry_run {
+        // Dry run: format but don't write, report what would change
+        let formatted = processor.format_files(&file_paths, &emitter_config);
+        convert_format_results_to_batch_result(formatted)
+    } else if config.in_place {
+        // In-place: format and write
+        processor.format_in_place(&file_paths, &emitter_config)
+    } else {
+        // Default: just parse/validate
+        processor.parse_files(&file_paths)
+    };
 
     // Report results using BatchSummary event
+    // Note: fast-yaml-parallel uses 'changed' instead of 'formatted'
+    // and doesn't have 'skipped' (dry_run is CLI-specific)
+    let skipped = if config.dry_run { result.changed } else { 0 };
+    let formatted = if config.dry_run { 0 } else { result.changed };
+
     reporter.report(ReportEvent::BatchSummary {
         total: result.total,
-        formatted: result.formatted,
-        unchanged: result.unchanged,
-        skipped: result.skipped,
+        formatted,
+        unchanged: result.success - result.changed,
+        skipped,
         failed: result.failed,
         duration: result.duration,
     })?;
@@ -120,4 +137,36 @@ pub fn execute_batch(
     } else {
         Ok(ExitCode::Success)
     }
+}
+
+/// Convert `format_files` results to `BatchResult` for dry-run reporting
+fn convert_format_results_to_batch_result(
+    results: Vec<(PathBuf, Result<String, fast_yaml_parallel::Error>)>,
+) -> ParallelBatchResult {
+    use fast_yaml_parallel::{FileOutcome, FileResult};
+    use std::time::{Duration, Instant};
+
+    let start = Instant::now();
+    let mut file_results = Vec::with_capacity(results.len());
+
+    for (path, result) in results {
+        let outcome = match result {
+            Ok(_formatted) => {
+                // In dry-run mode, we report as "would change"
+                // Use Changed to indicate file would be modified
+                FileOutcome::Changed {
+                    duration: Duration::ZERO,
+                }
+            }
+            Err(error) => FileOutcome::Error {
+                error,
+                duration: Duration::ZERO,
+            },
+        };
+        file_results.push(FileResult::new(path, outcome));
+    }
+
+    let mut batch = ParallelBatchResult::from_results(file_results);
+    batch.duration = start.elapsed();
+    batch
 }

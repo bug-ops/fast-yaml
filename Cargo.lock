@@ -391,7 +391,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "criterion",
  "fast-yaml-core",
@@ -406,7 +406,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-cli"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -415,12 +415,12 @@ dependencies = [
  "criterion",
  "fast-yaml-core",
  "fast-yaml-linter",
+ "fast-yaml-parallel",
  "glob",
  "globset",
  "ignore",
  "indoc",
  "is-terminal",
- "memmap2",
  "num_cpus",
  "ordered-float",
  "predicates",
@@ -433,7 +433,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-core"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "bumpalo",
  "criterion",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-linter"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "fast-yaml-core",
  "indoc",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-nodejs"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "fast-yaml-core",
  "fast-yaml-linter",
@@ -474,12 +474,15 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-parallel"
-version = "0.4.1"
+version = "0.5.0"
 dependencies = [
  "criterion",
  "fast-yaml-core",
+ "memmap2",
  "num_cpus",
+ "proptest",
  "rayon",
+ "tempfile",
  "thiserror",
 ]
 

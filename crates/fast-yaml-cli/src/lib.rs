@@ -7,4 +7,6 @@
 #![cfg_attr(not(test), deny(clippy::expect_used))]
 #![cfg_attr(not(test), deny(clippy::panic))]
 
-pub mod batch;
+pub mod discovery;
+/// Error types and exit codes for CLI operations
+pub mod error;

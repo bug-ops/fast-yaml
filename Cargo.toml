@@ -18,7 +18,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 rust-version = "1.88.0"
 license = "MIT OR Apache-2.0"
@@ -26,9 +26,9 @@ repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 # Internal crates
-fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.4.1" }
-fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.4.1" }
-fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.4.1" }
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.5.0" }
+fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.5.0" }
+fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.5.0" }
 
 # External dependencies - production
 anyhow = { version = "1" }

@@ -36,10 +36,10 @@
 use anyhow::Result;
 use clap::Parser;
 
-mod batch;
 mod cli;
 mod commands;
 mod config;
+mod discovery;
 mod error;
 mod io;
 mod reporter;
@@ -94,7 +94,7 @@ fn run() -> Result<ExitCode> {
 
             if is_batch {
                 // BATCH MODE - using composed BatchConfig
-                let mut discovery_config = batch::DiscoveryConfig::new();
+                let mut discovery_config = discovery::DiscoveryConfig::new();
 
                 // Apply include patterns if provided
                 if !include.is_empty() {
@@ -120,7 +120,11 @@ fn run() -> Result<ExitCode> {
                                 .with_indent(indent)
                                 .with_width(width),
                         )
-                        .with_parallel(config::ParallelConfig::new().with_workers(jobs)),
+                        .with_parallel(config::ParallelConfig::new().with_workers(if jobs == 0 {
+                            None
+                        } else {
+                            Some(jobs)
+                        })),
                 )
                 .with_discovery(discovery_config)
                 .with_dry_run(dry_run)
