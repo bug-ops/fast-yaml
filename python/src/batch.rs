@@ -11,7 +11,11 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// Outcome of processing a single file.
-#[pyclass(module = "fast_yaml._core.batch", name = "FileOutcome")]
+#[pyclass(
+    module = "fast_yaml._core.batch",
+    name = "FileOutcome",
+    skip_from_py_object
+)]
 #[derive(Clone)]
 pub enum PyFileOutcome {
     /// File processed successfully
@@ -162,7 +166,7 @@ impl From<RustBatchResult> for PyBatchResult {
 }
 
 /// Configuration for batch file processing.
-#[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig")]
+#[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyBatchConfig {
     inner: RustConfig,

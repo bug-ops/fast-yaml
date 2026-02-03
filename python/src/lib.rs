@@ -48,7 +48,7 @@ mod parallel;
 ///     >>> import fast_yaml
 ///     >>> loader = fast_yaml.SafeLoader()
 ///     >>> data = fast_yaml.load("key: value", loader)
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SafeLoader;
 
@@ -74,7 +74,7 @@ impl SafeLoader {
 ///     >>> import fast_yaml
 ///     >>> loader = fast_yaml.FullLoader()
 ///     >>> data = fast_yaml.load("key: value", loader)
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct FullLoader;
 
@@ -100,7 +100,7 @@ impl FullLoader {
 ///     >>> import fast_yaml
 ///     >>> loader = fast_yaml.Loader()
 ///     >>> data = fast_yaml.load("key: value", loader)
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Loader;
 
@@ -130,7 +130,7 @@ impl Loader {
 ///     >>> import fast_yaml
 ///     >>> dumper = fast_yaml.SafeDumper()
 ///     >>> yaml_str = fast_yaml.dump({'key': 'value'}, dumper)
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct SafeDumper;
 
@@ -156,7 +156,7 @@ impl SafeDumper {
 ///     >>> import fast_yaml
 ///     >>> dumper = fast_yaml.Dumper()
 ///     >>> yaml_str = fast_yaml.dump({'key': 'value'}, dumper)
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 pub struct Dumper;
 
@@ -244,7 +244,7 @@ create_exception!(
 /// mark.line   # 5
 /// mark.column # 10
 /// ```
-#[pyclass]
+#[pyclass(skip_from_py_object)]
 #[derive(Clone, Debug)]
 pub struct Mark {
     /// Name of the input source (e.g., filename or `"<string>"`)

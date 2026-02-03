@@ -35,7 +35,11 @@ const ABSOLUTE_MAX_DOCUMENTS: usize = 10_000_000;
 /// Examples:
 ///     >>> from `fast_yaml`._core.parallel import `ParallelConfig`
 ///     >>> config = `ParallelConfig(thread_count=8`, `max_input_size=200`*1024*1024)
-#[pyclass(module = "fast_yaml._core.parallel", name = "ParallelConfig")]
+#[pyclass(
+    module = "fast_yaml._core.parallel",
+    name = "ParallelConfig",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyParallelConfig {
     inner: RustParallelConfig,
