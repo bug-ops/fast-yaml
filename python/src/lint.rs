@@ -26,7 +26,11 @@ use fast_yaml_linter::JsonFormatter as RustJsonFormatter;
 ///     >>> from `fast_yaml`._core.lint import Severity
 ///     >>> error = Severity.ERROR
 ///     >>> warning = Severity.WARNING
-#[pyclass(module = "fast_yaml._core.lint", name = "Severity")]
+#[pyclass(
+    module = "fast_yaml._core.lint",
+    name = "Severity",
+    skip_from_py_object
+)]
 #[derive(Clone, Copy)]
 pub struct PySeverity {
     inner: RustSeverity,
@@ -116,7 +120,7 @@ impl From<RustSeverity> for PySeverity {
 ///     >>> loc = Location(line=10, column=5, offset=145)
 ///     >>> print(f"Line {loc.line}, Column {loc.column}")
 ///     Line 10, Column 5
-#[pyclass(module = "fast_yaml._core.lint", name = "Location")]
+#[pyclass(module = "fast_yaml._core.lint", name = "Location", from_py_object)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PyLocation {
     /// Line number (1-indexed, human-readable).
@@ -175,7 +179,7 @@ impl From<RustLocation> for PyLocation {
 ///     >>> start = Location(10, 5, 145)
 ///     >>> end = Location(10, 9, 149)
 ///     >>> span = Span(start, end)
-#[pyclass(module = "fast_yaml._core.lint", name = "Span")]
+#[pyclass(module = "fast_yaml._core.lint", name = "Span", from_py_object)]
 #[derive(Clone)]
 pub struct PySpan {
     /// Start position (inclusive).
@@ -214,7 +218,7 @@ impl From<RustSpan> for PySpan {
 }
 
 /// A single line of source context.
-#[pyclass(module = "fast_yaml._core.lint", name = "ContextLine")]
+#[pyclass(module = "fast_yaml._core.lint", name = "ContextLine", from_py_object)]
 #[derive(Clone)]
 pub struct PyContextLine {
     /// Line number (1-indexed).
@@ -254,7 +258,11 @@ impl PyContextLine {
 // We'll create PyContextLine from the DiagnosticContext fields instead
 
 /// Source code context for diagnostics.
-#[pyclass(module = "fast_yaml._core.lint", name = "DiagnosticContext")]
+#[pyclass(
+    module = "fast_yaml._core.lint",
+    name = "DiagnosticContext",
+    from_py_object
+)]
 #[derive(Clone)]
 pub struct PyDiagnosticContext {
     /// Source lines to display.
@@ -293,7 +301,7 @@ impl From<RustDiagnosticContext> for PyDiagnosticContext {
 }
 
 /// A suggested fix for a diagnostic.
-#[pyclass(module = "fast_yaml._core.lint", name = "Suggestion")]
+#[pyclass(module = "fast_yaml._core.lint", name = "Suggestion", from_py_object)]
 #[derive(Clone)]
 pub struct PySuggestion {
     /// Description of the fix.
@@ -343,7 +351,7 @@ impl PySuggestion {
 ///     >>> for diag in diagnostics:
 ///     ...     `print(f"{diag.severity.as_str()}`: {diag.message}")
 ///     error: duplicate key 'key' found
-#[pyclass(module = "fast_yaml._core.lint", name = "Diagnostic")]
+#[pyclass(module = "fast_yaml._core.lint", name = "Diagnostic", from_py_object)]
 #[derive(Clone)]
 pub struct PyDiagnostic {
     /// Diagnostic code (e.g., "duplicate-key").
@@ -416,7 +424,7 @@ impl From<RustDiagnostic> for PyDiagnostic {
 ///     >>> from `fast_yaml`._core.lint import `LintConfig`
 ///     >>> config = `LintConfig(max_line_length=120`, `indent_size=4`)
 ///     >>> config = config.with_disabled_rule("line-length")
-#[pyclass(module = "fast_yaml._core.lint", name = "LintConfig")]
+#[pyclass(module = "fast_yaml._core.lint", name = "LintConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyLintConfig {
     inner: RustLintConfig,

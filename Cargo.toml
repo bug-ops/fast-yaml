@@ -46,7 +46,7 @@ napi-build = { version = "2.3" }
 napi-derive = { version = "3.5" }
 num_cpus = { version = "1.17" }
 ordered-float = { version = "5" }
-pyo3 = { version = "0.27" }
+pyo3 = { version = "0.28" }
 rayon = { version = "1.11" }
 saphyr = { version = "0.0.6" }
 saphyr-parser = { version = "0.0.6" }
