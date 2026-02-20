@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-02-20
+
+### Changed
+
+- Updated Rust dependencies (clap minor/patch group)
+- Updated PyO3 from 0.27.2 to 0.28.0 with API migration
+- Updated Node.js devDependencies and Biome configuration
+- Updated Python toolchain dependencies (uv.lock refresh)
+
+### Infrastructure
+
+- Added Dependabot auto-merge workflow for patch and minor updates
+
 ## [0.5.0] - 2026-01-19
 
 ### Breaking Changes
@@ -474,7 +487,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.0...HEAD
+[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/bug-ops/fast-yaml/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bug-ops/fast-yaml/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/bug-ops/fast-yaml/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/bug-ops/fast-yaml/compare/v0.3.3...v0.4.0
