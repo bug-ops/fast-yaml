@@ -325,7 +325,7 @@ jobs:
           verbose: true
 
       - name: Archive coverage report
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: rust-coverage-report
           path: lcov.info
@@ -670,7 +670,7 @@ jobs:
         run: cd nodejs && npm run build
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: nodejs-binaries-${{ matrix.os }}
           path: nodejs/*.node
