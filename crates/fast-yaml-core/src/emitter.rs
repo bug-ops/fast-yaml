@@ -450,11 +450,25 @@ impl Emitter {
         {
             let docs = crate::Parser::parse_all_preserving_styles(input)
                 .map_err(|e| EmitError::Emit(e.to_string()))?;
-            let value = docs
-                .into_iter()
-                .next()
-                .ok_or_else(|| EmitError::Emit("Empty document".to_string()))?;
-            return Self::emit_str_preserving_styles(&value, config, 0);
+            if docs.is_empty() {
+                return Ok(String::new());
+            }
+            let inner_config = EmitterConfig {
+                explicit_start: false,
+                ..*config
+            };
+            let mut output = String::new();
+            for (i, doc) in docs.iter().enumerate() {
+                if i > 0 || config.explicit_start {
+                    if !output.is_empty() && !output.ends_with('\n') {
+                        output.push('\n');
+                    }
+                    output.push_str("---\n");
+                }
+                let emitted = Self::emit_str_preserving_styles(doc, &inner_config, 0)?;
+                output.push_str(&emitted);
+            }
+            return Ok(output);
         }
     }
 
@@ -1279,6 +1293,71 @@ mod tests {
         assert!(
             result.contains("key: |"),
             "literal indicator must be present, got: {result}"
+        );
+    }
+
+    // Regression tests for issue #65: multi-document YAML stream formatting
+    #[test]
+    fn test_format_multidoc_preserves_both_documents() {
+        let input =
+            "---\n- Mark McGwire\n- Sammy Sosa\n\n---\n- Chicago Cubs\n- St Louis Cardinals";
+        let result = Emitter::format(input).unwrap();
+        assert!(result.contains("Mark McGwire"), "First doc must be present");
+        assert!(
+            result.contains("Chicago Cubs"),
+            "Second doc must be present"
+        );
+    }
+
+    #[test]
+    fn test_format_multidoc_separator_present() {
+        let input = "---\nfoo: 1\n---\nbar: 2";
+        let result = Emitter::format(input).unwrap();
+        assert!(result.contains("---"), "Separator must appear in output");
+        assert!(result.contains("foo"), "First doc key must be present");
+        assert!(result.contains("bar"), "Second doc key must be present");
+    }
+
+    #[test]
+    fn test_format_multidoc_issue65_fixture() {
+        let input =
+            "---\n- Mark McGwire\n- Sammy Sosa\n\n---\n- Chicago Cubs\n- St Louis Cardinals";
+        let result = Emitter::format(input).unwrap();
+        assert!(result.contains("Mark McGwire"));
+        assert!(result.contains("Sammy Sosa"));
+        assert!(result.contains("Chicago Cubs"));
+        assert!(result.contains("St Louis Cardinals"));
+        assert!(result.contains("---"));
+    }
+
+    #[test]
+    fn test_format_multidoc_three_documents() {
+        let input = "---\na: 1\n---\nb: 2\n---\nc: 3";
+        let result = Emitter::format(input).unwrap();
+        assert!(result.contains('a'), "First doc must be present");
+        assert!(result.contains('b'), "Second doc must be present");
+        assert!(result.contains('c'), "Third doc must be present");
+        assert!(
+            result.matches("---").count() >= 2,
+            "At least two separators must appear between three documents"
+        );
+    }
+
+    #[test]
+    fn test_format_multidoc_explicit_start() {
+        let input = "---\nfoo: 1\n---\nbar: 2";
+        let config = EmitterConfig::new().with_explicit_start(true);
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(result.contains("foo"), "First doc must be present");
+        assert!(result.contains("bar"), "Second doc must be present");
+        assert!(
+            !result.contains("---\n---"),
+            "Double separator must not appear: {result}"
+        );
+        assert_eq!(
+            result.matches("---").count(),
+            2,
+            "Exactly two separators for two docs"
         );
     }
 }
