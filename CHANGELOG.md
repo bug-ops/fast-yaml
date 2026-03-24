@@ -11,11 +11,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `DuplicateKeysRule` now fires by default: `LintConfig::default()` sets `allow_duplicate_keys: false`
 - Fixed false positives in duplicate key detection — nested keys with same name no longer reported as duplicates
+- **Core/CLI**: `fy format` no longer quotes YAML 1.1 boolean-like keys (`on`, `off`, `yes`, `no`).
+  In YAML 1.2.2 Core Schema these are plain strings; only `true`, `false`, `null`, and `~` have
+  special meaning. The formatter now always uses the streaming path which preserves the original
+  scalar style from the parser, instead of the DOM path (saphyr `YamlEmitter`) that incorrectly
+  added quotes for YAML 1.1 compatibility. This fixes broken GitHub Actions workflow files after
+  `fy format -i`. (#64)
 
 ### Added
 
 - `--allow-duplicate-keys` CLI flag for `fy lint` to opt-in to allowing duplicate keys
 - `LintConfig::with_allow_duplicate_keys` builder method
+
+### Changed
+
+- **Core**: `Emitter::format_with_config` now always uses the streaming formatter when the
+  `streaming` feature is enabled, regardless of input size. The trailing newline is now always
+  emitted for all file sizes (consistent POSIX text-file behavior).
 
 ## [0.5.2] - 2026-03-17
 

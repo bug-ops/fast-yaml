@@ -17,7 +17,7 @@ fn fy() -> Command {
 #[test]
 fn test_stdin_mode_unchanged() {
     let input = "key:  value\n";
-    let expected = "key: value";
+    let expected = "key: value\n";
 
     fy().arg("format")
         .write_stdin(input)
@@ -52,7 +52,7 @@ fn test_single_file_stdout_unchanged() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("test.yaml");
     let input = "key:  value\n";
-    let expected = "key: value";
+    let expected = "key: value\n";
 
     fs::write(&file, input).unwrap();
 
@@ -70,7 +70,7 @@ fn test_single_file_in_place_unchanged() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("test.yaml");
     let input = "key:  value\n";
-    let expected = "key: value";
+    let expected = "key: value\n";
 
     fs::write(&file, input).unwrap();
 
@@ -140,7 +140,7 @@ fn test_format_nonexistent_file_error() {
 #[test]
 fn test_default_command_stdin() {
     let input = "key:  value\n";
-    let expected = "key: value";
+    let expected = "key: value\n";
 
     fy().write_stdin(input).assert().success().stdout(expected);
 }
@@ -173,7 +173,7 @@ fn test_single_file_with_output_flag() {
     let input_file = temp.path().join("input.yaml");
     let output_file = temp.path().join("output.yaml");
     let input = "key:  value\n";
-    let expected = "key: value";
+    let expected = "key: value\n";
 
     fs::write(&input_file, input).unwrap();
 

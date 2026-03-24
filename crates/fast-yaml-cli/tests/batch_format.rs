@@ -36,8 +36,8 @@ fn test_batch_multiple_files() {
     .assert()
     .success();
 
-    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1");
-    assert_eq!(fs::read_to_string(&file2).unwrap(), "key2: value2");
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1\n");
+    assert_eq!(fs::read_to_string(&file2).unwrap(), "key2: value2\n");
 }
 
 #[test]
@@ -57,8 +57,8 @@ fn test_batch_directory_recursive() {
         .assert()
         .success();
 
-    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1");
-    assert_eq!(fs::read_to_string(&file2).unwrap(), "key2: value2");
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1\n");
+    assert_eq!(fs::read_to_string(&file2).unwrap(), "key2: value2\n");
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn test_batch_directory_no_recursive() {
         .success();
 
     // Top-level file should be formatted
-    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1");
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1\n");
 
     // Subdirectory file should NOT be formatted
     assert_eq!(fs::read_to_string(&file2).unwrap(), "key2:  value2\n");
@@ -109,7 +109,7 @@ fn test_batch_exclude_pattern() {
     .success();
 
     // Main file should be formatted
-    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1");
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1\n");
 
     // Vendor file should NOT be formatted
     assert_eq!(fs::read_to_string(&file2).unwrap(), "key2:  value2\n");
@@ -138,7 +138,7 @@ fn test_batch_include_pattern() {
     assert_eq!(fs::read_to_string(&yaml_file).unwrap(), "key1:  value1\n");
 
     // .yml file should be formatted
-    assert_eq!(fs::read_to_string(&yml_file).unwrap(), "key2: value2");
+    assert_eq!(fs::read_to_string(&yml_file).unwrap(), "key2: value2\n");
 
     // .txt file should NOT be touched
     assert_eq!(fs::read_to_string(&txt_file).unwrap(), "key3:  value3\n");
@@ -176,8 +176,8 @@ fn test_batch_stdin_files() {
         .assert()
         .success();
 
-    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1");
-    assert_eq!(fs::read_to_string(&file2).unwrap(), "key2: value2");
+    assert_eq!(fs::read_to_string(&file1).unwrap(), "key1: value1\n");
+    assert_eq!(fs::read_to_string(&file2).unwrap(), "key2: value2\n");
 }
 
 #[test]
@@ -210,7 +210,7 @@ fn test_batch_mixed_success_failure() {
         .code(1);
 
     // Valid file should still be formatted
-    assert_eq!(fs::read_to_string(&valid).unwrap(), "key: value");
+    assert_eq!(fs::read_to_string(&valid).unwrap(), "key: value\n");
 }
 
 #[test]
@@ -233,7 +233,7 @@ fn test_batch_jobs_parallel() {
         let file = dir.join(format!("file{i}.yaml"));
         assert_eq!(
             fs::read_to_string(&file).unwrap(),
-            format!("key{i}: value{i}")
+            format!("key{i}: value{i}\n")
         );
     }
 }
@@ -306,7 +306,7 @@ fn test_batch_respects_gitignore() {
         .success();
 
     // Tracked file should be formatted
-    assert_eq!(fs::read_to_string(&tracked).unwrap(), "key1: value1");
+    assert_eq!(fs::read_to_string(&tracked).unwrap(), "key1: value1\n");
 
     // Ignored file should NOT be formatted (respects .gitignore)
     assert_eq!(fs::read_to_string(&ignored).unwrap(), "key2:  value2\n");

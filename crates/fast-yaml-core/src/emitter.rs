@@ -425,26 +425,28 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+        // Always prefer the streaming formatter when available.
+        //
+        // The DOM-based path (saphyr's YamlEmitter) quotes YAML 1.1 boolean-like
+        // keys (`on`, `off`, `yes`, `no`) even though they are plain strings in
+        // YAML 1.2.2 Core Schema. The streaming formatter preserves the original
+        // ScalarStyle from the parser, so it never introduces spurious quoting.
         #[cfg(feature = "streaming")]
-        {
-            if crate::streaming::is_streaming_suitable(input) {
-                // Prefer arena allocation when available
-                #[cfg(feature = "arena")]
-                {
-                    return crate::streaming::format_streaming_arena(input, config);
-                }
-                #[cfg(not(feature = "arena"))]
-                {
-                    return crate::streaming::format_streaming(input, config);
-                }
-            }
-        }
+        // Prefer arena allocation when available
+        #[cfg(feature = "arena")]
+        return crate::streaming::format_streaming_arena(input, config);
 
-        // Fall back to DOM-based formatting
-        let value = crate::Parser::parse_str(input)
-            .map_err(|e| EmitError::Emit(e.to_string()))?
-            .ok_or_else(|| EmitError::Emit("Empty document".to_string()))?;
-        Self::emit_str_with_config(&value, config)
+        #[cfg(all(feature = "streaming", not(feature = "arena")))]
+        return crate::streaming::format_streaming(input, config);
+
+        // Fall back to DOM-based formatting (no streaming feature)
+        #[cfg(not(feature = "streaming"))]
+        {
+            let value = crate::Parser::parse_str(input)
+                .map_err(|e| EmitError::Emit(e.to_string()))?
+                .ok_or_else(|| EmitError::Emit("Empty document".to_string()))?;
+            Self::emit_str_with_config(&value, config)
+        }
     }
 
     /// Format a YAML string with default configuration.
@@ -914,5 +916,74 @@ mod tests {
         let input = "key: value\nlist:\n  - item1\n  - item2\nnumber: 42\n";
         let result = Emitter::fix_special_floats(input);
         assert_eq!(result, input, "No changes should be made for normal YAML");
+    }
+
+    // Regression tests for issue #64: YAML 1.1 boolean-like keys must not be quoted.
+    // In YAML 1.2.2 Core Schema, `on`, `off`, `yes`, `no` are plain strings.
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_yaml11_bool_key_on() {
+        let result = Emitter::format("on: push").unwrap();
+        assert!(
+            !result.contains("\"on\""),
+            "key `on` must not be quoted, got: {result}"
+        );
+        assert!(result.contains("on:"), "key `on` must appear unquoted");
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_yaml11_bool_key_off() {
+        let result = Emitter::format("off: value").unwrap();
+        assert!(
+            !result.contains("\"off\""),
+            "key `off` must not be quoted, got: {result}"
+        );
+        assert!(result.contains("off:"), "key `off` must appear unquoted");
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_yaml11_bool_key_yes() {
+        let result = Emitter::format("yes: value").unwrap();
+        assert!(
+            !result.contains("\"yes\""),
+            "key `yes` must not be quoted, got: {result}"
+        );
+        assert!(result.contains("yes:"), "key `yes` must appear unquoted");
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_yaml11_bool_key_no() {
+        let result = Emitter::format("no: value").unwrap();
+        assert!(
+            !result.contains("\"no\""),
+            "key `no` must not be quoted, got: {result}"
+        );
+        assert!(result.contains("no:"), "key `no` must appear unquoted");
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_github_actions_workflow() {
+        let yaml = "on:\n  push:\n    branches:\n      - main\n";
+        let result = Emitter::format(yaml).unwrap();
+        assert!(
+            !result.contains("\"on\""),
+            "GitHub Actions `on:` trigger must not be quoted, got: {result}"
+        );
+        assert!(result.contains("on:"), "on: key must appear unquoted");
+        assert!(result.contains("push:"), "push: key must appear");
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_yaml12_bools_unaffected() {
+        // YAML 1.2.2 actual booleans must still be emitted as true/false
+        let yaml = "enabled: true\ndisabled: false\n";
+        let result = Emitter::format(yaml).unwrap();
+        assert!(result.contains("true"), "true value must be preserved");
+        assert!(result.contains("false"), "false value must be preserved");
     }
 }
