@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scalar style from the parser, instead of the DOM path (saphyr `YamlEmitter`) that incorrectly
   added quotes for YAML 1.1 compatibility. This fixes broken GitHub Actions workflow files after
   `fy format -i`. (#64)
+- `fy format <directory>` without `-i` now returns an error instead of silently validating files (#69)
+- `fy format --dry-run` now reports "would change: N" instead of "skipped: N" (#69)
 
 ### Added
 
