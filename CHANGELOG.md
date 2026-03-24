@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fy format -i`. (#64)
 - `fy format <directory>` without `-i` now returns an error instead of silently validating files (#69)
 - `fy format --dry-run` now reports "would change: N" instead of "skipped: N" (#69)
+- Preserve block scalar styles (literal `|` and folded `>`) in `fy format` (#62)
 
 ### Added
 
