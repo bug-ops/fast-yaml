@@ -172,17 +172,28 @@ fn test_lint_json_format() {
 
 #[test]
 #[cfg(feature = "linter")]
-fn test_lint_duplicate_keys_disabled_by_default() {
-    // Duplicate key detection is disabled by default to avoid false positives
-    // from nested keys with the same name in different contexts
+fn test_lint_duplicate_keys_reported_by_default() {
     Command::cargo_bin("fy")
         .unwrap()
         .arg("lint")
         .write_stdin("key: value1\nkey: value2\n")
         .assert()
+        .failure()
+        .code(2)
+        .stdout(predicate::str::contains("duplicate key 'key'"));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_duplicate_keys_allowed_with_flag() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg("--allow-duplicate-keys")
+        .write_stdin("key: value1\nkey: value2\n")
+        .assert()
         .success()
-        .code(0)
-        .stdout(predicate::str::contains("0 errors, 0 warnings"));
+        .code(0);
 }
 
 #[test]

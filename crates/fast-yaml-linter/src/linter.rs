@@ -43,9 +43,7 @@ impl Default for LintConfig {
             indent_size: 2,
             require_document_start: false,
             require_document_end: false,
-            // Duplicate key detection disabled by default due to false positives
-            // from nested keys with same names (e.g., top-level "name" and nested "author.name")
-            allow_duplicate_keys: true,
+            allow_duplicate_keys: false,
             disabled_rules: HashSet::new(),
             rule_configs: HashMap::new(),
         }
@@ -198,6 +196,22 @@ impl LintConfig {
         self.get_rule_config(rule_code)
             .and_then(|rc| rc.severity)
             .unwrap_or(default)
+    }
+
+    /// Allows or disallows duplicate keys.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintConfig;
+    ///
+    /// let config = LintConfig::new().with_allow_duplicate_keys(true);
+    /// assert!(config.allow_duplicate_keys);
+    /// ```
+    #[must_use]
+    pub const fn with_allow_duplicate_keys(mut self, allow: bool) -> Self {
+        self.allow_duplicate_keys = allow;
+        self
     }
 
     /// Adds a rule-specific configuration.
@@ -427,8 +441,7 @@ mod tests {
         assert_eq!(config.max_line_length, Some(80));
         assert_eq!(config.indent_size, 2);
         assert!(!config.require_document_start);
-        // Duplicate key detection is disabled by default
-        assert!(config.allow_duplicate_keys);
+        assert!(!config.allow_duplicate_keys);
     }
 
     #[test]
