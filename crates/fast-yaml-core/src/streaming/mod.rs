@@ -99,28 +99,31 @@ fn fix_special_float_value(value: &str) -> &str {
 /// # {
 /// use fast_yaml_core::streaming::is_streaming_suitable;
 ///
-/// // Small files - use DOM
-/// assert!(!is_streaming_suitable("small: yaml"));
+/// // Regular files - use streaming (preserves float types)
+/// assert!(is_streaming_suitable("version: 1.0"));
+/// assert!(is_streaming_suitable("small: yaml"));
 ///
-/// // Large files - use streaming
+/// // Large files - also use streaming
 /// let large = "key: value\n".repeat(1000);
 /// assert!(is_streaming_suitable(&large));
 /// # }
 /// ```
 pub fn is_streaming_suitable(input: &str) -> bool {
-    // Small files are fast enough with DOM-based formatting
-    if input.len() < 1024 {
-        return false;
-    }
+    // Streaming preserves the original scalar text (e.g. "1.0" stays "1.0"),
+    // while DOM-based formatting loses type information (float 1.0 → integer 1).
+    // Always prefer streaming to maintain YAML 1.2.2 Core Schema type fidelity.
 
-    // Count indicators of complexity that benefit from DOM
-    let anchor_count = input.bytes().filter(|&b| b == b'&').count();
-    let alias_count = input.bytes().filter(|&b| b == b'*').count();
+    // Heavy anchor/alias usage: avoid streaming only when anchor density is very
+    // high, because the DOM path resolves aliases during parse.
+    let len = input.len();
+    if len > 0 {
+        let anchor_count = input.bytes().filter(|&b| b == b'&').count();
+        let alias_count = input.bytes().filter(|&b| b == b'*').count();
 
-    // Heavy anchor/alias usage benefits from DOM for resolution
-    // Threshold: more than 1 anchor/alias per 1000 bytes
-    if anchor_count + alias_count > input.len() / 1000 {
-        return false;
+        // More than 10 anchors/aliases per 1000 bytes → fall back to DOM
+        if (anchor_count + alias_count) * 100 > len {
+            return false;
+        }
     }
 
     true
@@ -225,8 +228,11 @@ double: "quoted""#;
 
     #[test]
     fn test_is_streaming_suitable_small() {
-        assert!(!is_streaming_suitable("small: yaml"));
-        assert!(!is_streaming_suitable("key: value\nlist:\n  - a\n  - b"));
+        // Small files now use streaming to preserve float types (issue #66)
+        assert!(is_streaming_suitable("small: yaml"));
+        assert!(is_streaming_suitable("key: value\nlist:\n  - a\n  - b"));
+        assert!(is_streaming_suitable("version: 1.0"));
+        assert!(is_streaming_suitable("count: 1.23e10"));
     }
 
     #[test]
@@ -245,6 +251,41 @@ double: "quoted""#;
         assert!(
             !is_streaming_suitable(&heavy_anchors),
             "Heavy anchor usage should not be suitable for streaming"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_float_type_preservation() {
+        // Regression tests for issue #66: float values must not be converted to integers
+        let config = EmitterConfig::default();
+
+        // 1.0 must remain 1.0, not become 1
+        let result = format_streaming("version: 1.0", &config).unwrap();
+        assert!(
+            result.contains("1.0"),
+            "1.0 must stay as float, got: {result}"
+        );
+        assert!(
+            !result.contains(": 1\n"),
+            "1.0 must not be emitted as integer 1, got: {result}"
+        );
+
+        // Scientific notation must be preserved, not expanded to integer
+        let result = format_streaming("count: 1.23e10", &config).unwrap();
+        assert!(
+            result.contains("1.23e10") || result.contains("1.23e+10"),
+            "Scientific notation must be preserved, got: {result}"
+        );
+        assert!(
+            !result.contains("12300000000"),
+            "Scientific notation must not expand to integer, got: {result}"
+        );
+
+        // Regular float (3.14) must be preserved as-is
+        let result = format_streaming("pi: 3.14", &config).unwrap();
+        assert!(
+            result.contains("3.14"),
+            "3.14 must be preserved, got: {result}"
         );
     }
 

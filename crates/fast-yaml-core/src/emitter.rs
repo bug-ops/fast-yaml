@@ -986,4 +986,39 @@ mod tests {
         assert!(result.contains("true"), "true value must be preserved");
         assert!(result.contains("false"), "false value must be preserved");
     }
+
+    #[test]
+    #[cfg(feature = "streaming")]
+    fn test_format_preserves_float_types() {
+        // Regression tests for issue #66: fy format must not change float type to integer
+
+        // 1.0 must remain 1.0
+        let result = Emitter::format("version: 1.0").unwrap();
+        assert!(
+            result.contains("1.0"),
+            "version: 1.0 must emit as float, got: {result}"
+        );
+        assert!(
+            !result.contains(": 1\n"),
+            "version: 1.0 must not become integer 1, got: {result}"
+        );
+
+        // Scientific notation must be preserved
+        let result = Emitter::format("count: 1.23e10").unwrap();
+        assert!(
+            result.contains("1.23e10") || result.contains("1.23e+10"),
+            "Scientific notation must be preserved, got: {result}"
+        );
+        assert!(
+            !result.contains("12300000000"),
+            "Scientific notation must not expand to integer, got: {result}"
+        );
+
+        // Regular float preserved
+        let result = Emitter::format("pi: 3.14").unwrap();
+        assert!(
+            result.contains("3.14"),
+            "3.14 must be preserved, got: {result}"
+        );
+    }
 }

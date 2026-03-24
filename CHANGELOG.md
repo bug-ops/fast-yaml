@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fy format` no longer changes float type to integer: `1.0` stays `1.0` (not `1`), `1.23e10` stays `1.23e10` (not `12300000000`). Root cause: streaming formatter now handles all input sizes, preserving the original scalar text representation from the parser. Previously, inputs smaller than 1 KB fell back to DOM-based formatting which lost float precision through Rust's float Display trait.
+- `fy format` output now consistently ends with a trailing newline (POSIX convention).
 - `DuplicateKeysRule` now fires by default: `LintConfig::default()` sets `allow_duplicate_keys: false`
 - Fixed false positives in duplicate key detection — nested keys with same name no longer reported as duplicates
 - **Core/CLI**: `fy format` no longer quotes YAML 1.1 boolean-like keys (`on`, `off`, `yes`, `no`).
