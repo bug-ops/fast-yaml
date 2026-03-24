@@ -176,12 +176,18 @@ fn run() -> Result<ExitCode> {
             max_line_length,
             indent_size,
             format,
+            allow_duplicate_keys,
         }) => {
             let input = InputSource::from_args(file)?;
             let lint_config = common_config
                 .clone()
                 .with_formatter(config::FormatterConfig::new().with_indent(indent_size as u8));
-            let cmd = commands::lint::LintCommand::new(lint_config, max_line_length, format);
+            let cmd = commands::lint::LintCommand::new(
+                lint_config,
+                max_line_length,
+                format,
+                allow_duplicate_keys,
+            );
             cmd.execute(&input)?
         }
         None => {

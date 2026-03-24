@@ -123,6 +123,10 @@ pub enum Command {
         /// Lint output format
         #[arg(long, value_enum, default_value = "text")]
         format: LintFormat,
+
+        /// Allow duplicate keys (opt-in, suppresses duplicate key errors)
+        #[arg(long)]
+        allow_duplicate_keys: bool,
     },
 }
 

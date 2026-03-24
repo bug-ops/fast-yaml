@@ -11,14 +11,21 @@ pub struct LintCommand {
     config: CommonConfig,
     max_line_length: usize,
     format: LintFormat,
+    allow_duplicate_keys: bool,
 }
 
 impl LintCommand {
-    pub const fn new(config: CommonConfig, max_line_length: usize, format: LintFormat) -> Self {
+    pub const fn new(
+        config: CommonConfig,
+        max_line_length: usize,
+        format: LintFormat,
+        allow_duplicate_keys: bool,
+    ) -> Self {
         Self {
             config,
             max_line_length,
             format,
+            allow_duplicate_keys,
         }
     }
 
@@ -33,7 +40,8 @@ impl LintCommand {
         // Configure linter using formatter indent from config
         let lint_config = LintConfig::new()
             .with_max_line_length(Some(self.max_line_length))
-            .with_indent_size(self.config.formatter.indent() as usize);
+            .with_indent_size(self.config.formatter.indent() as usize)
+            .with_allow_duplicate_keys(self.allow_duplicate_keys);
 
         // Create linter with all rules
         let mut linter = Linter::with_config(lint_config);
@@ -124,7 +132,7 @@ mod tests {
         };
 
         let config = create_test_config(true, false, false, 2);
-        let cmd = LintCommand::new(config, 120, LintFormat::Text);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text, false);
         let result = cmd.execute(&input);
 
         assert!(result.is_ok());
@@ -139,7 +147,7 @@ mod tests {
         };
 
         let config = create_test_config(true, false, false, 2);
-        let cmd = LintCommand::new(config, 80, LintFormat::Text);
+        let cmd = LintCommand::new(config, 80, LintFormat::Text, false);
         let result = cmd.execute(&input);
 
         // Should succeed (warnings don't cause failure)
@@ -155,7 +163,7 @@ mod tests {
         };
 
         let config = create_test_config(true, false, false, 2);
-        let cmd = LintCommand::new(config, 120, LintFormat::Text);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text, false);
         let result = cmd.execute(&input);
 
         // Should fail with parse error
@@ -170,7 +178,7 @@ mod tests {
         };
 
         let config = create_test_config(true, false, false, 2);
-        let cmd = LintCommand::new(config, 120, LintFormat::Text);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text, false);
         let result = cmd.execute(&input);
 
         assert!(result.is_ok());
@@ -185,7 +193,37 @@ mod tests {
         };
 
         let config = create_test_config(false, false, false, 2);
-        let cmd = LintCommand::new(config, 120, LintFormat::Json);
+        let cmd = LintCommand::new(config, 120, LintFormat::Json, false);
+        let result = cmd.execute(&input);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ExitCode::Success);
+    }
+
+    #[test]
+    fn test_lint_duplicate_keys_reported_by_default() {
+        let input = InputSource {
+            content: "key: value1\nkey: value2\nother: data".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+
+        let config = create_test_config(false, false, false, 2);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text, false);
+        let result = cmd.execute(&input);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), ExitCode::LintErrors);
+    }
+
+    #[test]
+    fn test_lint_duplicate_keys_allowed_when_flag_set() {
+        let input = InputSource {
+            content: "key: value1\nkey: value2\nother: data".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+
+        let config = create_test_config(false, false, false, 2);
+        let cmd = LintCommand::new(config, 120, LintFormat::Text, true);
         let result = cmd.execute(&input);
 
         assert!(result.is_ok());

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `DuplicateKeysRule` now fires by default: `LintConfig::default()` sets `allow_duplicate_keys: false`
+- Fixed false positives in duplicate key detection — nested keys with same name no longer reported as duplicates
+
+### Added
+
+- `--allow-duplicate-keys` CLI flag for `fy lint` to opt-in to allowing duplicate keys
+- `LintConfig::with_allow_duplicate_keys` builder method
+
 ## [0.5.2] - 2026-03-17
 
 ### Changed

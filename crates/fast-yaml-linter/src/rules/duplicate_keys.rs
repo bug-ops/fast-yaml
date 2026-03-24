@@ -65,9 +65,14 @@ fn check_top_level(
             .filter_map(|(k, _)| k.as_str().map(String::from))
             .collect();
 
-        // For each unique key, find ALL occurrences in source and detect duplicates
+        // For each unique key, find ALL occurrences in source and detect duplicates.
+        // Filter to column 1 (zero indentation) to avoid false positives from nested keys.
         for key_str in &unique_keys {
-            let all_spans = mapper.find_all_key_spans(key_str);
+            let all_spans: Vec<_> = mapper
+                .find_all_key_spans(key_str)
+                .into_iter()
+                .filter(|s| s.start.column == 1)
+                .collect();
 
             // If we find more than one occurrence, all after the first are duplicates
             if all_spans.len() > 1 {
