@@ -105,14 +105,11 @@ fn check_spaces_after_hyphen(
     let mut spaces = 0;
     let mut offset = hyphen_offset + 1;
 
-    while offset < source.len() {
-        if let Some(ch) = source.chars().nth(offset) {
-            if ch == ' ' {
-                spaces += 1;
-                offset += 1;
-            } else {
-                break;
-            }
+    let bytes = source.as_bytes();
+    while offset < bytes.len() {
+        if bytes[offset] == b' ' {
+            spaces += 1;
+            offset += 1;
         } else {
             break;
         }
@@ -126,8 +123,8 @@ fn check_spaces_after_hyphen(
     let spaces_i64 = spaces as i64;
 
     // Require at least one space after hyphen (unless it's at end of line)
-    if spaces == 0 && offset < source.len() {
-        let next_char = source.chars().nth(offset);
+    if spaces == 0 && offset < bytes.len() {
+        let next_char = bytes.get(offset).copied().map(char::from);
         if let Some(ch) = next_char
             && ch != '\n'
             && ch != '\r'
@@ -318,6 +315,23 @@ mod tests {
         assert_eq!(
             diagnostics[0].span.start.line, 1,
             "first violation should be on line 1"
+        );
+    }
+
+    #[test]
+    fn test_hyphens_no_false_positive_after_multibyte_chars() {
+        // ✓ is 3 bytes but 1 char; byte offset and char index diverge after it
+        let yaml = "items:\n  - note: \"contains ✓ checkmark\"\n  - item1\n  - item2";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = HyphensRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "valid list items after multibyte chars should not trigger hyphens rule: {diagnostics:?}"
         );
     }
 
