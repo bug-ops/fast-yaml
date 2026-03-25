@@ -303,7 +303,7 @@ impl QuotedStringsRule {
         }
 
         // Strings starting with special chars need quotes
-        let first_char = s.chars().next().unwrap();
+        let first_char = s.chars().next().unwrap_or('\0');
         if matches!(
             first_char,
             '@' | '`'
@@ -328,6 +328,20 @@ impl QuotedStringsRule {
 
         // Strings with colons or spaces often need quotes
         if s.contains(':') || s.contains('#') {
+            return true;
+        }
+
+        // Strings containing glob/template/cron special characters conventionally
+        // benefit from quoting even when YAML could parse them unquoted. Flagging
+        // them as "does not need quotes" produces false positives on real-world
+        // YAML (GitHub Actions, Helm charts, Kubernetes manifests, cron schedules).
+        if s.contains('*')
+            || s.contains('?')
+            || s.contains('{')
+            || s.contains('}')
+            || s.contains('[')
+            || s.contains(']')
+        {
             return true;
         }
 

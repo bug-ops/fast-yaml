@@ -5,7 +5,6 @@ use crate::{
     Span,
 };
 use fast_yaml_core::Value;
-use std::collections::HashSet;
 
 /// Linting rule for key ordering.
 ///
@@ -58,162 +57,182 @@ impl super::LintRule for KeyOrderingRule {
             .unwrap_or(true);
 
         let mut diagnostics = Vec::new();
+        let mut cursor = 1usize;
 
-        // Check the value tree recursively
-        self.check_value(
+        check_value(
             value,
             context,
             source,
             case_sensitive,
             config,
             &mut diagnostics,
+            &mut cursor,
         );
-
         diagnostics
     }
 }
 
-impl KeyOrderingRule {
-    /// Recursively checks a value tree for key ordering issues.
-    #[allow(
-        clippy::only_used_in_recursion,
-        clippy::self_only_used_in_recursion,
-        clippy::too_many_lines
-    )]
-    fn check_value(
-        &self,
-        value: &Value,
-        context: &LintContext,
-        source: &str,
-        case_sensitive: bool,
-        config: &LintConfig,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        match value {
-            Value::Mapping(hash) => {
-                // Pre-build HashSet of hash keys for O(1) lookup
-                let hash_keys: HashSet<&str> = hash.keys().filter_map(|v| v.as_str()).collect();
+/// Recursively walks `value` and emits ordering diagnostics.
+///
+/// `cursor` is a 1-based source line index that advances after each key is
+/// located. Searching forward from the cursor scopes each mapping's key search
+/// to its own position in the document, preventing duplicate diagnostics when
+/// the same key name appears in multiple mappings (#105).
+#[allow(clippy::too_many_arguments)]
+fn check_value(
+    value: &Value,
+    context: &LintContext<'_>,
+    source: &str,
+    case_sensitive: bool,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+    cursor: &mut usize,
+) {
+    match value {
+        Value::Mapping(hash) => {
+            let key_positions = locate_keys(hash, context, cursor);
+            emit_ordering_diagnostics(
+                &key_positions,
+                context,
+                source,
+                case_sensitive,
+                config,
+                diagnostics,
+            );
 
-                // Build a mapping of keys to their line numbers from the source
-                let mut key_positions: Vec<(String, usize)> = Vec::new();
-
-                // Use cached lines and metadata from context
-                let lines = context.lines();
-                let line_metadata = context.line_metadata();
-
-                // Extract keys from the source to preserve order and get positions
-                for (line_idx, (line, metadata)) in lines.iter().zip(line_metadata).enumerate() {
-                    let line_num = line_idx + 1;
-
-                    // Skip empty lines and comments using cached metadata
-                    if metadata.is_empty || metadata.is_comment {
-                        continue;
-                    }
-
-                    let trimmed = line.trim_start();
-
-                    // Check if this is a key-value line (contains ':' but not in a list)
-                    if let Some(colon_pos) = trimmed.find(':') {
-                        // Skip if this is a list item value (line starts with '- ')
-                        if trimmed.starts_with("- ") && colon_pos > 2 {
-                            // This is a list item with a mapping, recurse into it
-                            continue;
-                        }
-
-                        let key_part = &trimmed[..colon_pos].trim();
-
-                        // Skip if key is quoted (extract the content)
-                        #[allow(clippy::if_same_then_else)]
-                        let key = if key_part.starts_with('\'') && key_part.ends_with('\'') {
-                            &key_part[1..key_part.len() - 1]
-                        } else if key_part.starts_with('"') && key_part.ends_with('"') {
-                            &key_part[1..key_part.len() - 1]
-                        } else {
-                            key_part
-                        };
-
-                        // O(1) lookup in HashSet instead of O(n) hash.contains_key
-                        if hash_keys.contains(key) {
-                            key_positions.push((key.to_string(), line_num));
-                        }
-                    }
-                }
-
-                // Check if keys are in alphabetical order
-                let mut prev_key: Option<&str> = None;
-                let mut prev_line: Option<usize> = None;
-
-                for (key, line_num) in &key_positions {
-                    if let Some(prev) = prev_key {
-                        let current_cmp = if case_sensitive {
-                            key.as_str()
-                        } else {
-                            &key.to_lowercase()
-                        };
-
-                        let prev_cmp = if case_sensitive {
-                            prev
-                        } else {
-                            &prev.to_lowercase()
-                        };
-
-                        if current_cmp < prev_cmp {
-                            // Found a key that should come before the previous one
-                            let severity = config.get_effective_severity(
-                                DiagnosticCode::KEY_ORDERING,
-                                Severity::Info,
-                            );
-                            let line_offset = context.source_context().get_line_offset(*line_num);
-
-                            let location = Location::new(*line_num, 1, line_offset);
-                            let span = Span::new(
-                                location,
-                                Location::new(*line_num, 1, line_offset + key.len()),
-                            );
-
-                            diagnostics.push(
-                                DiagnosticBuilder::new(
-                                    DiagnosticCode::KEY_ORDERING,
-                                    severity,
-                                    format!(
-                                        "key '{}' should be ordered before '{}' (line {})",
-                                        key,
-                                        prev,
-                                        prev_line.unwrap()
-                                    ),
-                                    span,
-                                )
-                                .build(source),
-                            );
-                        }
-                    }
-
-                    prev_key = Some(key);
-                    prev_line = Some(*line_num);
-                }
-
-                // Recursively check nested values
-                for (_, nested_value) in hash {
-                    self.check_value(
-                        nested_value,
-                        context,
-                        source,
-                        case_sensitive,
-                        config,
-                        diagnostics,
-                    );
-                }
-            }
-            Value::Sequence(arr) => {
-                // Recursively check array elements
-                for item in arr {
-                    self.check_value(item, context, source, case_sensitive, config, diagnostics);
-                }
-            }
-            _ => {
-                // Scalar values don't have keys to check
+            for (_, nested_value) in hash {
+                check_value(
+                    nested_value,
+                    context,
+                    source,
+                    case_sensitive,
+                    config,
+                    diagnostics,
+                    cursor,
+                );
             }
         }
+        Value::Sequence(arr) => {
+            for item in arr {
+                check_value(
+                    item,
+                    context,
+                    source,
+                    case_sensitive,
+                    config,
+                    diagnostics,
+                    cursor,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Locates each key of `hash` in the source, scanning forward from `*cursor`.
+///
+/// Returns `(key_name, line_number)` pairs in document order.
+/// `*cursor` is advanced past each located key.
+fn locate_keys(
+    hash: &fast_yaml_core::Map,
+    context: &LintContext<'_>,
+    cursor: &mut usize,
+) -> Vec<(String, usize)> {
+    let lines = context.lines();
+    let line_metadata = context.line_metadata();
+    let mut positions: Vec<(String, usize)> = Vec::new();
+
+    for key_value in hash.keys() {
+        let Some(key) = key_value.as_str() else {
+            continue;
+        };
+
+        for (line_idx, (line, metadata)) in lines
+            .iter()
+            .zip(line_metadata)
+            .enumerate()
+            .skip(*cursor - 1)
+        {
+            let line_num = line_idx + 1;
+
+            if metadata.is_empty || metadata.is_comment {
+                continue;
+            }
+
+            let trimmed = line.trim_start();
+            let Some(colon_pos) = trimmed.find(':') else {
+                continue;
+            };
+
+            let raw_key = trimmed[..colon_pos].trim();
+            let unquoted = if (raw_key.starts_with('\'') && raw_key.ends_with('\''))
+                || (raw_key.starts_with('"') && raw_key.ends_with('"'))
+            {
+                &raw_key[1..raw_key.len() - 1]
+            } else {
+                raw_key
+            };
+
+            if unquoted == key {
+                positions.push((key.to_string(), line_num));
+                *cursor = line_num + 1;
+                break;
+            }
+        }
+    }
+
+    positions
+}
+
+/// Compares consecutive key pairs and pushes a diagnostic for each violation.
+fn emit_ordering_diagnostics(
+    key_positions: &[(String, usize)],
+    context: &LintContext<'_>,
+    source: &str,
+    case_sensitive: bool,
+    config: &LintConfig,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut prev_key: Option<&str> = None;
+    let mut prev_line: Option<usize> = None;
+
+    for (key, line_num) in key_positions {
+        if let Some(prev) = prev_key {
+            let out_of_order = if case_sensitive {
+                key.as_str() < prev
+            } else {
+                key.to_lowercase() < prev.to_lowercase()
+            };
+
+            if out_of_order {
+                let severity =
+                    config.get_effective_severity(DiagnosticCode::KEY_ORDERING, Severity::Info);
+                let line_offset = context.source_context().get_line_offset(*line_num);
+                let location = Location::new(*line_num, 1, line_offset);
+                let span = Span::new(
+                    location,
+                    Location::new(*line_num, 1, line_offset + key.len()),
+                );
+
+                diagnostics.push(
+                    DiagnosticBuilder::new(
+                        DiagnosticCode::KEY_ORDERING,
+                        severity,
+                        format!(
+                            "key '{}' should be ordered before '{}' (line {})",
+                            key,
+                            prev,
+                            prev_line.unwrap_or(0)
+                        ),
+                        span,
+                    )
+                    .build(source),
+                );
+            }
+        }
+
+        prev_key = Some(key);
+        prev_line = Some(*line_num);
     }
 }
 
@@ -290,7 +309,6 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        // Nested keys should be checked
         assert!(!diagnostics.is_empty());
     }
 
@@ -330,7 +348,45 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        // Array items are not checked for ordering
         assert!(diagnostics.is_empty());
+    }
+
+    /// Regression test for #105: same key names across multiple mappings must
+    /// each produce exactly one diagnostic, not N times.
+    #[test]
+    fn test_key_ordering_no_duplicate_diagnostics_across_mappings() {
+        let yaml = "b: 1\na: 2\n---\nb: 3\na: 4\n";
+        let values = fast_yaml_core::Parser::parse_all(yaml).unwrap();
+
+        let rule = KeyOrderingRule;
+        let config = LintConfig::default();
+        let context = LintContext::new(yaml);
+
+        let total: usize = values
+            .iter()
+            .map(|v| rule.check(&context, v, &config).len())
+            .sum();
+        // Each document contributes exactly 1 violation (a < b).
+        assert_eq!(total, 2, "expected 2 diagnostics, got {total}");
+    }
+
+    /// Regression test for #105: repetitive nested structure (CI `with:` blocks)
+    /// must not inflate diagnostic count.
+    #[test]
+    fn test_key_ordering_repetitive_nested_structure() {
+        let yaml = "steps:\n  - with:\n      b: 1\n      a: 2\n  - with:\n      b: 3\n      a: 4\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = KeyOrderingRule;
+        let config = LintConfig::default();
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "expected 2 diagnostics, got {}",
+            diagnostics.len()
+        );
     }
 }
