@@ -436,4 +436,26 @@ mod tests {
             "unexpected diagnostics on Jinja2-style template: {diagnostics:?}"
         );
     }
+
+    // Regression test for issue #116
+    #[test]
+    fn test_braces_no_false_positive_in_block_scalar() {
+        let yaml = "message: >\n  This has {braces} and more {braces} inside.\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = BracesRule;
+        let config = LintConfig::new().with_rule_config(
+            "braces",
+            RuleConfig::new()
+                .with_option("min-spaces-inside", 0i64)
+                .with_option("max-spaces-inside", 0i64),
+        );
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "no false positives in block scalar: {diagnostics:?}"
+        );
+    }
 }
