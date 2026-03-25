@@ -563,7 +563,7 @@ impl PyLinter {
         Self {
             inner: match config {
                 Some(cfg) => RustLinter::with_config(cfg.inner),
-                None => RustLinter::new(),
+                None => RustLinter::with_config(RustLintConfig::default()),
             },
         }
     }
