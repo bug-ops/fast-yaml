@@ -82,6 +82,96 @@ fn fix_special_float_value(value: &str) -> &str {
     }
 }
 
+/// Extract original anchor names from YAML input.
+///
+/// Returns a `Vec` where `index == anchor_id` and `value == original anchor name`.
+/// Index 0 is always an empty string (saphyr anchor IDs start at 1).
+///
+/// Scans the input for `&name` tokens using the same ordering as saphyr's parser.
+/// Anchors inside quoted strings and comments are skipped.
+pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
+    // Fast path: no `&` byte means no anchors
+    if !input.bytes().any(|b| b == b'&') {
+        return vec![String::new()]; // index 0 placeholder
+    }
+
+    let mut names: Vec<String> = vec![String::new()]; // index 0 unused (saphyr IDs start at 1)
+    let bytes = input.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        match bytes[i] {
+            // Skip single-quoted strings: no escape sequences inside
+            b'\'' => {
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\'' {
+                        i += 1;
+                        // Two consecutive single quotes = escaped quote inside string
+                        if i < len && bytes[i] == b'\'' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            // Skip double-quoted strings
+            b'"' => {
+                i += 1;
+                while i < len {
+                    if bytes[i] == b'\\' {
+                        i += 2; // skip escape sequence
+                    } else if bytes[i] == b'"' {
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+            // Skip comments to end of line
+            b'#' => {
+                while i < len && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            }
+            // Block scalar headers: skip lines starting with | or > after whitespace
+            // (content lines follow and may contain `&` that is not an anchor)
+            // We handle this by only treating `&` after valid YAML flow positions.
+            // Anchor: `&` followed by a valid anchor name character
+            b'&' => {
+                i += 1;
+                // Anchor name: [a-zA-Z0-9_-] and other non-space non-special chars
+                let start = i;
+                while i < len {
+                    let b = bytes[i];
+                    // Anchor name ends at whitespace, `{`, `}`, `[`, `]`, `,`, `:`, `#`
+                    if b.is_ascii_whitespace()
+                        || matches!(b, b'{' | b'}' | b'[' | b']' | b',' | b':')
+                    {
+                        break;
+                    }
+                    i += 1;
+                }
+                if i > start
+                    && let Ok(name) = std::str::from_utf8(&bytes[start..i])
+                {
+                    names.push(name.to_owned());
+                }
+            }
+            _ => {
+                i += 1;
+            }
+        }
+    }
+
+    names
+}
+
 /// Check if input is suitable for streaming formatter.
 ///
 /// Returns `true` for inputs that benefit from streaming:
@@ -426,13 +516,13 @@ double: "quoted""#;
 
     #[test]
     fn test_format_streaming_anchor_on_mapping_value() {
-        // Anchor on mapping value: "key: &anchor1\n  subkey: val"
+        // Anchor on mapping value: original name must be preserved
         let yaml = "defaults: &base\n  adapter: postgres\n";
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
         assert!(
-            result.contains("defaults: &anchor1\n"),
-            "anchor must appear inline on same line as key, got: {result}"
+            result.contains("defaults: &base\n"),
+            "original anchor name must be preserved, got: {result}"
         );
         assert!(
             result.contains("  adapter: postgres\n"),
@@ -442,38 +532,37 @@ double: "quoted""#;
 
     #[test]
     fn test_format_streaming_anchor_on_sequence_value() {
-        // Anchor on sequence value: "tags: &anchor1\n  - yaml"
+        // Anchor on sequence value: original name must be preserved
         let yaml = "tags: &common\n  - yaml\n  - parser\n";
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
         assert!(
-            result.contains("tags: &anchor1\n"),
-            "anchor must appear inline on same line as key, got: {result}"
+            result.contains("tags: &common\n"),
+            "original anchor name must be preserved, got: {result}"
         );
     }
 
     #[test]
     fn test_format_streaming_anchor_mapping_in_sequence() {
-        // Anchored mapping inside a sequence: "- &anchor1\n  key: val"
-        // The key must be indented (not at column 0).
+        // Anchored mapping inside a sequence: original name must be preserved
         let yaml = "- &ref\n  key: val\n";
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
         assert_eq!(
-            result, "- &anchor1\n  key: val\n",
-            "anchored mapping in sequence: anchor inline, key indented, got: {result}"
+            result, "- &ref\n  key: val\n",
+            "original anchor name must be preserved, got: {result}"
         );
     }
 
     #[test]
     fn test_format_streaming_anchor_sequence_in_sequence() {
-        // Anchored sequence inside a sequence: "- &anchor1\n  - item"
+        // Anchored sequence inside a sequence: original name must be preserved
         let yaml = "- &ref\n  - item\n";
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
         assert_eq!(
-            result, "- &anchor1\n  - item\n",
-            "anchored sequence in sequence: anchor inline, item indented, got: {result}"
+            result, "- &ref\n  - item\n",
+            "original anchor name must be preserved, got: {result}"
         );
     }
 
@@ -487,6 +576,64 @@ double: "quoted""#;
         assert_eq!(
             first, second,
             "formatting must be idempotent for anchored documents"
+        );
+    }
+
+    // ── Issue #120: Anchor name preservation ────────────────────────────────
+
+    #[test]
+    fn test_format_streaming_preserves_anchor_name() {
+        // Anchor name must be preserved as-is after formatting
+        let yaml =
+            "defaults: &defaults\n  timeout: 30\nservice1:\n  <<: *defaults\n  name: api-server\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("&defaults"),
+            "original anchor name 'defaults' must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("*defaults"),
+            "alias must reference original name 'defaults', got: {result}"
+        );
+        assert!(
+            !result.contains("&anchor1"),
+            "generated name 'anchor1' must not appear, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_preserves_multiple_anchors() {
+        let yaml = "a: &foo\n  x: 1\nb: &bar\n  y: 2\nc: *foo\nd: *bar\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("&foo"),
+            "anchor 'foo' must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("&bar"),
+            "anchor 'bar' must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("*foo"),
+            "alias 'foo' must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("*bar"),
+            "alias 'bar' must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_anchor_reuse() {
+        // Same anchor name defined twice: both IDs store the same name string
+        let yaml = "a: &name\n  v: 1\nb: &name\n  v: 2\nc: *name\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("&name"),
+            "anchor name must be preserved on reuse, got: {result}"
         );
     }
 
@@ -623,6 +770,75 @@ ref3: *a3";
         assert!(result.contains("value:"));
         assert!(result.contains("level19:"));
     }
+
+    // ── Issue #120: extract_anchor_names unit tests ──────────────────────────
+
+    #[test]
+    fn test_extract_anchor_names_no_anchors() {
+        let names = extract_anchor_names("key: value\nlist:\n  - item\n");
+        // Fast path returns single-element vec with empty placeholder
+        assert_eq!(names, vec![String::new()]);
+    }
+
+    #[test]
+    fn test_extract_anchor_names_single() {
+        let names = extract_anchor_names("defaults: &myanchor\n  k: v\n");
+        assert_eq!(names.len(), 2);
+        assert_eq!(names[0], ""); // index 0 placeholder
+        assert_eq!(names[1], "myanchor");
+    }
+
+    #[test]
+    fn test_extract_anchor_names_multiple_in_order() {
+        let names = extract_anchor_names("a: &first\n  x: 1\nb: &second\n  y: 2\n");
+        assert_eq!(names.len(), 3);
+        assert_eq!(names[1], "first");
+        assert_eq!(names[2], "second");
+    }
+
+    #[test]
+    fn test_extract_anchor_names_skips_quoted_ampersand() {
+        // & inside quoted strings must not be treated as anchor
+        let names = extract_anchor_names("key: 'foo &notanchor bar'\nreal: &real\n  v: 1\n");
+        // Only &real should be captured
+        assert!(names.contains(&"real".to_owned()));
+        assert!(!names.contains(&"notanchor".to_owned()));
+    }
+
+    #[test]
+    fn test_extract_anchor_names_skips_comment_ampersand() {
+        // & in a comment must not be treated as anchor
+        let names = extract_anchor_names("key: value # &notanchor\nreal: &real\n  v: 1\n");
+        assert!(names.contains(&"real".to_owned()));
+        assert!(!names.contains(&"notanchor".to_owned()));
+    }
+
+    // ── Issue #120: Multi-document streams ──────────────────────────────────
+
+    #[test]
+    fn test_format_streaming_preserves_anchor_across_documents() {
+        // Each document in a stream has its own anchor namespace.
+        // Anchors in document 1 must use original names.
+        let yaml = "---\ndefaults: &cfg\n  timeout: 30\nservice: *cfg\n---\nother: &other\n  x: 1\nref: *other\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("&cfg"),
+            "anchor 'cfg' in first document must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("*cfg"),
+            "alias 'cfg' in first document must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("&other"),
+            "anchor 'other' in second document must be preserved, got: {result}"
+        );
+        assert!(
+            result.contains("*other"),
+            "alias 'other' in second document must be preserved, got: {result}"
+        );
+    }
 }
 
 #[cfg(all(test, feature = "arena"))]
@@ -718,7 +934,10 @@ mod arena_tests {
             standard, arena,
             "100 anchors: arena and standard must match"
         );
-        assert!(arena.contains("anchor100"));
+        assert!(
+            arena.contains("anchor100"),
+            "anchor name must be preserved, got partial: ..."
+        );
     }
 
     #[test]

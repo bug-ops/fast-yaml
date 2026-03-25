@@ -11,6 +11,7 @@ use bumpalo::Bump;
 use saphyr_parser::Parser;
 
 use super::Context;
+use super::extract_anchor_names;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
@@ -180,7 +181,19 @@ pub fn format_streaming_arena(input: &str, config: &EmitterConfig) -> EmitResult
     // Pre-allocate context stack in arena (16 levels handles 99% of cases)
     let context_capacity = 16;
 
-    let backend = ArenaBackend::new(context_capacity, &arena);
+    let anchor_names = extract_anchor_names(input);
+    let mut backend = ArenaBackend::new(context_capacity, &arena);
+    // Seed anchor store with original names extracted from input.
+    // ensure_capacity + direct write mirrors how StdBackend is seeded.
+    {
+        let store = backend.anchor_store_mut();
+        for (id, name) in anchor_names.into_iter().enumerate() {
+            store.ensure_capacity(id);
+            if !name.is_empty() && store[id].is_empty() {
+                let _ = write!(store[id], "{name}");
+            }
+        }
+    }
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend);
 
     for result in parser {
