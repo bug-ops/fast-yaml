@@ -81,7 +81,7 @@ impl Parser {
 ///
 /// saphyr handles lowercase `true`, `false`, `null`, `~` natively.
 /// This function post-processes the tree to handle `True`, `TRUE`, `False`, `FALSE`, `Null`.
-fn canonicalize(value: Value) -> Value {
+pub fn canonicalize(value: Value) -> Value {
     match value {
         Value::Value(ScalarOwned::String(ref s)) => match s.as_str() {
             "True" | "TRUE" => Value::Value(ScalarOwned::Boolean(true)),

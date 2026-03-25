@@ -4,8 +4,8 @@ This module tests that fast-yaml correctly implements the YAML 1.2.2 Core Schema
 which differs from YAML 1.1 (used by PyYAML) in several important ways.
 
 Key YAML 1.2.2 differences from YAML 1.1:
-- Only lowercase `true`/`false` are booleans (not Yes/No/On/Off)
-- Only lowercase `null` and `~` are null (not Null/NULL)
+- `true`/`True`/`TRUE` and `false`/`False`/`FALSE` are booleans (not Yes/No/On/Off)
+- `null`/`Null`/`NULL` and `~` are null
 - Octal numbers require `0o` prefix (not just leading 0)
 - Binary numbers use `0b` prefix
 """
@@ -28,21 +28,21 @@ class TestYAML122Booleans:
         """Test that lowercase 'false' is parsed as boolean False."""
         assert fast_yaml.safe_load("value: false") == {"value": False}
 
-    def test_uppercase_true_is_string(self):
-        """Test that uppercase 'TRUE' is parsed as string (YAML 1.2.2)."""
-        assert fast_yaml.safe_load("value: TRUE") == {"value": "TRUE"}
+    def test_uppercase_true_is_bool(self):
+        """Test that 'TRUE' is parsed as boolean True per YAML 1.2.2 Core Schema."""
+        assert fast_yaml.safe_load("value: TRUE") == {"value": True}
 
-    def test_uppercase_false_is_string(self):
-        """Test that uppercase 'FALSE' is parsed as string (YAML 1.2.2)."""
-        assert fast_yaml.safe_load("value: FALSE") == {"value": "FALSE"}
+    def test_uppercase_false_is_bool(self):
+        """Test that 'FALSE' is parsed as boolean False per YAML 1.2.2 Core Schema."""
+        assert fast_yaml.safe_load("value: FALSE") == {"value": False}
 
-    def test_capitalized_true_is_string(self):
-        """Test that 'True' is parsed as string (YAML 1.2.2)."""
-        assert fast_yaml.safe_load("value: True") == {"value": "True"}
+    def test_capitalized_true_is_bool(self):
+        """Test that 'True' is parsed as boolean True per YAML 1.2.2 Core Schema."""
+        assert fast_yaml.safe_load("value: True") == {"value": True}
 
-    def test_capitalized_false_is_string(self):
-        """Test that 'False' is parsed as string (YAML 1.2.2)."""
-        assert fast_yaml.safe_load("value: False") == {"value": "False"}
+    def test_capitalized_false_is_bool(self):
+        """Test that 'False' is parsed as boolean False per YAML 1.2.2 Core Schema."""
+        assert fast_yaml.safe_load("value: False") == {"value": False}
 
     def test_yes_is_string(self):
         """Test that 'yes' is parsed as string (not boolean like YAML 1.1)."""
@@ -96,9 +96,9 @@ class TestYAML122Null:
         # Accept either null or string based on parser implementation
         assert result["value"] is None or result["value"] == "NULL"
 
-    def test_capitalized_null_is_string(self):
-        """Test that 'Null' is parsed as string (YAML 1.2.2)."""
-        assert fast_yaml.safe_load("value: Null") == {"value": "Null"}
+    def test_capitalized_null_is_null(self):
+        """Test that 'Null' is parsed as null per YAML 1.2.2 Core Schema."""
+        assert fast_yaml.safe_load("value: Null") == {"value": None}
 
     def test_null_in_list(self):
         """Test null in lists."""

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python/NodeJS bindings now correctly parse `True`/`TRUE`/`False`/`FALSE`/`Null`/`NULL` as bool/null per YAML 1.2.2 Core Schema (fixes #80)
+- `batch.format_files` now preserves trailing newline in formatted output (fixes #81)
 - **Linter**: `Linter::with_config()` now loads all default rules instead of an empty registry. Previously, constructing a `Linter` with a custom config silently disabled all linting rules, causing zero diagnostics regardless of input. Affects Rust, Python, and NodeJS bindings. (#86)
 - `fy convert` now correctly handles multi-document YAML streams: all documents are included in a JSON array instead of silently dropping all but the first. Single-document streams continue to produce a plain JSON object. (#87)
 - `fy format` no longer adds trailing whitespace to blank lines inside block scalars (`|`, `>`). Previously, blank lines inside a block scalar received the same indentation prefix as non-blank lines, producing `  \n` instead of `\n`. (#85)
