@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - fix(nodejs): `new Linter()` with no args now uses default rules instead of an empty registry (fixes #124)
+- fix(python): `Linter()` with no args now uses default rules instead of an empty registry (fixes #135)
 - **Python**: `safe_dump()` `indent` and `default_flow_style` parameters now take effect. Previously both were accepted but silently ignored. `indent=N` rescales block-style indentation to N spaces; `default_flow_style=True` renders all mappings and sequences in flow style (`{k: v}` / `[a, b]`). (#127)
 - fix(linter): `duplicate-key` rule reported 0-indexed column numbers in JSON output; saphyr `col()` is 0-indexed and now correctly converted to 1-indexed (#131)
 - fix(linter): `key-ordering` rule silently skipped nested mapping keys when the parent mapping had more than one top-level key; fixed by interleaving key location with value recursion (#130)
