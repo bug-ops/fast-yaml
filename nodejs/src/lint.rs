@@ -52,9 +52,9 @@ pub struct Location {
 impl From<RustLocation> for Location {
     fn from(loc: RustLocation) -> Self {
         Self {
-            line: loc.line as u32,
-            column: loc.column as u32,
-            offset: loc.offset as u32,
+            line: u32::try_from(loc.line).unwrap_or(u32::MAX),
+            column: u32::try_from(loc.column).unwrap_or(u32::MAX),
+            offset: u32::try_from(loc.offset).unwrap_or(u32::MAX),
         }
     }
 }
@@ -93,12 +93,17 @@ pub struct ContextLine {
 impl From<RustContextLine> for ContextLine {
     fn from(line: RustContextLine) -> Self {
         Self {
-            line_number: line.line_number as u32,
+            line_number: u32::try_from(line.line_number).unwrap_or(u32::MAX),
             content: line.content,
             highlights: line
                 .highlights
                 .into_iter()
-                .map(|(start, end)| vec![start as u32, end as u32])
+                .map(|(start, end)| {
+                    vec![
+                        u32::try_from(start).unwrap_or(u32::MAX),
+                        u32::try_from(end).unwrap_or(u32::MAX),
+                    ]
+                })
                 .collect(),
         }
     }
@@ -264,6 +269,7 @@ impl Linter {
     ///
     /// Returns an error if the YAML cannot be parsed.
     #[napi]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn lint(&self, source: String) -> napi::Result<Vec<Diagnostic>> {
         self.inner
             .lint(&source)
@@ -287,6 +293,7 @@ impl Linter {
 /// const diagnostics = lint('key: value\nkey: duplicate');
 /// ```
 #[napi]
+#[allow(clippy::needless_pass_by_value)]
 pub fn lint(source: String, config: Option<LintConfig>) -> napi::Result<Vec<Diagnostic>> {
     let linter = match config {
         Some(cfg) => RustLinter::with_all_rules_and_config(to_rust_lint_config(cfg)),
