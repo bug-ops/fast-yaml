@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - fix(linter): `LintConfig.require_document_start` and `require_document_end` are now wired into `DocumentStartRule` and `DocumentEndRule` respectively; previously these fields were dead and had no effect — setting them to `true` now correctly requires `---`/`...` markers. Added `with_require_document_start` and `with_require_document_end` builder methods to `LintConfig`. (#193)
+- fix(python): `ParallelConfig.max_documents` is now enforced — `parse_parallel` and `dump_parallel` return `ValueError` when the parsed document count exceeds the configured limit; previously the limit was validated on construction but silently ignored during parsing (#195)
 - `duplicate-key` rule: fix false negative when mapping contains merge-key alias (`<<: *anchor`) — keys after the alias were silently skipped due to `Event::Alias` not advancing the key-tracking state (fixes #188)
 - `colons` rule: fix false positive when block mapping key has trailing whitespace but no inline value — spaces after `:` are now only checked when a non-whitespace value follows on the same line (fixes #190)
 - fix(linter): `quoted-strings` rule no longer emits "does not need quotes" for double-quoted strings with `\uXXXX`, `\UXXXXXXXX`, or `\xXX` escape sequences; these escapes decode to characters indistinguishable from plain text, requiring raw source inspection (#182)
