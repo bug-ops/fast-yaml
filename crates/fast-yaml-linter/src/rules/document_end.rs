@@ -52,7 +52,7 @@ impl super::LintRule for DocumentEndRule {
         let required = config
             .get_rule_config(self.code())
             .and_then(|rc| rc.options.get_bool("present"))
-            .unwrap_or(false);
+            .unwrap_or(config.require_document_end);
 
         if !required {
             return Vec::new();

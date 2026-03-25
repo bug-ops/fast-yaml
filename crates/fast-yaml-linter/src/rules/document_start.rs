@@ -52,7 +52,11 @@ impl super::LintRule for DocumentStartRule {
         let presence = config
             .get_rule_config(self.code())
             .and_then(|rc| rc.options.get_string("present"))
-            .unwrap_or("allowed");
+            .unwrap_or(if config.require_document_start {
+                "required"
+            } else {
+                "allowed"
+            });
 
         let source_context = context.source_context();
         match presence {
