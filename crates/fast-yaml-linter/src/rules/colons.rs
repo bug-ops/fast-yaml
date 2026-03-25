@@ -227,6 +227,16 @@ fn check_spaces_after_colon(
         }
     }
 
+    // If there is no non-whitespace character on this line after the colon
+    // (i.e. the colon is at end-of-line or end-of-file), the trailing spaces
+    // are not "spaces after colon" in a mapping sense — they are just trailing
+    // whitespace on a key-only line. Skip the check to avoid false positives.
+    let next_is_eol_or_eof =
+        offset >= bytes.len() || bytes[offset] == b'\n' || bytes[offset] == b'\r';
+    if next_is_eol_or_eof {
+        return None;
+    }
+
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_possible_wrap,
@@ -403,6 +413,24 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         // At least 2 violations (spaces before colons)
         assert!(diagnostics.len() >= 2);
+    }
+
+    /// Regression test for #190: trailing spaces after key colon must not be flagged.
+    #[test]
+    fn test_colons_trailing_whitespace_no_false_positive() {
+        // "nested:  " has two trailing spaces but no inline value — must not fire.
+        let yaml = "nested:  \n  a: 1\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = ColonsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for trailing whitespace after key colon, got: {diagnostics:?}"
+        );
     }
 
     #[test]
