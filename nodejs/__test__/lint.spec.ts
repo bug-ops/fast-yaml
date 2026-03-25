@@ -215,7 +215,7 @@ describe('Per-rule severity overrides', () => {
 
   it('unknown rule name is silently accepted', () => {
     expect(() =>
-      lint(VALID_YAML, { rules: { 'nonexistent-rule': { severity: 'error' } } }),
+      lint(VALID_YAML, { rules: { 'nonexistent-rule': { severity: 'error' } } })
     ).not.toThrow();
   });
 
@@ -230,9 +230,7 @@ describe('Per-rule severity overrides', () => {
   it('all four severity values are accepted', () => {
     const severities = ['error', 'warning', 'info', 'hint'] as const;
     for (const sev of severities) {
-      expect(() =>
-        lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': sev } }),
-      ).not.toThrow();
+      expect(() => lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': sev } })).not.toThrow();
     }
   });
 });

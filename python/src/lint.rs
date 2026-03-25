@@ -531,8 +531,8 @@ impl PyLintConfig {
                         .with_severity(parse_severity(sev_str)?)
                 } else {
                     // Object form: dict with optional "severity" and "enabled" keys
-                    let rule_dict = value.cast::<PyDict>()?;
-                    parse_rule_config_dict(rule_dict)?
+                    let entry = value.cast::<PyDict>()?;
+                    parse_rule_config_dict(entry)?
                 };
                 inner = inner.with_rule_config(code, rc);
             }
@@ -595,11 +595,11 @@ impl PyLintConfig {
         severity: Option<&str>,
         enabled: Option<bool>,
     ) -> PyResult<Self> {
-        let mut rc = fast_yaml_linter::config::RuleConfig::new();
-
-        if enabled == Some(false) {
-            rc = fast_yaml_linter::config::RuleConfig::disabled();
-        }
+        let mut rc = if enabled == Some(false) {
+            fast_yaml_linter::config::RuleConfig::disabled()
+        } else {
+            fast_yaml_linter::config::RuleConfig::new()
+        };
 
         if let Some(sev_str) = severity {
             rc = rc.with_severity(parse_severity(sev_str)?);
