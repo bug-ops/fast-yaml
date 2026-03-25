@@ -1,6 +1,6 @@
 {
   "name": "fastyaml-rs",
-  "version": "0.5.3",
+  "version": "0.6.0",
   "description": "Fast YAML 1.2.2 parser, linter, and parallel processor for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
@@ -61,7 +61,7 @@
     "@napi-rs/cli": "~3.5.0",
     "@types/node": "^25.3",
     "@vitest/coverage-v8": "^4.0",
-    "typescript": "^5.9",
+    "typescript": "^6.0",
     "vitest": "^4.0"
   }
 }

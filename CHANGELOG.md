@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-25
+
 ### Added
 
 - **CLI**: `fy lint` now accepts multiple `PATHS...` arguments (files, directories, glob patterns), mirrors the `fy format` batch mode. Supports `--include`/`--exclude` glob filters, `--no-recursive`, and `-j`/`--jobs` for parallel processing. Exit code is non-zero when any file has Error-severity diagnostics. (#165)
@@ -614,7 +616,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/bug-ops/fast-yaml/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/bug-ops/fast-yaml/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/bug-ops/fast-yaml/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bug-ops/fast-yaml/compare/v0.5.0...v0.5.1
