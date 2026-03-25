@@ -264,3 +264,34 @@ class TestInputValidation:
         large_yaml = "key: " + ("x" * (100 * 1024 * 1024))
         with pytest.raises(ValueError, match="exceeds maximum"):
             fast_yaml.load_all(large_yaml)
+
+    def test_safe_load_sequence_key_raises_value_error(self):
+        """safe_load() raises ValueError on sequence complex key."""
+        yaml_str = "? [a, b]\n: val"
+        with pytest.raises(ValueError, match="complex keys"):
+            fast_yaml.safe_load(yaml_str)
+
+    def test_safe_load_mapping_key_raises_value_error(self):
+        """safe_load() raises ValueError on mapping complex key."""
+        yaml_str = "? {k: v}\n: val"
+        with pytest.raises(ValueError, match="complex keys"):
+            fast_yaml.safe_load(yaml_str)
+
+    def test_safe_load_complex_key_not_type_error(self):
+        """safe_load() raises ValueError (not TypeError) on complex key."""
+        yaml_str = "? [a, b]\n: val"
+        with pytest.raises(ValueError):
+            fast_yaml.safe_load(yaml_str)
+        # ensure it's not a TypeError
+        try:
+            fast_yaml.safe_load(yaml_str)
+        except TypeError:
+            pytest.fail("safe_load raised TypeError instead of ValueError for complex key")
+        except ValueError:
+            pass
+
+    def test_safe_load_scalar_keys_work(self):
+        """safe_load() works normally for scalar keys (regression guard)."""
+        yaml_str = "key: value\nnumber: 42\nbool: true"
+        result = fast_yaml.safe_load(yaml_str)
+        assert result == {"key": "value", "number": 42, "bool": True}

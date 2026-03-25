@@ -340,6 +340,11 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
             let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
                 .iter()
                 .map(|(k, v)| {
+                    if matches!(k, YamlOwned::Sequence(_) | YamlOwned::Mapping(_)) {
+                        return Err(PyValueError::new_err(
+                            "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
+                        ));
+                    }
                     let py_key = yaml_to_python(py, k)?;
                     let py_value = yaml_to_python(py, v)?;
                     Ok((py_key, py_value))

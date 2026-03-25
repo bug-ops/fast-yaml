@@ -63,6 +63,11 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
             let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
                 .iter()
                 .map(|(k, v)| {
+                    if matches!(k, Value::Sequence(_) | Value::Mapping(_)) {
+                        return Err(PyValueError::new_err(
+                            "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
+                        ));
+                    }
                     let py_key = value_to_python(py, k)?;
                     let py_value = value_to_python(py, v)?;
                     Ok((py_key, py_value))

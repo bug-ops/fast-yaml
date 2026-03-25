@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - fix(linter): implement indentation rule — detect wrong indent size and mixed tabs/spaces (#139)
+- **Python**: `safe_load()` now raises `ValueError` with a clear message when YAML contains complex keys (sequences or mappings as mapping keys) instead of a confusing `TypeError` (#144)
 - fix(nodejs): `new Linter()` with no args now uses default rules instead of an empty registry (fixes #124)
 - fix(python): `Linter()` with no args now uses default rules instead of an empty registry (fixes #135)
 - **Python**: `safe_dump()` `indent` and `default_flow_style` parameters now take effect. Previously both were accepted but silently ignored. `indent=N` rescales block-style indentation to N spaces; `default_flow_style=True` renders all mappings and sequences in flow style (`{k: v}` / `[a, b]`). (#127)
