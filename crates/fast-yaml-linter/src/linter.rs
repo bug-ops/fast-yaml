@@ -365,6 +365,7 @@ impl Linter {
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
         let docs = Parser::parse_all(source)?;
+        let doc_start_lines = compute_doc_start_lines(source, docs.len());
         let context = LintContext::new(source);
         let mut diagnostics = Vec::new();
 
@@ -374,8 +375,10 @@ impl Linter {
             }
 
             if rule.needs_value() {
-                for doc in &docs {
-                    diagnostics.extend(rule.check(&context, doc, &self.config));
+                for (idx, doc) in docs.iter().enumerate() {
+                    let start_line = doc_start_lines.get(idx).copied().unwrap_or(1);
+                    let doc_context = LintContext::new(source).with_doc_start_line(start_line);
+                    diagnostics.extend(rule.check(&doc_context, doc, &self.config));
                 }
             } else {
                 let dummy = Value::Value(ScalarOwned::Null);
@@ -467,6 +470,29 @@ pub enum LintError {
     /// Failed to parse YAML.
     #[error("failed to parse YAML: {0}")]
     ParseError(#[from] fast_yaml_core::ParseError),
+}
+
+/// Returns a `Vec` where `result[i]` is the 1-based line number at which
+/// document `i` begins in `source`.
+///
+/// Document boundaries are detected by scanning for lines that consist solely
+/// of `---` (the YAML directive-end marker). The first document always starts
+/// at line 1. Each `---` line introduces the *next* document, which begins on
+/// the following line.
+fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
+    let mut starts = Vec::with_capacity(doc_count);
+    starts.push(1usize);
+
+    for (idx, line) in source.lines().enumerate() {
+        if line.trim_end_matches('\r') == "---" {
+            starts.push(idx + 2); // line after `---` (1-based)
+            if starts.len() == doc_count {
+                break;
+            }
+        }
+    }
+
+    starts
 }
 
 #[cfg(test)]

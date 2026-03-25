@@ -61,7 +61,7 @@ impl super::LintRule for KeyOrderingRule {
             .unwrap_or(true);
 
         let mut diagnostics = Vec::new();
-        let mut cursor = 1usize;
+        let mut cursor = context.doc_start_line();
 
         check_value(
             value,
@@ -395,6 +395,42 @@ mod tests {
             "expected 2 diagnostics, got {}: {:?}",
             diagnostics.len(),
             diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
+    }
+
+    /// Regression test for #156: key-ordering must report correct line numbers
+    /// for each document in a multi-doc stream. The second document's cursor
+    /// must start at its own first line, not at line 1.
+    #[test]
+    fn test_key_ordering_multi_doc_correct_line_numbers() {
+        let yaml = "z: 1\na: 2\n---\nz: 3\na: 4\n";
+        let values = fast_yaml_core::Parser::parse_all(yaml).unwrap();
+
+        let rule = KeyOrderingRule;
+        let config = LintConfig::default();
+
+        // doc 0 starts at line 1, doc 1 starts at line 4 (line after `---`)
+        let doc_start_lines = [1usize, 4usize];
+        let mut all_diagnostics: Vec<Diagnostic> = Vec::new();
+        for (idx, value) in values.iter().enumerate() {
+            let context = LintContext::new(yaml).with_doc_start_line(doc_start_lines[idx]);
+            all_diagnostics.extend(rule.check(&context, value, &config));
+        }
+
+        assert_eq!(all_diagnostics.len(), 2, "expected exactly 2 diagnostics");
+
+        // First diagnostic: `a` at line 2 (second line of doc 1)
+        assert_eq!(
+            all_diagnostics[0].span.start.line, 2,
+            "first diagnostic should point to line 2, got {}",
+            all_diagnostics[0].span.start.line
+        );
+
+        // Second diagnostic: `a` at line 5 (fifth line of the full stream)
+        assert_eq!(
+            all_diagnostics[1].span.start.line, 5,
+            "second diagnostic should point to line 5, got {}",
+            all_diagnostics[1].span.start.line
         );
     }
 
