@@ -1360,4 +1360,65 @@ mod tests {
             "Exactly two separators for two docs"
         );
     }
+
+    // Regression tests for issue #75: formatter must not produce trailing spaces
+    // or double-indented sequence-of-mapping keys.
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_nested_mapping_no_trailing_space() {
+        // "parent:\n  child: value" — the colon after "parent" must not be followed
+        // by a space when the value is a nested mapping.
+        let result = Emitter::format("parent:\n  child: value\n").unwrap();
+        assert!(
+            !result.contains("parent: \n"),
+            "trailing space after key with nested value, got: {result:?}"
+        );
+        assert!(
+            result.contains("parent:\n"),
+            "parent key must be followed by newline without space, got: {result:?}"
+        );
+        assert!(
+            result.contains("child: value"),
+            "child key-value must be preserved, got: {result:?}"
+        );
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_sequence_of_mappings_indent() {
+        // Steps with mapping items — first key of each item must align with the key,
+        // not be indented an extra level beyond "- ".
+        let yaml = "steps:\n  - uses: actions/checkout@v4\n  - name: Install Rust\n    uses: dtolnay/rust-toolchain@stable\n";
+        let result = Emitter::format(yaml).unwrap();
+        assert!(
+            !result.contains("-     "),
+            "sequence item keys must not be double-indented, got: {result:?}"
+        );
+        assert!(
+            result.contains("- uses:"),
+            "first item key must directly follow dash, got: {result:?}"
+        );
+        assert!(
+            result.contains("uses: actions/checkout@v4"),
+            "got: {result:?}"
+        );
+        assert!(
+            result.contains("uses: dtolnay/rust-toolchain@stable"),
+            "got: {result:?}"
+        );
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_format_sequence_of_mappings_valid_yaml() {
+        // Output must parse back to the same structure (no trailing spaces breaking YAML).
+        let yaml = "steps:\n  - uses: actions/checkout@v4\n  - name: Install Rust\n    uses: dtolnay/rust-toolchain@stable\n";
+        let result = Emitter::format(yaml).unwrap();
+        let reparsed = crate::Parser::parse_str(&result);
+        assert!(
+            reparsed.is_ok(),
+            "formatted output is invalid YAML: {result:?}"
+        );
+    }
 }

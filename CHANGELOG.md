@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Core**: Mixed-case YAML 1.2.2 boolean/null variants (`True`, `TRUE`, `False`, `FALSE`, `Null`) are now correctly parsed as `Bool`/`Null` values instead of strings. saphyr only handles lowercase variants natively; the parser now post-processes the value tree to canonicalize the remaining Core Schema variants. (#71)
 - **Linter**: `empty-values` rule no longer reports a false positive for values with explicit YAML type tags (`!!null null`, `!!str value`, `!!int 42`, etc.). Any value starting with `!` is now treated as explicitly typed. (#72)
+- `fy format` no longer produces trailing spaces on mapping keys whose value is a nested collection
+  (`parent: \n` → `parent:\n`). Root cause: the space after `:` was emitted unconditionally; it is
+  now deferred and only written when the next event is a scalar value. (#75)
+- `fy format` no longer double-indents the first key of a mapping that opens inside a sequence item
+  (`-     uses:` → `- uses:`). Root cause: after writing `"- "` for a sequence item, `write_indent`
+  was still called for the first mapping key, adding a redundant level of indentation. (#75)
 - `fy format` no longer changes float type to integer: `1.0` stays `1.0` (not `1`), `1.23e10` stays `1.23e10` (not `12300000000`). Root cause: streaming formatter now handles all input sizes, preserving the original scalar text representation from the parser. Previously, inputs smaller than 1 KB fell back to DOM-based formatting which lost float precision through Rust's float Display trait.
 - `fy format` output now consistently ends with a trailing newline (POSIX convention).
 - `fy format` now preserves all documents in multi-document YAML streams (issue #65)
