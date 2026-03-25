@@ -100,13 +100,18 @@ impl Reporter {
                 total,
                 formatted,
                 unchanged,
-                skipped,
+                would_change,
                 failed,
                 duration,
             } => {
                 if !self.config.is_quiet() || failed > 0 {
                     self.write_batch_summary(
-                        total, formatted, unchanged, skipped, failed, duration,
+                        total,
+                        formatted,
+                        unchanged,
+                        would_change,
+                        failed,
+                        duration,
                     )?;
                 }
             }
@@ -246,7 +251,7 @@ impl Reporter {
         total: usize,
         formatted: usize,
         unchanged: usize,
-        skipped: usize,
+        would_change: usize,
         failed: usize,
         duration: Duration,
     ) -> io::Result<()> {
@@ -269,8 +274,8 @@ impl Reporter {
             if unchanged > 0 {
                 writeln!(lock, "  {} unchanged", unchanged.to_string().cyan())?;
             }
-            if skipped > 0 {
-                writeln!(lock, "  {} skipped", skipped.to_string().yellow())?;
+            if would_change > 0 {
+                writeln!(lock, "  {} would change", would_change.to_string().yellow())?;
             }
             if failed > 0 {
                 writeln!(lock, "  {} failed", failed.to_string().red())?;
@@ -295,8 +300,8 @@ impl Reporter {
         if unchanged > 0 {
             writeln!(lock, "  {} unchanged", unchanged)?;
         }
-        if skipped > 0 {
-            writeln!(lock, "  {} skipped", skipped)?;
+        if would_change > 0 {
+            writeln!(lock, "  {} would change", would_change)?;
         }
         if failed > 0 {
             writeln!(lock, "  {} failed", failed)?;

@@ -61,8 +61,8 @@ pub enum ReportEvent<'a> {
         formatted: usize,
         /// Files that were unchanged
         unchanged: usize,
-        /// Files that were skipped
-        skipped: usize,
+        /// Files that would change (dry-run mode)
+        would_change: usize,
         /// Files that failed
         failed: usize,
         /// Total duration
@@ -159,7 +159,7 @@ mod tests {
                 total: 10,
                 formatted: 5,
                 unchanged: 3,
-                skipped: 1,
+                would_change: 1,
                 failed: 1,
                 duration: Duration::from_secs(5),
             },

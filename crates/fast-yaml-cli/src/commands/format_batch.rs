@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{BatchResult as ParallelBatchResult, FileProcessor};
 
@@ -104,21 +104,19 @@ pub fn execute_batch(
         // In-place: format and write
         processor.format_in_place(&file_paths, &emitter_config)
     } else {
-        // Default: just parse/validate
-        processor.parse_files(&file_paths)
+        bail!("use -i to format files in-place or --dry-run to preview changes");
     };
 
     // Report results using BatchSummary event
-    // Note: fast-yaml-parallel uses 'changed' instead of 'formatted'
-    // and doesn't have 'skipped' (dry_run is CLI-specific)
-    let skipped = if config.dry_run { result.changed } else { 0 };
+    // In dry-run mode, 'changed' means "would change"; in in-place mode it means "formatted".
+    let would_change = if config.dry_run { result.changed } else { 0 };
     let formatted = if config.dry_run { 0 } else { result.changed };
 
     reporter.report(ReportEvent::BatchSummary {
         total: result.total,
         formatted,
         unchanged: result.success - result.changed,
-        skipped,
+        would_change,
         failed: result.failed,
         duration: result.duration,
     })?;
