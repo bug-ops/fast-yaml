@@ -59,7 +59,6 @@ impl super::LintRule for TruthyRule {
 
     #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let rule_config = config.get_rule_config(self.code());
 
         let allowed_values = rule_config
@@ -123,7 +122,7 @@ impl super::LintRule for TruthyRule {
                                 ),
                                 span,
                             )
-                            .build(source),
+                            .build_with_context(context.source_context()),
                         );
                     }
                 }
@@ -170,7 +169,7 @@ impl super::LintRule for TruthyRule {
                             ),
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
             }
@@ -223,7 +222,7 @@ impl super::LintRule for TruthyRule {
                             ),
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
             }

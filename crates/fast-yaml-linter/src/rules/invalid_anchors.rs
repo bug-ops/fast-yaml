@@ -1,6 +1,8 @@
 //! Rule to detect duplicate anchor definitions in YAML documents.
 
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
+};
 use fast_yaml_core::Value;
 use std::collections::HashMap;
 
@@ -43,7 +45,7 @@ impl super::LintRule for InvalidAnchorsRule {
         _value: &Value,
         _config: &LintConfig,
     ) -> Vec<Diagnostic> {
-        scan_duplicate_anchors(context.source())
+        scan_duplicate_anchors(context.source(), context.source_context())
     }
 }
 
@@ -88,7 +90,7 @@ impl ScanState {
 
 // ── Main scan function ─────────────────────────────────────────────────────
 
-fn scan_duplicate_anchors(source: &str) -> Vec<Diagnostic> {
+fn scan_duplicate_anchors(source: &str, source_context: &SourceContext<'_>) -> Vec<Diagnostic> {
     // Map from anchor name → (1-indexed line, 1-indexed column) of first def.
     let mut seen: HashMap<String, (usize, usize)> = HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
@@ -151,6 +153,7 @@ fn scan_duplicate_anchors(source: &str) -> Vec<Diagnostic> {
             line_number,
             line_start_offset,
             source,
+            source_context,
             &mut state,
             &mut seen,
             &mut diagnostics,
@@ -169,7 +172,8 @@ fn scan_line_for_anchors(
     line: &str,
     line_number: usize,
     line_start_offset: usize,
-    source: &str,
+    _source: &str,
+    source_context: &SourceContext<'_>,
     state: &mut ScanState,
     seen: &mut HashMap<String, (usize, usize)>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -251,7 +255,7 @@ fn scan_line_for_anchors(
                                 span,
                             )
                             .with_suggestion("rename this anchor to be unique", span, None)
-                            .build(source),
+                            .build_with_context(source_context),
                         );
                     } else {
                         seen.insert(name.to_owned(), (line_number, col));

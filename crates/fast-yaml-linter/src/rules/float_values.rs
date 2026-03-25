@@ -53,7 +53,6 @@ impl super::LintRule for FloatValuesRule {
 
     #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let rule_config = config.get_rule_config(self.code());
 
         let require_numeral_before_decimal = rule_config
@@ -156,7 +155,7 @@ impl super::LintRule for FloatValuesRule {
                                 ),
                                 span,
                             )
-                            .build(source),
+                            .build_with_context(context.source_context()),
                         );
                     }
                 }
@@ -186,7 +185,7 @@ impl super::LintRule for FloatValuesRule {
                             format!("scientific notation '{value_token}' is forbidden"),
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
 
@@ -211,7 +210,7 @@ impl super::LintRule for FloatValuesRule {
                             "NaN (not a number) is forbidden",
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
 
@@ -241,7 +240,7 @@ impl super::LintRule for FloatValuesRule {
                             "Infinity is forbidden",
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
             }

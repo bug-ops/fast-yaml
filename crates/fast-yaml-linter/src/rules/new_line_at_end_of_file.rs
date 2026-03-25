@@ -74,7 +74,7 @@ impl super::LintRule for NewLineAtEndOfFileRule {
                     ),
                     Some("\n".to_string()),
                 )
-                .build(source),
+                .build_with_context(context.source_context()),
             ]
         }
     }

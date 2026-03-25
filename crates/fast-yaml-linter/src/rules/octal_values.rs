@@ -130,7 +130,7 @@ impl super::LintRule for OctalValuesRule {
                             ),
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
 
@@ -163,7 +163,7 @@ impl super::LintRule for OctalValuesRule {
                                 ),
                                 span,
                             )
-                            .build(source),
+                            .build_with_context(context.source_context()),
                         );
                     }
                 }

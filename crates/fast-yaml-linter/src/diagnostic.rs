@@ -328,9 +328,50 @@ impl DiagnosticBuilder {
         self
     }
 
+    /// Builds the diagnostic using a pre-built [`SourceContext`].
+    ///
+    /// Prefer this over [`build`](Self::build) when a `SourceContext` is already available
+    /// (e.g. from [`crate::LintContext::source_context`]) to avoid rebuilding the line index on
+    /// every diagnostic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, LintContext, Severity, Location, Span};
+    ///
+    /// let source = "name: John\nage: 30";
+    /// let ctx = LintContext::new(source);
+    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+    ///
+    /// let diagnostic = DiagnosticBuilder::new(
+    ///     DiagnosticCode::LINE_LENGTH,
+    ///     Severity::Info,
+    ///     "example",
+    ///     span
+    /// ).build_with_context(ctx.source_context());
+    ///
+    /// assert!(diagnostic.context.is_some());
+    /// ```
+    #[must_use]
+    pub fn build_with_context(self, source_ctx: &SourceContext<'_>) -> Diagnostic {
+        let context = source_ctx.extract_context(self.span, 2);
+
+        Diagnostic {
+            code: self.code,
+            severity: self.severity,
+            message: self.message,
+            span: self.span,
+            context: Some(context),
+            suggestions: self.suggestions,
+        }
+    }
+
     /// Builds the diagnostic with source context.
     ///
     /// Extracts context lines from the source around the diagnostic span.
+    ///
+    /// Consider using [`build_with_context`](Self::build_with_context) instead when a
+    /// [`SourceContext`] is already available to avoid redundant line index construction.
     ///
     /// # Examples
     ///

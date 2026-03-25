@@ -100,7 +100,7 @@ impl super::LintRule for BracesRule {
                             "flow mapping forbidden (forbid: all)",
                             token.span,
                         )
-                        .build(source),
+                        .build_with_context(source_context),
                     );
                 }
                 return diagnostics;
@@ -124,7 +124,7 @@ impl super::LintRule for BracesRule {
                                 "non-empty flow mapping forbidden (forbid: non-empty)",
                                 open.span,
                             )
-                            .build(source),
+                            .build_with_context(source_context),
                         );
                     }
                 }
@@ -148,6 +148,7 @@ impl super::LintRule for BracesRule {
                 // Check spaces after opening brace
                 if let Some(diag) = check_spaces_after_opening(
                     source,
+                    source_context,
                     open.span.end.offset,
                     close.span.start.offset,
                     min_spaces,
@@ -163,6 +164,7 @@ impl super::LintRule for BracesRule {
                 // Check spaces before closing brace
                 if let Some(diag) = check_spaces_before_closing(
                     source,
+                    source_context,
                     open.span.end.offset,
                     close.span.start.offset,
                     min_spaces,

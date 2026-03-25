@@ -129,7 +129,7 @@ impl super::LintRule for CommentsIndentationRule {
                         ),
                         comment.span,
                     )
-                    .build(source),
+                    .build_with_context(context.source_context()),
                 );
             }
         }

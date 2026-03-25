@@ -2,7 +2,7 @@
 
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    SourceContext, Span,
 };
 use fast_yaml_core::Value;
 
@@ -54,15 +54,21 @@ impl super::LintRule for DocumentStartRule {
             .and_then(|rc| rc.options.get_string("present"))
             .unwrap_or("allowed");
 
+        let source_context = context.source_context();
         match presence {
-            "required" => check_required(source, config, self.code()),
-            "forbidden" => check_forbidden(source, config, self.code()),
+            "required" => check_required(source, source_context, config, self.code()),
+            "forbidden" => check_forbidden(source, source_context, config, self.code()),
             _ => Vec::new(), // "allowed" = no checks
         }
     }
 }
 
-fn check_required(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
+fn check_required(
+    source: &str,
+    source_context: &SourceContext<'_>,
+    config: &LintConfig,
+    code: &str,
+) -> Vec<Diagnostic> {
     if has_document_start_marker(source) {
         Vec::new()
     } else {
@@ -79,12 +85,17 @@ fn check_required(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnost
                 Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0)),
                 Some("---\n".to_string()),
             )
-            .build(source),
+            .build_with_context(source_context),
         ]
     }
 }
 
-fn check_forbidden(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
+fn check_forbidden(
+    source: &str,
+    source_context: &SourceContext<'_>,
+    config: &LintConfig,
+    code: &str,
+) -> Vec<Diagnostic> {
     if let Some((_line_num, span)) = find_document_start_marker(source) {
         let severity = config.get_effective_severity(code, Severity::Warning);
         vec![
@@ -95,7 +106,7 @@ fn check_forbidden(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnos
                 span,
             )
             .with_suggestion("Remove '---'", span, None)
-            .build(source),
+            .build_with_context(source_context),
         ]
     } else {
         Vec::new()
