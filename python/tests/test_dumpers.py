@@ -194,7 +194,9 @@ class TestSafeDumpOptions:
         lines = result.splitlines()
         nested_line = next(ln for ln in lines if "child" in ln)
         assert nested_line.startswith("  "), f"Expected 2-space indent, got: {repr(nested_line)}"
-        assert not nested_line.startswith("    "), f"Expected exactly 2-space indent, got: {repr(nested_line)}"
+        assert not nested_line.startswith("    "), (
+            f"Expected exactly 2-space indent, got: {repr(nested_line)}"
+        )
 
     def test_indent_2(self):
         """safe_dump() with indent=2 indents nested values 2 spaces."""
@@ -211,7 +213,9 @@ class TestSafeDumpOptions:
         lines = result.splitlines()
         nested_line = next(ln for ln in lines if "child" in ln)
         assert nested_line.startswith("    "), f"Expected 4-space indent, got: {repr(nested_line)}"
-        assert not nested_line.startswith("     "), f"Expected exactly 4-space indent, got: {repr(nested_line)}"
+        assert not nested_line.startswith("     "), (
+            f"Expected exactly 4-space indent, got: {repr(nested_line)}"
+        )
 
     def test_indent_8(self):
         """safe_dump() with indent=8 indents nested values 8 spaces."""
@@ -219,7 +223,9 @@ class TestSafeDumpOptions:
         result = fast_yaml.safe_dump(data, indent=8)
         lines = result.splitlines()
         nested_line = next(ln for ln in lines if "child" in ln)
-        assert nested_line.startswith("        "), f"Expected 8-space indent, got: {repr(nested_line)}"
+        assert nested_line.startswith("        "), (
+            f"Expected 8-space indent, got: {repr(nested_line)}"
+        )
 
     def test_default_flow_style_false(self):
         """safe_dump() with default_flow_style=False produces block style."""
