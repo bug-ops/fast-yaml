@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: `invalid-anchor` rule now detects duplicate anchor definitions (`&name` used more than once in the same document). Reports a `Warning` diagnostic with the location of the duplicate and a reference to the first definition. False positives in comments, quoted strings (including multi-line), and block scalars (`|`/`>`) are suppressed. Document boundaries (`---`) reset the anchor map. (#121)
 - Python `safe_dump()` now accepts `explicit_start`, `indent`, `width`, and `default_flow_style` parameters, matching the underlying `_core.safe_dump` and PyYAML API (closes #93)
 - NodeJS bindings: `lint()` function, `Linter` class, `LintConfig`, `Diagnostic`, `Severity`, `Span`, `Location`, `ContextLine`, `DiagnosticContext`, `Suggestion` types (closes #61)
 - `Linter::with_all_rules_and_config()` method in `fast-yaml-linter` for creating a linter with all default rules and custom configuration
