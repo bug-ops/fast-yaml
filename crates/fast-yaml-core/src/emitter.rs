@@ -468,6 +468,9 @@ impl Emitter {
                 let emitted = Self::emit_str_preserving_styles(doc, &inner_config, 0)?;
                 output.push_str(&emitted);
             }
+            if !output.is_empty() && !output.ends_with('\n') {
+                output.push('\n');
+            }
             return Ok(output);
         }
     }
@@ -1419,6 +1422,56 @@ mod tests {
         assert!(
             reparsed.is_ok(),
             "formatted output is invalid YAML: {result:?}"
+        );
+    }
+
+    // Regression tests for issue #76: chomp indicator must not change during formatting.
+
+    #[test]
+    fn test_format_preserves_clip_chomp() {
+        // `|` (clip) must remain `|`, not be converted to `|-`
+        let input = "desc: |\n  line one\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("desc: |\n"),
+            "clip chomp `|` must not be changed to `|-`, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_preserves_strip_chomp() {
+        // `|-` (strip) must remain `|-`
+        let input = "desc: |-\n  line one\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("desc: |-\n"),
+            "strip chomp `|-` must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_preserves_keep_chomp() {
+        // `|+` (keep) must remain `|+` when value has trailing blank lines
+        let input = "desc: |+\n  line one\n  line two\n\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("desc: |+\n"),
+            "keep chomp `|+` must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_preserves_folded_clip_chomp() {
+        // `>` (folded clip) must remain `>`, not be converted to `>-`
+        let input = "desc: >\n  line one\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("desc: >\n"),
+            "folded clip `>` must not be changed to `>-`, got: {result}"
         );
     }
 }

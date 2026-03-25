@@ -27,20 +27,18 @@ class TestSafeLoad:
         # Note: yaml-rust2 only recognizes lowercase 'null', not 'Null' or 'NULL'
         # This is a known limitation of the Core Schema implementation
 
-    @pytest.mark.xfail(reason="yaml-rust2 only recognizes lowercase 'null'")
     def test_null_values_case_variants(self):
         import fast_yaml
         assert fast_yaml.safe_load("Null") is None
         assert fast_yaml.safe_load("NULL") is None
-    
+
     def test_boolean_values(self):
         import fast_yaml
-        # YAML 1.2 Core Schema only recognizes lowercase true/false
+        # YAML 1.2.2 Core Schema: true/True/TRUE and false/False/FALSE are all booleans
         assert fast_yaml.safe_load("true") is True
         assert fast_yaml.safe_load("false") is False
-        # Capitalized versions are strings in YAML 1.2
-        assert fast_yaml.safe_load("True") == "True"
-        assert fast_yaml.safe_load("False") == "False"
+        assert fast_yaml.safe_load("True") is True
+        assert fast_yaml.safe_load("False") is False
     
     def test_integer_values(self):
         import fast_yaml
@@ -188,7 +186,6 @@ class TestYAML122Null:
         assert fast_yaml.safe_load("null") is None
         # Note: yaml-rust2 only recognizes lowercase 'null'
 
-    @pytest.mark.xfail(reason="yaml-rust2 only recognizes lowercase 'null'")
     def test_null_keyword_case_variants(self):
         import fast_yaml
         assert fast_yaml.safe_load("Null") is None
@@ -209,19 +206,17 @@ class TestYAML122Boolean:
     
     def test_true_variants(self):
         import fast_yaml
-        # YAML 1.2 Core Schema only recognizes lowercase true
+        # YAML 1.2.2 Core Schema: true/True/TRUE are all booleans
         assert fast_yaml.safe_load("true") is True
-        # Capitalized versions are strings
-        assert fast_yaml.safe_load("True") == "True"
-        assert fast_yaml.safe_load("TRUE") == "TRUE"
+        assert fast_yaml.safe_load("True") is True
+        assert fast_yaml.safe_load("TRUE") is True
 
     def test_false_variants(self):
         import fast_yaml
-        # YAML 1.2 Core Schema only recognizes lowercase false
+        # YAML 1.2.2 Core Schema: false/False/FALSE are all booleans
         assert fast_yaml.safe_load("false") is False
-        # Capitalized versions are strings
-        assert fast_yaml.safe_load("False") == "False"
-        assert fast_yaml.safe_load("FALSE") == "FALSE"
+        assert fast_yaml.safe_load("False") is False
+        assert fast_yaml.safe_load("FALSE") is False
     
     def test_yaml11_booleans_are_strings(self):
         """YAML 1.1 boolean values should be strings in YAML 1.2"""

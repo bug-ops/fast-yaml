@@ -32,13 +32,21 @@ impl ConvertCommand {
 
     /// Convert YAML to JSON
     fn yaml_to_json(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
-        // Parse YAML
-        let value = Parser::parse_str(input.as_str())
-            .context("Failed to parse YAML")?
-            .ok_or_else(|| anyhow::anyhow!("Empty YAML document"))?;
+        // Parse all YAML documents to support multi-document streams
+        let docs = Parser::parse_all(input.as_str()).context("Failed to parse YAML")?;
 
-        // Convert to serde_json::Value
-        let json_value = value_to_json(&value)?;
+        if docs.is_empty() {
+            return Err(anyhow::anyhow!("Empty YAML document"));
+        }
+
+        let json_value = if docs.len() == 1 {
+            // Single document: preserve existing behaviour (plain object/value)
+            value_to_json(&docs[0])?
+        } else {
+            // Multi-document stream: output a JSON array
+            let arr: Result<Vec<_>> = docs.iter().map(value_to_json).collect();
+            serde_json::Value::Array(arr?)
+        };
 
         // Serialize to JSON
         let mut json_string = if self.pretty {
@@ -266,5 +274,33 @@ mod tests {
         let config = CommonConfig::new();
         let cmd = ConvertCommand::new(config, ConvertFormat::Yaml, true);
         assert!(cmd.execute(&input, &output).is_err());
+    }
+
+    #[test]
+    fn test_multi_document_yaml_to_json() {
+        let input = InputSource {
+            content: "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3\n".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_path = temp_dir.path().join("output.json");
+        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Json, false);
+        assert!(cmd.execute(&input, &output).is_ok());
+
+        let json_str = std::fs::read_to_string(&temp_path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(json_str.trim()).unwrap();
+        assert!(
+            json.is_array(),
+            "Expected JSON array for multi-document stream"
+        );
+        let arr = json.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
+        assert_eq!(arr[0]["foo"], 1);
+        assert_eq!(arr[1]["bar"], 2);
+        assert_eq!(arr[2]["baz"], 3);
     }
 }

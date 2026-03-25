@@ -12,6 +12,21 @@ use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH};
 use crate::emitter::EmitterConfig;
 
+/// Return the YAML chomp indicator suffix for a block scalar value.
+///
+/// - `"+"` (keep) if `value` ends with two or more newlines (trailing blank lines)
+/// - `""` (clip, default) if `value` ends with exactly one newline
+/// - `"-"` (strip) if `value` does not end with a newline
+fn chomp_indicator(value: &str) -> &'static str {
+    if value.ends_with("\n\n") {
+        "+"
+    } else if value.ends_with('\n') {
+        ""
+    } else {
+        "-"
+    }
+}
+
 /// Generic streaming formatter with pluggable backend.
 ///
 /// This struct contains ALL formatting logic and is parameterized over
@@ -270,18 +285,16 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.last_char_newline = false;
             }
             ScalarStyle::Literal => {
-                let chomp = Self::chomp_indicator(value);
                 self.output.push('|');
-                self.output.push_str(chomp);
+                self.output.push_str(chomp_indicator(value));
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
                 // write_block_scalar_lines always ends with newline
                 self.last_char_newline = true;
             }
             ScalarStyle::Folded => {
-                let chomp = Self::chomp_indicator(value);
                 self.output.push('>');
-                self.output.push_str(chomp);
+                self.output.push_str(chomp_indicator(value));
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
                 // write_block_scalar_lines always ends with newline
@@ -557,6 +570,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         let last_non_empty = value.trim_end_matches('\n');
 
         for line in value.lines() {
+            // Blank lines inside block scalars must not receive indentation — that
+            // would create trailing whitespace, which is a lint violation.
             if !line.is_empty() {
                 if indent_chars <= INDENT_SPACES.len() {
                     self.output.push_str(&INDENT_SPACES[..indent_chars]);

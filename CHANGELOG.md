@@ -14,10 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Python/NodeJS bindings now correctly parse `True`/`TRUE`/`False`/`FALSE`/`Null`/`NULL` as bool/null per YAML 1.2.2 Core Schema (fixes #80)
+- `batch.format_files` now preserves trailing newline in formatted output (fixes #81)
+- **Linter**: `Linter::with_config()` now loads all default rules instead of an empty registry. Previously, constructing a `Linter` with a custom config silently disabled all linting rules, causing zero diagnostics regardless of input. Affects Rust, Python, and NodeJS bindings. (#86)
+- `fy convert` now correctly handles multi-document YAML streams: all documents are included in a JSON array instead of silently dropping all but the first. Single-document streams continue to produce a plain JSON object. (#87)
+- `fy format` no longer adds trailing whitespace to blank lines inside block scalars (`|`, `>`). Previously, blank lines inside a block scalar received the same indentation prefix as non-blank lines, producing `  \n` instead of `\n`. (#85)
 - `fy format` no longer converts clip chomp (`|`) to strip chomp (`|-`) on block scalars. The chomp indicator is now derived from the trailing newlines in the scalar value: no trailing newline → strip (`|-`), exactly one → clip (`|`), two or more → keep (`|+`). (#76)
-- `fy format` no longer adds trailing whitespace on empty lines within block scalars. Empty lines are now emitted as bare `\n` consistent with the non-streaming path. (#76)
-- `fy format` no longer produces extra spaces before inner sequence items in sequence-of-sequences (`-   - item` → `- - item`). A `first_item_after_dash` flag suppresses the redundant `write_indent()` call for the first child of a nested sequence. (#83)
-- `fy format` no longer moves anchors to a separate line ahead of their node. Anchors on mappings and sequences are now emitted inline with their containing prefix (`- &anchor1\n  key: val` and `key: &anchor1\n  subkey: val`). (#84)
+- `fy format` no longer produces extra spaces before inner sequence items in sequence-of-sequences (`-   - item` → `- - item`). (#83)
+- `fy format` no longer moves anchors to a separate line ahead of their node. Anchors on mappings and sequences are now emitted inline with their containing prefix. (#84)
 - **Core**: Mixed-case YAML 1.2.2 boolean/null variants (`True`, `TRUE`, `False`, `FALSE`, `Null`) are now correctly parsed as `Bool`/`Null` values instead of strings. saphyr only handles lowercase variants natively; the parser now post-processes the value tree to canonicalize the remaining Core Schema variants. (#71)
 - **Linter**: `empty-values` rule no longer reports a false positive for values with explicit YAML type tags (`!!null null`, `!!str value`, `!!int 42`, etc.). Any value starting with `!` is now treated as explicitly typed. (#72)
 - `fy format` no longer produces trailing spaces on mapping keys whose value is a nested collection
@@ -40,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fy format <directory>` without `-i` now returns an error instead of silently validating files (#69)
 - `fy format --dry-run` now reports "would change: N" instead of "skipped: N" (#69)
 - Preserve block scalar styles (literal `|` and folded `>`) in `fy format` (#62)
+- **Core**: `fy format` no longer changes the chomp indicator of block scalars. `|` (clip) remains `|` and is not converted to `|-` (strip), preserving the trailing newline in the parsed value. All three chomp variants (`|`, `|-`, `|+`) and their folded equivalents are now round-tripped correctly. (#76)
 
 ### Added
 
