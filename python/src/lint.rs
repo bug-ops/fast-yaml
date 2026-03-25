@@ -12,7 +12,7 @@ use fast_yaml_linter::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PySet};
+use pyo3::types::PyList;
 use std::collections::HashSet;
 
 #[cfg(feature = "json-output")]
@@ -447,7 +447,7 @@ impl PyLintConfig {
         require_document_start: bool,
         require_document_end: bool,
         allow_duplicate_keys: bool,
-        disabled_rules: Option<Bound<'_, PySet>>,
+        disabled_rules: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         // Validate indent_size (must be between 1 and 16)
         if indent_size == 0 || indent_size > 16 {
@@ -467,8 +467,8 @@ impl PyLintConfig {
 
         let mut disabled_rules_set = HashSet::new();
         if let Some(rules) = disabled_rules {
-            for rule in rules.iter() {
-                let rule_str: String = rule.extract()?;
+            for rule in rules.try_iter()? {
+                let rule_str: String = rule?.extract()?;
                 disabled_rules_set.insert(rule_str);
             }
         }
