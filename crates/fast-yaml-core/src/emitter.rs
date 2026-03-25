@@ -643,7 +643,24 @@ impl Emitter {
                 ScalarOwned::Null => Ok("null".to_string()),
                 ScalarOwned::Boolean(b) => Ok(if *b { "true" } else { "false" }.to_string()),
                 ScalarOwned::Integer(i) => Ok(i.to_string()),
-                ScalarOwned::FloatingPoint(f) => Ok(f.to_string()),
+                ScalarOwned::FloatingPoint(f) => {
+                    let s = f.to_string();
+                    // Ensure the output is recognisable as a float (YAML Core Schema).
+                    // Rust formats e.g. `1.0` as `"1"` and `1.23e10` as `"12300000000"`.
+                    // Append `.0` when the string contains no decimal point or exponent and
+                    // is not a special value (inf / NaN handled by fix_special_floats).
+                    if s.contains('.')
+                        || s.contains('e')
+                        || s.contains('E')
+                        || s.eq_ignore_ascii_case("inf")
+                        || s.eq_ignore_ascii_case("-inf")
+                        || s.eq_ignore_ascii_case("nan")
+                    {
+                        Ok(s)
+                    } else {
+                        Ok(format!("{s}.0"))
+                    }
+                }
                 ScalarOwned::String(s) => {
                     if s.contains(':') || s.contains('#') || s.is_empty() {
                         Ok(format!("\"{s}\""))
