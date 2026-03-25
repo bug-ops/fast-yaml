@@ -108,18 +108,22 @@ impl<'a> FlowTokenizer<'a> {
             if let Some(line) = self.context.get_line(line_num) {
                 let line_start_offset = self.get_line_start_offset(line_num);
 
-                for (col, c) in line.chars().enumerate() {
-                    if c == ch && !Self::is_inside_string_at(line, col) {
+                let mut char_col = 0usize;
+                for (byte_col, c) in line.char_indices() {
+                    if c == ch && !Self::is_inside_string_at(line, byte_col) {
                         // For hyphen, only match at start of line or after whitespace
-                        if token_type == TokenType::Hyphen && !Self::is_list_item_hyphen(line, col)
+                        if token_type == TokenType::Hyphen
+                            && !Self::is_list_item_hyphen(line, byte_col)
                         {
+                            char_col += 1;
                             continue;
                         }
 
-                        let offset = line_start_offset + col;
+                        let offset = line_start_offset + byte_col;
 
                         // Skip tokens inside block scalar content (literal `|` or folded `>`)
                         if self.is_in_block_scalar(offset) {
+                            char_col += 1;
                             continue;
                         }
 
@@ -131,14 +135,16 @@ impl<'a> FlowTokenizer<'a> {
                                 | TokenType::BraceClose
                                 | TokenType::BracketOpen
                                 | TokenType::BracketClose
-                        ) && Self::is_in_block_plain_scalar_at(line, col)
+                        ) && Self::is_in_block_plain_scalar_at(line, char_col)
                         {
+                            char_col += 1;
                             continue;
                         }
-                        let start = Location::new(line_num, col + 1, offset);
-                        let end = Location::new(line_num, col + 2, offset + 1);
+                        let start = Location::new(line_num, char_col + 1, offset);
+                        let end = Location::new(line_num, char_col + 2, offset + 1);
                         tokens.push(Token::new(token_type, Span::new(start, end)));
                     }
+                    char_col += 1;
                 }
             }
         }
@@ -176,21 +182,25 @@ impl<'a> FlowTokenizer<'a> {
             if let Some(line) = self.context.get_line(line_num) {
                 let line_start_offset = self.get_line_start_offset(line_num);
 
-                for (col, c) in line.chars().enumerate() {
-                    let offset = line_start_offset + col;
+                let mut char_col = 0usize;
+                for (byte_col, c) in line.char_indices() {
+                    let offset = line_start_offset + byte_col;
 
                     // Skip if outside span bounds
                     if offset < span.start.offset || offset >= span.end.offset {
+                        char_col += 1;
                         continue;
                     }
 
                     // Skip tokens inside block scalar content
                     if self.is_in_block_scalar(offset) {
+                        char_col += 1;
                         continue;
                     }
 
                     // Skip if inside string
-                    if Self::is_inside_string_at(line, col) {
+                    if Self::is_inside_string_at(line, byte_col) {
+                        char_col += 1;
                         continue;
                     }
 
@@ -202,15 +212,16 @@ impl<'a> FlowTokenizer<'a> {
                         ']' => Some(TokenType::BracketClose),
                         ':' => Some(TokenType::Colon),
                         ',' => Some(TokenType::Comma),
-                        '-' if Self::is_list_item_hyphen(line, col) => Some(TokenType::Hyphen),
+                        '-' if Self::is_list_item_hyphen(line, byte_col) => Some(TokenType::Hyphen),
                         _ => None,
                     };
 
                     if let Some(tt) = token_type {
-                        let start = Location::new(line_num, col + 1, offset);
-                        let end = Location::new(line_num, col + 2, offset + 1);
+                        let start = Location::new(line_num, char_col + 1, offset);
+                        let end = Location::new(line_num, char_col + 2, offset + 1);
                         tokens.push(Token::new(tt, Span::new(start, end)));
                     }
+                    char_col += 1;
                 }
             }
         }
@@ -350,13 +361,13 @@ impl<'a> FlowTokenizer<'a> {
     /// Checks if a position is inside a quoted string.
     ///
     /// Handles both single and double quotes with escape sequences.
-    fn is_inside_string_at(line: &str, col: usize) -> bool {
+    fn is_inside_string_at(line: &str, byte_col: usize) -> bool {
         let mut in_single = false;
         let mut in_double = false;
         let mut escape = false;
 
-        for (i, ch) in line.chars().enumerate() {
-            if i >= col {
+        for (byte_i, ch) in line.char_indices() {
+            if byte_i >= byte_col {
                 break;
             }
 
@@ -379,13 +390,13 @@ impl<'a> FlowTokenizer<'a> {
     /// Checks if a hyphen at a position is a list item marker.
     ///
     /// Returns true if hyphen is at start of line or preceded by whitespace.
-    fn is_list_item_hyphen(line: &str, col: usize) -> bool {
-        if col == 0 {
+    fn is_list_item_hyphen(line: &str, byte_col: usize) -> bool {
+        if byte_col == 0 {
             return true;
         }
 
         // Check if all characters before the hyphen are whitespace
-        line.chars().take(col).all(char::is_whitespace)
+        line[..byte_col].chars().all(char::is_whitespace)
     }
 
     /// Maps token type to its character representation.
@@ -656,6 +667,54 @@ mod tests {
             "only the real YAML bracket should be found"
         );
         assert_eq!(brackets[0].span.start.line, 3);
+    }
+
+    // Regression tests for issue #167: byte vs char offset confusion for multibyte UTF-8
+    #[test]
+    fn test_non_ascii_no_false_positives_commas() {
+        // é is 2 bytes — char index and byte offset diverge after it
+        let yaml = "items:\n  - {données: 1, key: 2}";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let commas = tokenizer.find_all(TokenType::Comma);
+        assert_eq!(commas.len(), 1, "should find exactly 1 comma");
+        assert_eq!(commas[0].span.start.line, 2);
+    }
+
+    #[test]
+    fn test_non_ascii_hyphens_no_false_positives() {
+        // ✓ is 3 bytes — list items after it must not trigger false positives
+        let yaml = "items:\n  - note: \"contains ✓ checkmark\"\n  - item1\n  - item2";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let hyphens = tokenizer.find_all(TokenType::Hyphen);
+        assert_eq!(hyphens.len(), 3, "should find exactly 3 list item hyphens");
+    }
+
+    #[test]
+    fn test_cjk_no_false_positives() {
+        // CJK characters are 3 bytes each
+        let yaml = "data: {名前: value, key: other}";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let colons = tokenizer.find_all(TokenType::Colon);
+        assert_eq!(
+            colons.len(),
+            3,
+            "should find exactly 3 colons (data:, 名前:, key:)"
+        );
+        let commas = tokenizer.find_all(TokenType::Comma);
+        assert_eq!(commas.len(), 1, "should find exactly 1 comma");
+    }
+
+    #[test]
+    fn test_emoji_no_false_positives() {
+        // Emoji are 4 bytes each
+        let yaml = "data: {emoji: \"🎉\", key: value}";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let commas = tokenizer.find_all(TokenType::Comma);
+        assert_eq!(commas.len(), 1, "should find exactly 1 comma");
     }
 
     #[test]
