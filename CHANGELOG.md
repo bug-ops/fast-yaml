@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - fix(linter): correct `hyphens` rule false positives on list items following non-ASCII (multibyte) characters by using byte-level indexing instead of `chars().nth(offset)` (#161)
+- fix(linter): `comments-indentation` rule no longer emits false-positive diagnostics for column-0 comments that follow a nested block; column-0 comments are always valid top-level comments and are skipped unconditionally (#166)
 - fix(linter): `comments` rule no longer emits false-positive diagnostics for `#` characters inside block scalars (`|` and `>`); block scalar context is now tracked by indentation level (#160)
 - fix(linter): `float-values` suggestion for signed leading-dot floats now correctly inserts `0` after the sign character (`-.5` → `-0.5`, `+.5` → `+0.5`) instead of prepending `0` before the sign (#159)
 - fix(linter): replace O(n²) `compute_offset` in `quoted-strings` rule with O(1) `SourceContext::get_line_offset` lookup (#147)
