@@ -155,6 +155,7 @@ impl super::LintRule for BracesRule {
                     self.code(),
                     config,
                     "braces",
+                    open.span,
                 ) {
                     diagnostics.push(diag);
                 }
@@ -169,6 +170,7 @@ impl super::LintRule for BracesRule {
                     self.code(),
                     config,
                     "braces",
+                    close.span,
                 ) {
                     diagnostics.push(diag);
                 }
@@ -349,5 +351,89 @@ mod tests {
         assert!(is_empty_collection("{}", 1, 1));
         assert!(is_empty_collection("{  }", 1, 3));
         assert!(!is_empty_collection("{a}", 1, 2));
+    }
+
+    // Regression test for issue #102: location must not be hardcoded to 1:1
+    #[test]
+    fn test_braces_correct_location() {
+        let yaml = "key: {  a: 1  }";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = BracesRule;
+        let config = LintConfig::new().with_rule_config(
+            "braces",
+            RuleConfig::new().with_option("max-spaces-inside", 0i64),
+        );
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(!diagnostics.is_empty());
+        // The opening-side diagnostic must point to the `{`, not line 1 col 1
+        let open_diag = diagnostics.iter().find(|d| d.span.start.offset > 0);
+        assert!(open_diag.is_some(), "diagnostic must have non-zero offset");
+        // None of the diagnostics should report line 1 col 1 (offset 0)
+        for d in &diagnostics {
+            assert!(
+                d.span.start.offset > 0,
+                "diagnostic at wrong location: {:?}",
+                d.span,
+            );
+        }
+    }
+
+    // Regression test for issue #102: each violation fires only once
+    #[test]
+    fn test_braces_no_duplicate_diagnostics() {
+        let yaml = "key: { a: 1 }";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = BracesRule;
+        let config = LintConfig::new().with_rule_config(
+            "braces",
+            RuleConfig::new().with_option("max-spaces-inside", 0i64),
+        );
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        // Two violations: space after `{` and space before `}`
+        assert_eq!(diagnostics.len(), 2);
+        // They must point to different locations
+        assert_ne!(
+            diagnostics[0].span.start.offset,
+            diagnostics[1].span.start.offset
+        );
+    }
+
+    // Regression test for issue #103: no false positives on template expressions
+    #[test]
+    fn test_braces_no_false_positive_on_template_expression() {
+        let yaml = "key: ${{ github.ref }}";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = BracesRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics on template expression: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_braces_no_false_positive_jinja2() {
+        let yaml = "template: \"{{ variable }}\"";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = BracesRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "unexpected diagnostics on Jinja2-style template: {diagnostics:?}"
+        );
     }
 }

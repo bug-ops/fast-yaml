@@ -1,7 +1,7 @@
 //! Common utilities for flow collection rules (braces, brackets).
 
 use crate::{
-    LintConfig, Location, Severity, Span,
+    LintConfig, Severity, Span,
     diagnostic::{Diagnostic, DiagnosticBuilder},
 };
 
@@ -55,6 +55,7 @@ pub fn check_spaces_after_opening(
     code: &str,
     config: &LintConfig,
     collection_name: &str,
+    opening_span: Span,
 ) -> Option<Diagnostic> {
     if start_offset >= source.len() {
         return None;
@@ -72,9 +73,6 @@ pub fn check_spaces_after_opening(
 
     if min_spaces >= 0 && spaces_i64 < min_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, start_offset);
-        let span = Span::new(loc, loc);
-
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -82,7 +80,7 @@ pub fn check_spaces_after_opening(
                 format!(
                     "too few spaces inside {collection_name} (expected at least {min_spaces}, found {spaces})"
                 ),
-                span,
+                opening_span,
             )
             .build(source),
         );
@@ -90,9 +88,6 @@ pub fn check_spaces_after_opening(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, start_offset);
-        let span = Span::new(loc, loc);
-
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -100,7 +95,7 @@ pub fn check_spaces_after_opening(
                 format!(
                     "too many spaces inside {collection_name} (expected at most {max_spaces}, found {spaces})"
                 ),
-                span,
+                opening_span,
             )
             .build(source),
         );
@@ -133,6 +128,7 @@ pub fn check_spaces_before_closing(
     code: &str,
     config: &LintConfig,
     collection_name: &str,
+    closing_span: Span,
 ) -> Option<Diagnostic> {
     if start_offset >= end_offset || end_offset > source.len() {
         return None;
@@ -150,9 +146,6 @@ pub fn check_spaces_before_closing(
 
     if min_spaces >= 0 && spaces_i64 < min_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, end_offset);
-        let span = Span::new(loc, loc);
-
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -160,7 +153,7 @@ pub fn check_spaces_before_closing(
                 format!(
                     "too few spaces inside {collection_name} (expected at least {min_spaces}, found {spaces})"
                 ),
-                span,
+                closing_span,
             )
             .build(source),
         );
@@ -168,9 +161,6 @@ pub fn check_spaces_before_closing(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, end_offset);
-        let span = Span::new(loc, loc);
-
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -178,7 +168,7 @@ pub fn check_spaces_before_closing(
                 format!(
                     "too many spaces inside {collection_name} (expected at most {max_spaces}, found {spaces})"
                 ),
-                span,
+                closing_span,
             )
             .build(source),
         );
@@ -202,31 +192,40 @@ mod tests {
 
     #[test]
     fn test_check_spaces_after_opening() {
+        use crate::{Location, Span};
+        let dummy_span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{ key: value}";
         let config = LintConfig::default();
 
         // Should pass with 1 space
-        let result = check_spaces_after_opening(source, 1, 13, 0, 1, "test", &config, "braces");
+        let result =
+            check_spaces_after_opening(source, 1, 13, 0, 1, "test", &config, "braces", dummy_span);
         assert!(result.is_none());
 
         // Should fail with too many spaces
         let source2 = "{  key: value}";
-        let result2 = check_spaces_after_opening(source2, 1, 14, 0, 1, "test", &config, "braces");
+        let result2 =
+            check_spaces_after_opening(source2, 1, 14, 0, 1, "test", &config, "braces", dummy_span);
         assert!(result2.is_some());
     }
 
     #[test]
     fn test_check_spaces_before_closing() {
+        use crate::{Location, Span};
+        let dummy_span = Span::new(Location::new(1, 13, 12), Location::new(1, 14, 13));
         let source = "{key: value }";
         let config = LintConfig::default();
 
         // Should pass with 1 space
-        let result = check_spaces_before_closing(source, 1, 12, 0, 1, "test", &config, "braces");
+        let result =
+            check_spaces_before_closing(source, 1, 12, 0, 1, "test", &config, "braces", dummy_span);
         assert!(result.is_none());
 
         // Should fail with too many spaces
         let source2 = "{key: value  }";
-        let result2 = check_spaces_before_closing(source2, 1, 13, 0, 1, "test", &config, "braces");
+        let result2 = check_spaces_before_closing(
+            source2, 1, 13, 0, 1, "test", &config, "braces", dummy_span,
+        );
         assert!(result2.is_some());
     }
 }

@@ -113,6 +113,19 @@ impl<'a> FlowTokenizer<'a> {
                             continue;
                         }
 
+                        // Skip braces/brackets that appear inside block-context plain scalars
+                        // (e.g. template expressions like `${{ var }}`).
+                        if matches!(
+                            token_type,
+                            TokenType::BraceOpen
+                                | TokenType::BraceClose
+                                | TokenType::BracketOpen
+                                | TokenType::BracketClose
+                        ) && Self::is_in_block_plain_scalar_at(line, col)
+                        {
+                            continue;
+                        }
+
                         let offset = line_start_offset + col;
                         let start = Location::new(line_num, col + 1, offset);
                         let end = Location::new(line_num, col + 2, offset + 1);
@@ -191,6 +204,127 @@ impl<'a> FlowTokenizer<'a> {
 
         // Already sorted by scan order (left to right, top to bottom)
         tokens
+    }
+
+    /// Checks if a position is inside a block-context plain scalar.
+    ///
+    /// A plain scalar starts when the first non-whitespace character after a value
+    /// separator (`: ` or `, `) is not a flow indicator (`{`, `[`, `"`, `'`).
+    /// In block context (outside any flow collection), such a plain scalar
+    /// continues to the end of the line, so any `{` or `[` inside it must not
+    /// be treated as a YAML flow collection delimiter.
+    ///
+    /// This prevents false positives on template expressions like `${{ var }}`
+    /// that appear as plain scalar values.
+    fn is_in_block_plain_scalar_at(line: &str, col: usize) -> bool {
+        let chars: Vec<char> = line.chars().collect();
+        if col >= chars.len() {
+            return false;
+        }
+
+        let mut i = 0usize;
+        let mut in_double = false;
+        let mut in_single = false;
+        let mut escape_next = false;
+        let mut flow_depth: usize = 0;
+        let mut at_value_start = false;
+        let mut in_plain_scalar = false;
+
+        while i < col {
+            let ch = chars[i];
+
+            if escape_next {
+                escape_next = false;
+                i += 1;
+                continue;
+            }
+
+            if in_double {
+                if ch == '\\' {
+                    escape_next = true;
+                } else if ch == '"' {
+                    in_double = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_single {
+                if ch == '\'' {
+                    in_single = false;
+                }
+                i += 1;
+                continue;
+            }
+
+            if in_plain_scalar {
+                // Block-context plain scalar ends at flow terminators only when nested
+                if flow_depth > 0 {
+                    match ch {
+                        ',' => {
+                            in_plain_scalar = false;
+                            at_value_start = true;
+                        }
+                        '}' | ']' => {
+                            in_plain_scalar = false;
+                            flow_depth = flow_depth.saturating_sub(1);
+                        }
+                        _ => {}
+                    }
+                }
+                // In block context (flow_depth == 0) plain scalar runs to EOL — nothing ends it
+                i += 1;
+                continue;
+            }
+
+            if at_value_start {
+                match ch {
+                    ' ' | '\t' => {}
+                    '"' => {
+                        in_double = true;
+                        at_value_start = false;
+                    }
+                    '\'' => {
+                        in_single = true;
+                        at_value_start = false;
+                    }
+                    '{' | '[' => {
+                        flow_depth += 1;
+                        at_value_start = false;
+                    }
+                    '#' => break,
+                    _ => {
+                        at_value_start = false;
+                        if flow_depth == 0 {
+                            // Block-context plain scalar — everything until EOL is scalar
+                            in_plain_scalar = true;
+                        }
+                        // Flow-context plain scalars cannot contain `{`/`[`, so we do not
+                        // set in_plain_scalar; any `{` encountered later will be treated
+                        // as a nested flow collection (or invalid YAML).
+                    }
+                }
+            } else {
+                match ch {
+                    '"' => in_double = true,
+                    '\'' => in_single = true,
+                    '{' | '[' => flow_depth += 1,
+                    '}' | ']' => flow_depth = flow_depth.saturating_sub(1),
+                    ':' if i + 1 < chars.len() && (chars[i + 1] == ' ' || chars[i + 1] == '\t') => {
+                        at_value_start = true;
+                        i += 2; // consume `: `
+                        continue;
+                    }
+                    ',' if flow_depth > 0 => at_value_start = true,
+                    '#' => break,
+                    _ => {}
+                }
+            }
+
+            i += 1;
+        }
+
+        in_plain_scalar
     }
 
     /// Checks if a position is inside a quoted string.

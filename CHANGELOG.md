@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `braces`/`brackets` rules no longer fire on template expressions (Jinja2, GitHub Actions `${{ }}`) inside plain scalar values. Previously the rules scanned raw source text and matched `{`/`[` inside string values, causing false-positive spam on workflow files. The tokenizer now tracks block-context plain scalars and skips flow-syntax characters inside them. (#103)
+- **Linter**: `braces`/`brackets` rules now report diagnostics at the correct source location (the `{`/`[` or `}`/`]` token) instead of always reporting line 1, column 1. (#102)
 - **Linter**: `duplicate-key` rule now detects duplicate keys at all nesting levels, not only at the top-level mapping. Previously, duplicates inside nested mappings were silently ignored. (#96)
 - **Linter**: `duplicate-key` rule no longer emits the same diagnostic twice for a single duplicate key occurrence. The rule was rewritten to use event-based parsing (saphyr-parser) instead of source-text scanning, which also eliminates potential false positives from key names appearing in values or comments. (#97)
 - `Emitter::emit_str` and `emit_str_with_config` now always append a trailing newline, consistent with `emit_all_with_config` and POSIX text file convention. Affects `safe_dump`/`safeDump` in Python and NodeJS bindings. (#94)
