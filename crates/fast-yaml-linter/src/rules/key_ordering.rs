@@ -78,6 +78,11 @@ impl super::LintRule for KeyOrderingRule {
 /// located. Searching forward from the cursor scopes each mapping's key search
 /// to its own position in the document, preventing duplicate diagnostics when
 /// the same key name appears in multiple mappings (#105).
+///
+/// For mappings, each key is located and its value is recursed into immediately
+/// before searching for the next sibling key. This ensures the cursor is at the
+/// correct position when scanning nested keys, fixing false negatives when
+/// a parent mapping has multiple top-level keys (#130).
 #[allow(clippy::too_many_arguments)]
 fn check_value(
     value: &Value,
@@ -90,17 +95,18 @@ fn check_value(
 ) {
     match value {
         Value::Mapping(hash) => {
-            let key_positions = locate_keys(hash, context, cursor);
-            emit_ordering_diagnostics(
-                &key_positions,
-                context,
-                source,
-                case_sensitive,
-                config,
-                diagnostics,
-            );
+            let mut key_positions: Vec<(String, usize)> = Vec::new();
 
-            for (_, nested_value) in hash {
+            for (key_value, nested_value) in hash {
+                let Some(key) = key_value.as_str() else {
+                    continue;
+                };
+                if let Some(line_num) = locate_key(key, context, cursor) {
+                    key_positions.push((key.to_string(), line_num));
+                }
+                // Recurse into the value immediately after finding its key so
+                // the cursor is positioned correctly for nested keys before the
+                // next sibling key is searched.
                 check_value(
                     nested_value,
                     context,
@@ -111,6 +117,15 @@ fn check_value(
                     cursor,
                 );
             }
+
+            emit_ordering_diagnostics(
+                &key_positions,
+                context,
+                source,
+                case_sensitive,
+                config,
+                diagnostics,
+            );
         }
         Value::Sequence(arr) => {
             for item in arr {
@@ -129,59 +144,46 @@ fn check_value(
     }
 }
 
-/// Locates each key of `hash` in the source, scanning forward from `*cursor`.
+/// Locates a single `key` in the source, scanning forward from `*cursor`.
 ///
-/// Returns `(key_name, line_number)` pairs in document order.
-/// `*cursor` is advanced past each located key.
-fn locate_keys(
-    hash: &fast_yaml_core::Map,
-    context: &LintContext<'_>,
-    cursor: &mut usize,
-) -> Vec<(String, usize)> {
+/// Returns the 1-based line number if found, and advances `*cursor` past it.
+fn locate_key(key: &str, context: &LintContext<'_>, cursor: &mut usize) -> Option<usize> {
     let lines = context.lines();
     let line_metadata = context.line_metadata();
-    let mut positions: Vec<(String, usize)> = Vec::new();
 
-    for key_value in hash.keys() {
-        let Some(key) = key_value.as_str() else {
+    for (line_idx, (line, metadata)) in lines
+        .iter()
+        .zip(line_metadata)
+        .enumerate()
+        .skip(*cursor - 1)
+    {
+        let line_num = line_idx + 1;
+
+        if metadata.is_empty || metadata.is_comment {
+            continue;
+        }
+
+        let trimmed = line.trim_start();
+        let Some(colon_pos) = trimmed.find(':') else {
             continue;
         };
 
-        for (line_idx, (line, metadata)) in lines
-            .iter()
-            .zip(line_metadata)
-            .enumerate()
-            .skip(*cursor - 1)
+        let raw_key = trimmed[..colon_pos].trim();
+        let unquoted = if (raw_key.starts_with('\'') && raw_key.ends_with('\''))
+            || (raw_key.starts_with('"') && raw_key.ends_with('"'))
         {
-            let line_num = line_idx + 1;
+            &raw_key[1..raw_key.len() - 1]
+        } else {
+            raw_key
+        };
 
-            if metadata.is_empty || metadata.is_comment {
-                continue;
-            }
-
-            let trimmed = line.trim_start();
-            let Some(colon_pos) = trimmed.find(':') else {
-                continue;
-            };
-
-            let raw_key = trimmed[..colon_pos].trim();
-            let unquoted = if (raw_key.starts_with('\'') && raw_key.ends_with('\''))
-                || (raw_key.starts_with('"') && raw_key.ends_with('"'))
-            {
-                &raw_key[1..raw_key.len() - 1]
-            } else {
-                raw_key
-            };
-
-            if unquoted == key {
-                positions.push((key.to_string(), line_num));
-                *cursor = line_num + 1;
-                break;
-            }
+        if unquoted == key {
+            *cursor = line_num + 1;
+            return Some(line_num);
         }
     }
 
-    positions
+    None
 }
 
 /// Compares consecutive key pairs and pushes a diagnostic for each violation.
@@ -368,6 +370,28 @@ mod tests {
             .sum();
         // Each document contributes exactly 1 violation (a < b).
         assert_eq!(total, 2, "expected 2 diagnostics, got {total}");
+    }
+
+    /// Regression test for #130: nested mapping keys must be checked even when
+    /// the parent mapping has more than one top-level key.
+    #[test]
+    fn test_key_ordering_nested_with_multiple_top_level_keys() {
+        let yaml = "parent:\n  z_key: 1\n  a_key: 2\nother:\n  b_key: x\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = KeyOrderingRule;
+        let config = LintConfig::default();
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+
+        // "other" violates top-level order (o < p), and "a_key" violates nested order (a < z).
+        assert_eq!(
+            diagnostics.len(),
+            2,
+            "expected 2 diagnostics, got {}: {:?}",
+            diagnostics.len(),
+            diagnostics.iter().map(|d| &d.message).collect::<Vec<_>>()
+        );
     }
 
     /// Regression test for #105: repetitive nested structure (CI `with:` blocks)

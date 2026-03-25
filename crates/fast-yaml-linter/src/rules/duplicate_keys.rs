@@ -89,9 +89,9 @@ fn collect_duplicates(source: &str) -> Vec<(String, usize, usize, usize)> {
             }
 
             Event::Scalar(ref value, ..) => {
-                // saphyr Marker: line() and col() are 1-indexed.
+                // saphyr Marker: line() is 1-indexed, col() is 0-indexed.
                 let scalar_line = span.start.line();
-                let scalar_col = span.start.col();
+                let scalar_col = span.start.col() + 1; // convert to 1-indexed
 
                 match scopes.last_mut() {
                     Some(ScopeKind::Mapping {
@@ -266,5 +266,31 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("first defined at line 1"));
         assert_eq!(diags[0].span.start.line, 3);
+    }
+
+    /// Regression test for #131: duplicate-key column must be 1-indexed.
+    #[test]
+    fn test_duplicate_key_column_is_1_indexed() {
+        // "dup" starts at column 1 (first character of the line).
+        let diags = run("dup: 1\ndup: 2\n");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].span.start.column, 1,
+            "column should be 1-indexed; got {}",
+            diags[0].span.start.column
+        );
+    }
+
+    /// Regression test for #131: indented duplicate key column must reflect indent.
+    #[test]
+    fn test_duplicate_key_indented_column_is_1_indexed() {
+        // "key" starts at column 3 (2 spaces + 'k').
+        let diags = run("parent:\n  key: 1\n  key: 2\n");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(
+            diags[0].span.start.column, 3,
+            "column should be 1-indexed at indent 2; got {}",
+            diags[0].span.start.column
+        );
     }
 }
