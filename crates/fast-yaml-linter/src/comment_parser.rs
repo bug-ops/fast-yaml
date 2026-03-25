@@ -94,9 +94,30 @@ impl<'a> CommentParser<'a> {
         let mut in_string = false;
         let mut string_delimiter = b'"';
         let mut escape_next = false;
+        // block_scalar_indent: Some(n) means we're inside a block scalar where
+        // any line with indentation > n belongs to the scalar content.
+        let mut block_scalar_indent: Option<usize> = None;
 
         for (line_idx, line) in self.source.lines().enumerate() {
             let line_start_offset = self.context.get_line_offset(line_idx + 1);
+
+            // Determine indentation of current line (number of leading spaces)
+            let indent = line.len() - line.trim_start().len();
+
+            // Check if we need to exit block scalar state
+            if let Some(scalar_indent) = block_scalar_indent {
+                if line.trim().is_empty() {
+                    // blank lines are still inside the block scalar, skip
+                    continue;
+                }
+                if indent <= scalar_indent {
+                    // We've returned to or before the block scalar entry level
+                    block_scalar_indent = None;
+                } else {
+                    // Still inside block scalar content — skip this line
+                    continue;
+                }
+            }
 
             for (col_idx, ch) in line.char_indices() {
                 let offset = line_start_offset + col_idx;
@@ -151,6 +172,21 @@ impl<'a> CommentParser<'a> {
 
                     // Rest of line is comment, skip to next line
                     break;
+                }
+            }
+
+            // Detect block scalar markers: a line ending with `|` or `>` (optionally
+            // followed by chomping indicators `+`/`-` and/or an indentation hint digit)
+            // outside of a quoted string signals that subsequent indented lines are
+            // scalar content and must not be scanned for `#` comments.
+            let trimmed_line = line.trim_end();
+            let after_value = trimmed_line.trim_start_matches(|c: char| !matches!(c, '|' | '>'));
+            if !after_value.is_empty() {
+                let rest = after_value.trim_start_matches(['|', '>']);
+                let rest = rest.trim_start_matches(['+', '-']);
+                let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+                if rest.is_empty() && after_value.starts_with(['|', '>']) {
+                    block_scalar_indent = Some(indent);
                 }
             }
 
@@ -361,11 +397,9 @@ mod tests {
         let context = SourceContext::new(yaml);
         let parser = CommentParser::new(yaml, &context);
 
-        // Parser should not detect these as comments (they're in block scalar)
-        // For now, our simple parser will detect them - this documents the limitation
+        // Lines inside the block scalar must not be treated as comments
         let comments = parser.find_all();
-        // Current implementation treats these as comments (acceptable for Phase 3)
-        assert_eq!(comments.len(), 2);
+        assert_eq!(comments.len(), 0);
     }
 
     #[test]
