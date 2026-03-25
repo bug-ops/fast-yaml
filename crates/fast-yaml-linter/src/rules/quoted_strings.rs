@@ -175,7 +175,11 @@ impl QuotedStringsRule {
     ) {
         match style {
             ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
-                let quote_char = if style == ScalarStyle::SingleQuoted { '\'' } else { '"' };
+                let quote_char = if style == ScalarStyle::SingleQuoted {
+                    '\''
+                } else {
+                    '"'
+                };
                 // value.len() + 2 for the surrounding quote characters.
                 let scalar_span = Self::make_span(line, scalar_offset, value.len() + 2);
 
