@@ -383,4 +383,26 @@ mod tests {
         // Should have multiple violations
         assert!(diagnostics.len() >= 2);
     }
+
+    // Regression test for issue #116
+    #[test]
+    fn test_commas_no_false_positive_in_block_scalar() {
+        let yaml = "run: |\n  echo \"a, b, c\"\n  for i in 1,2,3; do echo $i; done\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommasRule;
+        let config = LintConfig::new().with_rule_config(
+            "commas",
+            RuleConfig::new()
+                .with_option("max-spaces-before", 0i64)
+                .with_option("min-spaces-after", 1i64),
+        );
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "no false positives in block scalar: {diagnostics:?}"
+        );
+    }
 }

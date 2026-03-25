@@ -343,4 +343,26 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
     }
+
+    // Regression test for issue #116
+    #[test]
+    fn test_brackets_no_false_positive_in_block_scalar() {
+        let yaml = "steps:\n  - name: Check result\n    run: |\n      if [[ \"$result\" != \"success\" ]]; then\n        exit 1\n      fi\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = BracketsRule;
+        let config = LintConfig::new().with_rule_config(
+            "brackets",
+            RuleConfig::new()
+                .with_option("min-spaces-inside", 0i64)
+                .with_option("max-spaces-inside", 0i64),
+        );
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "no false positives in block scalar: {diagnostics:?}"
+        );
+    }
 }
