@@ -97,7 +97,13 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
             ScalarOwned::Integer(i) => JValue::Number((*i).into()),
             ScalarOwned::FloatingPoint(f) => serde_json::Number::from_f64(f.0)
                 .map(JValue::Number)
-                .ok_or_else(|| anyhow::anyhow!("Invalid float value: {f}"))?,
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "YAML value '{f}' cannot be represented in JSON \
+                     (JSON does not support infinity/NaN). \
+                     Consider replacing with a numeric sentinel value."
+                    )
+                })?,
             ScalarOwned::String(s) => JValue::String(s.clone()),
         },
         YValue::Sequence(arr) => {
@@ -142,12 +148,24 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
         JValue::Null => YValue::Value(ScalarOwned::Null),
         JValue::Bool(b) => YValue::Value(ScalarOwned::Boolean(*b)),
         JValue::Number(n) => {
-            if let Some(i) = n.as_i64() {
+            use ordered_float::OrderedFloat;
+            use saphyr_parser::ScalarStyle;
+            // With the `arbitrary_precision` serde_json feature, `as_str()` returns the
+            // original JSON token (e.g. "1.0", "1.23e10", "42"). Use it to distinguish
+            // floats (contain '.' or 'e'/'E') from integers so that `1.0` is preserved
+            // as a floating-point YAML scalar rather than being coerced to integer `1`.
+            let raw = n.as_str();
+            let is_float = raw.contains('.') || raw.contains('e') || raw.contains('E');
+            if is_float {
+                // Validate the value is representable, then store the original JSON token
+                // as a plain scalar so the YAML output preserves the float notation.
+                let _ = n.as_f64().ok_or_else(|| {
+                    anyhow::anyhow!("Float value out of representable range: {n}")
+                })?;
+                YValue::Representation(raw.to_string(), ScalarStyle::Plain, None)
+            } else if let Some(i) = n.as_i64() {
                 YValue::Value(ScalarOwned::Integer(i))
             } else if let Some(f) = n.as_f64() {
-                // We need to use ordered_float::OrderedFloat which is a transitive dependency via saphyr
-                // Since it's not re-exported, we construct it using the From trait
-                use ordered_float::OrderedFloat;
                 YValue::Value(ScalarOwned::FloatingPoint(OrderedFloat(f)))
             } else {
                 anyhow::bail!("Unsupported number type: {n}");
@@ -302,5 +320,50 @@ mod tests {
         assert_eq!(arr[0]["foo"], 1);
         assert_eq!(arr[1]["bar"], 2);
         assert_eq!(arr[2]["baz"], 3);
+    }
+
+    #[test]
+    fn test_yaml_inf_nan_to_json_gives_clear_error() {
+        for yaml in &["val: .inf", "val: -.inf", "val: .nan"] {
+            let input = InputSource {
+                content: (*yaml).to_string(),
+                origin: InputOrigin::Stdin,
+            };
+            let output = OutputWriter::stdout();
+            let config = CommonConfig::new();
+            let cmd = ConvertCommand::new(config, ConvertFormat::Json, false);
+            let err = cmd.execute(&input, &output).unwrap_err();
+            let msg = err.to_string();
+            assert!(
+                msg.contains("cannot be represented in JSON"),
+                "expected descriptive error, got: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_json_float_preserves_type() {
+        let input = InputSource {
+            content: r#"{"whole_float": 1.0, "sci": 1.23e10, "integer": 42}"#.to_string(),
+            origin: InputOrigin::Stdin,
+        };
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_path = temp_dir.path().join("output.yaml");
+        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Yaml, false);
+        assert!(cmd.execute(&input, &output).is_ok());
+
+        let yaml_str = std::fs::read_to_string(&temp_path).unwrap();
+        // 1.0 must not become bare integer "1"
+        assert!(
+            yaml_str.contains("whole_float: 1.0"),
+            "expected 'whole_float: 1.0' in: {yaml_str}"
+        );
+        // integer stays integer
+        assert!(
+            yaml_str.contains("integer: 42"),
+            "expected 'integer: 42' in: {yaml_str}"
+        );
     }
 }
