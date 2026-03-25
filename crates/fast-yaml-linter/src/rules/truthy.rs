@@ -329,10 +329,16 @@ mod tests {
         let rule = TruthyRule;
         let config = LintConfig::default();
 
-        let diags_nonstandard =
-            rule.check(&LintContext::new(yaml_nonstandard), &value_nonstandard, &config);
-        let diags_noncanonical =
-            rule.check(&LintContext::new(yaml_noncanonical), &value_noncanonical, &config);
+        let diags_nonstandard = rule.check(
+            &LintContext::new(yaml_nonstandard),
+            &value_nonstandard,
+            &config,
+        );
+        let diags_noncanonical = rule.check(
+            &LintContext::new(yaml_noncanonical),
+            &value_noncanonical,
+            &config,
+        );
 
         assert!(diags_nonstandard[0].message.contains("non-standard"));
         assert!(!diags_nonstandard[0].message.contains("non-canonical"));
