@@ -204,6 +204,15 @@ impl ConfigFile {
                 {
                     config.max_line_length = Some(max_usize);
                 }
+                // Special case: indentation.indent-size maps to the top-level LintConfig field
+                // because IndentationRule reads config.indent_size directly, not rule_configs.
+                if rule_name == "indentation"
+                    && key == "indent-size"
+                    && let ConfigFileValue::Int(size) = &val
+                    && let Ok(size_usize) = usize::try_from(*size)
+                {
+                    config.indent_size = size_usize;
+                }
                 let opt = match val {
                     ConfigFileValue::Bool(b) => RuleOption::Bool(b),
                     ConfigFileValue::Int(i) => RuleOption::Int(i),
@@ -341,6 +350,52 @@ mod tests {
         assert!(
             !diagnostics.iter().any(|d| d.code.as_str() == "line-length"),
             "expected no line-length diagnostic for <80-char line with default config"
+        );
+    }
+
+    #[test]
+    fn test_indentation_indent_size_sets_top_level_field() {
+        // Regression: indentation.indent-size from config file must propagate to
+        // LintConfig::indent_size because IndentationRule reads that field directly.
+        let f = write_temp("rules:\n  indentation:\n    indent-size: 4\n");
+        let cfg = ConfigFile::load(f.path()).unwrap();
+        let lint_config = cfg.into_lint_config();
+        assert_eq!(lint_config.indent_size, 4);
+    }
+
+    #[test]
+    fn test_indentation_indent_size_actually_affects_linting() {
+        use crate::Linter;
+        // With indent-size: 4 set via config, 2-space indented YAML should produce a diagnostic.
+        let yaml = "list:\n  - item\n";
+
+        let f = write_temp("rules:\n  indentation:\n    indent-size: 4\n");
+        let cfg = ConfigFile::load(f.path()).unwrap();
+        let lint_config = cfg.into_lint_config();
+
+        let linter = Linter::with_config(lint_config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            diagnostics.iter().any(|d| d.code.as_str() == "indentation"),
+            "expected indentation diagnostic for 2-space indent with indent-size=4 config"
+        );
+    }
+
+    #[test]
+    fn test_indentation_default_not_triggered_for_2space() {
+        use crate::Linter;
+        // Without config override, default indent_size is 2. 2-space indented YAML is valid.
+        let yaml = "list:\n  - item\n";
+
+        let f = write_temp("rules: {}");
+        let cfg = ConfigFile::load(f.path()).unwrap();
+        let lint_config = cfg.into_lint_config();
+
+        let linter = Linter::with_config(lint_config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            !diagnostics.iter().any(|d| d.code.as_str() == "indentation"),
+            "expected no indentation diagnostic for 2-space indent with default config"
         );
     }
 
