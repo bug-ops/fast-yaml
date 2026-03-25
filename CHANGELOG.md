@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Python `safe_dump()` now accepts `explicit_start`, `indent`, `width`, and `default_flow_style` parameters, matching the underlying `_core.safe_dump` and PyYAML API (closes #93)
 - NodeJS bindings: `lint()` function, `Linter` class, `LintConfig`, `Diagnostic`, `Severity`, `Span`, `Location`, `ContextLine`, `DiagnosticContext`, `Suggestion` types (closes #61)
 - `Linter::with_all_rules_and_config()` method in `fast-yaml-linter` for creating a linter with all default rules and custom configuration
 

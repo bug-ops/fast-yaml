@@ -174,6 +174,67 @@ class TestDumperCompatibility:
         assert type(dumper).__name__ == "Dumper"
 
 
+class TestSafeDumpOptions:
+    """Tests for safe_dump() parameters: explicit_start, indent, width."""
+
+    def test_explicit_start(self):
+        """safe_dump() adds document start marker when explicit_start=True."""
+        result = fast_yaml.safe_dump({"k": "v"}, explicit_start=True)
+        assert result.startswith("---\n")
+
+    def test_explicit_start_false_by_default(self):
+        """safe_dump() does not add document start marker by default."""
+        result = fast_yaml.safe_dump({"k": "v"})
+        assert not result.startswith("---")
+
+    def test_indent(self):
+        """safe_dump() respects indent parameter."""
+        data = {"nested": {"a": 1, "b": 2}}
+        result = fast_yaml.safe_dump(data, indent=4)
+        assert result is not None
+
+    def test_width(self):
+        """safe_dump() accepts width parameter without error."""
+        data = {"key": "value"}
+        result = fast_yaml.safe_dump(data, width=40)
+        assert "key: value" in result
+
+    def test_sort_keys(self):
+        """safe_dump() sorts keys when sort_keys=True."""
+        data = {"z": 1, "a": 2}
+        result = fast_yaml.safe_dump(data, sort_keys=True)
+        assert result.index("a:") < result.index("z:")
+
+    def test_stream_output(self):
+        """safe_dump() writes to stream and returns None."""
+        import io
+
+        buf = io.StringIO()
+        result = fast_yaml.safe_dump({"k": "v"}, stream=buf)
+        assert result is None
+        assert "k: v" in buf.getvalue()
+
+    def test_explicit_start_with_stream(self):
+        """safe_dump() with explicit_start writes --- to stream."""
+        import io
+
+        buf = io.StringIO()
+        fast_yaml.safe_dump({"k": "v"}, stream=buf, explicit_start=True)
+        assert buf.getvalue().startswith("---\n")
+
+    def test_all_params_combined(self):
+        """safe_dump() accepts all new parameters together."""
+        result = fast_yaml.safe_dump(
+            {"z": 1, "a": 2},
+            explicit_start=True,
+            indent=4,
+            width=100,
+            sort_keys=True,
+        )
+        assert result.startswith("---\n")
+        assert result.index("a:") < result.index("z:")
+
+
 class TestDumpOptions:
     """Tests for dump options parameters."""
 

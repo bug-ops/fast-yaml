@@ -162,8 +162,10 @@ def safe_dump(
     *,
     allow_unicode: bool = True,
     sort_keys: bool = False,
-    indent: int | None = None,  # TODO: implement
-    width: int | None = None,  # TODO: implement
+    indent: int | None = None,
+    width: int | None = None,
+    explicit_start: bool = False,
+    default_flow_style: bool | None = None,
 ) -> str | None:
     """
     Serialize a Python object to a YAML string.
@@ -175,8 +177,10 @@ def safe_dump(
         stream: If provided, write to this file-like object and return None.
         allow_unicode: If True, allow unicode characters in output. Default: True.
         sort_keys: If True, sort dictionary keys. Default: False.
-        indent: Number of spaces for indentation. Default: 2 (TODO: implement).
-        width: Maximum line width. Default: 80 (TODO: implement).
+        indent: Number of spaces for indentation. Default: 2.
+        width: Maximum line width. Default: 80.
+        explicit_start: If True, add explicit document start marker (---). Default: False.
+        default_flow_style: Force flow style for collections. Default: None.
 
     Returns:
         A YAML string if stream is None, otherwise None.
@@ -188,11 +192,17 @@ def safe_dump(
         >>> import fast_yaml
         >>> fast_yaml.safe_dump({'name': 'test', 'value': 123})
         'name: test\\nvalue: 123\\n'
+        >>> fast_yaml.safe_dump({'k': 'v'}, explicit_start=True)
+        '---\\nk: v\\n'
     """
     result = _safe_dump(
         data,
         allow_unicode=allow_unicode,
         sort_keys=sort_keys,
+        indent=indent if indent is not None else 2,
+        width=width if width is not None else 80,
+        explicit_start=explicit_start,
+        default_flow_style=default_flow_style,
     )
 
     if stream is not None:
