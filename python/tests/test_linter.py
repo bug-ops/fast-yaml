@@ -456,3 +456,81 @@ production:
         yaml_content = "\n".join(lines)
         diagnostics = lint.lint(yaml_content)
         assert isinstance(diagnostics, list)
+
+
+class TestPerRuleSeverity:
+    """Tests for per-rule severity overrides in LintConfig."""
+
+    DUP_YAML = "key: value\nkey: duplicate\n"
+
+    def test_rules_dict_severity_override(self):
+        """Severity override via rules dict changes diagnostic severity."""
+        config = lint.LintConfig(rules={"duplicate-key": {"severity": "warning"}})
+        diagnostics = lint.lint(self.DUP_YAML, config)
+        diag = next((d for d in diagnostics if d.code == "duplicate-key"), None)
+        assert diag is not None
+        assert str(diag.severity) == "warning"
+
+    def test_rules_dict_string_shorthand(self):
+        """String shorthand in rules dict changes diagnostic severity."""
+        config = lint.LintConfig(rules={"duplicate-key": "warning"})
+        diagnostics = lint.lint(self.DUP_YAML, config)
+        diag = next((d for d in diagnostics if d.code == "duplicate-key"), None)
+        assert diag is not None
+        assert str(diag.severity) == "warning"
+
+    def test_rules_dict_enabled_false(self):
+        """enabled: false in rules dict disables rule."""
+        config = lint.LintConfig(rules={"duplicate-key": {"enabled": False}})
+        diagnostics = lint.lint(self.DUP_YAML, config)
+        assert not any(d.code == "duplicate-key" for d in diagnostics)
+
+    def test_with_rule_config_builder(self):
+        """with_rule_config builder method applies severity override."""
+        config = lint.LintConfig().with_rule_config("duplicate-key", severity="warning")
+        diagnostics = lint.lint(self.DUP_YAML, config)
+        diag = next((d for d in diagnostics if d.code == "duplicate-key"), None)
+        assert diag is not None
+        assert str(diag.severity) == "warning"
+
+    def test_with_rule_config_disabled(self):
+        """with_rule_config builder with enabled=False disables rule."""
+        config = lint.LintConfig().with_rule_config("duplicate-key", enabled=False)
+        diagnostics = lint.lint(self.DUP_YAML, config)
+        assert not any(d.code == "duplicate-key" for d in diagnostics)
+
+    def test_invalid_severity_raises_value_error(self):
+        """Invalid severity string raises ValueError."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid severity"):
+            lint.LintConfig(rules={"duplicate-key": "critical"})
+
+    def test_with_rule_config_invalid_severity(self):
+        """Invalid severity in builder raises ValueError."""
+        import pytest
+
+        with pytest.raises(ValueError, match="Invalid severity"):
+            lint.LintConfig().with_rule_config("duplicate-key", severity="critical")
+
+    def test_unknown_rule_is_accepted(self):
+        """Unknown rule code is silently accepted without error."""
+        config = lint.LintConfig(rules={"nonexistent-rule": {"severity": "error"}})
+        diagnostics = lint.lint("key: value\n", config)
+        assert isinstance(diagnostics, list)
+
+    def test_all_four_severity_values(self):
+        """All four severity values are accepted."""
+        for sev in ("error", "warning", "info", "hint"):
+            config = lint.LintConfig(rules={"duplicate-key": sev})
+            diagnostics = lint.lint(self.DUP_YAML, config)
+            assert isinstance(diagnostics, list)
+
+    def test_disabled_rules_takes_precedence(self):
+        """disabled_rules takes precedence over rules with enabled: false interaction."""
+        config = lint.LintConfig(
+            disabled_rules=["duplicate-key"],
+            rules={"duplicate-key": {"severity": "error"}},
+        )
+        diagnostics = lint.lint(self.DUP_YAML, config)
+        assert not any(d.code == "duplicate-key" for d in diagnostics)

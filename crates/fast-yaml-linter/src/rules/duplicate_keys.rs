@@ -38,7 +38,8 @@ impl super::LintRule for DuplicateKeysRule {
         if config.allow_duplicate_keys {
             return Vec::new();
         }
-        scan_duplicate_keys(context.source(), context.source_context())
+        let severity = config.get_effective_severity(self.code(), self.default_severity());
+        scan_duplicate_keys(context.source(), context.source_context(), severity)
     }
 }
 
@@ -143,14 +144,18 @@ const fn advance_parent_to_key(scopes: &mut [ScopeKind]) {
     }
 }
 
-fn scan_duplicate_keys(source: &str, source_context: &SourceContext<'_>) -> Vec<Diagnostic> {
+fn scan_duplicate_keys(
+    source: &str,
+    source_context: &SourceContext<'_>,
+    severity: Severity,
+) -> Vec<Diagnostic> {
     collect_duplicates(source)
         .into_iter()
         .map(|(key, first_line, dup_line, dup_col)| {
             let span = span_for_key(source, dup_line, dup_col, key.len());
             DiagnosticBuilder::new(
                 DiagnosticCode::DUPLICATE_KEY,
-                Severity::Error,
+                severity,
                 format!("duplicate key '{key}' (first defined at line {first_line})"),
                 span,
             )

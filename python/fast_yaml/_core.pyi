@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypedDict
 
 # =============================================================================
 # Loader Classes (PyYAML compatibility)
@@ -424,6 +424,12 @@ class lint:  # noqa: N801
 
         def __repr__(self) -> str: ...
 
+    class RuleConfigDict(TypedDict, total=False):
+        """Per-rule configuration override dict."""
+
+        severity: str  # "error" | "warning" | "info" | "hint"
+        enabled: bool
+
     class LintConfig:
         """Configuration for the linter."""
 
@@ -438,10 +444,17 @@ class lint:  # noqa: N801
             require_document_end: bool = False,
             allow_duplicate_keys: bool = False,
             disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
+            rules: dict[str, "lint.RuleConfigDict | str"] | None = None,
         ) -> None: ...
         def with_max_line_length(self, max: int | None) -> "lint.LintConfig": ...
         def with_indent_size(self, size: int) -> "lint.LintConfig": ...
         def with_disabled_rule(self, code: str) -> "lint.LintConfig": ...
+        def with_rule_config(
+            self,
+            code: str,
+            severity: str | None = None,
+            enabled: bool | None = None,
+        ) -> "lint.LintConfig": ...
         def __repr__(self) -> str: ...
 
     class Linter:

@@ -180,3 +180,57 @@ describe('Disabled rules', () => {
     expect(result.find((d) => d.code === 'duplicate-key')).toBeUndefined();
   });
 });
+
+describe('Per-rule severity overrides', () => {
+  it('object form: severity override changes diagnostic severity', () => {
+    const result = lint(DUPLICATE_KEYS_YAML, {
+      rules: { 'duplicate-key': { severity: 'warning' } },
+    });
+    const diag = result.find((d) => d.code === 'duplicate-key');
+    expect(diag).toBeDefined();
+    expect(diag?.severity).toBe('Warning');
+  });
+
+  it('string shorthand: severity override changes diagnostic severity', () => {
+    const result = lint(DUPLICATE_KEYS_YAML, {
+      rules: { 'duplicate-key': 'warning' },
+    });
+    const diag = result.find((d) => d.code === 'duplicate-key');
+    expect(diag).toBeDefined();
+    expect(diag?.severity).toBe('Warning');
+  });
+
+  it('enabled: false disables the rule', () => {
+    const result = lint(DUPLICATE_KEYS_YAML, {
+      rules: { 'duplicate-key': { enabled: false } },
+    });
+    expect(result.find((d) => d.code === 'duplicate-key')).toBeUndefined();
+  });
+
+  it('invalid severity string throws an error', () => {
+    expect(() =>
+      lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': 'critical' as unknown as 'error' } })
+    ).toThrow(/Invalid severity/);
+  });
+
+  it('unknown rule name is silently accepted', () => {
+    expect(() =>
+      lint(VALID_YAML, { rules: { 'nonexistent-rule': { severity: 'error' } } })
+    ).not.toThrow();
+  });
+
+  it('empty rules map does not change behavior', () => {
+    const withoutRules = lint(DUPLICATE_KEYS_YAML);
+    const withEmptyRules = lint(DUPLICATE_KEYS_YAML, { rules: {} });
+    const withoutDup = withoutRules.find((d) => d.code === 'duplicate-key');
+    const withDup = withEmptyRules.find((d) => d.code === 'duplicate-key');
+    expect(withoutDup?.severity).toBe(withDup?.severity);
+  });
+
+  it('all four severity values are accepted', () => {
+    const severities = ['error', 'warning', 'info', 'hint'] as const;
+    for (const sev of severities) {
+      expect(() => lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': sev } })).not.toThrow();
+    }
+  });
+});
