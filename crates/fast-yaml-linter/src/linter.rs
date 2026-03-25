@@ -494,7 +494,7 @@ mod tests {
     #[test]
     fn test_linter_with_all_rules() {
         let linter = Linter::with_all_rules();
-        assert_eq!(linter.registry().rules().len(), 22);
+        assert_eq!(linter.registry().rules().len(), 23);
     }
 
     #[test]
