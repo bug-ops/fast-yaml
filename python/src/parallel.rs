@@ -302,15 +302,15 @@ fn parse_parallel(
     let values = result.map_err(|e: ParallelError| PyValueError::new_err(e.to_string()))?;
 
     // Enforce document count limit
-    if let Some(limit) = max_documents {
-        if values.len() > limit {
-            return Err(PyValueError::new_err(format!(
-                "document count {} exceeds max_documents limit {}. Consider increasing \
-                 max_documents or processing in batches.",
-                values.len(),
-                limit
-            )));
-        }
+    if let Some(limit) = max_documents
+        && values.len() > limit
+    {
+        return Err(PyValueError::new_err(format!(
+            "document count {} exceeds max_documents limit {}. Consider increasing \
+             max_documents or processing in batches.",
+            values.len(),
+            limit
+        )));
     }
 
     // Convert Vec<Value> to Python list with pre-allocated capacity
