@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `duplicate-key` rule now detects duplicate keys at all nesting levels, not only at the top-level mapping. Previously, duplicates inside nested mappings were silently ignored. (#96)
+- **Linter**: `duplicate-key` rule no longer emits the same diagnostic twice for a single duplicate key occurrence. The rule was rewritten to use event-based parsing (saphyr-parser) instead of source-text scanning, which also eliminates potential false positives from key names appearing in values or comments. (#97)
 - `Emitter::emit_str` and `emit_str_with_config` now always append a trailing newline, consistent with `emit_all_with_config` and POSIX text file convention. Affects `safe_dump`/`safeDump` in Python and NodeJS bindings. (#94)
 - `fy format` and `Emitter::format_str` now preserve `%YAML` and `%TAG` directives. Previously they were silently dropped because saphyr does not round-trip directives through its AST. (#95)
 - **Linter**: `DuplicateKeysRule` / `SourceMapper` now builds a full inverted key index in a single O(n) pass on first use instead of scanning all source lines for every unique key (O(n²)). `fy lint` performance on large files (Kubernetes manifests, OpenAPI specs) improves from unusable (37s for 10 000 keys) to near-linear. (#100)

@@ -13,6 +13,7 @@ categories = ["development-tools", "parsing"]
 [dependencies]
 fast-yaml-core = { workspace = true }
 is-terminal = { workspace = true }
+saphyr-parser = { workspace = true }
 serde = { workspace = true, optional = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
 thiserror = { workspace = true }
