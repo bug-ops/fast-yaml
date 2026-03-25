@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix(linter): `key-ordering` rule silently skipped nested mapping keys when the parent mapping had more than one top-level key; fixed by interleaving key location with value recursion (#130)
 - fix(linter): `enabled: false` in config file did not disable rules; `is_rule_disabled` now checks `rule_configs` in addition to the `disabled_rules` set (#133)
 - fix(linter): `float-values` rule now detects signed floats without a leading numeral (`-.5`, `+.5`) in addition to the previously handled bare `.5` case (#138)
+- fix(linter): `trailing-whitespace` rule no longer emits false-positive hints on CRLF files; the `\r` from a `\r\n` line ending is now stripped before the whitespace check (#141)
 
 ## [0.5.3] - 2026-03-25
 
