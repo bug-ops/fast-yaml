@@ -152,10 +152,15 @@ describe('Linter class', () => {
 
   it('lint() respects config passed to constructor', () => {
     const linter = new Linter({ allowDuplicateKeys: true });
-    // With no rules registered via new(), duplicate key rule may not trigger
     const result = linter.lint(DUPLICATE_KEYS_YAML);
-    // new() creates linter with no rules, so no diagnostics expected
-    expect(Array.isArray(result)).toBe(true);
+    const dup = result.find((d) => d.code === 'duplicate-key');
+    expect(dup).toBeUndefined();
+  });
+
+  it('new Linter() with no args uses default rules', () => {
+    const linter = new Linter();
+    const result = linter.lint('key: v1\nkey: v2\n');
+    expect(result.length).toBeGreaterThanOrEqual(1);
   });
 
   it('lint() throws on invalid YAML', () => {
@@ -166,8 +171,6 @@ describe('Linter class', () => {
 
 describe('Disabled rules', () => {
   it('disabling line-length suppresses line-length diagnostics', () => {
-    const _linter = new Linter({ disabledRules: ['line-length'] });
-    // new() creates linter with no rules, but let's also test via lint()
     const result = lint(LONG_LINE_YAML, { disabledRules: ['line-length'] });
     expect(result.find((d) => d.code === 'line-length')).toBeUndefined();
   });

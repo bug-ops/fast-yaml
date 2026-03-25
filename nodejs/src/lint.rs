@@ -250,7 +250,7 @@ impl Linter {
     pub fn new(config: Option<LintConfig>) -> napi::Result<Self> {
         let inner = match config {
             Some(cfg) => RustLinter::with_config(to_rust_lint_config(cfg)),
-            None => RustLinter::new(),
+            None => RustLinter::with_config(RustLintConfig::default()),
         };
         Ok(Self { inner })
     }
