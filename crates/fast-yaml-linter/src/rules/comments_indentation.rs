@@ -100,8 +100,14 @@ impl super::LintRule for CommentsIndentationRule {
                 break;
             }
 
-            // If no content found after, check previous content line
+            // If no content found after, check previous content line.
+            // Column-0 comments always belong to the top level, so skip the
+            // backward-scan entirely — using indentation from a preceding nested
+            // block would produce a false-positive diagnostic.
             if expected_indent.is_none() {
+                if comment_indent == 0 {
+                    continue;
+                }
                 for info in line_info.iter().take(comment_line_idx).rev() {
                     // Skip empty lines and comment lines
                     if info.is_empty || info.is_comment {
@@ -278,5 +284,92 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
+    }
+
+    // Regression tests for issue #166: top-level comment after nested block false positive
+
+    #[test]
+    fn test_toplevel_comment_after_nested_block() {
+        // Top-level comment after a nested block should not be flagged
+        let yaml = "a:\n  b: 2\n# top-level comment\nc: 3\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommentsIndentationRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "top-level comment after nested block should not produce diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_toplevel_comment_at_start() {
+        // Top-level comment before any content should not be flagged
+        let yaml = "# top-level header\na: 1\nb: 2\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommentsIndentationRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "top-level comment at file start should not produce diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_toplevel_comment_between_top_level_keys() {
+        // Top-level comment between two top-level keys should not be flagged
+        let yaml = "a: 1\n# separator\nb: 2\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommentsIndentationRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "top-level comment between top-level keys should not produce diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_indented_comment_in_nested_block_still_checked() {
+        // A comment indented to match nested block should still work correctly
+        let yaml = "root:\n  nested:\n    # comment at level 2\n    key: value\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommentsIndentationRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "correctly indented nested comment should not produce diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_indented_comment_wrong_level_still_flagged() {
+        // A comment with wrong indentation inside a nested block should still be flagged
+        let yaml = "root:\n  nested:\n  # wrong level comment\n    key: value\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommentsIndentationRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            !diagnostics.is_empty(),
+            "incorrectly indented nested comment should produce diagnostics"
+        );
     }
 }
