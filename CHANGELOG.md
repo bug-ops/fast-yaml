@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Emitter::emit_str` and `emit_str_with_config` now always append a trailing newline, consistent with `emit_all_with_config` and POSIX text file convention. Affects `safe_dump`/`safeDump` in Python and NodeJS bindings. (#94)
+- `fy format` and `Emitter::format_str` now preserve `%YAML` and `%TAG` directives. Previously they were silently dropped because saphyr does not round-trip directives through its AST. (#95)
 - Python/NodeJS bindings now correctly parse `True`/`TRUE`/`False`/`FALSE`/`Null`/`NULL` as bool/null per YAML 1.2.2 Core Schema (fixes #80)
 - `batch.format_files` now preserves trailing newline in formatted output (fixes #81)
 - **Linter**: `Linter::with_config()` now loads all default rules instead of an empty registry. Previously, constructing a `Linter` with a custom config silently disabled all linting rules, causing zero diagnostics regardless of input. Affects Rust, Python, and NodeJS bindings. (#86)
