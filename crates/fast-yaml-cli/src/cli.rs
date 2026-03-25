@@ -112,21 +112,29 @@ pub enum Command {
         /// Input file (default: stdin)
         file: Option<PathBuf>,
 
-        /// Maximum line length
-        #[arg(long, default_value = "120")]
-        max_line_length: usize,
+        /// Path to config file (default: auto-discover .fast-yaml.yaml)
+        #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
+        config: Option<PathBuf>,
 
-        /// Indentation size
-        #[arg(long, default_value = "2")]
-        indent_size: usize,
+        /// Disable config file auto-discovery
+        #[arg(long, conflicts_with = "config")]
+        no_config: bool,
+
+        /// Maximum line length (overrides config file)
+        #[arg(long)]
+        max_line_length: Option<usize>,
+
+        /// Indentation size (overrides config file)
+        #[arg(long)]
+        indent_size: Option<usize>,
 
         /// Lint output format
         #[arg(long, value_enum, default_value = "text")]
         format: LintFormat,
 
-        /// Allow duplicate keys (opt-in, suppresses duplicate key errors)
-        #[arg(long)]
-        allow_duplicate_keys: bool,
+        /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
+        #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+        allow_duplicate_keys: Option<bool>,
     },
 }
 
