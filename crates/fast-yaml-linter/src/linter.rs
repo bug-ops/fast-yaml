@@ -199,6 +199,46 @@ impl LintConfig {
             .unwrap_or(default)
     }
 
+    /// Sets whether the document start marker (`---`) is required.
+    ///
+    /// When `true`, the linter will warn if a document is missing `---`.
+    /// This is equivalent to setting `present: "required"` via `rule_configs` for
+    /// the `document-start` rule, but `rule_configs` takes priority if both are set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintConfig;
+    ///
+    /// let config = LintConfig::new().with_require_document_start(true);
+    /// assert!(config.require_document_start);
+    /// ```
+    #[must_use]
+    pub const fn with_require_document_start(mut self, require: bool) -> Self {
+        self.require_document_start = require;
+        self
+    }
+
+    /// Sets whether the document end marker (`...`) is required.
+    ///
+    /// When `true`, the linter will warn if a document is missing `...`.
+    /// This is equivalent to setting `present: true` via `rule_configs` for
+    /// the `document-end` rule, but `rule_configs` takes priority if both are set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintConfig;
+    ///
+    /// let config = LintConfig::new().with_require_document_end(true);
+    /// assert!(config.require_document_end);
+    /// ```
+    #[must_use]
+    pub const fn with_require_document_end(mut self, require: bool) -> Self {
+        self.require_document_end = require;
+        self
+    }
+
     /// Allows or disallows duplicate keys.
     ///
     /// # Examples
@@ -683,6 +723,82 @@ mod tests {
                 .iter()
                 .any(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES),
             "single-doc without empty values should produce no empty-values diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_require_document_start_missing() {
+        let yaml = "key: value\n";
+        let config = LintConfig::new().with_require_document_start(true);
+        let linter = Linter::with_all_rules_and_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
+            "require_document_start=true must produce a diagnostic when '---' is absent"
+        );
+    }
+
+    #[test]
+    fn test_require_document_start_present() {
+        let yaml = "---\nkey: value\n";
+        let config = LintConfig::new().with_require_document_start(true);
+        let linter = Linter::with_all_rules_and_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
+            "require_document_start=true must not produce a diagnostic when '---' is present"
+        );
+    }
+
+    #[test]
+    fn test_require_document_end_missing() {
+        let yaml = "key: value\n";
+        let config = LintConfig::new().with_require_document_end(true);
+        let linter = Linter::with_all_rules_and_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_END),
+            "require_document_end=true must produce a diagnostic when '...' is absent"
+        );
+    }
+
+    #[test]
+    fn test_require_document_end_present() {
+        let yaml = "key: value\n...\n";
+        let config = LintConfig::new().with_require_document_end(true);
+        let linter = Linter::with_all_rules_and_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_END),
+            "require_document_end=true must not produce a diagnostic when '...' is present"
+        );
+    }
+
+    #[test]
+    fn test_rule_config_overrides_require_document_start() {
+        // rule_configs with present="forbidden" should override require_document_start=true
+        let yaml = "---\nkey: value\n";
+        let config = LintConfig::new()
+            .with_require_document_start(true)
+            .with_rule_config(
+                crate::DiagnosticCode::DOCUMENT_START,
+                crate::config::RuleConfig::new().with_option("present", "forbidden"),
+            );
+        let linter = Linter::with_all_rules_and_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
+            "rule_config present=forbidden should override require_document_start and flag existing '---'"
         );
     }
 
