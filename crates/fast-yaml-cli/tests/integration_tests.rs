@@ -469,6 +469,7 @@ fn test_lint_valid_yaml() {
 fn test_lint_with_warnings() {
     let long_line = "name: this is a very very very very very very very very very very very very very very very very very very very very long line";
 
+    // line-length rule emits info-severity diagnostics.
     Command::cargo_bin("fy")
         .unwrap()
         .arg("lint")
@@ -478,7 +479,7 @@ fn test_lint_with_warnings() {
         .assert()
         .success()
         .code(0)
-        .stdout(predicate::str::contains("warning"));
+        .stdout(predicate::str::contains("line-length"));
 }
 
 #[test]
@@ -524,6 +525,7 @@ fn test_lint_with_indent_size_option() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_text_format() {
+    // Clean YAML produces no diagnostics — stdout must be empty.
     Command::cargo_bin("fy")
         .unwrap()
         .arg("lint")
@@ -533,7 +535,7 @@ fn test_lint_text_format() {
         .assert()
         .success()
         .code(0)
-        .stdout(predicate::str::contains("errors"));
+        .stdout(predicate::str::is_empty());
 }
 
 #[test]
@@ -595,6 +597,7 @@ fn test_lint_file_input() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_trailing_whitespace() {
+    // trailing-whitespace rule emits hint-severity diagnostics.
     Command::cargo_bin("fy")
         .unwrap()
         .arg("lint")
@@ -602,7 +605,7 @@ fn test_lint_trailing_whitespace() {
         .assert()
         .success()
         .code(0)
-        .stdout(predicate::str::contains("warning"));
+        .stdout(predicate::str::contains("trailing-whitespace"));
 }
 
 // =============================================================================

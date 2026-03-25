@@ -15,7 +15,7 @@ use std::fmt::Write;
 ///
 /// let formatter = TextFormatter::new();
 /// let output = formatter.format(&[], "");
-/// assert!(output.contains("0 errors"));
+/// assert!(output.is_empty());
 /// ```
 pub struct TextFormatter {
     /// Show source context.
@@ -193,13 +193,9 @@ impl Formatter for TextFormatter {
             .filter(|d| d.severity == Severity::Warning)
             .count();
 
-        let summary = if error_count > 0 || warning_count > 0 {
-            format!("{error_count} errors, {warning_count} warnings")
-        } else {
-            "0 errors, 0 warnings".to_string()
-        };
-
-        writeln!(output, "{summary}").unwrap();
+        if error_count > 0 || warning_count > 0 {
+            writeln!(output, "{error_count} errors, {warning_count} warnings").unwrap();
+        }
 
         output
     }
@@ -227,7 +223,7 @@ mod tests {
     fn test_formatter_empty() {
         let formatter = TextFormatter::new();
         let output = formatter.format(&[], "");
-        assert!(output.contains("0 errors, 0 warnings"));
+        assert!(output.is_empty());
     }
 
     #[test]

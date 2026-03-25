@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use fast_yaml_linter::{Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter};
+use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
 use rayon::prelude::*;
 
 use crate::cli::LintFormat;
@@ -79,16 +79,17 @@ pub fn execute_lint_batch(config: &LintBatchConfig, paths: &[PathBuf]) -> Result
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 
-    // Process files in parallel, collecting (path, output, has_errors) tuples
-    let results: Vec<(PathBuf, String, bool)> = pool.install(|| {
+    // Process files in parallel, collecting (path, content, diagnostics, has_errors) tuples.
+    // Read/lint errors are printed to stderr directly; has_errors=true is set in that case.
+    let results: Vec<(PathBuf, String, Vec<Diagnostic>, bool)> = pool.install(|| {
         file_paths
             .par_iter()
             .map(|path| {
                 let content = match std::fs::read_to_string(path) {
                     Ok(c) => c,
                     Err(e) => {
-                        let msg = format!("error: failed to read '{}': {e}\n", path.display());
-                        return (path.clone(), msg, true);
+                        eprintln!("error: failed to read '{}': {e}", path.display());
+                        return (path.clone(), String::new(), vec![], true);
                     }
                 };
 
@@ -96,8 +97,8 @@ pub fn execute_lint_batch(config: &LintBatchConfig, paths: &[PathBuf]) -> Result
                 let diagnostics = match linter.lint(&content) {
                     Ok(d) => d,
                     Err(e) => {
-                        let msg = format!("error: '{}': {e}\n", path.display());
-                        return (path.clone(), msg, true);
+                        eprintln!("error: '{}': {e}", path.display());
+                        return (path.clone(), content, vec![], true);
                     }
                 };
 
@@ -111,38 +112,45 @@ pub fn execute_lint_batch(config: &LintBatchConfig, paths: &[PathBuf]) -> Result
                 };
 
                 let has_errors = filtered.iter().any(|d| d.severity == Severity::Error);
-
-                let output = match format {
-                    LintFormat::Text => {
-                        let mut formatter = TextFormatter::new();
-                        formatter.use_color = use_color;
-                        formatter.format(&filtered, &content)
-                    }
-                    LintFormat::Json => {
-                        let formatter = JsonFormatter::new(true);
-                        formatter.format(&filtered, &content)
-                    }
-                };
-
-                // Prefix output with the file path when linting multiple files
-                let prefixed = if output.is_empty() {
-                    output
-                } else {
-                    format!("{}:\n{}", path.display(), output)
-                };
-
-                (path.clone(), prefixed, has_errors)
+                (path.clone(), content, filtered, has_errors)
             })
             .collect()
     });
 
-    let mut any_errors = false;
-    for (_path, output, has_errors) in &results {
-        if !output.is_empty() {
-            print!("{output}");
+    let any_errors = results.iter().any(|(_, _, _, has_errors)| *has_errors);
+
+    match format {
+        LintFormat::Text => {
+            for (path, content, diagnostics, _) in &results {
+                if diagnostics.is_empty() {
+                    continue;
+                }
+                let mut formatter = TextFormatter::new();
+                formatter.use_color = use_color;
+                let output = formatter.format(diagnostics, content);
+                if !output.is_empty() {
+                    println!("{}:", path.display());
+                    print!("{output}");
+                }
+            }
         }
-        if *has_errors {
-            any_errors = true;
+        LintFormat::Json => {
+            // Collect all diagnostics into a single JSON array with a `file` field.
+            let all: Vec<serde_json::Value> = results
+                .iter()
+                .flat_map(|(path, _, diagnostics, _)| {
+                    let file = path.display().to_string();
+                    diagnostics.iter().map(move |d| {
+                        let mut v = serde_json::to_value(d).unwrap_or(serde_json::Value::Null);
+                        if let serde_json::Value::Object(ref mut map) = v {
+                            map.insert("file".to_string(), serde_json::Value::String(file.clone()));
+                        }
+                        v
+                    })
+                })
+                .collect();
+            let json = serde_json::to_string_pretty(&all).unwrap_or_else(|_| "[]".to_string());
+            println!("{json}");
         }
     }
 
