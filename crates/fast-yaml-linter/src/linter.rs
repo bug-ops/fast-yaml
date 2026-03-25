@@ -366,7 +366,7 @@ impl Linter {
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
         let docs = Parser::parse_all(source)?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
-        let context = LintContext::new(source);
+        let mut context = LintContext::new(source);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
@@ -377,9 +377,10 @@ impl Linter {
             if rule.needs_value() {
                 for (idx, doc) in docs.iter().enumerate() {
                     let start_line = doc_start_lines.get(idx).copied().unwrap_or(1);
-                    let doc_context = LintContext::new(source).with_doc_start_line(start_line);
-                    diagnostics.extend(rule.check(&doc_context, doc, &self.config));
+                    context.set_doc_start_line(start_line);
+                    diagnostics.extend(rule.check(&context, doc, &self.config));
                 }
+                context.set_doc_start_line(1);
             } else {
                 let dummy = Value::Value(ScalarOwned::Null);
                 diagnostics.extend(rule.check(&context, &dummy, &self.config));

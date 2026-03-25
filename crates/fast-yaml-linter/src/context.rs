@@ -483,6 +483,16 @@ impl<'a> LintContext<'a> {
         self
     }
 
+    /// Sets the document start line in-place.
+    ///
+    /// Prefer this over [`with_doc_start_line`](Self::with_doc_start_line) when you already have
+    /// a fully constructed `LintContext` and want to reuse it across multiple documents in a
+    /// multi-document stream. Mutating only `doc_start_line` avoids rebuilding the underlying
+    /// [`SourceContext`] and recomputing cached data, eliminating `O(source_len)` work per document.
+    pub const fn set_doc_start_line(&mut self, line: usize) {
+        self.doc_start_line = line;
+    }
+
     /// Returns the 1-based line number where the current document begins.
     ///
     /// For a single-document source this is always 1. For multi-document

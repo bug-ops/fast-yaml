@@ -2,7 +2,7 @@
 
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    SourceContext, Span, source::SourceMapper,
+    SourceContext, Span,
 };
 use fast_yaml_core::Value;
 
@@ -51,7 +51,6 @@ impl super::LintRule for EmptyValuesRule {
     }
 
     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let forbid_block = config
             .get_rule_config(self.code())
             .and_then(|rc| rc.options.get_bool("forbid_in_block_mappings"))
@@ -72,13 +71,10 @@ impl super::LintRule for EmptyValuesRule {
         }
 
         let mut diagnostics = Vec::new();
-        let mapper = SourceMapper::new(source);
         let source_context = context.source_context();
 
         check_value_for_empty(
             value,
-            source,
-            &mapper,
             source_context,
             &mut diagnostics,
             config,
@@ -95,8 +91,6 @@ impl super::LintRule for EmptyValuesRule {
 #[allow(clippy::too_many_arguments)]
 fn check_value_for_empty(
     value: &Value,
-    source: &str,
-    mapper: &SourceMapper<'_>,
     source_context: &SourceContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
     config: &LintConfig,
@@ -111,13 +105,13 @@ fn check_value_for_empty(
                 // Check if value is null and has no explicit null in source
                 if val.is_null()
                     && let Some(key_str) = key.as_str()
-                    && !has_explicit_null_value(source, key_str, mapper)
+                    && !has_explicit_null_value(key_str, source_context)
                 {
                     // Determine if it's in a flow or block mapping
-                    let is_flow = is_in_flow_mapping(source, key_str);
+                    let is_flow = is_in_flow_mapping(key_str, source_context);
 
                     if ((is_flow && forbid_flow) || (!is_flow && forbid_block))
-                        && let Some(span) = find_empty_value_span(source, key_str, mapper)
+                        && let Some(span) = find_empty_value_span(key_str, source_context)
                     {
                         let severity = config.get_effective_severity(code, Severity::Warning);
                         diagnostics.push(
@@ -136,8 +130,6 @@ fn check_value_for_empty(
                 // Recurse into nested structures
                 check_value_for_empty(
                     val,
-                    source,
-                    mapper,
                     source_context,
                     diagnostics,
                     config,
@@ -153,7 +145,7 @@ fn check_value_for_empty(
                 // Check for null items in sequences
                 if item.is_null() && forbid_block_sequences {
                     // Check if this is an implicit null in a block sequence
-                    if is_in_block_sequence_with_implicit_null(source, idx) {
+                    if is_in_block_sequence_with_implicit_null() {
                         let severity = config.get_effective_severity(code, Severity::Warning);
                         // Create a diagnostic for the null item in sequence
                         // For simplicity, we'll mark the whole source
@@ -175,8 +167,6 @@ fn check_value_for_empty(
 
                 check_value_for_empty(
                     item,
-                    source,
-                    mapper,
                     source_context,
                     diagnostics,
                     config,
@@ -191,9 +181,9 @@ fn check_value_for_empty(
     }
 }
 
-fn has_explicit_null_value(_source: &str, key: &str, mapper: &SourceMapper<'_>) -> bool {
-    for line_num in 1..=mapper.context().line_count() {
-        if let Some(line) = mapper.context().get_line(line_num) {
+fn has_explicit_null_value(key: &str, source_context: &SourceContext<'_>) -> bool {
+    for line_num in 1..=source_context.line_count() {
+        if let Some(line) = source_context.get_line(line_num) {
             let trimmed = line.trim_start();
             if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
                 let after_colon = trimmed[key.len() + 1..].trim();
@@ -213,55 +203,48 @@ fn has_explicit_null_value(_source: &str, key: &str, mapper: &SourceMapper<'_>) 
     false
 }
 
-fn is_in_flow_mapping(source: &str, key: &str) -> bool {
-    // Key-colon pattern to search for
+fn is_in_flow_mapping(key: &str, source_context: &SourceContext<'_>) -> bool {
     let key_colon = format!("{key}:");
-    for line in source.lines() {
-        // Find all occurrences of "key:" on the line
-        let mut search_from = 0;
-        while let Some(pos) = line[search_from..].find(key_colon.as_str()) {
-            let abs_pos = search_from + pos;
-            // Verify exact boundary: char before key must not be alphanumeric/underscore/hyphen
-            let before_ok = abs_pos == 0
-                || !line
-                    .as_bytes()
-                    .get(abs_pos - 1)
-                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
-            if before_ok {
-                // Check if there's a '{' before this position on the same line
-                if line[..abs_pos].contains('{') {
+    for line_num in 1..=source_context.line_count() {
+        if let Some(line) = source_context.get_line(line_num) {
+            let mut search_from = 0;
+            while let Some(pos) = line[search_from..].find(key_colon.as_str()) {
+                let abs_pos = search_from + pos;
+                let before_ok = abs_pos == 0
+                    || !line
+                        .as_bytes()
+                        .get(abs_pos - 1)
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
+                if before_ok && line[..abs_pos].contains('{') {
                     return true;
                 }
+                search_from = abs_pos + 1;
             }
-            search_from = abs_pos + 1;
         }
     }
 
     false
 }
 
-fn find_empty_value_span(_source: &str, key: &str, mapper: &SourceMapper<'_>) -> Option<Span> {
+fn find_empty_value_span(key: &str, source_context: &SourceContext<'_>) -> Option<Span> {
     let key_colon = format!("{key}:");
-    for line_num in 1..=mapper.context().line_count() {
-        if let Some(line) = mapper.context().get_line(line_num) {
+    for line_num in 1..=source_context.line_count() {
+        if let Some(line) = source_context.get_line(line_num) {
             let trimmed = line.trim_start();
             let indent = line.len() - trimmed.len();
 
             // Block mapping: key starts trimmed line
             if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
                 let abs_colon_pos = indent + key.len();
-                let line_offset: usize = (1..line_num)
-                    .filter_map(|ln| mapper.context().get_line(ln))
-                    .map(|l| l.len() + 1)
-                    .sum();
-
+                // Use pre-built line offset index — O(1) instead of O(line_num) sum.
+                let line_offset = source_context.get_line_offset(line_num);
                 return Some(Span::new(
                     Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
                     Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
                 ));
             }
 
-            // Flow mapping: key appears after '{' or ',' on the same line
+            // Flow mapping: key appears after '{' on the same line
             let mut search_from = 0;
             while let Some(rel_pos) = line[search_from..].find(key_colon.as_str()) {
                 let abs_pos = search_from + rel_pos;
@@ -272,11 +255,8 @@ fn find_empty_value_span(_source: &str, key: &str, mapper: &SourceMapper<'_>) ->
                         .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
                 if before_ok && line[..abs_pos].contains('{') {
                     let abs_colon_pos = abs_pos + key.len();
-                    let line_offset: usize = (1..line_num)
-                        .filter_map(|ln| mapper.context().get_line(ln))
-                        .map(|l| l.len() + 1)
-                        .sum();
-
+                    // Use pre-built line offset index — O(1) instead of O(line_num) sum.
+                    let line_offset = source_context.get_line_offset(line_num);
                     return Some(Span::new(
                         Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
                         Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
@@ -290,7 +270,7 @@ fn find_empty_value_span(_source: &str, key: &str, mapper: &SourceMapper<'_>) ->
     None
 }
 
-const fn is_in_block_sequence_with_implicit_null(_source: &str, _idx: usize) -> bool {
+const fn is_in_block_sequence_with_implicit_null() -> bool {
     // For now, we'll return false to avoid false positives
     // A full implementation would need to track which array items
     // are from block sequences vs flow sequences and check for implicit nulls
