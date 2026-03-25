@@ -182,7 +182,7 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 21);
+    /// assert_eq!(registry.rules().len(), 22);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
@@ -217,9 +217,10 @@ impl RuleRegistry {
         registry.add(Box::new(KeyOrderingRule));
         registry.add(Box::new(FloatValuesRule));
 
+        registry.add(Box::new(InvalidAnchorsRule));
+
         // Not yet implemented - planned for future phases
         // registry.add(Box::new(IndentationRule));
-        // registry.add(Box::new(InvalidAnchorsRule));
 
         registry
     }
@@ -292,7 +293,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 21);
+        assert_eq!(registry.rules().len(), 22);
     }
 
     #[test]
@@ -319,6 +320,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 21);
+        assert_eq!(registry.rules().len(), 22);
     }
 }
