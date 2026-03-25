@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix(linter): `float-values` rule now detects signed floats without a leading numeral (`-.5`, `+.5`) in addition to the previously handled bare `.5` case (#138)
 - fix(linter): `trailing-whitespace` rule no longer emits false-positive hints on CRLF files; the `\r` from a `\r\n` line ending is now stripped before the whitespace check (#141)
 - fix(linter): value-based rules (`key-ordering`, `empty-values`) now check all documents in a multi-document YAML stream; previously only the first document was checked (#142)
+- fix(linter): `rules.indentation.indent-size` in config file is now forwarded to `LintConfig::indent_size`; previously the option was stored in `rule_configs` but never applied, so the default 2-space indent was always used (#149)
 
 ## [0.5.3] - 2026-03-25
 
