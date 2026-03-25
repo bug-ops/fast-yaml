@@ -215,7 +215,10 @@ impl QuotedStringsRule {
                 }
 
                 if required == "only-when-needed" {
-                    let needs = Self::needs_quotes(value)
+                    let has_escape =
+                        style == ScalarStyle::DoubleQuoted && Self::has_yaml_escape(value);
+                    let needs = has_escape
+                        || Self::needs_quotes(value)
                         || extra_required.iter().any(|p| value.contains(p.as_str()));
                     if !needs {
                         let severity =
@@ -280,6 +283,24 @@ impl QuotedStringsRule {
             Location::new(line, col + 1, offset),
             Location::new(line, col + 1 + len, offset + len),
         )
+    }
+
+    /// Returns `true` if a double-quoted scalar's decoded value indicates it required escape
+    /// sequences in the source.
+    ///
+    /// Saphyr provides the already-decoded scalar value. A double-quoted string that contained
+    /// YAML escape sequences (`\n`, `\t`, `\r`, `\\`, `\"`, `\uXXXX`, etc.) will decode to
+    /// a string that either contains a backslash (from `\\`) or contains control characters
+    /// (from `\n`, `\t`, etc.). In either case, removing the quotes would produce a different
+    /// value, so the quotes are necessary.
+    fn has_yaml_escape(value: &str) -> bool {
+        value.contains('\\')
+            || value.chars().any(|c| {
+                matches!(
+                    c,
+                    '\n' | '\r' | '\t' | '\x00' | '\x07' | '\x08' | '\x0C' | '\x0B' | '\x1B'
+                )
+            })
     }
 
     /// Checks if a string needs quotes based on YAML syntax rules.
@@ -525,6 +546,57 @@ mod tests {
 
         assert!(!QuotedStringsRule::needs_quotes("simple"));
         assert!(!QuotedStringsRule::needs_quotes("hello_world"));
+    }
+
+    // Regression tests for issue #175: false positive on double-quoted strings with escapes.
+
+    #[test]
+    fn test_no_false_positive_escape_newline() {
+        // "\n" is a newline escape — removing quotes would produce a literal 'n', not a newline.
+        let yaml = "message: \"line1\\nline2\"";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for double-quoted string with \\n escape, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_false_positive_escape_tab() {
+        let yaml = "data: \"col1\\tcol2\"";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for double-quoted string with \\t escape, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_false_positive_escape_backslash() {
+        let yaml = r#"path: "C:\\Users\\foo""#;
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for double-quoted string with \\\\ escape, got: {diagnostics:?}"
+        );
     }
 
     // Regression tests for issue #113: false positives on quotes inside plain scalars.

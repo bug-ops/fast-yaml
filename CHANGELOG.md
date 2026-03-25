@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- fix(linter): `quoted-strings` rule no longer emits "does not need quotes" for double-quoted strings that contain YAML escape sequences (`\n`, `\t`, `\\`, `\"`, `\uXXXX`, etc.); removing quotes would silently corrupt the value (#175)
+- fix(linter): `octal-values` rule no longer fires on octal patterns (`0o\d+`, `0\d+`) found inside YAML comment lines or inline comments (#176)
+- fix(linter): `octal-values` diagnostic position now points to the octal value token, not to column 1 of the mapping key (#177)
 - fix(linter): correct `hyphens` rule false positives on list items following non-ASCII (multibyte) characters by using byte-level indexing instead of `chars().nth(offset)` (#161)
 - fix(linter): `comments-indentation` rule no longer emits false-positive diagnostics for column-0 comments that follow a nested block; column-0 comments are always valid top-level comments and are skipped unconditionally (#166)
 - fix(python): `LintConfig(disabled_rules=...)` now accepts any iterable (list, tuple, set) instead of requiring a set; the argument is converted to a set internally (#168)
