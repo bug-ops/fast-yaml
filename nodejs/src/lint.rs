@@ -213,19 +213,13 @@ fn parse_rule_config_json(value: &JsonValue) -> napi::Result<RustRuleConfig> {
             let mut rc = RustRuleConfig::new();
 
             // Parse optional `enabled` field
-            if let Some(enabled_val) = obj.get("enabled") {
-                if let Some(enabled) = enabled_val.as_bool() {
-                    if !enabled {
-                        rc = RustRuleConfig::disabled();
-                    }
-                }
+            if obj.get("enabled").and_then(JsonValue::as_bool) == Some(false) {
+                rc = RustRuleConfig::disabled();
             }
 
             // Parse optional `severity` field (applied after enabled to preserve it)
-            if let Some(sev_val) = obj.get("severity") {
-                if let Some(sev_str) = sev_val.as_str() {
-                    rc = rc.with_severity(parse_severity_str(sev_str)?);
-                }
+            if let Some(sev_str) = obj.get("severity").and_then(JsonValue::as_str) {
+                rc = rc.with_severity(parse_severity_str(sev_str)?);
             }
 
             Ok(rc)

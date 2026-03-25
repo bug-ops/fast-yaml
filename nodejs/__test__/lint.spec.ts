@@ -188,7 +188,7 @@ describe('Per-rule severity overrides', () => {
     });
     const diag = result.find((d) => d.code === 'duplicate-key');
     expect(diag).toBeDefined();
-    expect(diag!.severity).toBe('Warning');
+    expect(diag?.severity).toBe('Warning');
   });
 
   it('string shorthand: severity override changes diagnostic severity', () => {
@@ -197,7 +197,7 @@ describe('Per-rule severity overrides', () => {
     });
     const diag = result.find((d) => d.code === 'duplicate-key');
     expect(diag).toBeDefined();
-    expect(diag!.severity).toBe('Warning');
+    expect(diag?.severity).toBe('Warning');
   });
 
   it('enabled: false disables the rule', () => {
@@ -209,7 +209,7 @@ describe('Per-rule severity overrides', () => {
 
   it('invalid severity string throws an error', () => {
     expect(() =>
-      lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': 'critical' as any } }),
+      lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': 'critical' as unknown as 'error' } })
     ).toThrow(/Invalid severity/);
   });
 

@@ -521,8 +521,8 @@ impl PyLintConfig {
             rule_configs: std::collections::HashMap::new(),
         };
 
-        if let Some(rules_any) = rules {
-            let rules_dict = rules_any.cast::<PyDict>()?;
+        if let Some(rules_obj) = rules {
+            let rules_dict = rules_obj.cast::<PyDict>()?;
             for (key, value) in rules_dict.iter() {
                 let code: String = key.extract()?;
                 let rc = if let Ok(sev_str) = value.extract::<&str>() {
@@ -597,10 +597,8 @@ impl PyLintConfig {
     ) -> PyResult<Self> {
         let mut rc = fast_yaml_linter::config::RuleConfig::new();
 
-        if let Some(enabled_val) = enabled {
-            if !enabled_val {
-                rc = fast_yaml_linter::config::RuleConfig::disabled();
-            }
+        if enabled == Some(false) {
+            rc = fast_yaml_linter::config::RuleConfig::disabled();
         }
 
         if let Some(sev_str) = severity {
