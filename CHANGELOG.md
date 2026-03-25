@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-03-25
+
 ### Added
 
 - Python `safe_dump()` now accepts `explicit_start`, `indent`, `width`, and `default_flow_style` parameters, matching the underlying `_core.safe_dump` and PyYAML API (closes #93)
@@ -560,8 +562,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.1...HEAD
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/bug-ops/fast-yaml/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/bug-ops/fast-yaml/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/bug-ops/fast-yaml/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/bug-ops/fast-yaml/compare/v0.4.1...v0.5.0
