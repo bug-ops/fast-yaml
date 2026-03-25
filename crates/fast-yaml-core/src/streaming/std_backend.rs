@@ -8,6 +8,7 @@ use std::fmt::Write as FmtWrite;
 use saphyr_parser::Parser;
 
 use super::Context;
+use super::extract_anchor_names;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
@@ -155,7 +156,9 @@ pub fn format_streaming(input: &str, config: &EmitterConfig) -> EmitResult<Strin
     // Pre-allocate for a reasonable number of anchors (~4 anchors per KB)
     let anchor_capacity = input.len().min(1024) / 256;
 
-    let backend = StdBackend::new(context_capacity, anchor_capacity.max(1));
+    let anchor_names = extract_anchor_names(input);
+    let mut backend = StdBackend::new(context_capacity, anchor_capacity.max(1));
+    *backend.anchor_store_mut() = anchor_names;
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend);
 
     for result in parser {

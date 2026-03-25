@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Formatter**: `fy format` and `format_streaming` now preserve user-defined anchor names (e.g. `&defaults` stays `&defaults` instead of being renamed to `&anchor1`). The streaming formatter pre-scans the input to extract anchor names before processing events. (#120)
 - **CLI**: `fy lint` no longer reports each `duplicate-key` diagnostic twice. `Linter::with_config` already registers all default rules via `with_default_rules()`; the redundant manual `add_rule` calls in `lint.rs` have been removed. (#111)
 - **Linter**: `quoted-strings` rule no longer emits false positives when quote characters (`"` or `'`) appear as literal content inside plain (unquoted) YAML scalars. For example, `run: echo "hello"` and `if: ${{ github.event_name == 'push' }}` no longer trigger warnings. The rule was rewritten to use saphyr-parser event-based scalar style detection instead of raw source character scanning. (#113)
 - **Linter**: `brackets`, `braces`, and `commas` rules no longer fire false positives on content inside YAML block scalars (`|` literal, `>` folded). Previously, shell scripts and other arbitrary text in `run: |` blocks would trigger spurious diagnostics. The tokenizer now skips all tokens whose byte offset falls inside a block scalar range, detected via saphyr event stream. (#116)
