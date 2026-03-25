@@ -470,12 +470,16 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         let indent_chars = self.indent_level.saturating_mul(self.config.indent);
 
         for line in value.lines() {
-            if indent_chars <= INDENT_SPACES.len() {
-                self.output.push_str(&INDENT_SPACES[..indent_chars]);
-            } else {
-                self.output.push_str(&" ".repeat(indent_chars));
+            // Blank lines inside block scalars must not receive indentation — that
+            // would create trailing whitespace, which is a lint violation.
+            if !line.is_empty() {
+                if indent_chars <= INDENT_SPACES.len() {
+                    self.output.push_str(&INDENT_SPACES[..indent_chars]);
+                } else {
+                    self.output.push_str(&" ".repeat(indent_chars));
+                }
+                self.output.push_str(line);
             }
-            self.output.push_str(line);
             self.output.push('\n');
         }
     }
