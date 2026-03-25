@@ -187,6 +187,73 @@ class TestSafeDumpOptions:
         result = fast_yaml.safe_dump({"k": "v"})
         assert not result.startswith("---")
 
+    def test_indent_default(self):
+        """safe_dump() uses 2-space indent by default."""
+        data = {"parent": {"child": "value"}}
+        result = fast_yaml.safe_dump(data)
+        lines = result.splitlines()
+        nested_line = next(ln for ln in lines if "child" in ln)
+        assert nested_line.startswith("  "), f"Expected 2-space indent, got: {repr(nested_line)}"
+        assert not nested_line.startswith("    "), (
+            f"Expected exactly 2-space indent, got: {repr(nested_line)}"
+        )
+
+    def test_indent_2(self):
+        """safe_dump() with indent=2 indents nested values 2 spaces."""
+        data = {"parent": {"child": "value"}}
+        result = fast_yaml.safe_dump(data, indent=2)
+        lines = result.splitlines()
+        nested_line = next(ln for ln in lines if "child" in ln)
+        assert nested_line.startswith("  "), f"Expected 2-space indent, got: {repr(nested_line)}"
+
+    def test_indent_4(self):
+        """safe_dump() with indent=4 indents nested values 4 spaces."""
+        data = {"parent": {"child": "value"}}
+        result = fast_yaml.safe_dump(data, indent=4)
+        lines = result.splitlines()
+        nested_line = next(ln for ln in lines if "child" in ln)
+        assert nested_line.startswith("    "), f"Expected 4-space indent, got: {repr(nested_line)}"
+        assert not nested_line.startswith("     "), (
+            f"Expected exactly 4-space indent, got: {repr(nested_line)}"
+        )
+
+    def test_indent_8(self):
+        """safe_dump() with indent=8 indents nested values 8 spaces."""
+        data = {"parent": {"child": "value"}}
+        result = fast_yaml.safe_dump(data, indent=8)
+        lines = result.splitlines()
+        nested_line = next(ln for ln in lines if "child" in ln)
+        assert nested_line.startswith("        "), (
+            f"Expected 8-space indent, got: {repr(nested_line)}"
+        )
+
+    def test_default_flow_style_false(self):
+        """safe_dump() with default_flow_style=False produces block style."""
+        data = {"key": [1, 2, 3]}
+        result = fast_yaml.safe_dump(data, default_flow_style=False)
+        assert "- 1" in result
+        assert "[1, 2, 3]" not in result
+
+    def test_default_flow_style_true(self):
+        """safe_dump() with default_flow_style=True produces flow style."""
+        data = {"key": [1, 2, 3]}
+        result = fast_yaml.safe_dump(data, default_flow_style=True)
+        assert "[1, 2, 3]" in result or "{key: [1, 2, 3]}" in result
+
+    def test_default_flow_style_true_dict(self):
+        """safe_dump() with default_flow_style=True produces flow style for dicts."""
+        data = {"outer": {"inner": "value"}}
+        result = fast_yaml.safe_dump(data, default_flow_style=True)
+        assert "{" in result and "}" in result
+
+    def test_indent_4_with_flow_style_false(self):
+        """safe_dump() with indent=4 and default_flow_style=False works correctly."""
+        data = {"parent": {"child": "value"}}
+        result = fast_yaml.safe_dump(data, indent=4, default_flow_style=False)
+        lines = result.splitlines()
+        nested_line = next(ln for ln in lines if "child" in ln)
+        assert nested_line.startswith("    "), f"Expected 4-space indent, got: {repr(nested_line)}"
+
     def test_indent(self):
         """safe_dump() respects indent parameter."""
         data = {"nested": {"a": 1, "b": 2}}

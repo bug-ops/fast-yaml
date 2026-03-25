@@ -141,6 +141,16 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_str_with_config(value: &Value, config: &EmitterConfig) -> EmitResult<String> {
+        // When flow style is requested, use the custom path that renders {k: v} / [a, b].
+        if config.default_flow_style == Some(true) {
+            let raw = Self::emit_flow(value)?;
+            let mut output = Self::apply_formatting(raw, config);
+            if !output.is_empty() && !output.ends_with('\n') {
+                output.push('\n');
+            }
+            return Ok(output);
+        }
+
         let estimated_size = Self::estimate_output_size(value);
         let mut output = String::with_capacity(estimated_size);
         {
@@ -330,11 +340,10 @@ impl Emitter {
         // saphyr outputs "inf"/"-inf"/"NaN", but YAML 1.2 requires ".inf"/"-.inf"/".nan"
         output = Self::fix_special_floats(&output);
 
-        // TODO: Apply indent transformation if config.indent != 2
-        // This would require parsing indentation patterns and adjusting them
-
-        // TODO: Apply width transformation if config.width != 80
-        // This would require line wrapping logic
+        // Re-indent when caller requests a width other than saphyr's fixed 2 spaces.
+        if config.indent != 2 {
+            output = Self::reindent(&output, config.indent);
+        }
 
         output
     }
@@ -726,6 +735,115 @@ impl Emitter {
             }
         }
         out
+    }
+
+    /// Emit a value in YAML flow style: mappings as `{k: v}`, sequences as `[a, b]`.
+    ///
+    /// Scalar values are rendered inline.  Nested collections are also rendered
+    /// in flow style recursively.
+    ///
+    /// Returns a string without a leading `---\n` marker and without a trailing newline.
+    fn emit_flow(value: &Value) -> EmitResult<String> {
+        match value {
+            Value::Mapping(map) => {
+                let mut out = String::from("{");
+                for (i, (k, v)) in map.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    let key_str = Self::emit_scalar_inline(k)?;
+                    let val_str = Self::emit_flow(v)?;
+                    write!(out, "{key_str}: {val_str}")
+                        .map_err(|e| EmitError::Emit(e.to_string()))?;
+                }
+                out.push('}');
+                Ok(out)
+            }
+            Value::Sequence(seq) => {
+                let mut out = String::from("[");
+                for (i, item) in seq.iter().enumerate() {
+                    if i > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push_str(&Self::emit_flow(item)?);
+                }
+                out.push(']');
+                Ok(out)
+            }
+            // Scalars: use the inline scalar renderer (no trailing newline)
+            _ => Self::emit_value_inline(value),
+        }
+    }
+
+    /// Re-indent saphyr output from 2-space indentation to `target` spaces per level.
+    ///
+    /// Lines that form block scalar bodies (content under `|` / `>`) retain their
+    /// relative spacing; only the base indent level is rescaled.
+    ///
+    /// `---` / `...` markers and directive lines (`%YAML`, `%TAG`) are left unchanged.
+    fn reindent(output: &str, target: usize) -> String {
+        let mut result = String::with_capacity(output.len());
+        let mut in_block_scalar = false;
+        let mut block_scalar_base_indent: usize = 0;
+
+        for (i, line) in output.lines().enumerate() {
+            if i > 0 {
+                result.push('\n');
+            }
+
+            // Directives and document markers: never re-indent.
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("---")
+                || trimmed.starts_with("...")
+                || trimmed.starts_with("%YAML")
+                || trimmed.starts_with("%TAG")
+            {
+                in_block_scalar = false;
+                result.push_str(line);
+                continue;
+            }
+
+            let leading = line.len() - trimmed.len();
+            let level = leading / 2; // saphyr always uses 2-space indent
+
+            if in_block_scalar {
+                // Inside a block scalar body: keep lines that are deeper than the
+                // mapping/sequence key that introduced the scalar.
+                if leading > block_scalar_base_indent {
+                    // Rescale: base_level * target + (extra spaces beyond base)
+                    let base_level = block_scalar_base_indent / 2;
+                    let extra = leading - block_scalar_base_indent;
+                    let new_leading = base_level * target + extra;
+                    let spaces = " ".repeat(new_leading);
+                    result.push_str(&spaces);
+                    result.push_str(trimmed);
+                    continue;
+                }
+                // Dedented back out of the block scalar
+                in_block_scalar = false;
+            }
+
+            // Detect start of block scalar: line ends with `|` or `>` (with optional
+            // chomping indicator and trailing whitespace).
+            let value_part = trimmed.trim_end_matches(|c: char| c.is_whitespace());
+            let last_nonws = value_part.trim_start_matches(|c: char| c != '|' && c != '>');
+            if last_nonws.starts_with('|') || last_nonws.starts_with('>') {
+                in_block_scalar = true;
+                block_scalar_base_indent = leading;
+            }
+
+            let new_leading = level * target;
+            let spaces = " ".repeat(new_leading);
+            result.push_str(&spaces);
+            result.push_str(trimmed);
+        }
+
+        // Preserve trailing newline if present
+        if output.ends_with('\n') {
+            result.push('\n');
+        }
+
+        result
     }
 
     /// Format a YAML string with default configuration.
@@ -1685,5 +1803,103 @@ mod tests {
             result.contains("second: doc"),
             "second document must be present, got: {result:?}"
         );
+    }
+
+    // Tests for issue #127: indent and default_flow_style must be applied.
+
+    #[test]
+    fn test_emit_with_indent_4() {
+        use saphyr::MappingOwned;
+
+        let mut map = MappingOwned::new();
+        map.insert(
+            Value::Value(ScalarOwned::String("key".to_string())),
+            Value::Sequence(vec![
+                Value::Value(ScalarOwned::Integer(1)),
+                Value::Value(ScalarOwned::Integer(2)),
+            ]),
+        );
+        let value = Value::Mapping(map);
+        let config = EmitterConfig::new().with_indent(4);
+        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
+        // With indent=4, list items under a key should start with 4 spaces.
+        assert!(
+            result.contains("    - 1") || result.contains("    -"),
+            "indent=4 should produce 4-space indentation, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_emit_default_flow_style_true_mapping() {
+        use saphyr::MappingOwned;
+
+        let mut map = MappingOwned::new();
+        map.insert(
+            Value::Value(ScalarOwned::String("a".to_string())),
+            Value::Value(ScalarOwned::Integer(1)),
+        );
+        map.insert(
+            Value::Value(ScalarOwned::String("b".to_string())),
+            Value::Value(ScalarOwned::Integer(2)),
+        );
+        let value = Value::Mapping(map);
+        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
+        assert!(
+            result.contains('{') && result.contains('}'),
+            "default_flow_style=true should produce flow mapping {{...}}, got: {result:?}"
+        );
+        assert!(result.contains("a: 1"), "mapping key a must be present");
+        assert!(result.contains("b: 2"), "mapping key b must be present");
+    }
+
+    #[test]
+    fn test_emit_default_flow_style_true_sequence() {
+        let value = Value::Sequence(vec![
+            Value::Value(ScalarOwned::Integer(1)),
+            Value::Value(ScalarOwned::Integer(2)),
+            Value::Value(ScalarOwned::Integer(3)),
+        ]);
+        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
+        assert!(
+            result.contains('[') && result.contains(']'),
+            "default_flow_style=true should produce flow sequence [...], got: {result:?}"
+        );
+        assert!(result.contains("1, 2, 3"), "sequence items must be inline");
+    }
+
+    #[test]
+    fn test_emit_default_flow_style_none_is_block() {
+        let value = Value::Sequence(vec![
+            Value::Value(ScalarOwned::Integer(1)),
+            Value::Value(ScalarOwned::Integer(2)),
+        ]);
+        let config = EmitterConfig::new().with_default_flow_style(None);
+        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
+        // Block style uses "- " prefix per item.
+        assert!(
+            result.contains("- 1"),
+            "default_flow_style=None should produce block sequence, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_reindent_basic() {
+        // saphyr emits 2-space indent; reindent to 4 should double it.
+        let input = "key:\n  nested: value\n";
+        let result = Emitter::reindent(input, 4);
+        assert!(
+            result.contains("    nested: value"),
+            "reindent(4) should produce 4 spaces, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_reindent_preserves_markers() {
+        let input = "---\nkey: value\n";
+        let result = Emitter::reindent(input, 4);
+        assert!(result.contains("---"), "--- marker must be preserved");
+        assert!(result.contains("key: value"));
     }
 }
