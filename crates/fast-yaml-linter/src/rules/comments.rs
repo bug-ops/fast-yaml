@@ -297,6 +297,24 @@ mod tests {
     }
 
     #[test]
+    fn test_comments_shebang_in_block_scalar_no_false_positive() {
+        // Regression test for #160: '#' inside a '|' block scalar must not
+        // produce a comment diagnostic.
+        let yaml = "script: |\n  #!/bin/bash\n  echo hello\nkey: value";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommentsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn test_comments_in_string_ignored() {
         let yaml = r#"text: "not # a comment""#;
         let value = Parser::parse_str(yaml).unwrap().unwrap();

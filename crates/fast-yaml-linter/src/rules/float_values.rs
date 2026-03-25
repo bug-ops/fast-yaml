@@ -142,12 +142,17 @@ impl super::LintRule for FloatValuesRule {
                             Location::new(line_num, 1, offset + value_token.len()),
                         );
 
+                        let suggestion = if value_token.starts_with(['-', '+']) {
+                            format!("{}0{}", &value_token[..1], &value_token[1..])
+                        } else {
+                            format!("0{value_token}")
+                        };
                         diagnostics.push(
                             DiagnosticBuilder::new(
                                 self.code(),
                                 severity,
                                 format!(
-                                    "float value '{value_token}' should have a numeral before the decimal point (e.g., '0{value_token}')"
+                                    "float value '{value_token}' should have a numeral before the decimal point (e.g., '{suggestion}')"
                                 ),
                                 span,
                             )
@@ -440,6 +445,29 @@ mod tests {
             diagnostics.len(),
             3,
             "expected diagnostics for .5, -.5, +.5"
+        );
+    }
+
+    #[test]
+    fn test_float_values_signed_suggestion() {
+        let yaml = "neg: -.5\npos: +.5";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = FloatValuesRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert_eq!(diagnostics.len(), 2, "expected diagnostics for -.5 and +.5");
+        assert!(
+            diagnostics[0].message.contains("-0.5"),
+            "suggestion for -.5 should be -0.5, got: {}",
+            diagnostics[0].message
+        );
+        assert!(
+            diagnostics[1].message.contains("+0.5"),
+            "suggestion for +.5 should be +0.5, got: {}",
+            diagnostics[1].message
         );
     }
 
