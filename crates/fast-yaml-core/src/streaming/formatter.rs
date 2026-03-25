@@ -12,6 +12,21 @@ use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH};
 use crate::emitter::EmitterConfig;
 
+/// Return the YAML chomp indicator suffix for a block scalar value.
+///
+/// - `"+"` (keep) if `value` ends with two or more newlines (trailing blank lines)
+/// - `""` (clip, default) if `value` ends with exactly one newline
+/// - `"-"` (strip) if `value` does not end with a newline
+fn chomp_indicator(value: &str) -> &'static str {
+    if value.ends_with("\n\n") {
+        "+"
+    } else if value.ends_with('\n') {
+        ""
+    } else {
+        "-"
+    }
+}
+
 /// Generic streaming formatter with pluggable backend.
 ///
 /// This struct contains ALL formatting logic and is parameterized over
@@ -262,14 +277,16 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.last_char_newline = false;
             }
             ScalarStyle::Literal => {
-                self.output.push_str("|-");
+                self.output.push('|');
+                self.output.push_str(chomp_indicator(value));
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
                 // write_block_scalar_lines always ends with newline
                 self.last_char_newline = true;
             }
             ScalarStyle::Folded => {
-                self.output.push_str(">-");
+                self.output.push('>');
+                self.output.push_str(chomp_indicator(value));
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
                 // write_block_scalar_lines always ends with newline
