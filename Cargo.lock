@@ -453,6 +453,7 @@ dependencies = [
  "fast-yaml-core",
  "indoc",
  "is-terminal",
+ "saphyr-parser",
  "serde",
  "serde_json",
  "thiserror",
