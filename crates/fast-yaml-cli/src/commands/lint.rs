@@ -43,18 +43,8 @@ impl LintCommand {
             .with_indent_size(self.config.formatter.indent() as usize)
             .with_allow_duplicate_keys(self.allow_duplicate_keys);
 
-        // Create linter with all rules
-        let mut linter = Linter::with_config(lint_config);
-
-        // Add all default rules
-        linter
-            .add_rule(Box::new(fast_yaml_linter::rules::DuplicateKeysRule))
-            .add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule))
-            .add_rule(Box::new(fast_yaml_linter::rules::TrailingWhitespaceRule))
-            .add_rule(Box::new(fast_yaml_linter::rules::DocumentStartRule))
-            .add_rule(Box::new(fast_yaml_linter::rules::DocumentEndRule))
-            .add_rule(Box::new(fast_yaml_linter::rules::EmptyValuesRule))
-            .add_rule(Box::new(fast_yaml_linter::rules::NewLineAtEndOfFileRule));
+        // Create linter with all default rules (registered via with_config → with_default_rules)
+        let linter = Linter::with_config(lint_config);
 
         // Run linter
         let diagnostics = linter.lint(input.as_str()).context("Failed to lint YAML")?;
