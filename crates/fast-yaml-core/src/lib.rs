@@ -53,5 +53,5 @@ pub mod streaming;
 
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
-pub use parser::Parser;
+pub use parser::{Parser, canonicalize};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

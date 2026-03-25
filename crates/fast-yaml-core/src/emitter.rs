@@ -468,6 +468,9 @@ impl Emitter {
                 let emitted = Self::emit_str_preserving_styles(doc, &inner_config, 0)?;
                 output.push_str(&emitted);
             }
+            if !output.is_empty() && !output.ends_with('\n') {
+                output.push('\n');
+            }
             return Ok(output);
         }
     }

@@ -5,6 +5,7 @@
 
 use crate::Schema;
 use crate::conversion::yaml_to_js;
+use fast_yaml_core::canonicalize;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
 use saphyr::{LoadableYamlNode, ScalarOwned, YamlOwned};
@@ -81,7 +82,11 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
     let result = if docs.is_empty() {
         yaml_to_js(&env, &YamlOwned::Value(ScalarOwned::Null))
     } else {
-        yaml_to_js(&env, &docs[0])
+        let first = docs
+            .into_iter()
+            .next()
+            .unwrap_or(YamlOwned::Value(ScalarOwned::Null));
+        yaml_to_js(&env, &canonicalize(first))
     }?;
 
     // SAFETY: The Env parameter in #[napi] functions has a 'static lifetime
@@ -140,8 +145,8 @@ pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'stat
 
     // Convert all documents to JavaScript
     let mut js_docs = Vec::with_capacity(docs.len());
-    for doc in &docs {
-        let result = yaml_to_js(&env, doc)?;
+    for doc in docs {
+        let result = yaml_to_js(&env, &canonicalize(doc))?;
         // SAFETY: The Env parameter in #[napi] functions has a 'static lifetime
         // in practice, as it's valid for the entire JavaScript call.
         // We transmute the lifetime to allow storing Unknown<'static>.

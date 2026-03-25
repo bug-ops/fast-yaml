@@ -22,6 +22,7 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
+use fast_yaml_core::canonicalize;
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
@@ -500,7 +501,11 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
         return Ok(py.None());
     }
 
-    yaml_to_python(py, &docs[0])
+    let first = docs
+        .into_iter()
+        .next()
+        .unwrap_or(YamlOwned::Value(ScalarOwned::Null));
+    yaml_to_python(py, &canonicalize(first))
 }
 
 /// Parse a YAML string containing multiple documents.
@@ -543,8 +548,8 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Pre-allocate Python objects vector with known capacity
     let mut py_docs = Vec::with_capacity(docs.len());
-    for doc in &docs {
-        py_docs.push(yaml_to_python(py, doc)?);
+    for doc in docs {
+        py_docs.push(yaml_to_python(py, &canonicalize(doc))?);
     }
 
     let list = PyList::new(py, &py_docs)?;
