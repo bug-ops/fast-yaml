@@ -1,8 +1,8 @@
 //! Rule to check spacing around colons.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+    SourceContext, Span,
     tokenizer::{FlowTokenizer, TokenType},
 };
 use fast_yaml_core::Value;
@@ -80,6 +80,7 @@ impl super::LintRule for ColonsRule {
             // Check spaces before colon
             if let Some(diag) = check_spaces_before_colon(
                 source,
+                source_context,
                 colon.span.start.offset,
                 max_spaces_before,
                 self.code(),
@@ -91,6 +92,7 @@ impl super::LintRule for ColonsRule {
             // Check spaces after colon
             if let Some(diag) = check_spaces_after_colon(
                 source,
+                source_context,
                 colon.span.start.offset,
                 max_spaces_after,
                 self.code(),
@@ -146,6 +148,7 @@ fn is_url_or_time(source: &str, colon_offset: usize) -> bool {
 /// Checks spaces before a colon.
 fn check_spaces_before_colon(
     source: &str,
+    source_context: &SourceContext<'_>,
     colon_offset: usize,
     max_spaces: i64,
     code: &str,
@@ -178,7 +181,7 @@ fn check_spaces_before_colon(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, colon_offset);
+        let loc = source_context.offset_to_location(colon_offset);
         let span = Span::new(loc, loc);
 
         return Some(
@@ -200,6 +203,7 @@ fn check_spaces_before_colon(
 /// Checks spaces after a colon.
 fn check_spaces_after_colon(
     source: &str,
+    source_context: &SourceContext<'_>,
     colon_offset: usize,
     max_spaces: i64,
     code: &str,
@@ -232,7 +236,7 @@ fn check_spaces_after_colon(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, colon_offset + 1);
+        let loc = source_context.offset_to_location(colon_offset + 1);
         let span = Span::new(loc, loc);
 
         return Some(
@@ -366,6 +370,25 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_colons_correct_location() {
+        // Violation at line 3, not line 1
+        let yaml = "line1: ok\nline2: ok\nline3 : bad";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = ColonsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(!diagnostics.is_empty());
+        assert_eq!(
+            diagnostics[0].span.start.line, 3,
+            "violation should be on line 3, got: {}",
+            diagnostics[0].span.start.line
+        );
     }
 
     #[test]
