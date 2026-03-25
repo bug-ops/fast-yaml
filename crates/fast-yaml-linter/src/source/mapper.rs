@@ -6,7 +6,7 @@ use std::collections::HashMap;
 /// Maps YAML elements to their positions in source code.
 ///
 /// Provides utilities to locate keys, values, and special characters in the source text.
-/// Caches lookups for performance.
+/// Builds a full inverted index on first access for O(n) total lookup complexity.
 ///
 /// # Examples
 ///
@@ -22,6 +22,7 @@ use std::collections::HashMap;
 pub struct SourceMapper<'a> {
     context: SourceContext<'a>,
     key_positions: HashMap<String, Vec<Span>>,
+    index_built: bool,
 }
 
 impl<'a> SourceMapper<'a> {
@@ -30,12 +31,83 @@ impl<'a> SourceMapper<'a> {
         Self {
             context: SourceContext::new(source),
             key_positions: HashMap::new(),
+            index_built: false,
         }
+    }
+
+    /// Builds the full inverted key index by scanning all lines once.
+    ///
+    /// After this call, all key lookups are O(1). This is called lazily on
+    /// the first call to [`find_key_span`] or [`find_all_key_spans`].
+    fn build_index(&mut self) {
+        if self.index_built {
+            return;
+        }
+        self.index_built = true;
+
+        for line_num in 1..=self.context.line_count() {
+            let Some(line_content) = self.context.get_line(line_num) else {
+                continue;
+            };
+            let Some((key, col)) = Self::extract_key_from_line(line_content) else {
+                continue;
+            };
+
+            let line_start_offset = self.context.get_line_offset(line_num);
+            let start = Location::new(line_num, col + 1, line_start_offset + col);
+            let end = Location::new(
+                line_num,
+                col + key.len() + 1,
+                line_start_offset + col + key.len(),
+            );
+            self.key_positions
+                .entry(key.to_string())
+                .or_default()
+                .push(Span::new(start, end));
+        }
+    }
+
+    /// Extracts a YAML mapping key from a line, if one is present.
+    ///
+    /// Handles block mapping syntax: `<whitespace><key>: <value>` or `<key>:`.
+    /// Returns the key string and its byte column offset within the line.
+    fn extract_key_from_line(line: &str) -> Option<(&str, usize)> {
+        let trimmed_start = line.len() - line.trim_start().len();
+        let content = &line[trimmed_start..];
+
+        if content.is_empty() || content.starts_with('#') {
+            return None;
+        }
+
+        let mut in_single = false;
+        let mut in_double = false;
+
+        for (i, ch) in content.char_indices() {
+            match ch {
+                '\'' if !in_double => in_single = !in_single,
+                '"' if !in_single => in_double = !in_double,
+                ':' if !in_single && !in_double => {
+                    let key = &content[..i];
+                    if key.is_empty() || key.contains(|c: char| c.is_whitespace()) {
+                        return None;
+                    }
+                    let after = &content[i + 1..];
+                    if after.is_empty() || after.starts_with(' ') || after.starts_with('\t') {
+                        return Some((key, trimmed_start));
+                    }
+                    return None;
+                }
+                _ => {}
+            }
+        }
+
+        None
     }
 
     /// Finds the span of a key in the source code.
     ///
     /// Uses a line hint to disambiguate when the same key appears multiple times.
+    /// Builds the full source index on first call for O(n) total complexity.
     ///
     /// # Examples
     ///
@@ -51,34 +123,9 @@ impl<'a> SourceMapper<'a> {
     /// assert_ne!(first, second);
     /// ```
     pub fn find_key_span(&mut self, key: &str, line_hint: usize) -> Option<Span> {
-        // Check cache first
-        if let Some(spans) = self.key_positions.get(key) {
-            return spans.iter().find(|s| s.start.line == line_hint).copied();
-        }
-
-        // Search in source
-        let mut found_spans = Vec::new();
-
-        for line_num in 1..=self.context.line_count() {
-            if let Some(line_content) = self.context.get_line(line_num) {
-                // Look for the key at the beginning or after whitespace
-                if let Some(col) = Self::find_key_in_line(line_content, key) {
-                    let line_start_offset = self.get_line_start_offset(line_num);
-                    let start = Location::new(line_num, col + 1, line_start_offset + col);
-                    let end = Location::new(
-                        line_num,
-                        col + key.len() + 1,
-                        line_start_offset + col + key.len(),
-                    );
-                    found_spans.push(Span::new(start, end));
-                }
-            }
-        }
-
+        self.build_index();
         self.key_positions
-            .insert(key.to_string(), found_spans.clone());
-
-        found_spans
+            .get(key)?
             .iter()
             .find(|s| s.start.line == line_hint)
             .copied()
@@ -87,6 +134,7 @@ impl<'a> SourceMapper<'a> {
     /// Finds all occurrences of a key in the source code.
     ///
     /// Returns a vector of all spans where the key appears.
+    /// Builds the full source index on first call for O(n) total complexity.
     ///
     /// # Examples
     ///
@@ -100,12 +148,7 @@ impl<'a> SourceMapper<'a> {
     /// assert_eq!(spans.len(), 2);
     /// ```
     pub fn find_all_key_spans(&mut self, key: &str) -> Vec<Span> {
-        // Populate cache if needed by calling find_key_span with line hint 1
-        if !self.key_positions.contains_key(key) {
-            let _ = self.find_key_span(key, 1);
-        }
-
-        // Return cloned vector from cache
+        self.build_index();
         self.key_positions.get(key).cloned().unwrap_or_default()
     }
 
@@ -207,7 +250,7 @@ impl<'a> SourceMapper<'a> {
             if let Some(line) = self.context.get_line(line_num) {
                 for (col, c) in line.chars().enumerate() {
                     if c == ch && !Self::is_inside_string_at(line, col) {
-                        let offset = self.get_line_start_offset(line_num) + col;
+                        let offset = self.context.get_line_offset(line_num) + col;
                         locations.push(Location::new(line_num, col + 1, offset));
                     }
                 }
@@ -244,16 +287,11 @@ impl<'a> SourceMapper<'a> {
         in_single || in_double
     }
 
-    /// Gets the byte offset where a line starts.
+    /// Gets the byte offset where a line starts (1-indexed).
+    ///
+    /// Delegates to the pre-computed index in [`SourceContext`] for O(1) access.
     fn get_line_start_offset(&self, line_num: usize) -> usize {
-        if line_num == 1 {
-            return 0;
-        }
-
-        (1..line_num)
-            .filter_map(|ln| self.context.get_line(ln))
-            .map(|l| l.len() + 1) // +1 for newline
-            .sum()
+        self.context.get_line_offset(line_num)
     }
 
     /// Gets the source context.
@@ -382,5 +420,46 @@ mod tests {
 
         assert_eq!(first.start.line, 1);
         assert_eq!(second.start.line, 3);
+    }
+
+    #[test]
+    fn test_index_built_once() {
+        let source = "name: John\nage: 30\nname: Jane";
+        let mut mapper = SourceMapper::new(source);
+
+        assert!(!mapper.index_built);
+        let _ = mapper.find_key_span("name", 1);
+        assert!(mapper.index_built);
+        // Second call should use cache
+        let _ = mapper.find_key_span("age", 2);
+        assert!(mapper.index_built);
+    }
+
+    #[test]
+    fn test_find_all_key_spans() {
+        let source = "name: John\nage: 30\nname: Jane";
+        let mut mapper = SourceMapper::new(source);
+
+        let spans = mapper.find_all_key_spans("name");
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].start.line, 1);
+        assert_eq!(spans[1].start.line, 3);
+    }
+
+    #[test]
+    fn test_large_file_performance() {
+        // Verify index is built once even with many unique keys
+        let mut lines = Vec::new();
+        for i in 0..1000 {
+            lines.push(format!("key_{i}: value_{i}"));
+        }
+        let source = lines.join("\n");
+        let mut mapper = SourceMapper::new(&source);
+
+        // Looking up many keys should not rebuild the index
+        let _ = mapper.find_key_span("key_0", 1);
+        assert!(mapper.index_built);
+        let _ = mapper.find_key_span("key_999", 1000);
+        let _ = mapper.find_all_key_spans("key_500");
     }
 }

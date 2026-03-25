@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `Emitter::emit_str` and `emit_str_with_config` now always append a trailing newline, consistent with `emit_all_with_config` and POSIX text file convention. Affects `safe_dump`/`safeDump` in Python and NodeJS bindings. (#94)
 - `fy format` and `Emitter::format_str` now preserve `%YAML` and `%TAG` directives. Previously they were silently dropped because saphyr does not round-trip directives through its AST. (#95)
+- **Linter**: `DuplicateKeysRule` / `SourceMapper` now builds a full inverted key index in a single O(n) pass on first use instead of scanning all source lines for every unique key (O(n²)). `fy lint` performance on large files (Kubernetes manifests, OpenAPI specs) improves from unusable (37s for 10 000 keys) to near-linear. (#100)
 - Python/NodeJS bindings now correctly parse `True`/`TRUE`/`False`/`FALSE`/`Null`/`NULL` as bool/null per YAML 1.2.2 Core Schema (fixes #80)
 - `batch.format_files` now preserves trailing newline in formatted output (fixes #81)
 - `fy convert json` now emits a descriptive error when YAML contains `.inf`, `-.inf`, or `.nan` values that cannot be represented in JSON, instead of the terse `Invalid float value: inf`. (#89)
