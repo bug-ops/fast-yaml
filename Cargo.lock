@@ -479,6 +479,7 @@ dependencies = [
  "napi-derive",
  "ordered-float",
  "saphyr",
+ "serde_json",
  "thiserror",
 ]
 
@@ -830,6 +831,8 @@ dependencies = [
  "napi-sys",
  "nohash-hasher",
  "rustc-hash",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

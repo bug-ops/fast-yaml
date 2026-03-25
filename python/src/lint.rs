@@ -12,7 +12,7 @@ use fast_yaml_linter::{
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::PyList;
+use pyo3::types::{PyDict, PyList};
 use std::collections::HashSet;
 
 #[cfg(feature = "json-output")]
@@ -415,6 +415,42 @@ impl From<RustDiagnostic> for PyDiagnostic {
     }
 }
 
+/// Parses a severity string into `RustSeverity`.
+///
+/// Valid values (case-insensitive): "error", "warning", "info", "hint".
+fn parse_severity(s: &str) -> PyResult<RustSeverity> {
+    match s.to_lowercase().as_str() {
+        "error" => Ok(RustSeverity::Error),
+        "warning" => Ok(RustSeverity::Warning),
+        "info" => Ok(RustSeverity::Info),
+        "hint" => Ok(RustSeverity::Hint),
+        _ => Err(PyValueError::new_err(format!(
+            "Invalid severity '{s}', expected one of: error, warning, info, hint"
+        ))),
+    }
+}
+
+/// Parses a Python dict into a `RustRuleConfig`.
+fn parse_rule_config_dict(
+    rule_dict: &Bound<'_, PyDict>,
+) -> PyResult<fast_yaml_linter::config::RuleConfig> {
+    let mut rc = fast_yaml_linter::config::RuleConfig::new();
+
+    if let Some(enabled_val) = rule_dict.get_item("enabled")? {
+        let enabled: bool = enabled_val.extract()?;
+        if !enabled {
+            rc = fast_yaml_linter::config::RuleConfig::disabled();
+        }
+    }
+
+    if let Some(sev_val) = rule_dict.get_item("severity")? {
+        let sev_str: &str = sev_val.extract()?;
+        rc = rc.with_severity(parse_severity(sev_str)?);
+    }
+
+    Ok(rc)
+}
+
 /// Configuration for the linter.
 ///
 /// Controls linting behavior including rule enablement,
@@ -439,7 +475,8 @@ impl PyLintConfig {
         require_document_start=false,
         require_document_end=false,
         allow_duplicate_keys=false,
-        disabled_rules=None
+        disabled_rules=None,
+        rules=None,
     ))]
     fn new(
         max_line_length: Option<usize>,
@@ -448,6 +485,7 @@ impl PyLintConfig {
         require_document_end: bool,
         allow_duplicate_keys: bool,
         disabled_rules: Option<Bound<'_, PyAny>>,
+        rules: Option<Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         // Validate indent_size (must be between 1 and 16)
         if indent_size == 0 || indent_size > 16 {
@@ -466,24 +504,41 @@ impl PyLintConfig {
         }
 
         let mut disabled_rules_set = HashSet::new();
-        if let Some(rules) = disabled_rules {
-            for rule in rules.try_iter()? {
+        if let Some(disabled) = disabled_rules {
+            for rule in disabled.try_iter()? {
                 let rule_str: String = rule?.extract()?;
                 disabled_rules_set.insert(rule_str);
             }
         }
 
-        Ok(Self {
-            inner: RustLintConfig {
-                max_line_length,
-                indent_size,
-                require_document_start,
-                require_document_end,
-                allow_duplicate_keys,
-                disabled_rules: disabled_rules_set,
-                rule_configs: std::collections::HashMap::new(),
-            },
-        })
+        let mut inner = RustLintConfig {
+            max_line_length,
+            indent_size,
+            require_document_start,
+            require_document_end,
+            allow_duplicate_keys,
+            disabled_rules: disabled_rules_set,
+            rule_configs: std::collections::HashMap::new(),
+        };
+
+        if let Some(rules_any) = rules {
+            let rules_dict = rules_any.cast::<PyDict>()?;
+            for (key, value) in rules_dict.iter() {
+                let code: String = key.extract()?;
+                let rc = if let Ok(sev_str) = value.extract::<&str>() {
+                    // String shorthand: "error" | "warning" | "info" | "hint"
+                    fast_yaml_linter::config::RuleConfig::new()
+                        .with_severity(parse_severity(sev_str)?)
+                } else {
+                    // Object form: dict with optional "severity" and "enabled" keys
+                    let rule_dict = value.cast::<PyDict>()?;
+                    parse_rule_config_dict(rule_dict)?
+                };
+                inner = inner.with_rule_config(code, rc);
+            }
+        }
+
+        Ok(Self { inner })
     }
 
     /// Sets the maximum line length.
@@ -519,6 +574,42 @@ impl PyLintConfig {
         Self {
             inner: self.inner.clone().with_disabled_rule(code),
         }
+    }
+
+    /// Applies a per-rule configuration override.
+    ///
+    /// Args:
+    ///     code: Rule code (e.g. "line-length"). Unknown codes are silently accepted.
+    ///     severity: Severity override string ("error" | "warning" | "info" | "hint") or None.
+    ///     enabled: Whether the rule is enabled (None means keep default, True).
+    ///
+    /// Returns:
+    ///     A new LintConfig with the rule config applied.
+    ///
+    /// Raises:
+    ///     ValueError: If severity string is invalid.
+    #[pyo3(signature = (code, severity=None, enabled=None))]
+    fn with_rule_config(
+        &self,
+        code: &str,
+        severity: Option<&str>,
+        enabled: Option<bool>,
+    ) -> PyResult<Self> {
+        let mut rc = fast_yaml_linter::config::RuleConfig::new();
+
+        if let Some(enabled_val) = enabled {
+            if !enabled_val {
+                rc = fast_yaml_linter::config::RuleConfig::disabled();
+            }
+        }
+
+        if let Some(sev_str) = severity {
+            rc = rc.with_severity(parse_severity(sev_str)?);
+        }
+
+        Ok(Self {
+            inner: self.inner.clone().with_rule_config(code, rc),
+        })
     }
 
     /// Gets the maximum line length.

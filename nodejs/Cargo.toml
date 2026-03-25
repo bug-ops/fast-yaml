@@ -21,7 +21,8 @@ json-output = ["fast-yaml-linter/json-output"]
 fast-yaml-core = { workspace = true }
 fast-yaml-linter = { workspace = true }
 fast-yaml-parallel = { workspace = true }
-napi = { workspace = true, features = ["napi8", "error_anyhow"] }
+napi = { workspace = true, features = ["napi8", "error_anyhow", "serde-json"] }
+serde_json = { workspace = true }
 napi-derive = { workspace = true }
 ordered-float = { workspace = true }
 saphyr = { workspace = true }
