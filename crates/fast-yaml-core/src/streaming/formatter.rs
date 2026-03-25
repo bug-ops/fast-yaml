@@ -17,6 +17,7 @@ use crate::emitter::EmitterConfig;
 /// This struct contains ALL formatting logic and is parameterized over
 /// the backend type `B: FormatterBackend`. Through monomorphization,
 /// this compiles to specialized code for each backend with zero runtime cost.
+#[allow(clippy::struct_excessive_bools)]
 pub struct StreamingFormatter<'a, B: FormatterBackend> {
     config: &'a EmitterConfig,
     output: String,
@@ -26,6 +27,12 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     /// Tracks whether the last character written was a newline.
     /// Avoids O(n) `ends_with` scans by maintaining state.
     last_char_newline: bool,
+    /// Space after mapping key colon is deferred until the value is known.
+    /// Cleared without emitting when the value is a nested collection.
+    pending_space: bool,
+    /// The first key of a mapping opened inline after "- " must not call
+    /// `write_indent` — the dash already placed the cursor at the right column.
+    first_key_after_dash: bool,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -45,6 +52,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             indent_level: 0,
             pending_newline: false,
             last_char_newline: true, // Empty buffer conceptually "ends with" newline
+            pending_space: false,
+            first_key_after_dash: false,
             backend,
         }
     }
@@ -162,10 +171,21 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.last_char_newline = false;
             }
             Context::MappingKey => {
-                self.write_indent();
+                if self.first_key_after_dash {
+                    self.first_key_after_dash = false;
+                } else {
+                    self.write_indent();
+                }
             }
-            // Root level scalar and mapping value need no prefix
-            Context::Root | Context::MappingValue => {}
+            // Root level scalar needs no prefix; mapping value emits pending space
+            Context::Root => {}
+            Context::MappingValue => {
+                if self.pending_space {
+                    self.output.push(' ');
+                    self.pending_space = false;
+                    self.last_char_newline = false;
+                }
+            }
         }
 
         // Handle anchor if present (with bounds check for security)
@@ -182,8 +202,10 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 if let Some(last) = self.backend.context_stack_mut().last_mut() {
                     *last = Context::MappingValue;
                 }
-                // Add space after colon for simple values
-                self.output.push(' ');
+                // Defer the space — emitted only when the value is a scalar.
+                // If the value is a nested collection, pending_space is cleared
+                // without emitting so we avoid a trailing space before the newline.
+                self.pending_space = true;
                 self.last_char_newline = false;
             }
             Context::MappingValue => {
@@ -278,7 +300,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.write_indent();
             }
             Context::MappingValue => {
-                // Value position - newline and indent for nested sequence
+                // Value position - discard pending space and emit newline instead
+                self.pending_space = false;
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
@@ -323,13 +346,16 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.write_indent();
                 self.output.push_str("- ");
                 self.last_char_newline = false;
+                // The first key of this mapping sits right after "- "; no extra indent.
+                self.first_key_after_dash = true;
             }
             Context::MappingKey => {
                 // Mapping as mapping key - unusual but valid (complex key)
                 self.write_indent();
             }
             Context::MappingValue => {
-                // Value position - newline for nested mapping
+                // Value position - discard pending space and emit newline instead
+                self.pending_space = false;
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
@@ -378,7 +404,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             Context::MappingKey => {
                 self.write_indent();
             }
-            Context::Root | Context::MappingValue => {}
+            Context::Root => {}
+            Context::MappingValue => {
+                if self.pending_space {
+                    self.output.push(' ');
+                    self.pending_space = false;
+                    self.last_char_newline = false;
+                }
+            }
         }
 
         // Emit the alias reference
@@ -398,7 +431,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 if let Some(last) = self.backend.context_stack_mut().last_mut() {
                     *last = Context::MappingValue;
                 }
-                self.output.push(' ');
+                self.pending_space = true;
                 // last_char_newline remains false
             }
             Context::MappingValue => {
