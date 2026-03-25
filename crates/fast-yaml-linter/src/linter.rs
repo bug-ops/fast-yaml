@@ -273,7 +273,10 @@ impl Linter {
         }
     }
 
-    /// Creates a linter with custom configuration.
+    /// Creates a linter with all default rules and custom configuration.
+    ///
+    /// This is equivalent to [`Linter::with_all_rules_and_config`] and loads
+    /// all default rules with the provided configuration.
     ///
     /// # Examples
     ///
@@ -282,12 +285,13 @@ impl Linter {
     ///
     /// let config = LintConfig::new().with_indent_size(4);
     /// let linter = Linter::with_config(config);
+    /// assert!(!linter.registry().rules().is_empty());
     /// ```
     #[must_use]
     pub fn with_config(config: LintConfig) -> Self {
         Self {
             config,
-            registry: RuleRegistry::new(),
+            registry: RuleRegistry::with_default_rules(),
         }
     }
 
@@ -497,6 +501,21 @@ mod tests {
         let config = LintConfig::new().with_indent_size(4);
         let linter = Linter::with_config(config);
         assert_eq!(linter.config().indent_size, 4);
+        assert!(!linter.registry().rules().is_empty());
+    }
+
+    #[test]
+    fn test_linter_with_config_detects_duplicate_keys() {
+        let yaml = "key: 1\nkey: 2\n";
+        let config = LintConfig::new().with_allow_duplicate_keys(false);
+        let linter = Linter::with_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == "duplicate-key"),
+            "Linter::with_config should detect duplicate keys"
+        );
     }
 
     #[test]
