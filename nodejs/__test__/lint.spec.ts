@@ -3,7 +3,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { lint, Linter } from '../index';
+import { Linter, lint } from '../index';
 
 const VALID_YAML = 'name: John\nage: 30\n';
 const DUPLICATE_KEYS_YAML = 'key: value\nkey: duplicate\n';
@@ -27,7 +27,7 @@ describe('lint() function', () => {
     const result = lint(DUPLICATE_KEYS_YAML);
     const dupKey = result.find((d) => d.code === 'duplicate-key');
     expect(dupKey).toBeDefined();
-    expect(dupKey!.severity).toBe('Error');
+    expect(dupKey?.severity).toBe('Error');
   });
 
   it('detects line length violations', () => {
@@ -110,13 +110,13 @@ describe('Severity enum string values', () => {
   it('duplicate key severity is "Error"', () => {
     const result = lint(DUPLICATE_KEYS_YAML);
     const dup = result.find((d) => d.code === 'duplicate-key');
-    expect(dup!.severity).toBe('Error');
+    expect(dup?.severity).toBe('Error');
   });
 
   it('line-length severity is "Warning" or "Info"', () => {
     const result = lint(LONG_LINE_YAML);
     const ll = result.find((d) => d.code === 'line-length');
-    expect(['Warning', 'Info', 'Error', 'Hint']).toContain(ll!.severity);
+    expect(['Warning', 'Info', 'Error', 'Hint']).toContain(ll?.severity);
   });
 });
 
@@ -166,7 +166,7 @@ describe('Linter class', () => {
 
 describe('Disabled rules', () => {
   it('disabling line-length suppresses line-length diagnostics', () => {
-    const linter = new Linter({ disabledRules: ['line-length'] });
+    const _linter = new Linter({ disabledRules: ['line-length'] });
     // new() creates linter with no rules, but let's also test via lint()
     const result = lint(LONG_LINE_YAML, { disabledRules: ['line-length'] });
     expect(result.find((d) => d.code === 'line-length')).toBeUndefined();
