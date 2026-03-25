@@ -104,9 +104,9 @@ hash:
       expect(result).toEqual({ enabled: true, off: false });
     });
 
-    it('should handle uppercase boolean-like strings as strings', () => {
+    it('should parse TRUE as boolean per YAML 1.2.2 Core Schema', () => {
       const result = load('val: TRUE', { schema: Schema.SafeSchema });
-      expect(result).toEqual({ val: 'TRUE' });
+      expect(result).toEqual({ val: true });
     });
 
     it('should handle yes/no as strings in YAML 1.2.2', () => {
@@ -136,9 +136,9 @@ hash:
       expect(result).toEqual({ val: null });
     });
 
-    it('should parse Null as string', () => {
+    it('should parse Null as null per YAML 1.2.2 Core Schema', () => {
       const result = load('val: Null', { schema: Schema.SafeSchema });
-      expect(result).toEqual({ val: 'Null' });
+      expect(result).toEqual({ val: null });
     });
 
     it('should handle multiple null representations', () => {

@@ -41,14 +41,13 @@ person:
     });
 
     it('should handle YAML 1.2.2 booleans', () => {
-      // YAML 1.2 Core Schema: only lowercase true/false are booleans
+      // YAML 1.2.2 Core Schema: true/True/TRUE and false/False/FALSE are all booleans
       expect(safeLoad('value: true')).toEqual({ value: true });
       expect(safeLoad('value: false')).toEqual({ value: false });
-      // Capitalized versions are strings in YAML 1.2
-      expect(safeLoad('value: TRUE')).toEqual({ value: 'TRUE' });
-      expect(safeLoad('value: FALSE')).toEqual({ value: 'FALSE' });
-      expect(safeLoad('value: True')).toEqual({ value: 'True' });
-      expect(safeLoad('value: False')).toEqual({ value: 'False' });
+      expect(safeLoad('value: TRUE')).toEqual({ value: true });
+      expect(safeLoad('value: FALSE')).toEqual({ value: false });
+      expect(safeLoad('value: True')).toEqual({ value: true });
+      expect(safeLoad('value: False')).toEqual({ value: false });
 
       // YAML 1.2.2: yes/no are strings, not booleans
       expect(safeLoad('value: yes')).toEqual({ value: 'yes' });
@@ -62,8 +61,8 @@ person:
       expect(safeLoad('value: null')).toEqual({ value: null });
       expect(safeLoad('value:')).toEqual({ value: null });
 
-      // saphyr: Null is a string, but NULL is parsed as null
-      expect(safeLoad('value: Null')).toEqual({ value: 'Null' });
+      // YAML 1.2.2 Core Schema: null/Null/NULL are all null
+      expect(safeLoad('value: Null')).toEqual({ value: null });
       expect(safeLoad('value: NULL')).toEqual({ value: null });
     });
 
