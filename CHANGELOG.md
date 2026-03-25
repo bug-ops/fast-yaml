@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **CLI**: `fy lint` no longer reports each `duplicate-key` diagnostic twice. `Linter::with_config` already registers all default rules via `with_default_rules()`; the redundant manual `add_rule` calls in `lint.rs` have been removed. (#111)
+- **Linter**: `quoted-strings` rule no longer emits false positives when quote characters (`"` or `'`) appear as literal content inside plain (unquoted) YAML scalars. For example, `run: echo "hello"` and `if: ${{ github.event_name == 'push' }}` no longer trigger warnings. The rule was rewritten to use saphyr-parser event-based scalar style detection instead of raw source character scanning. (#113)
 - **Linter**: `braces`/`brackets` rules no longer fire on template expressions (Jinja2, GitHub Actions `${{ }}`) inside plain scalar values. Previously the rules scanned raw source text and matched `{`/`[` inside string values, causing false-positive spam on workflow files. The tokenizer now tracks block-context plain scalars and skips flow-syntax characters inside them. (#103)
 - **Linter**: `braces`/`brackets` rules now report diagnostics at the correct source location (the `{`/`[` or `}`/`]` token) instead of always reporting line 1, column 1. (#102)
 - **Linter**: `duplicate-key` rule now detects duplicate keys at all nesting levels, not only at the top-level mapping. Previously, duplicates inside nested mappings were silently ignored. (#96)

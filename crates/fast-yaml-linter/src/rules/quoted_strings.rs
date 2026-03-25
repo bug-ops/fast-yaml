@@ -5,6 +5,9 @@ use crate::{
     Span,
 };
 use fast_yaml_core::Value;
+use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser, ScalarStyle};
+
+use super::LintRule;
 
 /// Linting rule for quoted strings.
 ///
@@ -34,6 +37,14 @@ use fast_yaml_core::Value;
 /// ```
 pub struct QuotedStringsRule;
 
+/// Tracks whether the next scalar in a mapping scope is a key or a value.
+enum ScopeKind {
+    /// Inside a mapping; `expecting_key` alternates after each key/value.
+    Mapping { expecting_key: bool },
+    /// Inside a sequence; no key/value distinction.
+    Sequence,
+}
+
 impl super::LintRule for QuotedStringsRule {
     fn code(&self) -> &str {
         DiagnosticCode::QUOTED_STRINGS
@@ -51,7 +62,6 @@ impl super::LintRule for QuotedStringsRule {
         Severity::Warning
     }
 
-    #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let rule_config = config.get_rule_config(self.code());
@@ -75,203 +85,62 @@ impl super::LintRule for QuotedStringsRule {
             .unwrap_or_default();
 
         let mut diagnostics = Vec::new();
+        let mut scopes: Vec<ScopeKind> = Vec::new();
 
-        // Use cached lines and metadata from context
-        let lines = context.lines();
-        let line_metadata = context.line_metadata();
+        let input = BufferedInput::new(source.chars());
+        let mut parser = SaphyrParser::new(input);
 
-        for (line_idx, (line, metadata)) in lines.iter().zip(line_metadata).enumerate() {
-            let line_num = line_idx + 1;
-            let line_offset = context.source_context().get_line_offset(line_num);
+        while let Some(Ok(ev)) = parser.next_event() {
+            let (event, span) = ev;
 
-            // Skip comment lines using cached metadata
-            if metadata.is_comment {
-                continue;
-            }
-
-            // Find quoted strings in the line
-            // Use iterator directly instead of collecting into Vec
-            let mut chars_iter = line.char_indices();
-
-            while let Some((byte_idx, ch)) = chars_iter.next() {
-                if ch == '\'' || ch == '"' {
-                    let quote_char = ch;
-                    let start_byte_idx = byte_idx;
-
-                    // Find the closing quote
-                    let mut end_byte_idx = start_byte_idx;
-                    let mut escaped = false;
-
-                    for (curr_byte_idx, c) in chars_iter.by_ref() {
-                        if escaped {
-                            escaped = false;
-                            continue;
-                        }
-
-                        if c == '\\' {
-                            escaped = true;
-                            continue;
-                        }
-
-                        if c == quote_char {
-                            end_byte_idx = curr_byte_idx;
-                            break;
-                        }
-                    }
-
-                    if end_byte_idx > start_byte_idx {
-                        let string_content = &line[start_byte_idx + 1..end_byte_idx];
-
-                        // Check quote type
-                        if quote_type == "single" && quote_char == '"' {
-                            let severity =
-                                config.get_effective_severity(self.code(), self.default_severity());
-                            let offset = line_offset + start_byte_idx;
-                            let span_len = end_byte_idx - start_byte_idx + 1;
-
-                            let location = Location::new(line_num, 1, offset);
-                            let span =
-                                Span::new(location, Location::new(line_num, 1, offset + span_len));
-
-                            diagnostics.push(
-                                DiagnosticBuilder::new(
-                                    self.code(),
-                                    severity,
-                                    "string should use single quotes",
-                                    span,
-                                )
-                                .build(source),
-                            );
-                        } else if quote_type == "double" && quote_char == '\'' {
-                            let severity =
-                                config.get_effective_severity(self.code(), self.default_severity());
-                            let offset = line_offset + start_byte_idx;
-                            let span_len = end_byte_idx - start_byte_idx + 1;
-
-                            let location = Location::new(line_num, 1, offset);
-                            let span =
-                                Span::new(location, Location::new(line_num, 1, offset + span_len));
-
-                            diagnostics.push(
-                                DiagnosticBuilder::new(
-                                    self.code(),
-                                    severity,
-                                    "string should use double quotes",
-                                    span,
-                                )
-                                .build(source),
-                            );
-                        }
-
-                        // Check if quotes are needed
-                        if required == "only-when-needed" {
-                            let needs_quotes = Self::needs_quotes(string_content);
-
-                            if !needs_quotes
-                                && !extra_required
-                                    .iter()
-                                    .any(|p| string_content.contains(p.as_str()))
-                            {
-                                let severity = config
-                                    .get_effective_severity(self.code(), self.default_severity());
-                                let offset = line_offset + start_byte_idx;
-                                let span_len = end_byte_idx - start_byte_idx + 1;
-
-                                let location = Location::new(line_num, 1, offset);
-                                let span = Span::new(
-                                    location,
-                                    Location::new(line_num, 1, offset + span_len),
-                                );
-
-                                diagnostics.push(
-                                    DiagnosticBuilder::new(
-                                        self.code(),
-                                        severity,
-                                        "string does not need quotes",
-                                        span,
-                                    )
-                                    .build(source),
-                                );
-                            }
-                        } else if required == "never" {
-                            let severity =
-                                config.get_effective_severity(self.code(), self.default_severity());
-                            let offset = line_offset + start_byte_idx;
-                            let span_len = end_byte_idx - start_byte_idx + 1;
-
-                            let location = Location::new(line_num, 1, offset);
-                            let span =
-                                Span::new(location, Location::new(line_num, 1, offset + span_len));
-
-                            diagnostics.push(
-                                DiagnosticBuilder::new(
-                                    self.code(),
-                                    severity,
-                                    "string should not be quoted",
-                                    span,
-                                )
-                                .build(source),
-                            );
-                        }
-                    }
+            match event {
+                Event::MappingStart(..) => {
+                    scopes.push(ScopeKind::Mapping {
+                        expecting_key: true,
+                    });
                 }
-            }
-
-            // Check unquoted strings if required == "always"
-            if required == "always"
-                && let Some(colon_pos) = line.find(':')
-            {
-                let value_part = &line[colon_pos + 1..];
-                let value_trimmed = value_part.trim();
-
-                // Skip if empty, already quoted, or starts with flow collection markers
-                if !value_trimmed.is_empty()
-                    && !value_trimmed.starts_with('"')
-                    && !value_trimmed.starts_with('\'')
-                    && !value_trimmed.starts_with('[')
-                    && !value_trimmed.starts_with('{')
-                    && !value_trimmed.starts_with('&')
-                    && !value_trimmed.starts_with('*')
-                {
-                    // Extract the value token (before any comment)
-                    let value_token = value_trimmed
-                        .split_whitespace()
-                        .next()
-                        .and_then(|s| s.split('#').next())
-                        .unwrap_or(value_trimmed);
-
-                    // Skip if it's in extra-allowed
-                    if extra_allowed
-                        .iter()
-                        .any(|p| value_token.contains(p.as_str()))
-                    {
-                        continue;
-                    }
-
-                    // Check if this looks like a string value (not a number or boolean)
-                    if !Self::is_scalar_literal(value_token) {
-                        let value_start = line.find(value_token).unwrap_or(colon_pos + 1);
-                        let offset = line_offset + value_start;
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
-
-                        let location = Location::new(line_num, 1, offset);
-                        let span = Span::new(
-                            location,
-                            Location::new(line_num, 1, offset + value_token.len()),
-                        );
-
-                        diagnostics.push(
-                            DiagnosticBuilder::new(
-                                self.code(),
-                                severity,
-                                "string should be quoted",
-                                span,
-                            )
-                            .build(source),
-                        );
-                    }
+                Event::SequenceStart(..) => {
+                    scopes.push(ScopeKind::Sequence);
                 }
+                Event::MappingEnd | Event::SequenceEnd => {
+                    scopes.pop();
+                    Self::advance_parent_to_key(&mut scopes);
+                }
+                Event::Scalar(ref value, style, ..) => {
+                    let is_key = matches!(
+                        scopes.last(),
+                        Some(ScopeKind::Mapping {
+                            expecting_key: true
+                        })
+                    );
+
+                    // Advance scope: after a key comes a value, after a value comes next key.
+                    if let Some(ScopeKind::Mapping { expecting_key }) = scopes.last_mut() {
+                        *expecting_key = !*expecting_key;
+                    }
+
+                    // Build source location from parser marker (1-indexed line and col).
+                    let line = span.start.line();
+                    let col = span.start.col();
+                    let scalar_offset = Self::compute_offset(source, line, col);
+
+                    self.check_scalar(
+                        source,
+                        config,
+                        &mut diagnostics,
+                        value,
+                        style,
+                        is_key,
+                        line,
+                        scalar_offset,
+                        quote_type,
+                        required,
+                        &extra_required,
+                        &extra_allowed,
+                    );
+                }
+
+                _ => {}
             }
         }
 
@@ -280,6 +149,142 @@ impl super::LintRule for QuotedStringsRule {
 }
 
 impl QuotedStringsRule {
+    /// Advances the innermost mapping scope to expect a key after a nested structure ends.
+    const fn advance_parent_to_key(scopes: &mut [ScopeKind]) {
+        if let Some(ScopeKind::Mapping { expecting_key }) = scopes.last_mut() {
+            *expecting_key = true;
+        }
+    }
+
+    /// Checks a single scalar event and appends diagnostics as needed.
+    #[allow(clippy::too_many_arguments)]
+    fn check_scalar(
+        &self,
+        source: &str,
+        config: &LintConfig,
+        diagnostics: &mut Vec<Diagnostic>,
+        value: &str,
+        style: ScalarStyle,
+        is_key: bool,
+        line: usize,
+        scalar_offset: usize,
+        quote_type: &str,
+        required: &str,
+        extra_required: &[String],
+        extra_allowed: &[String],
+    ) {
+        match style {
+            ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
+                let quote_char = if style == ScalarStyle::SingleQuoted {
+                    '\''
+                } else {
+                    '"'
+                };
+                // value.len() + 2 for the surrounding quote characters.
+                let scalar_span = Self::make_span(line, scalar_offset, value.len() + 2);
+
+                if quote_type == "single" && quote_char == '"' {
+                    let severity =
+                        config.get_effective_severity(self.code(), self.default_severity());
+                    diagnostics.push(
+                        DiagnosticBuilder::new(
+                            self.code(),
+                            severity,
+                            "string should use single quotes",
+                            scalar_span,
+                        )
+                        .build(source),
+                    );
+                } else if quote_type == "double" && quote_char == '\'' {
+                    let severity =
+                        config.get_effective_severity(self.code(), self.default_severity());
+                    diagnostics.push(
+                        DiagnosticBuilder::new(
+                            self.code(),
+                            severity,
+                            "string should use double quotes",
+                            scalar_span,
+                        )
+                        .build(source),
+                    );
+                }
+
+                if required == "only-when-needed" {
+                    let needs = Self::needs_quotes(value)
+                        || extra_required.iter().any(|p| value.contains(p.as_str()));
+                    if !needs {
+                        let severity =
+                            config.get_effective_severity(self.code(), self.default_severity());
+                        diagnostics.push(
+                            DiagnosticBuilder::new(
+                                self.code(),
+                                severity,
+                                "string does not need quotes",
+                                scalar_span,
+                            )
+                            .build(source),
+                        );
+                    }
+                } else if required == "never" {
+                    let severity =
+                        config.get_effective_severity(self.code(), self.default_severity());
+                    diagnostics.push(
+                        DiagnosticBuilder::new(
+                            self.code(),
+                            severity,
+                            "string should not be quoted",
+                            scalar_span,
+                        )
+                        .build(source),
+                    );
+                }
+            }
+
+            ScalarStyle::Plain => {
+                // Plain scalars: only check when required == "always" and not a key.
+                if required == "always"
+                    && !is_key
+                    && !Self::is_scalar_literal(value)
+                    && !extra_allowed.iter().any(|p| value.contains(p.as_str()))
+                {
+                    let scalar_span = Self::make_span(line, scalar_offset, value.len());
+                    let severity =
+                        config.get_effective_severity(self.code(), self.default_severity());
+                    diagnostics.push(
+                        DiagnosticBuilder::new(
+                            self.code(),
+                            severity,
+                            "string should be quoted",
+                            scalar_span,
+                        )
+                        .build(source),
+                    );
+                }
+            }
+
+            // Literal and folded block scalars are intentional; skip.
+            _ => {}
+        }
+    }
+
+    /// Computes the byte offset of the scalar in `source` from 1-indexed line/col.
+    fn compute_offset(source: &str, line: usize, col: usize) -> usize {
+        let line_start: usize = source
+            .lines()
+            .take(line.saturating_sub(1))
+            .map(|l| l.len() + 1)
+            .sum();
+        line_start + col.saturating_sub(1)
+    }
+
+    /// Builds a [`Span`] covering `len` bytes starting at `offset` on `line`.
+    const fn make_span(line: usize, offset: usize, len: usize) -> Span {
+        Span::new(
+            Location::new(line, 1, offset),
+            Location::new(line, 1, offset + len),
+        )
+    }
+
     /// Checks if a string needs quotes based on YAML syntax rules.
     fn needs_quotes(s: &str) -> bool {
         // Empty strings need quotes
@@ -326,7 +331,7 @@ impl QuotedStringsRule {
             return true;
         }
 
-        // Strings with colons or spaces often need quotes
+        // Strings with colons or hash signs need quotes
         if s.contains(':') || s.contains('#') {
             return true;
         }
@@ -523,5 +528,41 @@ mod tests {
 
         assert!(!QuotedStringsRule::needs_quotes("simple"));
         assert!(!QuotedStringsRule::needs_quotes("hello_world"));
+    }
+
+    // Regression tests for issue #113: false positives on quotes inside plain scalars.
+
+    #[test]
+    fn test_no_false_positive_double_quotes_in_plain_scalar() {
+        // The value `echo "hello"` is a plain scalar; the " chars are literal content.
+        let yaml = r#"run: echo "hello""#;
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for plain scalar with embedded double quotes, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_false_positive_single_quotes_in_plain_scalar() {
+        // The value `${{ github.event_name == 'push' }}` is a plain scalar.
+        let yaml = "if: ${{ github.event_name == 'push' }}";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for plain scalar with embedded single quotes, got: {diagnostics:?}"
+        );
     }
 }
