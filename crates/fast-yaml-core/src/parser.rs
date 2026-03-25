@@ -1,6 +1,7 @@
 use crate::error::ParseResult;
 use crate::value::Value;
-use saphyr::LoadableYamlNode;
+use saphyr::{LoadableYamlNode, YamlLoader};
+use saphyr_parser::{BufferedInput, Parser as SaphyrParser};
 
 /// Parser for YAML documents.
 ///
@@ -49,6 +50,27 @@ impl Parser {
     /// ```
     pub fn parse_all(input: &str) -> ParseResult<Vec<Value>> {
         Ok(Value::load_from_str(input)?)
+    }
+
+    /// Parse all YAML documents preserving scalar styles (literal `|`, folded `>`).
+    ///
+    /// Unlike [`parse_all`], this function uses `early_parse = false` in the loader,
+    /// which keeps scalars as `Value::Representation` nodes with their original style
+    /// information instead of resolving them eagerly.
+    ///
+    /// This is used by the format pipeline to preserve block scalar styles in output.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid.
+    ///
+    /// [`parse_all`]: Parser::parse_all
+    pub fn parse_all_preserving_styles(input: &str) -> ParseResult<Vec<Value>> {
+        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(input.chars()));
+        let mut loader = YamlLoader::<Value>::default();
+        loader.early_parse(false);
+        saphyr_parser.load(&mut loader, true)?;
+        Ok(loader.into_documents())
     }
 }
 

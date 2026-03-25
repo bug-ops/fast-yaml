@@ -1,7 +1,10 @@
+use std::fmt::Write as _;
+
 use crate::error::{EmitError, EmitResult};
 use crate::value::Value;
 use memchr::memmem;
 use saphyr::{ScalarOwned, YamlEmitter};
+use saphyr_parser::ScalarStyle;
 
 /// Configuration for YAML emission.
 ///
@@ -410,6 +413,8 @@ impl Emitter {
     /// Uses streaming formatter for large files when the `streaming` feature is enabled,
     /// falling back to DOM-based formatting for small files or complex cases.
     ///
+    /// Block scalar styles (`|` literal and `>` folded) are preserved in the output.
+    ///
     /// # Errors
     ///
     /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
@@ -439,14 +444,204 @@ impl Emitter {
         #[cfg(all(feature = "streaming", not(feature = "arena")))]
         return crate::streaming::format_streaming(input, config);
 
-        // Fall back to DOM-based formatting (no streaming feature)
+        // Non-streaming fallback: parse with early_parse=false to preserve block scalar styles
+        // (literal | and folded >) instead of converting them to double-quoted strings.
         #[cfg(not(feature = "streaming"))]
         {
-            let value = crate::Parser::parse_str(input)
-                .map_err(|e| EmitError::Emit(e.to_string()))?
+            let docs = crate::Parser::parse_all_preserving_styles(input)
+                .map_err(|e| EmitError::Emit(e.to_string()))?;
+            let value = docs
+                .into_iter()
+                .next()
                 .ok_or_else(|| EmitError::Emit("Empty document".to_string()))?;
-            Self::emit_str_with_config(&value, config)
+            return Self::emit_str_preserving_styles(&value, config, 0);
         }
+    }
+
+    /// Emit a YAML value to a string, preserving block scalar styles.
+    ///
+    /// Handles `Literal` (`|`) and `Folded` (`>`) styles directly.
+    /// All other nodes are delegated to the saphyr emitter.
+    ///
+    /// # Errors
+    ///
+    /// Returns `EmitError::Emit` if the value cannot be serialized.
+    fn emit_str_preserving_styles(
+        value: &Value,
+        config: &EmitterConfig,
+        indent_level: usize,
+    ) -> EmitResult<String> {
+        // Fast path: no block scalars — use standard saphyr emitter
+        if !Self::has_block_scalar(value) {
+            return Self::emit_str_with_config(value, config);
+        }
+        let raw = Self::emit_value(value, config, indent_level)?;
+        // Apply the same post-processing (special floats, explicit_start) as the standard path
+        Ok(Self::apply_formatting(raw, config))
+    }
+
+    /// Check whether the value tree contains any Literal or Folded block scalars.
+    fn has_block_scalar(value: &Value) -> bool {
+        match value {
+            Value::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) => true,
+            Value::Sequence(seq) => seq.iter().any(Self::has_block_scalar),
+            Value::Mapping(map) => map
+                .iter()
+                .any(|(k, v)| Self::has_block_scalar(k) || Self::has_block_scalar(v)),
+            Value::Tagged(_, inner) => Self::has_block_scalar(inner),
+            _ => false,
+        }
+    }
+
+    /// Recursively emit a YAML value, handling block scalars manually.
+    ///
+    /// `indent_level` is the current nesting depth (in units of `config.indent` spaces).
+    /// Returns YAML text without a leading `---\n` document marker.
+    fn emit_value(
+        value: &Value,
+        config: &EmitterConfig,
+        indent_level: usize,
+    ) -> EmitResult<String> {
+        match value {
+            Value::Representation(content, ScalarStyle::Literal, _) => Ok(
+                Self::format_block_scalar(content, '|', config.indent, indent_level),
+            ),
+            Value::Representation(content, ScalarStyle::Folded, _) => Ok(
+                Self::format_block_scalar(content, '>', config.indent, indent_level),
+            ),
+            Value::Mapping(map) => {
+                let indent = " ".repeat(indent_level * config.indent);
+                let mut out = String::new();
+                for (k, v) in map {
+                    let key_str = Self::emit_scalar_inline(k)?;
+                    match v {
+                        Value::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) => {
+                            // Block scalar directly as value: `key: |\n  line\n`
+                            let val_str = Self::emit_value(v, config, indent_level + 1)?;
+                            write!(out, "{indent}{key_str}: {val_str}")
+                                .map_err(|e| EmitError::Emit(e.to_string()))?;
+                        }
+                        Value::Mapping(_) | Value::Sequence(_) => {
+                            writeln!(out, "{indent}{key_str}:")
+                                .map_err(|e| EmitError::Emit(e.to_string()))?;
+                            let val_str = Self::emit_value(v, config, indent_level + 1)?;
+                            out.push_str(&val_str);
+                        }
+                        _ => {
+                            let val_str = Self::emit_value_inline(v)?;
+                            writeln!(out, "{indent}{key_str}: {val_str}")
+                                .map_err(|e| EmitError::Emit(e.to_string()))?;
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            Value::Sequence(seq) => {
+                let indent = " ".repeat(indent_level * config.indent);
+                let mut out = String::new();
+                for item in seq {
+                    match item {
+                        Value::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) => {
+                            let item_str = Self::emit_value(item, config, indent_level + 1)?;
+                            write!(out, "{indent}- {item_str}")
+                                .map_err(|e| EmitError::Emit(e.to_string()))?;
+                        }
+                        Value::Mapping(_) | Value::Sequence(_) => {
+                            writeln!(out, "{indent}-")
+                                .map_err(|e| EmitError::Emit(e.to_string()))?;
+                            let item_str = Self::emit_value(item, config, indent_level + 1)?;
+                            out.push_str(&item_str);
+                        }
+                        _ => {
+                            let item_str = Self::emit_value_inline(item)?;
+                            writeln!(out, "{indent}- {item_str}")
+                                .map_err(|e| EmitError::Emit(e.to_string()))?;
+                        }
+                    }
+                }
+                Ok(out)
+            }
+            // Scalars and everything else: delegate to saphyr (no block style involved)
+            _ => Self::emit_value_inline(value).map(|s| format!("{s}\n")),
+        }
+    }
+
+    /// Emit a scalar key as an inline string (no trailing newline).
+    fn emit_scalar_inline(value: &Value) -> EmitResult<String> {
+        match value {
+            Value::Representation(s, ScalarStyle::SingleQuoted, _) => Ok(format!("'{s}'")),
+            Value::Representation(s, ScalarStyle::DoubleQuoted, _) => Ok(format!("\"{s}\"")),
+            Value::Representation(s, _, _) => Ok(s.clone()),
+            Value::Value(scalar) => match scalar {
+                ScalarOwned::Null => Ok("null".to_string()),
+                ScalarOwned::Boolean(b) => Ok(if *b { "true" } else { "false" }.to_string()),
+                ScalarOwned::Integer(i) => Ok(i.to_string()),
+                ScalarOwned::FloatingPoint(f) => Ok(f.to_string()),
+                ScalarOwned::String(s) => {
+                    if s.contains(':') || s.contains('#') || s.is_empty() {
+                        Ok(format!("\"{s}\""))
+                    } else {
+                        Ok(s.clone())
+                    }
+                }
+            },
+            _ => Err(EmitError::UnsupportedType(
+                "complex key not supported".to_string(),
+            )),
+        }
+    }
+
+    /// Emit any non-block-scalar value as an inline string (no trailing newline).
+    fn emit_value_inline(value: &Value) -> EmitResult<String> {
+        let mut out = String::new();
+        {
+            let mut emitter = YamlEmitter::new(&mut out);
+            emitter.compact(true);
+            let yaml: saphyr::Yaml = value.into();
+            emitter
+                .dump(&yaml)
+                .map_err(|e| EmitError::Emit(e.to_string()))?;
+        }
+        // saphyr emits "---\nvalue\n" — strip markers
+        let trimmed = out
+            .strip_prefix("---\n")
+            .unwrap_or(&out)
+            .trim_end_matches('\n');
+        Ok(trimmed.to_string())
+    }
+
+    /// Format a block scalar header + indented body lines.
+    ///
+    /// Returns text starting with the block indicator (`|` or `>`),
+    /// followed by `\n` and indented content lines.
+    fn format_block_scalar(
+        content: &str,
+        indicator: char,
+        indent_width: usize,
+        indent_level: usize,
+    ) -> String {
+        let child_indent = " ".repeat(indent_level * indent_width);
+
+        // Chomping: keep (+) if trailing blank lines, strip (-) if no trailing newline,
+        // clip (default) otherwise.
+        let chomping = if content.ends_with("\n\n") {
+            "+"
+        } else if !content.ends_with('\n') {
+            "-"
+        } else {
+            ""
+        };
+
+        let mut out = format!("{indicator}{chomping}\n");
+        for line in content.lines() {
+            if line.is_empty() {
+                out.push('\n');
+            } else {
+                // String::writeln never fails
+                let _ = writeln!(out, "{child_indent}{line}");
+            }
+        }
+        out
     }
 
     /// Format a YAML string with default configuration.
@@ -1019,6 +1214,71 @@ mod tests {
         assert!(
             result.contains("3.14"),
             "3.14 must be preserved, got: {result}"
+        );
+    }
+
+    // Regression tests for issue #62: block scalar styles must be preserved by fy format.
+    #[test]
+    fn test_format_preserves_literal_block_scalar() {
+        let input = "literal: |\n  line one\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("literal: |"),
+            "literal block style should be preserved, got: {result}"
+        );
+        assert!(result.contains("line one"));
+        assert!(result.contains("line two"));
+    }
+
+    #[test]
+    fn test_format_preserves_folded_block_scalar() {
+        let input = "folded: >\n  word1\n  word2\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("folded: >"),
+            "folded block style should be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_nested_literal_block_scalar() {
+        let input = "outer:\n  inner: |\n    line one\n    line two\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("inner: |"),
+            "nested literal block should be preserved, got: {result}"
+        );
+        assert!(result.contains("line one"));
+        assert!(result.contains("line two"));
+    }
+
+    #[test]
+    fn test_format_mixed_block_and_plain_values() {
+        let input = "plain: value\nliteral: |\n  block content\nnumber: 42\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(result.contains("plain: value"));
+        assert!(result.contains("literal: |"));
+        assert!(result.contains("block content"));
+        assert!(result.contains("number: 42") || result.contains("number: '42'"));
+    }
+
+    #[test]
+    fn test_format_block_scalar_not_double_quoted() {
+        // Regression: before fix, block scalars were emitted as double-quoted strings
+        let input = "key: |\n  multiline\n  content\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            !result.contains("\"multiline"),
+            "block scalar should not be double-quoted, got: {result}"
+        );
+        assert!(
+            result.contains("key: |"),
+            "literal indicator must be present, got: {result}"
         );
     }
 }
