@@ -160,6 +160,11 @@ impl Emitter {
         // Apply post-processing for configuration options
         output = Self::apply_formatting(output, config);
 
+        // Ensure output always ends with a newline
+        if !output.is_empty() && !output.ends_with('\n') {
+            output.push('\n');
+        }
+
         Ok(output)
     }
 
@@ -408,12 +413,31 @@ impl Emitter {
             || prefix.ends_with('\n')
     }
 
+    /// Extract `%YAML` and `%TAG` directive lines that appear before the first `---`.
+    ///
+    /// Returns the directive block (with a trailing newline) or an empty string.
+    fn extract_directives(input: &str) -> String {
+        let mut directives = String::new();
+        for line in input.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("---") || trimmed.starts_with("...") {
+                break;
+            }
+            if trimmed.starts_with("%YAML") || trimmed.starts_with("%TAG") {
+                directives.push_str(line);
+                directives.push('\n');
+            }
+        }
+        directives
+    }
+
     /// Format a YAML string with configuration.
     ///
     /// Uses streaming formatter for large files when the `streaming` feature is enabled,
     /// falling back to DOM-based formatting for small files or complex cases.
     ///
     /// Block scalar styles (`|` literal and `>` folded) are preserved in the output.
+    /// `%YAML` and `%TAG` directives are extracted and prepended to the formatted output.
     ///
     /// # Errors
     ///
@@ -430,19 +454,27 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+        // Extract %YAML / %TAG directives before formatting; the streaming
+        // formatter (and DOM fallback) silently drops them.
+        let directives = Self::extract_directives(input);
+
         // Always prefer the streaming formatter when available.
         //
         // The DOM-based path (saphyr's YamlEmitter) quotes YAML 1.1 boolean-like
         // keys (`on`, `off`, `yes`, `no`) even though they are plain strings in
         // YAML 1.2.2 Core Schema. The streaming formatter preserves the original
         // ScalarStyle from the parser, so it never introduces spurious quoting.
-        #[cfg(feature = "streaming")]
-        // Prefer arena allocation when available
-        #[cfg(feature = "arena")]
-        return crate::streaming::format_streaming_arena(input, config);
+        #[cfg(all(feature = "streaming", feature = "arena"))]
+        {
+            let formatted = crate::streaming::format_streaming_arena(input, config)?;
+            Ok(Self::prepend_directives(&directives, formatted))
+        }
 
         #[cfg(all(feature = "streaming", not(feature = "arena")))]
-        return crate::streaming::format_streaming(input, config);
+        {
+            let formatted = crate::streaming::format_streaming(input, config)?;
+            Ok(Self::prepend_directives(&directives, formatted))
+        }
 
         // Non-streaming fallback: parse with early_parse=false to preserve block scalar styles
         // (literal | and folded >) instead of converting them to double-quoted strings.
@@ -471,7 +503,25 @@ impl Emitter {
             if !output.is_empty() && !output.ends_with('\n') {
                 output.push('\n');
             }
-            return Ok(output);
+            Ok(Self::prepend_directives(&directives, output))
+        }
+    }
+
+    /// Prepend directive lines to formatted output.
+    ///
+    /// If `directives` is non-empty, inserts them before the first `---` line
+    /// or at the beginning of the output.
+    fn prepend_directives(directives: &str, formatted: String) -> String {
+        if directives.is_empty() {
+            return formatted;
+        }
+        // Per YAML 1.2 spec §6.8.1, a directive end marker (`---`) MUST follow
+        // any directives. If the formatter already emitted `---`, just prepend the
+        // directives; otherwise inject the required marker between them.
+        if formatted.starts_with("---") {
+            format!("{directives}{formatted}")
+        } else {
+            format!("{directives}---\n{formatted}")
         }
     }
 
@@ -1472,6 +1522,151 @@ mod tests {
         assert!(
             result.contains("desc: >\n"),
             "folded clip `>` must not be changed to `>-`, got: {result}"
+        );
+    }
+
+    // Regression tests for issue #94: emit output must always end with newline
+    #[test]
+    fn test_emit_str_ends_with_newline() {
+        let value = Value::Value(ScalarOwned::String("hello".to_string()));
+        let result = Emitter::emit_str(&value).unwrap();
+        assert!(
+            result.ends_with('\n'),
+            "emit_str output must end with newline, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_emit_str_with_config_ends_with_newline_default() {
+        let value = Value::Value(ScalarOwned::String("hello".to_string()));
+        let config = EmitterConfig::default();
+        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
+        assert!(
+            result.ends_with('\n'),
+            "emit_str_with_config output must end with newline (default config), got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_emit_str_with_config_ends_with_newline_explicit_start() {
+        let value = Value::Value(ScalarOwned::String("hello".to_string()));
+        let config = EmitterConfig::new().with_explicit_start(true);
+        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
+        assert!(
+            result.ends_with('\n'),
+            "emit_str_with_config output must end with newline (explicit_start=true), got: {result:?}"
+        );
+    }
+
+    // Regression tests for issue #95: format must preserve %YAML and %TAG directives
+    #[test]
+    fn test_format_preserves_yaml_directive() {
+        let input = "%YAML 1.2\n---\nkey: value\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("%YAML 1.2"),
+            "format_with_config must preserve %YAML directive, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_preserves_tag_directive() {
+        let input = "%TAG ! tag:example.com,2000:app/\n---\nkey: value\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("%TAG ! tag:example.com,2000:app/"),
+            "format_with_config must preserve %TAG directive, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_without_directives_works_normally() {
+        let input = "key: value\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("key: value"),
+            "format_with_config without directives must work normally, got: {result:?}"
+        );
+        assert!(
+            result.ends_with('\n'),
+            "format_with_config output must end with newline, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_yaml_directive_precedes_document_start() {
+        let input = "%YAML 1.2\n---\nkey: value\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        let yaml_pos = result
+            .find("%YAML 1.2")
+            .expect("%YAML directive must be present");
+        let doc_start_pos = result.find("---").expect("--- must be present");
+        assert!(
+            yaml_pos < doc_start_pos,
+            "%YAML directive must appear before ---, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_yaml_and_tag_directives_together() {
+        let input = "%YAML 1.2\n%TAG ! tag:example.com,2000:app/\n---\nkey: value\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("%YAML 1.2"),
+            "%YAML directive must be preserved, got: {result:?}"
+        );
+        assert!(
+            result.contains("%TAG ! tag:example.com,2000:app/"),
+            "%TAG directive must be preserved, got: {result:?}"
+        );
+        let yaml_pos = result.find("%YAML 1.2").unwrap();
+        let tag_pos = result.find("%TAG").unwrap();
+        let doc_pos = result.find("---").unwrap();
+        assert!(
+            yaml_pos < doc_pos,
+            "%YAML must precede ---, got: {result:?}"
+        );
+        assert!(tag_pos < doc_pos, "%TAG must precede ---, got: {result:?}");
+    }
+
+    #[test]
+    fn test_extract_directives_without_explicit_doc_start() {
+        // extract_directives must capture %YAML lines even when no `---` follows in input.
+        let input = "%YAML 1.2\nkey: value\n";
+        let directives = Emitter::extract_directives(input);
+        assert_eq!(
+            directives, "%YAML 1.2\n",
+            "extract_directives must return directive line even without ---, got: {directives:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_directive_only_on_first_document_in_multidoc_stream() {
+        let input = "%YAML 1.2\n---\nfirst: doc\n---\nsecond: doc\n";
+        let config = EmitterConfig::default();
+        let result = Emitter::format_with_config(input, &config).unwrap();
+        assert!(
+            result.contains("%YAML 1.2"),
+            "%YAML directive must be present in output, got: {result:?}"
+        );
+        // Directive must appear only once (before first document)
+        assert_eq!(
+            result.matches("%YAML 1.2").count(),
+            1,
+            "Directive must appear exactly once, got: {result:?}"
+        );
+        assert!(
+            result.contains("first: doc"),
+            "first document must be present, got: {result:?}"
+        );
+        assert!(
+            result.contains("second: doc"),
+            "second document must be present, got: {result:?}"
         );
     }
 }
