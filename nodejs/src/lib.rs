@@ -26,6 +26,7 @@ use napi_derive::napi;
 mod batch;
 mod conversion;
 mod emitter;
+mod lint;
 mod parallel;
 mod parser;
 
@@ -35,6 +36,10 @@ pub use batch::{
     format_files_in_place, process_files,
 };
 pub use emitter::{DumpOptions, safe_dump, safe_dump_all};
+pub use lint::{
+    ContextLine, Diagnostic, DiagnosticContext, LintConfig, Linter, Location, Severity, Span,
+    Suggestion, lint,
+};
 pub use parallel::{ParallelConfig, parse_parallel, parse_parallel_async};
 pub use parser::{LoadOptions, load, load_all, safe_load, safe_load_all};
 

@@ -308,6 +308,24 @@ impl Linter {
         }
     }
 
+    /// Creates a linter with all default rules and custom configuration.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{Linter, LintConfig};
+    ///
+    /// let config = LintConfig::new().with_max_line_length(Some(120));
+    /// let linter = Linter::with_all_rules_and_config(config);
+    /// ```
+    #[must_use]
+    pub fn with_all_rules_and_config(config: LintConfig) -> Self {
+        Self {
+            config,
+            registry: RuleRegistry::with_default_rules(),
+        }
+    }
+
     /// Adds a custom rule.
     ///
     /// # Examples
