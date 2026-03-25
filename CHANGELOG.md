@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core**: Mixed-case YAML 1.2.2 boolean/null variants (`True`, `TRUE`, `False`, `FALSE`, `Null`) are now correctly parsed as `Bool`/`Null` values instead of strings. saphyr only handles lowercase variants natively; the parser now post-processes the value tree to canonicalize the remaining Core Schema variants. (#71)
+- **Linter**: `empty-values` rule no longer reports a false positive for values with explicit YAML type tags (`!!null null`, `!!str value`, `!!int 42`, etc.). Any value starting with `!` is now treated as explicitly typed. (#72)
 - `fy format` no longer changes float type to integer: `1.0` stays `1.0` (not `1`), `1.23e10` stays `1.23e10` (not `12300000000`). Root cause: streaming formatter now handles all input sizes, preserving the original scalar text representation from the parser. Previously, inputs smaller than 1 KB fell back to DOM-based formatting which lost float precision through Rust's float Display trait.
 - `fy format` output now consistently ends with a trailing newline (POSIX convention).
 - `DuplicateKeysRule` now fires by default: `LintConfig::default()` sets `allow_duplicate_keys: false`

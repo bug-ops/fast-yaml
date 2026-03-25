@@ -350,19 +350,19 @@ fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         }
     }
 
-    // Title case and uppercase true/false are strings in saphyr (YAML 1.2.2 compliant)
-    for key in &[
-        "bool_true_title",
-        "bool_false_title",
-        "bool_true_upper",
-        "bool_false_upper",
+    // Title case and uppercase true/false are canonicalized to Boolean per YAML 1.2.2 Core Schema
+    for (key, expected_bool) in &[
+        ("bool_true_title", true),
+        ("bool_false_title", false),
+        ("bool_true_upper", true),
+        ("bool_false_upper", false),
     ] {
         let key_value = Value::Value(ScalarOwned::String((*key).to_string()));
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::String(_)))
+            && !matches!(value, Value::Value(ScalarOwned::Boolean(b)) if b == expected_bool)
         {
             failures.push(format!(
-                "  {name} - Key '{key}' should be String (saphyr behavior), got {value:?}"
+                "  {name} - Key '{key}' should be Boolean({expected_bool}), got {value:?}"
             ));
         }
     }
@@ -409,15 +409,15 @@ fn verify_null_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         }
     }
 
-    // Title case "Null" is a string in saphyr
+    // Title case "Null" is canonicalized to Null per YAML 1.2.2 Core Schema
     {
         let key = "null_word_title";
         let key_value = Value::Value(ScalarOwned::String(key.to_string()));
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::String(_)))
+            && !matches!(value, Value::Value(ScalarOwned::Null))
         {
             failures.push(format!(
-                "  {name} - Key '{key}' should be String (saphyr behavior), got {value:?}"
+                "  {name} - Key '{key}' should be Null (YAML 1.2.2 Core Schema), got {value:?}"
             ));
         }
     }
