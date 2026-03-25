@@ -52,6 +52,7 @@ saphyr = { version = "0.0.6" }
 saphyr-parser = { version = "0.0.6" }
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }
+serde_norway = { version = "0.9" }
 thiserror = { version = "2.0" }
 
 # External dependencies - dev/test

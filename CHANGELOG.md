@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CLI**: `fy lint` now supports a `--config <path>` flag to load rule configuration from a YAML file. Auto-discovery walks up from the current working directory looking for `.fast-yaml.yaml` or `.fast-yaml.yml` (up to 20 directory levels). Use `--no-config` to disable auto-discovery. (#123)
+- **CLI**: `--max-line-length`, `--indent-size`, and `--allow-duplicate-keys` flags on `fy lint` now use `Option<T>` so they only override config file values when explicitly provided; defaults are no longer silently applied over config file settings.
+- **Linter**: `ConfigFile` and `ConfigFileError` types in `fast-yaml-linter` for loading and merging `.fast-yaml.yaml` config files into `LintConfig`. Unknown rule names emit a warning to stderr.
+
 ### Fixed
 
 - fix(nodejs): `new Linter()` with no args now uses default rules instead of an empty registry (fixes #124)

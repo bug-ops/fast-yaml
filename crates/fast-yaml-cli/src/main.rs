@@ -173,21 +173,23 @@ fn run() -> Result<ExitCode> {
         #[cfg(feature = "linter")]
         Some(Command::Lint {
             file,
+            config: config_path,
+            no_config,
             max_line_length,
             indent_size,
             format,
             allow_duplicate_keys,
         }) => {
             let input = InputSource::from_args(file)?;
-            let lint_config = common_config
-                .clone()
-                .with_formatter(config::FormatterConfig::new().with_indent(indent_size as u8));
-            let cmd = commands::lint::LintCommand::new(
-                lint_config,
+            let args = commands::lint::LintArgs {
+                config_path,
+                no_config,
                 max_line_length,
+                indent_size,
                 format,
                 allow_duplicate_keys,
-            );
+            };
+            let cmd = commands::lint::LintCommand::build(common_config.clone(), args, &input)?;
             cmd.execute(&input)?
         }
         None => {
