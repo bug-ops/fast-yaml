@@ -1,0 +1,7 @@
+base: &base
+  x: 1
+
+child:
+  <<: *base
+  key: first
+  key: second

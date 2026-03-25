@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `duplicate-key` rule: fix false negative when mapping contains merge-key alias (`<<: *anchor`) — keys after the alias were silently skipped due to `Event::Alias` not advancing the key-tracking state (fixes #188)
+- `colons` rule: fix false positive when block mapping key has trailing whitespace but no inline value — spaces after `:` are now only checked when a non-whitespace value follows on the same line (fixes #190)
 - fix(linter): `quoted-strings` rule no longer emits "does not need quotes" for double-quoted strings with `\uXXXX`, `\UXXXXXXXX`, or `\xXX` escape sequences; these escapes decode to characters indistinguishable from plain text, requiring raw source inspection (#182)
 - fix(linter): `truthy` rule now distinguishes non-standard YAML 1.1-only values (`yes`, `no`, `on`, `off`, `y`, `n`) from non-canonical YAML 1.2.2 booleans (`True`, `TRUE`, `False`, `FALSE`); the latter now emit "non-canonical boolean, use 'true' or 'false'" instead of "non-standard truthy value" (#181)
 - fix(cli): `fy lint` now returns an error when `--in-place` / `-i` is passed instead of silently accepting a flag with no effect (#180)

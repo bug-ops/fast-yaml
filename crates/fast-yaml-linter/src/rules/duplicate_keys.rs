@@ -118,6 +118,16 @@ fn collect_duplicates(source: &str) -> Vec<(String, usize, usize, usize)> {
                 }
             }
 
+            // An alias node acts as a value in the current scope. When it appears
+            // as the value of a mapping entry (expecting_key == false), advance the
+            // parent mapping back to expecting the next key — same as MappingEnd /
+            // SequenceEnd. This fixes false negatives when `<<: *anchor` precedes
+            // duplicate keys: without this, expecting_key is never flipped back to
+            // true, so subsequent real keys are misclassified as values and skipped.
+            Event::Alias(..) => {
+                advance_parent_to_key(&mut scopes);
+            }
+
             _ => {}
         }
     }
@@ -294,5 +304,14 @@ mod tests {
             "column should be 1-indexed at indent 2; got {}",
             diags[0].span.start.column
         );
+    }
+
+    /// Regression test for #188: duplicate keys after `<<: *anchor` must be detected.
+    #[test]
+    fn test_duplicate_key_after_merge_alias() {
+        let yaml = "base: &base\n  x: 1\n\nchild:\n  <<: *base\n  key: first\n  key: second\n";
+        let diags = run(yaml);
+        assert_eq!(diags.len(), 1, "expected 1 diagnostic, got {}", diags.len());
+        assert!(diags[0].message.contains("duplicate key 'key'"));
     }
 }
