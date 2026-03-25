@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - fix(linter): replace O(n²) `compute_offset` in `quoted-strings` rule with O(1) `SourceContext::get_line_offset` lookup (#147)
+- **Python**: `safe_dump_all()` now accepts `indent`, `width`, `explicit_start`, and `default_flow_style` parameters, matching the `safe_dump()` API. (#151)
 - fix(linter): implement indentation rule — detect wrong indent size and mixed tabs/spaces (#139)
 - **Python**: `safe_load()` now raises `ValueError` with a clear message when YAML contains complex keys (sequences or mappings as mapping keys) instead of a confusing `TypeError` (#144)
 - fix(nodejs): `new Linter()` with no args now uses default rules instead of an empty registry (fixes #124)

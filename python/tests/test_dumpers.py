@@ -302,6 +302,74 @@ class TestSafeDumpOptions:
         assert result.index("a:") < result.index("z:")
 
 
+class TestSafeDumpAllOptions:
+    """Tests for safe_dump_all() formatting parameters (issue #151)."""
+
+    def test_indent(self):
+        """safe_dump_all() respects indent parameter."""
+        docs = [{"parent": {"child": "value"}}]
+        result = fast_yaml.safe_dump_all(docs, indent=4)
+        lines = result.splitlines()
+        nested_line = next(ln for ln in lines if "child" in ln)
+        assert nested_line.startswith("    "), f"Expected 4-space indent, got: {repr(nested_line)}"
+
+    def test_explicit_start(self):
+        """safe_dump_all() adds document start marker when explicit_start=True."""
+        result = fast_yaml.safe_dump_all([{"k": "v"}], explicit_start=True)
+        assert result.startswith("---\n")
+
+    def test_explicit_start_false_by_default(self):
+        """safe_dump_all() already adds --- separators between docs by default."""
+        result = fast_yaml.safe_dump_all([{"a": 1}, {"b": 2}])
+        assert "---" in result
+
+    def test_default_flow_style_false(self):
+        """safe_dump_all() with default_flow_style=False produces block style."""
+        docs = [{"key": [1, 2, 3]}]
+        result = fast_yaml.safe_dump_all(docs, default_flow_style=False)
+        assert "- 1" in result
+        assert "[1, 2, 3]" not in result
+
+    def test_default_flow_style_true(self):
+        """safe_dump_all() with default_flow_style=True produces flow style."""
+        docs = [{"key": [1, 2, 3]}]
+        result = fast_yaml.safe_dump_all(docs, default_flow_style=True)
+        assert "[1, 2, 3]" in result or "{key: [1, 2, 3]}" in result
+
+    def test_sort_keys(self):
+        """safe_dump_all() sorts keys in all documents when sort_keys=True."""
+        docs = [{"z": 1, "a": 2}, {"y": 3, "b": 4}]
+        result = fast_yaml.safe_dump_all(docs, sort_keys=True)
+        assert result.index("a:") < result.index("z:")
+
+    def test_width(self):
+        """safe_dump_all() accepts width parameter without error."""
+        result = fast_yaml.safe_dump_all([{"key": "value"}], width=40)
+        assert "key: value" in result
+
+    def test_all_params_combined(self):
+        """safe_dump_all() accepts all formatting kwargs together."""
+        docs = [{"z": 1, "a": 2}, {"nested": {"x": 1}}]
+        result = fast_yaml.safe_dump_all(
+            docs,
+            explicit_start=True,
+            indent=4,
+            width=100,
+            sort_keys=True,
+        )
+        assert result.startswith("---\n")
+        assert result.index("a:") < result.index("z:")
+
+    def test_stream_output(self):
+        """safe_dump_all() writes to stream and returns None."""
+        import io
+
+        buf = io.StringIO()
+        result = fast_yaml.safe_dump_all([{"k": "v"}], stream=buf)
+        assert result is None
+        assert "k: v" in buf.getvalue()
+
+
 class TestDumpOptions:
     """Tests for dump options parameters."""
 
