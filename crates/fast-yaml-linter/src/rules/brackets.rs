@@ -155,6 +155,7 @@ impl super::LintRule for BracketsRule {
                     self.code(),
                     config,
                     "brackets",
+                    open.span,
                 ) {
                     diagnostics.push(diag);
                 }
@@ -169,6 +170,7 @@ impl super::LintRule for BracketsRule {
                     self.code(),
                     config,
                     "brackets",
+                    close.span,
                 ) {
                     diagnostics.push(diag);
                 }
