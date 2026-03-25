@@ -298,6 +298,198 @@ double: "quoted""#;
         assert_eq!(fix_special_float_value("normal"), "normal");
     }
 
+    // ── Issue #76: Block scalar chomp indicator ─────────────────────────────
+
+    #[test]
+    fn test_format_streaming_block_scalar_clip_chomp() {
+        // Clip (|) — value ends with exactly one newline
+        let yaml = "desc: |\n  line one\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("desc: |\n"),
+            "clip chomp '|' must be preserved, got: {result}"
+        );
+        assert!(
+            !result.contains("|-"),
+            "clip chomp must not become strip '|-', got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_block_scalar_strip_chomp() {
+        // Strip (|-) — value does not end with a newline
+        let yaml = "desc: |-\n  line one\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("|-"),
+            "strip chomp '|-' must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_block_scalar_keep_chomp() {
+        // Keep (|+) — value ends with two or more newlines
+        let yaml = "desc: |+\n  line one\n  line two\n\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("|+"),
+            "keep chomp '|+' must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_block_scalar_keep_chomp_multiple_trailing() {
+        // Keep (|+) with multiple trailing blank lines
+        let yaml = "desc: |+\n  line one\n  line two\n\n\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("|+"),
+            "keep chomp '|+' must be preserved, got: {result}"
+        );
+        // The formatted output must end with at least two blank lines after content
+        assert!(
+            result.contains("  line two\n\n"),
+            "multiple trailing blank lines must be preserved, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_block_scalar_empty_line_no_indent() {
+        // Empty lines in block scalars must not get trailing whitespace
+        let yaml = "desc: |\n  line one\n\n  line two\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        // The empty line must be a bare newline, not "  \n"
+        assert!(
+            !result.contains("  \n"),
+            "empty lines in block scalars must not have trailing spaces, got: {result}"
+        );
+        assert!(
+            result.contains("line one\n\n"),
+            "empty line between content lines must be preserved as bare newline, got: {result}"
+        );
+    }
+
+    // ── Issue #83: Sequence-of-sequences ────────────────────────────────────
+
+    #[test]
+    fn test_format_streaming_sequence_of_sequences() {
+        let yaml = "- - name\n  - hr\n  - avg\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert_eq!(
+            result, "- - name\n  - hr\n  - avg\n",
+            "sequence-of-sequences must not produce extra spaces, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_sequence_of_sequences_from_flow() {
+        // Flow sequence converts to block: inner items must align correctly
+        let yaml = "- [name, hr, avg]\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert_eq!(
+            result, "- - name\n  - hr\n  - avg\n",
+            "flow-to-block sequence-of-sequences must produce correct indentation, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_triple_nested_sequence() {
+        let yaml = "- - - deep\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert_eq!(
+            result, "- - - deep\n",
+            "triple-nested sequence must format correctly, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_sequence_first_item_mapping() {
+        // Mapping as first item of a nested sequence
+        let yaml = "- - key: val\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert_eq!(
+            result, "- - key: val\n",
+            "mapping as first item after dash must not double-indent, got: {result}"
+        );
+    }
+
+    // ── Issue #84: Anchors on correct line ───────────────────────────────────
+
+    #[test]
+    fn test_format_streaming_anchor_on_mapping_value() {
+        // Anchor on mapping value: "key: &anchor1\n  subkey: val"
+        let yaml = "defaults: &base\n  adapter: postgres\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("defaults: &anchor1\n"),
+            "anchor must appear inline on same line as key, got: {result}"
+        );
+        assert!(
+            result.contains("  adapter: postgres\n"),
+            "sub-key must be indented on next line, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_anchor_on_sequence_value() {
+        // Anchor on sequence value: "tags: &anchor1\n  - yaml"
+        let yaml = "tags: &common\n  - yaml\n  - parser\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert!(
+            result.contains("tags: &anchor1\n"),
+            "anchor must appear inline on same line as key, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_anchor_mapping_in_sequence() {
+        // Anchored mapping inside a sequence: "- &anchor1\n  key: val"
+        // The key must be indented (not at column 0).
+        let yaml = "- &ref\n  key: val\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert_eq!(
+            result, "- &anchor1\n  key: val\n",
+            "anchored mapping in sequence: anchor inline, key indented, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_anchor_sequence_in_sequence() {
+        // Anchored sequence inside a sequence: "- &anchor1\n  - item"
+        let yaml = "- &ref\n  - item\n";
+        let config = EmitterConfig::default();
+        let result = format_streaming(yaml, &config).unwrap();
+        assert_eq!(
+            result, "- &anchor1\n  - item\n",
+            "anchored sequence in sequence: anchor inline, item indented, got: {result}"
+        );
+    }
+
+    #[test]
+    fn test_format_streaming_anchor_idempotency() {
+        // format(format(input)) == format(input) for anchored documents
+        let yaml = "defaults: &base\n  adapter: postgres\ndev:\n  <<: *base\n  debug: true\n";
+        let config = EmitterConfig::default();
+        let first = format_streaming(yaml, &config).unwrap();
+        let second = format_streaming(&first, &config).unwrap();
+        assert_eq!(
+            first, second,
+            "formatting must be idempotent for anchored documents"
+        );
+    }
+
     #[test]
     fn test_format_streaming_multiline_literal() {
         let yaml = "text: |\n  line1\n  line2";

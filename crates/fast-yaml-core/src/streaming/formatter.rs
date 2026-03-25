@@ -48,6 +48,9 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     /// The first key of a mapping opened inline after "- " must not call
     /// `write_indent` — the dash already placed the cursor at the right column.
     first_key_after_dash: bool,
+    /// The first item of a sequence opened inline after an outer "- " must not
+    /// call `write_indent` — the outer dash already positioned the cursor.
+    first_item_after_dash: bool,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -69,6 +72,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             last_char_newline: true, // Empty buffer conceptually "ends with" newline
             pending_space: false,
             first_key_after_dash: false,
+            first_item_after_dash: false,
             backend,
         }
     }
@@ -181,7 +185,11 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         // Write indentation and prefix based on context
         match ctx {
             Context::Sequence => {
-                self.write_indent();
+                if self.first_item_after_dash {
+                    self.first_item_after_dash = false;
+                } else {
+                    self.write_indent();
+                }
                 self.output.push_str("- ");
                 self.last_char_newline = false;
             }
@@ -305,28 +313,61 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             self.last_char_newline = true;
         }
 
-        // Write prefix based on context
+        // Write prefix and anchor inline per context to avoid anchors on wrong line.
         match ctx {
             Context::Sequence => {
-                self.write_indent();
+                if self.first_item_after_dash {
+                    self.first_item_after_dash = false;
+                } else {
+                    self.write_indent();
+                }
                 self.output.push_str("- ");
                 self.last_char_newline = false;
+                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+                    // Emit anchor inline after "- "; then a newline.
+                    // Children need fresh indentation — do NOT set first_item_after_dash.
+                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
+                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+                    self.output.push('&');
+                    self.output.push_str(name);
+                    self.output.push('\n');
+                    self.last_char_newline = true;
+                } else {
+                    // No anchor: first child sits right after "- ".
+                    self.first_item_after_dash = true;
+                }
             }
             Context::MappingKey => {
                 // Sequence as mapping key - unusual but valid
                 self.write_indent();
+                self.emit_anchor_if_present(anchor_id, false);
             }
             Context::MappingValue => {
-                // Value position - discard pending space and emit newline instead
+                // Value position - emit anchor inline if present, then newline.
+                // The pending_space after colon is consumed here: if an anchor is present,
+                // emit "key: &anchor\n"; otherwise emit "key:\n" (no trailing space).
                 self.pending_space = false;
+                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+                    self.output.push(' ');
+                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
+                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+                    self.output.push('&');
+                    self.output.push_str(name);
+                }
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
-            Context::Root => {}
+            Context::Root => {
+                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
+                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+                    self.output.push('&');
+                    self.output.push_str(name);
+                    self.output.push('\n');
+                    self.last_char_newline = true;
+                }
+            }
         }
-
-        // Handle anchor (with bounds check for security)
-        self.emit_anchor_if_present(anchor_id, false);
 
         // Update context for mapping value -> key transition
         if ctx == Context::MappingValue
@@ -357,30 +398,63 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             self.last_char_newline = true;
         }
 
-        // Write prefix based on context
+        // Write prefix and anchor inline per context to avoid anchors on wrong line.
         match ctx {
             Context::Sequence => {
-                self.write_indent();
+                if self.first_item_after_dash {
+                    self.first_item_after_dash = false;
+                } else {
+                    self.write_indent();
+                }
                 self.output.push_str("- ");
                 self.last_char_newline = false;
-                // The first key of this mapping sits right after "- "; no extra indent.
-                self.first_key_after_dash = true;
+                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+                    // Emit anchor inline after "- "; then a newline.
+                    // Anchor occupies the "- " line, so the first key goes on its own
+                    // indented line — do NOT set first_key_after_dash.
+                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
+                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+                    self.output.push('&');
+                    self.output.push_str(name);
+                    self.output.push('\n');
+                    self.last_char_newline = true;
+                    self.first_key_after_dash = false;
+                } else {
+                    // No anchor: first key sits right after "- "; no extra indent.
+                    self.first_key_after_dash = true;
+                }
             }
             Context::MappingKey => {
                 // Mapping as mapping key - unusual but valid (complex key)
                 self.write_indent();
+                self.emit_anchor_if_present(anchor_id, false);
             }
             Context::MappingValue => {
-                // Value position - discard pending space and emit newline instead
+                // Value position - emit anchor inline if present, then newline.
+                // The pending_space after colon is consumed here: if an anchor is present,
+                // emit "key: &anchor\n"; otherwise emit "key:\n" (no trailing space).
                 self.pending_space = false;
+                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+                    self.output.push(' ');
+                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
+                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+                    self.output.push('&');
+                    self.output.push_str(name);
+                }
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
-            Context::Root => {}
+            Context::Root => {
+                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
+                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+                    self.output.push('&');
+                    self.output.push_str(name);
+                    self.output.push('\n');
+                    self.last_char_newline = true;
+                }
+            }
         }
-
-        // Handle anchor (with bounds check for security)
-        self.emit_anchor_if_present(anchor_id, true);
 
         // Update context for mapping value -> key transition
         if ctx == Context::MappingValue
@@ -414,7 +488,11 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         // Write prefix based on context
         match ctx {
             Context::Sequence => {
-                self.write_indent();
+                if self.first_item_after_dash {
+                    self.first_item_after_dash = false;
+                } else {
+                    self.write_indent();
+                }
                 self.output.push_str("- ");
                 self.last_char_newline = false;
             }
@@ -465,9 +543,31 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         }
     }
 
+    /// Derive YAML block scalar chomp indicator from content.
+    ///
+    /// - `"+"` (keep): value ends with two or more newlines
+    /// - `"-"` (strip): value does not end with a newline
+    /// - `""` (clip): value ends with exactly one newline
+    fn chomp_indicator(value: &str) -> &'static str {
+        if value.ends_with("\n\n") {
+            "+"
+        } else if !value.ends_with('\n') {
+            "-"
+        } else {
+            ""
+        }
+    }
+
     /// Write indentation for block scalar content (literal/folded styles).
+    ///
+    /// Empty lines are emitted as bare `\n` (no trailing spaces) to match
+    /// the non-streaming path in `emitter.rs`.
     fn write_block_scalar_lines(&mut self, value: &str) {
         let indent_chars = self.indent_level.saturating_mul(self.config.indent);
+
+        // Track the last non-empty line position to handle keep (+) chomp.
+        // value.lines() drops trailing empty entries produced by trailing newlines.
+        let last_non_empty = value.trim_end_matches('\n');
 
         for line in value.lines() {
             // Blank lines inside block scalars must not receive indentation — that
@@ -481,6 +581,18 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.output.push_str(line);
             }
             self.output.push('\n');
+        }
+
+        // For keep (+) chomp: value.lines() drops trailing empty entries.
+        // After the last non-empty line, emit the extra blank lines that lines() skipped.
+        // Example: "text\n\n" → lines() yields ["text"], but we need "text\n\n".
+        // The loop above already emitted one \n after the last content line,
+        // so we emit (trailing_count - 1) additional newlines.
+        if value.ends_with("\n\n") {
+            let trailing_count = value.len() - last_non_empty.len();
+            for _ in 1..trailing_count {
+                self.output.push('\n');
+            }
         }
     }
 
