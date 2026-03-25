@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python**: `safe_dump()` `indent` and `default_flow_style` parameters now take effect. Previously both were accepted but silently ignored. `indent=N` rescales block-style indentation to N spaces; `default_flow_style=True` renders all mappings and sequences in flow style (`{k: v}` / `[a, b]`). (#127)
 - fix(linter): `duplicate-key` rule reported 0-indexed column numbers in JSON output; saphyr `col()` is 0-indexed and now correctly converted to 1-indexed (#131)
 - fix(linter): `key-ordering` rule silently skipped nested mapping keys when the parent mapping had more than one top-level key; fixed by interleaving key location with value recursion (#130)
+- fix(linter): `enabled: false` in config file did not disable rules; `is_rule_disabled` now checks `rule_configs` in addition to the `disabled_rules` set (#133)
 
 ## [0.5.3] - 2026-03-25
 

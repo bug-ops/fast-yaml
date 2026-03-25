@@ -132,6 +132,7 @@ impl LintConfig {
     #[must_use]
     pub fn is_rule_disabled(&self, code: &str) -> bool {
         self.disabled_rules.contains(code)
+            || self.rule_configs.get(code).is_some_and(|rc| !rc.enabled)
     }
 
     /// Gets the configuration for a specific rule.
@@ -567,5 +568,25 @@ mod tests {
         let diagnostics = linter.lint(yaml).unwrap();
 
         assert!(!diagnostics.iter().any(|d| d.code.as_str() == "line-length"));
+    }
+
+    #[test]
+    fn test_linter_rule_config_disabled_suppresses_rule() {
+        // Regression test for #133: RuleConfig::disabled() via with_rule_config should
+        // suppress the rule, not just store it in rule_configs without effect.
+        let yaml = "very_long_line: this line is definitely longer than eighty characters and should trigger a warning";
+        let config = LintConfig::new()
+            .with_rule_config("line-length", crate::config::RuleConfig::disabled());
+        let linter = Linter::with_config(config);
+
+        let mut linter = linter;
+        linter.add_rule(Box::new(crate::rules::LineLengthRule));
+
+        let diagnostics = linter.lint(yaml).unwrap();
+
+        assert!(
+            !diagnostics.iter().any(|d| d.code.as_str() == "line-length"),
+            "rule disabled via RuleConfig::disabled() should not produce diagnostics"
+        );
     }
 }
