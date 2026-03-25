@@ -14,17 +14,19 @@ categories = ["development-tools", "parsing"]
 fast-yaml-core = { workspace = true }
 is-terminal = { workspace = true }
 saphyr-parser = { workspace = true }
-serde = { workspace = true, optional = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, optional = true }
+serde_norway = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 indoc = { workspace = true }
+tempfile = { workspace = true }
 
 [features]
 default = []
-json-output = ["dep:serde", "dep:serde_json"]
-sarif-output = ["dep:serde", "dep:serde_json"]
+json-output = ["dep:serde_json"]
+sarif-output = ["dep:serde_json"]
 all-formats = ["json-output", "sarif-output"]
 
 [lints]
