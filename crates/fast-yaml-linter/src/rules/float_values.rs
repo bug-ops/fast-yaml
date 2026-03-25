@@ -124,10 +124,11 @@ impl super::LintRule for FloatValuesRule {
                 let value_lower = value_token.to_lowercase();
 
                 // Check for missing numeral before decimal point
-                if require_numeral_before_decimal && value_token.starts_with('.') {
-                    // Check if it's a valid float starting with '.'
-                    if value_token.len() > 1
-                        && value_token[1..].chars().next().unwrap().is_ascii_digit()
+                let bare = value_token.trim_start_matches(['-', '+']);
+                if require_numeral_before_decimal && bare.starts_with('.') {
+                    // Check if it's a valid float starting with '.' (e.g. .5, -.5, +.5)
+                    if bare.len() > 1
+                        && bare[1..].chars().next().is_some_and(|c| c.is_ascii_digit())
                     {
                         let value_start =
                             line[part_offset..].find(value_token).unwrap_or(0) + part_offset;
@@ -423,6 +424,23 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert!(!diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_float_values_signed_missing_numeral() {
+        let yaml = "bad1: .5\nbad2: -.5\nbad3: +.5\ngood: 0.5";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = FloatValuesRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert_eq!(
+            diagnostics.len(),
+            3,
+            "expected diagnostics for .5, -.5, +.5"
+        );
     }
 
     #[test]
