@@ -185,11 +185,25 @@ def safe_dump(
     """
     ...
 
-def safe_dump_all(documents: Any) -> str:
+def safe_dump_all(
+    documents: Any,
+    allow_unicode: bool = True,
+    sort_keys: bool = False,
+    indent: int = 2,
+    width: int = 80,
+    default_flow_style: bool | None = None,
+    explicit_start: bool = False,
+) -> str:
     """Serialize multiple Python objects to a YAML string.
 
     Args:
         documents: An iterable of Python objects to serialize
+        allow_unicode: If True, allow unicode in output (currently always enabled)
+        sort_keys: If True, sort dictionary keys
+        indent: Number of spaces for indentation (default: 2)
+        width: Maximum line width (default: 80)
+        default_flow_style: Force flow style for collections (default: None)
+        explicit_start: Add explicit document start marker (default: False)
 
     Returns:
         A YAML string with multiple documents separated by '---'
