@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI**: `--max-line-length`, `--indent-size`, and `--allow-duplicate-keys` flags on `fy lint` now use `Option<T>` so they only override config file values when explicitly provided; defaults are no longer silently applied over config file settings.
 - **Linter**: `ConfigFile` and `ConfigFileError` types in `fast-yaml-linter` for loading and merging `.fast-yaml.yaml` config files into `LintConfig`. Unknown rule names emit a warning to stderr.
 
+### Fixed
+
+- fix(nodejs): `new Linter()` with no args now uses default rules instead of an empty registry (fixes #124)
+
 ## [0.5.3] - 2026-03-25
 
 ### Added
