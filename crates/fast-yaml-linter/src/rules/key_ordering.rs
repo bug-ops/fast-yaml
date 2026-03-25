@@ -194,7 +194,7 @@ fn locate_key(key: &str, context: &LintContext<'_>, cursor: &mut usize) -> Optio
 fn emit_ordering_diagnostics(
     key_positions: &[(String, usize)],
     context: &LintContext<'_>,
-    source: &str,
+    _source: &str,
     case_sensitive: bool,
     config: &LintConfig,
     diagnostics: &mut Vec<Diagnostic>,
@@ -232,7 +232,7 @@ fn emit_ordering_diagnostics(
                         ),
                         span,
                     )
-                    .build(source),
+                    .build_with_context(context.source_context()),
                 );
             }
         }

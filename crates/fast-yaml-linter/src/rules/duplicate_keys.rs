@@ -1,6 +1,8 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
+};
 use fast_yaml_core::Value;
 use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser};
 use std::collections::HashMap;
@@ -36,7 +38,7 @@ impl super::LintRule for DuplicateKeysRule {
         if config.allow_duplicate_keys {
             return Vec::new();
         }
-        scan_duplicate_keys(context.source())
+        scan_duplicate_keys(context.source(), context.source_context())
     }
 }
 
@@ -131,7 +133,7 @@ const fn advance_parent_to_key(scopes: &mut [ScopeKind]) {
     }
 }
 
-fn scan_duplicate_keys(source: &str) -> Vec<Diagnostic> {
+fn scan_duplicate_keys(source: &str, source_context: &SourceContext<'_>) -> Vec<Diagnostic> {
     collect_duplicates(source)
         .into_iter()
         .map(|(key, first_line, dup_line, dup_col)| {
@@ -143,7 +145,7 @@ fn scan_duplicate_keys(source: &str) -> Vec<Diagnostic> {
                 span,
             )
             .with_suggestion("remove this duplicate key or rename it", span, None)
-            .build(source)
+            .build_with_context(source_context)
         })
         .collect()
 }

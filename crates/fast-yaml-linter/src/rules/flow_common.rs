@@ -1,7 +1,7 @@
 //! Common utilities for flow collection rules (braces, brackets).
 
 use crate::{
-    LintConfig, Severity, Span,
+    LintConfig, Severity, SourceContext, Span,
     diagnostic::{Diagnostic, DiagnosticBuilder},
 };
 
@@ -36,6 +36,7 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
 /// # Arguments
 ///
 /// * `source` - The full YAML source
+/// * `source_ctx` - Pre-built source context for diagnostic extraction
 /// * `start_offset` - Byte offset after opening delimiter
 /// * `end_offset` - Byte offset of closing delimiter or next content
 /// * `min_spaces` - Minimum required spaces (-1 to disable)
@@ -48,6 +49,7 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
 #[allow(clippy::too_many_arguments)]
 pub fn check_spaces_after_opening(
     source: &str,
+    source_ctx: &SourceContext<'_>,
     start_offset: usize,
     end_offset: usize,
     min_spaces: i64,
@@ -82,7 +84,7 @@ pub fn check_spaces_after_opening(
                 ),
                 opening_span,
             )
-            .build(source),
+            .build_with_context(source_ctx),
         );
     }
 
@@ -97,7 +99,7 @@ pub fn check_spaces_after_opening(
                 ),
                 opening_span,
             )
-            .build(source),
+            .build_with_context(source_ctx),
         );
     }
 
@@ -109,6 +111,7 @@ pub fn check_spaces_after_opening(
 /// # Arguments
 ///
 /// * `source` - The full YAML source
+/// * `source_ctx` - Pre-built source context for diagnostic extraction
 /// * `start_offset` - Byte offset after opening delimiter or last content
 /// * `end_offset` - Byte offset of closing delimiter
 /// * `min_spaces` - Minimum required spaces (-1 to disable)
@@ -121,6 +124,7 @@ pub fn check_spaces_after_opening(
 #[allow(clippy::too_many_arguments)]
 pub fn check_spaces_before_closing(
     source: &str,
+    source_ctx: &SourceContext<'_>,
     start_offset: usize,
     end_offset: usize,
     min_spaces: i64,
@@ -155,7 +159,7 @@ pub fn check_spaces_before_closing(
                 ),
                 closing_span,
             )
-            .build(source),
+            .build_with_context(source_ctx),
         );
     }
 
@@ -170,7 +174,7 @@ pub fn check_spaces_before_closing(
                 ),
                 closing_span,
             )
-            .build(source),
+            .build_with_context(source_ctx),
         );
     }
 
@@ -192,39 +196,82 @@ mod tests {
 
     #[test]
     fn test_check_spaces_after_opening() {
-        use crate::{Location, Span};
+        use crate::{Location, SourceContext, Span};
         let dummy_span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{ key: value}";
+        let source_ctx = SourceContext::new(source);
         let config = LintConfig::default();
 
         // Should pass with 1 space
-        let result =
-            check_spaces_after_opening(source, 1, 13, 0, 1, "test", &config, "braces", dummy_span);
+        let result = check_spaces_after_opening(
+            source,
+            &source_ctx,
+            1,
+            13,
+            0,
+            1,
+            "test",
+            &config,
+            "braces",
+            dummy_span,
+        );
         assert!(result.is_none());
 
         // Should fail with too many spaces
         let source2 = "{  key: value}";
-        let result2 =
-            check_spaces_after_opening(source2, 1, 14, 0, 1, "test", &config, "braces", dummy_span);
+        let source_ctx2 = SourceContext::new(source2);
+        let result2 = check_spaces_after_opening(
+            source2,
+            &source_ctx2,
+            1,
+            14,
+            0,
+            1,
+            "test",
+            &config,
+            "braces",
+            dummy_span,
+        );
         assert!(result2.is_some());
     }
 
     #[test]
     fn test_check_spaces_before_closing() {
-        use crate::{Location, Span};
+        use crate::{Location, SourceContext, Span};
         let dummy_span = Span::new(Location::new(1, 13, 12), Location::new(1, 14, 13));
         let source = "{key: value }";
+        let source_ctx = SourceContext::new(source);
         let config = LintConfig::default();
 
         // Should pass with 1 space
-        let result =
-            check_spaces_before_closing(source, 1, 12, 0, 1, "test", &config, "braces", dummy_span);
+        let result = check_spaces_before_closing(
+            source,
+            &source_ctx,
+            1,
+            12,
+            0,
+            1,
+            "test",
+            &config,
+            "braces",
+            dummy_span,
+        );
         assert!(result.is_none());
 
         // Should fail with too many spaces
         let source2 = "{key: value  }";
+        let source_ctx2 = SourceContext::new(source2);
         let result2 = check_spaces_before_closing(
-            source2, 1, 13, 0, 1, "test", &config, "braces", dummy_span,
+            source2,
+            &source_ctx2,
+            1,
+            13,
+            0,
+            1,
+            "test",
+            &config,
+            "braces",
+            dummy_span,
         );
         assert!(result2.is_some());
     }

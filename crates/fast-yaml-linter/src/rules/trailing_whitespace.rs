@@ -32,7 +32,6 @@ impl super::LintRule for TrailingWhitespaceRule {
         _value: &Value,
         _config: &LintConfig,
     ) -> Vec<Diagnostic> {
-        let source = context.source();
         let mut diagnostics = Vec::new();
         let ctx = context.source_context();
 
@@ -70,7 +69,7 @@ impl super::LintRule for TrailingWhitespaceRule {
                         span,
                     )
                     .with_suggestion("remove trailing whitespace", span, None)
-                    .build(source);
+                    .build_with_context(context.source_context());
 
                     diagnostics.push(diagnostic);
                 }

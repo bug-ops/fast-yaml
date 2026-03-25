@@ -27,7 +27,6 @@ impl super::LintRule for IndentationRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let ctx = context.source_context();
         let indent_size = config.indent_size;
         let mut diagnostics = Vec::new();
@@ -76,7 +75,7 @@ impl super::LintRule for IndentationRule {
                     "mixed tabs and spaces in indentation".to_string(),
                     span,
                 )
-                .build(source);
+                .build_with_context(context.source_context());
                 diagnostics.push(diagnostic);
                 continue;
             }
@@ -100,7 +99,7 @@ impl super::LintRule for IndentationRule {
                     ),
                     span,
                 )
-                .build(source);
+                .build_with_context(context.source_context());
                 diagnostics.push(diagnostic);
             }
         }

@@ -2,7 +2,7 @@
 
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span, source::SourceMapper,
+    SourceContext, Span, source::SourceMapper,
 };
 use fast_yaml_core::Value;
 
@@ -73,11 +73,13 @@ impl super::LintRule for EmptyValuesRule {
 
         let mut diagnostics = Vec::new();
         let mapper = SourceMapper::new(source);
+        let source_context = context.source_context();
 
         check_value_for_empty(
             value,
             source,
             &mapper,
+            source_context,
             &mut diagnostics,
             config,
             self.code(),
@@ -95,6 +97,7 @@ fn check_value_for_empty(
     value: &Value,
     source: &str,
     mapper: &SourceMapper<'_>,
+    source_context: &SourceContext<'_>,
     diagnostics: &mut Vec<Diagnostic>,
     config: &LintConfig,
     code: &str,
@@ -125,7 +128,7 @@ fn check_value_for_empty(
                                 span,
                             )
                             .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
-                            .build(source),
+                            .build_with_context(source_context),
                         );
                     }
                 }
@@ -135,6 +138,7 @@ fn check_value_for_empty(
                     val,
                     source,
                     mapper,
+                    source_context,
                     diagnostics,
                     config,
                     code,
@@ -164,7 +168,7 @@ fn check_value_for_empty(
                                 format!("empty value in sequence at index {idx}"),
                                 span,
                             )
-                            .build(source),
+                            .build_with_context(source_context),
                         );
                     }
                 }
@@ -173,6 +177,7 @@ fn check_value_for_empty(
                     item,
                     source,
                     mapper,
+                    source_context,
                     diagnostics,
                     config,
                     code,

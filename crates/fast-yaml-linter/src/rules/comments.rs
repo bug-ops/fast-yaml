@@ -87,7 +87,7 @@ impl super::LintRule for CommentsRule {
                         "comment should start with a space after '#'",
                         comment.span,
                     )
-                    .build(source),
+                    .build_with_context(context.source_context()),
                 );
             }
 
@@ -131,7 +131,7 @@ impl super::LintRule for CommentsRule {
                                 ),
                                 comment.span,
                             )
-                            .build(source),
+                            .build_with_context(context.source_context()),
                         );
                     }
                 }

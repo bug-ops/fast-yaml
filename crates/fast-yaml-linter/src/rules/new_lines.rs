@@ -112,7 +112,7 @@ impl super::LintRule for NewLinesRule {
                             ),
                             span,
                         )
-                        .build(source),
+                        .build_with_context(context.source_context()),
                     );
                 }
 

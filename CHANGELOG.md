@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix(linter): `rules.indentation.indent-size` in config file is now forwarded to `LintConfig::indent_size`; previously the option was stored in `rule_configs` but never applied, so the default 2-space indent was always used (#149)
 - fix(linter): `quoted-strings` rule always reported column 1 and wrong byte offset; `make_span` now uses the actual 0-indexed saphyr column converted to 1-indexed, and offset is computed via `SourceContext::get_line_offset` (O(1)) instead of a per-call O(n) scan (#153)
 - fix(linter): `key-ordering` rule reported wrong line numbers for documents after the first in multi-document streams; the forward-scan cursor now starts at each document's actual start line instead of always starting at line 1 (#156)
+- fix(linter): `DiagnosticBuilder::build` called `SourceContext::new` on every diagnostic, causing O(n²) work when many rules fired; added `build_with_context` method and updated all rule call sites to reuse the pre-built `SourceContext` from `LintContext` (#157)
 
 ## [0.5.3] - 2026-03-25
 

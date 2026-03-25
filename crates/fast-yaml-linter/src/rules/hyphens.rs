@@ -138,7 +138,7 @@ fn check_spaces_after_hyphen(
 
             return Some(
                 DiagnosticBuilder::new(code, severity, "missing space after hyphen", span)
-                    .build(source),
+                    .build_with_context(source_context),
             );
         }
     }
@@ -157,7 +157,7 @@ fn check_spaces_after_hyphen(
                 ),
                 span,
             )
-            .build(source),
+            .build_with_context(source_context),
         );
     }
 

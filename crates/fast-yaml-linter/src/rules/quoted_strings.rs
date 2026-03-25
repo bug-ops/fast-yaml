@@ -2,7 +2,7 @@
 
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    SourceContext, Span,
 };
 use fast_yaml_core::Value;
 use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser, ScalarStyle};
@@ -127,6 +127,7 @@ impl super::LintRule for QuotedStringsRule {
 
                     self.check_scalar(
                         source,
+                        context.source_context(),
                         config,
                         &mut diagnostics,
                         value,
@@ -162,7 +163,8 @@ impl QuotedStringsRule {
     #[allow(clippy::too_many_arguments)]
     fn check_scalar(
         &self,
-        source: &str,
+        _source: &str,
+        source_ctx: &SourceContext<'_>,
         config: &LintConfig,
         diagnostics: &mut Vec<Diagnostic>,
         value: &str,
@@ -196,7 +198,7 @@ impl QuotedStringsRule {
                             "string should use single quotes",
                             scalar_span,
                         )
-                        .build(source),
+                        .build_with_context(source_ctx),
                     );
                 } else if quote_type == "double" && quote_char == '\'' {
                     let severity =
@@ -208,7 +210,7 @@ impl QuotedStringsRule {
                             "string should use double quotes",
                             scalar_span,
                         )
-                        .build(source),
+                        .build_with_context(source_ctx),
                     );
                 }
 
@@ -225,7 +227,7 @@ impl QuotedStringsRule {
                                 "string does not need quotes",
                                 scalar_span,
                             )
-                            .build(source),
+                            .build_with_context(source_ctx),
                         );
                     }
                 } else if required == "never" {
@@ -238,7 +240,7 @@ impl QuotedStringsRule {
                             "string should not be quoted",
                             scalar_span,
                         )
-                        .build(source),
+                        .build_with_context(source_ctx),
                     );
                 }
             }
@@ -260,7 +262,7 @@ impl QuotedStringsRule {
                             "string should be quoted",
                             scalar_span,
                         )
-                        .build(source),
+                        .build_with_context(source_ctx),
                     );
                 }
             }

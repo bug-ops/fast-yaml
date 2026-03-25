@@ -100,7 +100,7 @@ impl super::LintRule for BracketsRule {
                             "flow sequence forbidden (forbid: all)",
                             token.span,
                         )
-                        .build(source),
+                        .build_with_context(source_context),
                     );
                 }
                 return diagnostics;
@@ -124,7 +124,7 @@ impl super::LintRule for BracketsRule {
                                 "non-empty flow sequence forbidden (forbid: non-empty)",
                                 open.span,
                             )
-                            .build(source),
+                            .build_with_context(source_context),
                         );
                     }
                 }
@@ -148,6 +148,7 @@ impl super::LintRule for BracketsRule {
                 // Check spaces after opening bracket
                 if let Some(diag) = check_spaces_after_opening(
                     source,
+                    source_context,
                     open.span.end.offset,
                     close.span.start.offset,
                     min_spaces,
@@ -163,6 +164,7 @@ impl super::LintRule for BracketsRule {
                 // Check spaces before closing bracket
                 if let Some(diag) = check_spaces_before_closing(
                     source,
+                    source_context,
                     open.span.end.offset,
                     close.span.start.offset,
                     min_spaces,
