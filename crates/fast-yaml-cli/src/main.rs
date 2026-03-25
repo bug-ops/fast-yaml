@@ -185,6 +185,11 @@ fn run() -> Result<ExitCode> {
             no_recursive,
             jobs,
         }) => {
+            if cli.in_place {
+                anyhow::bail!(
+                    "--in-place is not supported by `fy lint` (auto-fix is not implemented)"
+                );
+            }
             let is_batch = is_batch_mode(&paths, false, &include, &exclude, jobs);
 
             if is_batch {

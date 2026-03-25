@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- fix(linter): `quoted-strings` rule no longer emits "does not need quotes" for double-quoted strings with `\uXXXX`, `\UXXXXXXXX`, or `\xXX` escape sequences; these escapes decode to characters indistinguishable from plain text, requiring raw source inspection (#182)
+- fix(linter): `truthy` rule now distinguishes non-standard YAML 1.1-only values (`yes`, `no`, `on`, `off`, `y`, `n`) from non-canonical YAML 1.2.2 booleans (`True`, `TRUE`, `False`, `FALSE`); the latter now emit "non-canonical boolean, use 'true' or 'false'" instead of "non-standard truthy value" (#181)
+- fix(cli): `fy lint` now returns an error when `--in-place` / `-i` is passed instead of silently accepting a flag with no effect (#180)
 - fix(linter): `quoted-strings` rule no longer emits "does not need quotes" for double-quoted strings that contain YAML escape sequences (`\n`, `\t`, `\\`, `\"`, `\uXXXX`, etc.); removing quotes would silently corrupt the value (#175)
 - fix(linter): `octal-values` rule no longer fires on octal patterns (`0o\d+`, `0\d+`) found inside YAML comment lines or inline comments (#176)
 - fix(linter): `octal-values` diagnostic position now points to the octal value token, not to column 1 of the mapping key (#177)
