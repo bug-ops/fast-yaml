@@ -109,8 +109,10 @@ pub enum Command {
     #[cfg(feature = "linter")]
     /// Lint YAML with diagnostics
     Lint {
-        /// Input file (default: stdin)
-        file: Option<PathBuf>,
+        /// Input paths (files, directories, or glob patterns).
+        /// If empty, reads from stdin.
+        #[arg(value_name = "PATHS")]
+        paths: Vec<PathBuf>,
 
         /// Path to config file (default: auto-discover .fast-yaml.yaml)
         #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
@@ -135,6 +137,22 @@ pub enum Command {
         /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
         #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         allow_duplicate_keys: Option<bool>,
+
+        /// Include files matching glob pattern (can be repeated)
+        #[arg(long)]
+        include: Vec<String>,
+
+        /// Exclude files matching glob pattern (can be repeated)
+        #[arg(long)]
+        exclude: Vec<String>,
+
+        /// Don't recurse into subdirectories
+        #[arg(long)]
+        no_recursive: bool,
+
+        /// Number of parallel jobs (0 = auto-detect)
+        #[arg(short = 'j', long, default_value = "0")]
+        jobs: usize,
     },
 }
 

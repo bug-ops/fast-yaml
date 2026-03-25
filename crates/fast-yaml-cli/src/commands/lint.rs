@@ -28,7 +28,8 @@ pub struct LintArgs {
 /// Lint command implementation
 pub struct LintCommand {
     config: CommonConfig,
-    lint_config: LintConfig,
+    /// Resolved lint configuration (exposed for batch reuse).
+    pub lint_config: LintConfig,
     format: LintFormat,
 }
 

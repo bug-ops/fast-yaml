@@ -192,16 +192,11 @@ fn check_value_for_empty(
 }
 
 fn has_explicit_null_value(_source: &str, key: &str, mapper: &SourceMapper<'_>) -> bool {
-    // Find the key in source
     for line_num in 1..=mapper.context().line_count() {
-        if let Some(line) = mapper.context().get_line(line_num)
-            && let Some(key_pos) = line.find(key)
-        {
-            // Check what comes after the key and colon
-            let after_key = &line[key_pos + key.len()..];
-            if let Some(colon_pos) = after_key.find(':') {
-                let after_colon = after_key[colon_pos + 1..].trim();
-                // Check for explicit null values or any explicit type tag (!!/!)
+        if let Some(line) = mapper.context().get_line(line_num) {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
+                let after_colon = trimmed[key.len() + 1..].trim();
                 if after_colon.starts_with("null")
                     || after_colon.starts_with('~')
                     || after_colon.starts_with("Null")
@@ -219,13 +214,26 @@ fn has_explicit_null_value(_source: &str, key: &str, mapper: &SourceMapper<'_>) 
 }
 
 fn is_in_flow_mapping(source: &str, key: &str) -> bool {
+    // Key-colon pattern to search for
+    let key_colon = format!("{key}:");
     for line in source.lines() {
-        if let Some(key_pos) = line.find(key) {
-            // Check if there's a '{' before the key on the same line
-            let before = &line[..key_pos];
-            if before.contains('{') {
-                return true;
+        // Find all occurrences of "key:" on the line
+        let mut search_from = 0;
+        while let Some(pos) = line[search_from..].find(key_colon.as_str()) {
+            let abs_pos = search_from + pos;
+            // Verify exact boundary: char before key must not be alphanumeric/underscore/hyphen
+            let before_ok = abs_pos == 0
+                || !line
+                    .as_bytes()
+                    .get(abs_pos - 1)
+                    .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
+            if before_ok {
+                // Check if there's a '{' before this position on the same line
+                if line[..abs_pos].contains('{') {
+                    return true;
+                }
             }
+            search_from = abs_pos + 1;
         }
     }
 
@@ -233,21 +241,49 @@ fn is_in_flow_mapping(source: &str, key: &str) -> bool {
 }
 
 fn find_empty_value_span(_source: &str, key: &str, mapper: &SourceMapper<'_>) -> Option<Span> {
+    let key_colon = format!("{key}:");
     for line_num in 1..=mapper.context().line_count() {
-        if let Some(line) = mapper.context().get_line(line_num)
-            && let Some(key_pos) = line.find(key)
-            && let Some(colon_pos) = line[key_pos..].find(':')
-        {
-            let abs_colon_pos = key_pos + colon_pos;
-            let line_offset: usize = (1..line_num)
-                .filter_map(|ln| mapper.context().get_line(ln))
-                .map(|l| l.len() + 1)
-                .sum();
+        if let Some(line) = mapper.context().get_line(line_num) {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
 
-            return Some(Span::new(
-                Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
-                Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
-            ));
+            // Block mapping: key starts trimmed line
+            if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
+                let abs_colon_pos = indent + key.len();
+                let line_offset: usize = (1..line_num)
+                    .filter_map(|ln| mapper.context().get_line(ln))
+                    .map(|l| l.len() + 1)
+                    .sum();
+
+                return Some(Span::new(
+                    Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
+                    Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
+                ));
+            }
+
+            // Flow mapping: key appears after '{' or ',' on the same line
+            let mut search_from = 0;
+            while let Some(rel_pos) = line[search_from..].find(key_colon.as_str()) {
+                let abs_pos = search_from + rel_pos;
+                let before_ok = abs_pos == 0
+                    || !line
+                        .as_bytes()
+                        .get(abs_pos - 1)
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
+                if before_ok && line[..abs_pos].contains('{') {
+                    let abs_colon_pos = abs_pos + key.len();
+                    let line_offset: usize = (1..line_num)
+                        .filter_map(|ln| mapper.context().get_line(ln))
+                        .map(|l| l.len() + 1)
+                        .sum();
+
+                    return Some(Span::new(
+                        Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
+                        Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
+                    ));
+                }
+                search_from = abs_pos + 1;
+            }
         }
     }
 
@@ -433,6 +469,45 @@ mod tests {
         assert!(
             diagnostics.is_empty(),
             "!!int 42 should not trigger empty-values"
+        );
+    }
+
+    #[test]
+    fn test_empty_value_position_not_confused_by_key_substring() {
+        // Regression for #174: key "a" must not match inside "parent" on line 1.
+        // Diagnostic for "a" must point to line 2, not line 1.
+        let yaml = "parent:\n  a:\n  b: 1\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = EmptyValuesRule;
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].span.start.line, 2,
+            "diagnostic must be on line 2"
+        );
+        assert_eq!(
+            diagnostics[0].span.start.column, 4,
+            "diagnostic must point to the colon"
+        );
+    }
+
+    #[test]
+    fn test_empty_value_position_prefix_key() {
+        // Key "pa" must not match inside "parent" on line 1.
+        let yaml = "parent:\n  pa:\n  b: 1\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = EmptyValuesRule;
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].span.start.line, 2,
+            "diagnostic must be on line 2"
         );
     }
 

@@ -1,0 +1,154 @@
+//! Batch lint command execution.
+
+use std::path::PathBuf;
+
+use anyhow::{Context, Result};
+use fast_yaml_linter::{Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter};
+use rayon::prelude::*;
+
+use crate::cli::LintFormat;
+use crate::config::CommonConfig;
+use crate::discovery::{DiscoveryConfig, FileDiscovery};
+use crate::error::ExitCode;
+
+/// Configuration for batch lint execution.
+#[derive(Debug, Clone)]
+pub struct LintBatchConfig {
+    /// Common configuration
+    pub common: CommonConfig,
+    /// Discovery-specific configuration
+    pub discovery: DiscoveryConfig,
+    /// Lint configuration
+    pub lint_config: LintConfig,
+    /// Lint output format
+    pub format: LintFormat,
+}
+
+impl LintBatchConfig {
+    pub fn new(common: CommonConfig, lint_config: LintConfig, format: LintFormat) -> Self {
+        Self {
+            common,
+            discovery: DiscoveryConfig::new(),
+            lint_config,
+            format,
+        }
+    }
+
+    #[must_use]
+    pub fn with_discovery(mut self, discovery: DiscoveryConfig) -> Self {
+        self.discovery = discovery;
+        self
+    }
+}
+
+/// Execute batch linting on multiple files.
+///
+/// # Errors
+///
+/// Returns error if file discovery fails.
+pub fn execute_lint_batch(config: &LintBatchConfig, paths: &[PathBuf]) -> Result<ExitCode> {
+    let discovery = FileDiscovery::new(config.discovery.clone())
+        .context("Failed to initialize file discovery")?;
+
+    let files = discovery
+        .discover(paths)
+        .context("Failed to discover files")?;
+
+    if files.is_empty() {
+        if !config.common.output.is_quiet() {
+            eprintln!("No YAML files found");
+        }
+        return Ok(ExitCode::Success);
+    }
+
+    let workers = config
+        .common
+        .parallel
+        .workers()
+        .unwrap_or_else(rayon::current_num_threads);
+
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(workers)
+        .build()
+        .context("Failed to build thread pool")?;
+
+    let lint_config = config.lint_config.clone();
+    let format = config.format.clone();
+    let use_color = config.common.output.use_color();
+    let is_quiet = config.common.output.is_quiet();
+
+    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
+
+    // Process files in parallel, collecting (path, output, has_errors) tuples
+    let results: Vec<(PathBuf, String, bool)> = pool.install(|| {
+        file_paths
+            .par_iter()
+            .map(|path| {
+                let content = match std::fs::read_to_string(path) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        let msg = format!("error: failed to read '{}': {e}\n", path.display());
+                        return (path.clone(), msg, true);
+                    }
+                };
+
+                let linter = Linter::with_config(lint_config.clone());
+                let diagnostics = match linter.lint(&content) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let msg = format!("error: '{}': {e}\n", path.display());
+                        return (path.clone(), msg, true);
+                    }
+                };
+
+                let filtered: Vec<_> = if is_quiet {
+                    diagnostics
+                        .into_iter()
+                        .filter(|d| d.severity == Severity::Error)
+                        .collect()
+                } else {
+                    diagnostics
+                };
+
+                let has_errors = filtered.iter().any(|d| d.severity == Severity::Error);
+
+                let output = match format {
+                    LintFormat::Text => {
+                        let mut formatter = TextFormatter::new();
+                        formatter.use_color = use_color;
+                        formatter.format(&filtered, &content)
+                    }
+                    LintFormat::Json => {
+                        let formatter = JsonFormatter::new(true);
+                        formatter.format(&filtered, &content)
+                    }
+                };
+
+                // Prefix output with the file path when linting multiple files
+                let prefixed = if output.is_empty() {
+                    output
+                } else {
+                    format!("{}:\n{}", path.display(), output)
+                };
+
+                (path.clone(), prefixed, has_errors)
+            })
+            .collect()
+    });
+
+    let mut any_errors = false;
+    for (_path, output, has_errors) in &results {
+        if !output.is_empty() {
+            print!("{output}");
+        }
+        if *has_errors {
+            any_errors = true;
+        }
+    }
+
+    if any_errors {
+        Ok(ExitCode::LintErrors)
+    } else {
+        Ok(ExitCode::Success)
+    }
+}

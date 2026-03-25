@@ -46,6 +46,7 @@ mod reporter;
 
 use cli::{Cli, Command};
 use error::{ExitCode, format_error};
+use io::input::InputOrigin;
 use io::{InputSource, OutputWriter};
 
 fn main() {
@@ -172,25 +173,94 @@ fn run() -> Result<ExitCode> {
         }
         #[cfg(feature = "linter")]
         Some(Command::Lint {
-            file,
+            paths,
             config: config_path,
             no_config,
             max_line_length,
             indent_size,
             format,
             allow_duplicate_keys,
+            include,
+            exclude,
+            no_recursive,
+            jobs,
         }) => {
-            let input = InputSource::from_args(file)?;
-            let args = commands::lint::LintArgs {
-                config_path,
-                no_config,
-                max_line_length,
-                indent_size,
-                format,
-                allow_duplicate_keys,
-            };
-            let cmd = commands::lint::LintCommand::build(common_config.clone(), args, &input)?;
-            cmd.execute(&input)?
+            let is_batch = is_batch_mode(&paths, false, &include, &exclude, jobs);
+
+            if is_batch {
+                // BATCH MODE — multiple files, directories, or glob patterns
+                let mut discovery_config = discovery::DiscoveryConfig::new();
+                if !include.is_empty() {
+                    discovery_config = discovery_config.with_include_patterns(include);
+                }
+                if !exclude.is_empty() {
+                    discovery_config = discovery_config.with_exclude_patterns(exclude);
+                }
+                if no_recursive {
+                    discovery_config = discovery_config.with_max_depth(Some(1));
+                }
+
+                // Build lint config using same logic as single-file mode.
+                // Use a synthetic stdin input for config discovery (CWD-based, same as yamllint).
+                let stdin_fallback = InputSource {
+                    content: String::new(),
+                    origin: InputOrigin::Stdin,
+                };
+                let args = commands::lint::LintArgs {
+                    config_path,
+                    no_config,
+                    max_line_length,
+                    indent_size,
+                    format: format.clone(),
+                    allow_duplicate_keys,
+                };
+                let cmd = commands::lint::LintCommand::build(
+                    common_config.clone(),
+                    args,
+                    &stdin_fallback,
+                )?;
+
+                let batch_config = commands::lint_batch::LintBatchConfig::new(
+                    common_config.clone().with_parallel(
+                        config::ParallelConfig::new().with_workers(if jobs == 0 {
+                            None
+                        } else {
+                            Some(jobs)
+                        }),
+                    ),
+                    cmd.lint_config,
+                    format,
+                )
+                .with_discovery(discovery_config);
+
+                commands::lint_batch::execute_lint_batch(&batch_config, &paths)?
+            } else if paths.is_empty() {
+                // STDIN MODE
+                let input = InputSource::from_stdin()?;
+                let args = commands::lint::LintArgs {
+                    config_path,
+                    no_config,
+                    max_line_length,
+                    indent_size,
+                    format,
+                    allow_duplicate_keys,
+                };
+                let cmd = commands::lint::LintCommand::build(common_config.clone(), args, &input)?;
+                cmd.execute(&input)?
+            } else {
+                // SINGLE FILE MODE
+                let input = InputSource::from_file(&paths[0])?;
+                let args = commands::lint::LintArgs {
+                    config_path,
+                    no_config,
+                    max_line_length,
+                    indent_size,
+                    format,
+                    allow_duplicate_keys,
+                };
+                let cmd = commands::lint::LintCommand::build(common_config.clone(), args, &input)?;
+                cmd.execute(&input)?
+            }
         }
         None => {
             // Default: parse and format (passthrough) from stdin

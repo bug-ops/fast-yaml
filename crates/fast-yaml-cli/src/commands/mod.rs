@@ -5,3 +5,6 @@ pub mod parse;
 
 #[cfg(feature = "linter")]
 pub mod lint;
+
+#[cfg(feature = "linter")]
+pub mod lint_batch;
