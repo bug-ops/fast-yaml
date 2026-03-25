@@ -38,6 +38,10 @@ impl super::LintRule for TrailingWhitespaceRule {
 
         for line_num in 1..=ctx.line_count() {
             if let Some(line) = ctx.get_line(line_num) {
+                // Strip carriage return from CRLF line endings before checking
+                // trailing whitespace — \r is part of the line ending, not user
+                // content, so it must not trigger a trailing-whitespace warning.
+                let line = line.trim_end_matches('\r');
                 // Check for trailing whitespace (excluding final newline)
                 let trimmed = line.trim_end();
 
@@ -148,6 +152,38 @@ mod tests {
 
         // Empty lines should not trigger
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_crlf_line_endings_no_false_positive() {
+        // CRLF files: \r should not be reported as trailing whitespace.
+        let yaml = "key: value\r\nother: val\r\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = TrailingWhitespaceRule;
+        let config = LintConfig::default();
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
+
+        assert!(
+            diagnostics.is_empty(),
+            "CRLF line endings must not trigger trailing-whitespace: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_crlf_with_real_trailing_whitespace() {
+        // CRLF file that also has genuine trailing spaces — must still report.
+        let yaml = "key: value  \r\nother: val\r\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = TrailingWhitespaceRule;
+        let config = LintConfig::default();
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span.start.line, 1);
     }
 
     #[test]
