@@ -442,6 +442,8 @@ pub struct LintContext<'a> {
     comments: OnceLock<Vec<Comment>>,
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
+    /// 1-based line number where the current document starts within `source`.
+    doc_start_line: usize,
 }
 
 impl<'a> LintContext<'a> {
@@ -466,7 +468,29 @@ impl<'a> LintContext<'a> {
             comments: OnceLock::new(),
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
+            doc_start_line: 1,
         }
+    }
+
+    /// Returns a copy of this context with `doc_start_line` set to `line`.
+    ///
+    /// Used by the linter when processing individual documents within a
+    /// multi-document stream so that rules which scan forward from a cursor
+    /// can start at the correct document boundary.
+    #[must_use]
+    pub const fn with_doc_start_line(mut self, line: usize) -> Self {
+        self.doc_start_line = line;
+        self
+    }
+
+    /// Returns the 1-based line number where the current document begins.
+    ///
+    /// For a single-document source this is always 1. For multi-document
+    /// streams the linter sets this to the document's actual start line so
+    /// that rules can initialize their forward-scan cursors correctly.
+    #[must_use]
+    pub const fn doc_start_line(&self) -> usize {
+        self.doc_start_line
     }
 
     /// Returns the original source text.
