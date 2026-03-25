@@ -44,6 +44,7 @@ const ABSOLUTE_MAX_DOCUMENTS: usize = 10_000_000;
 pub struct PyParallelConfig {
     inner: RustParallelConfig,
     auto_tune: bool,
+    max_documents: usize,
 }
 
 #[pymethods]
@@ -105,13 +106,13 @@ impl PyParallelConfig {
             .with_sequential_threshold(min_chunk_size)
             .with_max_input_size(max_input_size);
 
-        // Note: max_chunk_size and max_documents are validated but not stored in new Config API
-        // They are used for FFI validation only
-        let _ = (max_chunk_size, max_documents); // Prevent unused variable warnings
+        // Note: max_chunk_size is validated but not stored in new Config API
+        let _ = max_chunk_size;
 
         Ok(Self {
             inner: config,
             auto_tune,
+            max_documents,
         })
     }
 
@@ -134,6 +135,7 @@ impl PyParallelConfig {
         Ok(Self {
             inner: self.inner.clone().with_workers(count),
             auto_tune: self.auto_tune,
+            max_documents: self.max_documents,
         })
     }
 
@@ -152,6 +154,7 @@ impl PyParallelConfig {
         Ok(Self {
             inner: self.inner.clone().with_max_input_size(size),
             auto_tune: self.auto_tune,
+            max_documents: self.max_documents,
         })
     }
 
@@ -167,11 +170,10 @@ impl PyParallelConfig {
                 "max_documents must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
             )));
         }
-        // Note: max_documents is validated but not stored in new Config API
-        // Validation happens at FFI boundary for security
         Ok(Self {
             inner: self.inner.clone(),
             auto_tune: self.auto_tune,
+            max_documents: count,
         })
     }
 
@@ -190,6 +192,7 @@ impl PyParallelConfig {
         Ok(Self {
             inner: self.inner.clone().with_sequential_threshold(size),
             auto_tune: self.auto_tune,
+            max_documents: self.max_documents,
         })
     }
 
@@ -206,10 +209,10 @@ impl PyParallelConfig {
             ));
         }
         // Note: max_chunk_size is validated but not stored in new Config API
-        // Validation happens at FFI boundary for security
         Ok(Self {
             inner: self.inner.clone(),
             auto_tune: self.auto_tune,
+            max_documents: self.max_documents,
         })
     }
 
@@ -223,6 +226,7 @@ impl PyParallelConfig {
         Self {
             inner: self.inner.clone(),
             auto_tune: enabled,
+            max_documents: self.max_documents,
         }
     }
 
@@ -286,6 +290,9 @@ fn parse_parallel(
     source: &str,
     config: Option<PyParallelConfig>,
 ) -> PyResult<Py<PyAny>> {
+    // Capture max_documents before releasing GIL
+    let max_documents = config.as_ref().map(|cfg| cfg.max_documents);
+
     // Release GIL for parallel processing
     let result = py.detach(|| match config {
         Some(cfg) => parse_parallel_with_config(source, &cfg.inner),
@@ -293,6 +300,18 @@ fn parse_parallel(
     });
 
     let values = result.map_err(|e: ParallelError| PyValueError::new_err(e.to_string()))?;
+
+    // Enforce document count limit
+    if let Some(limit) = max_documents {
+        if values.len() > limit {
+            return Err(PyValueError::new_err(format!(
+                "document count {} exceeds max_documents limit {}. Consider increasing \
+                 max_documents or processing in batches.",
+                values.len(),
+                limit
+            )));
+        }
+    }
 
     // Convert Vec<Value> to Python list with pre-allocated capacity
     let mut py_values = Vec::with_capacity(values.len());
@@ -365,11 +384,11 @@ fn dump_parallel(
     }
 
     // Validate against config limits
-    // Note: max_documents is no longer in Config API, so we use a hardcoded limit
-    let max_docs = 100_000; // Default limit
+    let max_docs = config.map_or(100_000, |cfg| cfg.max_documents);
     if yaml_values.len() > max_docs {
         return Err(PyValueError::new_err(format!(
-            "document count {} exceeds maximum {}. Consider processing in batches.",
+            "document count {} exceeds max_documents limit {}. Consider increasing \
+             max_documents or processing in batches.",
             yaml_values.len(),
             max_docs
         )));
