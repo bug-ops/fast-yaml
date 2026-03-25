@@ -1,8 +1,8 @@
 //! Rule to check spacing after list item hyphens.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+    SourceContext, Span,
     tokenizer::{FlowTokenizer, TokenType},
 };
 use fast_yaml_core::Value;
@@ -65,6 +65,7 @@ impl super::LintRule for HyphensRule {
         for hyphen in hyphens {
             if let Some(diag) = check_spaces_after_hyphen(
                 source,
+                source_context,
                 hyphen.span.start.offset,
                 max_spaces_after,
                 self.code(),
@@ -81,6 +82,7 @@ impl super::LintRule for HyphensRule {
 /// Checks spaces after a hyphen.
 fn check_spaces_after_hyphen(
     source: &str,
+    source_context: &SourceContext<'_>,
     hyphen_offset: usize,
     max_spaces: i64,
     code: &str,
@@ -88,6 +90,15 @@ fn check_spaces_after_hyphen(
 ) -> Option<Diagnostic> {
     if hyphen_offset + 1 >= source.len() {
         return None;
+    }
+
+    // Skip document separators (---)
+    let after = &source[hyphen_offset..];
+    if after.starts_with("---") {
+        let next = source.as_bytes().get(hyphen_offset + 3);
+        if next.is_none_or(|&b| b == b'\n' || b == b'\r' || b == b' ') {
+            return None;
+        }
     }
 
     // Count spaces after hyphen
@@ -122,7 +133,7 @@ fn check_spaces_after_hyphen(
             && ch != '\r'
         {
             let severity = config.get_effective_severity(code, Severity::Warning);
-            let loc = Location::new(1, 1, hyphen_offset + 1);
+            let loc = source_context.offset_to_location(hyphen_offset + 1);
             let span = Span::new(loc, loc);
 
             return Some(
@@ -134,7 +145,7 @@ fn check_spaces_after_hyphen(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, hyphen_offset + 1);
+        let loc = source_context.offset_to_location(hyphen_offset + 1);
         let span = Span::new(loc, loc);
 
         return Some(
@@ -267,6 +278,47 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_hyphens_no_false_positive_on_document_separator() {
+        let yaml = "---\nkey: value\n---\nother: data";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = HyphensRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "document separators should not trigger hyphens rule: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_hyphens_correct_location() {
+        // Violation at line 3, not line 1. Verify last violation is on line 3.
+        let yaml = "-item1\n-item2\n-item3";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = HyphensRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert_eq!(diagnostics.len(), 3, "expected 3 violations");
+        let last = diagnostics.last().unwrap();
+        assert_eq!(
+            last.span.start.line, 3,
+            "last violation should be on line 3, got: {}",
+            last.span.start.line
+        );
+        // First violation must be on line 1 (not 1:1 hardcoded for all)
+        assert_eq!(
+            diagnostics[0].span.start.line, 1,
+            "first violation should be on line 1"
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! Rule to check spacing around commas in flow collections.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+    SourceContext, Span,
     tokenizer::{FlowTokenizer, TokenType},
 };
 use fast_yaml_core::Value;
@@ -76,6 +76,7 @@ impl super::LintRule for CommasRule {
             // Check spaces before comma
             if let Some(diag) = check_spaces_before_comma(
                 source,
+                source_context,
                 comma.span.start.offset,
                 max_spaces_before,
                 self.code(),
@@ -87,6 +88,7 @@ impl super::LintRule for CommasRule {
             // Check spaces after comma
             if let Some(diag) = check_spaces_after_comma(
                 source,
+                source_context,
                 comma.span.start.offset,
                 min_spaces_after,
                 max_spaces_after,
@@ -104,6 +106,7 @@ impl super::LintRule for CommasRule {
 /// Checks spaces before a comma.
 fn check_spaces_before_comma(
     source: &str,
+    source_context: &SourceContext<'_>,
     comma_offset: usize,
     max_spaces: i64,
     code: &str,
@@ -136,7 +139,7 @@ fn check_spaces_before_comma(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, comma_offset);
+        let loc = source_context.offset_to_location(comma_offset);
         let span = Span::new(loc, loc);
 
         return Some(
@@ -158,6 +161,7 @@ fn check_spaces_before_comma(
 /// Checks spaces after a comma.
 fn check_spaces_after_comma(
     source: &str,
+    source_context: &SourceContext<'_>,
     comma_offset: usize,
     min_spaces: i64,
     max_spaces: i64,
@@ -196,7 +200,7 @@ fn check_spaces_after_comma(
     // Don't check min spaces if followed by newline
     if min_spaces >= 0 && spaces_i64 < min_spaces && !has_newline {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, comma_offset + 1);
+        let loc = source_context.offset_to_location(comma_offset + 1);
         let span = Span::new(loc, loc);
 
         return Some(
@@ -214,7 +218,7 @@ fn check_spaces_after_comma(
 
     if max_spaces >= 0 && spaces_i64 > max_spaces {
         let severity = config.get_effective_severity(code, Severity::Warning);
-        let loc = Location::new(1, 1, comma_offset + 1);
+        let loc = source_context.offset_to_location(comma_offset + 1);
         let span = Span::new(loc, loc);
 
         return Some(
@@ -367,6 +371,25 @@ mod tests {
         // Commas followed by newlines should be handled gracefully
         assert!(
             diagnostics.is_empty() || diagnostics.iter().all(|d| !d.message.contains("too few"))
+        );
+    }
+
+    #[test]
+    fn test_commas_correct_location() {
+        // Violation at line 2, not line 1
+        let yaml = "first: ok\nlist: [1,2,3]";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = CommasRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(!diagnostics.is_empty());
+        assert_eq!(
+            diagnostics[0].span.start.line, 2,
+            "violation should be on line 2, got: {}",
+            diagnostics[0].span.start.line
         );
     }
 
