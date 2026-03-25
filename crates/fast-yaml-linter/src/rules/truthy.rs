@@ -7,11 +7,14 @@ use crate::{
 use fast_yaml_core::Value;
 use std::collections::HashSet;
 
-/// Non-standard boolean representations to detect
+/// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
 const NON_STANDARD_BOOLS: &[&str] = &[
     "yes", "no", "Yes", "No", "YES", "NO", "on", "off", "On", "Off", "ON", "OFF", "y", "n", "Y",
-    "N", "True", "False", "TRUE", "FALSE",
+    "N",
 ];
+
+/// Valid YAML 1.2.2 booleans that are not in canonical form (`true`/`false`).
+const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 
 /// Linting rule for truthy values.
 ///
@@ -74,6 +77,7 @@ impl super::LintRule for TruthyRule {
 
         // Pre-build HashSets for O(1) lookup
         let non_standard_set: HashSet<&str> = NON_STANDARD_BOOLS.iter().copied().collect();
+        let non_canonical_set: HashSet<&str> = NON_CANONICAL_BOOLS.iter().copied().collect();
         let allowed_set: HashSet<&str> = allowed_values.iter().map(String::as_str).collect();
 
         let mut diagnostics = Vec::new();
@@ -99,30 +103,35 @@ impl super::LintRule for TruthyRule {
                 // Check key if configured
                 if check_keys {
                     let key_trimmed = key_part.trim();
-                    if non_standard_set.contains(key_trimmed) && !allowed_set.contains(key_trimmed)
+                    let key_msg = if non_standard_set.contains(key_trimmed)
+                        && !allowed_set.contains(key_trimmed)
                     {
+                        Some(format!(
+                            "found non-standard truthy key '{key_trimmed}' (use {})",
+                            allowed_values.join(" or ")
+                        ))
+                    } else if non_canonical_set.contains(key_trimmed)
+                        && !allowed_set.contains(key_trimmed)
+                    {
+                        Some(format!(
+                            "found non-canonical boolean key '{key_trimmed}', use 'true' or 'false'"
+                        ))
+                    } else {
+                        None
+                    };
+                    if let Some(msg) = key_msg {
                         let key_start = line.find(key_trimmed).unwrap_or(0);
                         let offset = line_offset + key_start;
                         let severity =
                             config.get_effective_severity(self.code(), self.default_severity());
-
                         let location = Location::new(line_num, 1, offset);
                         let span = Span::new(
                             location,
                             Location::new(line_num, 1, offset + key_trimmed.len()),
                         );
-
                         diagnostics.push(
-                            DiagnosticBuilder::new(
-                                self.code(),
-                                severity,
-                                format!(
-                                    "found non-standard truthy key '{key_trimmed}' (use {})",
-                                    allowed_values.join(" or ")
-                                ),
-                                span,
-                            )
-                            .build_with_context(context.source_context()),
+                            DiagnosticBuilder::new(self.code(), severity, msg, span)
+                                .build_with_context(context.source_context()),
                         );
                     }
                 }
@@ -147,29 +156,35 @@ impl super::LintRule for TruthyRule {
                     .and_then(|s| s.split('#').next())
                     .unwrap_or(value_trimmed);
 
-                if non_standard_set.contains(value_token) && !allowed_set.contains(value_token) {
+                let val_msg = if non_standard_set.contains(value_token)
+                    && !allowed_set.contains(value_token)
+                {
+                    Some(format!(
+                        "found non-standard truthy value '{value_token}' (use {})",
+                        allowed_values.join(" or ")
+                    ))
+                } else if non_canonical_set.contains(value_token)
+                    && !allowed_set.contains(value_token)
+                {
+                    Some(format!(
+                        "found non-canonical boolean '{value_token}', use 'true' or 'false'"
+                    ))
+                } else {
+                    None
+                };
+                if let Some(msg) = val_msg {
                     let value_start = line.find(value_token).unwrap_or(colon_pos + 1);
                     let offset = line_offset + value_start;
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
-
                     let location = Location::new(line_num, 1, offset);
                     let span = Span::new(
                         location,
                         Location::new(line_num, 1, offset + value_token.len()),
                     );
-
                     diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            format!(
-                                "found non-standard truthy value '{value_token}' (use {})",
-                                allowed_values.join(" or ")
-                            ),
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
+                        DiagnosticBuilder::new(self.code(), severity, msg, span)
+                            .build_with_context(context.source_context()),
                     );
                 }
             }
@@ -200,29 +215,35 @@ impl super::LintRule for TruthyRule {
                     .and_then(|s| s.split('#').next())
                     .unwrap_or(value_trimmed);
 
-                if non_standard_set.contains(value_token) && !allowed_set.contains(value_token) {
+                let list_msg = if non_standard_set.contains(value_token)
+                    && !allowed_set.contains(value_token)
+                {
+                    Some(format!(
+                        "found non-standard truthy value '{value_token}' (use {})",
+                        allowed_values.join(" or ")
+                    ))
+                } else if non_canonical_set.contains(value_token)
+                    && !allowed_set.contains(value_token)
+                {
+                    Some(format!(
+                        "found non-canonical boolean '{value_token}', use 'true' or 'false'"
+                    ))
+                } else {
+                    None
+                };
+                if let Some(msg) = list_msg {
                     let value_start = line.find(value_token).unwrap_or(hyphen_pos + 1);
                     let offset = line_offset + value_start;
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
-
                     let location = Location::new(line_num, 1, offset);
                     let span = Span::new(
                         location,
                         Location::new(line_num, 1, offset + value_token.len()),
                     );
-
                     diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            format!(
-                                "found non-standard truthy value '{value_token}' (use {})",
-                                allowed_values.join(" or ")
-                            ),
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
+                        DiagnosticBuilder::new(self.code(), severity, msg, span)
+                            .build_with_context(context.source_context()),
                     );
                 }
             }
@@ -292,6 +313,31 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 2);
+        // Must use "non-canonical" message, not "non-standard", since True/FALSE are valid YAML 1.2.2
+        assert!(diagnostics[0].message.contains("non-canonical"));
+        assert!(diagnostics[1].message.contains("non-canonical"));
+    }
+
+    #[test]
+    fn test_truthy_capitalized_vs_nonstandard_message() {
+        // yes/no → "non-standard"; True/FALSE → "non-canonical"
+        let yaml_nonstandard = "enabled: yes";
+        let yaml_noncanonical = "enabled: True";
+        let value_nonstandard = Parser::parse_str(yaml_nonstandard).unwrap().unwrap();
+        let value_noncanonical = Parser::parse_str(yaml_noncanonical).unwrap().unwrap();
+
+        let rule = TruthyRule;
+        let config = LintConfig::default();
+
+        let diags_nonstandard =
+            rule.check(&LintContext::new(yaml_nonstandard), &value_nonstandard, &config);
+        let diags_noncanonical =
+            rule.check(&LintContext::new(yaml_noncanonical), &value_noncanonical, &config);
+
+        assert!(diags_nonstandard[0].message.contains("non-standard"));
+        assert!(!diags_nonstandard[0].message.contains("non-canonical"));
+        assert!(diags_noncanonical[0].message.contains("non-canonical"));
+        assert!(!diags_noncanonical[0].message.contains("non-standard"));
     }
 
     #[test]

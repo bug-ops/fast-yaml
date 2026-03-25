@@ -163,7 +163,7 @@ impl QuotedStringsRule {
     #[allow(clippy::too_many_arguments)]
     fn check_scalar(
         &self,
-        _source: &str,
+        source: &str,
         source_ctx: &SourceContext<'_>,
         config: &LintConfig,
         diagnostics: &mut Vec<Diagnostic>,
@@ -215,8 +215,9 @@ impl QuotedStringsRule {
                 }
 
                 if required == "only-when-needed" {
-                    let has_escape =
-                        style == ScalarStyle::DoubleQuoted && Self::has_yaml_escape(value);
+                    let has_escape = style == ScalarStyle::DoubleQuoted
+                        && (Self::has_yaml_escape(value)
+                            || Self::has_source_unicode_hex_escape(source, scalar_offset));
                     let needs = has_escape
                         || Self::needs_quotes(value)
                         || extra_required.iter().any(|p| value.contains(p.as_str()));
@@ -301,6 +302,36 @@ impl QuotedStringsRule {
                     '\n' | '\r' | '\t' | '\x00' | '\x07' | '\x08' | '\x0C' | '\x0B' | '\x1B'
                 )
             })
+    }
+
+    /// Returns `true` if the raw double-quoted scalar in `source` at byte offset `start`
+    /// contains a `\u`, `\U`, or `\x` escape sequence.
+    ///
+    /// These escape sequences decode to Unicode/ASCII characters whose decoded form is
+    /// indistinguishable from plain text, so `has_yaml_escape` (which operates on the decoded
+    /// value) cannot detect them. We must inspect the raw source instead.
+    fn has_source_unicode_hex_escape(source: &str, start: usize) -> bool {
+        let bytes = source.as_bytes();
+        if start >= bytes.len() || bytes[start] != b'"' {
+            return false;
+        }
+        let mut i = start + 1;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'"' => return false,
+                b'\\' => {
+                    if i + 1 >= bytes.len() {
+                        return false;
+                    }
+                    if matches!(bytes[i + 1], b'u' | b'U' | b'x') {
+                        return true;
+                    }
+                    i += 2;
+                }
+                _ => i += 1,
+            }
+        }
+        false
     }
 
     /// Checks if a string needs quotes based on YAML syntax rules.
@@ -691,6 +722,53 @@ mod tests {
             span.start.offset, 2,
             "expected offset 2 for quoted value after '- ', got {}",
             span.start.offset
+        );
+    }
+
+    // Regression tests for issue #182: false positives on unicode/hex escape sequences.
+
+    #[test]
+    fn test_no_false_positive_unicode_escape_u4() {
+        // "\u0041BC" decodes to "ABC" — without quotes it becomes literal "\u0041BC"
+        let yaml = r#"key: "\u0041BC""#;
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for \\u escape, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_false_positive_unicode_escape_u8() {
+        // "\U00000041BC" decodes to "ABC" — without quotes it becomes literal
+        let yaml = r#"key: "\U00000041BC""#;
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for \\U escape, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn test_no_false_positive_hex_escape() {
+        // "\x41BC" decodes to "ABC" — without quotes it becomes literal "\x41BC"
+        let yaml = r#"key: "\x41BC""#;
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            diagnostics.is_empty(),
+            "expected no diagnostics for \\x escape, got: {diagnostics:?}"
         );
     }
 }
