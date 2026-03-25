@@ -44,6 +44,10 @@ impl super::LintRule for KeyOrderingRule {
         "Checks if keys in mappings are alphabetically ordered"
     }
 
+    fn needs_value(&self) -> bool {
+        true
+    }
+
     fn default_severity(&self) -> Severity {
         Severity::Info
     }

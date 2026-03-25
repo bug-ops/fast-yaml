@@ -1,7 +1,7 @@
 //! Main linter engine and configuration.
 
 use crate::{Diagnostic, LintContext, Severity, config::RuleConfig, rules::RuleRegistry};
-use fast_yaml_core::{Parser, Value};
+use fast_yaml_core::{Parser, ScalarOwned, Value};
 use std::collections::{HashMap, HashSet};
 
 /// Configuration for the linter.
@@ -364,12 +364,27 @@ impl Linter {
     /// let diagnostics = linter.lint(yaml).unwrap();
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
-        let value_opt = Parser::parse_str(source)?;
+        let docs = Parser::parse_all(source)?;
+        let context = LintContext::new(source);
+        let mut diagnostics = Vec::new();
 
-        value_opt.map_or_else(
-            || Ok(Vec::new()),
-            |value| Ok(self.lint_value(source, &value)),
-        )
+        for rule in self.registry.rules() {
+            if self.config.is_rule_disabled(rule.code()) {
+                continue;
+            }
+
+            if rule.needs_value() {
+                for doc in &docs {
+                    diagnostics.extend(rule.check(&context, doc, &self.config));
+                }
+            } else {
+                let dummy = Value::Value(ScalarOwned::Null);
+                diagnostics.extend(rule.check(&context, &dummy, &self.config));
+            }
+        }
+
+        diagnostics.sort_by(|a, b| a.span.start.cmp(&b.span.start));
+        Ok(diagnostics)
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -568,6 +583,80 @@ mod tests {
         let diagnostics = linter.lint(yaml).unwrap();
 
         assert!(!diagnostics.iter().any(|d| d.code.as_str() == "line-length"));
+    }
+
+    #[test]
+    fn test_multidoc_key_ordering_all_documents() {
+        // Regression test for #142: key-ordering must fire in ALL documents, not just the first.
+        let yaml = "---\nb: 1\na: 2\n---\nd: 1\nc: 2\n";
+        let config = LintConfig::new().with_rule_config(
+            crate::DiagnosticCode::KEY_ORDERING,
+            crate::config::RuleConfig::new(),
+        );
+        let linter = Linter::with_all_rules_and_config(config);
+        let diagnostics = linter.lint(yaml).unwrap();
+
+        let ordering_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == crate::DiagnosticCode::KEY_ORDERING)
+            .collect();
+
+        assert!(
+            ordering_diags.len() >= 2,
+            "key-ordering should fire in both documents, got {} diagnostics: {:?}",
+            ordering_diags.len(),
+            ordering_diags
+        );
+    }
+
+    #[test]
+    fn test_multidoc_empty_values_all_documents() {
+        // Regression test for #142: empty-values must fire in ALL documents, not just the first.
+        let yaml = "---\nfoo:\n---\nbar:\n";
+        let linter = Linter::with_all_rules();
+        let diagnostics = linter.lint(yaml).unwrap();
+
+        let empty_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES)
+            .collect();
+
+        assert!(
+            empty_diags.len() >= 2,
+            "empty-values should fire in both documents, got {} diagnostics: {:?}",
+            empty_diags.len(),
+            empty_diags
+        );
+    }
+
+    #[test]
+    fn test_single_doc_key_ordering_no_regression() {
+        // Verify single-doc YAML with correct key order produces no key-ordering diagnostic.
+        let yaml = "a: 1\nb: 2\nc: 3\n";
+        let linter = Linter::with_all_rules();
+        let diagnostics = linter.lint(yaml).unwrap();
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::KEY_ORDERING),
+            "correctly ordered single-doc should produce no key-ordering diagnostics"
+        );
+    }
+
+    #[test]
+    fn test_single_doc_empty_values_no_regression() {
+        // Verify single-doc YAML without empty values produces no empty-values diagnostic.
+        let yaml = "foo: bar\nbaz: qux\n";
+        let linter = Linter::with_all_rules();
+        let diagnostics = linter.lint(yaml).unwrap();
+
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES),
+            "single-doc without empty values should produce no empty-values diagnostics"
+        );
     }
 
     #[test]

@@ -42,6 +42,10 @@ impl super::LintRule for EmptyValuesRule {
         "Forbids keys with implicit null values (missing explicit 'null' or '~')"
     }
 
+    fn needs_value(&self) -> bool {
+        true
+    }
+
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

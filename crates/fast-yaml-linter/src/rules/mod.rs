@@ -105,6 +105,15 @@ pub trait LintRule: Send + Sync {
     /// Default severity level.
     fn default_severity(&self) -> Severity;
 
+    /// Returns true if this rule requires walking the parsed Value tree.
+    ///
+    /// Rules that return `true` are run once per document in a multi-document
+    /// stream. Rules that return `false` (the default) scan source text and are
+    /// run once for the full input.
+    fn needs_value(&self) -> bool {
+        false
+    }
+
     /// Checks the source and returns diagnostics.
     ///
     /// # Parameters
