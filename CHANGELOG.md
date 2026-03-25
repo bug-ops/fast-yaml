@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Python/NodeJS bindings now correctly parse `True`/`TRUE`/`False`/`FALSE`/`Null`/`NULL` as bool/null per YAML 1.2.2 Core Schema (fixes #80)
 - `batch.format_files` now preserves trailing newline in formatted output (fixes #81)
+- **Linter**: `Linter::with_config()` now loads all default rules instead of an empty registry. Previously, constructing a `Linter` with a custom config silently disabled all linting rules, causing zero diagnostics regardless of input. Affects Rust, Python, and NodeJS bindings. (#86)
 - **Core**: Mixed-case YAML 1.2.2 boolean/null variants (`True`, `TRUE`, `False`, `FALSE`, `Null`) are now correctly parsed as `Bool`/`Null` values instead of strings. saphyr only handles lowercase variants natively; the parser now post-processes the value tree to canonicalize the remaining Core Schema variants. (#71)
 - **Linter**: `empty-values` rule no longer reports a false positive for values with explicit YAML type tags (`!!null null`, `!!str value`, `!!int 42`, etc.). Any value starting with `!` is now treated as explicitly typed. (#72)
 - `fy format` no longer produces trailing spaces on mapping keys whose value is a nested collection
