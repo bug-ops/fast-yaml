@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix(linter): `enabled: false` in config file did not disable rules; `is_rule_disabled` now checks `rule_configs` in addition to the `disabled_rules` set (#133)
 - fix(linter): `float-values` rule now detects signed floats without a leading numeral (`-.5`, `+.5`) in addition to the previously handled bare `.5` case (#138)
 - fix(linter): `trailing-whitespace` rule no longer emits false-positive hints on CRLF files; the `\r` from a `\r\n` line ending is now stripped before the whitespace check (#141)
+- fix(linter): `quoted-strings` rule always reported column 1 and wrong byte offset; `make_span` now uses the actual 0-indexed saphyr column converted to 1-indexed, and offset is computed via `SourceContext::get_line_offset` (O(1)) instead of a per-call O(n) scan (#153)
 
 ## [0.5.3] - 2026-03-25
 

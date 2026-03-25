@@ -119,10 +119,11 @@ impl super::LintRule for QuotedStringsRule {
                         *expecting_key = !*expecting_key;
                     }
 
-                    // Build source location from parser marker (1-indexed line and col).
+                    // Build source location from parser marker.
+                    // saphyr line() is 1-indexed; col() is 0-indexed.
                     let line = span.start.line();
                     let col = span.start.col();
-                    let scalar_offset = Self::compute_offset(source, line, col);
+                    let scalar_offset = context.source_context().get_line_offset(line) + col;
 
                     self.check_scalar(
                         source,
@@ -132,6 +133,7 @@ impl super::LintRule for QuotedStringsRule {
                         style,
                         is_key,
                         line,
+                        col,
                         scalar_offset,
                         quote_type,
                         required,
@@ -167,6 +169,7 @@ impl QuotedStringsRule {
         style: ScalarStyle,
         is_key: bool,
         line: usize,
+        col: usize,
         scalar_offset: usize,
         quote_type: &str,
         required: &str,
@@ -181,7 +184,7 @@ impl QuotedStringsRule {
                     '"'
                 };
                 // value.len() + 2 for the surrounding quote characters.
-                let scalar_span = Self::make_span(line, scalar_offset, value.len() + 2);
+                let scalar_span = Self::make_span(line, col, scalar_offset, value.len() + 2);
 
                 if quote_type == "single" && quote_char == '"' {
                     let severity =
@@ -247,7 +250,7 @@ impl QuotedStringsRule {
                     && !Self::is_scalar_literal(value)
                     && !extra_allowed.iter().any(|p| value.contains(p.as_str()))
                 {
-                    let scalar_span = Self::make_span(line, scalar_offset, value.len());
+                    let scalar_span = Self::make_span(line, col, scalar_offset, value.len());
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
                     diagnostics.push(
@@ -267,21 +270,13 @@ impl QuotedStringsRule {
         }
     }
 
-    /// Computes the byte offset of the scalar in `source` from 1-indexed line/col.
-    fn compute_offset(source: &str, line: usize, col: usize) -> usize {
-        let line_start: usize = source
-            .lines()
-            .take(line.saturating_sub(1))
-            .map(|l| l.len() + 1)
-            .sum();
-        line_start + col.saturating_sub(1)
-    }
-
     /// Builds a [`Span`] covering `len` bytes starting at `offset` on `line`.
-    const fn make_span(line: usize, offset: usize, len: usize) -> Span {
+    ///
+    /// `col` is 0-indexed (as returned by saphyr); `Location` column is 1-indexed.
+    const fn make_span(line: usize, col: usize, offset: usize, len: usize) -> Span {
         Span::new(
-            Location::new(line, 1, offset),
-            Location::new(line, 1, offset + len),
+            Location::new(line, col + 1, offset),
+            Location::new(line, col + 1 + len, offset + len),
         )
     }
 
@@ -563,6 +558,65 @@ mod tests {
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for plain scalar with embedded single quotes, got: {diagnostics:?}"
+        );
+    }
+
+    // Regression tests for issue #153: incorrect column and offset in diagnostics.
+
+    #[test]
+    fn test_diagnostic_location_value_after_key() {
+        // `key: "unnecessary"` — the quoted value starts at column 6 (1-indexed), offset 5.
+        let yaml = r#"key: "unnecessary""#;
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            !diagnostics.is_empty(),
+            "expected at least one diagnostic for unnecessarily quoted value"
+        );
+        let span = diagnostics[0].span;
+        assert_eq!(
+            span.start.column, 6,
+            "expected column 6 for quoted value, got {}",
+            span.start.column
+        );
+        assert_eq!(
+            span.start.offset, 5,
+            "expected offset 5 for quoted value, got {}",
+            span.start.offset
+        );
+    }
+
+    #[test]
+    fn test_diagnostic_location_value_at_line_start() {
+        // A quoted value at the start of a sequence: `- "val"` — value starts at column 3, offset 2.
+        // Use a plain sequence to get a quoted scalar at a known offset.
+        let yaml = "- \"val\"";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = QuotedStringsRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let diagnostics = rule.check(&context, &value, &config);
+        assert!(
+            !diagnostics.is_empty(),
+            "expected diagnostic for unnecessarily quoted sequence value"
+        );
+        let span = diagnostics[0].span;
+        assert_eq!(
+            span.start.column, 3,
+            "expected column 3 for quoted value after '- ', got {}",
+            span.start.column
+        );
+        assert_eq!(
+            span.start.offset, 2,
+            "expected offset 2 for quoted value after '- ', got {}",
+            span.start.offset
         );
     }
 }
