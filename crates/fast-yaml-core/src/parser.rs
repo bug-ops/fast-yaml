@@ -1,7 +1,7 @@
 use crate::error::ParseResult;
 use crate::value::Value;
-use saphyr::{LoadableYamlNode, ScalarOwned, YamlLoader};
-use saphyr_parser::{BufferedInput, Parser as SaphyrParser};
+use saphyr::{ScalarOwned, YamlLoader};
+use saphyr_parser::{BufferedInput, Parser as SaphyrParser, ScalarStyle, Tag};
 
 /// Parser for YAML documents.
 ///
@@ -27,8 +27,11 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_str(input: &str) -> ParseResult<Option<Value>> {
-        let docs = Value::load_from_str(input)?;
-        Ok(docs.into_iter().next().map(canonicalize))
+        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(input.chars()));
+        let mut loader = YamlLoader::<Value>::default();
+        loader.early_parse(false);
+        saphyr_parser.load(&mut loader, true)?;
+        Ok(loader.into_documents().into_iter().next().map(canonicalize))
     }
 
     /// Parse all YAML documents from a string.
@@ -49,7 +52,12 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all(input: &str) -> ParseResult<Vec<Value>> {
-        Ok(Value::load_from_str(input)?
+        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(input.chars()));
+        let mut loader = YamlLoader::<Value>::default();
+        loader.early_parse(false);
+        saphyr_parser.load(&mut loader, true)?;
+        Ok(loader
+            .into_documents()
             .into_iter()
             .map(canonicalize)
             .collect())
@@ -80,23 +88,147 @@ impl Parser {
 /// Canonicalize mixed-case YAML 1.2.2 bool/null variants that saphyr leaves as strings.
 ///
 /// saphyr handles lowercase `true`, `false`, `null`, `~` natively.
-/// This function post-processes the tree to handle `True`, `TRUE`, `False`, `FALSE`, `Null`.
+/// This function post-processes the tree to:
+/// - Resolve `Value::Representation` nodes (produced by `early_parse = false`) to typed scalars,
+///   applying explicit YAML core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
+///   when present (#203).
+/// - Handle `True`, `TRUE`, `False`, `FALSE`, `Null` mixed-case variants.
+/// - Resolve YAML 1.1 merge keys (`<<: *anchor`) into parent mappings (#204).
 pub fn canonicalize(value: Value) -> Value {
     match value {
+        Value::Representation(ref s, style, ref tag) => {
+            coerce_representation(s, style, tag.as_ref())
+        }
         Value::Value(ScalarOwned::String(ref s)) => match s.as_str() {
             "True" | "TRUE" => Value::Value(ScalarOwned::Boolean(true)),
             "False" | "FALSE" => Value::Value(ScalarOwned::Boolean(false)),
             "Null" | "NULL" => Value::Value(ScalarOwned::Null),
             _ => value,
         },
+        Value::Tagged(ref tag, ref inner) => coerce_tagged(tag, inner),
         Value::Sequence(seq) => Value::Sequence(seq.into_iter().map(canonicalize).collect()),
-        Value::Mapping(map) => Value::Mapping(
-            map.into_iter()
+        Value::Mapping(map) => {
+            let canonicalized: crate::value::Map = map
+                .into_iter()
                 .map(|(k, v)| (canonicalize(k), canonicalize(v)))
-                .collect(),
-        ),
+                .collect();
+            resolve_merge_keys(canonicalized)
+        }
         other => other,
     }
+}
+
+/// Parse a YAML core schema float, handling special values (.inf, .nan, etc.).
+fn parse_core_schema_float(s: &str) -> Option<f64> {
+    match s {
+        ".inf" | ".Inf" | ".INF" => Some(f64::INFINITY),
+        "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
+        ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
+        _ => s.parse::<f64>().ok(),
+    }
+}
+
+/// Coerce a `Value::Representation` scalar, applying the tag if present.
+///
+/// When `early_parse = false`, saphyr preserves the raw string, style, and tag in a
+/// `Representation` node. This function resolves that node to a typed `Value::Value`.
+fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
+    if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
+        let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
+            "int" => s.parse::<i64>().ok().map(ScalarOwned::Integer),
+            "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
+            "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
+            "null" => matches!(s, "~" | "null" | "").then_some(ScalarOwned::Null),
+            "str" => Some(ScalarOwned::String(s.into())),
+            _ => None,
+        };
+        if let Some(scalar) = coerced {
+            return Value::Value(scalar);
+        }
+    }
+    // No tag or unknown tag: non-plain scalars are always strings.
+    if style != ScalarStyle::Plain {
+        return Value::Value(ScalarOwned::String(s.into()));
+    }
+    // Plain scalar: apply saphyr's implicit resolution rules.
+    let scalar = match s {
+        "~" | "null" | "NULL" | "Null" => ScalarOwned::Null,
+        "true" | "True" | "TRUE" => ScalarOwned::Boolean(true),
+        "false" | "False" | "FALSE" => ScalarOwned::Boolean(false),
+        other => other.parse::<i64>().map_or_else(
+            |_| {
+                parse_core_schema_float(other).map_or_else(
+                    || ScalarOwned::String(other.into()),
+                    |f| ScalarOwned::FloatingPoint(f.into()),
+                )
+            },
+            ScalarOwned::Integer,
+        ),
+    };
+    Value::Value(scalar)
+}
+
+/// Coerce a tagged value to the appropriate scalar type based on the YAML core schema tag suffix.
+fn coerce_tagged(tag: &Tag, inner: &Value) -> Value {
+    if tag.is_yaml_core_schema()
+        && let Value::Value(ScalarOwned::String(ref s)) = *inner
+    {
+        let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
+            "int" => s.parse::<i64>().ok().map(ScalarOwned::Integer),
+            "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
+            "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
+            "null" => matches!(s.as_str(), "~" | "null" | "").then_some(ScalarOwned::Null),
+            "str" => Some(ScalarOwned::String(s.clone())),
+            _ => None,
+        };
+        if let Some(scalar) = coerced {
+            return Value::Value(scalar);
+        }
+    }
+    canonicalize(inner.clone())
+}
+
+/// Resolve YAML 1.1 merge keys (`<<`) in a canonicalized mapping.
+///
+/// Explicit keys always win over merged keys.
+fn resolve_merge_keys(map: crate::value::Map) -> Value {
+    let merge_key = Value::Value(ScalarOwned::String("<<".into()));
+    if !map.contains_key(&merge_key) {
+        return Value::Mapping(map);
+    }
+
+    let mut result: crate::value::Map = crate::value::Map::new();
+    let mut merges: Vec<Value> = Vec::new();
+
+    for (k, v) in map {
+        if k == merge_key {
+            merges.push(v);
+        } else {
+            result.insert(k, v);
+        }
+    }
+
+    for merge_val in merges {
+        match merge_val {
+            Value::Mapping(merge_map) => {
+                for (mk, mv) in merge_map {
+                    result.entry(mk).or_insert(mv);
+                }
+            }
+            Value::Sequence(seq) => {
+                for item in seq {
+                    if let Value::Mapping(merge_map) = item {
+                        for (mk, mv) in merge_map {
+                            result.entry(mk).or_insert(mv);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Value::Mapping(result)
 }
 
 #[cfg(test)]
@@ -123,7 +255,6 @@ mod tests {
 
     #[test]
     fn test_yaml12_bool_true_variants() {
-        use saphyr::ScalarOwned;
         for variant in &["True", "TRUE"] {
             let result = Parser::parse_str(&format!("val: {variant}"))
                 .unwrap()
@@ -142,7 +273,6 @@ mod tests {
 
     #[test]
     fn test_yaml12_bool_false_variants() {
-        use saphyr::ScalarOwned;
         for variant in &["False", "FALSE"] {
             let result = Parser::parse_str(&format!("val: {variant}"))
                 .unwrap()
@@ -161,7 +291,6 @@ mod tests {
 
     #[test]
     fn test_yaml12_null_variant() {
-        use saphyr::ScalarOwned;
         let result = Parser::parse_str("val: Null").unwrap().unwrap();
         if let Value::Mapping(map) = result {
             let v = map.values().next().unwrap();
@@ -207,5 +336,144 @@ development:
 ";
         let result = Parser::parse_str(yaml).unwrap();
         assert!(result.is_some());
+    }
+
+    fn get_mapping_val(yaml: &str, key: &str) -> Value {
+        let result = Parser::parse_str(yaml).unwrap().unwrap();
+        let Value::Mapping(map) = result else {
+            panic!("expected mapping");
+        };
+        let k = Value::Value(ScalarOwned::String(key.into()));
+        map[&k].clone()
+    }
+
+    #[test]
+    fn test_explicit_tag_int_quoted() {
+        let v = get_mapping_val("val: !!int '42'", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(42))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_float() {
+        let v = get_mapping_val("val: !!float '3.14'", "val");
+        if let Value::Value(ScalarOwned::FloatingPoint(f)) = v {
+            #[allow(clippy::approx_constant)]
+            let expected = 3.14_f64;
+            assert!((f64::from(f) - expected).abs() < 1e-9);
+        } else {
+            panic!("expected FloatingPoint, got {v:?}");
+        }
+    }
+
+    #[test]
+    fn test_explicit_tag_bool() {
+        let v = get_mapping_val("val: !!bool 'true'", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Boolean(true))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_null() {
+        let v = get_mapping_val("val: !!null ''", "val");
+        assert!(matches!(v, Value::Value(ScalarOwned::Null)), "got {v:?}");
+    }
+
+    #[test]
+    fn test_explicit_tag_str_int() {
+        let v = get_mapping_val("val: !!str 42", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "42"),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_merge_key_basic() {
+        let yaml = r"
+defaults: &defaults
+  adapter: postgres
+  host: localhost
+development:
+  <<: *defaults
+  database: dev_db
+";
+        let result = Parser::parse_str(yaml).unwrap().unwrap();
+        let Value::Mapping(root) = result else {
+            panic!("expected mapping")
+        };
+        let dev_key = Value::Value(ScalarOwned::String("development".into()));
+        let Value::Mapping(dev) = root[&dev_key].clone() else {
+            panic!("expected mapping")
+        };
+
+        let adapter_key = Value::Value(ScalarOwned::String("adapter".into()));
+        let host_key = Value::Value(ScalarOwned::String("host".into()));
+        let db_key = Value::Value(ScalarOwned::String("database".into()));
+
+        assert!(dev.contains_key(&adapter_key), "adapter should be merged");
+        assert!(dev.contains_key(&host_key), "host should be merged");
+        assert!(dev.contains_key(&db_key), "database should be present");
+        assert!(
+            !dev.contains_key(&Value::Value(ScalarOwned::String("<<".into()))),
+            "<< should be removed"
+        );
+    }
+
+    #[test]
+    fn test_merge_key_explicit_wins() {
+        let yaml = r"
+base: &base
+  host: localhost
+  port: 5432
+override:
+  <<: *base
+  host: remotehost
+";
+        let result = Parser::parse_str(yaml).unwrap().unwrap();
+        let Value::Mapping(root) = result else {
+            panic!("expected mapping")
+        };
+        let ov_key = Value::Value(ScalarOwned::String("override".into()));
+        let Value::Mapping(ov) = root[&ov_key].clone() else {
+            panic!("expected mapping")
+        };
+        let host_key = Value::Value(ScalarOwned::String("host".into()));
+        assert!(
+            matches!(&ov[&host_key], Value::Value(ScalarOwned::String(s)) if s == "remotehost"),
+            "explicit host should win over merged"
+        );
+    }
+
+    #[test]
+    fn test_merge_key_sequence() {
+        let yaml = r"
+a: &a
+  x: 1
+b: &b
+  y: 2
+merged:
+  <<: [*a, *b]
+  z: 3
+";
+        let result = Parser::parse_str(yaml).unwrap().unwrap();
+        let Value::Mapping(root) = result else {
+            panic!("expected mapping")
+        };
+        let m_key = Value::Value(ScalarOwned::String("merged".into()));
+        let Value::Mapping(m) = root[&m_key].clone() else {
+            panic!("expected mapping")
+        };
+
+        let x = Value::Value(ScalarOwned::String("x".into()));
+        let y = Value::Value(ScalarOwned::String("y".into()));
+        let z = Value::Value(ScalarOwned::String("z".into()));
+        assert!(m.contains_key(&x), "x should be merged from *a");
+        assert!(m.contains_key(&y), "y should be merged from *b");
+        assert!(m.contains_key(&z), "z should be present");
     }
 }
