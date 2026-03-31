@@ -124,7 +124,19 @@ fn parse_core_schema_float(s: &str) -> Option<f64> {
         ".inf" | ".Inf" | ".INF" => Some(f64::INFINITY),
         "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
         ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
-        _ => s.parse::<f64>().ok(),
+        // YAML 1.2 Core Schema float: optional sign, digits, optional fraction, optional exponent.
+        // Reject bare words like "infinity" or "nan" that Rust's f64::parse() accepts.
+        other => {
+            let s = other.strip_prefix(['+', '-']).unwrap_or(other);
+            let has_digit_start = s.starts_with(|c: char| c.is_ascii_digit());
+            let looks_like_float = has_digit_start
+                && s.chars().all(|c| {
+                    c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
+                });
+            looks_like_float
+                .then(|| other.parse::<f64>().ok())
+                .flatten()
+        }
     }
 }
 

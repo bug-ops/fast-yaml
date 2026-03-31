@@ -129,7 +129,6 @@ description: |
         result = fast_yaml.safe_load(yaml)
         assert result == {"person": {"name": "John", "age": 30}}
     
-    @pytest.mark.xfail(reason="yaml-rust2 does not support YAML 1.1 merge key '<<:'")
     def test_anchors_and_aliases(self):
         import fast_yaml
         yaml = """
@@ -405,7 +404,6 @@ alias: *ref
         assert result["anchor"] == "value"
         assert result["alias"] == "value"
     
-    @pytest.mark.xfail(reason="yaml-rust2 does not support YAML 1.1 merge key '<<:'")
     def test_merge_key(self):
         """Merge key << combines mappings"""
         import fast_yaml
