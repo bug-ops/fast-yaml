@@ -89,6 +89,7 @@ fn run() -> Result<ExitCode> {
             exclude,
             no_recursive,
             dry_run,
+            strip_comments,
         }) => {
             // Determine if this is batch mode
             let is_batch = is_batch_mode(&paths, stdin_files, &include, &exclude, jobs);
@@ -144,7 +145,7 @@ fn run() -> Result<ExitCode> {
                         .with_indent(indent)
                         .with_width(width),
                 );
-                let cmd = commands::format::FormatCommand::new(format_config);
+                let cmd = commands::format::FormatCommand::new(format_config, strip_comments);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
             } else {
@@ -158,7 +159,7 @@ fn run() -> Result<ExitCode> {
                         .with_indent(indent)
                         .with_width(width),
                 );
-                let cmd = commands::format::FormatCommand::new(format_config);
+                let cmd = commands::format::FormatCommand::new(format_config, strip_comments);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
             }
@@ -274,7 +275,7 @@ fn run() -> Result<ExitCode> {
             let format_config = common_config
                 .clone()
                 .with_formatter(config::FormatterConfig::new().with_indent(2).with_width(80));
-            let cmd = commands::format::FormatCommand::new(format_config);
+            let cmd = commands::format::FormatCommand::new(format_config, false);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }

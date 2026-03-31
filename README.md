@@ -119,7 +119,8 @@ const yamlStr = safeDump(data);
 ```bash
 # Single file operations
 fy parse config.yaml           # Validate syntax
-fy format -i config.yaml       # Format in-place
+fy format -i config.yaml       # Format in-place (exits with error if comments detected)
+fy format -i --strip-comments config.yaml  # Format and strip comments silently
 fy convert json config.yaml    # YAML → JSON
 fy lint config.yaml            # Lint with diagnostics
 
@@ -132,6 +133,9 @@ fy lint --exclude "tests/**" . # Lint all except tests
 
 > [!TIP]
 > Batch mode activates automatically for directories, globs, or multiple files. Supports parallel processing, include/exclude patterns, and respects `.gitignore`.
+
+> [!WARNING]
+> `fy format` does **not** preserve YAML comments. If the input contains comments, the command exits with an error (exit code 1). Pass `--strip-comments` to acknowledge this and allow formatting to proceed — comments will be removed from the output.
 
 ## Features
 
