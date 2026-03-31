@@ -72,10 +72,9 @@ describe('Parser Options - LoadOptions', () => {
       expect(result).toBe(null);
     });
 
-    it('should return error on invalid YAML with options', () => {
+    it('should throw on invalid YAML with options', () => {
       const options: LoadOptions = { filename: 'bad.yaml' };
-      const result = load('invalid: [', options);
-      expect(result).toBeInstanceOf(Error);
+      expect(() => load('invalid: [', options)).toThrow();
     });
   });
 
@@ -117,10 +116,9 @@ describe('Parser Options - LoadOptions', () => {
       expect(docs).toEqual([]);
     });
 
-    it('should return error on invalid YAML with options', () => {
+    it('should throw on invalid YAML with options', () => {
       const options: LoadOptions = { filename: 'broken.yaml' };
-      const result = loadAll('---\nvalid: true\n---\ninvalid: {', options);
-      expect(result).toBeInstanceOf(Error);
+      expect(() => loadAll('---\nvalid: true\n---\ninvalid: {', options)).toThrow();
     });
   });
 });
@@ -329,9 +327,7 @@ describe('Emitter Options - DumpOptions', () => {
       const largeArray = Array(500_000)
         .fill(null)
         .map((_, i) => ({ [`key${i}`]: 'x'.repeat(500) }));
-      const result = safeDumpAll(largeArray);
-      expect(result).toBeInstanceOf(Error);
-      expect((result as Error).message).toContain('exceeds maximum');
+      expect(() => safeDumpAll(largeArray)).toThrow(/exceeds maximum/);
     });
   });
 });

@@ -96,22 +96,15 @@ person:
       expect(safeLoad('   ')).toBe(null);
     });
 
-    it('should return error on invalid YAML', () => {
-      // NAPI-RS returns Error objects instead of throwing
-      const result1 = safeLoad('invalid: [');
-      expect(result1).toBeInstanceOf(Error);
-      expect((result1 as Error).message).toContain('YAML parse error');
-
-      const result2 = safeLoad('key: {invalid');
-      expect(result2).toBeInstanceOf(Error);
+    it('should throw on invalid YAML', () => {
+      expect(() => safeLoad('invalid: [')).toThrow(/YAML parse error/);
+      expect(() => safeLoad('key: {invalid')).toThrow();
     });
 
     it('should enforce 100MB size limit', () => {
       // Create a string larger than 100MB (~105MB)
       const large = 'x: '.repeat(35_000_000);
-      const result = safeLoad(large);
-      expect(result).toBeInstanceOf(Error);
-      expect((result as Error).message).toContain('exceeds maximum');
+      expect(() => safeLoad(large)).toThrow(/exceeds maximum/);
     });
   });
 
@@ -136,17 +129,13 @@ person:
       expect(safeLoadAll('   ')).toEqual([]);
     });
 
-    it('should return error on invalid YAML', () => {
-      // NAPI-RS returns Error objects instead of throwing
-      const result = safeLoadAll('---\nvalid: true\n---\ninvalid: [');
-      expect(result).toBeInstanceOf(Error);
+    it('should throw on invalid YAML', () => {
+      expect(() => safeLoadAll('---\nvalid: true\n---\ninvalid: [')).toThrow();
     });
 
     it('should enforce 100MB size limit', () => {
       const large = 'x: '.repeat(35_000_000); // ~105MB, exceeds 100MB limit
-      const result = safeLoadAll(large);
-      expect(result).toBeInstanceOf(Error);
-      expect((result as Error).message).toContain('exceeds maximum');
+      expect(() => safeLoadAll(large)).toThrow(/exceeds maximum/);
     });
   });
 });

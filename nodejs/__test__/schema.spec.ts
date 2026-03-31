@@ -431,14 +431,12 @@ folded: >
       ];
 
       schemas.forEach((schema) => {
-        const result = load('invalid: [', { schema });
-        expect(result).toBeInstanceOf(Error);
+        expect(() => load('invalid: [', { schema })).toThrow();
       });
     });
 
-    it('should return error on malformed document with schema', () => {
-      const result = load('key: {invalid', { schema: Schema.SafeSchema });
-      expect(result).toBeInstanceOf(Error);
+    it('should throw on malformed document with schema', () => {
+      expect(() => load('key: {invalid', { schema: Schema.SafeSchema })).toThrow();
     });
 
     it('should validate input size with all schemas', () => {
@@ -451,9 +449,7 @@ folded: >
       ];
 
       schemas.forEach((schema) => {
-        const result = load(large, { schema });
-        expect(result).toBeInstanceOf(Error);
-        expect((result as Error).message).toContain('exceeds maximum');
+        expect(() => load(large, { schema })).toThrow(/exceeds maximum/);
       });
     });
   });
