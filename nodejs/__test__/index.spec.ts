@@ -108,17 +108,10 @@ describe('Module Integration', () => {
   it('should handle errors consistently across functions', () => {
     const invalidYaml = 'invalid: [unclosed';
 
-    const result1 = fastYaml.safeLoad(invalidYaml);
-    expect(result1).toBeInstanceOf(Error);
-
-    const result2 = fastYaml.load(invalidYaml);
-    expect(result2).toBeInstanceOf(Error);
-
-    const result3 = fastYaml.safeLoadAll(invalidYaml);
-    expect(result3).toBeInstanceOf(Error);
-
-    const result4 = fastYaml.loadAll(invalidYaml);
-    expect(result4).toBeInstanceOf(Error);
+    expect(() => fastYaml.safeLoad(invalidYaml)).toThrow();
+    expect(() => fastYaml.load(invalidYaml)).toThrow();
+    expect(() => fastYaml.safeLoadAll(invalidYaml)).toThrow();
+    expect(() => fastYaml.loadAll(invalidYaml)).toThrow();
   });
 
   it('should handle empty input consistently', () => {
@@ -158,9 +151,7 @@ describe('Module Integration', () => {
 describe('Module Error Handling', () => {
   it('should handle size limit errors', () => {
     const large = 'x: '.repeat(35_000_000); // ~105MB, exceeds 100MB limit
-    const result = fastYaml.safeLoad(large);
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toContain('exceeds maximum');
+    expect(() => fastYaml.safeLoad(large)).toThrow(/exceeds maximum/);
   });
 
   it('should handle malformed YAML errors', () => {
@@ -172,11 +163,8 @@ describe('Module Error Handling', () => {
     ];
 
     malformed.forEach((yaml) => {
-      const result1 = fastYaml.safeLoad(yaml);
-      expect(result1).toBeInstanceOf(Error);
-
-      const result2 = fastYaml.load(yaml);
-      expect(result2).toBeInstanceOf(Error);
+      expect(() => fastYaml.safeLoad(yaml)).toThrow();
+      expect(() => fastYaml.load(yaml)).toThrow();
     });
   });
 
@@ -186,10 +174,7 @@ describe('Module Error Handling', () => {
   });
 
   it('should provide meaningful error messages', () => {
-    const result = fastYaml.safeLoad('key: [unclosed');
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toBeTruthy();
-    expect((result as Error).message.length).toBeGreaterThan(10);
+    expect(() => fastYaml.safeLoad('key: [unclosed')).toThrow(/.{10,}/)
   });
 });
 
