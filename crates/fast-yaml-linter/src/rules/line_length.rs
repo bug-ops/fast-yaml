@@ -59,7 +59,7 @@ impl super::LintRule for LineLengthRule {
 
                     let diagnostic = DiagnosticBuilder::new(
                         DiagnosticCode::LINE_LENGTH,
-                        Severity::Info,
+                        config.get_effective_severity(self.code(), self.default_severity()),
                         format!(
                             "line exceeds maximum length of {max_length} characters (current: {line_len})"
                         ),
@@ -79,7 +79,7 @@ impl super::LintRule for LineLengthRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::LintRule;
+    use crate::{config::RuleConfig, rules::LintRule};
     use fast_yaml_core::Parser;
 
     #[test]
@@ -195,6 +195,25 @@ mod tests {
 
         // Should only report the first line (10 chars), not the empty lines
         assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_severity_override() {
+        let yaml = "key: this is a very long value that definitely exceeds eighty characters without any doubt";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = LineLengthRule;
+        let config = LintConfig::new()
+            .with_max_line_length(Some(10))
+            .with_rule_config(
+                "line-length",
+                RuleConfig::new().with_severity(Severity::Error),
+            );
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     #[test]
