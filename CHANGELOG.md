@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- fix(cli): `fy format` now exits with an error (exit code 1) when the input contains YAML comments, which are silently stripped by the formatter. Pass `--strip-comments` to acknowledge comment loss and proceed. Previously, comments were dropped without any warning or error. (#199)
+
+### Added
+
+- **CLI**: `--strip-comments` flag on `fy format` — suppress the new comment-detection error and allow formatting to proceed (comments will still be stripped from the output). (#199)
+
 ## [0.6.0] - 2026-03-25
 
 ### Added

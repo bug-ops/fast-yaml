@@ -90,6 +90,12 @@ pub enum Command {
         /// Show what would be changed without modifying files
         #[arg(short = 'n', long)]
         dry_run: bool,
+
+        /// Suppress the error when YAML comments are detected.
+        /// Comments are not preserved by the formatter and will be stripped.
+        /// Without this flag, formatting a file that contains comments exits with an error.
+        #[arg(long)]
+        strip_comments: bool,
     },
 
     /// Convert between YAML and JSON

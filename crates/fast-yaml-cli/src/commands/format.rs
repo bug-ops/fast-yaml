@@ -7,29 +7,58 @@ use crate::io::{InputSource, OutputWriter};
 /// Format command implementation
 pub struct FormatCommand {
     config: CommonConfig,
+    strip_comments: bool,
 }
 
 impl FormatCommand {
-    pub const fn new(config: CommonConfig) -> Self {
-        Self { config }
+    pub const fn new(config: CommonConfig, strip_comments: bool) -> Self {
+        Self {
+            config,
+            strip_comments,
+        }
     }
 
     /// Execute format command
     pub fn execute(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
-        // Create emitter config from formatter settings
+        if !self.strip_comments && yaml_has_comments(input.as_str()) {
+            anyhow::bail!(
+                "warning: YAML comments will be stripped by the formatter. \
+                 Use --strip-comments to suppress this error."
+            );
+        }
+
         let emitter_config = EmitterConfig::new()
             .with_indent(self.config.formatter.indent() as usize)
             .with_width(self.config.formatter.width());
 
-        // Use format_with_config which automatically selects streaming for large files
         let formatted = Emitter::format_with_config(input.as_str(), &emitter_config)
             .context("Failed to format YAML")?;
 
-        // Write output
         output.write(&formatted)?;
 
         Ok(())
     }
+}
+
+/// Returns true if the YAML input contains at least one comment.
+///
+/// Scans line by line and tracks single-quoted and double-quoted string regions
+/// to avoid false positives from `#` inside string literals.
+fn yaml_has_comments(input: &str) -> bool {
+    for line in input.lines() {
+        let mut in_single = false;
+        let mut in_double = false;
+
+        for (_, ch) in line.char_indices() {
+            match ch {
+                '\'' if !in_double => in_single = !in_single,
+                '"' if !in_single => in_double = !in_double,
+                '#' if !in_single && !in_double => return true,
+                _ => {}
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]
@@ -38,6 +67,12 @@ mod tests {
     use crate::config::FormatterConfig;
     use crate::io::input::InputOrigin;
     use tempfile::NamedTempFile;
+
+    fn make_cmd(strip_comments: bool) -> FormatCommand {
+        let config = CommonConfig::new()
+            .with_formatter(FormatterConfig::new().with_indent(2).with_width(80));
+        FormatCommand::new(config, strip_comments)
+    }
 
     #[test]
     fn test_format_simple_yaml() {
@@ -50,10 +85,7 @@ mod tests {
         let output =
             OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
 
-        let config = CommonConfig::new()
-            .with_formatter(FormatterConfig::new().with_indent(2).with_width(80));
-        let cmd = FormatCommand::new(config);
-        assert!(cmd.execute(&input, &output).is_ok());
+        assert!(make_cmd(false).execute(&input, &output).is_ok());
 
         let formatted = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(formatted.contains("name:"));
@@ -66,13 +98,8 @@ mod tests {
             content: "invalid: [".to_string(),
             origin: InputOrigin::Stdin,
         };
-
         let output = OutputWriter::stdout();
-
-        let config = CommonConfig::new()
-            .with_formatter(FormatterConfig::new().with_indent(2).with_width(80));
-        let cmd = FormatCommand::new(config);
-        assert!(cmd.execute(&input, &output).is_err());
+        assert!(make_cmd(false).execute(&input, &output).is_err());
     }
 
     #[test]
@@ -88,10 +115,52 @@ mod tests {
 
         let config = CommonConfig::new()
             .with_formatter(FormatterConfig::new().with_indent(4).with_width(80));
-        let cmd = FormatCommand::new(config);
-        assert!(cmd.execute(&input, &output).is_ok());
+        assert!(
+            FormatCommand::new(config, false)
+                .execute(&input, &output)
+                .is_ok()
+        );
 
         let formatted = std::fs::read_to_string(temp_file.path()).unwrap();
         assert!(formatted.contains("parent:"));
+    }
+
+    #[test]
+    fn test_format_with_comments_no_flag_errors() {
+        let input = InputSource {
+            content: "# top-level comment\nname: test".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+        let output = OutputWriter::stdout();
+        let err = make_cmd(false).execute(&input, &output).unwrap_err();
+        assert!(err.to_string().contains("--strip-comments"));
+    }
+
+    #[test]
+    fn test_format_with_comments_strip_flag_succeeds() {
+        let input = InputSource {
+            content: "# top-level comment\nname: test".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+        let temp_file = NamedTempFile::new().unwrap();
+        let output =
+            OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
+        assert!(make_cmd(true).execute(&input, &output).is_ok());
+    }
+
+    #[test]
+    fn test_yaml_has_comments_detects_inline() {
+        assert!(yaml_has_comments("key: value # inline"));
+    }
+
+    #[test]
+    fn test_yaml_has_comments_ignores_hash_in_string() {
+        assert!(!yaml_has_comments("key: \"value # not a comment\""));
+        assert!(!yaml_has_comments("key: 'value # not a comment'"));
+    }
+
+    #[test]
+    fn test_yaml_has_comments_no_comment() {
+        assert!(!yaml_has_comments("key: value\nother: 123"));
     }
 }
