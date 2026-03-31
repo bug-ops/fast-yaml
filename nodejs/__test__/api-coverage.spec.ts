@@ -64,11 +64,11 @@ describe('API Coverage - All Functions', () => {
       expect(safeLoad('\n\nkey: value\n\n')).toEqual({ key: 'value' });
     });
 
-    it('should return errors for invalid YAML', () => {
-      expect(safeLoad('{')).toBeInstanceOf(Error);
-      expect(safeLoad('[')).toBeInstanceOf(Error);
-      expect(safeLoad('key: {')).toBeInstanceOf(Error);
-      expect(safeLoad('- [')).toBeInstanceOf(Error);
+    it('should throw for invalid YAML', () => {
+      expect(() => safeLoad('{')).toThrow();
+      expect(() => safeLoad('[')).toThrow();
+      expect(() => safeLoad('key: {')).toThrow();
+      expect(() => safeLoad('- [')).toThrow();
     });
   });
 
@@ -126,9 +126,9 @@ describe('API Coverage - All Functions', () => {
       expect(load('key: value', options)).toEqual({ key: 'value' });
     });
 
-    it('should return errors with options', () => {
+    it('should throw with options', () => {
       const options: LoadOptions = { filename: 'bad.yaml' };
-      expect(load('invalid: [', options)).toBeInstanceOf(Error);
+      expect(() => load('invalid: [', options)).toThrow();
     });
   });
 
@@ -160,8 +160,8 @@ describe('API Coverage - All Functions', () => {
       expect(safeLoadAll('---\nstring\n---\n123\n---\ntrue')).toEqual(['string', 123, true]);
     });
 
-    it('should return errors for invalid YAML', () => {
-      expect(safeLoadAll('---\nvalid: true\n---\ninvalid: [')).toBeInstanceOf(Error);
+    it('should throw for invalid YAML', () => {
+      expect(() => safeLoadAll('---\nvalid: true\n---\ninvalid: [')).toThrow();
     });
   });
 
@@ -542,30 +542,28 @@ describe('API Coverage - Data Type Combinations', () => {
 
 describe('API Coverage - Error Handling', () => {
   describe('all error types', () => {
-    it('should handle syntax errors', () => {
+    it('should throw on syntax errors', () => {
       const invalid = ['[', '{', 'key: [', 'key: {', '- [', 'key:\n\tvalue'];
       invalid.forEach((yaml) => {
-        expect(safeLoad(yaml)).toBeInstanceOf(Error);
-        expect(load(yaml)).toBeInstanceOf(Error);
+        expect(() => safeLoad(yaml)).toThrow();
+        expect(() => load(yaml)).toThrow();
       });
     });
 
-    it('should handle size limit errors', () => {
+    it('should throw on size limit errors', () => {
       const large = 'x: '.repeat(35_000_000); // ~105MB, exceeds 100MB limit
-      expect(safeLoad(large)).toBeInstanceOf(Error);
-      expect(load(large)).toBeInstanceOf(Error);
-      expect(safeLoadAll(large)).toBeInstanceOf(Error);
-      expect(loadAll(large)).toBeInstanceOf(Error);
+      expect(() => safeLoad(large)).toThrow(/exceeds maximum/);
+      expect(() => load(large)).toThrow(/exceeds maximum/);
+      expect(() => safeLoadAll(large)).toThrow(/exceeds maximum/);
+      expect(() => loadAll(large)).toThrow(/exceeds maximum/);
     });
 
-    it('should handle invalid anchors', () => {
-      expect(safeLoad('ref: *unknown')).toBeInstanceOf(Error);
+    it('should throw on invalid anchors', () => {
+      expect(() => safeLoad('ref: *unknown')).toThrow();
     });
 
     it('should provide error messages', () => {
-      const result = safeLoad('invalid: [');
-      expect(result).toBeInstanceOf(Error);
-      expect((result as Error).message).toBeTruthy();
+      expect(() => safeLoad('invalid: [')).toThrow(/.+/);
     });
   });
 });

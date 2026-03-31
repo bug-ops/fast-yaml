@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix(parser): explicit YAML tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`) now correctly coerce scalar values, including quoted scalars such as `!!int '42'` (#203)
 - fix(parser): YAML merge keys (`<<: *anchor` and `<<: [*a, *b]`) are now resolved during parsing; explicit keys always win over merged keys (#204)
 - fix(cli): `fy format` now exits with an error (exit code 1) when the input contains YAML comments, which are silently stripped by the formatter. Pass `--strip-comments` to acknowledge comment loss and proceed. Previously, comments were dropped without any warning or error. (#199)
+- fix(nodejs): `safeLoad`, `safeLoadAll`, `load`, `loadAll`, and `parseParallel` now throw a JavaScript exception on error instead of returning an Error object as the resolved value. Root cause was `Unknown<'static>` + `unsafe transmute` pattern bypassing NAPI-RS error propagation; replaced with explicit `env.throw_error()` calls on all error paths (#202)
 
 ### Added
 

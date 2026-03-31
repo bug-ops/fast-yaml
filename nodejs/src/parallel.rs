@@ -3,9 +3,7 @@
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
 use crate::conversion::yaml_to_js;
-use fast_yaml_parallel::{
-    Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config,
-};
+use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
     Env, Result as NapiResult, Task,
     bindgen_prelude::{AsyncTask, Unknown},
@@ -119,6 +117,22 @@ impl ParallelConfig {
     }
 }
 
+/// Coerce `Unknown<'env>` to `Unknown<'static>` for returning from `#[napi]` functions.
+///
+/// # Safety
+///
+/// The returned value must not outlive the JS call frame. NAPI-RS guarantees that all
+/// `#[napi]` function return values are consumed before the Env becomes invalid, so this
+/// transmute is safe in this specific context.
+#[inline]
+fn to_static(v: Unknown<'_>) -> Unknown<'static> {
+    // SAFETY: see doc comment above
+    #[allow(clippy::missing_transmute_annotations)]
+    unsafe {
+        std::mem::transmute(v)
+    }
+}
+
 /// Parse multi-document YAML in parallel (synchronous).
 ///
 /// Automatically splits YAML documents at '---' boundaries and
@@ -160,18 +174,33 @@ pub fn parse_parallel(
     config: Option<ParallelConfig>,
 ) -> NapiResult<Vec<Unknown<'static>>> {
     // Convert config
-    let rust_config = config.unwrap_or_default().to_rust_config()?;
+    let rust_config = match config.unwrap_or_default().to_rust_config() {
+        Ok(c) => c,
+        Err(e) => {
+            env.throw_error(&e.to_string(), None)?;
+            return Ok(Vec::new());
+        }
+    };
 
     // Parse in parallel
-    let values = parse_parallel_with_config(&yaml_str, &rust_config)
-        .map_err(|e: ParallelError| napi::Error::from_reason(e.to_string()))?;
+    let values = match parse_parallel_with_config(&yaml_str, &rust_config) {
+        Ok(v) => v,
+        Err(e) => {
+            env.throw_error(&e.to_string(), None)?;
+            return Ok(Vec::new());
+        }
+    };
 
     // Convert to JavaScript
     let mut js_docs = Vec::with_capacity(values.len());
     for value in &values {
-        let result = yaml_to_js(&env, value)?;
-        #[allow(clippy::missing_transmute_annotations)]
-        js_docs.push(unsafe { std::mem::transmute(result) });
+        match yaml_to_js(&env, value) {
+            Ok(v) => js_docs.push(to_static(v)),
+            Err(e) => {
+                env.throw_error(&e.to_string(), None)?;
+                return Ok(Vec::new());
+            }
+        }
     }
 
     Ok(js_docs)
@@ -202,9 +231,7 @@ impl Task for ParseParallelTask {
     fn resolve(&mut self, env: Env, output: Self::Output) -> NapiResult<Self::JsValue> {
         let mut js_docs = Vec::with_capacity(output.len());
         for value in &output {
-            let result = yaml_to_js(&env, value)?;
-            #[allow(clippy::missing_transmute_annotations)]
-            js_docs.push(unsafe { std::mem::transmute(result) });
+            js_docs.push(to_static(yaml_to_js(&env, value)?));
         }
         Ok(js_docs)
     }
