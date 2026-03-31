@@ -174,7 +174,7 @@ describe('Module Error Handling', () => {
   });
 
   it('should provide meaningful error messages', () => {
-    expect(() => fastYaml.safeLoad('key: [unclosed')).toThrow(/.{10,}/)
+    expect(() => fastYaml.safeLoad('key: [unclosed')).toThrow(/.{10,}/);
   });
 });
 
