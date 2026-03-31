@@ -103,9 +103,33 @@ fn test_parse_empty_document() {
         .arg("parse")
         .write_stdin("")
         .assert()
-        .failure()
-        .code(1)
-        .stderr(predicate::str::contains("Empty YAML document"));
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("YAML is valid"));
+}
+
+#[test]
+fn test_parse_null_yaml() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("parse")
+        .write_stdin("~")
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("YAML is valid"));
+}
+
+#[test]
+fn test_parse_comment_only_yaml() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("parse")
+        .write_stdin("# just a comment\n")
+        .assert()
+        .success()
+        .code(0)
+        .stdout(predicate::str::contains("YAML is valid"));
 }
 
 #[test]
@@ -945,6 +969,28 @@ fn test_roundtrip_yaml_json_yaml() {
         .success()
         .stdout(predicate::str::contains("name:"))
         .stdout(predicate::str::contains("value:"));
+}
+
+#[test]
+fn test_convert_yaml_non_string_keys_to_json() {
+    // YAML maps with null, boolean, and integer keys should convert to JSON
+    // with those keys coerced to their string representations.
+    let yaml = "null: null_val\ntrue: bool_val\n42: int_val\n";
+    let output = Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin(yaml)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json_str = String::from_utf8(output).unwrap();
+    let json: serde_json::Value = serde_json::from_str(json_str.trim()).unwrap();
+    assert_eq!(json["null"], "null_val");
+    assert_eq!(json["true"], "bool_val");
+    assert_eq!(json["42"], "int_val");
 }
 
 // =============================================================================

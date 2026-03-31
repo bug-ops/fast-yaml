@@ -84,6 +84,35 @@ impl ConvertCommand {
     }
 }
 
+/// Coerce a YAML scalar key to its string representation for JSON output.
+///
+/// JSON only supports string keys. Scalar YAML keys are converted to their
+/// canonical string form: null -> "null", bool -> "true"/"false",
+/// integers and floats -> their decimal string representation.
+///
+/// # Errors
+///
+/// Returns an error for non-scalar key types (mappings, sequences, aliases)
+/// that have no meaningful string representation.
+fn yaml_key_to_string(key: &Value) -> Result<String> {
+    use Value as YValue;
+    use fast_yaml_core::value::ScalarOwned;
+
+    match key {
+        YValue::Value(scalar) => Ok(match scalar {
+            ScalarOwned::Null => "null".to_string(),
+            ScalarOwned::Boolean(b) => b.to_string(),
+            ScalarOwned::Integer(i) => i.to_string(),
+            ScalarOwned::FloatingPoint(f) => f.to_string(),
+            ScalarOwned::String(s) => s.clone(),
+        }),
+        _ => Err(anyhow::anyhow!(
+            "Unsupported YAML map key type: only scalar keys (string, number, boolean, null) \
+             can be converted to JSON"
+        )),
+    }
+}
+
 /// Convert `fast_yaml_core::Value` to `serde_json::Value`
 fn value_to_json(value: &Value) -> Result<serde_json::Value> {
     use Value as YValue;
@@ -113,10 +142,8 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
         YValue::Mapping(map) => {
             let mut json_map = serde_json::Map::new();
             for (k, v) in map {
-                let key = k
-                    .as_str()
-                    .ok_or_else(|| anyhow::anyhow!("Map key must be a string"))?;
-                json_map.insert(key.to_string(), value_to_json(v)?);
+                let key = yaml_key_to_string(k)?;
+                json_map.insert(key, value_to_json(v)?);
             }
             JValue::Object(json_map)
         }
@@ -365,5 +392,29 @@ mod tests {
             yaml_str.contains("integer: 42"),
             "expected 'integer: 42' in: {yaml_str}"
         );
+    }
+
+    #[test]
+    fn test_value_to_json_null_key() {
+        let yaml = "null: value";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let json = value_to_json(&value).unwrap();
+        assert_eq!(json["null"], "value");
+    }
+
+    #[test]
+    fn test_value_to_json_bool_key() {
+        let yaml = "true: yes_value";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let json = value_to_json(&value).unwrap();
+        assert_eq!(json["true"], "yes_value");
+    }
+
+    #[test]
+    fn test_value_to_json_integer_key() {
+        let yaml = "42: answer";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let json = value_to_json(&value).unwrap();
+        assert_eq!(json["42"], "answer");
     }
 }
