@@ -39,13 +39,9 @@ impl super::LintRule for InvalidAnchorsRule {
         Severity::Warning
     }
 
-    fn check(
-        &self,
-        context: &LintContext,
-        _value: &Value,
-        _config: &LintConfig,
-    ) -> Vec<Diagnostic> {
-        scan_duplicate_anchors(context.source(), context.source_context())
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let severity = config.get_effective_severity(self.code(), self.default_severity());
+        scan_duplicate_anchors(context.source(), context.source_context(), severity)
     }
 }
 
@@ -90,7 +86,11 @@ impl ScanState {
 
 // ── Main scan function ─────────────────────────────────────────────────────
 
-fn scan_duplicate_anchors(source: &str, source_context: &SourceContext<'_>) -> Vec<Diagnostic> {
+fn scan_duplicate_anchors(
+    source: &str,
+    source_context: &SourceContext<'_>,
+    severity: Severity,
+) -> Vec<Diagnostic> {
     // Map from anchor name → (1-indexed line, 1-indexed column) of first def.
     let mut seen: HashMap<String, (usize, usize)> = HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
@@ -157,6 +157,7 @@ fn scan_duplicate_anchors(source: &str, source_context: &SourceContext<'_>) -> V
             &mut state,
             &mut seen,
             &mut diagnostics,
+            severity,
         );
 
         line_start_offset += line.len() + 1; // +1 for the '\n'
@@ -177,6 +178,7 @@ fn scan_line_for_anchors(
     state: &mut ScanState,
     seen: &mut HashMap<String, (usize, usize)>,
     diagnostics: &mut Vec<Diagnostic>,
+    severity: Severity,
 ) {
     let bytes = line.as_bytes();
     let mut i = 0;
@@ -246,7 +248,7 @@ fn scan_line_for_anchors(
                         diagnostics.push(
                             DiagnosticBuilder::new(
                                 DiagnosticCode::INVALID_ANCHOR,
-                                Severity::Warning,
+                                severity,
                                 format!(
                                     "anchor '&{name}' is defined multiple times; \
                                      the earlier definition is shadowed \
@@ -378,7 +380,7 @@ const fn build_span(line: usize, col: usize, offset: usize, len: usize) -> crate
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::LintRule;
+    use crate::{config::RuleConfig, rules::LintRule};
     use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
@@ -471,5 +473,20 @@ mod tests {
     fn test_block_scalar_anchor_no_warning() {
         let yaml = "script: |\n  echo &not_an_anchor\n  curl *endpoint\nkey: value\n";
         assert!(run(yaml).is_empty());
+    }
+
+    #[test]
+    fn test_severity_override() {
+        let yaml = "a: &anchor value1\nb: &anchor value2\n";
+        let value = Parser::parse_str(yaml)
+            .unwrap()
+            .unwrap_or(Value::Value(fast_yaml_core::ScalarOwned::Null));
+        let config = LintConfig::new().with_rule_config(
+            "invalid-anchor",
+            RuleConfig::new().with_severity(Severity::Error),
+        );
+        let diagnostics = InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &config);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 }

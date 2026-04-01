@@ -26,12 +26,7 @@ impl super::LintRule for TrailingWhitespaceRule {
         Severity::Hint
     }
 
-    fn check(
-        &self,
-        context: &LintContext,
-        _value: &Value,
-        _config: &LintConfig,
-    ) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let ctx = context.source_context();
 
@@ -64,7 +59,7 @@ impl super::LintRule for TrailingWhitespaceRule {
 
                     let diagnostic = DiagnosticBuilder::new(
                         DiagnosticCode::TRAILING_WHITESPACE,
-                        Severity::Hint,
+                        config.get_effective_severity(self.code(), self.default_severity()),
                         "trailing whitespace detected".to_string(),
                         span,
                     )
@@ -83,7 +78,7 @@ impl super::LintRule for TrailingWhitespaceRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::LintRule;
+    use crate::{config::RuleConfig, rules::LintRule};
     use fast_yaml_core::Parser;
 
     #[test]
@@ -183,6 +178,23 @@ mod tests {
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].span.start.line, 1);
+    }
+
+    #[test]
+    fn test_severity_override() {
+        let yaml = "key: value \nname: test";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+
+        let rule = TrailingWhitespaceRule;
+        let config = LintConfig::new().with_rule_config(
+            "trailing-whitespace",
+            RuleConfig::new().with_severity(Severity::Error),
+        );
+        let lint_context = LintContext::new(yaml);
+        let diagnostics = rule.check(&lint_context, &value, &config);
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     #[test]

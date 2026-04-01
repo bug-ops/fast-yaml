@@ -71,7 +71,7 @@ impl super::LintRule for IndentationRule {
                 );
                 let diagnostic = DiagnosticBuilder::new(
                     DiagnosticCode::INDENTATION,
-                    Severity::Warning,
+                    config.get_effective_severity(self.code(), self.default_severity()),
                     "mixed tabs and spaces in indentation".to_string(),
                     span,
                 )
@@ -93,7 +93,7 @@ impl super::LintRule for IndentationRule {
                 );
                 let diagnostic = DiagnosticBuilder::new(
                     DiagnosticCode::INDENTATION,
-                    Severity::Warning,
+                    config.get_effective_severity(self.code(), self.default_severity()),
                     format!(
                         "wrong indentation: found {leading_spaces} space(s), expected a multiple of {indent_size}"
                     ),
@@ -111,7 +111,7 @@ impl super::LintRule for IndentationRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{LintConfig, LintContext, rules::LintRule};
+    use crate::{LintConfig, LintContext, config::RuleConfig, rules::LintRule};
     use fast_yaml_core::Parser;
 
     fn parse(yaml: &str) -> Value {
@@ -200,6 +200,21 @@ mod tests {
         let config = LintConfig::default();
         let ctx = LintContext::new(tab_source);
         assert!(rule.check(&ctx, &value, &config).is_empty());
+    }
+
+    #[test]
+    fn test_severity_override() {
+        let yaml = "parent:\n   child: value\n";
+        let value = parse(yaml);
+        let rule = IndentationRule;
+        let config = LintConfig::new().with_rule_config(
+            "indentation",
+            RuleConfig::new().with_severity(Severity::Error),
+        );
+        let ctx = LintContext::new(yaml);
+        let diagnostics = rule.check(&ctx, &value, &config);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     #[test]

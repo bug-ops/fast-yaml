@@ -33,28 +33,24 @@ describe('parseParallel', () => {
     expect(docs).toHaveLength(2);
   });
 
-  it('returns error on invalid YAML', () => {
+  it('throws on invalid YAML', () => {
     const yaml = '---\nfoo: bar\n---\n{ invalid: yaml: structure ]';
-    const result = parseParallel(yaml);
-    expect(result).toBeInstanceOf(Error);
-    expect((result as Error).message).toMatch(/parse|invalid|error/i);
+    expect(() => parseParallel(yaml)).toThrow(/parse|invalid|error/i);
   });
 
   it('validates config limits', () => {
     const yaml = 'foo: bar';
 
     // Thread count too high
-    const result1 = parseParallel(yaml, { threadCount: 1000 });
-    expect(result1).toBeInstanceOf(Error);
-    expect((result1 as Error).message).toMatch(/threadCount|thread|128/i);
+    expect(() => parseParallel(yaml, { threadCount: 1000 })).toThrow(/threadCount|thread|128/i);
 
     // Invalid chunk sizes - max < min
-    const result2 = parseParallel(yaml, {
-      minChunkSize: 10000,
-      maxChunkSize: 1000,
-    });
-    expect(result2).toBeInstanceOf(Error);
-    expect((result2 as Error).message).toMatch(/chunk|size/i);
+    expect(() =>
+      parseParallel(yaml, {
+        minChunkSize: 10000,
+        maxChunkSize: 1000,
+      })
+    ).toThrow(/chunk|size/i);
   });
 });
 

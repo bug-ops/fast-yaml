@@ -23,9 +23,7 @@ impl ParseCommand {
         let mut reporter = Reporter::new(self.config.output.clone());
         reporter.start_timing();
 
-        let value = Parser::parse_str(input.as_str())
-            .context("Failed to parse YAML")?
-            .ok_or_else(|| anyhow::anyhow!("Empty YAML document"))?;
+        let maybe_value = Parser::parse_str(input.as_str()).context("Failed to parse YAML")?;
 
         reporter
             .report(ReportEvent::Success {
@@ -33,8 +31,10 @@ impl ParseCommand {
             })
             .ok();
 
-        if self.show_stats {
-            self.print_statistics(&value, &reporter);
+        if self.show_stats
+            && let Some(ref value) = maybe_value
+        {
+            self.print_statistics(value, &reporter);
         }
 
         if let Some(duration) = reporter.elapsed() {
@@ -147,14 +147,33 @@ mod tests {
         let config =
             CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
         let cmd = ParseCommand::new(config, false);
-        let result = cmd.execute(&input);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Empty YAML document")
-        );
+        assert!(cmd.execute(&input).is_ok());
+    }
+
+    #[test]
+    fn test_parse_null_document() {
+        let input = InputSource {
+            content: "~".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+
+        let config =
+            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let cmd = ParseCommand::new(config, false);
+        assert!(cmd.execute(&input).is_ok());
+    }
+
+    #[test]
+    fn test_parse_comment_only_document() {
+        let input = InputSource {
+            content: "# just a comment\n".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+
+        let config =
+            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let cmd = ParseCommand::new(config, false);
+        assert!(cmd.execute(&input).is_ok());
     }
 
     #[test]
