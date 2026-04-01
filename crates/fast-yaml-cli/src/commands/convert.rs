@@ -366,4 +366,21 @@ mod tests {
             "expected 'integer: 42' in: {yaml_str}"
         );
     }
+
+    #[test]
+    fn test_explicit_int_tag_float_to_json() {
+        let input = InputSource {
+            content: "val: !!int 3.14".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_path = temp_dir.path().join("output.json");
+        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let config = CommonConfig::new();
+        let cmd = ConvertCommand::new(config, ConvertFormat::Json, false);
+        assert!(cmd.execute(&input, &output).is_ok());
+        let json_str = std::fs::read_to_string(&temp_path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(json_str.trim()).unwrap();
+        assert_eq!(json["val"], 3, "!!int 3.14 should truncate to integer 3");
+    }
 }

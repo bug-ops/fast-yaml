@@ -1187,6 +1187,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fast_yaml_core::Parser;
 
     #[test]
     fn test_parse_simple() {
@@ -1248,12 +1249,15 @@ development:
             );
         }
 
-        // In saphyr YAML 1.2, "Null" and "NULL" are strings, not null values
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str("Null").unwrap();
-        assert!(docs[0].as_str().is_some());
-
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str("NULL").unwrap();
-        assert!(docs[0].as_str().is_some());
+        // Since v0.6.0, canonicalize() normalizes "Null" and "NULL" to null.
+        // Use Parser::parse_str() to test the full fast-yaml pipeline.
+        for null_str in &["Null", "NULL"] {
+            let result = Parser::parse_str(null_str).unwrap().unwrap();
+            assert!(
+                matches!(result, YamlOwned::Value(ScalarOwned::Null)),
+                "Expected null for '{null_str}', got {result:?}",
+            );
+        }
     }
 
     /// YAML 1.2.2 Section 10.2.1.2 - Boolean

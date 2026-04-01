@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- fix(parser): `!!int` tag now coerces float-valued strings to integers via truncation toward zero (e.g. `!!int 3.14` → `3`, `!!int -2.7` → `-2`, `!!int 1.0e2` → `100`); non-finite values (`.nan`, `.inf`) and out-of-range values (e.g. `!!int 1.0e20`) fall through unchanged, consistent with PyYAML convention (#212)
+- fix(python): `test_yaml_122_null` now uses `Parser::parse_str()` to test the full fast-yaml pipeline; previously the test used the raw saphyr API and incorrectly asserted that `"Null"` and `"NULL"` were strings rather than null values (#210)
 - fix(parser): explicit YAML tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`) now correctly coerce scalar values, including quoted scalars such as `!!int '42'` (#203)
 - fix(parser): YAML merge keys (`<<: *anchor` and `<<: [*a, *b]`) are now resolved during parsing; explicit keys always win over merged keys (#204)
 - fix(cli): `fy format` now exits with an error (exit code 1) when the input contains YAML comments, which are silently stripped by the formatter. Pass `--strip-comments` to acknowledge comment loss and proceed. Previously, comments were dropped without any warning or error. (#199)

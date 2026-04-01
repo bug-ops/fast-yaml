@@ -118,6 +118,18 @@ pub fn canonicalize(value: Value) -> Value {
     }
 }
 
+/// Attempt to coerce a float string to `i64` via truncation toward zero (`PyYAML` convention).
+///
+/// Returns `None` for non-finite values (.nan, .inf) and values outside the `i64` range.
+/// Values very close to `i64::MAX` may saturate due to `f64` precision limits — this is a
+/// known, benign edge case at the representable boundary.
+#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+fn float_str_to_int(s: &str) -> Option<i64> {
+    parse_core_schema_float(s)
+        .filter(|f| f.is_finite() && *f >= i64::MIN as f64 && *f <= i64::MAX as f64)
+        .map(|f| f as i64)
+}
+
 /// Parse a YAML core schema float, handling special values (.inf, .nan, etc.).
 fn parse_core_schema_float(s: &str) -> Option<f64> {
     match s {
@@ -147,7 +159,11 @@ fn parse_core_schema_float(s: &str) -> Option<f64> {
 fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
     if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
         let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
-            "int" => s.parse::<i64>().ok().map(ScalarOwned::Integer),
+            "int" => s
+                .parse::<i64>()
+                .ok()
+                .or_else(|| float_str_to_int(s))
+                .map(ScalarOwned::Integer),
             "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
             "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
             "null" => matches!(s, "~" | "null" | "").then_some(ScalarOwned::Null),
@@ -186,7 +202,11 @@ fn coerce_tagged(tag: &Tag, inner: &Value) -> Value {
         && let Value::Value(ScalarOwned::String(ref s)) = *inner
     {
         let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
-            "int" => s.parse::<i64>().ok().map(ScalarOwned::Integer),
+            "int" => s
+                .parse::<i64>()
+                .ok()
+                .or_else(|| float_str_to_int(s))
+                .map(ScalarOwned::Integer),
             "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
             "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
             "null" => matches!(s.as_str(), "~" | "null" | "").then_some(ScalarOwned::Null),
@@ -401,6 +421,69 @@ development:
         assert!(
             matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "42"),
             "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_float_truncation() {
+        let v = get_mapping_val("val: !!int 3.14", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(3))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_negative_float() {
+        let v = get_mapping_val("val: !!int -2.7", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(-2))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_scientific() {
+        let v = get_mapping_val("val: !!int 1.0e2", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(100))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_exact_float() {
+        let v = get_mapping_val("val: !!int 3.0", "val");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(3))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_nan_rejected() {
+        let v = get_mapping_val("val: !!int .nan", "val");
+        assert!(
+            !matches!(v, Value::Value(ScalarOwned::Integer(_))),
+            "!!int .nan should not produce an integer, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_inf_rejected() {
+        let v = get_mapping_val("val: !!int .inf", "val");
+        assert!(
+            !matches!(v, Value::Value(ScalarOwned::Integer(_))),
+            "!!int .inf should not produce an integer, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_explicit_tag_int_overflow_rejected() {
+        let v = get_mapping_val("val: !!int 1.0e20", "val");
+        assert!(
+            !matches!(v, Value::Value(ScalarOwned::Integer(_))),
+            "!!int 1.0e20 should not produce a saturated integer, got {v:?}"
         );
     }
 
