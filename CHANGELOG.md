@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-01
+
 ### Fixed
 
 - fix(parser): `!!int` tag now coerces float-valued strings to integers via truncation toward zero (e.g. `!!int 3.14` → `3`, `!!int -2.7` → `-2`, `!!int 1.0e2` → `100`); non-finite values (`.nan`, `.inf`) and out-of-range values (e.g. `!!int 1.0e20`) fall through unchanged, consistent with PyYAML convention (#212)
@@ -633,7 +635,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/bug-ops/fast-yaml/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/bug-ops/fast-yaml/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/bug-ops/fast-yaml/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/bug-ops/fast-yaml/compare/v0.5.1...v0.5.2
