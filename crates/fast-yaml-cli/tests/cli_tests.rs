@@ -196,6 +196,47 @@ fn test_lint_duplicate_keys_allowed_with_flag() {
         .code(0);
 }
 
+#[cfg(unix)]
+#[test]
+fn test_format_output_dev_stdout() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .arg("-o")
+        .arg("/dev/stdout")
+        .write_stdin("name:   test\nvalue:    123")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("name: test"));
+}
+
+#[test]
+fn test_format_output_dash() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .arg("-o")
+        .arg("-")
+        .write_stdin("name:   test\nvalue:    123")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("name: test"));
+}
+
+#[test]
+fn test_convert_output_dash() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .arg("-o")
+        .arg("-")
+        .write_stdin("name: test\nvalue: 123\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("name"));
+}
+
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_verbose_mode() {
