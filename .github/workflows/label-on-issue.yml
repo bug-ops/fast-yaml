@@ -16,7 +16,7 @@ jobs:
 
     steps:
       - name: Apply labels based on issue content
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -141,7 +141,7 @@ jobs:
 
       - name: Add comment for security issues
         if: contains(github.event.issue.title, 'security') || contains(github.event.issue.title, 'vulnerability')
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
