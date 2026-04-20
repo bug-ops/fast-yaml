@@ -427,7 +427,7 @@ impl Linter {
             }
         }
 
-        diagnostics.sort_by(|a, b| a.span.start.cmp(&b.span.start));
+        diagnostics.sort_by_key(|d| d.span.start);
         Ok(diagnostics)
     }
 
@@ -461,7 +461,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
-        diagnostics.sort_by(|a, b| a.span.start.cmp(&b.span.start));
+        diagnostics.sort_by_key(|d| d.span.start);
 
         diagnostics
     }
