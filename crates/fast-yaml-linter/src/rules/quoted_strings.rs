@@ -249,26 +249,24 @@ impl QuotedStringsRule {
                 }
             }
 
-            ScalarStyle::Plain => {
-                // Plain scalars: only check when required == "always" and not a key.
+            // Plain scalars: only check when required == "always" and not a key.
+            ScalarStyle::Plain
                 if required == "always"
                     && !is_key
                     && !Self::is_scalar_literal(value)
-                    && !extra_allowed.iter().any(|p| value.contains(p.as_str()))
-                {
-                    let scalar_span = Self::make_span(line, col, scalar_offset, value.len());
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "string should be quoted",
-                            scalar_span,
-                        )
-                        .build_with_context(source_ctx),
-                    );
-                }
+                    && !extra_allowed.iter().any(|p| value.contains(p.as_str())) =>
+            {
+                let scalar_span = Self::make_span(line, col, scalar_offset, value.len());
+                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                diagnostics.push(
+                    DiagnosticBuilder::new(
+                        self.code(),
+                        severity,
+                        "string should be quoted",
+                        scalar_span,
+                    )
+                    .build_with_context(source_ctx),
+                );
             }
 
             // Literal and folded block scalars are intentional; skip.
