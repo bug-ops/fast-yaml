@@ -366,14 +366,8 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
             }
 
             ScalarOwned::String(s) => {
-                if is_integer_literal(s) {
-                    // Oversized decimal integer stored as String by parser (exceeds i64 range)
-                    let builtins = py.import("builtins")?;
-                    Ok(builtins.getattr("int")?.call1((s.as_str(),))?.unbind())
-                } else {
-                    let py_str = s.into_pyobject(py)?;
-                    Ok(py_str.as_any().clone().unbind())
-                }
+                let py_str = s.into_pyobject(py)?;
+                Ok(py_str.as_any().clone().unbind())
             }
         },
 
@@ -388,24 +382,52 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
         }
 
         YamlOwned::Mapping(map) => {
-            // Pre-convert all key-value pairs to minimize dict resize operations
-            let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
-                .iter()
-                .map(|(k, v)| {
-                    if matches!(k, YamlOwned::Sequence(_) | YamlOwned::Mapping(_)) {
-                        return Err(PyValueError::new_err(
-                            "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
-                        ));
-                    }
-                    let py_key = yaml_to_python(py, k)?;
-                    let py_value = yaml_to_python(py, v)?;
-                    Ok((py_key, py_value))
-                })
-                .collect::<PyResult<Vec<_>>>()?;
+            let mut explicit: Vec<(Py<PyAny>, Py<PyAny>)> = Vec::with_capacity(map.len());
+            let mut merges: Vec<Py<PyAny>> = Vec::new();
 
-            // Create dict and set all items (PyDict doesn't have from_iter)
+            for (k, v) in map {
+                if matches!(k, YamlOwned::Sequence(_) | YamlOwned::Mapping(_)) {
+                    return Err(PyValueError::new_err(
+                        "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
+                    ));
+                }
+                let py_key = yaml_to_python(py, k)?;
+                // Detect YAML 1.1 merge key (<<) and collect merge sources
+                let is_merge = py_key
+                    .bind(py)
+                    .cast::<PyString>()
+                    .is_ok_and(|s| s.to_str().is_ok_and(|s| s == "<<"));
+                if is_merge {
+                    merges.push(yaml_to_python(py, v)?);
+                } else {
+                    explicit.push((py_key, yaml_to_python(py, v)?));
+                }
+            }
+
             let dict = PyDict::new(py);
-            for (key, value) in pairs {
+            // Apply merged keys first (lower priority — explicit keys override)
+            for merge_val in merges {
+                let bound = merge_val.bind(py);
+                if let Ok(merge_dict) = bound.cast::<PyDict>() {
+                    for (mk, mv) in merge_dict.iter() {
+                        if !dict.contains(mk.clone())? {
+                            dict.set_item(mk, mv)?;
+                        }
+                    }
+                } else if let Ok(seq) = bound.cast::<PyList>() {
+                    for item in seq.iter() {
+                        if let Ok(merge_dict) = item.cast::<PyDict>() {
+                            for (mk, mv) in merge_dict.iter() {
+                                if !dict.contains(mk.clone())? {
+                                    dict.set_item(mk, mv)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Explicit keys always win
+            for (key, value) in explicit {
                 dict.set_item(key, value)?;
             }
             Ok(dict.into_any().unbind())
@@ -617,7 +639,7 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs: Vec<YamlOwned> = py
-        .detach(|| CoreParser::parse_all(yaml_str))
+        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     docs.into_iter()
@@ -660,7 +682,7 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs: Vec<YamlOwned> = py
-        .detach(|| CoreParser::parse_all(yaml_str))
+        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     // Pre-allocate Python objects vector with known capacity
