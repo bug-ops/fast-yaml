@@ -2,7 +2,9 @@ import fast_yaml
 
 
 def test_large_integer_type():
-    result = fast_yaml.safe_load("x: 99999999999999999999999999999999999999999999999999999999999999999999999999999999")
+    result = fast_yaml.safe_load(
+        "x: 99999999999999999999999999999999999999999999999999999999999999999999999999999999"
+    )
     assert isinstance(result["x"], int)
 
 
