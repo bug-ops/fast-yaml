@@ -142,11 +142,18 @@ fn parse_core_schema_int(s: &str) -> Option<i64> {
     if neg { raw.checked_neg() } else { Some(raw) }
 }
 
-/// Returns `true` if `s` is a decimal integer literal that may exceed `i64` range.
+/// Returns `true` if `s` is an integer literal (decimal, hex, or octal) that may exceed `i64` range.
 ///
-/// Matches an optional `+`/`-` sign followed by one or more ASCII digits, with no `.` or `e`.
+/// Matches optional `+`/`-` sign followed by `0x`/`0X` + hex digits, `0o`/`0O` + octal digits,
+/// or plain ASCII decimal digits.
 fn is_integer_literal(s: &str) -> bool {
     let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        return !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit());
+    }
+    if let Some(oct) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
+        return !oct.is_empty() && oct.bytes().all(|b| matches!(b, b'0'..=b'7'));
+    }
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
@@ -191,9 +198,7 @@ fn parse_core_schema_float(s: &str) -> Option<f64> {
 fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
     if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
         let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
-            "int" => s
-                .parse::<i64>()
-                .ok()
+            "int" => parse_core_schema_int(s)
                 .or_else(|| float_str_to_int(s))
                 .map(ScalarOwned::Integer),
             "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
@@ -238,9 +243,7 @@ fn coerce_tagged(tag: &Tag, inner: &Value) -> Value {
         && let Value::Value(ScalarOwned::String(ref s)) = *inner
     {
         let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
-            "int" => s
-                .parse::<i64>()
-                .ok()
+            "int" => parse_core_schema_int(s)
                 .or_else(|| float_str_to_int(s))
                 .map(ScalarOwned::Integer),
             "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
@@ -674,6 +677,107 @@ merged:
         assert!(
             matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == big),
             "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_hex_overflow_preserved_as_string() {
+        let v = get_mapping_val("x: 0x8000000000000000", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "hex overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_hex_max_i64_preserved_as_integer() {
+        // 0x7FFFFFFFFFFFFFFF == i64::MAX == 9223372036854775807
+        let v = get_mapping_val("x: 0x7FFFFFFFFFFFFFFF", "x");
+        assert!(
+            matches!(
+                v,
+                Value::Value(ScalarOwned::Integer(9_223_372_036_854_775_807))
+            ),
+            "0x7FFFFFFFFFFFFFFF should be Integer(i64::MAX), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_octal_overflow_preserved_as_string() {
+        let v = get_mapping_val("x: 0o1000000000000000000000", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "octal overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_octal_max_fitting_preserved_as_integer() {
+        // 0o777777777777777777777 == i64::MAX == 9223372036854775807
+        let v = get_mapping_val("x: 0o777777777777777777777", "x");
+        assert!(
+            matches!(
+                v,
+                Value::Value(ScalarOwned::Integer(9_223_372_036_854_775_807))
+            ),
+            "0o777777777777777777777 should be Integer(i64::MAX), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_int_hex_fits_i64() {
+        let v = get_mapping_val("x: !!int 0xFF", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(255))),
+            "!!int 0xFF should be Integer(255), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_int_hex_overflow_preserved_as_string() {
+        let v = get_mapping_val("x: !!int 0x8000000000000000", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "!!int hex overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_negative_hex_overflow_preserved_as_string() {
+        // -0x8000000000000000 == i64::MIN, which fits; -0x8000000000000001 overflows.
+        // Both produce String because parse_core_schema_int does not handle sign + 0x prefix —
+        // consistent with the decimal path where signed hex is not a YAML 1.2 core schema form.
+        let v = get_mapping_val("x: -0x8000000000000001", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "negative hex overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_int_octal_overflow_preserved_as_string() {
+        let v = get_mapping_val("x: !!int 0o1000000000000000000000", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "!!int octal overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_prefix_hex_overflow_preserved_as_string() {
+        let v = get_mapping_val("x: 0XDEADBEEFDEADBEEF", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "0X uppercase prefix overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_uppercase_prefix_octal_overflow_preserved_as_string() {
+        let v = get_mapping_val("x: 0O1000000000000000000000", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "0O uppercase prefix overflow should be String, got {v:?}"
         );
     }
 }
