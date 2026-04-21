@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- yaml-test-suite integration in Python CI: parametrized ~400 test cases against `fast_yaml.safe_load()` / `safe_load_all()`, pinned to `data-2022-01-17` tag ([#228](https://github.com/bug-ops/fast-yaml/issues/228))
+
 ### Fixed
 
 - Hex (`0x...`) and octal (`0o...`) integer literals that overflow `i64` are now preserved as strings instead of being silently coerced to float; `is_integer_literal` and the `!!int` tag path now recognise hex/octal prefixes ([#230](https://github.com/bug-ops/fast-yaml/issues/230))

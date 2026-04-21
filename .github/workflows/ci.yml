@@ -467,8 +467,19 @@ jobs:
       - name: Build Python extension
         run: cd python && uv run maturin develop
 
+      - name: Checkout yaml-test-suite
+        uses: actions/checkout@v6
+        with:
+          repository: yaml/yaml-test-suite
+          ref: data-2022-01-17
+          path: yaml-test-suite
+          depth: 1
+          persist-credentials: false
+
       - name: Run Python tests
-        run: cd python && uv run pytest ../tests/ tests/ -v
+        run: cd python && uv run pytest tests/ -v
+        env:
+          YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
 
 
   # NodeJS bindings tests
@@ -568,8 +579,19 @@ jobs:
       - name: Build Python extension
         run: cd python && uv run maturin develop
 
+      - name: Checkout yaml-test-suite
+        uses: actions/checkout@v6
+        with:
+          repository: yaml/yaml-test-suite
+          ref: data-2022-01-17
+          path: yaml-test-suite
+          depth: 1
+          persist-credentials: false
+
       - name: Run tests with coverage
-        run: cd python && uv run pytest ../tests/ tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
+        run: cd python && uv run pytest tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
+        env:
+          YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
 
       - name: Upload Python coverage to codecov
         uses: codecov/codecov-action@v6
