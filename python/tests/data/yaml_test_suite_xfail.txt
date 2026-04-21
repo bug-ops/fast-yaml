@@ -12,10 +12,3 @@
 # To regenerate after suite or parser changes:
 #   YAML_TEST_SUITE_PATH=/path/to/yaml-test-suite \
 #     uv run python scripts/gen_yaml_test_suite_xfail.py
-6KGN  # #236 null values parsed as empty string
-8G76  # #235 comment-only document parsed as empty list
-98YD  # #235 comment-only document parsed as empty list
-AVM7  # #235 bare --- parsed as empty list
-HWV9  # #235 bare ... parsed as empty list
-QT73  # #235 comment + ... parsed as empty list
-S4JQ  # #237 quoted numeric string parsed as integer
