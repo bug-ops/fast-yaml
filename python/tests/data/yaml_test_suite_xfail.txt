@@ -12,3 +12,10 @@
 # To regenerate after suite or parser changes:
 #   YAML_TEST_SUITE_PATH=/path/to/yaml-test-suite \
 #     uv run python scripts/gen_yaml_test_suite_xfail.py
+6KGN
+8G76
+98YD
+AVM7
+HWV9
+QT73
+S4JQ
