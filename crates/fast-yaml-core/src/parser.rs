@@ -31,7 +31,8 @@ impl Parser {
         let mut loader = YamlLoader::<Value>::default();
         loader.early_parse(false);
         saphyr_parser.load(&mut loader, true)?;
-        Ok(loader.into_documents().into_iter().next().map(canonicalize))
+        let docs = inject_implicit_null_if_empty(loader.into_documents(), input);
+        Ok(docs.into_iter().next().map(canonicalize))
     }
 
     /// Parse all YAML documents from a string.
@@ -56,11 +57,8 @@ impl Parser {
         let mut loader = YamlLoader::<Value>::default();
         loader.early_parse(false);
         saphyr_parser.load(&mut loader, true)?;
-        Ok(loader
-            .into_documents()
-            .into_iter()
-            .map(canonicalize)
-            .collect())
+        let docs = inject_implicit_null_if_empty(loader.into_documents(), input);
+        Ok(docs.into_iter().map(canonicalize).collect())
     }
 
     /// Parse all YAML documents preserving scalar styles (literal `|`, folded `>`).
@@ -81,7 +79,31 @@ impl Parser {
         let mut loader = YamlLoader::<Value>::default();
         loader.early_parse(false);
         saphyr_parser.load(&mut loader, true)?;
-        Ok(loader.into_documents())
+        Ok(inject_implicit_null_if_empty(
+            loader.into_documents(),
+            input,
+        ))
+    }
+}
+
+/// Returns `true` when `tag` is the YAML non-specific tag `!`.
+///
+/// The non-specific tag forces the failsafe schema: scalars resolve to plain strings
+/// regardless of their content (YAML 1.2 §6.8.1 / §10.3.2).
+fn is_non_specific_tag(tag: &Tag) -> bool {
+    tag.handle.is_empty() && tag.suffix == "!"
+}
+
+/// Injects one implicit null document when saphyr produces no documents for non-empty input.
+///
+/// Per YAML 1.2 §9.2, a stream with no explicit documents but non-empty content
+/// (comments, bare markers, whitespace) represents one document with an implicit null node.
+/// Empty string input stays `[]` to match `safe_load("")` → `None` behaviour.
+fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
+    if docs.is_empty() && !input.is_empty() {
+        vec![Value::Value(ScalarOwned::Null)]
+    } else {
+        docs
     }
 }
 
@@ -196,6 +218,7 @@ fn parse_core_schema_float(s: &str) -> Option<f64> {
 /// When `early_parse = false`, saphyr preserves the raw string, style, and tag in a
 /// `Representation` node. This function resolves that node to a typed `Value::Value`.
 fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
+    // 1. Core-schema explicit tag (!!str, !!int, !!float, !!bool, !!null).
     if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
         let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
             "int" => parse_core_schema_int(s)
@@ -211,11 +234,19 @@ fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Valu
             return Value::Value(scalar);
         }
     }
-    // No tag or unknown tag: non-plain scalars are always strings.
+    // 2. Non-specific tag `!`: failsafe schema forces string (YAML 1.2 §6.8.1 / §10.3.2).
+    if tag.is_some_and(is_non_specific_tag) {
+        return Value::Value(ScalarOwned::String(s.into()));
+    }
+    // 3. No tag or unknown tag: non-plain scalars are always strings.
     if style != ScalarStyle::Plain {
         return Value::Value(ScalarOwned::String(s.into()));
     }
-    // Plain scalar: apply saphyr's implicit resolution rules.
+    // 4. Empty plain scalar with no tag: implicit null (YAML 1.2 §10.3.2, bare `---`).
+    if s.is_empty() {
+        return Value::Value(ScalarOwned::Null);
+    }
+    // 5. Plain scalar: apply saphyr's implicit resolution rules.
     let scalar = match s {
         "~" | "null" | "NULL" | "Null" => ScalarOwned::Null,
         "true" | "True" | "TRUE" => ScalarOwned::Boolean(true),
@@ -779,5 +810,150 @@ merged:
             matches!(v, Value::Value(ScalarOwned::String(_))),
             "0O uppercase prefix overflow should be String, got {v:?}"
         );
+    }
+
+    // --- #235: empty/comment-only/bare-marker streams yield one null doc ---
+
+    #[test]
+    fn test_empty_string_yields_empty_vec() {
+        let docs = Parser::parse_all("").unwrap();
+        assert!(docs.is_empty(), "empty string must stay []");
+    }
+
+    #[test]
+    fn test_whitespace_only_yields_null_doc() {
+        let docs = Parser::parse_all("   ").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+    }
+
+    #[test]
+    fn test_comment_only_yields_null_doc() {
+        let docs = Parser::parse_all("# comment").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+    }
+
+    #[test]
+    fn test_bare_doc_end_yields_null_doc() {
+        let docs = Parser::parse_all("...").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+    }
+
+    #[test]
+    fn test_comment_then_doc_end_yields_null_doc() {
+        let docs = Parser::parse_all("# c\n...").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+    }
+
+    #[test]
+    fn test_bare_doc_start_yields_null_doc() {
+        let docs = Parser::parse_all("---").unwrap();
+        assert_eq!(docs.len(), 1);
+        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+    }
+
+    #[test]
+    fn test_parse_str_comment_only_returns_null() {
+        let result = Parser::parse_str("# comment").unwrap();
+        assert!(matches!(result, Some(Value::Value(ScalarOwned::Null))));
+    }
+
+    #[test]
+    fn test_parse_str_empty_unchanged() {
+        let result = Parser::parse_str("").unwrap();
+        assert!(result.is_none(), "empty string must still return None");
+    }
+
+    #[test]
+    fn test_bom_only_yields_one_doc() {
+        // BOM-only: saphyr processes the BOM and returns one document (empty Null scalar).
+        // inject_implicit_null_if_empty is not needed here — saphyr handles it.
+        // Document: BOM-only → 1 doc (saphyr behaviour, not injected).
+        let docs = Parser::parse_all("\u{FEFF}").unwrap();
+        assert_eq!(docs.len(), 1, "BOM-only should yield exactly one document");
+    }
+
+    // --- #238: non-specific tag `!` forces string (failsafe schema) ---
+
+    #[test]
+    fn test_non_specific_tag_plain_integer_is_string() {
+        let v = get_mapping_val("x: ! 99", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "99"),
+            "! 99 should be String(\"99\"), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_non_specific_tag_quoted_is_string() {
+        let v = get_mapping_val("x: ! \"99\"", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "99"),
+            "! \"99\" should be String(\"99\"), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_non_specific_tag_true_is_string() {
+        let v = get_mapping_val("x: ! true", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "true"),
+            "! true should be String(\"true\"), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_non_specific_tag_null_keyword_is_string() {
+        let v = get_mapping_val("x: ! null", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "null"),
+            "! null should be String(\"null\"), got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_non_specific_tag_empty_is_string_not_null() {
+        // `! ''` must be String(""), NOT Null. Order of branches is load-bearing.
+        let v = get_mapping_val("x: ! ''", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s.is_empty()),
+            "! '' should be String(\"\") not Null, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_non_specific_tag_on_sequence_is_noop() {
+        // Non-specific tag on collection: failsafe seq = plain seq.
+        let yaml = "x: ! [1, 2]";
+        let result = Parser::parse_str(yaml).unwrap().unwrap();
+        let Value::Mapping(map) = result else {
+            panic!("expected mapping")
+        };
+        let k = Value::Value(ScalarOwned::String("x".into()));
+        let val = &map[&k];
+        assert!(
+            matches!(val, Value::Sequence(_)),
+            "! on sequence must stay Sequence, got {val:?}"
+        );
+    }
+
+    // --- #235 round-trip: format(parse("# c")) freezes new expected output ---
+
+    #[test]
+    fn test_round_trip_comment_only() {
+        use crate::emitter::Emitter;
+        let docs = Parser::parse_all_preserving_styles("# comment").unwrap();
+        assert_eq!(docs.len(), 1, "should have one null doc");
+        // The null doc formats to "null\n" or "~\n" — freeze whatever the emitter produces.
+        let formatted = Emitter::emit_all(&docs).unwrap();
+        assert!(
+            !formatted.is_empty(),
+            "formatted output must be non-empty, got: {formatted:?}"
+        );
+        // Null should not format as empty string.
+        assert_ne!(formatted.trim(), "", "null doc must not format to empty");
     }
 }

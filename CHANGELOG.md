@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `parse_all` / `safe_load_all` now yield one implicit null document for non-empty inputs that contain no explicit documents (whitespace-only, comment-only, bare `---`, bare `...`), matching YAML 1.2 §9.2 and PyYAML parity; empty string `""` continues to return `[]` ([#235](https://github.com/bug-ops/fast-yaml/issues/235))
+- Bare `---` with no content now correctly resolves to null instead of `String("")`; empty plain scalar with no tag is treated as implicit null per YAML 1.2 §10.3.2 ([#235](https://github.com/bug-ops/fast-yaml/issues/235))
+- Non-specific tag `!` on a scalar (e.g. `x: ! 99`) now forces the failsafe schema and returns a string (`"99"`) instead of applying implicit type resolution; matches YAML 1.2 §6.8.1 / §10.3.2 and PyYAML behaviour ([#238](https://github.com/bug-ops/fast-yaml/issues/238))
 - Hex (`0x...`) and octal (`0o...`) integer literals that overflow `i64` are now preserved as strings instead of being silently coerced to float; `is_integer_literal` and the `!!int` tag path now recognise hex/octal prefixes ([#230](https://github.com/bug-ops/fast-yaml/issues/230))
 - Large integers exceeding `i64` range are now correctly preserved as Python `int` instead of being coerced to `float` ([#229](https://github.com/bug-ops/fast-yaml/issues/229), closes [#227](https://github.com/bug-ops/fast-yaml/issues/227))
 

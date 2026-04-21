@@ -464,6 +464,10 @@ fn repr_to_python(
     style: ScalarStyle,
     tag: Option<&Tag>,
 ) -> PyResult<Py<PyAny>> {
+    // Non-specific tag `!`: failsafe schema forces string (YAML 1.2 §6.8.1).
+    if tag.is_some_and(|t| t.handle.is_empty() && t.suffix == "!") {
+        return Ok(s.into_pyobject(py)?.as_any().clone().unbind());
+    }
     // Non-plain scalars (quoted, block) are always strings
     if style != ScalarStyle::Plain {
         return Ok(s.into_pyobject(py)?.as_any().clone().unbind());
@@ -499,7 +503,8 @@ fn repr_to_python(
     }
     // Plain scalar implicit resolution
     match s {
-        "~" | "null" | "NULL" | "Null" => Ok(py.None()),
+        // Empty plain scalar with no tag: implicit null (YAML 1.2 §10.3.2, e.g. bare `---`).
+        "" | "~" | "null" | "NULL" | "Null" => Ok(py.None()),
         "true" | "True" | "TRUE" => Ok(true.into_pyobject(py)?.as_any().clone().unbind()),
         "false" | "False" | "FALSE" => Ok(false.into_pyobject(py)?.as_any().clone().unbind()),
         other => {
