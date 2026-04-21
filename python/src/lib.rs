@@ -366,8 +366,14 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
             }
 
             ScalarOwned::String(s) => {
-                let py_str = s.into_pyobject(py)?;
-                Ok(py_str.as_any().clone().unbind())
+                if is_integer_literal(s) {
+                    // Oversized decimal integer stored as String by parser (exceeds i64 range)
+                    let builtins = py.import("builtins")?;
+                    Ok(builtins.getattr("int")?.call1((s.as_str(),))?.unbind())
+                } else {
+                    let py_str = s.into_pyobject(py)?;
+                    Ok(py_str.as_any().clone().unbind())
+                }
             }
         },
 
@@ -611,7 +617,7 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs: Vec<YamlOwned> = py
-        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
+        .detach(|| CoreParser::parse_all(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     docs.into_iter()
@@ -654,7 +660,7 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs: Vec<YamlOwned> = py
-        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
+        .detach(|| CoreParser::parse_all(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     // Pre-allocate Python objects vector with known capacity
