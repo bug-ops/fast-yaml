@@ -41,6 +41,10 @@ def collect_cases(suite_root):
         if has_json:
             raw = in_json.read_text(encoding="utf-8")
             json_docs = parse_ndjson(raw)
+            # An empty in.json represents a single null-valued document per yaml-test-suite
+            # convention (YAML 1.2 §9.2: comment-only / bare-marker streams yield null).
+            if not json_docs and not raw.strip():
+                json_docs = [None]
             multi_doc = len(json_docs) > 1
 
         if not has_json and not has_error and event_file.exists():
