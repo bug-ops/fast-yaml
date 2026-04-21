@@ -1,0 +1,59 @@
+name: yaml-test-suite xfail bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: yaml/yaml-test-suite
+          ref: data-2022-01-17
+          path: yaml-test-suite
+          depth: 1
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "yaml-test-suite-xfail-bootstrap"
+          save-if: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: cd python && uv sync
+
+      - name: Build Python extension
+        run: cd python && uv run maturin develop
+
+      - name: Generate xfail list
+        env:
+          YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
+        run: cd python && uv run python scripts/gen_yaml_test_suite_xfail.py
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: yaml-test-suite-xfail
+          path: python/tests/data/yaml_test_suite_xfail.txt
+          retention-days: 14
