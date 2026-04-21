@@ -150,6 +150,17 @@ fn is_integer_literal(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
+/// Returns `true` if `s` is a hex (`0x`/`0X`) or octal (`0o`/`0O`) integer literal.
+fn is_hex_octal_integer_literal(s: &str) -> bool {
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    let tail = s.strip_prefix("0x")
+        .or_else(|| s.strip_prefix("0X"))
+        .or_else(|| s.strip_prefix("0o"))
+        .or_else(|| s.strip_prefix("0O"));
+    // Must have at least one digit after the prefix to be a valid literal.
+    matches!(tail, Some(t) if !t.is_empty())
+}
+
 /// Attempt to coerce a float string to `i64` via truncation toward zero (`PyYAML` convention).
 ///
 /// Returns `None` for non-finite values (.nan, .inf) and values outside the `i64` range.
@@ -217,7 +228,7 @@ fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Valu
         "false" | "False" | "FALSE" => ScalarOwned::Boolean(false),
         other => parse_core_schema_int(other).map_or_else(
             || {
-                if is_integer_literal(other) {
+                if is_integer_literal(other) || is_hex_octal_integer_literal(other) {
                     ScalarOwned::String(other.into())
                 } else {
                     parse_core_schema_float(other).map_or_else(
