@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Large integers exceeding `i64` range are now correctly preserved as Python `int` instead of being coerced to `float` ([#229](https://github.com/bug-ops/fast-yaml/issues/229), closes [#227](https://github.com/bug-ops/fast-yaml/issues/227))
+
 ## [0.6.1] - 2026-04-01
 
 ### Fixed

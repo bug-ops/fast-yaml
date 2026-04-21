@@ -27,6 +27,7 @@ ordered-float = { workspace = true }
 pyo3 = { workspace = true, features = ["extension-module"] }
 rayon = { workspace = true }
 saphyr = { workspace = true }
+saphyr-parser = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

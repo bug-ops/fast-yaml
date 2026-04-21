@@ -22,16 +22,62 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
-use fast_yaml_core::canonicalize;
+use fast_yaml_core::Parser as CoreParser;
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
-use saphyr::{LoadableYamlNode, MappingOwned, ScalarOwned, YamlOwned};
+use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
+use saphyr_parser::{ScalarStyle, Tag};
 
 mod batch;
 mod conversion;
+
+fn is_integer_literal(s: &str) -> bool {
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn parse_core_schema_int(s: &str) -> Option<i64> {
+    let (neg, digits) = s.strip_prefix('-').map_or_else(
+        || (false, s.strip_prefix('+').unwrap_or(s)),
+        |rest| (true, rest),
+    );
+    let raw: i64 = if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        i64::from_str_radix(hex, 16).ok()?
+    } else if let Some(oct) = digits
+        .strip_prefix("0o")
+        .or_else(|| digits.strip_prefix("0O"))
+    {
+        i64::from_str_radix(oct, 8).ok()?
+    } else {
+        digits.parse::<i64>().ok()?
+    };
+    if neg { raw.checked_neg() } else { Some(raw) }
+}
+
+fn parse_core_schema_float(s: &str) -> Option<f64> {
+    match s {
+        ".inf" | ".Inf" | ".INF" => Some(f64::INFINITY),
+        "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
+        ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
+        other => {
+            let stripped = other.strip_prefix(['+', '-']).unwrap_or(other);
+            let has_digit_start = stripped.starts_with(|c: char| c.is_ascii_digit());
+            let looks_like_float = has_digit_start
+                && stripped.chars().all(|c| {
+                    c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
+                });
+            looks_like_float
+                .then(|| other.parse::<f64>().ok())
+                .flatten()
+        }
+    }
+}
 mod lint;
 mod parallel;
 
@@ -336,24 +382,52 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
         }
 
         YamlOwned::Mapping(map) => {
-            // Pre-convert all key-value pairs to minimize dict resize operations
-            let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
-                .iter()
-                .map(|(k, v)| {
-                    if matches!(k, YamlOwned::Sequence(_) | YamlOwned::Mapping(_)) {
-                        return Err(PyValueError::new_err(
-                            "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
-                        ));
-                    }
-                    let py_key = yaml_to_python(py, k)?;
-                    let py_value = yaml_to_python(py, v)?;
-                    Ok((py_key, py_value))
-                })
-                .collect::<PyResult<Vec<_>>>()?;
+            let mut explicit: Vec<(Py<PyAny>, Py<PyAny>)> = Vec::with_capacity(map.len());
+            let mut merges: Vec<Py<PyAny>> = Vec::new();
 
-            // Create dict and set all items (PyDict doesn't have from_iter)
+            for (k, v) in map {
+                if matches!(k, YamlOwned::Sequence(_) | YamlOwned::Mapping(_)) {
+                    return Err(PyValueError::new_err(
+                        "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
+                    ));
+                }
+                let py_key = yaml_to_python(py, k)?;
+                // Detect YAML 1.1 merge key (<<) and collect merge sources
+                let is_merge = py_key
+                    .bind(py)
+                    .cast::<PyString>()
+                    .is_ok_and(|s| s.to_str().is_ok_and(|s| s == "<<"));
+                if is_merge {
+                    merges.push(yaml_to_python(py, v)?);
+                } else {
+                    explicit.push((py_key, yaml_to_python(py, v)?));
+                }
+            }
+
             let dict = PyDict::new(py);
-            for (key, value) in pairs {
+            // Apply merged keys first (lower priority — explicit keys override)
+            for merge_val in merges {
+                let bound = merge_val.bind(py);
+                if let Ok(merge_dict) = bound.cast::<PyDict>() {
+                    for (mk, mv) in merge_dict.iter() {
+                        if !dict.contains(mk.clone())? {
+                            dict.set_item(mk, mv)?;
+                        }
+                    }
+                } else if let Ok(seq) = bound.cast::<PyList>() {
+                    for item in seq.iter() {
+                        if let Ok(merge_dict) = item.cast::<PyDict>() {
+                            for (mk, mv) in merge_dict.iter() {
+                                if !dict.contains(mk.clone())? {
+                                    dict.set_item(mk, mv)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Explicit keys always win
+            for (key, value) in explicit {
                 dict.set_item(key, value)?;
             }
             Ok(dict.into_any().unbind())
@@ -367,13 +441,79 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
 
         YamlOwned::BadValue => Err(PyValueError::new_err("Invalid YAML value encountered")),
 
-        // Tagged values - extract the inner value
-        YamlOwned::Tagged(_, inner) => yaml_to_python(py, inner),
+        // Tagged values: apply tag coercion if inner is a plain Representation
+        YamlOwned::Tagged(tag, inner) => {
+            if let YamlOwned::Representation(repr, style, _) = inner.as_ref() {
+                repr_to_python(py, repr, *style, Some(tag))
+            } else {
+                yaml_to_python(py, inner)
+            }
+        }
 
-        // Representation values - the first element is the raw string representation
-        YamlOwned::Representation(repr, _, _) => {
-            let py_str = repr.into_pyobject(py)?;
-            Ok(py_str.as_any().clone().unbind())
+        // Representation values: resolve scalar type from raw string + style + tag
+        YamlOwned::Representation(repr, style, tag) => {
+            repr_to_python(py, repr, *style, tag.as_ref())
+        }
+    }
+}
+
+/// Resolve a `Representation` scalar to a Python object, applying YAML core schema coercion.
+fn repr_to_python(
+    py: Python<'_>,
+    s: &str,
+    style: ScalarStyle,
+    tag: Option<&Tag>,
+) -> PyResult<Py<PyAny>> {
+    // Non-plain scalars (quoted, block) are always strings
+    if style != ScalarStyle::Plain {
+        return Ok(s.into_pyobject(py)?.as_any().clone().unbind());
+    }
+    // Core schema tag overrides
+    if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
+        let as_str =
+            || -> PyResult<Py<PyAny>> { Ok(s.into_pyobject(py)?.as_any().clone().unbind()) };
+        return match tag.suffix.as_str() {
+            "int" => parse_core_schema_int(s).map_or_else(
+                || {
+                    if is_integer_literal(s) {
+                        py.import("builtins")
+                            .and_then(|b| b.getattr("int"))
+                            .and_then(|t| t.call1((s,)))
+                            .map(pyo3::Bound::unbind)
+                    } else {
+                        as_str()
+                    }
+                },
+                |i| Ok(i.into_pyobject(py)?.as_any().clone().unbind()),
+            ),
+            "float" => parse_core_schema_float(s).map_or_else(as_str, |f| {
+                Ok(f.into_pyobject(py)?.as_any().clone().unbind())
+            }),
+            "bool" => s.parse::<bool>().map_or_else(
+                |_| as_str(),
+                |b| Ok(b.into_pyobject(py)?.as_any().clone().unbind()),
+            ),
+            "null" if matches!(s, "~" | "null" | "") => Ok(py.None()),
+            _ => as_str(),
+        };
+    }
+    // Plain scalar implicit resolution
+    match s {
+        "~" | "null" | "NULL" | "Null" => Ok(py.None()),
+        "true" | "True" | "TRUE" => Ok(true.into_pyobject(py)?.as_any().clone().unbind()),
+        "false" | "False" | "FALSE" => Ok(false.into_pyobject(py)?.as_any().clone().unbind()),
+        other => {
+            if let Some(i) = parse_core_schema_int(other) {
+                Ok(i.into_pyobject(py)?.as_any().clone().unbind())
+            } else if is_integer_literal(other) {
+                // Bigint: decimal integer exceeding i64 range
+                let builtins = py.import("builtins")?;
+                Ok(builtins.getattr("int")?.call1((other,))?.unbind())
+            } else if let Some(f) = parse_core_schema_float(other) {
+                Ok(f.into_pyobject(py)?.as_any().clone().unbind())
+            } else {
+                Ok(other.into_pyobject(py)?.as_any().clone().unbind())
+            }
         }
     }
 }
@@ -499,18 +639,12 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs: Vec<YamlOwned> = py
-        .detach(|| YamlOwned::load_from_str(yaml_str))
+        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
-    if docs.is_empty() {
-        return Ok(py.None());
-    }
-
-    let first = docs
-        .into_iter()
+    docs.into_iter()
         .next()
-        .unwrap_or(YamlOwned::Value(ScalarOwned::Null));
-    yaml_to_python(py, &canonicalize(first))
+        .map_or_else(|| Ok(py.None()), |value| yaml_to_python(py, &value))
 }
 
 /// Parse a YAML string containing multiple documents.
@@ -548,13 +682,13 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
 
     // Release GIL during CPU-intensive parsing
     let docs: Vec<YamlOwned> = py
-        .detach(|| YamlOwned::load_from_str(yaml_str))
+        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
         .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
 
     // Pre-allocate Python objects vector with known capacity
     let mut py_docs = Vec::with_capacity(docs.len());
     for doc in docs {
-        py_docs.push(yaml_to_python(py, &canonicalize(doc))?);
+        py_docs.push(yaml_to_python(py, &doc)?);
     }
 
     let list = PyList::new(py, &py_docs)?;
@@ -1188,6 +1322,7 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use fast_yaml_core::Parser;
+    use saphyr::LoadableYamlNode;
 
     #[test]
     fn test_parse_simple() {

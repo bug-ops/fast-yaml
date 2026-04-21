@@ -118,6 +118,38 @@ pub fn canonicalize(value: Value) -> Value {
     }
 }
 
+/// Parse a YAML core schema integer: decimal, hex (`0x`), or octal (`0o`).
+///
+/// Returns `None` for values that overflow `i64` or don't match integer syntax.
+fn parse_core_schema_int(s: &str) -> Option<i64> {
+    let (neg, digits) = s.strip_prefix('-').map_or_else(
+        || (false, s.strip_prefix('+').unwrap_or(s)),
+        |rest| (true, rest),
+    );
+    let raw: i64 = if let Some(hex) = digits
+        .strip_prefix("0x")
+        .or_else(|| digits.strip_prefix("0X"))
+    {
+        i64::from_str_radix(hex, 16).ok()?
+    } else if let Some(oct) = digits
+        .strip_prefix("0o")
+        .or_else(|| digits.strip_prefix("0O"))
+    {
+        i64::from_str_radix(oct, 8).ok()?
+    } else {
+        digits.parse::<i64>().ok()?
+    };
+    if neg { raw.checked_neg() } else { Some(raw) }
+}
+
+/// Returns `true` if `s` is a decimal integer literal that may exceed `i64` range.
+///
+/// Matches an optional `+`/`-` sign followed by one or more ASCII digits, with no `.` or `e`.
+fn is_integer_literal(s: &str) -> bool {
+    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
 /// Attempt to coerce a float string to `i64` via truncation toward zero (`PyYAML` convention).
 ///
 /// Returns `None` for non-finite values (.nan, .inf) and values outside the `i64` range.
@@ -183,12 +215,16 @@ fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Valu
         "~" | "null" | "NULL" | "Null" => ScalarOwned::Null,
         "true" | "True" | "TRUE" => ScalarOwned::Boolean(true),
         "false" | "False" | "FALSE" => ScalarOwned::Boolean(false),
-        other => other.parse::<i64>().map_or_else(
-            |_| {
-                parse_core_schema_float(other).map_or_else(
-                    || ScalarOwned::String(other.into()),
-                    |f| ScalarOwned::FloatingPoint(f.into()),
-                )
+        other => parse_core_schema_int(other).map_or_else(
+            || {
+                if is_integer_literal(other) {
+                    ScalarOwned::String(other.into())
+                } else {
+                    parse_core_schema_float(other).map_or_else(
+                        || ScalarOwned::String(other.into()),
+                        |f| ScalarOwned::FloatingPoint(f.into()),
+                    )
+                }
             },
             ScalarOwned::Integer,
         ),
@@ -570,5 +606,74 @@ merged:
         assert!(m.contains_key(&x), "x should be merged from *a");
         assert!(m.contains_key(&y), "y should be merged from *b");
         assert!(m.contains_key(&z), "z should be present");
+    }
+
+    #[test]
+    fn test_i64_max_boundary() {
+        let v = get_mapping_val("x: 9223372036854775807", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(i64::MAX))),
+            "i64::MAX should stay Integer, got {v:?}"
+        );
+
+        let v = get_mapping_val("x: 9223372036854775808", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "i64::MAX+1 should become String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_leading_plus_large_integer() {
+        let v = get_mapping_val("x: +42", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(42))),
+            "+42 should be Integer(42), got {v:?}"
+        );
+
+        let v = get_mapping_val("x: +99999999999999999999", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(_))),
+            "+overflow should be String, got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_large_integer_preserved_as_string() {
+        let big =
+            "99999999999999999999999999999999999999999999999999999999999999999999999999999999";
+        let v = get_mapping_val(&format!("x: {big}"), "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == big),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_normal_integer_unaffected() {
+        let v = get_mapping_val("x: 42", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::Integer(42))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_float_unaffected() {
+        let v = get_mapping_val("x: 1.5e10", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::FloatingPoint(_))),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_negative_large_integer() {
+        let big = "-99999999999999999999999999999999";
+        let v = get_mapping_val(&format!("x: {big}"), "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == big),
+            "got {v:?}"
+        );
     }
 }
