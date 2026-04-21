@@ -1,4 +1,4 @@
-"""Generate python/tests/data/yaml_test_suite_xfail.txt by running pytest and collecting failures."""
+"""Generate python/tests/data/yaml_test_suite_xfail.txt by running pytest and parsing failures."""
 
 import os
 import subprocess
@@ -33,11 +33,14 @@ def main():
     env = {**os.environ, "YAML_TEST_SUITE_XFAIL_COLLECT": "1"}
     subprocess.run(
         [
-            "uv", "run", "pytest",
+            "uv",
+            "run",
+            "pytest",
             str(TEST),
             "-q",
             "--tb=no",
-            "-p", "no:cacheprovider",
+            "-p",
+            "no:cacheprovider",
             f"--junitxml={junit}",
         ],
         env=env,
@@ -46,11 +49,13 @@ def main():
     )
 
     tree = ET.parse(junit)
-    failing = sorted({
-        tc.get("name").split("[", 1)[1].rstrip("]")
-        for tc in tree.iter("testcase")
-        if any(tc.find(t) is not None for t in ("failure", "error"))
-    })
+    failing = sorted(
+        {
+            tc.get("name").split("[", 1)[1].rstrip("]")
+            for tc in tree.iter("testcase")
+            if any(tc.find(t) is not None for t in ("failure", "error"))
+        }
+    )
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(

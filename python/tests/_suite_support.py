@@ -46,15 +46,17 @@ def collect_cases(suite_root):
         if not has_json and not has_error and event_file.exists():
             skip_reason = "event-stream only"
 
-        cases.append({
-            "id": case_id,
-            "path": case_dir,
-            "has_json": has_json,
-            "has_error": has_error,
-            "multi_doc": multi_doc,
-            "json_docs": json_docs,
-            "skip_reason": skip_reason,
-        })
+        cases.append(
+            {
+                "id": case_id,
+                "path": case_dir,
+                "has_json": has_json,
+                "has_error": has_error,
+                "multi_doc": multi_doc,
+                "json_docs": json_docs,
+                "skip_reason": skip_reason,
+            }
+        )
     return cases
 
 

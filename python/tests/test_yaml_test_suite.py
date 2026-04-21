@@ -50,7 +50,9 @@ def _make_param(case):
     if mode is True:
         marks.append(pytest.mark.xfail(strict=True, reason="known failure; see xfail list"))
     elif mode is False:
-        marks.append(pytest.mark.xfail(strict=False, reason="known failure (non-strict); see xfail list"))
+        marks.append(
+            pytest.mark.xfail(strict=False, reason="known failure (non-strict); see xfail list")
+        )
     return pytest.param(case, id=case["id"], marks=marks)
 
 
