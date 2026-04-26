@@ -27,7 +27,7 @@ use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PySet, PyString};
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 use saphyr_parser::{ScalarStyle, Tag};
 
@@ -443,6 +443,18 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
 
         // Tagged values: apply tag coercion if inner is a plain Representation
         YamlOwned::Tagged(tag, inner) => {
+            // !!set (YAML spec §10.3.3): mapping with null values → Python set of keys
+            if tag.is_yaml_core_schema()
+                && tag.suffix == "set"
+                && let YamlOwned::Mapping(map) = inner.as_ref()
+            {
+                let keys: Vec<Py<PyAny>> = map
+                    .keys()
+                    .map(|k| yaml_to_python(py, k))
+                    .collect::<PyResult<Vec<_>>>()?;
+                let set = PySet::new(py, &keys)?;
+                return Ok(set.into_any().unbind());
+            }
             if let YamlOwned::Representation(repr, style, _) = inner.as_ref() {
                 repr_to_python(py, repr, *style, Some(tag))
             } else {

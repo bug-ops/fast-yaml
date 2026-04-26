@@ -457,3 +457,27 @@ class TestYAML122EdgeCases:
         """Test special characters in quoted strings."""
         result = fast_yaml.safe_load('key: "value: with: colons"')
         assert result == {"key": "value: with: colons"}
+
+
+class TestYAMLCollectionTags:
+    """Tests for YAML collection type tags (§10.3)."""
+
+    def test_set_tag_returns_python_set(self):
+        """!!set mapping must be returned as a Python set (YAML spec §10.3.3)."""
+        yaml = "--- !!set\n? Mark McGwire\n? Sammy Sosa\n? Ken Griff\n"
+        result = fast_yaml.safe_load(yaml)
+        assert isinstance(result, set)
+        assert result == {"Mark McGwire", "Sammy Sosa", "Ken Griff"}
+
+    def test_set_tag_empty(self):
+        """Empty !!set must return an empty Python set."""
+        result = fast_yaml.safe_load("--- !!set {}")
+        assert isinstance(result, set)
+        assert result == set()
+
+    def test_set_tag_single_element(self):
+        """!!set with one element returns a one-element Python set."""
+        yaml = "--- !!set\n? only\n"
+        result = fast_yaml.safe_load(yaml)
+        assert isinstance(result, set)
+        assert result == {"only"}
