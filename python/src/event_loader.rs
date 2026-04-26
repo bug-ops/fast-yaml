@@ -140,6 +140,17 @@ impl<'input> EventLoader<'input> {
             let Some(key) = self.parse_node(py)? else {
                 break; // MappingEnd consumed
             };
+
+            // Reject unhashable complex keys with the same error as the original pipeline
+            {
+                let bound = key.bind(py);
+                if bound.cast::<PyList>().is_ok() || bound.cast::<PyDict>().is_ok() {
+                    return Err(PyValueError::new_err(
+                        "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
+                    ));
+                }
+            }
+
             let value = self.parse_node(py)?.unwrap_or_else(|| py.None());
 
             let is_merge = key

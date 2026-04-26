@@ -117,6 +117,12 @@ def yaml_json_equal(actual, expected):
         return True, ""
 
     if type(expected) is dict:
+        # A !!set in YAML serialises to JSON as {key: null, ...}.
+        # Accept a Python set when all JSON values are null and keys match.
+        if isinstance(actual, set):
+            if all(v is None for v in expected.values()) and actual == set(expected.keys()):
+                return True, ""
+            return False, f"set mismatch: {actual!r} vs {set(expected.keys())!r}"
         if type(actual) is not dict:
             return False, f"expected dict, got {type(actual).__name__}"
         if set(expected.keys()) != set(actual.keys()):
