@@ -6,7 +6,7 @@
 use fast_yaml_core::{ScalarOwned, Value};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PySet};
+use pyo3::types::{PyDict, PyList};
 
 /// Convert `fast_yaml_core::Value` (`saphyr::YamlOwned`) to Python object.
 ///
@@ -83,22 +83,8 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
 
         Value::BadValue => Err(PyValueError::new_err("Invalid YAML value encountered")),
 
-        // Tagged values - apply tag-specific conversions
-        Value::Tagged(tag, inner) => {
-            // !!set (YAML spec §10.3.3): mapping with null values → Python set of keys
-            if tag.is_yaml_core_schema()
-                && tag.suffix == "set"
-                && let Value::Mapping(map) = inner.as_ref()
-            {
-                let keys: Vec<Py<PyAny>> = map
-                    .keys()
-                    .map(|k| value_to_python(py, k))
-                    .collect::<PyResult<Vec<_>>>()?;
-                let set = PySet::new(py, &keys)?;
-                return Ok(set.into_any().unbind());
-            }
-            value_to_python(py, inner)
-        }
+        // Tagged values - extract the inner value
+        Value::Tagged(_, inner) => value_to_python(py, inner),
 
         // Representation values - the first element is the raw string representation
         Value::Representation(repr, _, _) => {

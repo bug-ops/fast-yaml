@@ -22,17 +22,17 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
-use fast_yaml_core::Parser as CoreParser;
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PySet, PyString};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 use saphyr_parser::{ScalarStyle, Tag};
 
 mod batch;
 mod conversion;
+pub(crate) mod event_loader;
 
 fn is_integer_literal(s: &str) -> bool {
     let s = s.strip_prefix(['+', '-']).unwrap_or(s);
@@ -443,18 +443,6 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
 
         // Tagged values: apply tag coercion if inner is a plain Representation
         YamlOwned::Tagged(tag, inner) => {
-            // !!set (YAML spec §10.3.3): mapping with null values → Python set of keys
-            if tag.is_yaml_core_schema()
-                && tag.suffix == "set"
-                && let YamlOwned::Mapping(map) = inner.as_ref()
-            {
-                let keys: Vec<Py<PyAny>> = map
-                    .keys()
-                    .map(|k| yaml_to_python(py, k))
-                    .collect::<PyResult<Vec<_>>>()?;
-                let set = PySet::new(py, &keys)?;
-                return Ok(set.into_any().unbind());
-            }
             if let YamlOwned::Representation(repr, style, _) = inner.as_ref() {
                 repr_to_python(py, repr, *style, Some(tag))
             } else {
@@ -470,7 +458,7 @@ fn yaml_to_python(py: Python<'_>, yaml: &YamlOwned) -> PyResult<Py<PyAny>> {
 }
 
 /// Resolve a `Representation` scalar to a Python object, applying YAML core schema coercion.
-fn repr_to_python(
+pub(crate) fn repr_to_python(
     py: Python<'_>,
     s: &str,
     style: ScalarStyle,
@@ -654,14 +642,8 @@ fn safe_load(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
         )));
     }
 
-    // Release GIL during CPU-intensive parsing
-    let docs: Vec<YamlOwned> = py
-        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
-        .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
-
-    docs.into_iter()
-        .next()
-        .map_or_else(|| Ok(py.None()), |value| yaml_to_python(py, &value))
+    let docs = event_loader::load_all(py, yaml_str)?;
+    Ok(docs.into_iter().next().unwrap_or_else(|| py.None()))
 }
 
 /// Parse a YAML string containing multiple documents.
@@ -697,18 +679,8 @@ fn safe_load_all(py: Python<'_>, yaml_str: &str) -> PyResult<Py<PyAny>> {
         )));
     }
 
-    // Release GIL during CPU-intensive parsing
-    let docs: Vec<YamlOwned> = py
-        .detach(|| CoreParser::parse_all_preserving_styles(yaml_str))
-        .map_err(|e| PyValueError::new_err(format!("YAML parse error: {e}")))?;
-
-    // Pre-allocate Python objects vector with known capacity
-    let mut py_docs = Vec::with_capacity(docs.len());
-    for doc in docs {
-        py_docs.push(yaml_to_python(py, &doc)?);
-    }
-
-    let list = PyList::new(py, &py_docs)?;
+    let docs = event_loader::load_all(py, yaml_str)?;
+    let list = PyList::new(py, &docs)?;
     Ok(list.into_any().unbind())
 }
 
