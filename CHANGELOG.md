@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-04-26
+
 ### Added
 
 - yaml-test-suite integration in Python CI: parametrized ~400 test cases against `fast_yaml.safe_load()` / `safe_load_all()`, pinned to `data-2022-01-17` tag ([#228](https://github.com/bug-ops/fast-yaml/issues/228))
@@ -19,6 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Non-specific tag `!` on a scalar (e.g. `x: ! 99`) now forces the failsafe schema and returns a string (`"99"`) instead of applying implicit type resolution; matches YAML 1.2 §6.8.1 / §10.3.2 and PyYAML behaviour ([#238](https://github.com/bug-ops/fast-yaml/issues/238))
 - Hex (`0x...`) and octal (`0o...`) integer literals that overflow `i64` are now preserved as strings instead of being silently coerced to float; `is_integer_literal` and the `!!int` tag path now recognise hex/octal prefixes ([#230](https://github.com/bug-ops/fast-yaml/issues/230))
 - Large integers exceeding `i64` range are now correctly preserved as Python `int` instead of being coerced to `float` ([#229](https://github.com/bug-ops/fast-yaml/issues/229), closes [#227](https://github.com/bug-ops/fast-yaml/issues/227))
+- Linter: resolve `sort_by` and `collapsible_match` Clippy warnings in `linter.rs` and `quoted_strings.rs`
+
+### Dependencies
+
+- Bump `pyo3` ([#218](https://github.com/bug-ops/fast-yaml/pull/218))
+- Bump `rand` 0.9.2 → 0.9.4 ([#224](https://github.com/bug-ops/fast-yaml/pull/224))
+- Bump `pytest` ([#223](https://github.com/bug-ops/fast-yaml/pull/223))
+- Bump `vite` ([#219](https://github.com/bug-ops/fast-yaml/pull/219))
+- Bump `actions/github-script` 8 → 9 ([#225](https://github.com/bug-ops/fast-yaml/pull/225))
+- Bump `softprops/action-gh-release` 2 → 3 ([#220](https://github.com/bug-ops/fast-yaml/pull/220))
+- Bump `dependabot/fetch-metadata` 2 → 3 ([#221](https://github.com/bug-ops/fast-yaml/pull/221))
+- Bump `lewagon/wait-on-check-action` 1.6.0 → 1.7.0 ([#222](https://github.com/bug-ops/fast-yaml/pull/222), [#226](https://github.com/bug-ops/fast-yaml/pull/226))
 
 ## [0.6.1] - 2026-04-01
 
@@ -648,7 +662,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/bug-ops/fast-yaml/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/bug-ops/fast-yaml/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/bug-ops/fast-yaml/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/bug-ops/fast-yaml/compare/v0.5.2...v0.5.3

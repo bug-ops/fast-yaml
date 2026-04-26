@@ -268,7 +268,7 @@ bash benches/comparison/scripts/run_nodejs_benchmark.sh  # Node.js API
 bash benches/comparison/scripts/run_batch_benchmark.sh   # CLI batch mode
 ```
 
-**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.6.1, PyYAML 6.0.3, js-yaml 4.1.1, Node.js 25.2.1, yamlfmt 0.21.0
+**Test environment:** macOS 14, Apple M3 Pro (12 cores), fast-yaml 0.6.2, PyYAML 6.0.3, js-yaml 4.1.1, Node.js 25.2.1, yamlfmt 0.21.0
 
 </details>
 
