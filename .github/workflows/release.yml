@@ -453,7 +453,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
@@ -475,7 +475,7 @@ jobs:
           shared-key: "nodejs-${{ matrix.settings.target }}"
 
       - name: Install dependencies
-        run: cd nodejs && pnpm install --frozen-lockfile
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       # Build with Docker for cross-compilation targets
       - name: Build in Docker
@@ -517,13 +517,13 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 10
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
           cache: "pnpm"
           cache-dependency-path: nodejs/pnpm-lock.yaml
@@ -555,11 +555,11 @@ jobs:
         working-directory: nodejs
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --no-frozen-lockfile
         working-directory: nodejs
 
       - name: Publish to npm
-        run: pnpm publish --access public --no-git-checks
+        run: pnpm publish --access public --no-git-checks --provenance --ignore-scripts
         working-directory: nodejs
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
