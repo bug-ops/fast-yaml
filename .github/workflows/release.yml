@@ -401,7 +401,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             build: |
               cd nodejs
-              npm run build -- --target x86_64-unknown-linux-gnu
+              pnpm run build -- --target x86_64-unknown-linux-gnu
               strip *.node
 
           # Linux musl (uses zig for cross-compilation)
@@ -409,7 +409,7 @@ jobs:
             target: x86_64-unknown-linux-musl
             build: |
               cd nodejs
-              npm run build -- --target x86_64-unknown-linux-musl --use-napi-cross
+              pnpm run build -- --target x86_64-unknown-linux-musl --use-napi-cross
               strip *.node
 
           # Linux ARM64 (uses zig for cross-compilation)
@@ -417,14 +417,14 @@ jobs:
             target: aarch64-unknown-linux-gnu
             build: |
               cd nodejs
-              npm run build -- --target aarch64-unknown-linux-gnu --use-napi-cross
+              pnpm run build -- --target aarch64-unknown-linux-gnu --use-napi-cross
 
           # macOS x86_64
           - host: macos-latest
             target: x86_64-apple-darwin
             build: |
               cd nodejs
-              npm run build -- --target x86_64-apple-darwin
+              pnpm run build -- --target x86_64-apple-darwin
               strip -x *.node
 
           # macOS ARM64 (Apple Silicon)
@@ -432,7 +432,7 @@ jobs:
             target: aarch64-apple-darwin
             build: |
               cd nodejs
-              npm run build -- --target aarch64-apple-darwin
+              pnpm run build -- --target aarch64-apple-darwin
               strip -x *.node
 
           # Windows x64
@@ -440,24 +440,29 @@ jobs:
             target: x86_64-pc-windows-msvc
             build: |
               cd nodejs
-              npm run build -- --target x86_64-pc-windows-msvc
+              pnpm run build -- --target x86_64-pc-windows-msvc
 
           # Windows ARM64
           - host: windows-latest
             target: aarch64-pc-windows-msvc
             build: |
               cd nodejs
-              npm run build -- --target aarch64-pc-windows-msvc
+              pnpm run build -- --target aarch64-pc-windows-msvc
 
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
 
       - name: Set up Node.js 22
         uses: actions/setup-node@v6
         with:
           node-version: "22"
-          cache: "npm"
-          cache-dependency-path: nodejs/package-lock.json
+          cache: "pnpm"
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -470,7 +475,7 @@ jobs:
           shared-key: "nodejs-${{ matrix.settings.target }}"
 
       - name: Install dependencies
-        run: cd nodejs && npm install
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       # Build with Docker for cross-compilation targets
       - name: Build in Docker
@@ -510,12 +515,18 @@ jobs:
       url: https://www.npmjs.com/package/fastyaml-rs
     steps:
       - uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: "24"
           registry-url: "https://registry.npmjs.org"
-          cache: "npm"
-          cache-dependency-path: nodejs/package-lock.json
+          cache: "pnpm"
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Download all binary artifacts
         uses: actions/download-artifact@v8
@@ -542,13 +553,16 @@ jobs:
           fi
           echo "Version verified: $PKG_VERSION"
         working-directory: nodejs
-      - run: npm ci
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
         working-directory: nodejs
-      - name: Update npm for trusted publishing
-        run: npm install -g npm@latest
+
       - name: Publish to npm
-        run: npm publish --access public --ignore-scripts
+        run: pnpm publish --access public --no-git-checks --provenance --ignore-scripts
         working-directory: nodejs
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   # Create GitHub Release with all artifacts
   create-github-release:

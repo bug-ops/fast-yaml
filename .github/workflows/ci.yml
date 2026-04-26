@@ -98,21 +98,27 @@ jobs:
         run: cd python && uv run ruff format --check .
 
       # NodeJS formatting
+      - name: Set up pnpm
+        if: matrix.lang == 'nodejs'
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
       - name: Set up Node.js
         if: matrix.lang == 'nodejs'
         uses: actions/setup-node@v6
         with:
           node-version: '23'
-          cache: 'npm'
-          cache-dependency-path: nodejs/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Install NodeJS dependencies
         if: matrix.lang == 'nodejs'
-        run: cd nodejs && npm install
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Check NodeJS formatting
         if: matrix.lang == 'nodejs'
-        run: cd nodejs && npm run format:check
+        run: cd nodejs && pnpm run format:check
 
   # Clippy linting - runs in parallel with format
   lint:
@@ -372,34 +378,36 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
+
       - name: Set up Node.js 23
         uses: actions/setup-node@v6
         with:
           node-version: '23'
-          cache: 'npm'
-          cache-dependency-path: nodejs/package-lock.json
-
-      # Note: Skipping lockfile check as npm versions generate slightly different formats
-      # The important validation is that npm install succeeds
+          cache: 'pnpm'
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Install NodeJS dependencies
-        run: cd nodejs && npm install
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Run security audit
         run: |
           cd nodejs
           # Fail on high and critical vulnerabilities
-          npm audit --audit-level=high || {
-            echo "Security vulnerabilities found. Run 'npm audit' locally to see details."
-            echo "To fix automatically: npm audit fix"
+          pnpm audit --audit-level=high || {
+            echo "Security vulnerabilities found. Run 'pnpm audit' locally to see details."
+            echo "To fix automatically: pnpm audit fix"
             exit 1
           }
 
       - name: Run linting
-        run: cd nodejs && npm run lint
+        run: cd nodejs && pnpm run lint
 
       - name: Run type checking
-        run: cd nodejs && npm run typecheck
+        run: cd nodejs && pnpm run typecheck
 
   # Python bindings tests (optimized matrix)
   test-python:
@@ -515,13 +523,17 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
 
       - name: Set up Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-          cache-dependency-path: nodejs/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -530,13 +542,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cd nodejs && npm install
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Build NodeJS extension
-        run: cd nodejs && npm run build:debug
+        run: cd nodejs && pnpm run build:debug
 
       - name: Run NodeJS tests
-        run: cd nodejs && npm test
+        run: cd nodejs && pnpm test
 
 
   # Python coverage (Linux only)
@@ -620,13 +632,17 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
 
       - name: Set up Node.js 23
         uses: actions/setup-node@v6
         with:
           node-version: '23'
-          cache: 'npm'
-          cache-dependency-path: nodejs/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -635,13 +651,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cd nodejs && npm install
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Build NodeJS extension
-        run: cd nodejs && npm run build:debug
+        run: cd nodejs && pnpm run build:debug
 
       - name: Run tests with coverage
-        run: cd nodejs && npm run test:coverage
+        run: cd nodejs && pnpm run test:coverage
 
       - name: Upload NodeJS coverage to codecov
         uses: codecov/codecov-action@v6
@@ -671,13 +687,17 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 10
 
       - name: Set up Node.js 23
         uses: actions/setup-node@v6
         with:
           node-version: '23'
-          cache: 'npm'
-          cache-dependency-path: nodejs/package-lock.json
+          cache: 'pnpm'
+          cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
@@ -686,10 +706,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install NodeJS dependencies
-        run: cd nodejs && npm install
+        run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Build release
-        run: cd nodejs && npm run build
+        run: cd nodejs && pnpm run build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
