@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-05-26
+
+### Fixed
+
+- CI: Python Cargo cache key now includes the full patch version (e.g. `3.14.5`) so any patch update to the Python interpreter invalidates the cached build artifacts and prevents linker errors on Windows (`LNK1181: cannot open input file 'python314.lib'`)
+
+### Dependencies
+
+- Bump `rayon` 1.11.0 → 1.12.0 ([#248](https://github.com/bug-ops/fast-yaml/pull/248))
+- Bump `clap` 4.6.0 → 4.6.1 ([#248](https://github.com/bug-ops/fast-yaml/pull/248))
+- Bump `napi` 3.8.4 → 3.9.0, `napi-derive` 3.5.3 → 3.5.6, `napi-build` 2.3.1 → 2.3.2 ([#248](https://github.com/bug-ops/fast-yaml/pull/248), [#249](https://github.com/bug-ops/fast-yaml/pull/249), [#250](https://github.com/bug-ops/fast-yaml/pull/250))
+- Bump `assert_cmd` 2.2.0 → 2.2.2 ([#248](https://github.com/bug-ops/fast-yaml/pull/248), [#250](https://github.com/bug-ops/fast-yaml/pull/250))
+- Bump `bumpalo` 3.20.2 → 3.20.3, `serde_json` 1.0.149 → 1.0.150 ([#251](https://github.com/bug-ops/fast-yaml/pull/251))
+
 ## [0.6.2] - 2026-04-26
 
 ### Added
@@ -662,7 +676,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/bug-ops/fast-yaml/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/bug-ops/fast-yaml/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/bug-ops/fast-yaml/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/bug-ops/fast-yaml/compare/v0.5.3...v0.6.0
