@@ -454,6 +454,7 @@ jobs:
 
 
       - name: Set up Python ${{ matrix.python-version }}
+        id: setup-python
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
@@ -461,7 +462,7 @@ jobs:
       - name: Cache Cargo
         uses: Swatinem/rust-cache@v2
         with:
-          shared-key: "python-${{ matrix.os }}-${{ matrix.python-version }}"
+          shared-key: "python-${{ matrix.os }}-${{ steps.setup-python.outputs.python-version }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install uv
