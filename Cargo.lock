@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "criterion",
  "fast-yaml-core",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-cli"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-core"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "bumpalo",
  "criterion",
@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-linter"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "fast-yaml-core",
  "indoc",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-nodejs"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "fast-yaml-core",
  "fast-yaml-linter",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "fast-yaml-parallel"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "criterion",
  "fast-yaml-core",
