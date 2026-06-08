@@ -321,7 +321,7 @@ jobs:
         run: cargo llvm-cov nextest --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --lcov --output-path lcov.info
 
       - name: Upload to codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
@@ -607,7 +607,7 @@ jobs:
           YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
 
       - name: Upload Python coverage to codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: python/coverage.xml
@@ -661,7 +661,7 @@ jobs:
         run: cd nodejs && pnpm run test:coverage
 
       - name: Upload NodeJS coverage to codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: nodejs/coverage/lcov.info
