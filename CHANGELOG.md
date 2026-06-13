@@ -7,9 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.4] - 2026-06-13
+
 ### Dependencies
 
 - Bump `pyo3` 0.28.3 → 0.29.0 ([#256](https://github.com/bug-ops/fast-yaml/pull/256))
+- Bump `codecov/codecov-action` 6 → 7 ([#254](https://github.com/bug-ops/fast-yaml/pull/254))
+- Bump `ignore` 0.4.25 → 0.4.26 ([#255](https://github.com/bug-ops/fast-yaml/pull/255))
+- Bump `memchr` 2.8.0 → 2.8.1 ([#253](https://github.com/bug-ops/fast-yaml/pull/253))
 
 ## [0.6.3] - 2026-05-26
 
@@ -680,7 +685,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/bug-ops/fast-yaml/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/bug-ops/fast-yaml/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/bug-ops/fast-yaml/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/bug-ops/fast-yaml/compare/v0.6.0...v0.6.1
