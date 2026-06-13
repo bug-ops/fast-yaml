@@ -130,7 +130,7 @@ use fast_yaml_core::streaming::{format_yaml, FormatterBackend};
 ```
 
 > [!TIP]
-> Enable the `streaming` feature for formatter: `fast-yaml-core = { version = "0.4", features = ["streaming"] }`
+> Enable the `streaming` feature for formatter: `fast-yaml-core = { version = "0.6", features = ["streaming"] }`
 
 ## YAML 1.2.2 Compliance
 
@@ -156,13 +156,13 @@ This library implements the YAML 1.2.2 specification with the Core Schema:
 
 ```toml
 # Enable streaming formatter
-fast-yaml-core = { version = "0.4", features = ["streaming"] }
+fast-yaml-core = { version = "0.6", features = ["streaming"] }
 
 # Enable arena allocation
-fast-yaml-core = { version = "0.4", features = ["arena"] }
+fast-yaml-core = { version = "0.6", features = ["arena"] }
 
 # Enable both
-fast-yaml-core = { version = "0.4", features = ["streaming", "arena"] }
+fast-yaml-core = { version = "0.6", features = ["streaming", "arena"] }
 ```
 
 > [!TIP]
