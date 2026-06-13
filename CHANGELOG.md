@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dependencies
+
+- Bump `pyo3` 0.28.3 → 0.29.0 ([#256](https://github.com/bug-ops/fast-yaml/pull/256))
+
 ## [0.6.3] - 2026-05-26
 
 ### Fixed
