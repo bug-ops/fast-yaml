@@ -58,11 +58,11 @@
     "version": "napi version"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4",
-    "@napi-rs/cli": "~3.5.0",
-    "@types/node": "^25.3",
-    "@vitest/coverage-v8": "^4.0",
-    "typescript": "^6.0",
-    "vitest": "^4.0"
+    "@biomejs/biome": "^2.5.0",
+    "@napi-rs/cli": "^3.7.1",
+    "@types/node": "^25.9.3",
+    "@vitest/coverage-v8": "^4.1.8",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
   }
 }
