@@ -527,7 +527,6 @@ pub(crate) fn repr_to_python(
 ///
 /// Handles Python types including special float values (inf, -inf, nan)
 /// converting them to YAML 1.2.2 compliant representations.
-#[allow(deprecated)] // PyO3 0.27 deprecated downcast in favor of cast, but downcast still works
 pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
     // Check None first
     if obj.is_none() {
@@ -561,7 +560,7 @@ pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
     }
 
     // Check list
-    if let Ok(list) = obj.downcast::<PyList>() {
+    if let Ok(list) = obj.cast::<PyList>() {
         let mut arr = Vec::with_capacity(list.len());
         for item in list.iter() {
             arr.push(python_to_yaml(&item)?);
@@ -570,7 +569,7 @@ pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
     }
 
     // Check dict
-    if let Ok(dict) = obj.downcast::<PyDict>() {
+    if let Ok(dict) = obj.cast::<PyDict>() {
         let mut map = MappingOwned::with_capacity(dict.len());
         for (k, v) in dict.iter() {
             map.insert(python_to_yaml(&k)?, python_to_yaml(&v)?);
@@ -594,7 +593,7 @@ pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
         let mut map = MappingOwned::new();
         for item in iter {
             let item = item?;
-            if let Ok(tuple) = item.downcast::<pyo3::types::PyTuple>() {
+            if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>() {
                 let k = tuple.get_item(0)?;
                 let v = tuple.get_item(1)?;
                 map.insert(python_to_yaml(&k)?, python_to_yaml(&v)?);
