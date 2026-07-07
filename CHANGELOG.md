@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bump `vite` 8.0.10 → 8.0.16 in Node.js bindings to fix GHSA-7qr8-wg58-9r72 (`server.fs.deny` bypass on Windows) and GHSA-4vq8-g365-vhgc (NTLMv2 hash disclosure via UNC path handling on Windows)
 
+### Dependencies
+
+- Bump `saphyr` 0.0.6 → 0.0.9 and `saphyr-parser` 0.0.6 → 0.0.9 (combined, since both crates are released in lockstep from the same upstream repository) ([#266](https://github.com/bug-ops/fast-yaml/pull/266), [#267](https://github.com/bug-ops/fast-yaml/pull/267))
+
 ## [0.6.4] - 2026-06-13
 
 ### Dependencies
