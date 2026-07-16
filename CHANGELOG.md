@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- Bump `saphyr` 0.0.9 → 0.0.11 and `saphyr-parser` 0.0.9 → 0.0.11 (combined, since both crates are released in lockstep from the same upstream repository; bumping either alone leaves two mismatched `saphyr_parser` versions in the dependency graph and fails to compile) ([#270](https://github.com/bug-ops/fast-yaml/pull/270), [#271](https://github.com/bug-ops/fast-yaml/pull/271))
 - Bump `saphyr` 0.0.6 → 0.0.9 and `saphyr-parser` 0.0.6 → 0.0.9 (combined, since both crates are released in lockstep from the same upstream repository) ([#266](https://github.com/bug-ops/fast-yaml/pull/266), [#267](https://github.com/bug-ops/fast-yaml/pull/267))
 
 ## [0.6.4] - 2026-06-13
