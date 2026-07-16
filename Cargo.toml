@@ -48,8 +48,8 @@ num_cpus = { version = "1.17" }
 ordered-float = { version = "5" }
 pyo3 = { version = "0.29" }
 rayon = { version = "1.12" }
-saphyr = { version = "0.0.9" }
-saphyr-parser = { version = "0.0.9" }
+saphyr = { version = "0.0.11" }
+saphyr-parser = { version = "0.0.11" }
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }
 serde_norway = { version = "0.9" }
