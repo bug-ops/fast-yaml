@@ -369,6 +369,117 @@ jobs:
           packages-dir: dist/
           skip-existing: true
 
+  # Build prebuilt CLI binaries (fy) for direct download / install script
+  build-cli-binaries:
+    name: Build CLI Binary (${{ matrix.settings.platform }})
+    needs: [extract-version, verify-tests]
+    runs-on: ${{ matrix.settings.host }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        settings:
+          # Linux x86_64
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            platform: linux-x86_64
+            archive: tar.gz
+
+          # Linux aarch64
+          - host: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            platform: linux-aarch64
+            archive: tar.gz
+
+          # Linux x86_64 musl (static, for Alpine and other musl-based distros)
+          - host: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            platform: linux-x86_64-musl
+            archive: tar.gz
+
+          # macOS x86_64 (cross-compiled from arm64 host)
+          - host: macos-latest
+            target: x86_64-apple-darwin
+            platform: macos-x86_64
+            archive: tar.gz
+
+          # macOS aarch64 (Apple Silicon)
+          - host: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos-aarch64
+            archive: tar.gz
+
+          # Windows x86_64
+          - host: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+            archive: zip
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.settings.target }}
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "cli-${{ matrix.settings.target }}"
+
+      - name: Setup cross-compilation (Linux aarch64)
+        if: matrix.settings.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
+
+      - name: Setup musl (Linux x86_64 musl)
+        if: matrix.settings.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: Build fy
+        run: cargo build -p fast-yaml-cli --release --target ${{ matrix.settings.target }}
+
+      - name: Package archive (Unix)
+        if: matrix.settings.archive == 'tar.gz'
+        run: |
+          PKG="fy-${{ needs.extract-version.outputs.version }}-${{ matrix.settings.target }}"
+          mkdir -p "$PKG"
+          cp "target/${{ matrix.settings.target }}/release/fy" "$PKG/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "$PKG/"
+          tar czf "${PKG}.tar.gz" "$PKG"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
+          else
+            shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256"
+          fi
+
+      - name: Package archive (Windows)
+        if: matrix.settings.archive == 'zip'
+        shell: pwsh
+        run: |
+          $pkg = "fy-${{ needs.extract-version.outputs.version }}-${{ matrix.settings.target }}"
+          New-Item -ItemType Directory -Path $pkg | Out-Null
+          Copy-Item "target/${{ matrix.settings.target }}/release/fy.exe" -Destination $pkg
+          Copy-Item LICENSE-MIT, LICENSE-APACHE, README.md -Destination $pkg
+          Compress-Archive -Path $pkg -DestinationPath "$pkg.zip"
+          (Get-FileHash "$pkg.zip" -Algorithm SHA256).Hash.ToLower() + "  $pkg.zip" | Out-File -Encoding ascii "$pkg.zip.sha256"
+
+      - name: Upload CLI binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-${{ matrix.settings.platform }}
+          path: |
+            fy-*.tar.gz
+            fy-*.tar.gz.sha256
+            fy-*.zip
+            fy-*.zip.sha256
+          retention-days: 7
+
   # Build Node.js native binaries
   build-nodejs:
     name: Build Node.js Binary (${{ matrix.settings.target }})
@@ -538,6 +649,7 @@ jobs:
     needs:
       - extract-version
       - publish-crates
+      - build-cli-binaries
       - publish-python
       - publish-nodejs
     runs-on: ubuntu-latest
@@ -561,6 +673,13 @@ jobs:
           pattern: nodejs-binary-*
           path: release-artifacts/nodejs
 
+      - name: Download CLI binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: cli-*
+          path: release-artifacts/cli
+          merge-multiple: true
+
       - name: Generate release notes
         id: release_notes
         run: |
@@ -575,11 +694,28 @@ jobs:
           - `fast-yaml-parallel` ${{ needs.extract-version.outputs.version_no_v }}
           - `fast-yaml-cli` ${{ needs.extract-version.outputs.version_no_v }} (CLI tool `fy`)
 
-          ## CLI Tool
+          ## Rust CLI
+
+          Install via `cargo`:
           ```bash
           cargo install fast-yaml-cli
           fy --help
           ```
+
+          Or download a prebuilt binary and install it with the install script:
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/scripts/install.sh | sh
+          ```
+
+          Or download the archive for your platform directly from this release's assets
+          (`fy-${{ needs.extract-version.outputs.version }}-<target>.tar.gz` / `.zip`) and verify it against the accompanying `.sha256` checksum.
+
+          **Supported CLI binary platforms:**
+          - Linux: x86_64 (glibc, musl), aarch64 (glibc)
+          - macOS: x86_64, Apple Silicon (aarch64)
+          - Windows: x64
+
+          Note: aarch64 musl (e.g. Alpine on ARM64) has no prebuilt binary yet — build from source with `cargo install fast-yaml-cli`.
 
           ## Python Package (PyPI)
           ```bash
@@ -609,9 +745,13 @@ jobs:
 
           See [CHANGELOG.md](CHANGELOG.md) for detailed changes.
 
+          ## Artifacts
+
+          - Rust crates (crates.io), CLI prebuilt binaries (Linux/macOS/Windows), Python wheels (PyPI), Node.js native binaries (npm)
+
           ## Checksums
 
-          Python wheel and Node.js binary checksums are available below.
+          Python wheel, Node.js binary, and CLI binary checksums are available below.
           EOF
 
       - name: Generate checksums
@@ -620,12 +760,17 @@ jobs:
           find release-artifacts/python -type f \( -name '*.whl' -o -name '*.tar.gz' \) -exec sha256sum {} \; > release-artifacts/python-SHA256SUMS.txt
           # Node.js binaries checksums
           find release-artifacts/nodejs -type f -name '*.node' -exec sha256sum {} \; > release-artifacts/nodejs-SHA256SUMS.txt
+          # CLI binaries checksums (aggregate of the per-archive .sha256 files)
+          find release-artifacts/cli -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec sha256sum {} \; > release-artifacts/cli-SHA256SUMS.txt
 
           echo "Python checksums:"
           cat release-artifacts/python-SHA256SUMS.txt
           echo ""
           echo "Node.js checksums:"
           cat release-artifacts/nodejs-SHA256SUMS.txt
+          echo ""
+          echo "CLI checksums:"
+          cat release-artifacts/cli-SHA256SUMS.txt
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -638,7 +783,11 @@ jobs:
             release-artifacts/python/**/*.whl
             release-artifacts/python/**/*.tar.gz
             release-artifacts/nodejs/**/*.node
+            release-artifacts/cli/*.tar.gz
+            release-artifacts/cli/*.zip
+            release-artifacts/cli/*.sha256
             release-artifacts/*-SHA256SUMS.txt
+            scripts/install.sh
           fail_on_unmatched_files: true
           generate_release_notes: true
 
