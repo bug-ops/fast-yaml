@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Bump `vite` 8.0.10 → 8.0.16 in Node.js bindings to fix GHSA-7qr8-wg58-9r72 (`server.fs.deny` bypass on Windows) and GHSA-4vq8-g365-vhgc (NTLMv2 hash disclosure via UNC path handling on Windows)
+- Bump `js-yaml` (transitive, via `@napi-rs/cli`) to >=4.3.0 via pnpm override to fix GHSA-52cp-r559-cp3m (YAML merge-key chains can force quadratic CPU consumption)
 
 ### Dependencies
 
