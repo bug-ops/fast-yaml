@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Release pipeline now builds and attaches prebuilt `fy` CLI binaries to every GitHub release (Linux x86_64/aarch64 glibc, Linux x86_64 musl, macOS x86_64/aarch64, Windows x86_64), each packaged with a `.sha256` checksum. Linux aarch64 musl (e.g. Alpine on ARM64) is not yet published — build from source with `cargo install fast-yaml-cli`
+- `scripts/install.sh`: POSIX-sh installer that detects the host OS/arch/libc (including musl via `/lib/ld-musl-*` or `ldd --version`), downloads the matching prebuilt `fy` binary, verifies its checksum, and installs it to `~/.local/bin` (or `$FASTYAML_INSTALL_DIR`)
+- `skills/fast-yaml-cli/SKILL.md`, an Agent Skill documenting installation and usage of the `fy` CLI for AI coding agents
+
 ### Security
 
 - Bump `vite` 8.0.10 → 8.0.16 in Node.js bindings to fix GHSA-7qr8-wg58-9r72 (`server.fs.deny` bypass on Windows) and GHSA-4vq8-g365-vhgc (NTLMv2 hash disclosure via UNC path handling on Windows)
+- Bump `js-yaml` (transitive, via `@napi-rs/cli`) to >=4.3.0 via pnpm override to fix GHSA-52cp-r559-cp3m (YAML merge-key chains can force quadratic CPU consumption)
 
 ### Dependencies
 
