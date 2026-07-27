@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bump `vite` 8.0.10 → 8.0.16 in Node.js bindings to fix GHSA-7qr8-wg58-9r72 (`server.fs.deny` bypass on Windows) and GHSA-4vq8-g365-vhgc (NTLMv2 hash disclosure via UNC path handling on Windows)
 - Bump `js-yaml` (transitive, via `@napi-rs/cli`) to >=4.3.0 via pnpm override to fix GHSA-52cp-r559-cp3m (YAML merge-key chains can force quadratic CPU consumption)
+- Tighten the `js-yaml` pnpm override from an open-ended `>=4.3.0` to `^4.3.0`, which was resolving to the vulnerable `js-yaml` 5.2.1 and reintroducing GHSA-pm4m-ph32-ghv5 (exponential parsing time in flow collections)
+- Add a `postcss` pnpm override (`>=8.5.18`) in Node.js bindings to fix GHSA-r28c-9q8g-f849 (path traversal via `sourceMappingURL` auto-loading), pulled in transitively through `vitest > vite > postcss`
 
 ### Dependencies
 
