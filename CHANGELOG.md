@@ -7,25 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.5] - 2026-07-27
+
 ### Added
 
 - Release pipeline now builds and attaches prebuilt `fy` CLI binaries to every GitHub release (Linux x86_64/aarch64 glibc, Linux x86_64 musl, macOS x86_64/aarch64, Windows x86_64), each packaged with a `.sha256` checksum. Linux aarch64 musl (e.g. Alpine on ARM64) is not yet published — build from source with `cargo install fast-yaml-cli`
 - `scripts/install.sh`: POSIX-sh installer that detects the host OS/arch/libc (including musl via `/lib/ld-musl-*` or `ldd --version`), downloads the matching prebuilt `fy` binary, verifies its checksum, and installs it to `~/.local/bin` (or `$FASTYAML_INSTALL_DIR`)
-- `skills/fast-yaml-cli/SKILL.md`, an Agent Skill documenting installation and usage of the `fy` CLI for AI coding agents
+- `skills/fast-yaml-cli/SKILL.md`, an Agent Skill documenting installation and usage of the `fy` CLI for AI coding agents ([#276](https://github.com/bug-ops/fast-yaml/pull/276))
 
 ### Security
 
-- Bump `vite` 8.0.10 → 8.0.16 in Node.js bindings to fix GHSA-7qr8-wg58-9r72 (`server.fs.deny` bypass on Windows) and GHSA-4vq8-g365-vhgc (NTLMv2 hash disclosure via UNC path handling on Windows)
-- Bump `js-yaml` (transitive, via `@napi-rs/cli`) to >=4.3.0 via pnpm override to fix GHSA-52cp-r559-cp3m (YAML merge-key chains can force quadratic CPU consumption)
-- Tighten the `js-yaml` pnpm override from an open-ended `>=4.3.0` to `^4.3.0`, which was resolving to the vulnerable `js-yaml` 5.2.1 and reintroducing GHSA-pm4m-ph32-ghv5 (exponential parsing time in flow collections)
-- Add a `postcss` pnpm override (`>=8.5.18`) in Node.js bindings to fix GHSA-r28c-9q8g-f849 (path traversal via `sourceMappingURL` auto-loading), pulled in transitively through `vitest > vite > postcss`
+- Bump `crossbeam-epoch` (transitive, via `ignore` and `rayon-core`) 0.9.18 → 0.9.20 to fix RUSTSEC-2026-0204 (invalid pointer dereference in the `fmt::Pointer` impl) ([#265](https://github.com/bug-ops/fast-yaml/pull/265))
+- Bump `js-yaml` (transitive, via `@napi-rs/cli`) to >=4.3.0 via pnpm override to fix GHSA-52cp-r559-cp3m (YAML merge-key chains can force quadratic CPU consumption) ([#276](https://github.com/bug-ops/fast-yaml/pull/276))
+- Tighten the `js-yaml` pnpm override from an open-ended `>=4.3.0` to `^4.3.0`, which was resolving to the vulnerable `js-yaml` 5.2.1 and reintroducing GHSA-pm4m-ph32-ghv5 (exponential parsing time in flow collections) ([#280](https://github.com/bug-ops/fast-yaml/pull/280))
+- Add a `postcss` pnpm override (`>=8.5.18`) in Node.js bindings to fix GHSA-r28c-9q8g-f849 (path traversal via `sourceMappingURL` auto-loading), pulled in transitively through `vitest > vite > postcss` ([#280](https://github.com/bug-ops/fast-yaml/pull/280))
 
 ### Dependencies
 
-- Bump `saphyr` 0.0.9 → 0.0.11 and `saphyr-parser` 0.0.9 → 0.0.11 (combined, since both crates are released in lockstep from the same upstream repository; bumping either alone leaves two mismatched `saphyr_parser` versions in the dependency graph and fails to compile) ([#270](https://github.com/bug-ops/fast-yaml/pull/270), [#271](https://github.com/bug-ops/fast-yaml/pull/271))
-- Bump `saphyr` 0.0.6 → 0.0.9 and `saphyr-parser` 0.0.6 → 0.0.9 (combined, since both crates are released in lockstep from the same upstream repository) ([#266](https://github.com/bug-ops/fast-yaml/pull/266), [#267](https://github.com/bug-ops/fast-yaml/pull/267))
+- Bump `saphyr` 0.0.9 → 0.0.11 and `saphyr-parser` 0.0.9 → 0.0.11 (combined, since both crates are released in lockstep from the same upstream repository; bumping either alone leaves two mismatched `saphyr_parser` versions in the dependency graph and fails to compile) ([#272](https://github.com/bug-ops/fast-yaml/pull/272))
+- Bump `saphyr` 0.0.6 → 0.0.9 and `saphyr-parser` 0.0.6 → 0.0.9 (combined, since both crates are released in lockstep from the same upstream repository) ([#268](https://github.com/bug-ops/fast-yaml/pull/268))
+- Bump `napi` 3.9.4 → 3.11.0, `napi-derive` 3.5.7 → 3.6.0 ([#265](https://github.com/bug-ops/fast-yaml/pull/265), [#269](https://github.com/bug-ops/fast-yaml/pull/269), [#275](https://github.com/bug-ops/fast-yaml/pull/275), [#279](https://github.com/bug-ops/fast-yaml/pull/279))
+- Bump `ignore` 0.4.26 → 0.4.31 ([#265](https://github.com/bug-ops/fast-yaml/pull/265), [#269](https://github.com/bug-ops/fast-yaml/pull/269), [#275](https://github.com/bug-ops/fast-yaml/pull/275), [#279](https://github.com/bug-ops/fast-yaml/pull/279))
+- Bump `clap` 4.6.1 → 4.6.4 ([#275](https://github.com/bug-ops/fast-yaml/pull/275), [#279](https://github.com/bug-ops/fast-yaml/pull/279))
+- Bump `memchr` 2.8.2 → 2.8.3 ([#269](https://github.com/bug-ops/fast-yaml/pull/269))
+- Bump `anyhow` 1.0.103 → 1.0.104, `globset` 0.4.18 → 0.4.19, `serde` 1.0.228 → 1.0.229, `serde_json` 1.0.150 → 1.0.151, `thiserror` 2.0.18 → 2.0.19 ([#275](https://github.com/bug-ops/fast-yaml/pull/275))
+- Bump `glob` 0.3.3 → 0.3.4 ([#279](https://github.com/bug-ops/fast-yaml/pull/279))
+- Bump `actions/setup-node` 6 → 7 ([#273](https://github.com/bug-ops/fast-yaml/pull/273))
+- Bump `actions/setup-python` 6 → 7 ([#274](https://github.com/bug-ops/fast-yaml/pull/274))
+- Bump `actions/labeler` 6 → 7 ([#278](https://github.com/bug-ops/fast-yaml/pull/278))
+- Bump `lewagon/wait-on-check-action` 1.8.0 → 1.9.0 ([#264](https://github.com/bug-ops/fast-yaml/pull/264), [#277](https://github.com/bug-ops/fast-yaml/pull/277))
 
 ## [0.6.4] - 2026-06-13
+
+### Security
+
+- Bump `vite` 8.0.10 → 8.0.16 in Node.js bindings to fix GHSA-7qr8-wg58-9r72 (`server.fs.deny` bypass on Windows) and GHSA-4vq8-g365-vhgc (NTLMv2 hash disclosure via UNC path handling on Windows) ([#260](https://github.com/bug-ops/fast-yaml/pull/260))
 
 ### Dependencies
 
@@ -703,7 +719,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.4...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.5...HEAD
+[0.6.5]: https://github.com/bug-ops/fast-yaml/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/bug-ops/fast-yaml/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/bug-ops/fast-yaml/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/bug-ops/fast-yaml/compare/v0.6.1...v0.6.2
