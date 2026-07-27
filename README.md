@@ -24,12 +24,18 @@ pip install fastyaml-rs
 # Node.js
 npm install fastyaml-rs
 
-# CLI
+# CLI (prebuilt binary — no Rust toolchain required)
+curl -fsSL https://raw.githubusercontent.com/bug-ops/fast-yaml/main/scripts/install.sh | sh
+
+# CLI (from source via cargo)
 cargo install fast-yaml-cli
 ```
 
 > [!WARNING]
-> Requires Rust 1.88+, Python 3.10+ or Node.js 20+
+> Requires Rust 1.88+, Python 3.10+ or Node.js 20+ (only for building from source — the prebuilt CLI binary has no runtime dependencies)
+
+> [!NOTE]
+> `scripts/install.sh` detects the host OS/arch/libc (including musl) and downloads the matching prebuilt `fy` binary with checksum verification from the [GitHub releases](https://github.com/bug-ops/fast-yaml/releases). Linux aarch64 musl (e.g. Alpine on ARM64) has no prebuilt binary yet — use `cargo install fast-yaml-cli` instead. Pin a version with `FASTYAML_VERSION=v0.6.5`, or change the install directory with `FASTYAML_INSTALL_DIR`.
 
 <details>
 <summary><b>Build from source</b></summary>

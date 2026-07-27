@@ -1,6 +1,6 @@
 {
   "name": "fastyaml-rs",
-  "version": "0.6.4",
+  "version": "0.6.5",
   "description": "Fast YAML 1.2.2 parser, linter, and parallel processor for Node.js",
   "main": "index.js",
   "types": "index.d.ts",
@@ -58,12 +58,12 @@
     "version": "napi version"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
-    "@napi-rs/cli": "^3.7.1",
-    "@types/node": "^25.9.3",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@biomejs/biome": "^2.5.5",
+    "@napi-rs/cli": "^3.7.4",
+    "@types/node": "^25.9.5",
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.10"
   },
   "pnpm": {
     "overrides": {
