@@ -57,7 +57,7 @@ jobs:
           shared-key: "release-verify"
 
       - name: Install nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.5
         with:
           tool: nextest
 
