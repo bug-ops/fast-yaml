@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Mark `has_source_unicode_hex_escape` in the quoted-strings lint rule as `const fn` to satisfy `clippy::missing_const_for_fn` under newer clippy ([#289](https://github.com/bug-ops/fast-yaml/pull/289))
+
 ### Security
 
 - Tighten the `js-yaml` pnpm override from `^4.3.0` to `>=4.3.1` to fix CVE-2026-59870 (quadratic CPU consumption in `!!omap` resolution), which was resolving to the vulnerable `js-yaml` 4.3.0 ([#285](https://github.com/bug-ops/fast-yaml/pull/285))

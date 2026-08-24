@@ -308,7 +308,7 @@ impl QuotedStringsRule {
     /// These escape sequences decode to Unicode/ASCII characters whose decoded form is
     /// indistinguishable from plain text, so `has_yaml_escape` (which operates on the decoded
     /// value) cannot detect them. We must inspect the raw source instead.
-    fn has_source_unicode_hex_escape(source: &str, start: usize) -> bool {
+    const fn has_source_unicode_hex_escape(source: &str, start: usize) -> bool {
         let bytes = source.as_bytes();
         if start >= bytes.len() || bytes[start] != b'"' {
             return false;
