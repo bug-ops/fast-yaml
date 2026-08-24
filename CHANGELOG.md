@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tighten the `js-yaml` pnpm override from `^4.3.0` to `>=4.3.1` to fix CVE-2026-59870 (quadratic CPU consumption in `!!omap` resolution), which was resolving to the vulnerable `js-yaml` 4.3.0 ([#285](https://github.com/bug-ops/fast-yaml/pull/285))
 - Add a `nanoid` pnpm override (`>=3.3.17`) in Node.js bindings to fix GHSA-2v37-7h3g-55p8 (custom generators can loop indefinitely when size is zero), pulled in transitively through `vitest > vite > postcss > nanoid` ([#285](https://github.com/bug-ops/fast-yaml/pull/285))
 
+### Dependencies
+
+- Bump `saphyr` 0.0.11 → 0.0.12 and `saphyr-parser` 0.0.11 → 0.0.12 (combined, since both crates are released in lockstep from the same upstream repository; bumping either alone leaves two mismatched `saphyr_parser` versions in the dependency graph and fails to compile) ([#290](https://github.com/bug-ops/fast-yaml/pull/290))
+
 ## [0.6.5] - 2026-07-27
 
 ### Added
