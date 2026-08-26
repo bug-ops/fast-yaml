@@ -9,7 +9,7 @@ compatibility: |-
   or install script: `curl -fsSL https://raw.githubusercontent.com/bug-ops/fast-yaml/main/scripts/install.sh | sh` (macOS, Linux only).
 metadata:
   author: bug-ops
-  version: "0.6.5"
+  version: "0.6.6"
 ---
 
 ## Installation
@@ -32,7 +32,7 @@ Downloads prebuilt binary from latest GitHub Release, verifies checksum with sha
 
 **Pinning to a specific version:**
 ```bash
-FASTYAML_VERSION=v0.6.5 curl -fsSL https://raw.githubusercontent.com/bug-ops/fast-yaml/main/scripts/install.sh | sh
+FASTYAML_VERSION=v0.6.6 curl -fsSL https://raw.githubusercontent.com/bug-ops/fast-yaml/main/scripts/install.sh | sh
 ```
 
 **Custom install directory:**
@@ -46,23 +46,23 @@ FASTYAML_INSTALL_DIR=/usr/local/bin curl -fsSL https://raw.githubusercontent.com
 
 1. Go to https://github.com/bug-ops/fast-yaml/releases
 2. Download the prebuilt `.tar.gz` archive for your OS/arch:
-   - macOS x86_64: `fy-v0.6.5-x86_64-apple-darwin.tar.gz`
-   - macOS ARM64: `fy-v0.6.5-aarch64-apple-darwin.tar.gz`
-   - Linux x86_64 (glibc): `fy-v0.6.5-x86_64-unknown-linux-gnu.tar.gz`
-   - Linux x86_64 (musl/Alpine): `fy-v0.6.5-x86_64-unknown-linux-musl.tar.gz`
-   - Linux ARM64: `fy-v0.6.5-aarch64-unknown-linux-gnu.tar.gz`
+   - macOS x86_64: `fy-v0.6.6-x86_64-apple-darwin.tar.gz`
+   - macOS ARM64: `fy-v0.6.6-aarch64-apple-darwin.tar.gz`
+   - Linux x86_64 (glibc): `fy-v0.6.6-x86_64-unknown-linux-gnu.tar.gz`
+   - Linux x86_64 (musl/Alpine): `fy-v0.6.6-x86_64-unknown-linux-musl.tar.gz`
+   - Linux ARM64: `fy-v0.6.6-aarch64-unknown-linux-gnu.tar.gz`
 3. Download the corresponding `.sha256` checksum file
-4. Verify: `sha256sum -c fy-v0.6.5-*.tar.gz.sha256` (or `shasum -a 256`)
-5. Extract: `tar -xzf fy-v0.6.5-*.tar.gz`
-6. Move binary to PATH: `mv fy-v0.6.5-*/fy /usr/local/bin/`
+4. Verify: `sha256sum -c fy-v0.6.6-*.tar.gz.sha256` (or `shasum -a 256`)
+5. Extract: `tar -xzf fy-v0.6.6-*.tar.gz`
+6. Move binary to PATH: `mv fy-v0.6.6-*/fy /usr/local/bin/`
 
 #### Windows
 
 1. Go to https://github.com/bug-ops/fast-yaml/releases
-2. Download: `fy-v0.6.5-x86_64-pc-windows-msvc.zip`
+2. Download: `fy-v0.6.6-x86_64-pc-windows-msvc.zip`
 3. Download the corresponding `.sha256` checksum file
 4. Verify the archive (before extracting) — see "Checksum verification" in [Platform Notes → Windows](#windows) section below
-5. Extract: `Expand-Archive -Path fy-v0.6.5-x86_64-pc-windows-msvc.zip -DestinationPath .`
+5. Extract: `Expand-Archive -Path fy-v0.6.6-x86_64-pc-windows-msvc.zip -DestinationPath .`
 6. Move `fy.exe` to your chosen `%PATH%` directory
 
 ### From Source
@@ -403,9 +403,9 @@ When downloaded, the binary is named `fy.exe`. Add its directory to `%PATH%` via
 
 Checksum verification on Windows (required before extracting):
 ```powershell
-Get-FileHash -Path fy-v0.6.5-x86_64-pc-windows-msvc.zip -Algorithm SHA256
+Get-FileHash -Path fy-v0.6.6-x86_64-pc-windows-msvc.zip -Algorithm SHA256
 ```
-Compare the output hash against the `.sha256` file downloaded from the release. Then extract with `Expand-Archive -Path fy-v0.6.5-x86_64-pc-windows-msvc.zip -DestinationPath .` and move the `fy.exe` binary to your chosen `%PATH%` directory.
+Compare the output hash against the `.sha256` file downloaded from the release. Then extract with `Expand-Archive -Path fy-v0.6.6-x86_64-pc-windows-msvc.zip -DestinationPath .` and move the `fy.exe` binary to your chosen `%PATH%` directory.
 
 ### PATH Setup Across Shells
 

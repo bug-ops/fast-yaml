@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.6] - 2026-08-26
+
 ### Fixed
 
 - Mark `has_source_unicode_hex_escape` in the quoted-strings lint rule as `const fn` to satisfy `clippy::missing_const_for_fn` under newer clippy ([#289](https://github.com/bug-ops/fast-yaml/pull/289))
+- Reformat a `python/README.md` code block to match `ruff` 0.16.4's formatter output ([#292](https://github.com/bug-ops/fast-yaml/pull/292))
 
 ### Security
 
@@ -18,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
+- Bump `napi` 3.11.0 → 3.12.0, `napi-build` 2.3.2 → 2.4.0, and `napi-derive` 3.6.0 → 3.6.2 ([#282](https://github.com/bug-ops/fast-yaml/pull/282))
+- Bump `clap` 4.6.4 → 4.6.6, `globset` 0.4.19 → 0.4.20, `ignore` 0.4.31 → 0.4.33, and `pyo3` 0.29.0 → 0.29.2 ([#284](https://github.com/bug-ops/fast-yaml/pull/284))
+- Bump `napi` 3.12.0 → 3.12.1, `napi-build` 2.4.0 → 2.4.1, `napi-derive` 3.6.2 → 3.6.3, and `thiserror` 2.0.19 → 2.0.20 ([#286](https://github.com/bug-ops/fast-yaml/pull/286))
 - Bump `saphyr` 0.0.11 → 0.0.12 and `saphyr-parser` 0.0.11 → 0.0.12 (combined, since both crates are released in lockstep from the same upstream repository; bumping either alone leaves two mismatched `saphyr_parser` versions in the dependency graph and fails to compile) ([#290](https://github.com/bug-ops/fast-yaml/pull/290))
 - Bump Node.js dev dependencies: `@biomejs/biome` ^2.5.5 → ^2.5.10, `@napi-rs/cli` ^3.7.4 → ^3.8.6, `@types/node` ^25.9.5 → ^26.3.0, `@vitest/coverage-v8`/`vitest` ^4.1.10 → ^4.1.11, `typescript` ^6.0.3 → ^7.0.2 ([#292](https://github.com/bug-ops/fast-yaml/pull/292))
 - Refresh `python/uv.lock` to pick up latest compatible dev dependency versions ([#292](https://github.com/bug-ops/fast-yaml/pull/292))
@@ -734,7 +740,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.5...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.6.6...HEAD
+[0.6.6]: https://github.com/bug-ops/fast-yaml/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/bug-ops/fast-yaml/compare/v0.6.4...v0.6.5
 [0.6.4]: https://github.com/bug-ops/fast-yaml/compare/v0.6.3...v0.6.4
 [0.6.3]: https://github.com/bug-ops/fast-yaml/compare/v0.6.2...v0.6.3
