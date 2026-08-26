@@ -47,11 +47,13 @@ Process multiple YAML files in parallel:
 from fast_yaml._core import batch
 
 # Parse multiple files
-result = batch.process_files([
-    "config1.yaml",
-    "config2.yaml",
-    "config3.yaml",
-])
+result = batch.process_files(
+    [
+        "config1.yaml",
+        "config2.yaml",
+        "config3.yaml",
+    ]
+)
 print(f"Processed {result.total} files, {result.failed} failed")
 
 # With configuration
