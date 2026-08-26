@@ -58,12 +58,12 @@
     "version": "napi version"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.5",
-    "@napi-rs/cli": "^3.7.4",
-    "@types/node": "^25.9.5",
-    "@vitest/coverage-v8": "^4.1.10",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.10"
+    "@biomejs/biome": "^2.5.10",
+    "@napi-rs/cli": "^3.8.6",
+    "@types/node": "^26.3.0",
+    "@vitest/coverage-v8": "^4.1.11",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   },
   "pnpm": {
     "overrides": {

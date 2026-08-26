@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 
 - Bump `saphyr` 0.0.11 → 0.0.12 and `saphyr-parser` 0.0.11 → 0.0.12 (combined, since both crates are released in lockstep from the same upstream repository; bumping either alone leaves two mismatched `saphyr_parser` versions in the dependency graph and fails to compile) ([#290](https://github.com/bug-ops/fast-yaml/pull/290))
+- Bump Node.js dev dependencies: `@biomejs/biome` ^2.5.5 → ^2.5.10, `@napi-rs/cli` ^3.7.4 → ^3.8.6, `@types/node` ^25.9.5 → ^26.3.0, `@vitest/coverage-v8`/`vitest` ^4.1.10 → ^4.1.11, `typescript` ^6.0.3 → ^7.0.2 ([#292](https://github.com/bug-ops/fast-yaml/pull/292))
+- Refresh `python/uv.lock` to pick up latest compatible dev dependency versions ([#292](https://github.com/bug-ops/fast-yaml/pull/292))
 
 ## [0.6.5] - 2026-07-27
 
