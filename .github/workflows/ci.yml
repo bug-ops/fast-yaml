@@ -145,7 +145,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install SARIF tools
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.0
         with:
           tool: clippy-sarif,sarif-fmt
 
@@ -183,7 +183,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install security tools
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.0
         with:
           tool: cargo-deny
 
@@ -197,7 +197,7 @@ jobs:
         run: cargo deny check
 
       - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.0
         with:
           tool: cargo-semver-checks
 
@@ -264,7 +264,7 @@ jobs:
 
 
       - name: Install nextest
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.0
         with:
           tool: nextest
 
@@ -307,7 +307,7 @@ jobs:
 
 
       - name: Install coverage tools
-        uses: taiki-e/install-action@v2.86.5
+        uses: taiki-e/install-action@v2.87.0
         with:
           tool: cargo-llvm-cov,nextest
 
