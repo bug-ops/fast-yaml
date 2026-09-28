@@ -383,7 +383,7 @@ dependencies = [
  "pyo3",
  "rayon",
  "saphyr",
- "saphyr-parser",
+ "saphyr-parser 0.1.0",
 ]
 
 [[package]]
@@ -408,7 +408,7 @@ dependencies = [
  "predicates",
  "proptest",
  "rayon",
- "saphyr-parser",
+ "saphyr-parser 0.1.0",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -424,7 +424,7 @@ dependencies = [
  "memchr",
  "ordered-float",
  "saphyr",
- "saphyr-parser",
+ "saphyr-parser 0.1.0",
  "thiserror",
 ]
 
@@ -435,7 +435,7 @@ dependencies = [
  "fast-yaml-core",
  "indoc",
  "is-terminal",
- "saphyr-parser",
+ "saphyr-parser 0.1.0",
  "serde",
  "serde_json",
  "serde_norway",
@@ -1266,7 +1266,7 @@ dependencies = [
  "encoding_rs",
  "hashlink",
  "ordered-float",
- "saphyr-parser",
+ "saphyr-parser 0.0.12",
  "thiserror",
 ]
 
@@ -1275,6 +1275,16 @@ name = "saphyr-parser"
 version = "0.0.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a0b1b76852c5643f558e7347e4de549474c3ecb7154295a189f4668428c1b453"
+dependencies = [
+ "arraydeque",
+ "thiserror",
+]
+
+[[package]]
+name = "saphyr-parser"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7429158804c36e705d9423b7848018e535b3e92d439a763e364ee12670ef473b"
 dependencies = [
  "arraydeque",
  "thiserror",
