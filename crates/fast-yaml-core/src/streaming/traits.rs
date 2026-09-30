@@ -25,13 +25,6 @@ pub(super) trait ContextStackOps {
 
     /// Returns the number of contexts in the stack.
     fn len(&self) -> usize;
-
-    /// Returns whether the stack is empty (should never happen in practice).
-    #[inline]
-    #[allow(dead_code)] // Keep for trait completeness
-    fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
 }
 
 /// Operations on anchor storage abstraction.
@@ -59,14 +52,6 @@ pub(super) trait AnchorStoreOps {
     ///
     /// Panics if `anchor_id` is out of bounds. Call `ensure_capacity` first.
     fn set_if_empty(&mut self, anchor_id: usize) -> &str;
-
-    /// Checks if the `anchor_id` slot is empty.
-    ///
-    /// Returns `true` if the slot doesn't exist or contains an empty string.
-    #[allow(dead_code)] // Keep for trait completeness
-    fn is_empty(&self, anchor_id: usize) -> bool {
-        self.get(anchor_id).is_none_or(str::is_empty)
-    }
 }
 
 /// Formatter backend abstraction combining context stack and anchor storage.

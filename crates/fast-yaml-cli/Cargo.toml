@@ -24,7 +24,6 @@ fast-yaml-parallel = { workspace = true }
 glob = { workspace = true }
 globset = { workspace = true }
 ignore = { workspace = true }
-is-terminal = { workspace = true, optional = true }
 num_cpus = { workspace = true }
 ordered-float = { workspace = true }
 rayon = { workspace = true }
@@ -42,7 +41,7 @@ tempfile = { workspace = true }
 
 [features]
 default = ["colors", "linter", "arena"]
-colors = ["dep:colored", "dep:is-terminal"]
+colors = ["dep:colored"]
 linter = ["dep:fast-yaml-linter"]
 arena = ["fast-yaml-core/arena"]
 all = ["colors", "linter", "arena"]

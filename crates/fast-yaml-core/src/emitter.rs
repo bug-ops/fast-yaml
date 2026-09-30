@@ -1,6 +1,6 @@
 use std::fmt::Write as _;
 
-use crate::error::{EmitError, EmitResult};
+use crate::error::{EmitError, EmitResult, from_saphyr};
 use crate::value::Value;
 use memchr::memmem;
 use saphyr::{ScalarOwned, YamlEmitter};
@@ -134,7 +134,7 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if the value cannot be serialized.
+    /// Returns `EmitError::Format` if the value cannot be serialized.
     ///
     /// # Examples
     ///
@@ -168,9 +168,7 @@ impl Emitter {
 
             // Convert YamlOwned to Yaml for emission
             let yaml_borrowed: saphyr::Yaml = value.into();
-            emitter
-                .dump(&yaml_borrowed)
-                .map_err(|e| EmitError::Emit(e.to_string()))?;
+            emitter.dump(&yaml_borrowed).map_err(from_saphyr)?;
         }
 
         // Apply post-processing for configuration options
@@ -234,7 +232,7 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if the value cannot be serialized.
+    /// Returns `EmitError::Format` if the value cannot be serialized.
     ///
     /// # Examples
     ///
@@ -253,7 +251,7 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if any value cannot be serialized.
+    /// Returns `EmitError::Format` if any value cannot be serialized.
     ///
     /// # Examples
     ///
@@ -306,7 +304,7 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if any value cannot be serialized.
+    /// Returns `EmitError::Format` if any value cannot be serialized.
     ///
     /// # Examples
     ///
@@ -456,7 +454,8 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted, and
+    /// Returns `EmitError::Parse` if the YAML cannot be parsed, `EmitError::Format` if
+    /// writing fails, and
     /// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
     /// document exceeds the formatter's nesting or per-document anchor limits.
     ///
@@ -550,9 +549,7 @@ impl Emitter {
             let mut emitter = YamlEmitter::new(&mut out);
             emitter.compact(true);
             let yaml: saphyr::Yaml = value.into();
-            emitter
-                .dump(&yaml)
-                .map_err(|e| EmitError::Emit(e.to_string()))?;
+            emitter.dump(&yaml).map_err(from_saphyr)?;
         }
         // saphyr emits "---\nvalue\n" — strip markers
         let trimmed = out
@@ -578,8 +575,7 @@ impl Emitter {
                     }
                     let key_str = Self::emit_scalar_inline(k)?;
                     let val_str = Self::emit_flow(v)?;
-                    write!(out, "{key_str}: {val_str}")
-                        .map_err(|e| EmitError::Emit(e.to_string()))?;
+                    write!(out, "{key_str}: {val_str}")?;
                 }
                 out.push('}');
                 Ok(out)
@@ -678,7 +674,8 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted, and
+    /// Returns `EmitError::Parse` if the YAML cannot be parsed, `EmitError::Format` if
+    /// writing fails, and
     /// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
     /// document exceeds the formatter's nesting or per-document anchor limits.
     ///

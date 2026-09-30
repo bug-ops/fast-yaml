@@ -676,3 +676,23 @@ fn test_lint_directory_succeeds() {
         .assert()
         .success();
 }
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_warns_on_unknown_rule_in_config() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("lint.yaml");
+    let file = dir.path().join("clean.yaml");
+    std::fs::write(&config, "rules:\n  no-such-rule:\n    enabled: true\n").unwrap();
+    std::fs::write(&file, "key: value\n").unwrap();
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--config"])
+        .arg(&config)
+        .arg(&file)
+        .assert()
+        .stderr(predicate::str::contains(
+            "warning: unknown rule 'no-such-rule' in config file",
+        ));
+}

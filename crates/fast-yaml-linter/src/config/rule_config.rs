@@ -139,6 +139,7 @@ impl RuleOptions {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "json-output", serde(untagged))]
+#[non_exhaustive]
 pub enum RuleOption {
     /// Boolean value
     Bool(bool),

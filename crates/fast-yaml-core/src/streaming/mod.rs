@@ -55,7 +55,7 @@ fn tag_budget_error(err: ParseError) -> EmitError {
             kind: LimitKind::TagBytes(limit),
             ..
         } => EmitError::TagLimitExceeded { limit },
-        other => EmitError::Emit(other.to_string()),
+        other => EmitError::Parse(other),
     }
 }
 

@@ -512,6 +512,7 @@ impl Default for Linter {
 
 /// Errors that can occur during linting.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum LintError {
     /// Failed to parse YAML.
     #[error("failed to parse YAML: {0}")]

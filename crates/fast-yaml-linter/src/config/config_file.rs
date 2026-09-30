@@ -105,6 +105,7 @@ pub enum ConfigFileValue {
 
 /// Errors from config file loading.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum ConfigFileError {
     /// I/O error reading config file.
     #[error("failed to read config file '{path}': {source}")]
@@ -163,14 +164,28 @@ impl ConfigFile {
         None
     }
 
-    /// Validate rule names against the known set. Emit warnings to stderr for
-    /// unknown names so users get feedback on typos.
-    pub fn warn_unknown_rules(&self) {
-        for name in self.rules.keys() {
-            if !KNOWN_RULE_CODES.contains(&name.as_str()) {
-                eprintln!("warning: unknown rule '{name}' in config file");
-            }
-        }
+    /// Returns the configured rule names that are not known rule codes, sorted.
+    ///
+    /// Callers decide how to surface them so typos in the config get feedback.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::ConfigFile;
+    ///
+    /// let cfg: ConfigFile = serde_norway::from_str("rules:\n  no-such-rule:\n    enabled: true\n").unwrap();
+    /// assert_eq!(cfg.unknown_rules(), ["no-such-rule"]);
+    /// ```
+    #[must_use]
+    pub fn unknown_rules(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self
+            .rules
+            .keys()
+            .map(String::as_str)
+            .filter(|name| !KNOWN_RULE_CODES.contains(name))
+            .collect();
+        names.sort_unstable();
+        names
     }
 
     /// Convert into a `LintConfig`, applying all `rules:` entries.
@@ -180,7 +195,7 @@ impl ConfigFile {
 
         for (rule_name, rule_cfg) in self.rules {
             if !KNOWN_RULE_CODES.contains(&rule_name.as_str()) {
-                continue; // already warned above
+                continue; // reported by `unknown_rules`
             }
 
             let enabled = rule_cfg.enabled.unwrap_or(true);
@@ -447,11 +462,12 @@ mod tests {
     }
 
     #[test]
-    fn test_warn_unknown_rules_does_not_panic() {
-        let f = write_temp("rules:\n  unknown-rule-xyz:\n    enabled: true\n");
+    fn test_unknown_rules_returned() {
+        let f = write_temp(
+            "rules:\n  unknown-rule-xyz:\n    enabled: true\n  truthy:\n    enabled: true\n",
+        );
         let cfg = ConfigFile::load(f.path()).unwrap();
-        // Should not panic, warns to stderr
-        cfg.warn_unknown_rules();
+        assert_eq!(cfg.unknown_rules(), ["unknown-rule-xyz"]);
     }
 
     #[test]

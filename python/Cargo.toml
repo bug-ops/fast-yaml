@@ -36,10 +36,5 @@ criterion = { workspace = true }
 name = "parse_benchmark"
 harness = false
 
-# Note: This profile is used by maturin when building the extension module.
-# Workspace builds will show a warning that this is ignored, which is expected.
-[profile.release]
-panic = "unwind"  # PyO3 extension modules require this (not "abort")
-
 [lints]
 workspace = true

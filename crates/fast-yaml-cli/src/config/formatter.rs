@@ -44,6 +44,7 @@ impl FormatterConfig {
     }
 
     /// Returns the indentation width.
+    #[cfg(any(test, feature = "linter"))]
     #[must_use]
     pub const fn indent(&self) -> u8 {
         self.indent

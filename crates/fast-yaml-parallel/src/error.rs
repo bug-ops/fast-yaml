@@ -7,6 +7,7 @@ use thiserror::Error;
 
 /// Unified error type for all parallel operations.
 #[derive(Error, Debug)]
+#[non_exhaustive]
 pub enum Error {
     /// Failed to parse a document at specific index.
     #[error("failed to parse document at index {index}")]
@@ -38,11 +39,24 @@ pub enum Error {
         source: std::str::Utf8Error,
     },
 
-    /// Failed to format YAML.
-    #[error("format error: {message}")]
+    /// Failed to format a file.
+    ///
+    /// The message includes the source error because bindings surface only `Display`.
+    #[error("failed to format '{path}': {source}")]
     Format {
-        /// Error message.
-        message: String,
+        /// Path to the file that failed.
+        path: PathBuf,
+
+        /// The underlying emission error.
+        #[source]
+        source: fast_yaml_core::EmitError,
+    },
+
+    /// A file contains no YAML document.
+    #[error("empty document in '{path}'")]
+    EmptyDocument {
+        /// Path to the empty file.
+        path: PathBuf,
     },
 
     /// Formatting would silently drop YAML comments and the caller did not allow it.
@@ -78,17 +92,9 @@ pub enum Error {
         max: usize,
     },
 
-    /// Document chunking failed.
-    #[error("chunking failed: {0}")]
-    Chunking(String),
-
-    /// Thread pool error.
-    #[error("thread pool error: {0}")]
-    ThreadPool(String),
-
-    /// Configuration error.
-    #[error("configuration error: {0}")]
-    Config(String),
+    /// Building the Rayon thread pool failed.
+    #[error("failed to build thread pool")]
+    ThreadPool(#[source] rayon::ThreadPoolBuildError),
 }
 
 /// Result type for parallel operations.

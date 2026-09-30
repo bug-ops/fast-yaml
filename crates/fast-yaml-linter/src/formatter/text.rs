@@ -48,7 +48,7 @@ impl TextFormatter {
 
     /// Detects if color should be enabled based on terminal.
     ///
-    /// Uses the `is-terminal` crate to check if stdout is a terminal.
+    /// Uses [`std::io::IsTerminal`] to check if stdout is a terminal.
     ///
     /// # Examples
     ///
