@@ -343,7 +343,7 @@ fn canonicalize_scalar(value: Value) -> Value {
 /// Converts a resolved scalar to its owned core value; strings are copied.
 ///
 /// Integers beyond `i64` become a plain `Value::Representation` holding their decimal text.
-fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
+pub(crate) fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
     Value::Value(match resolved {
         ResolvedScalar::Null => ScalarOwned::Null,
         ResolvedScalar::Bool(b) => ScalarOwned::Boolean(b),
