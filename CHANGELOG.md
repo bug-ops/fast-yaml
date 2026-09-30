@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Core**: `fy format` no longer rewrites plain `inf`/`-inf`/`NaN` scalars to `.inf`/`-.inf`/`.nan`; they stay strings (#362) (#PR)
+- **Core**: `fy format` no longer rewrites plain `inf`/`-inf`/`NaN` scalars to `.inf`/`-.inf`/`.nan`; they stay strings (#362) (#450)
 - **Core**: `MaxDepth::new` and `MaxAliasBytes::new` now return `Result<_, LimitRangeError>` (depth 1..=512, alias bytes 1..=1 GiB); `LintConfig` gains a public `parse_limits` field; Node.js `processFiles`/`formatFiles`/`formatFilesInPlace` now throw instead of returning the error as a value (#433)
 - **Linter**: rule options are typed per-rule structs validated at config load; unknown rules, option keys, wrong types, `null` and unknown top-level config keys are errors in the CLI, Python and Node.js, and `RuleConfig`/`RuleOption`/`RuleOptions` and the string-keyed `LintConfig` fields are replaced by `RulesConfig` (#324) (#426)
 - **Linter**: `Severity` implements `FromStr`/`Deserialize` and `ConfigFileSeverity` is removed; Python and Node.js `rules` now accept every rule option and Python `with_rule_config` takes `options` (#327) (#426)
@@ -70,8 +70,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
-- **Core**: `fy format` keeps `%YAML`/`%TAG` directives of second and later documents and writes `...` before them (#447) (#PR)
-- **Core**: `fy format --strip-comments` drops the comment on a directive line but keeps `#` inside directive tokens (#447) (#PR)
+- **Core**: `fy format` keeps `%YAML`/`%TAG` directives of second and later documents and writes `...` before them (#447) (#450)
+- **Core**: `fy format --strip-comments` drops the comment on a directive line but keeps `#` inside directive tokens (#447) (#450)
 - Fix `braces`/`brackets` dropping the max check for empty collections when only `min-spaces-inside-empty` is set; the empty-collection limits now inherit independently (#426)
 - Fix `document-start: {present: true}` and `quote-type` typos being silently ignored in lint configs (#324) (#426)
 - `fy format` output stays parseable: `%` continuation lines, dropped `...` document ends, invalid anchor names, tagged empty keys and block-ambiguous plain scalars (#429) (#430) (#431) (#441)
