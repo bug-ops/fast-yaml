@@ -1,0 +1,5 @@
+disallowed-methods = [
+    { path = "saphyr_parser::Marker::index", reason = "char-based; convert via SourceContext" },
+    { path = "saphyr_parser::Marker::col", reason = "char-based; convert via SourceContext" },
+    { path = "saphyr_parser::Span::len", reason = "char count; use SourceContext::byte_range_of" },
+]

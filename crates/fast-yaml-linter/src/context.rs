@@ -4,7 +4,9 @@ use crate::{
     Location, Span,
     comment_parser::{Comment, CommentParser},
     diagnostic::{ContextLine, DiagnosticContext},
+    source::offset::{ByteOffset, ByteRange},
 };
+use saphyr_parser::{Marker, Span as SaphyrSpan};
 use std::sync::OnceLock;
 
 /// Extracts source code context for diagnostics.
@@ -256,6 +258,48 @@ impl<'a> SourceContext<'a> {
         }
         self.line_starts[line_num - 1]
     }
+
+    /// Typed twin of [`get_line_offset`](Self::get_line_offset).
+    pub(crate) fn line_start(&self, line_num: usize) -> ByteOffset {
+        ByteOffset::new(self.get_line_offset(line_num))
+    }
+
+    /// Converts a saphyr marker (char-based column) to a byte offset.
+    ///
+    /// This is the only place that reads `Marker::col`; a marker past the end maps to the
+    /// end of its line, or of the source when the line does not exist.
+    #[expect(clippy::disallowed_methods)]
+    pub(crate) fn byte_offset_of(&self, marker: Marker) -> ByteOffset {
+        let Some(line) = self.get_line(marker.line()) else {
+            return ByteOffset::new(self.source.len());
+        };
+        let byte_col = line
+            .char_indices()
+            .nth(marker.col())
+            .map_or(line.len(), |(byte, _)| byte);
+        self.line_start(marker.line()).add_bytes(byte_col)
+    }
+
+    /// Converts a saphyr marker to a [`Location`] with a 1-indexed char column.
+    pub(crate) fn location_of(&self, marker: Marker) -> Location {
+        let offset = self.byte_offset_of(marker);
+        #[expect(clippy::disallowed_methods)]
+        let column = marker.col() + 1;
+        Location::new(marker.line(), column, offset.get())
+    }
+
+    /// Converts a saphyr span to a [`Span`].
+    pub(crate) fn span_of(&self, span: SaphyrSpan) -> Span {
+        Span::new(self.location_of(span.start), self.location_of(span.end))
+    }
+
+    /// Converts a saphyr span to a byte range.
+    pub(crate) fn byte_range_of(&self, span: SaphyrSpan) -> ByteRange {
+        ByteRange::new(
+            self.byte_offset_of(span.start),
+            self.byte_offset_of(span.end),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -396,6 +440,53 @@ mod tests {
         assert_eq!(ctx.get_line_offset(3), 14);
         assert_eq!(ctx.get_line_offset(0), 0);
         assert_eq!(ctx.get_line_offset(100), 0);
+    }
+
+    fn scalar_spans(source: &str) -> Vec<SaphyrSpan> {
+        use saphyr_parser::{BufferedInput, Event, Parser};
+        let mut parser = Parser::new(BufferedInput::new(source.chars()));
+        let mut spans = Vec::new();
+        while let Some(Ok((event, span))) = parser.next_event() {
+            if matches!(event, Event::Scalar(..)) {
+                spans.push(span);
+            }
+        }
+        spans
+    }
+
+    #[test]
+    fn test_span_of_scalars_with_multibyte_chars() {
+        let source = "—: \"é\"\n🎉: x\n";
+        let ctx = SourceContext::new(source);
+        let spans: Vec<Span> = scalar_spans(source)
+            .into_iter()
+            .map(|s| ctx.span_of(s))
+            .collect();
+        let snippets: Vec<&str> = spans.iter().map(|&s| ctx.get_snippet(s)).collect();
+        assert_eq!(snippets, ["—", "\"é\"", "🎉", "x"]);
+        assert_eq!((spans[1].start.column, spans[1].start.offset), (4, 5));
+        assert_eq!((spans[1].end.column, spans[1].end.offset), (7, 9));
+        assert_eq!((spans[2].start.line, spans[2].start.column), (2, 1));
+    }
+
+    #[test]
+    fn test_byte_offset_of_crlf_second_line() {
+        let source = "a: 1\r\nb: é\r\n";
+        let ctx = SourceContext::new(source);
+        let starts: Vec<usize> = scalar_spans(source)
+            .into_iter()
+            .map(|s| ctx.byte_offset_of(s.start).get())
+            .collect();
+        assert_eq!(starts, [0, 3, 6, 9]);
+    }
+
+    #[test]
+    fn test_byte_offset_of_past_end_clamps() {
+        let ctx = SourceContext::new("é");
+        let span = scalar_spans("é")[0];
+        assert_eq!(ctx.byte_offset_of(span.end).get(), "é".len());
+        let missing_line = Marker::new(99, 99, 99);
+        assert_eq!(ctx.byte_offset_of(missing_line).get(), "é".len());
     }
 }
 

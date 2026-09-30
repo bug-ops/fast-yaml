@@ -1,7 +1,7 @@
 //! Rule to check quoted string style.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
 use fast_yaml_core::Value;
@@ -119,12 +119,6 @@ impl super::LintRule for QuotedStringsRule {
                         *expecting_key = !*expecting_key;
                     }
 
-                    // Build source location from parser marker.
-                    // saphyr line() is 1-indexed; col() is 0-indexed.
-                    let line = span.start.line();
-                    let col = span.start.col();
-                    let scalar_offset = context.source_context().get_line_offset(line) + col;
-
                     self.check_scalar(
                         source,
                         context.source_context(),
@@ -133,9 +127,7 @@ impl super::LintRule for QuotedStringsRule {
                         value,
                         style,
                         is_key,
-                        line,
-                        col,
-                        scalar_offset,
+                        context.source_context().span_of(span),
                         quote_type,
                         required,
                         &extra_required,
@@ -170,9 +162,7 @@ impl QuotedStringsRule {
         value: &str,
         style: ScalarStyle,
         is_key: bool,
-        line: usize,
-        col: usize,
-        scalar_offset: usize,
+        scalar_span: Span,
         quote_type: &str,
         required: &str,
         extra_required: &[String],
@@ -185,9 +175,6 @@ impl QuotedStringsRule {
                 } else {
                     '"'
                 };
-                // value.len() + 2 for the surrounding quote characters.
-                let scalar_span = Self::make_span(line, col, scalar_offset, value.len() + 2);
-
                 if quote_type == "single" && quote_char == '"' {
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
@@ -217,7 +204,10 @@ impl QuotedStringsRule {
                 if required == "only-when-needed" {
                     let has_escape = style == ScalarStyle::DoubleQuoted
                         && (Self::has_yaml_escape(value)
-                            || Self::has_source_unicode_hex_escape(source, scalar_offset));
+                            || Self::has_source_unicode_hex_escape(
+                                source,
+                                scalar_span.start.offset,
+                            ));
                     let needs = has_escape
                         || Self::needs_quotes(value)
                         || extra_required.iter().any(|p| value.contains(p.as_str()));
@@ -256,7 +246,6 @@ impl QuotedStringsRule {
                     && !Self::is_scalar_literal(value)
                     && !extra_allowed.iter().any(|p| value.contains(p.as_str())) =>
             {
-                let scalar_span = Self::make_span(line, col, scalar_offset, value.len());
                 let severity = config.get_effective_severity(self.code(), self.default_severity());
                 diagnostics.push(
                     DiagnosticBuilder::new(
@@ -272,16 +261,6 @@ impl QuotedStringsRule {
             // Literal and folded block scalars are intentional; skip.
             _ => {}
         }
-    }
-
-    /// Builds a [`Span`] covering `len` bytes starting at `offset` on `line`.
-    ///
-    /// `col` is 0-indexed (as returned by saphyr); `Location` column is 1-indexed.
-    const fn make_span(line: usize, col: usize, offset: usize, len: usize) -> Span {
-        Span::new(
-            Location::new(line, col + 1, offset),
-            Location::new(line, col + 1 + len, offset + len),
-        )
     }
 
     /// Returns `true` if a double-quoted scalar's decoded value indicates it required escape
@@ -721,6 +700,57 @@ mod tests {
             "expected offset 2 for quoted value after '- ', got {}",
             span.start.offset
         );
+    }
+
+    fn run(yaml: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        QuotedStringsRule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+    }
+
+    // Regression tests for issue #308: non-ASCII text before a quoted scalar.
+
+    #[test]
+    fn test_non_ascii_key_does_not_hide_unicode_escape() {
+        assert!(run("—: \"\\u00e9\"").is_empty());
+        assert!(run("ключ: \"\\x41\"").is_empty());
+    }
+
+    #[test]
+    fn test_non_ascii_key_quoted_value_span() {
+        let yaml = "—: \"é\"";
+        let diagnostics = run(yaml);
+        assert_eq!(diagnostics.len(), 1);
+        let span = diagnostics[0].span;
+        assert_eq!((span.start.column, span.start.offset), (4, 5));
+        assert_eq!((span.end.column, span.end.offset), (7, 9));
+    }
+
+    #[test]
+    fn test_four_byte_key_quoted_value_span() {
+        let yaml = "🎉: \"é\"";
+        let diagnostics = run(yaml);
+        assert_eq!(diagnostics.len(), 1);
+        let span = diagnostics[0].span;
+        assert_eq!((span.start.column, span.start.offset), (4, 6));
+        assert_eq!((span.end.column, span.end.offset), (7, 10));
+        assert!(run("🎉: \"\\u00e9\"").is_empty());
+    }
+
+    #[test]
+    fn test_non_ascii_quoted_key_span() {
+        let diagnostics = run("\"ключ\": 1");
+        assert_eq!(diagnostics.len(), 1);
+        let span = diagnostics[0].span;
+        assert_eq!((span.start.column, span.start.offset), (1, 0));
+        assert_eq!((span.end.column, span.end.offset), (7, 10));
+    }
+
+    #[test]
+    fn test_multiline_quoted_span_ends_on_last_line() {
+        let diagnostics = run("k: \"a\n  b\"\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span.start.line, 1);
+        assert_eq!(diagnostics[0].span.end.line, 2);
     }
 
     // Regression tests for issue #182: false positives on unicode/hex escape sequences.

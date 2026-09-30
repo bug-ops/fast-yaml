@@ -150,6 +150,41 @@ mod edge_case_fixtures {
     }
 
     #[test]
+    fn test_edge_case_non_ascii_offsets_are_consistent() {
+        let yaml = include_str!("fixtures/edge_cases/non_ascii_offsets.yaml");
+        assert_offsets_consistent(yaml);
+        assert_offsets_consistent(&yaml.replace('\n', "\r\n"));
+    }
+
+    fn assert_offsets_consistent(yaml: &str) {
+        let linter = Linter::with_all_rules();
+        let diagnostics = linter.lint(yaml).unwrap();
+        assert!(!diagnostics.is_empty());
+
+        for d in &diagnostics {
+            let (start, end) = (d.span.start, d.span.end);
+            assert!(yaml.is_char_boundary(start.offset), "{d:?}");
+            assert!(yaml.is_char_boundary(end.offset), "{d:?}");
+            let line_start = yaml
+                .split_inclusive('\n')
+                .take(start.line - 1)
+                .map(str::len)
+                .sum::<usize>();
+            assert_eq!(
+                yaml[line_start..start.offset].chars().count() + 1,
+                start.column,
+                "{d:?}"
+            );
+        }
+        assert!(
+            !diagnostics.iter().any(
+                |d| d.span.start.line == 7 && d.code.as_str() == DiagnosticCode::QUOTED_STRINGS
+            ),
+            "\\u escape must not be flagged: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn test_edge_case_stray_bracket_in_comment_no_panic() {
         let linter = Linter::with_all_rules();
         assert!(linter.lint("k: [a,\n  b]\n# x ]\nz: [ 1 ]\n").is_ok());
