@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -12,7 +11,10 @@ from fast_yaml._core import lint
 
 
 def test_deeply_nested_input():
-    nested = json.loads('{"truthy": {"allowed-values":' + "[" * 3000 + "]" * 3000 + "}}")
+    inner: list = []
+    for _ in range(3000):
+        inner = [inner]
+    nested = {"truthy": {"allowed-values": inner}}
     with pytest.raises(ValueError, match="nested deeper"):
         lint.LintConfig(rules=nested)
 
