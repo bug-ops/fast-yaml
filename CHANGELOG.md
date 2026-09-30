@@ -74,6 +74,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CLI**: `fy convert` keeps integers beyond `i64` exact in both directions; YAML to JSON now emits them as JSON numbers instead of strings and canonicalizes big-integer JSON map keys (#466, #476)
+- **Python**: `safe_dump`, `dump_all` and `dump_parallel` accept integers beyond `i64` as values and keys instead of raising `OverflowError` (beyond the int-to-str digit limit they raise `ValueError`) (#463, #476)
 - **Linter**: `document-start` no longer reports a missing `---` after `%YAML`/`%TAG` directives, `comments-indentation` and flow/scalar scans are linear (also on non-ASCII lines), and the text formatter bounds long context lines (#443) (#444) (#439) (#453)
 - **Linter**: `empty-values` and `truthy` locate keys and values from parser positions, so a repeated key is reported at its own line, quoted keys containing `:` are checked, and `truthy` flags only a whole scalar (#353) (#473)
 - **Linter**: add linearity guard tests for `byte_offset_of` on long non-ASCII lines (#467) (#473)

@@ -25,7 +25,6 @@ glob = { workspace = true }
 globset = { workspace = true }
 ignore = { workspace = true }
 num_cpus = { workspace = true }
-ordered-float = { workspace = true }
 rayon = { workspace = true }
 saphyr-parser = { workspace = true }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }

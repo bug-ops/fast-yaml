@@ -5,6 +5,8 @@
 //! both adapt its [`ResolvedScalar`] result to their own value types, so the rules cannot drift
 //! between surfaces.
 
+use std::borrow::Cow;
+
 use saphyr_parser::{ScalarStyle, Tag};
 
 /// A decimal integer literal that overflows `i64`.
@@ -33,6 +35,40 @@ impl<'a> DecimalBigInt<'a> {
     #[must_use]
     pub const fn as_str(self) -> &'a str {
         self.0
+    }
+
+    /// Returns the literal in JSON integer grammar: no leading `+`, no leading zeros.
+    ///
+    /// Borrows the input when it is already canonical.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
+    /// use saphyr_parser::ScalarStyle;
+    ///
+    /// let ResolvedScalar::BigInt(big) =
+    ///     resolve_scalar("+0099999999999999999999", ScalarStyle::Plain, None)
+    /// else {
+    ///     unreachable!()
+    /// };
+    /// assert_eq!(big.canonical(), "99999999999999999999");
+    /// ```
+    #[must_use]
+    pub fn canonical(self) -> Cow<'a, str> {
+        let (negative, digits) = match self.0.as_bytes() {
+            [b'-', ..] => (true, &self.0[1..]),
+            [b'+', ..] => (false, &self.0[1..]),
+            _ => (false, self.0),
+        };
+        let trimmed = digits.trim_start_matches('0');
+        if !negative && trimmed.len() == self.0.len() {
+            Cow::Borrowed(self.0)
+        } else if negative {
+            Cow::Owned(format!("-{trimmed}"))
+        } else {
+            Cow::Borrowed(trimmed)
+        }
     }
 }
 
@@ -265,6 +301,25 @@ fn parse_core_schema_float(s: &str) -> Option<f64> {
 mod tests {
     use super::*;
     use ResolvedScalar::{Bool, Float, Int, Null, Str};
+
+    #[test]
+    fn big_int_canonical_form() {
+        for (raw, expected) in [
+            ("9223372036854775808", "9223372036854775808"),
+            ("+9223372036854775808", "9223372036854775808"),
+            ("-9223372036854775809", "-9223372036854775809"),
+            ("-0009223372036854775809", "-9223372036854775809"),
+            (
+                "0000000000000000000009223372036854775808",
+                "9223372036854775808",
+            ),
+        ] {
+            let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
+                panic!("{raw} should be BigInt");
+            };
+            assert_eq!(big.canonical(), expected);
+        }
+    }
 
     fn core(suffix: &str) -> Tag {
         Tag {

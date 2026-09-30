@@ -81,9 +81,119 @@ fn test_convert_json_big_integer_key_and_value() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            "\"9223372036854775808\": \"-99999999999999999999\"",
+            "\"9223372036854775808\": -99999999999999999999",
         ))
         .stdout(predicate::str::contains("\"99999999999999999999\": \"x\""));
+}
+
+#[test]
+fn test_convert_json_big_integers_are_numbers() {
+    let out = Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin(
+            "a: 9223372036854775808\nb: -9223372036854775809\nc: +99999999999999999999\n\
+             d: 00000000000000000000123456789012345678901\ne: \"9223372036854775808\"\n",
+        )
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
+    assert_eq!(json["a"].to_string(), "9223372036854775808");
+    assert_eq!(json["b"].to_string(), "-9223372036854775809");
+    assert_eq!(json["c"].to_string(), "99999999999999999999");
+    assert_eq!(json["d"].to_string(), "123456789012345678901");
+    assert_eq!(json["e"], "9223372036854775808");
+}
+
+#[test]
+fn test_convert_yaml_big_integers_keep_digits() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("yaml")
+        .write_stdin(
+            r#"{"a":9223372036854775808,"b":18446744073709551615,"c":-9223372036854775809,"d":123456789012345678901234567890,"e":[18446744073709551616],"f":9223372036854775807,"g":1.5}"#,
+        )
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a: 9223372036854775808\n"))
+        .stdout(predicate::str::contains("b: 18446744073709551615\n"))
+        .stdout(predicate::str::contains("c: -9223372036854775809\n"))
+        .stdout(predicate::str::contains("d: 123456789012345678901234567890\n"))
+        .stdout(predicate::str::contains("- 18446744073709551616\n"))
+        .stdout(predicate::str::contains("f: 9223372036854775807\n"))
+        .stdout(predicate::str::contains("g: 1.5\n"));
+}
+
+#[test]
+fn test_convert_big_integers_json_yaml_json_round_trip() {
+    let json = r#"{"a":9223372036854775808,"b":-99999999999999999999,"c":[18446744073709551616]}"#;
+    let yaml = Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("yaml")
+        .write_stdin(json)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let back = Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin(yaml)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let a: serde_json::Value = serde_json::from_str(json).unwrap();
+    let b: serde_json::Value = serde_json::from_slice(&back).unwrap();
+    assert_eq!(a.to_string(), b.to_string());
+}
+
+#[test]
+fn test_convert_json_big_integer_key_is_canonical() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("+99999999999999999999: v\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"99999999999999999999\": \"v\""));
+}
+
+#[test]
+fn test_convert_json_equivalent_big_integer_keys_collapse_last_wins() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("? 99999999999999999999\n: first\n? +99999999999999999999\n: second\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "\"99999999999999999999\": \"second\"",
+        ))
+        .stdout(predicate::str::contains("first").not());
+}
+
+#[test]
+fn test_convert_yaml_json_negative_zero_is_integer_zero() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("yaml")
+        .write_stdin(r#"{"z":-0}"#)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("z: 0\n"));
 }
 
 #[test]
