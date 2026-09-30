@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 
 use crate::error::{EmitError, EmitResult, from_saphyr};
 use crate::parser::scalar_to_value;
-use crate::scalar::{ResolvedScalar, resolve_scalar};
+use crate::scalar::{IntRadix, ResolvedScalar, resolve_scalar};
 use crate::streaming::{
     effective_style, is_unsafe_plain, write_double_quoted, write_single_quoted,
 };
@@ -719,9 +719,13 @@ fn reads_as_non_string(s: &str) -> bool {
 fn needs_saphyr_rewrite(value: &Value) -> bool {
     match value {
         Value::Value(ScalarOwned::String(s)) => reads_as_non_string(s),
-        Value::Representation(_, style, tag) => {
+        Value::Representation(s, style, tag) => {
             matches!(style, ScalarStyle::Literal | ScalarStyle::Folded)
                 || tag.as_ref().is_some_and(Tag::is_yaml_core_schema)
+                || matches!(
+                    resolve_scalar(s, *style, tag.as_ref()),
+                    ResolvedScalar::BigInt(big) if big.radix() != IntRadix::Decimal
+                )
         }
         Value::Tagged(_, inner) => needs_saphyr_rewrite(inner),
         Value::Sequence(seq) => seq.iter().any(needs_saphyr_rewrite),
@@ -2367,14 +2371,44 @@ mod tests {
     }
 
     #[test]
+    fn emit_radix_big_ints_in_flow_collections_and_keys_as_decimal() {
+        let decimal = "4722366482869645213695";
+        for input in [
+            "[0xFFFFFFFFFFFFFFFFFF]",
+            "{a: 0xFFFFFFFFFFFFFFFFFF}",
+            "{0xFFFFFFFFFFFFFFFFFF: a}",
+            "0xFFFFFFFFFFFFFFFFFF: a\nb: [0o7777777777777777777777]\n",
+        ] {
+            let doc = crate::Parser::parse_str(input).unwrap().unwrap();
+            for out in emit_both(&doc) {
+                assert!(!out.contains("0x") && !out.contains("0o"), "{input}: {out}");
+                let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+                assert!(!Emitter::emit_str(&back).unwrap().contains("0x"), "{input}");
+            }
+        }
+        let doc = crate::Parser::parse_str("{0xFFFFFFFFFFFFFFFFFF: 0xFFFFFFFFFFFFFFFFFF}")
+            .unwrap()
+            .unwrap();
+        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        assert_eq!(
+            Emitter::emit_str_with_config(&doc, &flow).unwrap(),
+            format!("{{{decimal}: {decimal}}}\n")
+        );
+    }
+
+    #[test]
     fn emit_radix_big_ints_as_canonical_decimal_and_quote_strings() {
         let doc =
             crate::Parser::parse_str("a: 0xFFFFFFFFFFFFFFFFFF\nb: 0o7777777777777777777777\n")
                 .unwrap()
                 .unwrap();
+        let decimal =
+            crate::Parser::parse_str("a: 4722366482869645213695\nb: 73786976294838206463\n")
+                .unwrap()
+                .unwrap();
         for out in emit_both(&doc) {
             let back = crate::Parser::parse_str(&out).unwrap().unwrap();
-            assert_eq!(back, doc, "{out}");
+            assert_eq!(back, decimal, "{out}");
         }
         assert_eq!(
             Emitter::emit_str(&doc).unwrap(),

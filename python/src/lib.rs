@@ -23,7 +23,7 @@
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
 use fast_yaml_core::{
-    DumpBudget, LimitKind, MaxDepth, MaxOutputBytes, ResolvedScalar, resolve_scalar,
+    DumpBudget, IntRadix, LimitKind, MaxDepth, MaxOutputBytes, ResolvedScalar, resolve_scalar,
 };
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
@@ -32,6 +32,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString};
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 use saphyr_parser::{ScalarStyle, Tag};
+use std::borrow::Cow;
 
 mod batch;
 mod conversion;
@@ -314,11 +315,17 @@ pub(crate) fn repr_to_python(
         ResolvedScalar::Bool(b) => b.into_pyobject(py)?.as_any().clone().unbind(),
         ResolvedScalar::Int(i) => i.into_pyobject(py)?.as_any().clone().unbind(),
         ResolvedScalar::Float(f) => f.into_pyobject(py)?.as_any().clone().unbind(),
-        ResolvedScalar::BigInt(big) => py
-            .import("builtins")?
-            .getattr("int")?
-            .call1((big.as_str(), big.radix().value()))?
-            .unbind(),
+        ResolvedScalar::BigInt(big) => {
+            // Decimal is counted by canonical digits so both loaders apply the same limit.
+            let text = match big.radix() {
+                IntRadix::Decimal => big.canonical(),
+                IntRadix::Hex | IntRadix::Octal => Cow::Borrowed(big.as_str()),
+            };
+            py.import("builtins")?
+                .getattr("int")?
+                .call1((text.as_ref(), big.radix().value()))?
+                .unbind()
+        }
         ResolvedScalar::Str(s) => s.into_pyobject(py)?.as_any().clone().unbind(),
     })
 }

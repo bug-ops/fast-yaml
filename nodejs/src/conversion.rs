@@ -3,7 +3,7 @@
 //! This module provides bidirectional conversion utilities for translating
 //! between saphyr's `YamlOwned` type and NAPI-RS JavaScript values.
 
-use fast_yaml_core::{DumpBudget, LimitKind, MaxDepth};
+use fast_yaml_core::{DumpBudget, LimitKind, MaxDepth, ResolvedScalar, resolve_scalar};
 use napi::{Result as NapiResult, bindgen_prelude::*};
 use ordered_float::OrderedFloat;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
@@ -71,8 +71,12 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &YamlOwned) -> NapiResult<Unknown<
         // Tagged values - extract the inner value
         YamlOwned::Tagged(_, inner) => yaml_to_js(env, inner),
 
-        // Representation values hold canonical decimal text for integers beyond i64
-        YamlOwned::Representation(repr, _, _) => repr.as_str().into_unknown(env),
+        YamlOwned::Representation(repr, style, tag) => {
+            match resolve_scalar(repr, *style, tag.as_ref()) {
+                ResolvedScalar::BigInt(big) => big.canonical().as_ref().into_unknown(env),
+                _ => repr.as_str().into_unknown(env),
+            }
+        }
     }
 }
 

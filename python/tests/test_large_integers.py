@@ -341,21 +341,6 @@ def test_int_beyond_digit_limit_raises_in_every_load_path(
         load_path(text)
 
 
-@pytest.mark.parametrize(
-    "name", ["safe_load", "safe_load_all", "load", "load_all", "safe_load_stream"]
-)
-def test_leading_zeros_count_towards_digit_limit_in_event_loader(name, int_digit_limit):
-    int_digit_limit(4300)
-    with pytest.raises(ValueError, match="Exceeds the limit"):
-        _load_path(name)(LEADING_ZEROS_DOC)
-
-
-def test_parse_parallel_leading_zeros_are_canonicalized_before_digit_limit(int_digit_limit):
-    int_digit_limit(4300)
-    value = _load_path("parse_parallel")(LEADING_ZEROS_DOC)["x"]
-    assert value == BIG_301, "leading-zero literal is not exact"
-
-
 def test_leading_zeros_are_exact_when_limit_disabled(load_path, int_digit_limit):
     int_digit_limit(0)
     assert load_path(LEADING_ZEROS_DOC)["x"] == BIG_301, "leading-zero literal is not exact"
@@ -413,20 +398,6 @@ def test_radix_big_int_paths_agree_under_default_limit(text, int_digit_limit):
     assert sequential == parallel_result, "safe_load and parse_parallel diverge"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="parse_parallel converts canonical decimal text, so a lowered limit hits radix ints",
-)
-def test_radix_big_int_ignores_lowered_digit_limit_in_both_loaders(int_digit_limit):
-    from fast_yaml._core import parallel
-
-    int_digit_limit(1000)
-    text = "x: 0x" + "F" * 1000 + "\n"
-    expected = int("F" * 1000, 16)
-    assert fast_yaml.safe_load(text)["x"] == expected, "safe_load value is not exact"
-    assert parallel.parse_parallel(text)[0]["x"] == expected, "parse_parallel value is not exact"
-
-
 def _dump_path(name):
     from fast_yaml._core import parallel
 
@@ -448,3 +419,55 @@ def test_dump_int_beyond_digit_limit(path, value, int_digit_limit):
     int_digit_limit(0)
     out = dump({"k": value})
     assert fast_yaml.safe_load(out)["k"] == value, "dump round trip not exact"
+
+
+@pytest.mark.parametrize(
+    ("literal", "base"),
+    [("0x" + "F" * 1000, 16), ("0o" + "7" * 1500, 8)],
+)
+def test_radix_big_int_ignores_lowered_digit_limit_in_every_loader(
+    load_path, int_digit_limit, literal, base
+):
+    expected = int(literal, base)
+    int_digit_limit(1000)
+    assert load_path(f"x: {literal}")["x"] == expected
+
+
+def test_leading_zeros_do_not_count_toward_digit_limit_in_every_loader(load_path, int_digit_limit):
+    int_digit_limit(4300)
+    digits = "9" * 301
+    assert load_path(f"x: {'0' * 4000}{digits}")["x"] == int(digits)
+
+
+@pytest.mark.parametrize(
+    ("literal", "base"),
+    [("0x" + "F" * 1000, 16), ("0o" + "7" * 1000, 8)],
+)
+def test_radix_big_int_key_ignores_lowered_digit_limit_in_every_loader(
+    load_path, int_digit_limit, literal, base
+):
+    expected = int(literal, base)
+    int_digit_limit(700)
+    assert load_path(f"{literal}: 1") == {expected: 1}
+
+
+def test_equal_radix_and_decimal_keys_collapse_under_lowered_limit(load_path, int_digit_limit):
+    big = int("0x" + "F" * 1000, 16)
+    int_digit_limit(1000)
+    assert load_path(f"0x{'F' * 1000}: a\nk: 0\n0X{'F' * 1000}: b") == {
+        big: "b",
+        "k": 0,
+    }
+
+
+def test_parse_parallel_hex_round_trips_through_dump_parallel():
+    from fast_yaml._core import parallel
+
+    docs = parallel.parse_parallel("0xFFFFFFFFFFFFFFFFFF: 0o7777777777777777777777\n")
+    out = parallel.dump_parallel(docs)
+    assert list(fast_yaml.safe_load_all(out)) == docs
+
+
+def test_radix_big_int_key_and_value_agree_across_loaders(load_path):
+    doc = load_path("0xFFFFFFFFFFFFFFFFFF: 0o7777777777777777777777")
+    assert doc == {0xFFFFFFFFFFFFFFFFFF: 0o7777777777777777777777}
