@@ -558,9 +558,6 @@ class TestInlineDirectives:
 
     def test_block_disable_and_enable(self):
         """disable/enable open and close a suppression block."""
-        yaml = (
-            "# fy: disable duplicate-key\na: 1\na: 2\n"
-            "# fy: enable duplicate-key\nb: 1\nb: 2\n"
-        )
+        yaml = "# fy: disable duplicate-key\na: 1\na: 2\n# fy: enable duplicate-key\nb: 1\nb: 2\n"
         lines = [d.span.start.line for d in lint.lint(yaml) if d.code == "duplicate-key"]
         assert lines == [6]
