@@ -45,6 +45,18 @@ pub enum Error {
         message: String,
     },
 
+    /// Formatting would silently drop YAML comments and the caller did not allow it.
+    #[error("file contains YAML comments that formatting would strip")]
+    CommentsWouldBeStripped,
+
+    /// Scanning the input for comments failed.
+    #[error("failed to scan for comments: {source}")]
+    CommentScan {
+        /// The underlying parse error from fast-yaml-core.
+        #[source]
+        source: CoreParseError,
+    },
+
     /// Failed to write file.
     #[error("failed to write '{path}': {source}")]
     Write {

@@ -154,7 +154,10 @@ fn test_batch_dry_run() {
 
     fy().args(["format", "-n", file.to_str().unwrap()])
         .assert()
-        .success();
+        .code(5);
+    fy().args(["format", "-i", "--dry-run", file.to_str().unwrap()])
+        .assert()
+        .code(5);
 
     // File should NOT be modified
     assert_eq!(fs::read_to_string(&file).unwrap(), original);
@@ -363,19 +366,6 @@ fn test_batch_mixed_only_formats_files_without_comments() {
 }
 
 #[test]
-fn test_single_file_dry_run_does_not_write() {
-    let temp = TempDir::new().unwrap();
-    let file = temp.path().join("e.yaml");
-    fs::write(&file, "key:    value\n").unwrap();
-
-    fy().args(["format", "-i", "--dry-run", file.to_str().unwrap()])
-        .assert()
-        .success();
-
-    assert_eq!(fs::read_to_string(&file).unwrap(), "key:    value\n");
-}
-
-#[test]
 fn test_dry_run_with_output_is_rejected() {
     let temp = TempDir::new().unwrap();
     let out = temp.path().join("out.yaml");
@@ -419,7 +409,7 @@ fn test_multiple_paths_with_comments_guard() {
         clean.to_str().unwrap(),
     ])
     .assert()
-    .failure();
+    .code(1);
 
     assert_eq!(fs::read_to_string(&commented).unwrap(), COMMENTED);
     assert_eq!(fs::read_to_string(&clean).unwrap(), "key: value\n");
@@ -454,7 +444,7 @@ fn test_single_file_dry_run_with_comments() {
 
     fy().args(["format", "-i", "--dry-run", "--strip-comments", path])
         .assert()
-        .success();
+        .code(5);
     assert_eq!(fs::read_to_string(&file).unwrap(), COMMENTED);
 }
 
@@ -557,4 +547,214 @@ fn test_apostrophe_comment_is_guarded() {
         .failure();
 
     assert_eq!(fs::read_to_string(&file).unwrap(), content);
+}
+
+#[test]
+fn test_dry_run_already_formatted_is_unchanged() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("clean.yaml");
+    fs::write(&file, "key: value\n").unwrap();
+
+    fy().args(["format", "--dry-run", file.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 unchanged"))
+        .stderr(predicate::str::contains("would change").not());
+}
+
+#[test]
+fn test_dry_run_batch_mixed_reports_accurately() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    let dirty = temp.path().join("dirty.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+    fs::write(&dirty, "key:    value\n").unwrap();
+
+    fy().args([
+        "format",
+        "--dry-run",
+        clean.to_str().unwrap(),
+        dirty.to_str().unwrap(),
+    ])
+    .assert()
+    .code(5)
+    .stderr(predicate::str::contains("1 unchanged"))
+    .stderr(predicate::str::contains("1 would change"));
+
+    assert_eq!(fs::read_to_string(&dirty).unwrap(), "key:    value\n");
+}
+
+#[test]
+fn test_dry_run_batch_all_clean_succeeds() {
+    let temp = TempDir::new().unwrap();
+    let a = temp.path().join("a.yaml");
+    let b = temp.path().join("b.yaml");
+    fs::write(&a, "a: 1\n").unwrap();
+    fs::write(&b, "b: 2\n").unwrap();
+
+    fy().args([
+        "format",
+        "--dry-run",
+        a.to_str().unwrap(),
+        b.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("2 unchanged"));
+}
+
+#[test]
+fn test_dry_run_failure_takes_precedence_over_would_change() {
+    let temp = TempDir::new().unwrap();
+    let dirty = temp.path().join("dirty.yaml");
+    let commented = temp.path().join("c.yaml");
+    fs::write(&dirty, "key:    value\n").unwrap();
+    fs::write(&commented, COMMENTED).unwrap();
+
+    fy().args([
+        "format",
+        "--dry-run",
+        dirty.to_str().unwrap(),
+        commented.to_str().unwrap(),
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("--strip-comments"));
+}
+
+#[test]
+fn test_stdin_dry_run_reports_summary_and_exit_code() {
+    fy().args(["format", "--dry-run"])
+        .write_stdin("key: value\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("1 unchanged"));
+
+    fy().args(["format", "--dry-run"])
+        .write_stdin("key:    value\n")
+        .assert()
+        .code(5)
+        .stdout(predicate::str::is_empty())
+        .stderr(predicate::str::contains("1 would change"));
+}
+
+#[test]
+fn test_comment_after_multiline_quote_is_guarded() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("h2.yaml");
+    let content = "a: foo\n  \"bar\nb: 1 # real comment\n";
+    fs::write(&file, content).unwrap();
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--strip-comments"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), content);
+}
+
+#[test]
+fn test_quiet_dry_run_keeps_exit_codes() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    let dirty = temp.path().join("dirty.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+    fs::write(&dirty, "key:    value\n").unwrap();
+
+    fy().args(["-q", "format", "--dry-run", clean.to_str().unwrap()])
+        .assert()
+        .code(0);
+    fy().args(["-q", "format", "--dry-run", dirty.to_str().unwrap()])
+        .assert()
+        .code(5);
+}
+
+#[test]
+fn test_stdin_dry_run_with_comments() {
+    fy().args(["format", "--dry-run"])
+        .write_stdin(COMMENTED)
+        .assert()
+        .code(1);
+    fy().args(["format", "--dry-run", "--strip-comments"])
+        .write_stdin(COMMENTED)
+        .assert()
+        .code(5);
+}
+
+#[test]
+fn test_batch_dry_run_strip_comments() {
+    let temp = TempDir::new().unwrap();
+    let commented = temp.path().join("c.yaml");
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&commented, COMMENTED).unwrap();
+    fs::write(&clean, "key: value\n").unwrap();
+
+    fy().args([
+        "format",
+        "--dry-run",
+        "--strip-comments",
+        commented.to_str().unwrap(),
+        clean.to_str().unwrap(),
+    ])
+    .assert()
+    .code(5)
+    .stderr(predicate::str::contains("1 would change"))
+    .stderr(predicate::str::contains("1 unchanged"));
+
+    assert_eq!(fs::read_to_string(&commented).unwrap(), COMMENTED);
+}
+
+#[test]
+fn test_in_place_changed_and_failed_exits_with_failure_code() {
+    let temp = TempDir::new().unwrap();
+    let dirty = temp.path().join("dirty.yaml");
+    let broken = temp.path().join("broken.yaml");
+    fs::write(&dirty, "key:    value\n").unwrap();
+    fs::write(&broken, "key: [\n").unwrap();
+
+    fy().args([
+        "format",
+        "-i",
+        dirty.to_str().unwrap(),
+        broken.to_str().unwrap(),
+    ])
+    .assert()
+    .code(1);
+
+    assert_eq!(fs::read_to_string(&dirty).unwrap(), "key: value\n");
+}
+
+#[test]
+fn test_empty_input_dry_run_is_unchanged() {
+    let temp = TempDir::new().unwrap();
+    let empty = temp.path().join("empty.yaml");
+    fs::write(&empty, "").unwrap();
+
+    fy().args(["format", "--dry-run", empty.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 unchanged"));
+
+    fy().args(["format", "--dry-run"])
+        .write_stdin("")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 unchanged"));
+}
+
+#[test]
+fn test_single_file_in_place_skips_write_when_already_formatted() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("clean.yaml");
+    fs::write(&file, "key: value\n").unwrap();
+    let before = fs::metadata(&file).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), before);
+    assert_eq!(fs::read_to_string(&file).unwrap(), "key: value\n");
 }

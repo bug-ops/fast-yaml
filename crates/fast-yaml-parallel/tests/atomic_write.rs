@@ -33,7 +33,7 @@ fn leaves_no_temp_files_behind() {
 mod unix {
     use super::*;
     use fast_yaml_core::EmitterConfig;
-    use fast_yaml_parallel::FileProcessor;
+    use fast_yaml_parallel::{CommentPolicy, FileProcessor};
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::Path;
 
@@ -154,7 +154,11 @@ mod unix {
         }
         let only_paths: Vec<_> = paths.iter().map(|(p, _)| p.clone()).collect();
 
-        let result = FileProcessor::new().format_in_place(&only_paths, &EmitterConfig::new());
+        let result = FileProcessor::new().format_in_place(
+            &only_paths,
+            &EmitterConfig::new(),
+            CommentPolicy::Reject,
+        );
 
         assert_eq!(result.failed, 0);
         for (path, m) in &paths {

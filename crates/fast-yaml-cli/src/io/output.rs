@@ -69,6 +69,11 @@ impl OutputWriter {
         }
     }
 
+    /// Returns `true` if this writer overwrites the file at `path`.
+    pub fn targets(&self, path: &Path) -> bool {
+        matches!(&self.destination, OutputDestination::File(p) if p == path)
+    }
+
     /// Write output to destination.
     ///
     /// # Errors

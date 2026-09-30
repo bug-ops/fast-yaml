@@ -91,7 +91,11 @@ fn run() -> Result<ExitCode> {
             dry_run,
             strip_comments,
         }) => {
-            // Determine if this is batch mode
+            let comment_policy = if strip_comments {
+                fast_yaml_parallel::CommentPolicy::Strip
+            } else {
+                fast_yaml_parallel::CommentPolicy::Reject
+            };
             let is_batch = is_batch_mode(&paths, stdin_files, &include, &exclude, jobs);
 
             if is_batch {
@@ -146,10 +150,9 @@ fn run() -> Result<ExitCode> {
                         .with_indent(indent)
                         .with_width(width),
                 );
-                let cmd = commands::format::FormatCommand::new(format_config, strip_comments)
-                    .with_dry_run(dry_run);
-                cmd.execute(&input, &output)?;
-                ExitCode::Success
+                commands::format::FormatCommand::new(format_config, comment_policy)
+                    .with_dry_run(dry_run)
+                    .run(&input, &output)?
             } else {
                 // SINGLE FILE MODE - backward compatible
                 let file_path = &paths[0];
@@ -161,22 +164,9 @@ fn run() -> Result<ExitCode> {
                         .with_indent(indent)
                         .with_width(width),
                 );
-                let cmd = commands::format::FormatCommand::new(format_config, strip_comments)
-                    .with_dry_run(dry_run);
-                cmd.execute(&input, &output)?;
-                if dry_run {
-                    reporter::Reporter::new(common_config.output.clone()).report(
-                        reporter::ReportEvent::BatchSummary {
-                            total: 1,
-                            formatted: 0,
-                            unchanged: 0,
-                            would_change: 1,
-                            failed: 0,
-                            duration: std::time::Duration::ZERO,
-                        },
-                    )?;
-                }
-                ExitCode::Success
+                commands::format::FormatCommand::new(format_config, comment_policy)
+                    .with_dry_run(dry_run)
+                    .run(&input, &output)?
             }
         }
         Some(Command::Convert { to, file, pretty }) => {
@@ -290,7 +280,10 @@ fn run() -> Result<ExitCode> {
             let format_config = common_config
                 .clone()
                 .with_formatter(config::FormatterConfig::new().with_indent(2).with_width(80));
-            let cmd = commands::format::FormatCommand::new(format_config, false);
+            let cmd = commands::format::FormatCommand::new(
+                format_config,
+                fast_yaml_parallel::CommentPolicy::Reject,
+            );
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }

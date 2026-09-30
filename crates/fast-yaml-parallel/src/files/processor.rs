@@ -4,12 +4,32 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use fast_yaml_core::emitter::{Emitter, EmitterConfig};
+use fast_yaml_core::has_comments;
 use rayon::prelude::*;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::io::SmartReader;
 use crate::result::{BatchResult, FileOutcome, FileResult};
+
+/// Whether formatting may discard YAML comments, which the emitter cannot preserve.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CommentPolicy {
+    /// Fail files that contain comments with [`Error::CommentsWouldBeStripped`].
+    #[default]
+    Reject,
+    /// Format regardless and drop the comments.
+    Strip,
+}
+
+/// Formatted content of one file together with whether it differs from the original.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FormatOutput {
+    /// The formatted document text.
+    pub formatted: String,
+    /// `true` when `formatted` differs from the file's current content.
+    pub changed: bool,
+}
 
 /// Parallel file processor for batch YAML operations.
 ///
@@ -100,20 +120,36 @@ impl FileProcessor {
         })
     }
 
-    /// Format files and return `(path, formatted_content)` pairs.
+    /// Format files and return `(path, output)` pairs without writing anything.
+    ///
+    /// Each file is read once; `output.changed` reports whether formatting would alter it.
+    /// With [`CommentPolicy::Reject`], files containing comments yield
+    /// [`Error::CommentsWouldBeStripped`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::PathBuf;
+    /// use fast_yaml_core::EmitterConfig;
+    /// use fast_yaml_parallel::{CommentPolicy, FileProcessor};
+    ///
+    /// let processor = FileProcessor::new();
+    /// let paths = [PathBuf::from("a.yaml")];
+    /// for (path, result) in processor.format_files(&paths, &EmitterConfig::new(), CommentPolicy::Reject) {
+    ///     match result {
+    ///         Ok(out) if out.changed => println!("{} would change", path.display()),
+    ///         Ok(_) => {}
+    ///         Err(e) => eprintln!("{}: {e}", path.display()),
+    ///     }
+    /// }
+    /// ```
     pub fn format_files(
         &self,
         paths: &[PathBuf],
         emitter_config: &EmitterConfig,
-    ) -> Vec<(PathBuf, Result<String>)> {
-        let process_file = |path: &Path| -> Result<String> {
-            let file_content = self.reader.read(path)?;
-            let original = file_content.as_str()?;
-
-            Emitter::format_with_config(original, emitter_config).map_err(|e| Error::Format {
-                message: format!("{}: {}", path.display(), e),
-            })
-        };
+        comments: CommentPolicy,
+    ) -> Vec<(PathBuf, Result<FormatOutput>)> {
+        let process_file = |path: &Path| self.format_content(path, emitter_config, comments);
 
         if Self::should_use_sequential(paths) {
             paths
@@ -129,10 +165,14 @@ impl FileProcessor {
     }
 
     /// Format files in place (write back if changed).
+    ///
+    /// With [`CommentPolicy::Reject`], files containing comments are reported as
+    /// [`Error::CommentsWouldBeStripped`] and left untouched.
     pub fn format_in_place(
         &self,
         paths: &[PathBuf],
         emitter_config: &EmitterConfig,
+        comments: CommentPolicy,
     ) -> BatchResult {
         let batch_start = std::time::Instant::now();
         let total = paths.len();
@@ -144,12 +184,12 @@ impl FileProcessor {
         let results = if Self::should_use_sequential(paths) {
             paths
                 .iter()
-                .map(|path| self.format_single_file(path, emitter_config))
+                .map(|path| self.format_single_file(path, emitter_config, comments))
                 .collect()
         } else {
             paths
                 .par_iter()
-                .map(|path| self.format_single_file(path, emitter_config))
+                .map(|path| self.format_single_file(path, emitter_config, comments))
                 .collect()
         };
 
@@ -158,47 +198,61 @@ impl FileProcessor {
         batch
     }
 
-    /// Format a single file in place
-    fn format_single_file(&self, path: &Path, emitter_config: &EmitterConfig) -> FileResult {
-        let start = std::time::Instant::now();
-
-        let metadata = match std::fs::metadata(path) {
-            Ok(m) => m,
-            Err(source) => {
-                return FileResult::new(
-                    path.to_path_buf(),
-                    FileOutcome::Error {
-                        error: Error::Io {
-                            path: path.to_path_buf(),
-                            source,
-                        },
-                        duration: start.elapsed(),
-                    },
-                );
-            }
-        };
+    /// Reads `path` once, enforces the size limit and comment policy, and formats it.
+    fn format_content(
+        &self,
+        path: &Path,
+        emitter_config: &EmitterConfig,
+        comments: CommentPolicy,
+    ) -> Result<FormatOutput> {
+        let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
 
         let file_size = metadata.len();
         let max_size = self.config.max_input_size();
 
-        #[allow(clippy::cast_possible_truncation)]
-        let size = file_size as usize;
-
         if file_size > max_size as u64 {
-            return FileResult::new(
-                path.to_path_buf(),
-                FileOutcome::Error {
-                    error: Error::InputTooLarge {
-                        size,
-                        max: max_size,
-                    },
-                    duration: start.elapsed(),
-                },
-            );
+            #[allow(clippy::cast_possible_truncation)]
+            let size = file_size as usize;
+            return Err(Error::InputTooLarge {
+                size,
+                max: max_size,
+            });
         }
 
-        let file_content = match self.reader.read(path) {
-            Ok(c) => c,
+        let file_content = self.reader.read(path)?;
+        let content = file_content.as_str()?;
+
+        let formatted =
+            Emitter::format_with_config(content, emitter_config).map_err(|e| Error::Format {
+                message: format!("{}: {}", path.display(), e),
+            })?;
+
+        if comments == CommentPolicy::Reject
+            && has_comments(content).map_err(|source| Error::CommentScan { source })?
+        {
+            return Err(Error::CommentsWouldBeStripped);
+        }
+
+        Ok(FormatOutput {
+            changed: content != formatted,
+            formatted,
+        })
+    }
+
+    /// Format a single file in place
+    fn format_single_file(
+        &self,
+        path: &Path,
+        emitter_config: &EmitterConfig,
+        comments: CommentPolicy,
+    ) -> FileResult {
+        let start = std::time::Instant::now();
+
+        let output = match self.format_content(path, emitter_config, comments) {
+            Ok(output) => output,
             Err(error) => {
                 return FileResult::new(
                     path.to_path_buf(),
@@ -210,37 +264,9 @@ impl FileProcessor {
             }
         };
 
-        let content = match file_content.as_str() {
-            Ok(s) => s,
-            Err(error) => {
-                return FileResult::new(
-                    path.to_path_buf(),
-                    FileOutcome::Error {
-                        error,
-                        duration: start.elapsed(),
-                    },
-                );
-            }
-        };
-
-        let formatted = match Emitter::format_with_config(content, emitter_config) {
-            Ok(f) => f,
-            Err(e) => {
-                return FileResult::new(
-                    path.to_path_buf(),
-                    FileOutcome::Error {
-                        error: Error::Format {
-                            message: format!("{}: {}", path.display(), e),
-                        },
-                        duration: start.elapsed(),
-                    },
-                );
-            }
-        };
-
-        let changed = content != formatted;
-
-        if changed && let Err(error) = Self::write_file_atomic(path, &formatted) {
+        if output.changed
+            && let Err(error) = Self::write_file_atomic(path, &output.formatted)
+        {
             return FileResult::new(
                 path.to_path_buf(),
                 FileOutcome::Error {
@@ -251,10 +277,10 @@ impl FileProcessor {
         }
 
         let duration = start.elapsed();
-        let outcome = if changed {
+        let outcome = if output.changed {
             FileOutcome::Changed { duration }
         } else {
-            FileOutcome::Success { duration }
+            FileOutcome::Unchanged { duration }
         };
 
         FileResult::new(path.to_path_buf(), outcome)
@@ -467,7 +493,7 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let results = processor.format_files(&paths, &emitter_config);
+        let results = processor.format_files(&paths, &emitter_config, CommentPolicy::Strip);
 
         assert_eq!(results.len(), 1);
         assert!(results[0].1.is_ok());
@@ -480,7 +506,11 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let result = processor.format_in_place(std::slice::from_ref(&path), &emitter_config);
+        let result = processor.format_in_place(
+            std::slice::from_ref(&path),
+            &emitter_config,
+            CommentPolicy::Strip,
+        );
 
         assert_eq!(result.total, 1);
     }
@@ -583,7 +613,11 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let result = processor.format_in_place(std::slice::from_ref(&path), &emitter_config);
+        let result = processor.format_in_place(
+            std::slice::from_ref(&path),
+            &emitter_config,
+            CommentPolicy::Strip,
+        );
 
         // Should process successfully
         assert_eq!(result.total, 1);
@@ -600,7 +634,11 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let result = processor.format_in_place(std::slice::from_ref(&path), &emitter_config);
+        let result = processor.format_in_place(
+            std::slice::from_ref(&path),
+            &emitter_config,
+            CommentPolicy::Strip,
+        );
 
         // File should be changed
         assert_eq!(result.total, 1);
@@ -729,11 +767,88 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let results = processor.format_files(&paths, &emitter_config);
+        let results = processor.format_files(&paths, &emitter_config, CommentPolicy::Strip);
 
         assert_eq!(results.len(), 2);
         assert!(results[0].1.is_ok());
         assert!(results[1].1.is_ok());
+    }
+
+    #[test]
+    fn test_format_files_reports_changed_accurately() {
+        let dir = TempDir::new().unwrap();
+        let clean = create_test_file(&dir, "clean.yaml", "key: value\n");
+        let dirty = create_test_file(&dir, "dirty.yaml", "key:     value\n");
+
+        let results = FileProcessor::new().format_files(
+            &[clean, dirty],
+            &EmitterConfig::new(),
+            CommentPolicy::Reject,
+        );
+
+        assert!(!results[0].1.as_ref().unwrap().changed);
+        assert!(results[1].1.as_ref().unwrap().changed);
+    }
+
+    #[test]
+    fn test_format_files_comment_policy() {
+        let dir = TempDir::new().unwrap();
+        let path = create_test_file(&dir, "c.yaml", "a: 1 # note\n");
+        let processor = FileProcessor::new();
+        let cfg = EmitterConfig::new();
+
+        let rejected =
+            processor.format_files(std::slice::from_ref(&path), &cfg, CommentPolicy::Reject);
+        assert!(matches!(rejected[0].1, Err(Error::CommentsWouldBeStripped)));
+
+        let stripped =
+            processor.format_files(std::slice::from_ref(&path), &cfg, CommentPolicy::Strip);
+        assert!(stripped[0].1.as_ref().unwrap().changed);
+    }
+
+    #[test]
+    fn test_format_in_place_reject_leaves_file_untouched() {
+        let dir = TempDir::new().unwrap();
+        let content = "a: foo\n  \"bar\nb: 1 # real comment\n";
+        let path = create_test_file(&dir, "c.yaml", content);
+
+        let result = FileProcessor::new().format_in_place(
+            std::slice::from_ref(&path),
+            &EmitterConfig::new(),
+            CommentPolicy::Reject,
+        );
+
+        assert_eq!(result.failed, 1);
+        assert!(matches!(result.errors[0].1, Error::CommentsWouldBeStripped));
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    }
+
+    #[test]
+    fn test_format_in_place_unchanged_counts_as_unchanged() {
+        let dir = TempDir::new().unwrap();
+        let path = create_test_file(&dir, "clean.yaml", "key: value\n");
+
+        let result = FileProcessor::new().format_in_place(
+            std::slice::from_ref(&path),
+            &EmitterConfig::new(),
+            CommentPolicy::Reject,
+        );
+
+        assert_eq!((result.success, result.changed), (1, 0));
+    }
+
+    #[test]
+    fn test_format_files_enforces_max_input_size() {
+        let dir = TempDir::new().unwrap();
+        let path = create_test_file(&dir, "big.yaml", "key: a-long-enough-value\n");
+
+        let processor = FileProcessor::with_config(Config::default().with_max_input_size(4));
+        let results = processor.format_files(&[path], &EmitterConfig::new(), CommentPolicy::Strip);
+
+        assert!(matches!(
+            results[0].1,
+            Err(Error::InputTooLarge { max: 4, .. })
+        ));
     }
 
     #[test]

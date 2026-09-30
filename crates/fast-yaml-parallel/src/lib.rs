@@ -86,7 +86,7 @@ pub use error::{Error, Result};
 pub use fast_yaml_core::Value;
 
 // File-level parallelism
-pub use files::FileProcessor;
+pub use files::{CommentPolicy, FileProcessor, FormatOutput};
 pub use io::{FileContent, SmartReader};
 pub use result::{BatchResult, FileOutcome, FileResult};
 
