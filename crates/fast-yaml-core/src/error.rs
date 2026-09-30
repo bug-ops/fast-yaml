@@ -50,21 +50,11 @@ impl ParseError {
                     e.info().to_owned(),
                 ))
             }
-            Self::Syntax {
-                line,
-                column,
-                message,
-            } => Self::Syntax {
-                line: line + lines,
-                column,
-                message,
-            },
             Self::LimitExceeded { kind, line, column } => Self::LimitExceeded {
                 kind,
                 line: line + lines,
                 column,
             },
-            invalid @ Self::InvalidFloat { .. } => invalid,
         }
     }
 }
