@@ -248,7 +248,11 @@ pub fn safe_load_all(
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
-pub fn load(env: &Env, yaml_str: String, options: Option<LoadOptions>) -> napi::Result<Unknown<'_>> {
+pub fn load(
+    env: &Env,
+    yaml_str: String,
+    options: Option<LoadOptions>,
+) -> napi::Result<Unknown<'_>> {
     // Schema is ignored (safe by default); limits are honoured
     safe_load(env, yaml_str, options)
 }
