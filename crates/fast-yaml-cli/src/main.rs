@@ -32,21 +32,26 @@
 #![allow(clippy::too_many_lines)]
 #![allow(clippy::redundant_clone)]
 #![allow(clippy::cast_possible_truncation)]
+#![warn(dead_code)]
 
 use anyhow::Result;
 use clap::Parser;
+use fast_yaml_cli::{discovery, error};
+use fast_yaml_parallel::CommentPolicy;
 
 mod cli;
 mod commands;
 mod config;
-mod discovery;
-mod error;
+mod invocation;
 mod io;
 mod reporter;
 
 use cli::{Cli, Command};
+use commands::format::{EditIntent, FormatCommand, WriteMode};
+use commands::format_batch::BatchWrite;
+use config::{CommonConfig, FormatterConfig};
 use error::{ExitCode, format_error};
-use io::input::InputOrigin;
+use invocation::Target;
 use io::{InputSource, OutputWriter};
 
 fn main() {
@@ -68,10 +73,8 @@ fn main() {
 fn run() -> Result<ExitCode> {
     let cli = Cli::parse();
 
-    // Create common config early to avoid borrow issues
-    let common_config = config::CommonConfig::from_cli(&cli);
+    let common_config = CommonConfig::from_cli(&cli);
 
-    // Execute command
     let exit_code = match cli.command {
         Some(Command::Parse { file, stats }) => {
             let input = InputSource::from_args(file)?;
@@ -83,97 +86,47 @@ fn run() -> Result<ExitCode> {
             paths,
             indent,
             width,
-            jobs,
             stdin_files,
-            include,
-            exclude,
-            no_recursive,
+            batch,
             dry_run,
             strip_comments,
         }) => {
-            let comment_policy = if strip_comments {
-                fast_yaml_parallel::CommentPolicy::Strip
+            let comments = if strip_comments {
+                CommentPolicy::Strip
             } else {
-                fast_yaml_parallel::CommentPolicy::Reject
+                CommentPolicy::Reject
             };
-            let is_batch = is_batch_mode(&paths, stdin_files, &include, &exclude, jobs);
+            let intent = EditIntent::from_flags(dry_run, cli.in_place);
+            let common = common_config
+                .with_formatter(FormatterConfig::new().with_indent(indent).with_width(width));
 
-            if is_batch {
-                // BATCH MODE - using composed BatchConfig
-                let mut discovery_config = discovery::DiscoveryConfig::new();
-
-                // Apply include patterns if provided
-                if !include.is_empty() {
-                    discovery_config = discovery_config.with_include_patterns(include);
+            match Target::resolve(paths, stdin_files, &batch)? {
+                Target::Stdin => {
+                    let mode = stdin_write_mode(intent, cli.output)?;
+                    FormatCommand::new(common, comments).run(&InputSource::from_stdin()?, &mode)?
                 }
-
-                // Apply exclude patterns if provided
-                if !exclude.is_empty() {
-                    discovery_config = discovery_config.with_exclude_patterns(exclude);
+                Target::File(path) => {
+                    let input = InputSource::from_file(&path)?;
+                    let mode = WriteMode::new(intent, cli.output, Some(&path))?;
+                    FormatCommand::new(common, comments).run(&input, &mode)?
                 }
-
-                // Set recursion depth
-                if no_recursive {
-                    discovery_config = discovery_config.with_max_depth(Some(1));
+                Target::Batch(target) => {
+                    let write = match intent {
+                        EditIntent::Preview => BatchWrite::DryRun,
+                        EditIntent::InPlace => BatchWrite::InPlace,
+                        EditIntent::Print => anyhow::bail!(
+                            "use -i to format files in-place or --dry-run to preview changes"
+                        ),
+                    };
+                    commands::format_batch::execute_batch(&common, &target, write, comments)?
                 }
-
-                // Build batch config from common config
-                let batch_config = commands::format_batch::BatchConfig::new(
-                    common_config
-                        .clone()
-                        .with_formatter(
-                            config::FormatterConfig::new()
-                                .with_indent(indent)
-                                .with_width(width),
-                        )
-                        .with_parallel(config::ParallelConfig::new().with_workers(if jobs == 0 {
-                            None
-                        } else {
-                            Some(jobs)
-                        })),
-                )
-                .with_discovery(discovery_config)
-                .with_dry_run(dry_run)
-                .with_strip_comments(strip_comments)
-                .with_in_place(cli.in_place);
-
-                commands::format_batch::execute_batch(&batch_config, &paths, stdin_files)?
-            } else if paths.is_empty() {
-                // STDIN MODE - backward compatible
-                if cli.in_place {
-                    anyhow::bail!("--in-place (-i) requires a file argument");
-                }
-                let input = InputSource::from_stdin()?;
-                let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
-                let format_config = common_config.clone().with_formatter(
-                    config::FormatterConfig::new()
-                        .with_indent(indent)
-                        .with_width(width),
-                );
-                commands::format::FormatCommand::new(format_config, comment_policy)
-                    .with_dry_run(dry_run)
-                    .run(&input, &output)?
-            } else {
-                // SINGLE FILE MODE - backward compatible
-                let file_path = &paths[0];
-                let input = InputSource::from_file(file_path)?;
-                let output =
-                    OutputWriter::from_args(cli.output.clone(), cli.in_place, Some(file_path))?;
-                let format_config = common_config.clone().with_formatter(
-                    config::FormatterConfig::new()
-                        .with_indent(indent)
-                        .with_width(width),
-                );
-                commands::format::FormatCommand::new(format_config, comment_policy)
-                    .with_dry_run(dry_run)
-                    .run(&input, &output)?
             }
         }
         Some(Command::Convert { to, file, pretty }) => {
             let input = InputSource::from_args(file)?;
             let output =
                 OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
-            let cmd = commands::convert::ConvertCommand::new(common_config, to, pretty);
+            let cmd = commands::convert::ConvertCommand::new(to, pretty);
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
@@ -186,154 +139,72 @@ fn run() -> Result<ExitCode> {
             indent_size,
             format,
             allow_duplicate_keys,
-            include,
-            exclude,
-            no_recursive,
-            jobs,
+            batch,
         }) => {
             if cli.in_place {
                 anyhow::bail!(
                     "--in-place is not supported by `fy lint` (auto-fix is not implemented)"
                 );
             }
-            let is_batch = is_batch_mode(&paths, false, &include, &exclude, jobs);
+            let target = Target::resolve(paths, false, &batch)?;
+            let args = commands::lint::LintArgs {
+                config_path,
+                no_config,
+                max_line_length,
+                indent_size,
+                format,
+                allow_duplicate_keys,
+            };
 
-            if is_batch {
-                // BATCH MODE — multiple files, directories, or glob patterns
-                let mut discovery_config = discovery::DiscoveryConfig::new();
-                if !include.is_empty() {
-                    discovery_config = discovery_config.with_include_patterns(include);
+            match target {
+                Target::Stdin => lint_input(common_config, args, &InputSource::from_stdin()?)?,
+                Target::File(path) => {
+                    lint_input(common_config, args, &InputSource::from_file(&path)?)?
                 }
-                if !exclude.is_empty() {
-                    discovery_config = discovery_config.with_exclude_patterns(exclude);
+                Target::Batch(target) => {
+                    // Synthetic stdin input: config discovery is CWD-based, same as yamllint.
+                    let stdin_fallback = InputSource {
+                        content: String::new(),
+                        origin: io::input::InputOrigin::Stdin,
+                    };
+                    let format = args.format;
+                    let cmd = commands::lint::LintCommand::build(
+                        common_config.clone(),
+                        args,
+                        &stdin_fallback,
+                    )?;
+                    commands::lint_batch::execute_lint_batch(
+                        &common_config,
+                        &target,
+                        &cmd.lint_config,
+                        format,
+                    )?
                 }
-                if no_recursive {
-                    discovery_config = discovery_config.with_max_depth(Some(1));
-                }
-
-                // Build lint config using same logic as single-file mode.
-                // Use a synthetic stdin input for config discovery (CWD-based, same as yamllint).
-                let stdin_fallback = InputSource {
-                    content: String::new(),
-                    origin: InputOrigin::Stdin,
-                };
-                let args = commands::lint::LintArgs {
-                    config_path,
-                    no_config,
-                    max_line_length,
-                    indent_size,
-                    format: format.clone(),
-                    allow_duplicate_keys,
-                };
-                let cmd = commands::lint::LintCommand::build(
-                    common_config.clone(),
-                    args,
-                    &stdin_fallback,
-                )?;
-
-                let batch_config = commands::lint_batch::LintBatchConfig::new(
-                    common_config.clone().with_parallel(
-                        config::ParallelConfig::new().with_workers(if jobs == 0 {
-                            None
-                        } else {
-                            Some(jobs)
-                        }),
-                    ),
-                    cmd.lint_config,
-                    format,
-                )
-                .with_discovery(discovery_config);
-
-                commands::lint_batch::execute_lint_batch(&batch_config, &paths)?
-            } else if paths.is_empty() {
-                // STDIN MODE
-                let input = InputSource::from_stdin()?;
-                let args = commands::lint::LintArgs {
-                    config_path,
-                    no_config,
-                    max_line_length,
-                    indent_size,
-                    format,
-                    allow_duplicate_keys,
-                };
-                let cmd = commands::lint::LintCommand::build(common_config.clone(), args, &input)?;
-                cmd.execute(&input)?
-            } else {
-                // SINGLE FILE MODE
-                let input = InputSource::from_file(&paths[0])?;
-                let args = commands::lint::LintArgs {
-                    config_path,
-                    no_config,
-                    max_line_length,
-                    indent_size,
-                    format,
-                    allow_duplicate_keys,
-                };
-                let cmd = commands::lint::LintCommand::build(common_config.clone(), args, &input)?;
-                cmd.execute(&input)?
             }
         }
         None => {
-            // Default: parse and format (passthrough) from stdin
-            let input = InputSource::from_stdin()?;
-            let output = OutputWriter::from_args(cli.output.clone(), false, None)?;
-            let format_config = common_config
-                .clone()
-                .with_formatter(config::FormatterConfig::new().with_indent(2).with_width(80));
-            let cmd = commands::format::FormatCommand::new(
-                format_config,
-                fast_yaml_parallel::CommentPolicy::Reject,
-            );
-            cmd.execute(&input, &output)?;
-            ExitCode::Success
+            let mode = stdin_write_mode(EditIntent::from_flags(false, cli.in_place), cli.output)?;
+            FormatCommand::new(common_config, CommentPolicy::Reject)
+                .run(&InputSource::from_stdin()?, &mode)?
         }
     };
 
     Ok(exit_code)
 }
 
-/// Determines if format command should use batch mode.
-fn is_batch_mode(
-    paths: &[std::path::PathBuf],
-    stdin_files: bool,
-    include: &[String],
-    exclude: &[String],
-    jobs: usize,
-) -> bool {
-    // stdin-files flag explicitly requests batch mode
-    if stdin_files {
-        return true;
+/// Resolves the write mode for stdin input, which has no file to edit in place.
+fn stdin_write_mode(intent: EditIntent, output: Option<std::path::PathBuf>) -> Result<WriteMode> {
+    if intent == EditIntent::InPlace {
+        anyhow::bail!("--in-place (-i) requires a file argument");
     }
-
-    // Multiple paths = batch mode
-    if paths.len() > 1 {
-        return true;
-    }
-
-    // Single path that is a directory or glob = batch mode
-    if paths.len() == 1 && is_batch_path(&paths[0]) {
-        return true;
-    }
-
-    // Include/exclude patterns = batch mode
-    if !include.is_empty() || !exclude.is_empty() {
-        return true;
-    }
-
-    // Explicit job count > 0 suggests batch mode
-    if jobs > 0 {
-        return true;
-    }
-
-    false
+    WriteMode::new(intent, output, None)
 }
 
-/// Determines if a path should trigger batch mode.
-fn is_batch_path(path: &std::path::Path) -> bool {
-    path.is_dir() || contains_glob_chars(&path.to_string_lossy())
-}
-
-/// Checks if path contains glob special characters.
-fn contains_glob_chars(s: &str) -> bool {
-    s.contains('*') || s.contains('?') || s.contains('[')
+#[cfg(feature = "linter")]
+fn lint_input(
+    common: CommonConfig,
+    args: commands::lint::LintArgs,
+    input: &InputSource,
+) -> Result<ExitCode> {
+    commands::lint::LintCommand::build(common, args, input)?.execute(input)
 }

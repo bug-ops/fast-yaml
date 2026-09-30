@@ -104,6 +104,69 @@ impl DiscoveryConfig {
     }
 }
 
+/// A positional path argument resolved against the filesystem.
+///
+/// Resolving up front makes a missing path an error instead of an empty glob expansion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputPath {
+    /// Existing non-directory path
+    File(PathBuf),
+    /// Existing directory
+    Dir(PathBuf),
+    /// Non-existent path containing glob metacharacters
+    Glob(String),
+}
+
+impl InputPath {
+    /// Classifies `path` as a file, directory, or glob pattern.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DiscoveryError::PathNotFound`] or [`DiscoveryError::BrokenSymlink`] when the path
+    /// does not exist and is not a glob pattern, and permission or I/O errors otherwise.
+    pub fn resolve(path: PathBuf) -> Result<Self, DiscoveryError> {
+        match path.metadata() {
+            Ok(meta) if meta.is_dir() => Ok(Self::Dir(path)),
+            Ok(_) => Ok(Self::File(path)),
+            Err(e) => {
+                let lossy = path.to_string_lossy();
+                if e.kind() == std::io::ErrorKind::NotFound && contains_glob_chars(&lossy) {
+                    Ok(Self::Glob(lossy.into_owned()))
+                } else {
+                    Err(classify_io_error(path, e))
+                }
+            }
+        }
+    }
+}
+
+/// Maps a filesystem error on `path` to the matching [`DiscoveryError`].
+fn classify_io_error(path: impl Into<PathBuf>, source: std::io::Error) -> DiscoveryError {
+    let path = path.into();
+    match source.kind() {
+        std::io::ErrorKind::NotFound if path.symlink_metadata().is_ok() => {
+            DiscoveryError::BrokenSymlink { path }
+        }
+        std::io::ErrorKind::NotFound => DiscoveryError::PathNotFound { path },
+        std::io::ErrorKind::PermissionDenied => DiscoveryError::PermissionDenied { path },
+        _ => DiscoveryError::IoError { path, source },
+    }
+}
+
+/// Checks if a string contains glob special characters.
+fn contains_glob_chars(s: &str) -> bool {
+    s.contains(['*', '?', '['])
+}
+
+/// Where a batch run takes its files from.
+#[derive(Debug, Clone)]
+pub enum BatchSource {
+    /// Resolved positional paths
+    Paths(Vec<InputPath>),
+    /// One path per line on stdin
+    StdinList,
+}
+
 /// Origin of a discovered file.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiscoveryOrigin {
@@ -147,33 +210,47 @@ impl FileDiscovery {
         })
     }
 
+    /// Discover files from a [`BatchSource`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a file cannot be canonicalized or stdin cannot be read.
+    pub fn discover_source(
+        &self,
+        source: &BatchSource,
+    ) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
+        match source {
+            BatchSource::Paths(paths) => self.discover(paths),
+            BatchSource::StdinList => self.discover_from_stdin(),
+        }
+    }
+
     /// Discover files from the given paths.
     ///
     /// Paths can be:
     /// - Regular files (included directly if matching patterns)
     /// - Directories (walked recursively)
     /// - Glob patterns (expanded)
-    pub fn discover(&self, paths: &[PathBuf]) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
+    pub fn discover(&self, paths: &[InputPath]) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
         // Heuristic: estimate 10 files per input path
         let estimated_capacity = paths.len().saturating_mul(10);
         let mut discovered = Vec::with_capacity(estimated_capacity);
         let mut seen = HashSet::new();
 
         for path in paths {
-            if path.exists() {
-                if path.is_file() {
+            match path {
+                InputPath::File(file) => {
                     self.discover_file(
-                        path,
+                        file,
                         DiscoveryOrigin::DirectPath,
                         &mut discovered,
                         &mut seen,
                     )?;
-                } else if path.is_dir() {
-                    self.discover_directory(path, &mut discovered, &mut seen);
                 }
-            } else {
-                // Treat as glob pattern
-                self.discover_glob(&path.to_string_lossy(), &mut discovered, &mut seen);
+                InputPath::Dir(dir) => self.discover_directory(dir, &mut discovered, &mut seen),
+                InputPath::Glob(pattern) => {
+                    self.discover_glob(pattern, &mut discovered, &mut seen);
+                }
             }
         }
 
@@ -255,29 +332,9 @@ impl FileDiscovery {
         }
 
         // Canonicalize for deduplication
-        let canonical = path.canonicalize().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                // Check if it's a broken symlink
-                if path.symlink_metadata().is_ok() {
-                    DiscoveryError::BrokenSymlink {
-                        path: path.to_path_buf(),
-                    }
-                } else {
-                    DiscoveryError::PathNotFound {
-                        path: path.to_path_buf(),
-                    }
-                }
-            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
-                DiscoveryError::PermissionDenied {
-                    path: path.to_path_buf(),
-                }
-            } else {
-                DiscoveryError::IoError {
-                    path: path.to_path_buf(),
-                    source: e,
-                }
-            }
-        })?;
+        let canonical = path
+            .canonicalize()
+            .map_err(|e| classify_io_error(path, e))?;
 
         // Dedup by canonical path
         if seen.insert(canonical.clone()) {
@@ -394,6 +451,10 @@ mod tests {
         DiscoveryConfig::new()
     }
 
+    fn input(path: impl Into<PathBuf>) -> InputPath {
+        InputPath::resolve(path.into()).unwrap()
+    }
+
     #[test]
     fn test_config_default() {
         let config = DiscoveryConfig::default();
@@ -468,7 +529,7 @@ mod tests {
 
         let config = default_config();
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(std::slice::from_ref(&file)).unwrap();
+        let files = discovery.discover(&[input(&file)]).unwrap();
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].origin, DiscoveryOrigin::DirectPath);
@@ -484,7 +545,7 @@ mod tests {
 
         let config = default_config();
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[temp.path().to_path_buf()]).unwrap();
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
 
         assert_eq!(files.len(), 2);
         assert!(
@@ -504,7 +565,7 @@ mod tests {
         let pattern = format!("{}/*.yaml", temp.path().display());
         let config = default_config();
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[PathBuf::from(pattern)]).unwrap();
+        let files = discovery.discover(&[input(pattern)]).unwrap();
 
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].origin, DiscoveryOrigin::GlobExpansion);
@@ -525,7 +586,7 @@ mod tests {
 
         let config = default_config();
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[file, dir]).unwrap();
+        let files = discovery.discover(&[input(file), input(dir)]).unwrap();
 
         assert_eq!(files.len(), 2);
         assert!(
@@ -548,7 +609,7 @@ mod tests {
 
         let config = default_config(); // include_hidden = false
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[temp.path().to_path_buf()]).unwrap();
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
 
         assert_eq!(files.len(), 1);
         assert!(files[0].path.ends_with("visible.yaml"));
@@ -562,7 +623,7 @@ mod tests {
 
         let config = default_config().with_hidden(true);
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[temp.path().to_path_buf()]).unwrap();
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
 
         assert_eq!(files.len(), 2);
     }
@@ -594,7 +655,7 @@ mod tests {
 
         let config = default_config(); // respect_gitignore = true
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[temp.path().to_path_buf()]).unwrap();
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
 
         // Only included.yaml should be found (ignored.yaml is gitignored)
         assert_eq!(files.len(), 1);
@@ -617,7 +678,7 @@ mod tests {
         // max_depth = 1 should only find root.yaml
         let config = default_config().with_max_depth(Some(1));
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover(&[temp.path().to_path_buf()]).unwrap();
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
 
         assert_eq!(files.len(), 1);
         assert!(files[0].path.ends_with("root.yaml"));
@@ -633,7 +694,7 @@ mod tests {
         let discovery = FileDiscovery::new(config).unwrap();
 
         // Provide the same file twice
-        let files = discovery.discover(&[file.clone(), file]).unwrap();
+        let files = discovery.discover(&[input(&file), input(&file)]).unwrap();
 
         // Should only be discovered once
         assert_eq!(files.len(), 1);
@@ -724,6 +785,45 @@ mod tests {
 
         // Long line should be skipped, only valid file should be found
         assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_resolve_file_dir_glob() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("a.yaml");
+        fs::write(&file, "a: 1").unwrap();
+
+        assert_eq!(
+            InputPath::resolve(file.clone()).unwrap(),
+            InputPath::File(file)
+        );
+        assert_eq!(
+            InputPath::resolve(temp.path().to_path_buf()).unwrap(),
+            InputPath::Dir(temp.path().to_path_buf())
+        );
+        let pattern = format!("{}/*.yaml", temp.path().display());
+        assert_eq!(
+            InputPath::resolve(PathBuf::from(&pattern)).unwrap(),
+            InputPath::Glob(pattern)
+        );
+    }
+
+    #[test]
+    fn test_resolve_missing_path_errors() {
+        let temp = TempDir::new().unwrap();
+        let err = InputPath::resolve(temp.path().join("nonexist.yaml")).unwrap_err();
+        assert!(matches!(err, DiscoveryError::PathNotFound { .. }));
+        assert!(err.to_string().contains("path does not exist"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_resolve_broken_symlink_errors() {
+        let temp = TempDir::new().unwrap();
+        let link = temp.path().join("link.yaml");
+        std::os::unix::fs::symlink(temp.path().join("gone.yaml"), &link).unwrap();
+        let err = InputPath::resolve(link).unwrap_err();
+        assert!(matches!(err, DiscoveryError::BrokenSymlink { .. }));
     }
 
     #[test]

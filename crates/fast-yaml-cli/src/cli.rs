@@ -1,5 +1,8 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
+
+use crate::discovery::DiscoveryConfig;
 
 /// Fast YAML processor with validation and linting
 #[derive(Parser, Debug)]
@@ -40,6 +43,56 @@ pub struct Cli {
     pub verbose: bool,
 }
 
+/// Discovery and parallelism flags shared by every batch-capable subcommand.
+#[derive(Args, Debug)]
+pub struct BatchArgs {
+    /// Include files matching glob pattern (can be repeated)
+    #[arg(long)]
+    pub include: Vec<String>,
+
+    /// Exclude files matching glob pattern (can be repeated)
+    #[arg(long)]
+    pub exclude: Vec<String>,
+
+    /// Don't recurse into subdirectories
+    #[arg(long)]
+    pub no_recursive: bool,
+
+    /// Number of parallel jobs (0 = auto-detect)
+    #[arg(short = 'j', long, default_value = "0")]
+    pub jobs: usize,
+}
+
+impl BatchArgs {
+    /// Builds the discovery configuration from the include/exclude/recursion flags.
+    #[must_use]
+    pub fn discovery_config(&self) -> DiscoveryConfig {
+        let mut config = DiscoveryConfig::new();
+        if !self.include.is_empty() {
+            config = config.with_include_patterns(self.include.clone());
+        }
+        if !self.exclude.is_empty() {
+            config = config.with_exclude_patterns(self.exclude.clone());
+        }
+        if self.no_recursive {
+            config = config.with_max_depth(Some(1));
+        }
+        config
+    }
+
+    /// Returns the explicit worker count, or `None` to auto-detect.
+    #[must_use]
+    pub const fn workers(&self) -> Option<NonZeroUsize> {
+        NonZeroUsize::new(self.jobs)
+    }
+
+    /// Returns `true` when any flag only makes sense for a batch run.
+    #[must_use]
+    pub const fn requests_batch(&self) -> bool {
+        !self.include.is_empty() || !self.exclude.is_empty() || self.jobs > 0
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Parse and validate YAML
@@ -67,25 +120,12 @@ pub enum Command {
         #[arg(long, default_value = "80")]
         width: usize,
 
-        /// Number of parallel jobs (0 = auto-detect)
-        #[arg(short = 'j', long, default_value = "0")]
-        jobs: usize,
-
         /// Read file paths from stdin (one per line)
         #[arg(long, conflicts_with = "paths")]
         stdin_files: bool,
 
-        /// Include files matching glob pattern (can be repeated)
-        #[arg(long)]
-        include: Vec<String>,
-
-        /// Exclude files matching glob pattern (can be repeated)
-        #[arg(long)]
-        exclude: Vec<String>,
-
-        /// Don't recurse into subdirectories
-        #[arg(long)]
-        no_recursive: bool,
+        #[command(flatten)]
+        batch: BatchArgs,
 
         /// Never write any file; only print a summary of what would change.
         /// Works for stdin too. Exits with code 5 if any file would change,
@@ -146,21 +186,8 @@ pub enum Command {
         #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         allow_duplicate_keys: Option<bool>,
 
-        /// Include files matching glob pattern (can be repeated)
-        #[arg(long)]
-        include: Vec<String>,
-
-        /// Exclude files matching glob pattern (can be repeated)
-        #[arg(long)]
-        exclude: Vec<String>,
-
-        /// Don't recurse into subdirectories
-        #[arg(long)]
-        no_recursive: bool,
-
-        /// Number of parallel jobs (0 = auto-detect)
-        #[arg(short = 'j', long, default_value = "0")]
-        jobs: usize,
+        #[command(flatten)]
+        batch: BatchArgs,
     },
 }
 
@@ -178,7 +205,7 @@ pub enum ConvertFormat {
 }
 
 #[cfg(feature = "linter")]
-#[derive(ValueEnum, Clone, Debug)]
+#[derive(ValueEnum, Clone, Copy, Debug)]
 pub enum LintFormat {
     Text,
     Json,

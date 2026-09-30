@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Integers with a doubled sign (`+-5`, `--5`, `0x-1`) are now strings instead of numbers, and `-9223372036854775808` is an integer (#390)
 - `fast-yaml-core` adds `resolve_scalar`/`ResolvedScalar` as the single scalar resolver shared by the core loader and Python bindings (#390)
 - Linter: typed `ByteOffset`/`ByteRange` boundary for saphyr positions, shared `braces`/`brackets` implementation (#347)
+- CLI: resolve arguments into typed targets and write modes before execution and remove dead config/reporter code (#323)
+- CLI: batch summary prints `1 file` instead of `1 files`
+- **Breaking:** `fy format <dir|glob>` without `-i` or `--dry-run` now fails with exit code 1 even when no files match, instead of printing "No YAML files found"
+- **Breaking:** `fy -i` without a subcommand now fails with exit code 1, matching `fy format -i`
+- `fy format`/`fy lint` treat an existing file named with glob characters (e.g. `a[1].yaml`) as a single file instead of a glob pattern
 
 ### Security
 
@@ -33,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398)
 - Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#385)
 - Fix quadratic lint time on large files in `key-ordering` key lookup and flow-token block-scalar checks (#385)
 - Fix `fy format --dry-run` always reporting "would change": output is compared with the input in single-file, batch and stdin modes (#397)

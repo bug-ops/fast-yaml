@@ -18,6 +18,7 @@ pub struct OutputConfig {
 
 impl OutputConfig {
     /// Creates a new output configuration with default values.
+    #[cfg(test)]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -56,6 +57,7 @@ impl OutputConfig {
     }
 
     /// Sets quiet mode.
+    #[cfg(test)]
     #[must_use]
     pub const fn with_quiet(mut self, quiet: bool) -> Self {
         self.quiet = quiet;
@@ -63,6 +65,7 @@ impl OutputConfig {
     }
 
     /// Sets verbose mode.
+    #[cfg(test)]
     #[must_use]
     pub const fn with_verbose(mut self, verbose: bool) -> Self {
         self.verbose = verbose;
@@ -70,6 +73,7 @@ impl OutputConfig {
     }
 
     /// Sets color usage.
+    #[cfg(test)]
     #[must_use]
     pub const fn with_color(mut self, color: bool) -> Self {
         self.use_color = color;
@@ -77,6 +81,7 @@ impl OutputConfig {
     }
 
     /// Sets timing display.
+    #[cfg(test)]
     #[must_use]
     pub const fn with_timing(mut self, timing: bool) -> Self {
         self.show_timing = timing;

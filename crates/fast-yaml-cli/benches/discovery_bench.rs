@@ -5,7 +5,7 @@
 #![allow(clippy::cast_sign_loss)]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use fast_yaml_cli::discovery::{DiscoveryConfig, FileDiscovery};
+use fast_yaml_cli::discovery::{DiscoveryConfig, FileDiscovery, InputPath};
 use std::fs;
 use std::hint::black_box;
 use tempfile::TempDir;
@@ -61,7 +61,7 @@ fn bench_discover_small(c: &mut Criterion) {
     let temp = setup_test_directory(10, 1, 10);
     let config = DiscoveryConfig::default();
     let discovery = FileDiscovery::new(config).unwrap();
-    let paths = vec![temp.path().to_path_buf()];
+    let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
     c.bench_function("discover_10_files_flat", |b| {
         b.iter(|| {
@@ -75,7 +75,7 @@ fn bench_discover_medium(c: &mut Criterion) {
     let temp = setup_test_directory(100, 3, 10);
     let config = DiscoveryConfig::default();
     let discovery = FileDiscovery::new(config).unwrap();
-    let paths = vec![temp.path().to_path_buf()];
+    let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
     c.bench_function("discover_100_files_nested", |b| {
         b.iter(|| {
@@ -89,7 +89,7 @@ fn bench_discover_large(c: &mut Criterion) {
     let temp = setup_test_directory(1000, 4, 10);
     let config = DiscoveryConfig::default();
     let discovery = FileDiscovery::new(config).unwrap();
-    let paths = vec![temp.path().to_path_buf()];
+    let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
     c.bench_function("discover_1000_files_nested", |b| {
         b.iter(|| {
@@ -106,7 +106,7 @@ fn bench_discover_scaling(c: &mut Criterion) {
         let temp = setup_test_directory(file_count, 3, 10);
         let config = DiscoveryConfig::default();
         let discovery = FileDiscovery::new(config).unwrap();
-        let paths = vec![temp.path().to_path_buf()];
+        let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
         group.bench_with_input(
             BenchmarkId::from_parameter(file_count),
@@ -139,7 +139,7 @@ fn bench_pattern_matching(c: &mut Criterion) {
 
         let config = DiscoveryConfig::default().with_include_patterns(patterns);
         let discovery = FileDiscovery::new(config).unwrap();
-        let paths = vec![temp.path().to_path_buf()];
+        let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
         group.bench_with_input(
             BenchmarkId::from_parameter(pattern_count),
@@ -163,7 +163,7 @@ fn bench_deep_nesting(c: &mut Criterion) {
         let temp = setup_test_directory(100, depth, 5);
         let config = DiscoveryConfig::default();
         let discovery = FileDiscovery::new(config).unwrap();
-        let paths = vec![temp.path().to_path_buf()];
+        let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
         group.bench_with_input(BenchmarkId::from_parameter(depth), &depth, |b, _| {
             b.iter(|| {
@@ -185,7 +185,7 @@ fn bench_deduplication(c: &mut Criterion) {
     let base_path = temp.path().to_path_buf();
     let mut paths = Vec::new();
     for _ in 0..10 {
-        paths.push(base_path.clone());
+        paths.push(InputPath::Dir(base_path.clone()));
     }
 
     c.bench_function("deduplication_100_files_10x", |b| {
@@ -227,7 +227,7 @@ fn bench_exclude_patterns(c: &mut Criterion) {
 
     let config = DiscoveryConfig::default().with_exclude_patterns(vec!["**/vendor/**".to_string()]);
     let discovery = FileDiscovery::new(config).unwrap();
-    let paths = vec![temp.path().to_path_buf()];
+    let paths = vec![InputPath::Dir(temp.path().to_path_buf())];
 
     c.bench_function("exclude_vendor_directory", |b| {
         b.iter(|| {

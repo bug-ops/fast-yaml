@@ -2,9 +2,6 @@
 
 use fast_yaml_core::EmitterConfig;
 
-#[cfg(feature = "linter")]
-use fast_yaml_linter::LintConfig;
-
 /// Configuration for YAML formatting.
 ///
 /// Controls indentation and line width for formatting operations.
@@ -53,6 +50,7 @@ impl FormatterConfig {
     }
 
     /// Returns the maximum line width.
+    #[cfg(test)]
     #[must_use]
     pub const fn width(&self) -> usize {
         self.width
@@ -64,15 +62,6 @@ impl FormatterConfig {
         EmitterConfig::new()
             .with_indent(self.indent as usize)
             .with_width(self.width)
-    }
-
-    /// Converts to `LintConfig` for fast-yaml-linter.
-    #[cfg(feature = "linter")]
-    #[must_use]
-    pub fn to_lint_config(&self, max_line_length: usize) -> LintConfig {
-        LintConfig::new()
-            .with_indent_size(self.indent as usize)
-            .with_max_line_length(Some(max_line_length))
     }
 }
 
@@ -140,13 +129,5 @@ mod tests {
         let config = FormatterConfig::new().with_indent(4).with_width(120);
 
         let _emitter_config = config.to_emitter_config();
-    }
-
-    #[cfg(feature = "linter")]
-    #[test]
-    fn test_to_lint_config() {
-        let config = FormatterConfig::new().with_indent(4);
-
-        let _lint_config = config.to_lint_config(100);
     }
 }
