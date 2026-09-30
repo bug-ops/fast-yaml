@@ -102,24 +102,6 @@ impl Parser {
             .map(canonicalize)
             .collect())
     }
-
-    /// Parse all YAML documents preserving scalar styles (literal `|`, folded `>`).
-    ///
-    /// Unlike [`parse_all`], this function uses `early_parse = false` in the loader,
-    /// which keeps scalars as `Value::Representation` nodes with their original style
-    /// information instead of resolving them eagerly.
-    ///
-    /// This is used by the format pipeline to preserve block scalar styles in output.
-    ///
-    /// # Errors
-    ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
-    /// `ParseError::LimitExceeded` if the input exceeds the default [`ParseLimits`].
-    ///
-    /// [`parse_all`]: Parser::parse_all
-    pub fn parse_all_preserving_styles(input: &str) -> ParseResult<Vec<Value>> {
-        load_documents(input, &ParseLimits::default())
-    }
 }
 
 /// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
@@ -914,23 +896,6 @@ merged:
         );
     }
 
-    // --- #235 round-trip: format(parse("# c")) freezes new expected output ---
-
-    #[test]
-    fn test_round_trip_comment_only() {
-        use crate::emitter::Emitter;
-        let docs = Parser::parse_all_preserving_styles("# comment").unwrap();
-        assert_eq!(docs.len(), 1, "should have one null doc");
-        // The null doc formats to "null\n" or "~\n" — freeze whatever the emitter produces.
-        let formatted = Emitter::emit_all(&docs).unwrap();
-        assert!(
-            !formatted.is_empty(),
-            "formatted output must be non-empty, got: {formatted:?}"
-        );
-        // Null should not format as empty string.
-        assert_ne!(formatted.trim(), "", "null doc must not format to empty");
-    }
-
     #[test]
     fn test_bom_before_comment_and_mapping_parses() {
         let value = Parser::parse_str("\u{FEFF}# c\na: 1").unwrap().unwrap();
@@ -953,12 +918,6 @@ merged:
             map.keys()
                 .any(|k| matches!(k, Value::Value(ScalarOwned::String(s)) if s == "a"))
         );
-    }
-
-    #[test]
-    fn test_bom_preserving_styles_parses() {
-        let docs = Parser::parse_all_preserving_styles("\u{FEFF}# c\na: 1").unwrap();
-        assert_eq!(docs.len(), 1);
     }
 
     #[test]
@@ -1070,7 +1029,6 @@ merged:
                     for value in Parser::parse_all(&input).unwrap() {
                         drop(value);
                     }
-                    drop(Parser::parse_all_preserving_styles(&input).unwrap());
                 })
                 .unwrap()
                 .join()
@@ -1234,9 +1192,6 @@ merged:
             };
             assert!(is_alias_limit(Parser::parse_str(BOMB).map(drop)));
             assert!(is_alias_limit(Parser::parse_all(BOMB).map(drop)));
-            assert!(is_alias_limit(
-                Parser::parse_all_preserving_styles(BOMB).map(drop)
-            ));
         }
 
         #[test]

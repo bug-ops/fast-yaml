@@ -448,8 +448,8 @@ impl Emitter {
 
     /// Format a YAML string with configuration.
     ///
-    /// Uses streaming formatter for large files when the `streaming` feature is enabled,
-    /// falling back to DOM-based formatting for small files or complex cases.
+    /// Uses the streaming formatter, which preserves scalar styles, explicit tags,
+    /// anchors and aliases.
     ///
     /// Block scalar styles (`|` literal and `>` folded) are preserved in the output.
     /// `%YAML` and `%TAG` directives are extracted and prepended to the formatted output.
@@ -473,78 +473,14 @@ impl Emitter {
     pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
         let input = crate::parser::strip_bom(input);
         // Extract %YAML / %TAG directives before formatting; the streaming
-        // formatter (and DOM fallback) silently drops them.
+        // formatter silently drops them.
         let directives = Self::extract_directives(input);
 
-        // Always prefer the streaming formatter when available.
-        //
-        // The DOM-based path (saphyr's YamlEmitter) quotes YAML 1.1 boolean-like
-        // keys (`on`, `off`, `yes`, `no`) even though they are plain strings in
-        // YAML 1.2.2 Core Schema. The streaming formatter preserves the original
-        // ScalarStyle from the parser, so it never introduces spurious quoting.
-        #[cfg(all(feature = "streaming", feature = "arena"))]
-        {
-            let formatted = crate::streaming::format_streaming_arena(input, config)?;
-            Ok(Self::prepend_directives(&directives, formatted))
-        }
-
-        #[cfg(all(feature = "streaming", not(feature = "arena")))]
-        {
-            let formatted = crate::streaming::format_streaming(input, config)?;
-            Ok(Self::prepend_directives(&directives, formatted))
-        }
-
-        // Non-streaming fallback: parse with early_parse=false to preserve block scalar styles
-        // (literal | and folded >) instead of converting them to double-quoted strings.
-        #[cfg(not(feature = "streaming"))]
-        {
-            let docs = crate::Parser::parse_all_preserving_styles(input)
-                .map_err(|e| EmitError::Emit(e.to_string()))?;
-            if docs.is_empty() {
-                return Ok(String::new());
-            }
-            let inner_config = EmitterConfig {
-                explicit_start: false,
-                ..*config
-            };
-            let mut output = String::new();
-            for (i, doc) in docs.into_iter().map(Self::nullify_omitted).enumerate() {
-                if i > 0 || config.explicit_start {
-                    if !output.is_empty() && !output.ends_with('\n') {
-                        output.push('\n');
-                    }
-                    output.push_str("---\n");
-                }
-                let emitted = Self::emit_str_preserving_styles(&doc, &inner_config, 0)?;
-                output.push_str(&emitted);
-            }
-            if !output.is_empty() && !output.ends_with('\n') {
-                output.push('\n');
-            }
-            Ok(Self::prepend_directives(&directives, output))
-        }
-    }
-
-    /// Replace omitted (empty plain) scalars with explicit nulls so they never emit as bare empty text.
-    #[cfg(not(feature = "streaming"))]
-    fn nullify_omitted(value: Value) -> Value {
-        match value {
-            Value::Representation(s, ScalarStyle::Plain, None) if s.is_empty() => {
-                Value::Value(ScalarOwned::Null)
-            }
-            Value::Sequence(seq) => {
-                Value::Sequence(seq.into_iter().map(Self::nullify_omitted).collect())
-            }
-            Value::Mapping(map) => Value::Mapping(
-                map.into_iter()
-                    .map(|(k, v)| (Self::nullify_omitted(k), Self::nullify_omitted(v)))
-                    .collect(),
-            ),
-            Value::Tagged(tag, inner) => {
-                Value::Tagged(tag, Box::new(Self::nullify_omitted(*inner)))
-            }
-            other => other,
-        }
+        #[cfg(feature = "arena")]
+        let formatted = crate::streaming::format_streaming_arena(input, config)?;
+        #[cfg(not(feature = "arena"))]
+        let formatted = crate::streaming::format_streaming(input, config)?;
+        Ok(Self::prepend_directives(&directives, formatted))
     }
 
     /// Prepend directive lines to formatted output.
@@ -562,118 +498,6 @@ impl Emitter {
             format!("{directives}{formatted}")
         } else {
             format!("{directives}---\n{formatted}")
-        }
-    }
-
-    /// Emit a YAML value to a string, preserving block scalar styles.
-    ///
-    /// Handles `Literal` (`|`) and `Folded` (`>`) styles directly.
-    /// All other nodes are delegated to the saphyr emitter.
-    ///
-    /// # Errors
-    ///
-    /// Returns `EmitError::Emit` if the value cannot be serialized.
-    fn emit_str_preserving_styles(
-        value: &Value,
-        config: &EmitterConfig,
-        indent_level: usize,
-    ) -> EmitResult<String> {
-        // Fast path: no block scalars — use standard saphyr emitter
-        if !Self::has_block_scalar(value) {
-            return Self::emit_str_with_config(value, config);
-        }
-        let raw = Self::emit_value(value, config, indent_level)?;
-        // `emit_value` already indents by `config.indent`; skip the 2-space -> N rescale
-        let rescaled = EmitterConfig {
-            indent: 2,
-            ..*config
-        };
-        Ok(Self::apply_formatting(raw, &rescaled))
-    }
-
-    /// Check whether the value tree contains any Literal or Folded block scalars.
-    fn has_block_scalar(value: &Value) -> bool {
-        match value {
-            Value::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) => true,
-            Value::Sequence(seq) => seq.iter().any(Self::has_block_scalar),
-            Value::Mapping(map) => map
-                .iter()
-                .any(|(k, v)| Self::has_block_scalar(k) || Self::has_block_scalar(v)),
-            Value::Tagged(_, inner) => Self::has_block_scalar(inner),
-            _ => false,
-        }
-    }
-
-    /// Recursively emit a YAML value, handling block scalars manually.
-    ///
-    /// `indent_level` is the current nesting depth (in units of `config.indent` spaces).
-    /// Returns YAML text without a leading `---\n` document marker.
-    fn emit_value(
-        value: &Value,
-        config: &EmitterConfig,
-        indent_level: usize,
-    ) -> EmitResult<String> {
-        match value {
-            Value::Representation(content, ScalarStyle::Literal, _) => Ok(
-                Self::format_block_scalar(content, '|', config.indent, indent_level),
-            ),
-            Value::Representation(content, ScalarStyle::Folded, _) => Ok(
-                Self::format_block_scalar(content, '>', config.indent, indent_level),
-            ),
-            Value::Mapping(map) => {
-                let indent = " ".repeat(indent_level * config.indent);
-                let mut out = String::new();
-                for (k, v) in map {
-                    let key_str = Self::emit_scalar_inline(k)?;
-                    match v {
-                        Value::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) => {
-                            // Block scalar directly as value: `key: |\n  line\n`
-                            let val_str = Self::emit_value(v, config, indent_level + 1)?;
-                            write!(out, "{indent}{key_str}: {val_str}")
-                                .map_err(|e| EmitError::Emit(e.to_string()))?;
-                        }
-                        Value::Mapping(_) | Value::Sequence(_) => {
-                            writeln!(out, "{indent}{key_str}:")
-                                .map_err(|e| EmitError::Emit(e.to_string()))?;
-                            let val_str = Self::emit_value(v, config, indent_level + 1)?;
-                            out.push_str(&val_str);
-                        }
-                        _ => {
-                            let val_str = Self::emit_value_inline(v)?;
-                            writeln!(out, "{indent}{key_str}: {val_str}")
-                                .map_err(|e| EmitError::Emit(e.to_string()))?;
-                        }
-                    }
-                }
-                Ok(out)
-            }
-            Value::Sequence(seq) => {
-                let indent = " ".repeat(indent_level * config.indent);
-                let mut out = String::new();
-                for item in seq {
-                    match item {
-                        Value::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) => {
-                            let item_str = Self::emit_value(item, config, indent_level + 1)?;
-                            write!(out, "{indent}- {item_str}")
-                                .map_err(|e| EmitError::Emit(e.to_string()))?;
-                        }
-                        Value::Mapping(_) | Value::Sequence(_) => {
-                            writeln!(out, "{indent}-")
-                                .map_err(|e| EmitError::Emit(e.to_string()))?;
-                            let item_str = Self::emit_value(item, config, indent_level + 1)?;
-                            out.push_str(&item_str);
-                        }
-                        _ => {
-                            let item_str = Self::emit_value_inline(item)?;
-                            writeln!(out, "{indent}- {item_str}")
-                                .map_err(|e| EmitError::Emit(e.to_string()))?;
-                        }
-                    }
-                }
-                Ok(out)
-            }
-            // Scalars and everything else: delegate to saphyr (no block style involved)
-            _ => Self::emit_value_inline(value).map(|s| format!("{s}\n")),
         }
     }
 
@@ -736,31 +560,6 @@ impl Emitter {
             .unwrap_or(&out)
             .trim_end_matches('\n');
         Ok(trimmed.to_string())
-    }
-
-    /// Format a block scalar header + indented body lines.
-    ///
-    /// Returns text starting with the block indicator (`|` or `>`),
-    /// followed by `\n` and indented content lines.
-    fn format_block_scalar(
-        content: &str,
-        indicator: char,
-        indent_width: usize,
-        indent_level: usize,
-    ) -> String {
-        let child_indent = " ".repeat(indent_level.max(1) * indent_width);
-
-        let mut out = block_scalar_header(indicator, content, indent_width);
-        out.push('\n');
-        for line in content.lines() {
-            if line.is_empty() {
-                out.push('\n');
-            } else {
-                // String::writeln never fails
-                let _ = writeln!(out, "{child_indent}{line}");
-            }
-        }
-        out
     }
 
     /// Emit a value in YAML flow style: mappings as `{k: v}`, sequences as `[a, b]`.
@@ -874,7 +673,8 @@ impl Emitter {
 
     /// Format a YAML string with default configuration.
     ///
-    /// Uses streaming formatter for large files when the `streaming` feature is enabled.
+    /// Uses the streaming formatter, which preserves scalar styles, explicit tags,
+    /// anchors and aliases.
     ///
     /// # Errors
     ///
@@ -1374,7 +1174,6 @@ mod tests {
 
     // Regression tests for issue #64: YAML 1.1 boolean-like keys must not be quoted.
     // In YAML 1.2.2 Core Schema, `on`, `off`, `yes`, `no` are plain strings.
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_yaml11_bool_key_on() {
         let result = Emitter::format("on: push").unwrap();
@@ -1385,7 +1184,6 @@ mod tests {
         assert!(result.contains("on:"), "key `on` must appear unquoted");
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_yaml11_bool_key_off() {
         let result = Emitter::format("off: value").unwrap();
@@ -1396,7 +1194,6 @@ mod tests {
         assert!(result.contains("off:"), "key `off` must appear unquoted");
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_yaml11_bool_key_yes() {
         let result = Emitter::format("yes: value").unwrap();
@@ -1407,7 +1204,6 @@ mod tests {
         assert!(result.contains("yes:"), "key `yes` must appear unquoted");
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_yaml11_bool_key_no() {
         let result = Emitter::format("no: value").unwrap();
@@ -1418,7 +1214,6 @@ mod tests {
         assert!(result.contains("no:"), "key `no` must appear unquoted");
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_github_actions_workflow() {
         let yaml = "on:\n  push:\n    branches:\n      - main\n";
@@ -1431,7 +1226,6 @@ mod tests {
         assert!(result.contains("push:"), "push: key must appear");
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_yaml12_bools_unaffected() {
         // YAML 1.2.2 actual booleans must still be emitted as true/false
@@ -1442,7 +1236,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(feature = "streaming")]
     fn test_format_preserves_float_types() {
         // Regression tests for issue #66: fy format must not change float type to integer
 
@@ -1609,7 +1402,6 @@ mod tests {
     // Regression tests for issue #75: formatter must not produce trailing spaces
     // or double-indented sequence-of-mapping keys.
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_nested_mapping_no_trailing_space() {
         // "parent:\n  child: value" — the colon after "parent" must not be followed
@@ -1629,7 +1421,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_sequence_of_mappings_indent() {
         // Steps with mapping items — first key of each item must align with the key,
@@ -1654,7 +1445,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_format_sequence_of_mappings_valid_yaml() {
         // Output must parse back to the same structure (no trailing spaces breaking YAML).
@@ -2170,7 +1960,6 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "streaming")]
     #[test]
     fn test_streaming_omitted_null_emitted_as_null() {
         assert_eq!(format_at("a:\nb: 1\n", 2), "a: null\nb: 1\n");
@@ -2182,5 +1971,68 @@ mod tests {
     fn test_empty_document_is_stable() {
         let out = format_at("---\n", 2);
         assert_eq!(out, format_at(&out, 2));
+    }
+
+    #[test]
+    fn test_format_preserves_explicit_str_tag() {
+        let out = assert_round_trip("a: !!str 1\n", 2);
+        assert_eq!(out, "a: !!str 1\n");
+        let docs = crate::Parser::parse_all(&out).unwrap();
+        let Value::Mapping(map) = &docs[0] else {
+            panic!("expected mapping, got {:?}", docs[0]);
+        };
+        assert!(
+            map.values()
+                .all(|v| matches!(v, Value::Value(ScalarOwned::String(s)) if s == "1")),
+            "tag lost its string type: {map:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_preserves_custom_tags_on_collections() {
+        let out = assert_round_trip("m: !custom\n  a: 1\ns: !seq\n  - x\n  - y\n", 2);
+        assert!(out.contains("m: !custom\n"), "got {out:?}");
+        assert!(out.contains("s: !seq\n"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_preserves_verbatim_tag() {
+        let out = assert_round_trip("a: !<tag:example.com,2000:x> v\n", 2);
+        assert!(out.contains("!<tag:example.com,2000:x> v"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_preserves_root_tag() {
+        let out = assert_round_trip("--- !!str foo\n", 2);
+        assert!(out.contains("!!str foo"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_preserves_tags_across_documents() {
+        let out = assert_round_trip("--- !!str 1\n--- !custom\na: !!str 2\n", 2);
+        assert!(out.contains("!!str 1"), "got {out:?}");
+        assert!(out.contains("!custom\na:"), "got {out:?}");
+        assert!(out.contains("a: !!str 2"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_preserves_anchor_tag_and_alias() {
+        let out = assert_round_trip("a: &x !!str 1\nb: *x\n", 2);
+        assert!(
+            out.contains("&x !!str 1") || out.contains("!!str &x 1"),
+            "got {out:?}"
+        );
+        assert!(out.contains("b: *x"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_preserves_tagged_block_scalar() {
+        let out = assert_round_trip("a: !!str |\n  line1\n  line2\n", 2);
+        assert!(out.contains("a: !!str |\n"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_empty_input_is_empty() {
+        assert_eq!(format_at("", 2), "");
     }
 }

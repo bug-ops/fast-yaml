@@ -37,7 +37,7 @@ Core YAML 1.2.2 parser and emitter for the fast-yaml ecosystem.
 
 **Configuration**: `EmitterConfig` allows customizing indent, line width, flow style, etc.
 
-### Streaming Formatter (feature: `streaming`)
+### Streaming Formatter
 
 **Purpose**: Format YAML directly from parser events without building DOM.
 
@@ -113,24 +113,16 @@ let yaml = emitter.emit_str(&value)?;
 ### Streaming Formatter: Events → YAML (no DOM)
 
 ```rust
-#[cfg(feature = "streaming")]
-use fast_yaml_core::streaming::{format_yaml, FormatterBackend};
+use fast_yaml_core::{Emitter, EmitterConfig};
 
-#[cfg(feature = "streaming")]
-{
-    let yaml = "name: test\nvalue: 123";
+let yaml = "name: test\nvalue: !!str 123";
 
-    // Format without building DOM (faster, less memory)
-    let formatted = format_yaml(yaml)?;
-
-    // Result: properly formatted YAML
-    assert!(formatted.contains("name: test"));
-}
+// Formats from parser events without building a DOM
+let formatted = Emitter::format_with_config(yaml, &EmitterConfig::default())?;
+assert!(formatted.contains("name: test"));
+assert!(formatted.contains("!!str 123"));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
-
-> [!TIP]
-> Enable the `streaming` feature for formatter: `fast-yaml-core = { version = "0.6", features = ["streaming"] }`
 
 ## YAML 1.2.2 Compliance
 
@@ -151,18 +143,11 @@ This library implements the YAML 1.2.2 specification with the Core Schema:
 
 | Feature | Description | Use Case |
 |---------|-------------|----------|
-| `streaming` | Event-based formatting without DOM | CLI tools, large file processing |
 | `arena` | Arena-based memory allocation | High-performance parsing |
 
 ```toml
-# Enable streaming formatter
-fast-yaml-core = { version = "0.6", features = ["streaming"] }
-
 # Enable arena allocation
 fast-yaml-core = { version = "0.6", features = ["arena"] }
-
-# Enable both
-fast-yaml-core = { version = "0.6", features = ["streaming", "arena"] }
 ```
 
 > [!TIP]

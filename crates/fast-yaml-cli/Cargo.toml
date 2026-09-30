@@ -18,7 +18,7 @@ path = "src/main.rs"
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "cargo", "env", "wrap_help"] }
 colored = { workspace = true, optional = true }
-fast-yaml-core = { workspace = true, features = ["streaming"] }
+fast-yaml-core = { workspace = true }
 fast-yaml-linter = { workspace = true, optional = true, features = ["json-output"] }
 fast-yaml-parallel = { workspace = true }
 glob = { workspace = true }

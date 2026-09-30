@@ -2,7 +2,7 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fast_yaml_core::EmitterConfig;
-use fast_yaml_core::streaming::{format_streaming, is_streaming_suitable};
+use fast_yaml_core::streaming::format_streaming;
 use std::hint::black_box;
 
 #[cfg(feature = "arena")]
@@ -22,11 +22,6 @@ fn benchmark_streaming(c: &mut Criterion) {
     for size in sizes {
         let yaml = generate_yaml(size);
         let config = EmitterConfig::default();
-
-        // Only benchmark if streaming is suitable
-        if !is_streaming_suitable(&yaml) {
-            continue;
-        }
 
         group.bench_with_input(BenchmarkId::new("standard", size), &yaml, |b, input| {
             b.iter(|| format_streaming(black_box(input), &config));

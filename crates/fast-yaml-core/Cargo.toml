@@ -12,7 +12,6 @@ categories = ["parsing", "encoding"]
 
 [features]
 default = []
-streaming = []
 arena = ["bumpalo"]
 
 [dependencies]
@@ -30,7 +29,6 @@ indoc = { workspace = true }
 [[bench]]
 name = "arena_benchmark"
 harness = false
-required-features = ["streaming"]
 
 [lints]
 workspace = true

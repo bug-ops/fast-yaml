@@ -54,7 +54,6 @@ pub mod value;
 ///
 /// Provides high-performance formatting by processing parser events directly
 /// without building an intermediate DOM representation.
-#[cfg(feature = "streaming")]
 pub mod streaming;
 
 pub use comments::has_comments;

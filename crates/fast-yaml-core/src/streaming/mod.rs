@@ -1,32 +1,25 @@
 //! Streaming YAML formatter that bypasses DOM construction.
 //!
-//! This module provides high-performance formatting for YAML documents
-//! by processing parser events directly without building an intermediate
-//! representation. This approach achieves O(1) memory complexity for
-//! already-formatted files, compared to O(n) for DOM-based formatting.
+//! This module formats YAML by processing parser events directly, without
+//! building an intermediate DOM. It is the only formatting path behind
+//! [`Emitter::format_with_config`](crate::Emitter::format_with_config).
 //!
 //! # Performance Characteristics
 //!
-//! - Small files (<1KB): Use DOM-based formatter (overhead not worth it)
-//! - Large files (>1KB): Streaming provides 5-10x speedup
-//! - Memory: Constant memory usage regardless of input size
+//! - Faster than DOM-based formatting, especially on large files
+//! - Memory is the output buffer plus nesting and anchor state; no tree of
+//!   the document is ever allocated
 //!
 //! # Usage
 //!
 //! ```
-//! # #[cfg(feature = "streaming")]
-//! # {
-//! use fast_yaml_core::streaming::{format_streaming, is_streaming_suitable};
+//! use fast_yaml_core::streaming::format_streaming;
 //! use fast_yaml_core::EmitterConfig;
 //!
 //! let yaml = "key: value\nlist:\n  - item1\n  - item2\n";
 //! let config = EmitterConfig::default();
-//!
-//! if is_streaming_suitable(yaml) {
-//!     let formatted = format_streaming(yaml, &config).unwrap();
-//!     println!("{formatted}");
-//! }
-//! # }
+//! let formatted = format_streaming(yaml, &config).unwrap();
+//! assert!(formatted.contains("key: value"));
 //! ```
 
 use crate::error::{EmitError, ParseError};
@@ -203,53 +196,6 @@ pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
     names
 }
 
-/// Check if input is suitable for streaming formatter.
-///
-/// Returns `true` for inputs that benefit from streaming:
-/// - Large files (>1KB)
-/// - Files without heavy anchor/alias usage
-///
-/// Returns `false` for:
-/// - Small files (streaming overhead not worth it)
-/// - Files with heavy anchor/alias usage (DOM better for resolution)
-///
-/// # Examples
-///
-/// ```
-/// # #[cfg(feature = "streaming")]
-/// # {
-/// use fast_yaml_core::streaming::is_streaming_suitable;
-///
-/// // Regular files - use streaming (preserves float types)
-/// assert!(is_streaming_suitable("version: 1.0"));
-/// assert!(is_streaming_suitable("small: yaml"));
-///
-/// // Large files - also use streaming
-/// let large = "key: value\n".repeat(1000);
-/// assert!(is_streaming_suitable(&large));
-/// # }
-/// ```
-pub fn is_streaming_suitable(input: &str) -> bool {
-    // Streaming preserves the original scalar text (e.g. "1.0" stays "1.0"),
-    // while DOM-based formatting loses type information (float 1.0 → integer 1).
-    // Always prefer streaming to maintain YAML 1.2.2 Core Schema type fidelity.
-
-    // Heavy anchor/alias usage: avoid streaming only when anchor density is very
-    // high, because the DOM path resolves aliases during parse.
-    let len = input.len();
-    if len > 0 {
-        let anchor_count = input.bytes().filter(|&b| b == b'&').count();
-        let alias_count = input.bytes().filter(|&b| b == b'*').count();
-
-        // More than 10 anchors/aliases per 1000 bytes → fall back to DOM
-        if (anchor_count + alias_count) * 100 > len {
-            return false;
-        }
-    }
-
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,34 +291,6 @@ double: "quoted""#;
         let result = format_streaming(yaml, &config).unwrap();
         assert!(result.contains('&'), "Should contain anchor");
         assert!(result.contains('*'), "Should contain alias");
-    }
-
-    #[test]
-    fn test_is_streaming_suitable_small() {
-        // Small files now use streaming to preserve float types (issue #66)
-        assert!(is_streaming_suitable("small: yaml"));
-        assert!(is_streaming_suitable("key: value\nlist:\n  - a\n  - b"));
-        assert!(is_streaming_suitable("version: 1.0"));
-        assert!(is_streaming_suitable("count: 1.23e10"));
-    }
-
-    #[test]
-    fn test_is_streaming_suitable_large() {
-        let large = "key: value\n".repeat(200); // ~2.2KB
-        assert!(is_streaming_suitable(&large));
-    }
-
-    #[test]
-    fn test_is_streaming_suitable_heavy_anchors() {
-        use std::fmt::Write;
-        let mut heavy_anchors = String::new();
-        for i in 0..100 {
-            writeln!(heavy_anchors, "key{i}: &anchor{i} value{i}").unwrap();
-        }
-        assert!(
-            !is_streaming_suitable(&heavy_anchors),
-            "Heavy anchor usage should not be suitable for streaming"
-        );
     }
 
     #[test]

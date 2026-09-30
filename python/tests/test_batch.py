@@ -181,6 +181,16 @@ class TestFormatFiles:
             assert content is not None
             assert error is None
 
+    def test_format_preserves_explicit_tags(self):
+        """Explicit tags must survive format_files."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "tagged.yaml"
+            path.write_text("a: !!str 1\nb: !custom x\n")
+            [(_, content, error)] = batch.format_files([str(path)])
+        assert error is None
+        assert "a: !!str 1" in content
+        assert "b: !custom x" in content
+
     def test_format_with_invalid_file(self, temp_invalid_yaml):
         """Test formatting invalid file."""
         results = batch.format_files([temp_invalid_yaml])

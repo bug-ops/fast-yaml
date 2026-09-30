@@ -136,8 +136,6 @@ impl FormatterBackend for StdBackend {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(feature = "streaming")]
-/// # {
 /// use fast_yaml_core::streaming::format_streaming;
 /// use fast_yaml_core::EmitterConfig;
 ///
@@ -145,7 +143,6 @@ impl FormatterBackend for StdBackend {
 /// let config = EmitterConfig::default();
 /// let formatted = format_streaming(yaml, &config).unwrap();
 /// assert!(formatted.contains("key:"));
-/// # }
 /// ```
 pub fn format_streaming(input: &str, config: &EmitterConfig) -> EmitResult<String> {
     let input = crate::parser::strip_bom(input);
