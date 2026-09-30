@@ -284,3 +284,9 @@ other: "path---with---dashes"
     let docs = parse_parallel(yaml).unwrap();
     assert_eq!(docs.len(), 2);
 }
+
+#[test]
+fn test_unterminated_directive_errors() {
+    assert!(parse_parallel("%").is_err());
+    assert!(parse_parallel("a: 1\n%").is_err());
+}

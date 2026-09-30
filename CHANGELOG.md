@@ -44,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `label-on-issue` workflow no longer re-creates the removed `status:needs-triage` label on new issues (#413) (#414)
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
 - Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)
+- Fix `fy parse`/`fy lint`/`fy convert` and the bindings hanging forever on input ending in an unterminated `%` directive (#403, #415)
 - Fix Node.js bindings aborting the process on a Rust panic; panics in sync and async exports now throw a catchable JS `Error` (#404)
 - Make `parse_parallel` chunking match `Parser::parse_all`: `...` end markers, multiple `%YAML` blocks, lone-CR line endings, no `---`+NBSP/NEL markers, and whole-input `Error::Parse` marks via new public `ParseError::relocated` (#365) (#405)
 - Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#385)

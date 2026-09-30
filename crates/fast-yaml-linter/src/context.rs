@@ -552,8 +552,8 @@ mod tests {
     }
 
     fn scalar_spans(source: &str) -> Vec<SaphyrSpan> {
-        use saphyr_parser::{BufferedInput, Event, Parser};
-        let mut parser = Parser::new(BufferedInput::new(source.chars()));
+        use saphyr_parser::{Event, Parser};
+        let mut parser = Parser::new_from_str(source);
         let mut spans = Vec::new();
         while let Some(Ok((event, span))) = parser.next_event() {
             if matches!(event, Event::Scalar(..)) {

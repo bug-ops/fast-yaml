@@ -51,3 +51,10 @@ fn stray_quotes_in_plain_scalars_do_not_mask_later_diagnostics() {
 fn stray_quote_before_syntax_error_does_not_panic() {
     let _ = Linter::with_all_rules().lint("a: foo \"bar {\nb: [1,2 ,3\n");
 }
+
+#[test]
+fn unterminated_directive_does_not_hang() {
+    for yaml in ["%", "%YAML", "a: 1\n%", "a\n...\n%FOO bar"] {
+        let _ = Linter::with_all_rules().lint(yaml);
+    }
+}
