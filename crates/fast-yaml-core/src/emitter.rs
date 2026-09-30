@@ -6,6 +6,12 @@ use memchr::memmem;
 use saphyr::{ScalarOwned, YamlEmitter};
 use saphyr_parser::ScalarStyle;
 
+/// Smallest supported indentation width.
+pub(crate) const MIN_INDENT: usize = 1;
+
+/// Largest supported indentation width (a block scalar indentation indicator is one digit).
+pub(crate) const MAX_INDENT: usize = 9;
+
 /// Configuration for YAML emission.
 ///
 /// Controls formatting, style, and output options when serializing YAML.
@@ -77,7 +83,7 @@ impl EmitterConfig {
     /// Set indentation width (clamped to 1-9).
     #[must_use]
     pub fn with_indent(mut self, indent: usize) -> Self {
-        self.indent = indent.clamp(1, 9);
+        self.indent = indent.clamp(MIN_INDENT, MAX_INDENT);
         self
     }
 

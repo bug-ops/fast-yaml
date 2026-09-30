@@ -444,10 +444,9 @@ double: "quoted""#;
             result.contains("|+"),
             "keep chomp '|+' must be preserved, got: {result}"
         );
-        // The formatted output must end with at least two blank lines after content
-        assert!(
-            result.contains("  line two\n\n"),
-            "multiple trailing blank lines must be preserved, got: {result}"
+        assert_eq!(
+            result, "desc: |+\n  line one\n  line two\n\n\n",
+            "trailing blank lines must be preserved exactly"
         );
     }
 
@@ -860,17 +859,24 @@ mod arena_tests {
             "outer:\n  inner: value",
             "defaults: &anchor1\n  key: value\nref: *anchor1",
             "pos_inf: inf\nneg_inf: -inf\nnan: NaN",
+            "- a: 1\n  b: 2\n- - x\n  - y\n",
+            "a: []\nb: {}\n",
+            "- {}\n- &b [1]\n- !!seq []\n",
+            "? []\n: 1\n? [a]\n: {}\n",
+            "a: >\n  x\n\n  y\nb: |+\n  z\n\n\nc: |2\n    lead\n  x\n",
+            "- &a x\n- *a : 1\n",
         ];
 
-        let config = EmitterConfig::default();
-
-        for yaml in test_cases {
-            let standard = format_streaming(yaml, &config).unwrap();
-            let arena = format_streaming_arena(yaml, &config).unwrap();
-            assert_eq!(
-                standard, arena,
-                "Arena and standard should produce identical output for: {yaml}"
-            );
+        for indent in [2, 4] {
+            let config = EmitterConfig::new().with_indent(indent);
+            for yaml in &test_cases {
+                let standard = format_streaming(yaml, &config).unwrap();
+                let arena = format_streaming_arena(yaml, &config).unwrap();
+                assert_eq!(
+                    standard, arena,
+                    "Arena and standard should produce identical output at indent {indent} for: {yaml}"
+                );
+            }
         }
     }
 
