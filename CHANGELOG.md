@@ -103,6 +103,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `fy format <dir|glob>` without `-i` or `--dry-run` now fails with exit code 1 even when no files match, instead of printing "No YAML files found" (#401)
 - **Breaking:** `fy -i` without a subcommand now fails with exit code 1, matching `fy format -i` (#401)
 - `fy format`/`fy lint` treat an existing file named with glob characters (e.g. `a[1].yaml`) as a single file instead of a glob pattern (#401)
+- **CI**: bump `astral-sh/setup-uv` to v10.2.0, `pnpm/action-setup` to v6.1.0 and `taiki-e/install-action` to v2.87.22 (#535)
 
 ### Security
 
