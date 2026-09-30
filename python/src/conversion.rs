@@ -8,6 +8,8 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
+use crate::numeric_keys::NumericKeys;
+
 /// Convert `fast_yaml_core::Value` (`saphyr::YamlOwned`) to Python object.
 ///
 /// Handles YAML 1.2.2 Core Schema types including special float values
@@ -75,7 +77,11 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
                 .collect::<PyResult<Vec<_>>>()?;
 
             let dict = PyDict::new(py);
+            let mut numeric = NumericKeys::new(py);
             for (key, value) in pairs {
+                if let Some(clash) = numeric.record(key.bind(py))? {
+                    return Err(PyValueError::new_err(format!("YAML parse error: {clash}")));
+                }
                 dict.set_item(key, value)?;
             }
             Ok(dict.into_any().unbind())

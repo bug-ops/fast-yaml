@@ -4,7 +4,7 @@
 //! pathological input (deep nesting, alias amplification) is rejected while memory
 //! and stack usage are still bounded.
 
-use crate::error::{ParseError, ParseResult};
+use crate::error::{ParseError, ParseResult, SourcePosition};
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
 use std::fmt;
@@ -60,7 +60,7 @@ impl MaxDepth {
     /// Largest accepted depth: twice the default.
     ///
     /// The calling thread needs about 1 MiB of stack at this depth (worst case: nested tagged
-    /// block sequences, roughly 830 KiB measured in release). On 512 KiB or smaller stacks
+    /// block mappings, roughly 980 KiB measured in release). On 512 KiB or smaller stacks
     /// (small thread stacks, `ulimit -s 512`) the process can abort, and a stack overflow cannot
     /// be caught; the default depth of 256 is safe there. The emitter and formatter keep their
     /// own fixed depth of 256 (TODO #427), so data parsed deeper than that may fail to dump.
@@ -862,14 +862,9 @@ impl LimitGuard {
         }
     }
 
-    // Char-based column, shifted to 1-indexed like saphyr's own errors; no source text to convert from here.
-    #[allow(clippy::disallowed_methods)]
     fn exceeded(kind: LimitKind, span: Span) -> ParseError {
-        ParseError::LimitExceeded {
-            kind,
-            line: span.start.line(),
-            column: span.start.col() + 1,
-        }
+        let SourcePosition { line, column } = span.into();
+        ParseError::LimitExceeded { kind, line, column }
     }
 }
 

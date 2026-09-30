@@ -38,6 +38,7 @@ mod conversion;
 pub(crate) mod event_loader;
 pub(crate) mod limits;
 mod lint;
+mod numeric_keys;
 mod parallel;
 mod rule_input;
 

@@ -13,6 +13,8 @@
 //! - only the plain, untagged scalar `<<` is a merge key; quoted or tagged forms are ordinary keys;
 //! - a merge value must be a mapping or a sequence of mappings, anything else is a [`MergeError`].
 
+use std::num::NonZeroUsize;
+
 use saphyr_parser::Tag;
 use thiserror::Error;
 
@@ -26,11 +28,34 @@ const SET_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0";
 /// Handle of the per-key tag that keeps repeated plain `<<` keys distinct after loading.
 const MERGE_KEY_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0merge";
 
-pub(crate) fn merge_key_tag(ordinal: usize) -> Tag {
+/// One-based ordinal of a tagged `<<` key, in order of appearance in the stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct MergeKeyId(NonZeroUsize);
+
+impl MergeKeyId {
+    /// The id of the key that follows `recorded` earlier keys.
+    pub(crate) const fn after(recorded: usize) -> Self {
+        Self(NonZeroUsize::MIN.saturating_add(recorded))
+    }
+
+    /// Zero-based position of this key in a table of all keys.
+    pub(crate) const fn index(self) -> usize {
+        self.0.get() - 1
+    }
+}
+
+pub(crate) fn merge_key_tag(id: MergeKeyId) -> Tag {
     Tag {
         handle: MERGE_KEY_MARKER_HANDLE.into(),
-        suffix: ordinal.to_string(),
+        suffix: id.0.to_string(),
     }
+}
+
+pub(crate) fn merge_key_id(tag: &Tag) -> Option<MergeKeyId> {
+    if !is_merge_key_marker(tag) {
+        return None;
+    }
+    tag.suffix.parse().ok().map(MergeKeyId)
 }
 
 pub(crate) fn is_merge_key_marker(tag: &Tag) -> bool {
@@ -56,7 +81,7 @@ pub(crate) fn is_set_marker(tag: &Tag) -> bool {
 /// use fast_yaml_core::{MergeError, ParseError, Parser};
 ///
 /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
-/// assert!(matches!(err, ParseError::Merge(MergeError::NotMapping)));
+/// assert!(matches!(err, ParseError::Merge { error: MergeError::NotMapping, .. }));
 /// ```
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -134,6 +159,9 @@ pub trait MergeTarget {
     fn set_if_absent(&mut self, key: Self::Node, value: Self::Node) -> Result<(), Self::Error>;
 
     /// Stores `value` under `key`; an existing key keeps its position and gets the new value.
+    ///
+    /// [`merge_into`] calls this exactly once per explicit pair, in iteration order, and never for
+    /// merged entries; implementors may count calls to tell which pair failed.
     ///
     /// # Errors
     ///

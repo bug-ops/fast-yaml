@@ -1,13 +1,14 @@
-use crate::error::{ParseError, ParseResult};
+use crate::error::{ParseError, ParseResult, SourcePosition};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::merge::{
-    MergeError, is_merge_key_marker, is_set_marker, merge_into, merge_key_tag, set_marker_tag,
+    MergeError, MergeKeyId, is_merge_key_marker, is_set_marker, merge_into, merge_key_id,
+    merge_key_tag, set_marker_tag,
 };
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::{Map, Value};
 use saphyr::{ScalarOwned, YamlLoader};
 use saphyr_parser::{
-    Event, Marker, Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag,
+    Event, Marker, Parser as SaphyrParser, ScalarStyle, Span, SpannedEventReceiver, Tag,
 };
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -63,9 +64,14 @@ impl Parser {
     /// assert!(matches!(err, ParseError::LimitExceeded { .. }));
     /// ```
     pub fn parse_str_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Option<Value>> {
-        let mut docs = load_documents(input, limits)?.into_iter();
-        let first = docs.next().map(canonicalize).transpose()?;
-        docs.try_for_each(|doc| canonicalize(doc).map(drop))?;
+        let (docs, positions) =
+            load_documents_with_budget(input, &StreamBudget::new(*limits), Bom::Strip)?;
+        let mut docs = docs.into_iter();
+        let first = docs
+            .next()
+            .map(|doc| canonicalize_located(doc, &positions))
+            .transpose()?;
+        docs.try_for_each(|doc| canonicalize_located(doc, &positions).map(drop))?;
         Ok(first)
     }
 
@@ -133,10 +139,7 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-        Ok(load_documents_with_budget(input, budget, Bom::Strip)?
-            .into_iter()
-            .map(canonicalize)
-            .collect::<Result<_, _>>()?)
+        canonicalize_documents(load_documents_with_budget(input, budget, Bom::Strip)?)
     }
 
     /// Parse all YAML documents of one chunk of a larger stream, without BOM handling.
@@ -163,10 +166,7 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_chunk_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-        Ok(load_documents_with_budget(input, budget, Bom::Keep)?
-            .into_iter()
-            .map(canonicalize)
-            .collect::<Result<_, _>>()?)
+        canonicalize_documents(load_documents_with_budget(input, budget, Bom::Keep)?)
     }
 }
 
@@ -177,17 +177,22 @@ enum Bom {
     Keep,
 }
 
-/// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
-/// recurses or clones aliases, then returns the un-canonicalized documents.
-fn load_documents(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
-    load_documents_with_budget(input, &StreamBudget::new(*limits), Bom::Strip)
+fn canonicalize_documents(
+    (docs, positions): (Vec<Value>, MergeKeyPositions),
+) -> ParseResult<Vec<Value>> {
+    docs.into_iter()
+        .map(|doc| canonicalize_located(doc, &positions))
+        .collect()
 }
 
+/// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
+/// recurses or clones aliases, then returns the un-canonicalized documents together with the
+/// source position of every `<<` key.
 fn load_documents_with_budget(
     input: &str,
     budget: &StreamBudget,
     bom: Bom,
-) -> ParseResult<Vec<Value>> {
+) -> ParseResult<(Vec<Value>, MergeKeyPositions)> {
     let text = match bom {
         Bom::Strip => strip_bom(input),
         Bom::Keep => input,
@@ -201,11 +206,11 @@ fn load_documents_with_budget(
     while let Some(event) = parser.next_event() {
         let (event, span) = event?;
         guard.observe(&event, span)?;
-        loader.on_event(keys.tag(mark_set(event)), span);
+        loader.on_event(keys.tag(mark_set(event), span), span);
     }
-    Ok(inject_implicit_null_if_empty(
-        loader.into_documents(),
-        input,
+    Ok((
+        inject_implicit_null_if_empty(loader.into_documents(), input),
+        keys.positions,
     ))
 }
 
@@ -321,9 +326,49 @@ fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
 ///
 /// Recursion depth equals the nesting depth of `value`, which [`ParseLimits`] bounds for
 /// parsed input; the collection arms are kept free of scalar temporaries to keep frames small.
-pub fn canonicalize(mut value: Value) -> Result<Value, MergeError> {
-    canonicalize_in_place(&mut value, SetElements::No)?;
+pub fn canonicalize(value: Value) -> Result<Value, MergeError> {
+    canonicalize_value(value, &mut Blame::default())
+}
+
+/// [`canonicalize`] that reports a rejected merge value at the source position of its `<<` key.
+fn canonicalize_located(value: Value, positions: &MergeKeyPositions) -> ParseResult<Value> {
+    let mut blame = Blame::default();
+    canonicalize_value(value, &mut blame).map_err(|error| {
+        let SourcePosition { line, column } = blame
+            .0
+            .and_then(|id| positions.get(id))
+            .unwrap_or_else(|| unreachable!("parser-loaded merge keys are always tagged"));
+        ParseError::Merge {
+            error,
+            line,
+            column,
+        }
+    })
+}
+
+fn canonicalize_value(mut value: Value, blame: &mut Blame) -> Result<Value, MergeError> {
+    canonicalize_in_place(&mut value, SetElements::No, blame)?;
     Ok(value)
+}
+
+/// Out-of-band record of the `<<` key that failed, so recursion can return a one-byte error.
+#[derive(Default)]
+struct Blame(Option<MergeKeyId>);
+
+/// Positions of all tagged `<<` keys of a stream, indexed by [`MergeKeyId`].
+#[derive(Default)]
+struct MergeKeyPositions(Vec<SourcePosition>);
+
+impl MergeKeyPositions {
+    fn record(&mut self, span: Span) -> MergeKeyId {
+        let id = MergeKeyId::after(self.0.len());
+        self.0.push(span.into());
+        id
+    }
+
+    fn get(&self, id: MergeKeyId) -> Option<SourcePosition> {
+        self.0.get(id.index()).copied()
+    }
 }
 
 /// Whether the mapping being canonicalized holds `!!set` elements, where `<<` is not a merge key.
@@ -334,16 +379,20 @@ enum SetElements {
 }
 
 // In place, with a one-byte result: the recursion frame holds no `Value` temporaries.
-fn canonicalize_in_place(slot: &mut Value, set: SetElements) -> Result<(), MergeError> {
+fn canonicalize_in_place(
+    slot: &mut Value,
+    set: SetElements,
+    blame: &mut Blame,
+) -> Result<(), MergeError> {
     match slot {
         Value::Sequence(seq) => {
             for item in seq {
-                canonicalize_in_place(item, SetElements::No)?;
+                canonicalize_in_place(item, SetElements::No, blame)?;
             }
             Ok(())
         }
-        Value::Mapping(_) => canonicalize_mapping(slot, set),
-        Value::Tagged(..) => canonicalize_tagged(slot),
+        Value::Mapping(_) => canonicalize_mapping(slot, set, blame),
+        Value::Tagged(..) => canonicalize_tagged(slot, blame),
         _ => {
             canonicalize_scalar(slot);
             Ok(())
@@ -351,23 +400,30 @@ fn canonicalize_in_place(slot: &mut Value, set: SetElements) -> Result<(), Merge
     }
 }
 
-fn canonicalize_mapping(slot: &mut Value, set: SetElements) -> Result<(), MergeError> {
+fn canonicalize_mapping(
+    slot: &mut Value,
+    set: SetElements,
+    blame: &mut Blame,
+) -> Result<(), MergeError> {
     let Value::Mapping(map) = std::mem::replace(slot, Value::Value(ScalarOwned::Null)) else {
         return Ok(());
     };
     let mut explicit = Map::with_capacity(map.len());
     let mut merge = None;
+    let mut merge_id = None;
     for (k, v) in map {
         if matches!(set, SetElements::No) && is_merge_key(&k) {
-            let source = canonicalize_merge_source(v)?;
+            let source = canonicalize_merge_source(v, blame)?;
             // A repeated `<<` keeps only the last value, but every value must be valid
             if let Some(earlier) = merge.replace(source) {
-                merge_into(&mut Map::new(), Some(earlier), [])?;
+                merge_into(&mut Map::new(), Some(earlier), [])
+                    .map_err(|e| blamed(e, merge_id, blame))?;
             }
+            merge_id = merge_key_id_of(&k);
         } else {
             let (mut k, mut v) = (k, v);
-            canonicalize_in_place(&mut k, SetElements::No)?;
-            canonicalize_in_place(&mut v, SetElements::No)?;
+            canonicalize_in_place(&mut k, SetElements::No, blame)?;
+            canonicalize_in_place(&mut v, SetElements::No, blame)?;
             explicit.insert(k, v);
         }
     }
@@ -375,11 +431,27 @@ fn canonicalize_mapping(slot: &mut Value, set: SetElements) -> Result<(), MergeE
         None => explicit,
         Some(merge) => {
             let mut result = Map::with_capacity(explicit.len());
-            merge_into(&mut result, Some(merge), explicit)?;
+            merge_into(&mut result, Some(merge), explicit)
+                .map_err(|e| blamed(e, merge_id, blame))?;
             result
         }
     });
     Ok(())
+}
+
+/// Records the `<<` key a merge failure belongs to.
+#[cold]
+#[inline(never)]
+const fn blamed(error: MergeError, key: Option<MergeKeyId>, blame: &mut Blame) -> MergeError {
+    blame.0 = key;
+    error
+}
+
+fn merge_key_id_of(key: &Value) -> Option<MergeKeyId> {
+    match key {
+        Value::Representation(_, _, Some(tag)) => merge_key_id(tag),
+        _ => None,
+    }
 }
 
 /// Whether `key` is the plain, untagged scalar `<<`; quoted and tagged forms are ordinary keys.
@@ -417,17 +489,16 @@ struct MergeKeyTagger {
     frames: Vec<(bool, usize)>,
     /// Anchors on plain `<<` scalars; an alias to one in key position is a merge key too.
     merge_anchors: HashSet<usize>,
-    next: usize,
+    positions: MergeKeyPositions,
 }
 
 impl MergeKeyTagger {
-    fn marked<'a>(&mut self, text: Cow<'a, str>, anchor: usize) -> Event<'a> {
-        self.next += 1;
-        let tag = Cow::Owned(merge_key_tag(self.next));
+    fn marked<'a>(&mut self, text: Cow<'a, str>, anchor: usize, span: Span) -> Event<'a> {
+        let tag = Cow::Owned(merge_key_tag(self.positions.record(span)));
         Event::Scalar(text, ScalarStyle::Plain, anchor, Some(tag))
     }
 
-    fn tag<'a>(&mut self, event: Event<'a>) -> Event<'a> {
+    fn tag<'a>(&mut self, event: Event<'a>, span: Span) -> Event<'a> {
         let is_key = match event {
             Event::Scalar(..)
             | Event::Alias(_)
@@ -452,10 +523,10 @@ impl MergeKeyTagger {
                 self.frames.pop();
             }
             Event::Scalar(s, ScalarStyle::Plain, anchor, None) if is_key && s == "<<" => {
-                return self.marked(s, anchor);
+                return self.marked(s, anchor, span);
             }
             Event::Alias(id) if is_key && self.merge_anchors.contains(&id) => {
-                return self.marked(Cow::Borrowed("<<"), 0);
+                return self.marked(Cow::Borrowed("<<"), 0, span);
             }
             _ => {}
         }
@@ -465,28 +536,28 @@ impl MergeKeyTagger {
 
 /// Canonicalizes a merge value, keeping the marker on a `!!set` source (and on sequence items)
 /// so that [`MergeTarget::classify`](crate::merge::MergeTarget::classify) rejects it.
-fn canonicalize_merge_source(raw: Value) -> Result<Value, MergeError> {
+fn canonicalize_merge_source(raw: Value, blame: &mut Blame) -> Result<Value, MergeError> {
     match raw {
         Value::Sequence(items) => items
             .into_iter()
-            .map(canonicalize_set_source)
+            .map(|item| canonicalize_set_source(item, blame))
             .collect::<Result<_, _>>()
             .map(Value::Sequence),
-        other => canonicalize_set_source(other),
+        other => canonicalize_set_source(other, blame),
     }
 }
 
-fn canonicalize_set_source(raw: Value) -> Result<Value, MergeError> {
+fn canonicalize_set_source(raw: Value, blame: &mut Blame) -> Result<Value, MergeError> {
     match raw {
         Value::Tagged(tag, mut inner) if is_set_marker(&tag) => {
-            canonicalize_in_place(&mut inner, SetElements::Yes)?;
+            canonicalize_in_place(&mut inner, SetElements::Yes, blame)?;
             Ok(Value::Tagged(tag, inner))
         }
-        other => canonicalize(other),
+        other => canonicalize_value(other, blame),
     }
 }
 
-fn canonicalize_tagged(slot: &mut Value) -> Result<(), MergeError> {
+fn canonicalize_tagged(slot: &mut Value, blame: &mut Blame) -> Result<(), MergeError> {
     let Value::Tagged(tag, inner) = std::mem::replace(slot, Value::Value(ScalarOwned::Null)) else {
         return Ok(());
     };
@@ -500,7 +571,7 @@ fn canonicalize_tagged(slot: &mut Value) -> Result<(), MergeError> {
     } else {
         SetElements::No
     };
-    canonicalize_in_place(slot, set)
+    canonicalize_in_place(slot, set, blame)
 }
 
 /// Canonicalize a non-collection, non-tagged node.
@@ -810,7 +881,7 @@ development:
             "x: 1\n---\ny: 2\n---\nm:\n  <<: 1",
         ] {
             assert!(
-                matches!(Parser::parse_str(yaml), Err(ParseError::Merge(_))),
+                matches!(Parser::parse_str(yaml), Err(ParseError::Merge { .. })),
                 "{yaml}"
             );
             assert!(Parser::parse_all(yaml).is_err(), "{yaml}");
@@ -1022,7 +1093,10 @@ m:
             assert!(
                 matches!(
                     Parser::parse_str(&yaml),
-                    Err(ParseError::Merge(MergeError::NotMapping))
+                    Err(ParseError::Merge {
+                        error: MergeError::NotMapping,
+                        ..
+                    })
                 ),
                 "{merge}"
             );
@@ -1087,15 +1161,103 @@ m:
         let yaml = "a: &a {x: 1}\nm:\n  <<: [*a, 5, null, [{w: 0}], {z: 3}]\n  k: 0\n";
         assert!(matches!(
             Parser::parse_str(yaml),
-            Err(ParseError::Merge(MergeError::NotMapping))
+            Err(ParseError::Merge {
+                error: MergeError::NotMapping,
+                ..
+            })
         ));
     }
 
     fn merge_error(yaml: &str) -> Option<MergeError> {
         match Parser::parse_str(yaml) {
-            Err(ParseError::Merge(e)) => Some(e),
+            Err(ParseError::Merge { error, .. }) => Some(error),
             _ => None,
         }
+    }
+
+    fn merge_at(result: ParseResult<impl std::fmt::Debug>) -> (MergeError, usize, usize) {
+        match result {
+            Err(ParseError::Merge {
+                error,
+                line,
+                column,
+            }) => (error, line, column),
+            other => panic!("merge error expected, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_merge_error_position() {
+        let cases = [
+            ("m:\n  <<: 1\n", MergeError::NotMapping, 2, 3),
+            ("<<: 1\n", MergeError::NotMapping, 1, 1),
+            ("a: 1\nb: 2\n<<: null\n", MergeError::NotMapping, 3, 1),
+            (
+                "s: &s !!set {x}\nm:\n  k: 0\n  <<: *s\n",
+                MergeError::SetSource,
+                4,
+                3,
+            ),
+            ("m:\n  <<: [{a: 1}, 5]\n", MergeError::NotMapping, 2, 3),
+            ("m: {k: 0, <<: 1}\n", MergeError::NotMapping, 1, 11),
+            ("m:\n  <<: 1\n  <<: {a: 1}\n", MergeError::NotMapping, 2, 3),
+            ("m:\n  <<: {a: 1}\n  <<: 1\n", MergeError::NotMapping, 3, 3),
+            ("a:\n  b:\n    <<: 1\n", MergeError::NotMapping, 3, 5),
+            ("- x: 1\n- <<: 1\n", MergeError::NotMapping, 2, 3),
+            ("m:\n  \u{e9}: 1\n  <<: 1\n", MergeError::NotMapping, 3, 3),
+            ("a: 1\r\nm:\r\n  <<: 1\r\n", MergeError::NotMapping, 3, 3),
+        ];
+        for (yaml, error, line, column) in cases {
+            assert_eq!(
+                merge_at(Parser::parse_str(yaml)),
+                (error, line, column),
+                "{yaml:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_error_position_alias_key() {
+        let yaml = "a: {&m <<: {x: 1}}\nb:\n  *m : 5\n";
+        assert_eq!(
+            merge_at(Parser::parse_str(yaml)),
+            (MergeError::NotMapping, 3, 3)
+        );
+    }
+
+    #[test]
+    fn test_merge_error_position_non_ascii_prefix() {
+        let yaml = "m: {\"\u{e9}\u{e9}\": 1, <<: 1}\n";
+        assert_eq!(
+            merge_at(Parser::parse_str(yaml)),
+            (MergeError::NotMapping, 1, 14)
+        );
+    }
+
+    #[test]
+    fn test_merge_error_position_across_documents() {
+        let yaml = "a: 1\n---\nb: 2\n---\nm:\n  <<: 1\n";
+        assert_eq!(
+            merge_at(Parser::parse_all(yaml)),
+            (MergeError::NotMapping, 6, 3)
+        );
+    }
+
+    #[test]
+    fn test_merge_error_position_display() {
+        let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_without_positions_reports_bare_error() {
+        let key = Value::Representation("<<".into(), ScalarStyle::Plain, None);
+        let one = Value::Representation("1".into(), ScalarStyle::Plain, None);
+        let map = Value::Mapping(Map::from_iter([(key, one)]));
+        assert_eq!(canonicalize(map).unwrap_err(), MergeError::NotMapping);
     }
 
     #[test]

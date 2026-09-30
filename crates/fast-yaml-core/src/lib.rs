@@ -60,7 +60,7 @@ pub mod streaming;
 
 pub use comments::{find_comments, has_comments};
 pub use emitter::{Emitter, EmitterConfig};
-pub use error::{EmitError, EmitResult, ParseError, ParseResult};
+pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition};
 pub use limits::{
     DumpBudget, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
     MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits, StreamBudget,
