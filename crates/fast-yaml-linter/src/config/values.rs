@@ -530,7 +530,7 @@ impl Default for PatternList {
 }
 
 impl PatternList {
-    /// Builds a list, rejecting more than [`MAX_PATTERNS`] patterns before compiling any of them.
+    /// Builds a list, rejecting more than `MAX_PATTERNS` patterns before compiling any of them.
     ///
     /// # Errors
     ///
