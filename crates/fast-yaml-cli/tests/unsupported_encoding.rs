@@ -19,6 +19,13 @@ const BOMS: [(&[u8], &str); 4] = [
     (&[0x00, 0x00, 0xFE, 0xFF, 0, 0, 0, b'a'], "UTF-32BE"),
 ];
 
+const NO_BOM: [(&[u8], &str); 4] = [
+    (&[b'a', 0x00, b':', 0x00, b'1', 0x00], "UTF-16LE"),
+    (&[0x00, b'a', 0x00, b':', 0x00, b'1'], "UTF-16BE"),
+    (&[b'a', 0, 0, 0, b':', 0, 0, 0], "UTF-32LE"),
+    (&[0, 0, 0, b'a', 0, 0, 0, b':'], "UTF-32BE"),
+];
+
 const SUBCOMMANDS: [&[&str]; 4] = [&["parse"], &["lint"], &["format"], &["convert", "json"]];
 
 fn fy() -> Command {
@@ -113,4 +120,28 @@ fn invalid_utf8_keeps_utf8_message() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("not valid UTF-8"), "{stderr}");
     assert!(!stderr.contains("unsupported encoding"), "{stderr}");
+}
+
+#[test]
+fn stdin_without_bom_is_reported_from_its_null_bytes() {
+    for (bytes, name) in NO_BOM {
+        let output = fy().arg("parse").write_stdin(bytes).output().unwrap();
+        assert_rejected(&output, name, name);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("null bytes"), "{name}: {stderr}");
+        assert!(!stderr.contains("NUL (U+0000)"), "{name}: {stderr}");
+    }
+}
+
+#[test]
+fn file_without_bom_is_reported_by_every_subcommand() {
+    let dir = tempfile::tempdir().unwrap();
+    for (bytes, name) in NO_BOM {
+        let path = dir.path().join("input.yaml");
+        std::fs::write(&path, bytes).unwrap();
+        for args in SUBCOMMANDS {
+            let output = fy().args(args).arg(&path).output().unwrap();
+            assert_rejected(&output, name, &format!("{args:?} {name}"));
+        }
+    }
 }

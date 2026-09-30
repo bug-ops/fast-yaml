@@ -1,6 +1,7 @@
 use crate::limits::{LimitKind, MaxTagBytes};
 use crate::merge::MergeError;
 use saphyr_parser::Span;
+use std::fmt;
 use thiserror::Error;
 
 /// Start of a node in the source text, as reported in error messages.
@@ -36,8 +37,8 @@ impl From<Span> for SourcePosition {
 /// Renders " (document N)" for every document after the first, nothing for the first.
 struct InDocument(usize);
 
-impl std::fmt::Display for InDocument {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for InDocument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             0 => Ok(()),
             index => write!(f, " (document {})", index + 1),
@@ -45,18 +46,130 @@ impl std::fmt::Display for InDocument {
     }
 }
 
+/// Why the YAML text is not well formed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SyntaxReason {
+    Scanner(Box<str>),
+    InvalidCharacter(char),
+    RecursiveAlias,
+}
+
+impl fmt::Display for SyntaxReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Scanner(info) => f.write_str(info),
+            Self::InvalidCharacter('\0') => f.write_str("NUL (U+0000) is not allowed in YAML"),
+            Self::InvalidCharacter(c) => {
+                write!(f, "U+{:04X} is not allowed in YAML", u32::from(*c))
+            }
+            Self::RecursiveAlias => {
+                f.write_str("alias refers to an anchor that is still being defined")
+            }
+        }
+    }
+}
+
+/// A well-formedness error in the YAML text, with its position.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{ParseError, Parser};
+///
+/// let ParseError::Syntax(err) = Parser::parse_str("a: [").unwrap_err() else {
+///     panic!("syntax error expected")
+/// };
+/// assert_eq!(err.line(), 2);
+/// assert!(err.to_string().contains("line 2"));
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SyntaxError {
+    reason: SyntaxReason,
+    line: usize,
+    column: usize,
+    document: usize,
+}
+
+impl SyntaxError {
+    const fn new(reason: SyntaxReason, position: SourcePosition, document: usize) -> Self {
+        Self {
+            reason,
+            line: position.line,
+            column: position.column,
+            document,
+        }
+    }
+
+    pub(crate) const fn invalid_character(
+        c: char,
+        position: SourcePosition,
+        document: usize,
+    ) -> Self {
+        Self::new(SyntaxReason::InvalidCharacter(c), position, document)
+    }
+
+    /// Error for an alias that refers to an anchor whose node is still being defined.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{SourcePosition, SyntaxError};
+    ///
+    /// let err = SyntaxError::recursive_alias(SourcePosition { line: 1, column: 5 }, 0);
+    /// assert!(err.to_string().contains("still being defined"));
+    /// ```
+    #[must_use]
+    pub const fn recursive_alias(position: SourcePosition, document: usize) -> Self {
+        Self::new(SyntaxReason::RecursiveAlias, position, document)
+    }
+
+    /// Line number of the error (1-indexed).
+    #[must_use]
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    /// Column number of the error (1-indexed, in characters).
+    #[must_use]
+    pub const fn column(&self) -> usize {
+        self.column
+    }
+
+    /// Position of the error in the source text.
+    #[must_use]
+    pub const fn position(&self) -> SourcePosition {
+        SourcePosition {
+            line: self.line,
+            column: self.column,
+        }
+    }
+
+    /// Zero-based index of the document in the stream.
+    #[must_use]
+    pub const fn document(&self) -> usize {
+        self.document
+    }
+}
+
+impl fmt::Display for SyntaxError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{} at line {}, column {}",
+            self.reason, self.line, self.column
+        )
+    }
+}
+
+impl std::error::Error for SyntaxError {}
+
 /// Errors that can occur during YAML parsing.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ParseError {
-    /// YAML scanner error from saphyr.
-    #[error("YAML scanner error: {error}{}", InDocument(*.document))]
-    Scanner {
-        /// Underlying scanner error.
-        error: saphyr::ScanError,
-        /// Zero-based index of the document in the stream.
-        document: usize,
-    },
+    /// The text is not well-formed YAML.
+    #[error("YAML syntax error: {}{}", .0, InDocument(.0.document))]
+    Syntax(SyntaxError),
 
     /// Input exceeds a configured resource limit (nesting depth or alias expansion).
     #[error("YAML resource limit exceeded at line {line}, column {column}: {kind}{}", InDocument(*.document))]
@@ -101,36 +214,27 @@ impl ParseError {
     /// Shifts source positions by the text that precedes the parsed fragment.
     ///
     /// Lets an error from a fragment be reported in the coordinates of the whole input:
-    /// `lines` line breaks, `chars` characters and `documents` documents come before the fragment,
-    /// which must start at the beginning of a line so columns stay valid.
+    /// `lines` line breaks and `documents` documents come before the fragment, which must start
+    /// at the beginning of a line so columns stay valid.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_core::{ParseError, Parser};
     ///
-    /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 20, 0);
-    /// let ParseError::Scanner { error: scan, .. } = err else { panic!("scanner error expected") };
-    /// assert!(scan.marker().line() > 4);
-    /// assert!(scan.marker().index() >= 20);
+    /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 0);
+    /// assert!(err.position().line > 4);
     ///
-    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().relocated(4, 20, 2);
+    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().relocated(4, 2);
     /// assert!(matches!(err, ParseError::Merge { line: 6, column: 3, document: 2, .. }));
     /// ```
-    // Marker fields are char-based; shifted by char counts, no source text to convert from.
-    #[allow(clippy::disallowed_methods)]
     #[must_use]
-    pub fn relocated(self, lines: usize, chars: usize, documents: usize) -> Self {
+    pub fn relocated(self, lines: usize, documents: usize) -> Self {
         match self {
-            Self::Scanner { error, document } => {
-                let m = error.marker();
-                Self::Scanner {
-                    error: saphyr::ScanError::new(
-                        saphyr_parser::Marker::new(m.index() + chars, m.line() + lines, m.col()),
-                        error.info().to_owned(),
-                    ),
-                    document: document + documents,
-                }
+            Self::Syntax(mut e) => {
+                e.line += lines;
+                e.document += documents;
+                Self::Syntax(e)
             }
             Self::LimitExceeded {
                 kind,
@@ -157,6 +261,29 @@ impl ParseError {
         }
     }
 
+    /// Source position the error points at.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Parser;
+    ///
+    /// let position = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().position();
+    /// assert_eq!((position.line, position.column), (2, 3));
+    /// ```
+    #[must_use]
+    pub const fn position(&self) -> SourcePosition {
+        match self {
+            Self::Syntax(e) => e.position(),
+            Self::LimitExceeded { line, column, .. } | Self::Merge { line, column, .. } => {
+                SourcePosition {
+                    line: *line,
+                    column: *column,
+                }
+            }
+        }
+    }
+
     /// Zero-based index of the document the error belongs to.
     ///
     /// Every variant records the document in which it was detected. A scanner error that
@@ -175,9 +302,8 @@ impl ParseError {
     #[must_use]
     pub const fn document_index(&self) -> usize {
         match self {
-            Self::Scanner { document, .. }
-            | Self::LimitExceeded { document, .. }
-            | Self::Merge { document, .. } => *document,
+            Self::Syntax(e) => e.document,
+            Self::LimitExceeded { document, .. } | Self::Merge { document, .. } => *document,
         }
     }
 }
@@ -194,9 +320,14 @@ pub enum EmitError {
     #[error(transparent)]
     Parse(#[from] ParseError),
 
-    /// Attempted to serialize an unsupported type.
-    #[error("unsupported type for serialization: {0}")]
-    UnsupportedType(String),
+    /// A sequence or mapping was used as a mapping key in flow style, which the flow emitter
+    /// cannot write.
+    #[error("collections are not supported as mapping keys in flow style")]
+    ComplexFlowKey,
+
+    /// A `!!set` was used as a mapping key or set member, which YAML text cannot express.
+    #[error("a !!set cannot be a mapping key or set member")]
+    SetAsKey,
 
     /// Collection nesting exceeds the formatter depth limit.
     #[error("nesting depth exceeds the formatter limit of {limit}")]
@@ -218,6 +349,24 @@ pub enum EmitError {
         /// Maximum bytes of expanded tag prefixes per stream.
         limit: MaxTagBytes,
     },
+}
+
+impl ParseError {
+    /// Wraps a scanner error found in the document with zero-based index `document`.
+    #[must_use]
+    // Char-based column, 1-indexed like the scanner's own messages; no source text to convert from.
+    #[allow(clippy::disallowed_methods)]
+    pub fn scanner(error: &saphyr_parser::ScanError, document: usize) -> Self {
+        let marker = error.marker();
+        Self::Syntax(SyntaxError::new(
+            SyntaxReason::Scanner(error.info().into()),
+            SourcePosition {
+                line: marker.line(),
+                column: marker.col() + 1,
+            },
+            document,
+        ))
+    }
 }
 
 pub(crate) const fn from_saphyr(err: saphyr::EmitError) -> EmitError {
@@ -259,7 +408,28 @@ mod tests {
 
     #[test]
     fn test_emit_error_display() {
-        let err = EmitError::UnsupportedType("CustomType".to_string());
-        assert!(err.to_string().contains("CustomType"));
+        assert!(EmitError::ComplexFlowKey.to_string().contains("flow style"));
+    }
+
+    #[test]
+    fn syntax_error_display_has_no_byte_offset() {
+        let err = crate::Parser::parse_str("a: [").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.starts_with("YAML syntax error: "), "{msg}");
+        assert!(msg.contains("at line 2, column"), "{msg}");
+        assert!(!msg.contains("byte"), "{msg}");
+    }
+
+    #[test]
+    fn position_covers_every_variant() {
+        let limit = ParseError::LimitExceeded {
+            kind: LimitKind::Depth(crate::limits::MaxDepth::MIN),
+            line: 3,
+            column: 7,
+            document: 0,
+        };
+        assert_eq!(limit.position(), SourcePosition { line: 3, column: 7 });
+        let syntax = crate::Parser::parse_str("a: [").unwrap_err();
+        assert_eq!(syntax.position().line, 2);
     }
 }

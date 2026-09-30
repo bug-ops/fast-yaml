@@ -212,12 +212,17 @@ impl RaiseHint {
                 ..
             } if limit.get() < MaxDepth::MAX.get() => Some(Self::MaxDepth),
             ParseError::LimitExceeded {
-                kind: LimitKind::AliasBytes(limit),
+                kind: LimitKind::AliasBytes(limit) | LimitKind::AnchorCopies(limit),
                 ..
             } if limit.get() < MaxAliasBytes::MAX.get() => Some(Self::MaxAliasBytes),
             _ => None,
         };
         if let Some(e) = err.downcast_ref::<ParseError>() {
+            return parse_error(e);
+        }
+        if let Some(fast_yaml_core::EmitError::Parse(e)) =
+            err.downcast_ref::<fast_yaml_core::EmitError>()
+        {
             return parse_error(e);
         }
         if let Some(e) = err.downcast_ref::<InputTooLarge>() {

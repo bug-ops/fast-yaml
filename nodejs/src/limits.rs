@@ -12,7 +12,7 @@ use napi::Result as NapiResult;
 use crate::options::{checked_uint, range_error};
 
 fn core_error(option: &str, e: LimitRangeError) -> napi::Error {
-    range_error(option, 1, e.max as u64, e.value)
+    range_error(option, e.min as u64, e.max as u64, e.value)
 }
 
 /// Validates an optional limit of kind `K`, defaulting to [`Bounded::DEFAULT`].

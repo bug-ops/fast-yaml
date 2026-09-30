@@ -1,0 +1,476 @@
+//! Parser input that has been validated and stripped of prefix byte order marks.
+//!
+//! Every entry point that hands text to the YAML parser goes through [`NormalizedInput::new`],
+//! which is the only way to obtain one. The parser, the loader and the streaming formatter accept
+//! nothing else, so text can neither skip validation nor be normalized twice.
+
+use std::borrow::Cow;
+use std::ops::Range;
+
+use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
+use crate::limits::DocumentCursor;
+use crate::scalar::is_c_printable;
+
+const BOM: char = '\u{FEFF}';
+
+/// Byte length of U+FEFF in UTF-8.
+const BOM_LEN: usize = BOM.len_utf8();
+
+/// YAML text that contains only printable characters and no byte order mark in a document prefix.
+///
+/// Normalization does two things:
+///
+/// 1. Every character outside the YAML 1.2.2 `c-printable` set (for example NUL, DEL, C1
+///    controls, U+FFFE) is rejected with a [`ParseError::Syntax`] at its position.
+/// 2. Each U+FEFF that YAML 1.2.2 section 9.1.1 allows in a document prefix is removed: one at
+///    the start of the stream, one at the start of a line after a `...` line (blank and comment
+///    lines between are skipped), and one at the start of a line that, after blank and comment
+///    lines, holds a `%` directive or a `---` marker. A U+FEFF anywhere else is content.
+///
+/// Line and column numbers, including that of a rejected character, count characters of the
+/// normalized text, so a line that lost a BOM reads as if the BOM were absent, like the leading
+/// BOM always has; [`original_offset`](Self::original_offset) maps byte offsets back.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::NormalizedInput;
+///
+/// let input = NormalizedInput::new("\u{FEFF}a: 1\n...\n\u{FEFF}---\nb: 2\n")?;
+/// assert_eq!(input.as_str(), "a: 1\n...\n---\nb: 2\n");
+/// assert_eq!(input.original_offset(input.as_str().len()), input.as_str().len() + 6);
+/// assert!(NormalizedInput::new("a: \u{7F}").is_err());
+/// # Ok::<(), fast_yaml_core::ParseError>(())
+/// ```
+#[derive(Debug, Clone)]
+pub struct NormalizedInput<'a> {
+    text: Cow<'a, str>,
+    /// Offsets in `text` at which a BOM was removed, ascending.
+    removed_at: Vec<usize>,
+    original_len: usize,
+}
+
+impl<'a> NormalizedInput<'a> {
+    /// Validates `input` and strips its prefix byte order marks.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::Syntax`] positioned at the first character outside the YAML
+    /// printable set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{NormalizedInput, ParseError};
+    ///
+    /// assert!(NormalizedInput::new("a: 1\n").is_ok());
+    /// let Err(ParseError::Syntax(err)) = NormalizedInput::new("a: 1\nb: \u{7F}") else {
+    ///     unreachable!()
+    /// };
+    /// assert_eq!((err.line(), err.column()), (2, 4));
+    /// ```
+    pub fn new(input: &'a str) -> ParseResult<Self> {
+        let (text, removed_at) = strip_prefix_boms(input);
+        if let Some((offset, c)) = first_non_printable(&text) {
+            return Err(ParseError::Syntax(SyntaxError::invalid_character(
+                c,
+                position_at(&text, offset),
+                document_at(text.get(..offset).unwrap_or_default()),
+            )));
+        }
+        Ok(Self {
+            text,
+            removed_at,
+            original_len: input.len(),
+        })
+    }
+
+    /// Returns the normalized text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::NormalizedInput;
+    ///
+    /// let input = NormalizedInput::new("\u{FEFF}a: 1\n")?;
+    /// assert_eq!(input.as_str(), "a: 1\n");
+    /// # Ok::<(), fast_yaml_core::ParseError>(())
+    /// ```
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.text
+    }
+
+    /// Returns the byte length of the text this input was made from.
+    ///
+    /// Zero only for an empty original, even when normalization left nothing (a lone BOM).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::NormalizedInput;
+    ///
+    /// let input = NormalizedInput::new("\u{FEFF}")?;
+    /// assert_eq!((input.as_str().len(), input.original_len()), (0, 3));
+    /// # Ok::<(), fast_yaml_core::ParseError>(())
+    /// ```
+    #[must_use]
+    pub const fn original_len(&self) -> usize {
+        self.original_len
+    }
+
+    /// Maps a byte offset in the normalized text to the same position in the original text,
+    /// counting every removed BOM at or before it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::NormalizedInput;
+    ///
+    /// let input = NormalizedInput::new("a\n...\n\u{FEFF}b: 1\n")?;
+    /// assert_eq!(input.original_offset(0), 0);
+    /// let b = input.as_str().find('b').unwrap();
+    /// assert_eq!(input.original_offset(b), b + 3);
+    /// # Ok::<(), fast_yaml_core::ParseError>(())
+    /// ```
+    #[must_use]
+    pub fn original_offset(&self, offset: usize) -> usize {
+        offset
+            + BOM_LEN
+                * self
+                    .removed_at
+                    .partition_point(|&removed| removed <= offset)
+    }
+
+    /// Returns the part of this input in `range`, without validating or stripping again.
+    ///
+    /// Returns `None` unless `range` lies within the text on character boundaries and starts at
+    /// the beginning of a line, which keeps error columns of the part valid. The part does not
+    /// track removed BOMs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::NormalizedInput;
+    ///
+    /// let input = NormalizedInput::new("a: 1\n---\nb: 2\n")?;
+    /// let second = input.slice(5..input.as_str().len()).unwrap();
+    /// assert_eq!(second.as_str(), "---\nb: 2\n");
+    /// assert!(input.slice(1..4).is_none(), "a part must start at a line start");
+    /// # Ok::<(), fast_yaml_core::ParseError>(())
+    /// ```
+    #[must_use]
+    pub fn slice(&self, range: Range<usize>) -> Option<NormalizedInput<'_>> {
+        let text = self.text.get(range.clone())?;
+        let at_line_start = range.start == 0
+            || self
+                .text
+                .as_bytes()
+                .get(range.start - 1)
+                .is_some_and(|b| matches!(b, b'\n' | b'\r'));
+        at_line_start.then(|| NormalizedInput {
+            original_len: text.len(),
+            text: Cow::Borrowed(text),
+            removed_at: Vec::new(),
+        })
+    }
+}
+
+/// Finds the first character outside `c-printable`, with its byte offset.
+fn first_non_printable(text: &str) -> Option<(usize, char)> {
+    text.bytes().enumerate().find_map(|(i, b)| {
+        let suspect = match b {
+            b'\t' | b'\n' | b'\r' => false,
+            0x00..=0x1F | 0x7F | 0xC2 | 0xEF => true,
+            _ => false,
+        };
+        let c = suspect.then(|| text.get(i..)?.chars().next()).flatten()?;
+        (!is_c_printable(c)).then_some((i, c))
+    })
+}
+
+/// Index of the document the text after `prefix` belongs to, as scanner errors count it.
+fn document_at(prefix: &str) -> usize {
+    let mut cursor = DocumentCursor::default();
+    let end = position_at(prefix, prefix.len());
+    for event in saphyr_parser::Parser::new_from_str(prefix) {
+        let Ok((event, span)) = event else { break };
+        // The parser closes the truncated prefix with a DocumentEnd at its end; the text after it is not past that document.
+        let at = SourcePosition::from(span);
+        if matches!(event, saphyr_parser::Event::DocumentEnd)
+            && (at.line, at.column) >= (end.line, end.column)
+        {
+            break;
+        }
+        cursor.observe(&event);
+    }
+    cursor.index()
+}
+
+/// Line and column (1-indexed, in characters) of a byte offset, counting `\n`, `\r\n` and lone
+/// `\r` as one line break each.
+fn position_at(text: &str, offset: usize) -> SourcePosition {
+    let (mut line, mut column) = (1, 1);
+    let mut prev = None;
+    for c in text.get(..offset).unwrap_or_default().chars() {
+        match c {
+            '\n' => (line, column) = (line + usize::from(prev != Some('\r')), 1),
+            '\r' => (line, column) = (line + 1, 1),
+            _ => column += 1,
+        }
+        prev = Some(c);
+    }
+    SourcePosition { line, column }
+}
+
+/// What a line holds, as far as BOM placement cares.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LineKind {
+    Blank,
+    Comment,
+    /// A `%` directive or a `---` marker.
+    Marker,
+    /// A `...` marker.
+    DocumentEnd,
+    Other,
+}
+
+fn classify(body: &str) -> LineKind {
+    let is_marker = |prefix: &str| {
+        body.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+    };
+    let trimmed = body.trim_start_matches([' ', '\t']);
+    if trimmed.is_empty() {
+        LineKind::Blank
+    } else if trimmed.starts_with('#') {
+        LineKind::Comment
+    } else if body.starts_with('%') || is_marker("---") {
+        LineKind::Marker
+    } else if is_marker("...") {
+        LineKind::DocumentEnd
+    } else {
+        LineKind::Other
+    }
+}
+
+/// Removes the prefix BOMs; returns the text and the normalized offsets where BOMs were removed.
+fn strip_prefix_boms(input: &str) -> (Cow<'_, str>, Vec<usize>) {
+    if !input.contains(BOM) {
+        return (Cow::Borrowed(input), Vec::new());
+    }
+    let strip = prefix_bom_offsets(input);
+    if strip.is_empty() {
+        return (Cow::Borrowed(input), Vec::new());
+    }
+    let mut text = String::with_capacity(input.len() - BOM_LEN * strip.len());
+    let mut removed_at = Vec::with_capacity(strip.len());
+    let mut from = 0;
+    for &offset in &strip {
+        text.push_str(input.get(from..offset).unwrap_or_default());
+        removed_at.push(text.len());
+        from = offset + BOM_LEN;
+    }
+    text.push_str(input.get(from..).unwrap_or_default());
+    (Cow::Owned(text), removed_at)
+}
+
+/// Byte offsets of the BOMs that sit in a document prefix, ascending.
+fn prefix_bom_offsets(input: &str) -> Vec<usize> {
+    let bytes = input.as_bytes();
+    let mut strip = Vec::new();
+    // BOM lines whose fate depends on the next line that is neither blank nor a comment.
+    let mut pending = Vec::new();
+    let mut after_document_end = false;
+    let mut pos = 0;
+    while pos < input.len() {
+        let rest = bytes.get(pos..).unwrap_or_default();
+        let len = memchr::memchr2(b'\n', b'\r', rest).unwrap_or(rest.len());
+        let terminator = if rest.get(len..).is_some_and(|r| r.starts_with(b"\r\n")) {
+            2
+        } else {
+            usize::from(len < rest.len())
+        };
+        let line = input.get(pos..pos + len).unwrap_or_default();
+        let (has_bom, body) = line
+            .strip_prefix(BOM)
+            .map_or((false, line), |body| (true, body));
+        match classify(body) {
+            LineKind::Blank | LineKind::Comment => {
+                if has_bom {
+                    if pos == 0 || after_document_end {
+                        strip.push(pos);
+                    } else {
+                        pending.push(pos);
+                    }
+                }
+            }
+            kind => {
+                if kind == LineKind::Marker {
+                    strip.append(&mut pending);
+                }
+                pending.clear();
+                if has_bom && (pos == 0 || after_document_end || kind == LineKind::Marker) {
+                    strip.push(pos);
+                }
+                after_document_end = kind == LineKind::DocumentEnd;
+            }
+        }
+        pos += len + terminator;
+    }
+    strip
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn normalized(input: &str) -> String {
+        NormalizedInput::new(input).unwrap().as_str().to_owned()
+    }
+
+    const B: char = BOM;
+
+    #[test]
+    fn printable_input_is_borrowed_unchanged() {
+        let input = NormalizedInput::new("a: 1\n\tb: \u{85}\u{A0}\u{10FFFF}\r\n").unwrap();
+        assert!(matches!(input.text, Cow::Borrowed(_)));
+        assert_eq!(input.original_offset(5), 5);
+    }
+
+    #[test]
+    fn rejected_characters_report_the_document_they_are_in() {
+        for (text, document) in [
+            ("a: \0\n", 0),
+            ("a: 1\n---\nb: \x7f\n", 1),
+            ("a: 1\n---\nb: 2\n---\nc: \x01", 2),
+            ("\u{FEFF}a: 1\n...\n\u{FEFF}b: \u{7F}", 1),
+            ("a: 1\n...\n\x01", 1),
+            ("---\n\x01", 0),
+        ] {
+            let err = NormalizedInput::new(text).unwrap_err();
+            assert_eq!(err.document_index(), document, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn non_printable_characters_are_rejected_with_exact_positions() {
+        for (text, c, line, column) in [
+            ("a: 1\0\n", '\0', 1, 5),
+            ("a: 1\n\u{7F}", '\u{7F}', 2, 1),
+            ("\u{FEFF}a: \u{86}", '\u{86}', 1, 4),
+            ("a: 1\n...\n\u{FEFF}b: \u{7F}", '\u{7F}', 3, 4),
+            ("a\r\nb: \u{FFFE}", '\u{FFFE}', 2, 4),
+            ("# é\n\u{FFFF}", '\u{FFFF}', 2, 1),
+            ("a: \u{1}", '\u{1}', 1, 4),
+            ("a\rb\r c\0", '\0', 3, 3),
+        ] {
+            let ParseError::Syntax(err) = NormalizedInput::new(text).unwrap_err() else {
+                panic!("syntax error expected for {text:?}");
+            };
+            assert_eq!((err.line(), err.column()), (line, column), "{text:?}");
+            let shown = err.to_string();
+            assert!(
+                shown.contains(&format!("{:04X}", u32::from(c))) || c == '\0',
+                "{shown}"
+            );
+        }
+    }
+
+    #[test]
+    fn stream_leading_bom_is_stripped_once() {
+        assert_eq!(normalized(&format!("{B}a: 1")), "a: 1");
+        assert_eq!(normalized(&format!("{B}{B}a: 1")), format!("{B}a: 1"));
+        assert_eq!(normalized(&format!("{B}")), "");
+        assert_eq!(normalized(&format!("{B}\n{B}a")), format!("\n{B}a"));
+    }
+
+    #[test]
+    fn bom_after_document_end_is_a_prefix_bom() {
+        assert_eq!(normalized(&format!("a\n...\n{B}b: 1")), "a\n...\nb: 1");
+        assert_eq!(
+            normalized(&format!("a\n...\n\n# c\n{B}b: 1")),
+            "a\n...\n\n# c\nb: 1"
+        );
+        assert_eq!(
+            normalized(&format!("a\n...\n{B}# c\n{B}b")),
+            "a\n...\n# c\nb"
+        );
+        assert_eq!(normalized(&format!("a\n{B}b: 1")), format!("a\n{B}b: 1"));
+    }
+
+    #[test]
+    fn bom_before_directive_or_marker_is_a_prefix_bom() {
+        assert_eq!(
+            normalized(&format!("a\n{B}%YAML 1.2\n---\nb")),
+            "a\n%YAML 1.2\n---\nb"
+        );
+        assert_eq!(normalized(&format!("a\n{B}---\nb")), "a\n---\nb");
+        assert_eq!(normalized(&format!("a\n{B}--- y")), "a\n--- y");
+        assert_eq!(
+            normalized(&format!("a\n{B}# c\n\n{B}\n{B}---\nb")),
+            "a\n# c\n\n\n---\nb"
+        );
+        assert_eq!(
+            normalized(&format!("a\n{B}# c\nb")),
+            format!("a\n{B}# c\nb")
+        );
+        assert_eq!(
+            normalized(&format!("a\n{B}----\nb")),
+            format!("a\n{B}----\nb")
+        );
+    }
+
+    #[test]
+    fn bom_in_the_middle_of_a_line_is_content() {
+        let input = format!("a: {B}1\n...\nb: {B}2\n");
+        assert_eq!(normalized(&input), input);
+    }
+
+    #[test]
+    fn original_offsets_count_every_removed_bom() {
+        let text = format!("{B}a\n...\n{B}---\nb");
+        let input = NormalizedInput::new(&text).unwrap();
+        assert_eq!(input.as_str(), "a\n...\n---\nb");
+        assert_eq!(input.original_offset(0), 3);
+        assert_eq!(input.original_offset(1), 4);
+        assert_eq!(input.original_offset(6), 6 + 3 + 3);
+        assert_eq!(
+            input.original_offset(input.as_str().len()),
+            input.as_str().len() + 6
+        );
+    }
+
+    #[test]
+    fn crlf_and_lone_cr_lines_are_handled() {
+        assert_eq!(normalized(&format!("a\r\n...\r\n{B}b")), "a\r\n...\r\nb");
+        assert_eq!(normalized(&format!("a\r...\r{B}b")), "a\r...\rb");
+    }
+
+    #[test]
+    fn original_len_survives_a_bom_only_input() {
+        let text = format!("{B}");
+        let input = NormalizedInput::new(&text).unwrap();
+        assert_eq!(input.as_str(), "");
+        assert_eq!(input.original_len(), 3);
+        assert_eq!(NormalizedInput::new("").unwrap().original_len(), 0);
+    }
+
+    #[test]
+    fn slices_must_start_at_a_line_start_inside_the_text() {
+        let input = NormalizedInput::new("a: 1\n---\nb: 2\n").unwrap();
+        assert_eq!(input.slice(5..9).unwrap().as_str(), "---\n");
+        assert_eq!(input.slice(0..4).unwrap().as_str(), "a: 1");
+        assert!(input.slice(1..4).is_none());
+        assert!(input.slice(5..99).is_none());
+        let multibyte = NormalizedInput::new("é\nb").unwrap();
+        assert!(multibyte.slice(1..3).is_none());
+        assert_eq!(multibyte.slice(3..4).unwrap().original_len(), 1);
+    }
+
+    #[test]
+    fn many_bom_comment_lines_are_linear() {
+        let input = format!("a\n{}", format!("{B}# c\n").repeat(50_000));
+        assert_eq!(NormalizedInput::new(&input).unwrap().as_str(), input);
+    }
+}

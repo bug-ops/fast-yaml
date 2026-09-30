@@ -574,3 +574,15 @@ class TestAutoTune:
         docs = [{"id": i} for i in range(100)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
+
+
+class TestParseParallelLoader:
+    """parse_parallel shares the core loader's key order and alias rules."""
+
+    def test_duplicate_key_keeps_first_position_and_last_value(self):
+        [doc] = parallel.parse_parallel("b: 1\na: 2\nb: 3\n")
+        assert list(doc.items()) == [("b", 3), ("a", 2)]
+
+    def test_recursive_alias_is_an_error(self):
+        with pytest.raises(ValueError, match="still being defined"):
+            parallel.parse_parallel("&a [*a]")

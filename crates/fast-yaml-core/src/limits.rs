@@ -4,7 +4,7 @@
 //! pathological input (deep nesting, alias amplification) is rejected while memory
 //! and stack usage are still bounded.
 
-use crate::error::{ParseError, ParseResult, SourcePosition};
+use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
 use std::fmt;
@@ -15,7 +15,7 @@ use thiserror::Error;
 
 /// A limit was constructed with a value outside its permitted range.
 ///
-/// The `Display` form is `must be between 1 and {max}, got {value}`; callers prefix it with
+/// The `Display` form is `must be between {min} and {max}, got {value}`; callers prefix it with
 /// the name of the option they are validating.
 ///
 /// # Examples
@@ -27,10 +27,12 @@ use thiserror::Error;
 /// assert_eq!(err.to_string(), "must be between 1 and 512, got 0");
 /// ```
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
-#[error("must be between 1 and {max}, got {value}")]
+#[error("must be between {min} and {max}, got {value}")]
 pub struct LimitRangeError {
     /// The rejected value.
     pub value: usize,
+    /// The smallest accepted value.
+    pub min: usize,
     /// The largest accepted value.
     pub max: usize,
 }
@@ -94,11 +96,15 @@ impl<K: Bounds> Bounded<K> {
     /// use fast_yaml_core::limits::{LimitRangeError, MaxDepth};
     ///
     /// assert_eq!(MaxDepth::new(512), Ok(MaxDepth::MAX));
-    /// assert_eq!(MaxDepth::new(513), Err(LimitRangeError { value: 513, max: 512 }));
+    /// assert_eq!(MaxDepth::new(513), Err(LimitRangeError { value: 513, min: 1, max: 512 }));
     /// ```
     pub const fn new(value: usize) -> Result<Self, LimitRangeError> {
         if value < 1 || value > K::MAX {
-            Err(LimitRangeError { value, max: K::MAX })
+            Err(LimitRangeError {
+                value,
+                min: 1,
+                max: K::MAX,
+            })
         } else {
             Ok(Self(value, PhantomData))
         }
@@ -197,8 +203,10 @@ impl Bounds for Documents {
 ///
 /// The calling thread needs about 1 MiB of stack at the maximum depth (worst case: nested tagged
 /// block mappings, roughly 980 KiB measured in release). On 512 KiB or smaller stacks the process
-/// can abort, and a stack overflow cannot be caught. The emitter and formatter keep their own
-/// fixed depth of 256 (TODO #427), so data parsed deeper than that may fail to dump.
+/// can abort, and a stack overflow cannot be caught. The value emitter and the formatter take
+/// their own limit from `EmitterConfig::max_depth` (256 by default), so data parsed deeper than
+/// that needs a matching `max_depth` to dump; `Emitter::emit_str_with_config` recurses through
+/// saphyr and needs about 2 MiB of stack at depth 512 (release).
 ///
 /// # Examples
 ///
@@ -217,7 +225,8 @@ pub type MaxDepth = Bounded<Depth>;
 /// and long-scalar amplification are bounded. The budget is shared by all documents of a
 /// stream, not reset per document. Valid values lie between `1` and `MAX` (1 GiB, about 16 Mi
 /// expanded nodes) inclusive; host objects built from the expansion can cost several times the
-/// estimate.
+/// estimate. A collection that holds anchors is stored once per anchored level; those copies are
+/// limited by this value and by [`ANCHOR_COPY_FACTOR`] times the source size.
 ///
 /// # Examples
 ///
@@ -351,6 +360,145 @@ impl MaxInputBytes {
         } else {
             Ok(())
         }
+    }
+}
+
+/// Indentation width of emitted block collections, in spaces.
+///
+/// Valid values lie between [`MIN`](Self::MIN) and [`MAX`](Self::MAX) inclusive: a block scalar
+/// indentation indicator is a single digit.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::Indent;
+///
+/// assert_eq!(Indent::default(), Indent::DEFAULT);
+/// assert_eq!(Indent::new(4).unwrap().get(), 4);
+/// assert_eq!(Indent::new(9).unwrap().digit(), '9');
+/// assert!(Indent::new(0).is_err());
+/// assert!(Indent::new(10).is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Indent(u8);
+
+impl Indent {
+    /// Two spaces.
+    pub const DEFAULT: Self = Self(2);
+
+    /// Smallest accepted width.
+    pub const MIN: Self = Self(1);
+
+    /// Largest accepted width.
+    pub const MAX: Self = Self(9);
+
+    /// Creates an indentation of `width` spaces.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitRangeError`] when `width` is outside `1..=9`.
+    pub const fn new(width: usize) -> Result<Self, LimitRangeError> {
+        if width < Self::MIN.0 as usize || width > Self::MAX.0 as usize {
+            return Err(LimitRangeError {
+                value: width,
+                min: Self::MIN.0 as usize,
+                max: Self::MAX.0 as usize,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(width as u8))
+    }
+
+    /// Returns the width as a plain number.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0 as usize
+    }
+
+    /// Returns the width as a byte.
+    #[must_use]
+    pub const fn to_u8(self) -> u8 {
+        self.0
+    }
+
+    /// Returns the width as the digit of a block scalar indentation indicator.
+    #[must_use]
+    pub const fn digit(self) -> char {
+        (b'0' + self.0) as char
+    }
+}
+
+impl Default for Indent {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl fmt::Display for Indent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Preferred maximum line width of emitted YAML, in characters.
+///
+/// Valid values lie between [`MIN`](Self::MIN) and [`MAX`](Self::MAX) inclusive.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::Width;
+///
+/// assert_eq!(Width::default(), Width::DEFAULT);
+/// assert_eq!(Width::new(120).unwrap().get(), 120);
+/// assert_eq!(Width::new(10).unwrap_err().to_string(), "must be between 20 and 1000, got 10");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Width(u16);
+
+impl Width {
+    /// Eighty characters.
+    pub const DEFAULT: Self = Self(80);
+
+    /// Smallest accepted width.
+    pub const MIN: Self = Self(20);
+
+    /// Largest accepted width.
+    pub const MAX: Self = Self(1000);
+
+    /// Creates a line width of `width` characters.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitRangeError`] when `width` is outside `20..=1000`.
+    pub const fn new(width: usize) -> Result<Self, LimitRangeError> {
+        if width < Self::MIN.0 as usize || width > Self::MAX.0 as usize {
+            return Err(LimitRangeError {
+                value: width,
+                min: Self::MIN.0 as usize,
+                max: Self::MAX.0 as usize,
+            });
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Self(width as u16))
+    }
+
+    /// Returns the width as a plain number.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Default for Width {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl fmt::Display for Width {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -697,6 +845,11 @@ pub enum LimitKind {
     /// Alias expansion would produce more data than the budget.
     #[error("alias expansion exceeds {0} bytes")]
     AliasBytes(MaxAliasBytes),
+    /// Anchored collections that hold other anchors are stored once per level and exceed the budget.
+    #[error(
+        "copies of anchored collections that hold other anchors exceed {0} bytes and {ANCHOR_COPY_FACTOR} times the source size"
+    )]
+    AnchorCopies(MaxAliasBytes),
     /// Tag prefix expansion would materialize more data than the budget.
     #[error("tag prefix expansion exceeds {0} bytes")]
     TagBytes(MaxTagBytes),
@@ -711,6 +864,19 @@ pub enum LimitKind {
 /// Estimated fixed cost of one expanded node, in bytes, charged on top of scalar and tag text.
 pub const NODE_BYTES: usize = 64;
 
+/// How many times the source size of a document the copies of its anchored collections may reach
+/// before [`LimitKind::AnchorCopies`] applies (the copies must also pass the alias budget).
+pub const ANCHOR_COPY_FACTOR: usize = 24;
+
+/// Estimated memory of one cloned value node, before its scalar text.
+const COPY_NODE_BYTES: usize = std::mem::size_of::<crate::value::Value>();
+
+/// Source position of `span`'s end in characters, which never exceeds its byte offset.
+#[allow(clippy::disallowed_methods)]
+fn source_end(span: Span) -> usize {
+    span.end.index()
+}
+
 /// Length of a resolved tag prefix, in bytes, that is not charged against [`MaxTagBytes`].
 pub const TAG_PREFIX_ALLOWANCE: usize = 64;
 
@@ -718,7 +884,11 @@ pub const TAG_PREFIX_ALLOWANCE: usize = 64;
 #[derive(Debug, Clone, Copy, Default)]
 struct Subtree {
     bytes: usize,
+    /// Memory a clone of the subtree occupies, estimated from the real size of a value.
+    copy: usize,
     height: usize,
+    /// Whether an anchor is defined inside, so every anchored ancestor stores its own copy.
+    anchored: bool,
 }
 
 fn tag_bytes(tag: Option<&Tag>) -> usize {
@@ -755,6 +925,12 @@ pub struct LimitGuard {
     stack: Vec<Frame>,
     completed: HashMap<usize, Subtree>,
     max_anchor_seen: usize,
+    /// Source position where the current document starts, in characters.
+    doc_start: usize,
+    /// Estimated memory of the copies of anchored collections holding anchors in the document.
+    anchor_copies: usize,
+    /// Whether the loader clones anchored nodes, so nested anchors multiply memory.
+    clones_anchors: bool,
     // Anchors below this id belong to earlier documents and are out of scope.
     doc_anchor_floor: usize,
     cursor: DocumentCursor,
@@ -803,6 +979,9 @@ impl LimitGuard {
             stack: Vec::new(),
             completed: HashMap::new(),
             max_anchor_seen: 0,
+            doc_start: 0,
+            anchor_copies: 0,
+            clones_anchors: true,
             doc_anchor_floor: 0,
             cursor: DocumentCursor::default(),
         }
@@ -816,12 +995,20 @@ impl LimitGuard {
         self.cursor.index()
     }
 
+    /// Declares that the loader shares anchored nodes instead of copying them, which lifts the
+    /// [`LimitKind::AnchorCopies`] check that only bounds copies.
+    #[must_use]
+    pub const fn sharing_anchors(mut self) -> Self {
+        self.clones_anchors = false;
+        self
+    }
+
     /// Accounts for one parser event.
     ///
     /// # Errors
     ///
     /// Returns [`ParseError::LimitExceeded`] when the event breaks a limit, and
-    /// [`ParseError::Scanner`] for an alias that refers to an anchor from a previous
+    /// [`ParseError::Syntax`] for an alias that refers to an anchor from a previous
     /// document (anchors do not cross document boundaries).
     pub fn observe(&mut self, event: &Event<'_>, span: Span) -> ParseResult<()> {
         self.cursor.observe(event);
@@ -829,6 +1016,8 @@ impl LimitGuard {
             Event::DocumentStart(_) => {
                 self.completed.clear();
                 self.doc_anchor_floor = self.max_anchor_seen + 1;
+                self.doc_start = source_end(span);
+                self.anchor_copies = 0;
             }
             Event::SequenceStart(anchor, tag) | Event::MappingStart(anchor, tag) => {
                 self.charge_tag_prefix(tag.as_deref(), span)?;
@@ -845,15 +1034,19 @@ impl LimitGuard {
             Event::Scalar(text, _, anchor, tag) => {
                 self.charge_tag_prefix(tag.as_deref(), span)?;
                 self.max_anchor_seen = self.max_anchor_seen.max(*anchor);
+                let bytes = NODE_BYTES
+                    .saturating_add(text.len())
+                    .saturating_add(tag_bytes(tag.as_deref()));
                 self.complete(
                     *anchor,
                     Subtree {
-                        bytes: NODE_BYTES
-                            .saturating_add(text.len())
-                            .saturating_add(tag_bytes(tag.as_deref())),
+                        bytes,
+                        copy: COPY_NODE_BYTES.saturating_add(text.len()),
                         height: 0,
+                        anchored: false,
                     },
-                );
+                    span,
+                )?;
             }
             Event::SequenceEnd | Event::MappingEnd => {
                 if let Some(frame) = self.stack.pop() {
@@ -865,9 +1058,12 @@ impl LimitGuard {
                                 .bytes
                                 .saturating_add(NODE_BYTES)
                                 .saturating_add(frame.tag_bytes),
+                            copy: frame.children.copy.saturating_add(COPY_NODE_BYTES),
                             height: frame.children.height + 1,
+                            anchored: frame.children.anchored,
                         },
-                    );
+                        span,
+                    )?;
                 }
             }
             Event::Alias(id) => self.observe_alias(*id, span)?,
@@ -885,34 +1081,55 @@ impl LimitGuard {
 
     fn observe_alias(&mut self, id: usize, span: Span) -> ParseResult<()> {
         if id < self.doc_anchor_floor {
-            return Err(ParseError::Scanner {
-                error: ScanError::new_str(span.start, "while parsing node, found unknown anchor"),
-                document: self.document(),
-            });
+            return Err(ParseError::scanner(
+                &ScanError::new_str(span.start, "while parsing node, found unknown anchor"),
+                self.document(),
+            ));
         }
-        // Absent means the anchor's collection is still open (`&a [*a]`); the loader yields one node.
-        let subtree = self.completed.get(&id).copied().unwrap_or(Subtree {
-            bytes: NODE_BYTES,
-            height: 0,
-        });
+        // Absent means the anchor's collection is still open (`&a [*a]`).
+        let subtree = self.completed.get(&id).copied().ok_or_else(|| {
+            ParseError::Syntax(SyntaxError::recursive_alias(span.into(), self.document()))
+        })?;
         self.budget
             .charge_alias(subtree.bytes)
             .map_err(|kind| self.exceeded(kind, span))?;
         if self.stack.len().saturating_add(subtree.height) > self.budget.limits.max_depth.get() {
             return Err(self.exceeded(LimitKind::Depth(self.budget.limits.max_depth), span));
         }
-        self.complete(0, subtree);
-        Ok(())
+        self.complete(
+            0,
+            Subtree {
+                anchored: false,
+                ..subtree
+            },
+            span,
+        )
     }
 
-    fn complete(&mut self, anchor: usize, subtree: Subtree) {
+    /// Records a finished node; an anchored subtree that holds anchors is stored once per level,
+    /// which is bounded by the alias budget together with a multiple of the source size. The check
+    /// runs on the subtree's closing event, before any loader clones it.
+    fn complete(&mut self, anchor: usize, subtree: Subtree, span: Span) -> ParseResult<()> {
         if anchor > 0 {
+            if subtree.anchored && self.clones_anchors {
+                self.anchor_copies = self.anchor_copies.saturating_add(subtree.copy);
+                let limit = self.budget.limits.max_alias_bytes;
+                let source = source_end(span).saturating_sub(self.doc_start);
+                if self.anchor_copies > limit.get()
+                    && self.anchor_copies / ANCHOR_COPY_FACTOR > source
+                {
+                    return Err(self.exceeded(LimitKind::AnchorCopies(limit), span));
+                }
+            }
             self.completed.insert(anchor, subtree);
         }
         if let Some(parent) = self.stack.last_mut() {
             parent.children.bytes = parent.children.bytes.saturating_add(subtree.bytes);
+            parent.children.copy = parent.children.copy.saturating_add(subtree.copy);
             parent.children.height = parent.children.height.max(subtree.height);
+            parent.children.anchored |= subtree.anchored || anchor > 0;
         }
+        Ok(())
     }
 
     fn exceeded(&self, kind: LimitKind, span: Span) -> ParseError {
@@ -944,6 +1161,7 @@ mod tests {
             MaxDocuments::new(0),
             Err(LimitRangeError {
                 value: 0,
+                min: 1,
                 max: 10_000_000
             })
         );
@@ -971,6 +1189,7 @@ mod tests {
                 MaxDepth::new(value),
                 Err(LimitRangeError {
                     value,
+                    min: 1,
                     max: MaxDepth::MAX.get()
                 })
             );
@@ -989,6 +1208,7 @@ mod tests {
                 MaxInputBytes::new(value),
                 Err(LimitRangeError {
                     value,
+                    min: 1,
                     max: MaxInputBytes::MAX.get()
                 })
             );

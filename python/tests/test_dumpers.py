@@ -499,3 +499,25 @@ class TestMappingDump:
 
         out = parallel.dump_parallel([UserDict(a=1)])
         assert fast_yaml.safe_load(out) == {"a": 1}
+
+
+@pytest.mark.parametrize(
+    "key", [" admin", "\u00a0admin", "\u3000admin", "\u0085admin", "\u2028admin"]
+)
+@pytest.mark.parametrize("indent", [3, 4, 9])
+def test_unicode_whitespace_in_a_key_is_not_indentation(key, indent):
+    data = {"user": {"name": "bob"}, key: True}
+    assert fast_yaml.safe_load(fast_yaml.safe_dump(data, indent=indent)) == data
+
+
+@pytest.mark.parametrize("flow", [None, True, False])
+def test_strings_with_a_bom_round_trip(flow):
+    for data in ({"\ufeffadmin": "a\ufeffb", "k": "\ufeff"}, "\ufeffroot", ["\ufeff"]):
+        dumped = fast_yaml.safe_dump(data, default_flow_style=flow)
+        assert fast_yaml.safe_load(dumped) == data
+
+
+@pytest.mark.parametrize("indent", range(1, 10))
+def test_nested_lists_survive_any_indent(indent):
+    data = {"perms": [["read", "write"], [True, 13], [[1], []]], "m": [{"k": ["v"]}]}
+    assert fast_yaml.safe_load(fast_yaml.safe_dump(data, indent=indent)) == data

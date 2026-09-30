@@ -379,10 +379,8 @@ dependencies = [
  "fast-yaml-linter",
  "fast-yaml-parallel",
  "num_cpus",
- "ordered-float",
  "pyo3",
  "rayon",
- "saphyr",
  "saphyr-parser",
  "serde_norway",
 ]
@@ -407,7 +405,6 @@ dependencies = [
  "predicates",
  "proptest",
  "rayon",
- "saphyr-parser",
  "serde_json",
  "tempfile",
  "thiserror",
@@ -419,9 +416,9 @@ version = "0.6.6"
 dependencies = [
  "bumpalo",
  "criterion",
+ "indexmap",
  "indoc",
  "memchr",
- "ordered-float",
  "proptest",
  "saphyr",
  "saphyr-parser",
@@ -455,8 +452,6 @@ dependencies = [
  "napi",
  "napi-build",
  "napi-derive",
- "ordered-float",
- "saphyr",
  "serde_json",
  "thiserror",
 ]

@@ -112,7 +112,7 @@ fn scan_duplicate_anchors(
     source_context: &SourceContext<'_>,
     severity: Severity,
 ) -> Vec<Diagnostic> {
-    // Map from anchor name → 1-indexed line of first def.
+    // Mapping from anchor name → 1-indexed line of first def.
     let mut seen: HashMap<String, usize> = HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut state = ScanState::new();
@@ -389,9 +389,7 @@ mod tests {
     use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml)
-            .unwrap()
-            .unwrap_or(Value::Value(fast_yaml_core::ScalarOwned::Null));
+        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
         InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &LintConfig::default())
     }
 
@@ -483,9 +481,7 @@ mod tests {
     #[test]
     fn test_severity_override() {
         let yaml = "a: &anchor value1\nb: &anchor value2\n";
-        let value = Parser::parse_str(yaml)
-            .unwrap()
-            .unwrap_or(Value::Value(fast_yaml_core::ScalarOwned::Null));
+        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
         let config = config_with_rule(RuleName::InvalidAnchor, "{severity: error}");
         let diagnostics = InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &config);
         assert_eq!(diagnostics.len(), 1);

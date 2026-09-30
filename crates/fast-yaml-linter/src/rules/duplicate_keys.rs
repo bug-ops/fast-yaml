@@ -148,9 +148,7 @@ mod tests {
     use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml)
-            .unwrap()
-            .unwrap_or(Value::Value(fast_yaml_core::ScalarOwned::Null));
+        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
         let rule = DuplicateKeysRule;
         rule.check(&LintContext::new(yaml), &value, &LintConfig::default())
     }

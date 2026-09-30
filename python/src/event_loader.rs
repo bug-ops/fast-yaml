@@ -6,14 +6,16 @@
 
 use std::collections::HashMap;
 
-use fast_yaml_core::merge::{MergeError, MergeSource, MergeTarget, merge_into};
+use fast_yaml_core::merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
+use fast_yaml_core::scalar::core_tag_suffix;
 use fast_yaml_core::{
-    LimitGuard, MergeKeyValidator, NodeRole, ParseError, ParseLimits, SourcePosition,
+    LimitGuard, MergeKeyValidator, NormalizedInput, ParseError, ParseLimits, SourcePosition,
+    SyntaxError,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyList, PySet};
-use saphyr_parser::{Event, Parser, ScanError, StrInput};
+use saphyr_parser::{Event, Parser, StrInput};
 
 use crate::conversion::COMPLEX_KEY_MESSAGE;
 use crate::numeric_keys::{KeyClash, NumericKeys, build_set};
@@ -31,13 +33,12 @@ use crate::repr_to_python;
 /// mapping or set holds keys that YAML keeps distinct but Python equality would merge
 /// (`1`, `true` and `1.0`).
 pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Vec<Py<PyAny>>> {
-    let source =
-        fast_yaml_core::reject_nul(fast_yaml_core::strip_bom(input)).map_err(|e| limit_err(&e))?;
+    let normalized = NormalizedInput::new(input).map_err(|e| limit_err(&e))?;
     let mut loader = EventLoader {
-        parser: Parser::new_from_str(source),
+        parser: Parser::new_from_str(normalized.as_str()),
         anchors: HashMap::new(),
         merge_keys: MergeKeyValidator::default(),
-        guard: LimitGuard::new(limits),
+        guard: LimitGuard::new(limits).sharing_anchors(),
         nan: None,
         last: START,
     };
@@ -86,7 +87,9 @@ impl<'input> EventLoader<'input> {
                     self.last = span.into();
                     return Ok((ev, self.last, role));
                 }
-                Some(Err(ref e)) => return Err(scan_err(e)),
+                Some(Err(e)) => {
+                    return Err(limit_err(&ParseError::scanner(&e, self.guard.document())));
+                }
                 None => return Ok((Event::StreamEnd, self.last, None)),
             }
         }
@@ -123,14 +126,16 @@ impl<'input> EventLoader<'input> {
                     self.store_anchor(anchor_id, &value, py);
                     value
                 }
-                Event::Alias(id) => self
-                    .anchors
-                    .get(&id)
-                    .map_or_else(|| py.None(), |v| v.clone_ref(py)),
+                Event::Alias(id) => {
+                    let Some(value) = self.anchors.get(&id) else {
+                        return Err(limit_err(&ParseError::Syntax(
+                            SyntaxError::recursive_alias(at, self.guard.document()),
+                        )));
+                    };
+                    value.clone_ref(py)
+                }
                 Event::MappingStart(anchor_id, tag) => {
-                    let is_set = tag
-                        .as_ref()
-                        .is_some_and(|t| t.is_yaml_core_schema() && t.suffix == "set");
+                    let is_set = tag.as_deref().and_then(core_tag_suffix) == Some("set");
                     stack.push(if is_set {
                         OpenNode::set(anchor_id)
                     } else {
@@ -315,6 +320,12 @@ enum PyMergeFailure {
     Py(PyErr),
 }
 
+impl From<MergeError> for PyMergeFailure {
+    fn from(error: MergeError) -> Self {
+        Self::Rejected(error)
+    }
+}
+
 impl From<PyErr> for PyMergeFailure {
     fn from(err: PyErr) -> Self {
         Self::Py(err)
@@ -362,10 +373,6 @@ impl<'py> MergeTarget for PyMergeTarget<'py> {
     type Error = PyMergeFailure;
     type Entries = Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>;
     type Items = Vec<Bound<'py, PyAny>>;
-
-    fn reject(error: MergeError) -> PyMergeFailure {
-        PyMergeFailure::Rejected(error)
-    }
 
     fn classify(
         &self,
@@ -464,10 +471,6 @@ fn clash_err(clash: &KeyClash, SourcePosition { line, column }: SourcePosition) 
     PyValueError::new_err(format!(
         "YAML parse error: {clash} at line {line}, column {column}"
     ))
-}
-
-fn scan_err(e: &ScanError) -> PyErr {
-    PyValueError::new_err(format!("YAML parse error: {e}"))
 }
 
 fn limit_err(e: &ParseError) -> PyErr {

@@ -112,9 +112,9 @@ describe('numeric option validation', () => {
     ['indent', { indent: 100 }],
     ['width', { width: 1 }],
     ['width', { width: 100_000 }],
-  ])('clamps safeDump %s out of range (%o)', (_name, opts) => {
-    expect(() => safeDump({ a: 1 }, opts)).not.toThrow();
-    expect(() => safeDumpAll([{ a: 1 }], opts)).not.toThrow();
+  ])('rejects safeDump %s out of range (%o)', (name, opts) => {
+    expect(() => safeDump({ a: 1 }, opts)).toThrow(new RegExp(`${name} must be between`));
+    expect(() => safeDumpAll([{ a: 1 }], opts)).toThrow(new RegExp(`${name} must be between`));
   });
 
   it('accepts boundary values', () => {
@@ -137,8 +137,8 @@ describe('numeric option validation', () => {
     const max = 2 ** 32 - 1;
     expect(() => processFiles([], { mmapThreshold: max })).not.toThrow();
     expect(() => processFiles([], { sequentialThreshold: max })).not.toThrow();
-    expect(() => formatFiles([], { indent: max })).not.toThrow();
-    expect(() => formatFilesInPlace([], { width: max })).not.toThrow();
+    expect(() => formatFiles([], { indent: 9 })).not.toThrow();
+    expect(() => formatFilesInPlace([], { width: 1000 })).not.toThrow();
     expect(() => parseParallel(MULTI, { minChunkSize: max })).not.toThrow();
   });
 

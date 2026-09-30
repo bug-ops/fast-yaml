@@ -6,11 +6,10 @@
 use crate::Schema;
 use crate::conversion::yaml_to_js;
 use crate::limits::parse_limits;
-use fast_yaml_core::Parser;
 use fast_yaml_core::limits::MaxInputBytes;
+use fast_yaml_core::{Parser, Value};
 use napi::{Env, bindgen_prelude::*};
 use napi_derive::napi;
-use saphyr::{ScalarOwned, YamlOwned};
 
 /// Options for YAML parsing (js-yaml compatible).
 #[napi(object)]
@@ -108,11 +107,9 @@ pub fn safe_load(
 
     // Convert first document to JavaScript (or null if empty)
     let doc = if docs.is_empty() {
-        YamlOwned::Value(ScalarOwned::Null)
+        Value::Null
     } else {
-        docs.into_iter()
-            .next()
-            .unwrap_or(YamlOwned::Value(ScalarOwned::Null))
+        docs.into_iter().next().unwrap_or(Value::Null)
     };
 
     yaml_to_js(env, &doc).or_else(|e| throw_and_undefined(env, &e.to_string()))
@@ -286,14 +283,14 @@ mod tests {
     #[test]
     fn test_parse_simple() {
         let yaml = "name: test\nvalue: 123";
-        let docs: Vec<YamlOwned> = Parser::parse_all(yaml).unwrap();
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 1);
     }
 
     #[test]
     fn test_parse_multi_document() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let docs: Vec<YamlOwned> = Parser::parse_all(yaml).unwrap();
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 2);
     }
 

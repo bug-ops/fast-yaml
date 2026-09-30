@@ -164,3 +164,14 @@ class TestSets:
         assert "!!set" in text
         assert fast_yaml.safe_load(text) == set()
         assert parallel.parse_parallel(text) == [set()]
+
+
+def test_safe_dump_sorts_set_members_with_sort_keys():
+    dumped = fast_yaml.safe_dump({"c", "a", "b"}, sort_keys=True)
+    assert dumped.index("a") < dumped.index("b") < dumped.index("c")
+    assert fast_yaml.safe_load(dumped) == {"a", "b", "c"}
+
+
+def test_set_as_a_mapping_key_cannot_be_dumped():
+    with pytest.raises(ValueError, match="cannot be a mapping key"):
+        fast_yaml.safe_dump({frozenset({"a"}): 1})

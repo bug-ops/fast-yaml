@@ -11,12 +11,11 @@ use bumpalo::Bump;
 use saphyr_parser::Parser;
 
 use super::Context;
-use super::Formatted;
-use super::format_with_anchor_names;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
 use crate::error::{EmitResult, ParseError};
+use crate::input::NormalizedInput;
 
 /// Arena allocation backend.
 ///
@@ -70,11 +69,6 @@ impl ContextStackOps for bumpalo::collections::Vec<'_, Context> {
     fn last_mut(&mut self) -> Option<&mut Context> {
         <[Context]>::last_mut(self)
     }
-
-    #[inline]
-    fn len(&self) -> usize {
-        bumpalo::collections::Vec::len(self)
-    }
 }
 
 // Implementation of AnchorStoreOps for bumpalo::collections::Vec<'bump, String<'bump>>
@@ -93,6 +87,12 @@ impl<'bump> AnchorStoreOps
         <[bumpalo::collections::String]>::get(self, anchor_id)
             .filter(|s| !s.is_empty())
             .map(bumpalo::collections::String::as_str)
+    }
+
+    fn set_name(&mut self, anchor_id: usize, name: &str) {
+        if self[anchor_id].is_empty() {
+            self[anchor_id].push_str(name);
+        }
     }
 
     fn set_if_empty(&mut self, anchor_id: usize) -> &str {
@@ -169,21 +169,21 @@ impl<'bump> FormatterBackend for ArenaBackend<'bump> {
 /// # }
 /// ```
 pub fn format_streaming_arena(input: &str, config: &EmitterConfig) -> EmitResult<String> {
-    let input = crate::parser::strip_bom(input);
-    format_with_anchor_names(input, |names| format_with_names(input, config, names))
+    format_normalized(&NormalizedInput::new(input)?, config)
 }
 
-fn format_with_names(
-    input: &str,
+/// [`format_streaming_arena`] for an input that is already normalized.
+pub fn format_normalized(
+    input: &NormalizedInput<'_>,
     config: &EmitterConfig,
-    anchor_names: Vec<String>,
-) -> EmitResult<Formatted> {
+) -> EmitResult<String> {
+    let input = input.as_str();
     // Create arena sized for typical YAML overhead
     // 4KB minimum handles most documents; larger inputs get proportional arenas
     let arena_size = (input.len() / 4).max(4096);
     let arena = Bump::with_capacity(arena_size);
 
-    let parser = Parser::new_from_str(crate::parser::reject_nul(input)?);
+    let parser = Parser::new_from_str(input);
 
     // Output is typically 10-20% larger than input due to formatting
     let output_capacity = input.len() + (input.len() / 5);
@@ -191,27 +191,14 @@ fn format_with_names(
     // Pre-allocate context stack in arena (16 levels handles 99% of cases)
     let context_capacity = 16;
 
-    let mut backend = ArenaBackend::new(context_capacity, &arena);
-    // Seed anchor store with original names extracted from input.
-    // ensure_capacity + direct write mirrors how StdBackend is seeded.
-    {
-        let store = backend.anchor_store_mut();
-        for (id, name) in anchor_names.into_iter().enumerate() {
-            store.ensure_capacity(id);
-            if !name.is_empty() && store[id].is_empty() {
-                let _ = write!(store[id], "{name}");
-            }
-        }
-    }
+    let backend = ArenaBackend::new(context_capacity, &arena);
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend, input);
 
-    let mut guard = super::tag_budget_guard();
+    let mut guard = super::format_guard(config.max_depth);
     let mut merge_keys = crate::merge_check::MergeKeyValidator::default();
     for result in parser {
-        let (event, span) = result.map_err(|error| ParseError::Scanner {
-            error,
-            document: guard.document(),
-        })?;
+        let (event, span) =
+            result.map_err(|error| ParseError::scanner(&error, guard.document()))?;
         guard
             .observe(&event, span)
             .map_err(super::tag_budget_error)?;

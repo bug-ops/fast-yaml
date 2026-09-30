@@ -2,4 +2,6 @@ disallowed-methods = [
     { path = "saphyr_parser::Marker::index", reason = "char-based; convert via SourceContext" },
     { path = "saphyr_parser::Marker::col", reason = "char-based; convert via SourceContext" },
     { path = "saphyr_parser::Span::len", reason = "char count; use SourceContext::byte_range_of" },
+    { path = "saphyr_parser::input::buffered::BufferedInput::new", reason = "hangs at EOF after a directive name (#403); use StrInput via Parser::new_from_str" },
+    { path = "saphyr_parser::Tag::is_yaml_core_schema", reason = "misses verbatim !<tag:yaml.org,2002:x>; use fast_yaml_core::scalar::core_tag_suffix" },
 ]

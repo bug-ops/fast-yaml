@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use fast_yaml_core::emitter::{Emitter, EmitterConfig};
-use fast_yaml_core::has_comments;
+use fast_yaml_core::{NormalizedInput, has_comments_normalized};
 use rayon::prelude::*;
 
 use crate::config::Config;
@@ -211,15 +211,21 @@ impl FileProcessor {
         let file_content = self.reader.read(path, self.config.max_input_bytes())?;
         let content = file_content.as_str()?;
 
-        let formatted = Emitter::format_with_config(content, emitter_config).map_err(|source| {
-            Error::Format {
-                path: path.to_path_buf(),
-                source,
-            }
+        let normalized = NormalizedInput::new(content).map_err(|source| Error::Format {
+            path: path.to_path_buf(),
+            source: source.into(),
         })?;
+        let formatted =
+            Emitter::format_normalized(&normalized, emitter_config).map_err(|source| {
+                Error::Format {
+                    path: path.to_path_buf(),
+                    source,
+                }
+            })?;
 
         if comments == CommentPolicy::Reject
-            && has_comments(content).map_err(|source| Error::CommentScan { source })?
+            && has_comments_normalized(&normalized)
+                .map_err(|source| Error::CommentScan { source })?
         {
             return Err(Error::CommentsWouldBeStripped);
         }

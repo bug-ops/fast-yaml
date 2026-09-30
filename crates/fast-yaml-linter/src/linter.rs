@@ -9,8 +9,8 @@ use crate::context::lines_of;
 use crate::directives::Directives;
 use crate::rules::MarkerPresence;
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
-use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits};
-use fast_yaml_core::{Parser, ScalarOwned, Value};
+use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
+use fast_yaml_core::{NormalizedInput, Parser, Value};
 
 /// Configuration for the linter.
 ///
@@ -392,8 +392,10 @@ impl Linter {
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
         self.config.max_input_bytes.check(source.len())?;
-        let (source, bom_len) = split_bom(source);
-        let docs = Parser::parse_all_with_limits(source, &self.config.parse_limits)?;
+        let normalized = NormalizedInput::new(source)?;
+        let source = normalized.as_str();
+        let docs =
+            Parser::parse_normalized(&normalized, &StreamBudget::new(self.config.parse_limits))?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
         let directives = Directives::from_source(source, &self.config, &self.registry);
         let mut context = LintContext::new(source);
@@ -415,12 +417,12 @@ impl Linter {
                 }
                 context.set_doc_start_line(1);
             } else {
-                let dummy = Value::Value(ScalarOwned::Null);
+                let dummy = Value::Null;
                 diagnostics.extend(rule.check(&context, &dummy, &self.config));
             }
         }
 
-        Ok(finish(diagnostics, directives, bom_len))
+        Ok(finish(diagnostics, directives, &normalized))
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -447,8 +449,8 @@ impl Linter {
     /// tokenizer would otherwise treat as end of input.
     pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
         self.config.max_input_bytes.check(source.len())?;
-        let (source, bom_len) = split_bom(source);
-        fast_yaml_core::reject_nul(source)?;
+        let normalized = NormalizedInput::new(source)?;
+        let source = normalized.as_str();
         let directives = Directives::from_source(source, &self.config, &self.registry);
         let context = LintContext::new(source);
         let mut diagnostics = Vec::new();
@@ -465,7 +467,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
-        Ok(finish(diagnostics, directives, bom_len))
+        Ok(finish(diagnostics, directives, &normalized))
     }
 
     /// Gets the current configuration.
@@ -547,31 +549,25 @@ fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
 fn finish(
     mut diagnostics: Vec<Diagnostic>,
     directives: Directives,
-    bom_len: usize,
+    normalized: &NormalizedInput<'_>,
 ) -> Vec<Diagnostic> {
     directives.apply(&mut diagnostics);
-    shift_offsets(&mut diagnostics, bom_len);
+    shift_offsets(&mut diagnostics, normalized);
     diagnostics.sort_by_key(|d| d.span.start);
     diagnostics
 }
 
-/// Strips a leading BOM and returns the stripped text with the BOM's byte length.
-fn split_bom(source: &str) -> (&str, usize) {
-    let stripped = fast_yaml_core::strip_bom(source);
-    (stripped, source.len() - stripped.len())
-}
-
-/// Rebases span offsets onto the original file, which still contains the BOM.
-fn shift_offsets(diagnostics: &mut [Diagnostic], bom_len: usize) {
-    if bom_len == 0 {
-        return;
-    }
+/// Rebases span offsets onto the original file, which still contains the removed BOMs.
+///
+/// Lines and columns stay as the rules saw them, in the normalized text, so a line that lost a
+/// BOM reads as if the BOM were absent.
+fn shift_offsets(diagnostics: &mut [Diagnostic], normalized: &NormalizedInput<'_>) {
     let spans = diagnostics.iter_mut().flat_map(|d| {
         std::iter::once(&mut d.span).chain(d.suggestions.iter_mut().map(|s| &mut s.span))
     });
     for span in spans {
-        span.start.offset += bom_len;
-        span.end.offset += bom_len;
+        span.start.offset = normalized.original_offset(span.start.offset);
+        span.end.offset = normalized.original_offset(span.end.offset);
     }
 }
 
@@ -794,7 +790,7 @@ mod tests {
     fn test_lint_value_honors_max_input_bytes() {
         let max = MaxInputBytes::new(8).unwrap();
         let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
-        let value = Value::Value(ScalarOwned::Null);
+        let value = Value::Null;
         assert!(linter.lint_value("a: 1\n", &value).is_ok());
         assert!(matches!(
             linter.lint_value("a: 1\nb: 2\n", &value),
@@ -1154,6 +1150,61 @@ mod tests {
             );
             assert_eq!(b.span.start.offset, p.span.start.offset + 3);
             assert_eq!(b.span.end.offset, p.span.end.offset + 3);
+        }
+    }
+
+    #[test]
+    fn test_lint_prefix_bom_lines_keep_columns_and_shift_offsets() {
+        let linter = Linter::with_all_rules();
+        let bom = '\u{FEFF}';
+        for (plain_src, bom_src, bom_lines) in [
+            (
+                "a: 1\n...\nb: 2   \nc:  3\n".to_owned(),
+                format!("a: 1\n...\n{bom}b: 2   \nc:  3\n"),
+                vec![3],
+            ),
+            (
+                "a: 1\n...\n# c\n---\nb: 2   \n".to_owned(),
+                format!("{bom}a: 1\n...\n{bom}# c\n{bom}---\nb: 2   \n"),
+                vec![1, 3, 4],
+            ),
+        ] {
+            let plain = linter.lint(&plain_src).unwrap();
+            let shifted = linter.lint(&bom_src).unwrap();
+            assert!(!plain.is_empty(), "{plain_src:?}");
+            assert_eq!(plain.len(), shifted.len(), "{bom_src:?}");
+            for (p, b) in plain.iter().zip(&shifted) {
+                assert_eq!(p.code, b.code);
+                assert_eq!(
+                    (p.span.start.line, p.span.start.column),
+                    (b.span.start.line, b.span.start.column),
+                    "{}",
+                    p.code.as_str()
+                );
+                let before = |line: usize| bom_lines.iter().filter(|&&l| l <= line).count() * 3;
+                assert_eq!(
+                    b.span.start.offset,
+                    p.span.start.offset + before(p.span.start.line),
+                    "{}",
+                    p.code.as_str()
+                );
+                assert_eq!(
+                    b.span.end.offset,
+                    p.span.end.offset + before(p.span.end.line)
+                );
+                assert_eq!(
+                    &bom_src[b.span.start.offset..b.span.end.offset],
+                    &plain_src[p.span.start.offset..p.span.end.offset]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_lint_rejects_non_printable_characters() {
+        let linter = Linter::with_all_rules();
+        for source in ["a: \u{FFFE}", "a: 1\u{7F}", "a: \"x\u{86}\""] {
+            assert!(linter.lint(source).is_err(), "{source:?}");
         }
     }
 

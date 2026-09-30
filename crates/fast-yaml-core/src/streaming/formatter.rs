@@ -9,11 +9,13 @@ use std::fmt::Write;
 
 use saphyr_parser::{Event, ScalarStyle, Span, Tag};
 
+use super::anchors::AnchorNames;
 use super::directives::DirectiveScanner;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
-use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH, MAX_IMPLICIT_KEY_CHARS};
-use crate::emitter::{EmitterConfig, MAX_INDENT, MIN_INDENT, block_scalar_header};
+use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_IMPLICIT_KEY_CHARS};
+use crate::emitter::{EmitterConfig, block_scalar_header};
 use crate::error::{EmitError, EmitResult};
+use crate::limits::Indent;
 
 /// Width of the `"- "` sequence entry indicator.
 const DASH_WIDTH: usize = 2;
@@ -61,16 +63,6 @@ enum BlockStyle {
     Folded,
 }
 
-/// Result of a completed formatting run, with the bookkeeping needed to validate anchor names.
-pub(super) struct Formatted {
-    /// The formatted document stream.
-    pub(super) output: String,
-    /// Highest anchor id the parser produced.
-    pub(super) max_anchor_id: usize,
-    /// Whether every emitted alias names the anchor the parser resolved it to.
-    pub(super) aliases_resolve: bool,
-}
-
 /// A collection start held back until the next event shows whether it is empty.
 struct PendingStart {
     kind: CollectionKind,
@@ -78,9 +70,10 @@ struct PendingStart {
     tag: Option<Tag>,
 }
 
-/// Whether `c` is a YAML non-printable that only a double-quoted escape can represent (tab excluded).
+/// Whether `c` is a YAML non-printable that only a double-quoted escape can represent (tab excluded),
+/// or a byte order mark, which the loader drops where it starts a document.
 fn needs_escape(c: char) -> bool {
-    (c.is_control() && c != '\t') || matches!(c, '\u{FFFE}' | '\u{FFFF}')
+    (c.is_control() && c != '\t') || matches!(c, '\u{FFFE}' | '\u{FFFF}' | '\u{FEFF}')
 }
 
 /// Whether a plain scalar with this value would not be read back as itself in block context:
@@ -126,7 +119,7 @@ pub fn write_double_quoted(out: &mut String, value: &str) {
             c if c.is_control() => {
                 let _ = write!(out, "\\x{:02X}", u32::from(c));
             }
-            '\u{FFFE}' | '\u{FFFF}' => {
+            '\u{FFFE}' | '\u{FFFF}' | '\u{FEFF}' => {
                 let _ = write!(out, "\\u{:04X}", u32::from(c));
             }
             _ => out.push(c),
@@ -191,9 +184,28 @@ enum TagForm {
     Verbatim,
 }
 
+/// The two UTF-8 bytes of a character that saphyr-parser decoded from a `%XX%YY` escape.
+///
+/// It combines the bytes of a two-byte sequence into one 16-bit value instead of decoding them
+/// (`%D1%82`, the letter `т`, arrives as U+D182). Longer sequences are rejected by the parser
+/// and raw non-ASCII tag text never reaches the formatter, so a character in this range can
+/// only be that misreading. Returns `None` for every other character.
+fn misdecoded_escape(c: char) -> Option<[u8; 2]> {
+    let code = u32::from(c);
+    let [_, _, hi, lo] = code.to_be_bytes();
+    let is_pair = (0xC2..=0xD7).contains(&hi) && (0x80..=0xBF).contains(&lo);
+    is_pair.then_some([hi, lo])
+}
+
 /// Appends `text`, percent-encoding bytes outside the allowed tag charset.
 fn push_tag_text(out: &mut String, text: &str, form: TagForm) {
     for c in text.chars() {
+        if let Some(bytes) = misdecoded_escape(c) {
+            for b in bytes {
+                let _ = write!(out, "%{b:02X}");
+            }
+            continue;
+        }
         let allowed = c.is_ascii_alphanumeric()
             || TAG_SAFE_CHARS.contains(c)
             || (form == TagForm::Verbatim && VERBATIM_ONLY_TAG_CHARS.contains(c));
@@ -223,9 +235,7 @@ enum ScalarTyping {
 #[allow(clippy::struct_excessive_bools)]
 pub struct StreamingFormatter<'a, B: FormatterBackend> {
     config: &'a EmitterConfig,
-    /// `config.indent` normalized to the supported range; `indent` is a public field,
-    /// so `EmitterConfig::with_indent` may have been bypassed.
-    indent: usize,
+    indent: Indent,
     output: String,
     /// Entry columns of the open block collections, innermost last.
     columns: Vec<Column>,
@@ -252,10 +262,11 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     max_anchor_id: usize,
     /// Number of documents started so far; every one after the first needs an explicit `---`.
     docs_started: usize,
-    /// Anchor id most recently emitted under each name, to check that aliases resolve.
+    /// Anchor id most recently emitted under each name in the current document, so that no two
+    /// live anchors share a name and every alias resolves to its own anchor.
     name_owner: HashMap<String, usize>,
-    /// Cleared when an alias would bind to a different anchor than the parser resolved.
-    aliases_resolve: bool,
+    /// Original anchor names, recovered from the source between events.
+    anchor_names: AnchorNames<'a>,
     /// Directive lines of the source, re-emitted before the documents that had them.
     directives: DirectiveScanner<'a>,
     /// Backend providing context stack and anchor storage
@@ -279,7 +290,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     ) -> Self {
         Self {
             config,
-            indent: config.indent.clamp(MIN_INDENT, MAX_INDENT),
+            indent: config.indent,
             output: String::with_capacity(output_capacity),
             columns: Vec::new(),
             pending_newline: false,
@@ -292,7 +303,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             max_anchor_id: 0,
             docs_started: 0,
             name_owner: HashMap::new(),
-            aliases_resolve: true,
+            anchor_names: AnchorNames::new(source),
             directives: DirectiveScanner::new(source),
             backend,
         }
@@ -325,7 +336,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             Context::MappingKey
             | Context::MappingValue
             | Context::ExplicitKey
-            | Context::ExplicitValue => Column(parent.0 + self.indent),
+            | Context::ExplicitValue => Column(parent.0 + self.indent.get()),
         }
     }
 
@@ -407,9 +418,50 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         if !matches!(event, Event::SequenceEnd | Event::MappingEnd) {
             self.flush_pending_start()?;
         }
+        if let Event::Scalar(_, _, anchor_id, _)
+        | Event::SequenceStart(anchor_id, _)
+        | Event::MappingStart(anchor_id, _) = &event
+        {
+            self.name_anchor(*anchor_id, span);
+        }
+        self.anchor_names.advance(&event, span);
+        self.dispatch(event, span)
+    }
 
+    /// Gives a new anchor its original name, or leaves it to be generated as `anchor{id}`.
+    ///
+    /// A name already used by another anchor of the document is not reused, so an alias can
+    /// never bind to the wrong definition.
+    fn name_anchor(&mut self, anchor_id: usize, span: Span) {
+        if anchor_id == 0 {
+            return;
+        }
+        let recovered = self
+            .anchor_names
+            .name_before(span)
+            .filter(|name| !self.name_owner.contains_key(*name));
+        let store = self.backend.anchor_store_mut();
+        store.ensure_capacity(anchor_id);
+        if store.get(anchor_id).is_some() {
+            return;
+        }
+        if let Some(name) = recovered {
+            store.set_name(anchor_id, name);
+            return;
+        }
+        let mut generated = format!("anchor{anchor_id}");
+        let mut attempt = 0;
+        while self.name_owner.contains_key(&generated) {
+            attempt += 1;
+            generated = format!("anchor{anchor_id}_{attempt}");
+        }
+        store.set_name(anchor_id, &generated);
+    }
+
+    fn dispatch(&mut self, event: Event<'_>, span: Span) -> EmitResult<()> {
         match event {
             Event::DocumentStart(explicit) => {
+                self.name_owner.clear();
                 self.anchor_base = self.max_anchor_id;
                 if explicit || self.config.explicit_start || self.docs_started > 0 {
                     if explicit && let Some(directives) = self.directives.before(span.start.line())
@@ -470,7 +522,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         anchor_id: usize,
         tag: Option<&Tag>,
     ) -> EmitResult<()> {
-        let style = effective_style(value, style);
+        let mut style = effective_style(value, style);
+        // saphyr reads an empty root block scalar together with the next `---` as one document
+        if value.is_empty()
+            && matches!(style, ScalarStyle::Literal | ScalarStyle::Folded)
+            && self.current_context() == Context::Root
+        {
+            style = ScalarStyle::DoubleQuoted;
+        }
         let shape = match style {
             ScalarStyle::Literal | ScalarStyle::Folded => NodeShape::BlockScalar,
             _ => NodeShape::Inline,
@@ -673,7 +732,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         let folded = requested == BlockStyle::Folded
             && !body.is_empty()
             && !body.split('\n').any(|line| line.starts_with([' ', '\t']));
-        let content_col = self.column().0 + self.indent;
+        let content_col = self.column().0 + self.indent.get();
 
         let indicator = if folded { '>' } else { '|' };
         self.output
@@ -742,9 +801,6 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         anchor_id: usize,
         tag: Option<&Tag>,
     ) -> EmitResult<()> {
-        if self.backend.context_stack().len() > MAX_DEPTH {
-            return Err(EmitError::DepthLimitExceeded { limit: MAX_DEPTH });
-        }
         self.begin_explicit_value();
         let ctx = self.current_context();
 
@@ -847,11 +903,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     /// Writes the alias reference `*name`.
     fn emit_alias_node(&mut self, anchor_id: usize) {
         self.output.push('*');
-        let name = self.backend.anchor_store().get(anchor_id);
-        if name.is_none_or(|name| self.name_owner.get(name) != Some(&anchor_id)) {
-            self.aliases_resolve = false;
-        }
-        match name {
+        match self.backend.anchor_store().get(anchor_id) {
             Some(name) => self.output.push_str(name),
             None => {
                 let _ = write!(self.output, "anchor{anchor_id}");
@@ -877,17 +929,13 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         }
     }
 
-    /// Completes formatting and returns the output with anchor bookkeeping.
-    pub(super) fn finish(mut self) -> Formatted {
+    /// Completes formatting and returns the output.
+    pub(super) fn finish(mut self) -> String {
         // Ensure output ends with newline
         if !self.output.is_empty() && !self.last_char_newline {
             self.output.push('\n');
         }
-        Formatted {
-            output: self.output,
-            max_anchor_id: self.max_anchor_id,
-            aliases_resolve: self.aliases_resolve,
-        }
+        self.output
     }
 }
 
@@ -895,8 +943,10 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 mod tests {
     use saphyr_parser::{Event, Parser};
 
-    use crate::limits::MaxTagBytes;
-    use crate::streaming::{MAX_ANCHOR_ID, MAX_DEPTH, format_streaming};
+    use super::misdecoded_escape;
+    use crate::error::ParseError;
+    use crate::limits::{Indent, LimitKind, MaxDepth, MaxTagBytes};
+    use crate::streaming::{MAX_ANCHOR_ID, format_streaming};
     use crate::{EmitError, EmitterConfig};
 
     fn fmt(yaml: &str) -> String {
@@ -979,6 +1029,69 @@ mod tests {
         assert_eq!(assert_stable("a: !foo%2Cbar x\n"), "a: !foo%2Cbar x\n");
         let out = assert_stable("a: !<tag:x.org,2000:a%20b> z\n");
         assert!(out.contains("!<tag:x.org,2000:a%20b> z"), "{out:?}");
+    }
+
+    #[test]
+    fn saphyr_misdecodes_two_byte_tag_escapes() {
+        // Canary for the workaround in `misdecoded_escape`: when saphyr-parser starts decoding
+        // `%D1%82` as `т` (U+0442) instead of U+D182, remove the workaround.
+        for (yaml, suffix) in [
+            ("!a%D1%82 x\n", "a\u{D182}"),
+            ("!a%C3%A9 x\n", "a\u{C3A9}"),
+            ("!a%C2%80 x\n", "a\u{C280}"),
+        ] {
+            let tag = Parser::new_from_str(yaml)
+                .find_map(|event| match event.unwrap().0 {
+                    Event::Scalar(_, _, _, Some(tag)) => Some(tag.into_owned()),
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(tag.suffix, suffix, "{yaml:?}");
+        }
+        for yaml in [
+            "!a%E2%82%AC x\n",
+            "!a%D8%80 x\n",
+            "!\u{442}\u{435}\u{433} x\n",
+        ] {
+            assert!(
+                Parser::new_from_str(yaml).any(|event| event.is_err()),
+                "{yaml:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn two_byte_tag_escapes_round_trip() {
+        for (yaml, expected) in [
+            ("a: !a%D1%82 x\n", "a: !a%D1%82 x\n"),
+            ("a: !a%C3%A9%20b x\n", "a: !a%C3%A9%20b x\n"),
+            ("a: !<tag:x%D1%82,2:y> z\n", "a: !<tag:x%D1%82,2:y> z\n"),
+            (
+                "%TAG !e! tag:x%D1%82,2000:\n---\na: !e!y z\n",
+                "%TAG !e! tag:x%D1%82,2000:\n---\na: !<tag:x%D1%82,2000:y> z\n",
+            ),
+        ] {
+            let out = assert_stable(yaml);
+            assert_eq!(out, expected, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_two_byte_misreading_is_unescaped() {
+        assert_eq!(misdecoded_escape('\u{D182}'), Some([0xD1, 0x82]));
+        assert_eq!(misdecoded_escape('\u{C280}'), Some([0xC2, 0x80]));
+        assert_eq!(misdecoded_escape('\u{D7BF}'), Some([0xD7, 0xBF]));
+        for c in [
+            'a',
+            '\u{E9}',
+            '\u{442}',
+            '\u{C27F}',
+            '\u{C2C0}',
+            '\u{C180}',
+            '\u{1F600}',
+        ] {
+            assert_eq!(misdecoded_escape(c), None, "{c:?}");
+        }
     }
 
     #[test]
@@ -1079,7 +1192,7 @@ mod tests {
 
     #[test]
     fn complex_key_indent_4() {
-        let config = EmitterConfig::new().with_indent(4);
+        let config = EmitterConfig::new().with_indent(Indent::new(4).unwrap());
         let yaml = "? [a, b]\n: c\n";
         let once = format_streaming(yaml, &config).unwrap();
         assert_eq!(format_streaming(&once, &config).unwrap(), once);
@@ -1106,7 +1219,7 @@ mod tests {
 
     #[test]
     fn alias_keys_indent_4() {
-        let config = EmitterConfig::new().with_indent(4);
+        let config = EmitterConfig::new().with_indent(Indent::new(4).unwrap());
         let yaml = "x:\n  &k a: 1\n  *k : 2\n";
         let once = format_streaming(yaml, &config).unwrap();
         assert_eq!(format_streaming(&once, &config).unwrap(), once);
@@ -1139,7 +1252,7 @@ mod tests {
 
     #[test]
     fn multiline_scalar_indent_4() {
-        let config = EmitterConfig::new().with_indent(4);
+        let config = EmitterConfig::new().with_indent(Indent::new(4).unwrap());
         let yaml = "x:\n  k: 'a\n\n    b'\n";
         let once = format_streaming(yaml, &config).unwrap();
         assert_eq!(format_streaming(&once, &config).unwrap(), once);
@@ -1159,7 +1272,7 @@ mod tests {
 
     #[test]
     fn nested_alias_key_with_multiline_value_indent_4() {
-        let config = EmitterConfig::new().with_indent(4);
+        let config = EmitterConfig::new().with_indent(Indent::new(4).unwrap());
         let yaml = "&k a: 1\nx:\n  y:\n    *k : \"p\\nq\"\n    z: 2\n";
         let once = format_streaming(yaml, &config).unwrap();
         assert_eq!(format_streaming(&once, &config).unwrap(), once);
@@ -1214,7 +1327,14 @@ mod tests {
     fn assert_depth_error(yaml: &str) {
         for result in format_all_backends(yaml) {
             assert!(
-                matches!(result, Err(EmitError::DepthLimitExceeded { limit }) if limit == MAX_DEPTH)
+                matches!(
+                    result,
+                    Err(EmitError::Parse(ParseError::LimitExceeded {
+                        kind: LimitKind::Depth(limit),
+                        ..
+                    })) if limit == MaxDepth::DEFAULT
+                ),
+                "{result:?}"
             );
         }
     }

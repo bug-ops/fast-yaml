@@ -5,6 +5,9 @@ import pytest
 import fast_yaml
 
 CASES = [
+    ('!<tag:yaml.org,2002:int> "7"', 7),
+    ("!<tag:yaml.org,2002:bool> 'true'", True),
+    ("!<tag:yaml.org,2002:str> 7", "7"),
     ('!!int "7"', 7),
     ("!!int '7'", 7),
     ('!!float "1.5"', 1.5),

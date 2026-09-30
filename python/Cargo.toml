@@ -23,10 +23,8 @@ fast-yaml-core = { workspace = true }
 fast-yaml-linter = { workspace = true }
 fast-yaml-parallel = { workspace = true }
 num_cpus = { workspace = true }
-ordered-float = { workspace = true }
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py310"] }
 rayon = { workspace = true }
-saphyr = { workspace = true }
 saphyr-parser = { workspace = true }
 serde_norway = { workspace = true }
 

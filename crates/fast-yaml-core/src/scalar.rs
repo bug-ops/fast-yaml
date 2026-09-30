@@ -1,7 +1,7 @@
 //! YAML 1.2 core-schema scalar resolution shared by the core loader and the language bindings.
 //!
 //! [`resolve_scalar`] is the single place that decides which type a scalar has, given its
-//! text, style and tag. The core loader ([`crate::canonicalize`]) and the Python bindings
+//! text, style and tag. The core loader ([`Parser`](crate::Parser)) and the Python bindings
 //! both adapt its [`ResolvedScalar`] result to their own value types, so the rules cannot drift
 //! between surfaces.
 
@@ -51,19 +51,52 @@ impl IntRadix {
 /// capped. Longer literals stay strings.
 const MAX_RADIX_BIG_BITS: usize = 14_284;
 
-/// An integer literal that overflows `i64`, in decimal, hex or octal notation.
+/// Namespace of the YAML core-schema tags, the target of the `!!` shorthand.
+const CORE_TAG_PREFIX: &str = "tag:yaml.org,2002:";
+
+/// Returns the core-schema name of `tag` (`int` for `!!int`), `None` for any other tag.
+///
+/// The shorthand `!!int`, a `%TAG` handle bound to the core prefix and the verbatim form
+/// `!<tag:yaml.org,2002:int>` all name the same tag, and only this function knows all three.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::scalar::core_tag_suffix;
+/// use saphyr_parser::Tag;
+///
+/// let tag = |handle: &str, suffix: &str| Tag { handle: handle.into(), suffix: suffix.into() };
+/// assert_eq!(core_tag_suffix(&tag("tag:yaml.org,2002:", "int")), Some("int"));
+/// assert_eq!(core_tag_suffix(&tag("", "tag:yaml.org,2002:int")), Some("int"));
+/// assert_eq!(core_tag_suffix(&tag("!", "int")), None);
+/// assert_eq!(core_tag_suffix(&tag("", "tag:example.com,2000:int")), None);
+/// ```
+#[must_use]
+pub fn core_tag_suffix(tag: &Tag) -> Option<&str> {
+    if tag.handle == CORE_TAG_PREFIX {
+        Some(&tag.suffix)
+    } else if tag.handle.is_empty() {
+        tag.suffix.strip_prefix(CORE_TAG_PREFIX)
+    } else {
+        None
+    }
+}
+
+/// Borrowed view of an integer literal that overflows `i64`, in decimal, hex or octal notation.
+///
+/// [`BigInt`](crate::BigInt) is the owned form.
 ///
 /// Guarantees an optional sign, then (for non-decimal radixes) the matching `0x`/`0o` prefix, then
 /// a non-empty run of digits valid for the radix; it can only be produced by [`resolve_scalar`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct BigInt<'a> {
+pub struct BigIntRef<'a> {
     text: &'a str,
     negative: bool,
     radix: IntRadix,
     digits: &'a str,
 }
 
-impl<'a> BigInt<'a> {
+impl<'a> BigIntRef<'a> {
     /// Returns the literal text as written, including sign and radix prefix.
     ///
     /// Pair it with [`radix`](Self::radix) for arbitrary-precision parsers such as Python's
@@ -105,36 +138,6 @@ impl<'a> BigInt<'a> {
     #[must_use]
     pub const fn radix(self) -> IntRadix {
         self.radix
-    }
-
-    /// Returns the text a parsed tree retains: canonical decimal for decimal literals, the
-    /// literal as written for hex and octal.
-    ///
-    /// Keeping the radix prefix lets arbitrary-precision parsers such as Python's
-    /// `int(text, base)` read power-of-two radixes without a quadratic decimal conversion.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
-    /// use saphyr_parser::ScalarStyle;
-    ///
-    /// for (raw, kept) in [
-    ///     ("+0099999999999999999999", "99999999999999999999"),
-    ///     ("0xFFFFFFFFFFFFFFFFFF", "0xFFFFFFFFFFFFFFFFFF"),
-    /// ] {
-    ///     let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
-    ///         unreachable!()
-    ///     };
-    ///     assert_eq!(big.retained_text(), kept);
-    /// }
-    /// ```
-    #[must_use]
-    pub fn retained_text(self) -> Cow<'a, str> {
-        match self.radix {
-            IntRadix::Decimal => self.canonical(),
-            IntRadix::Hex | IntRadix::Octal => Cow::Borrowed(self.text),
-        }
     }
 
     /// Returns the value as decimal text in JSON integer grammar: no leading `+`, no leading
@@ -259,7 +262,7 @@ pub enum ResolvedScalar<'a> {
     /// Integer that fits in `i64`.
     Int(i64),
     /// Integer outside `i64`, in decimal, hex or octal notation.
-    BigInt(BigInt<'a>),
+    BigInt(BigIntRef<'a>),
     /// Floating-point number, including `.inf` and `.nan`.
     Float(f64),
     /// String; borrows the whole scalar text.
@@ -292,10 +295,10 @@ impl TagClass {
         if tag.handle.is_empty() && tag.suffix == "!" {
             return Self::NonSpecific;
         }
-        if !tag.is_yaml_core_schema() {
+        let Some(suffix) = core_tag_suffix(tag) else {
             return Self::Other;
-        }
-        Self::Core(match tag.suffix.as_str() {
+        };
+        Self::Core(match suffix {
             "str" => CoreTag::Str,
             "int" => CoreTag::Int,
             "float" => CoreTag::Float,
@@ -436,7 +439,7 @@ fn parse_int(s: &str) -> Option<ResolvedScalar<'_>> {
         IntRadix::Hex => exceeds_bit_cap(digits, 4),
         IntRadix::Octal => exceeds_bit_cap(digits, 3),
     };
-    (!too_long).then_some(ResolvedScalar::BigInt(BigInt {
+    (!too_long).then_some(ResolvedScalar::BigInt(BigIntRef {
         text: s,
         negative,
         radix,
@@ -477,16 +480,51 @@ fn parse_core_schema_float(s: &str) -> Option<f64> {
     }
 }
 
+/// Whether `c` is in the YAML 1.2.2 `c-printable` set (§5.1).
+///
+/// Everything else (C0 controls other than tab and line breaks, DEL, C1 controls from U+0086,
+/// U+FFFE and U+FFFF) must be escaped in a double-quoted scalar to survive a round trip.
+pub(crate) const fn is_c_printable(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\r' | '\u{20}'..='\u{7E}' | '\u{85}' | '\u{A0}'..='\u{D7FF}'
+            | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use ResolvedScalar::{Bool, Float, Int, Null, Str};
 
-    fn big_of(raw: &str) -> BigInt<'_> {
+    fn big_of(raw: &str) -> BigIntRef<'_> {
         let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
             panic!("{raw} should be BigInt");
         };
         big
+    }
+
+    #[test]
+    fn c_printable_matches_the_spec_set() {
+        for c in [
+            '\t',
+            '\n',
+            '\r',
+            ' ',
+            '~',
+            '\u{85}',
+            '\u{A0}',
+            '\u{FFFD}',
+            '\u{10000}',
+        ] {
+            assert!(is_c_printable(c), "{c:?}");
+        }
+        for c in [
+            '\0', '\u{8}', '\u{B}', '\u{1F}', '\u{7F}', '\u{80}', '\u{86}', '\u{9F}', '\u{FFFE}',
+            '\u{FFFF}',
+        ] {
+            assert!(!is_c_printable(c), "{c:?}");
+        }
     }
 
     #[test]
@@ -639,7 +677,7 @@ mod tests {
             Some("0o" | "0O") => (IntRadix::Octal, &unsigned[2..]),
             _ => (IntRadix::Decimal, unsigned),
         };
-        ResolvedScalar::BigInt(BigInt {
+        ResolvedScalar::BigInt(BigIntRef {
             text: s,
             negative: s.starts_with('-'),
             radix,

@@ -2,15 +2,16 @@
 
 use std::path::PathBuf;
 
-use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size};
+use crate::limits::{bounded, max_input_bytes, parse_limits, reject_legacy_max_input_size};
 use fast_yaml_core::emitter::EmitterConfig;
+use fast_yaml_core::limits::Depth;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
     FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
 };
 use napi_derive::napi;
 
-use crate::options::{U32_MAX, checked_opt_uint};
+use crate::options::{U32_MAX, checked_opt_uint, emitter_indent, emitter_width};
 
 /// Outcome of processing a single file.
 #[napi(string_enum)]
@@ -131,15 +132,15 @@ pub struct BatchConfig {
     pub max_input_size: Option<f64>,
     /// Sequential threshold (default: 4KB)
     pub sequential_threshold: Option<f64>,
-    /// Indentation width in spaces (default: 2)
+    /// Indentation width in spaces (integer, 1..=9, default: 2)
     pub indent: Option<f64>,
-    /// Maximum line width (default: 80)
+    /// Maximum line width (integer, 20..=1000, default: 80)
     pub width: Option<f64>,
     /// Sort dictionary keys alphabetically (default: false)
     pub sort_keys: Option<bool>,
     /// Maximum collection nesting depth (integer, 1..=512, default: 256);
-    /// applies to `processFiles`, not to `formatFiles` (fixed formatter depth limit).
-    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+    /// applies to `processFiles` and `formatFiles`.
+    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` rejects input nested deeper than this limit.
     pub max_depth: Option<f64>,
     /// Maximum estimated alias-expansion bytes per file (integer, 1..=1073741824,
     /// default: 67108864); applies to `processFiles` only; peak memory can reach workers x this budget
@@ -166,11 +167,10 @@ impl BatchConfig {
     }
 
     fn to_emitter_config(&self) -> napi::Result<EmitterConfig> {
-        let indent = checked_opt_uint("indent", self.indent, 0, U32_MAX)?.unwrap_or(2);
-        let width = checked_opt_uint("width", self.width, 0, U32_MAX)?.unwrap_or(80);
         Ok(EmitterConfig::new()
-            .with_indent(indent.clamp(1, 9))
-            .with_width(width.clamp(20, 1000)))
+            .with_indent(emitter_indent(self.indent)?)
+            .with_width(emitter_width(self.width)?)
+            .with_max_depth(bounded::<Depth>("maxDepth", self.max_depth)?))
     }
 }
 

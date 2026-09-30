@@ -39,13 +39,13 @@ colored = { version = "3.1" }
 glob = { version = "0.3" }
 globset = { version = "0.4" }
 ignore = { version = "0.4" }
+indexmap = { version = "2" }
 memchr = { version = "2.8" }
 memmap2 = { version = "0.9" }
 napi = { version = "3.11" }
 napi-build = { version = "2.3" }
 napi-derive = { version = "3.6" }
 num_cpus = { version = "1.17" }
-ordered-float = { version = "5" }
 pyo3 = { version = "0.29" }
 rayon = { version = "1.12" }
 regex = { version = "1.13" }

@@ -17,7 +17,7 @@ arena = ["bumpalo"]
 [dependencies]
 bumpalo = { workspace = true, optional = true, features = ["collections"] }
 memchr = { workspace = true }
-ordered-float = { workspace = true }
+indexmap = { workspace = true }
 saphyr = { workspace = true }
 saphyr-parser = { workspace = true }
 thiserror = { workspace = true }

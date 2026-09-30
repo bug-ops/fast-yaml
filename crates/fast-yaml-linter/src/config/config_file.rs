@@ -475,6 +475,7 @@ fn parse_max_input_bytes(path: &Path, value: &Value) -> Result<MaxInputBytes, Co
         .map_or(
             Err(LimitRangeError {
                 value: usize::MAX,
+                min: 1,
                 max: MaxInputBytes::MAX.get(),
             }),
             MaxInputBytes::new,

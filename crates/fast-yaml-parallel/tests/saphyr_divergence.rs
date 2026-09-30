@@ -6,21 +6,21 @@
 //! of `""` (#456). Tests flip when saphyr fixes either one; where the parallel side is itself an
 //! EOF-chomping result it flips on both fixes. Update deliberately.
 
-use fast_yaml_core::{Parser, ScalarOwned, Value};
+use fast_yaml_core::{Parser, Value};
 use fast_yaml_parallel::{Config, Error, parse_parallel, parse_parallel_with_config};
 
 fn string(s: &str) -> Value {
-    Value::Value(ScalarOwned::String(s.into()))
+    Value::String(s.into())
 }
 
 fn int_map(key: &str, n: i64) -> Value {
-    let mut map = fast_yaml_core::Map::new();
-    map.insert(string(key), Value::Value(ScalarOwned::Integer(n)));
+    let mut map = fast_yaml_core::Mapping::new();
+    map.insert(string(key), Value::Int(n));
     Value::Mapping(map)
 }
 
 fn str_map(key: &str, value: &str) -> Value {
-    let mut map = fast_yaml_core::Map::new();
+    let mut map = fast_yaml_core::Mapping::new();
     map.insert(string(key), string(value));
     Value::Mapping(map)
 }
@@ -210,7 +210,7 @@ fn empty_block_scalar_at_eof_keeps_header_newline_in_both_engines() {
 
 #[test]
 fn empty_block_scalar_followed_by_blank_line_keeps_one_newline_when_kept() {
-    let mut map = fast_yaml_core::Map::new();
+    let mut map = fast_yaml_core::Mapping::new();
     map.insert(string("strip"), string(""));
     map.insert(string("clip"), string(""));
     map.insert(string("keep"), string("\n"));

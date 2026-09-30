@@ -1,7 +1,7 @@
 //! YAML 1.1 merge key (`<<`) resolution shared by every binding.
 //!
 //! [`merge_into`] is the single implementation of the merge algorithm; the core
-//! parser and the Python event loader each supply a [`MergeTarget`] over their own
+//! loader and the Python event loader each supply a [`MergeTarget`] over their own
 //! mapping representation, so key order and precedence cannot drift between surfaces.
 //!
 //! Semantics, in terms of the insertion order of the resulting mapping:
@@ -10,7 +10,8 @@
 //! - an explicit key always wins and replaces the merged value in the merged key's position;
 //! - for `<<: [*a, *b]` the earlier item wins and keys appear in forward order (a, then b);
 //! - the merge is shallow;
-//! - only the plain, untagged scalar `<<` is a merge key; quoted or tagged forms are ordinary keys;
+//! - only the plain, untagged scalar `<<` and any scalar tagged `!!merge` are merge keys; quoted
+//!   or otherwise tagged forms are ordinary keys, and so is every key of a `!!set`;
 //! - a merge value must be a mapping or a sequence of mappings, anything else is a [`MergeError`].
 
 use std::collections::HashSet;
@@ -19,65 +20,22 @@ use saphyr_parser::{Event, ScalarStyle, Tag};
 use thiserror::Error;
 
 pub use crate::merge_check::MergeKeyValidator;
-use crate::value::{Map, Value};
+use crate::scalar::core_tag_suffix;
+use crate::value::{Mapping, Value};
 
-/// Handle of the stand-in tag that keeps `!!set` visible after loading.
-///
-/// It contains NUL, which input validation rejects, so no document can spell it.
-const SET_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0";
-
-/// Whether `tag` is the core-schema `!!set` tag.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::{Value, core_set_tag, is_core_set_tag};
-///
-/// assert!(is_core_set_tag(&core_set_tag()));
-/// let Some(Value::Tagged(tag, _)) = fast_yaml_core::Parser::parse_str("!!set {a}")? else {
-///     unreachable!()
-/// };
-/// assert!(is_core_set_tag(&tag));
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[must_use]
-pub fn is_core_set_tag(tag: &Tag) -> bool {
-    tag.is_yaml_core_schema() && tag.suffix == "set"
+/// Whether `tag` is the core-schema `!!set` tag, in any spelling.
+pub(crate) fn is_core_set_tag(tag: &Tag) -> bool {
+    core_tag_suffix(tag) == Some("set")
 }
 
-/// The core-schema `!!set` tag that marks a set in parsed values.
-///
-/// A parsed `!!set` mapping is `Value::Tagged(core_set_tag(), Mapping{key: null, ..})`; use this
-/// to build the same shape by hand.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::{Emitter, Map, ScalarOwned, Value, core_set_tag};
-///
-/// let mut members = Map::new();
-/// members.insert(Value::Value(ScalarOwned::String("a".into())), Value::Value(ScalarOwned::Null));
-/// let set = Value::Tagged(core_set_tag(), Box::new(Value::Mapping(members)));
-/// assert!(Emitter::emit_str(&set)?.contains("!!set"));
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-#[must_use]
-pub fn core_set_tag() -> Tag {
-    Tag {
-        handle: "tag:yaml.org,2002:".into(),
-        suffix: "set".into(),
+/// Whether `event` is a scalar that makes the key it stands for a merge key: the plain,
+/// untagged `<<`, or any scalar tagged `!!merge`.
+fn is_merge_key_scalar(event: &Event<'_>) -> bool {
+    match event {
+        Event::Scalar(_, _, _, Some(tag)) => core_tag_suffix(tag) == Some("merge"),
+        Event::Scalar(text, ScalarStyle::Plain, _, None) => text == "<<",
+        _ => false,
     }
-}
-
-pub(crate) fn set_marker_tag() -> Tag {
-    Tag {
-        handle: SET_MARKER_HANDLE.into(),
-        suffix: "set".into(),
-    }
-}
-
-pub(crate) fn is_set_marker(tag: &Tag) -> bool {
-    tag.handle == SET_MARKER_HANDLE && tag.suffix == "set"
 }
 
 /// Structural role of a node within its parent, as reported by
@@ -85,26 +43,39 @@ pub(crate) fn is_set_marker(tag: &Tag) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NodeRole {
-    /// Top-level node of a document.
+    /// The root of a document.
     Root,
-    /// Item of a sequence.
+    /// An item of a sequence.
     Item,
-    /// Ordinary mapping key.
+    /// A mapping key that is not a merge key, including every key of a `!!set`.
     Key,
-    /// Plain untagged `<<` key, or an alias in key position to an anchored one.
+    /// A `<<` or `!!merge` key, or an alias in key position to an anchored one.
     MergeKey,
-    /// Mapping value.
+    /// A mapping value.
     Value,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FrameKind {
+    Mapping,
+    Set,
+    Sequence,
+}
+
+/// An open container and how many child nodes it has received.
+#[derive(Debug)]
+struct Frame {
+    kind: FrameKind,
+    children: usize,
 }
 
 /// Classifies parser events by their role in the tree, spotting `<<` merge keys.
 ///
-/// The single definition of which keys are merge keys, shared by the loader and the streaming
-/// formatter.
+/// The single definition of which keys are merge keys, shared by the core loader and the
+/// streaming formatter through [`MergeKeyValidator`], which the bindings use as well.
 #[derive(Debug, Default)]
 pub(crate) struct MergeKeyTracker {
-    /// Open containers: whether each is a mapping, and how many child nodes it has received.
-    frames: Vec<(bool, usize)>,
+    frames: Vec<Frame>,
     merge_anchors: HashSet<usize>,
 }
 
@@ -119,11 +90,21 @@ impl MergeKeyTracker {
             _ => None,
         };
         match event {
-            Event::Scalar(s, ScalarStyle::Plain, anchor @ 1.., None) if s == "<<" => {
+            Event::Scalar(_, _, anchor @ 1.., _) if is_merge_key_scalar(event) => {
                 self.merge_anchors.insert(*anchor);
             }
-            Event::MappingStart(..) => self.frames.push((true, 0)),
-            Event::SequenceStart(..) => self.frames.push((false, 0)),
+            Event::MappingStart(_, tag) => {
+                let kind = if tag.as_deref().is_some_and(is_core_set_tag) {
+                    FrameKind::Set
+                } else {
+                    FrameKind::Mapping
+                };
+                self.frames.push(Frame { kind, children: 0 });
+            }
+            Event::SequenceStart(..) => self.frames.push(Frame {
+                kind: FrameKind::Sequence,
+                children: 0,
+            }),
             Event::MappingEnd | Event::SequenceEnd => {
                 self.frames.pop();
             }
@@ -133,25 +114,26 @@ impl MergeKeyTracker {
     }
 
     fn next_role(&mut self, event: &Event<'_>) -> NodeRole {
-        let Some((mapping, children)) = self.frames.last_mut() else {
+        let Some(frame) = self.frames.last_mut() else {
             return NodeRole::Root;
         };
-        *children += 1;
-        if !*mapping {
-            return NodeRole::Item;
-        }
-        if *children % 2 == 0 {
-            return NodeRole::Value;
-        }
-        let merge_key = match event {
-            Event::Scalar(s, ScalarStyle::Plain, _, None) => s == "<<",
-            Event::Alias(id) => self.merge_anchors.contains(id),
-            _ => false,
-        };
-        if merge_key {
-            NodeRole::MergeKey
-        } else {
-            NodeRole::Key
+        frame.children += 1;
+        let is_key = frame.children % 2 == 1;
+        match (frame.kind, is_key) {
+            (FrameKind::Sequence, _) => NodeRole::Item,
+            (FrameKind::Mapping | FrameKind::Set, false) => NodeRole::Value,
+            (FrameKind::Set, true) => NodeRole::Key,
+            (FrameKind::Mapping, true) => {
+                let merge_key = match event {
+                    Event::Alias(id) => self.merge_anchors.contains(id),
+                    other => is_merge_key_scalar(other),
+                };
+                if merge_key {
+                    NodeRole::MergeKey
+                } else {
+                    NodeRole::Key
+                }
+            }
         }
     }
 }
@@ -199,10 +181,10 @@ pub enum MergeSource<E, S> {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::{Map, MergeTarget, ScalarOwned, Value};
+/// use fast_yaml_core::{Mapping, MergeTarget, Value};
 ///
-/// let text = |s: &str| Value::Value(ScalarOwned::String(s.into()));
-/// let mut map = Map::new();
+/// let text = |s: &str| Value::String(s.into());
+/// let mut map = Mapping::new();
 /// map.set(text("a"), text("1")).unwrap();
 /// map.set(text("b"), text("2")).unwrap();
 /// map.set_if_absent(text("a"), text("ignored")).unwrap();
@@ -214,8 +196,8 @@ pub enum MergeSource<E, S> {
 pub trait MergeTarget {
     /// Key and value type of the target and of its merge sources.
     type Node;
-    /// Failure of a target operation, including a rejected merge value.
-    type Error;
+    /// Failure of a target operation; a rejected merge value converts into it.
+    type Error: From<MergeError>;
     /// Entries of a mapping merge source.
     type Entries: IntoIterator<Item = (Self::Node, Self::Node)>;
     /// Items of a sequence merge source.
@@ -230,9 +212,6 @@ pub trait MergeTarget {
         &self,
         node: Self::Node,
     ) -> Result<MergeSource<Self::Entries, Self::Items>, Self::Error>;
-
-    /// Wraps a rejected merge value in the target's error type.
-    fn reject(error: MergeError) -> Self::Error;
 
     /// Stores `value` under `key` only when `key` is absent; an existing entry is left untouched.
     ///
@@ -252,7 +231,7 @@ pub trait MergeTarget {
     fn set(&mut self, key: Self::Node, value: Self::Node) -> Result<(), Self::Error>;
 }
 
-impl MergeTarget for Map {
+impl MergeTarget for Mapping {
     type Node = Value;
     type Error = MergeError;
     type Entries = Self;
@@ -262,19 +241,12 @@ impl MergeTarget for Map {
         Ok(match node {
             Value::Mapping(map) => MergeSource::Mapping(map),
             Value::Sequence(items) => MergeSource::Sequence(items),
-            Value::Tagged(tag, _) if is_set_marker(&tag) || is_core_set_tag(&tag) => {
-                MergeSource::Set
-            }
+            Value::Set(_) => MergeSource::Set,
             _ => MergeSource::Other,
         })
     }
 
-    fn reject(error: MergeError) -> MergeError {
-        error
-    }
-
     fn set_if_absent(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
-        // `entry().or_insert()` moves an occupied key to the back
         if !self.contains_key(&key) {
             self.insert(key, value);
         }
@@ -282,8 +254,7 @@ impl MergeTarget for Map {
     }
 
     fn set(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
-        // `insert` would move an existing key to the back
-        self.replace(key, value);
+        self.insert(key, value);
         Ok(())
     }
 }
@@ -312,12 +283,12 @@ fn absorb<T: MergeTarget>(
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::{Map, ScalarOwned, Value, merge::merge_into};
+/// use fast_yaml_core::{Mapping, Value, merge::merge_into};
 ///
-/// let text = |s: &str| Value::Value(ScalarOwned::String(s.into()));
-/// let base: Map = [(text("x"), text("1")), (text("y"), text("2"))].into_iter().collect();
+/// let text = |s: &str| Value::String(s.into());
+/// let base: Mapping = [(text("x"), text("1")), (text("y"), text("2"))].into_iter().collect();
 ///
-/// let mut merged = Map::new();
+/// let mut merged = Mapping::new();
 /// merge_into(&mut merged, Some(Value::Mapping(base)), [(text("x"), text("0"))]).unwrap();
 ///
 /// let entries: Vec<_> = merged.into_iter().collect();
@@ -335,19 +306,78 @@ pub fn merge_into<T: MergeTarget>(
                 for item in items {
                     match target.classify(item)? {
                         MergeSource::Mapping(entries) => absorb(target, entries)?,
-                        MergeSource::Set => return Err(T::reject(MergeError::SetSource)),
+                        MergeSource::Set => return Err(MergeError::SetSource.into()),
                         MergeSource::Sequence(_) | MergeSource::Other => {
-                            return Err(T::reject(MergeError::NotMapping));
+                            return Err(MergeError::NotMapping.into());
                         }
                     }
                 }
             }
-            MergeSource::Set => return Err(T::reject(MergeError::SetSource)),
-            MergeSource::Other => return Err(T::reject(MergeError::NotMapping)),
+            MergeSource::Set => return Err(MergeError::SetSource.into()),
+            MergeSource::Other => return Err(MergeError::NotMapping.into()),
         }
     }
     for (key, value) in explicit {
         target.set(key, value)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use saphyr_parser::Parser;
+
+    fn roles(yaml: &str) -> Vec<NodeRole> {
+        let mut tracker = MergeKeyTracker::default();
+        Parser::new_from_str(yaml)
+            .filter_map(|event| tracker.observe(&event.unwrap().0))
+            .collect()
+    }
+
+    #[test]
+    fn a_set_source_is_rejected_when_merging_into_a_mapping() {
+        let set = Value::Set(std::iter::once(crate::Value::Int(1)).collect());
+        let mut target = Mapping::new();
+        assert_eq!(
+            merge_into(&mut target, Some(set), std::iter::empty()),
+            Err(MergeError::SetSource)
+        );
+    }
+
+    #[test]
+    fn set_keys_are_never_merge_keys() {
+        use NodeRole::{Key, MergeKey, Root, Value};
+        assert_eq!(roles("{<<: 1}"), [Root, MergeKey, Value]);
+        assert_eq!(roles("!!set {<<: 1}"), [Root, Key, Value]);
+        assert_eq!(
+            roles("!<tag:yaml.org,2002:set> {<<, !!merge x}"),
+            [Root, Key, Value, Key, Value]
+        );
+    }
+
+    #[test]
+    fn merge_tag_and_its_anchor_mark_merge_keys() {
+        use NodeRole::{MergeKey, Root, Value};
+        assert_eq!(
+            roles("{!!merge x: 1, !!merge 'y': 2}"),
+            [Root, MergeKey, Value, MergeKey, Value]
+        );
+        assert_eq!(
+            roles("[&k !!merge <<, {*k : 1}]")[..3],
+            [Root, NodeRole::Item, NodeRole::Item]
+        );
+        assert_eq!(roles("[&k !!merge <<, {*k : 1}]")[3], MergeKey);
+    }
+
+    #[test]
+    fn core_tag_suffix_reads_each_spelling() {
+        let tag = |h: &str, s: &str| Tag {
+            handle: h.into(),
+            suffix: s.into(),
+        };
+        assert!(is_core_set_tag(&tag("tag:yaml.org,2002:", "set")));
+        assert!(is_core_set_tag(&tag("", "tag:yaml.org,2002:set")));
+        assert!(!is_core_set_tag(&tag("!", "set")));
+    }
 }

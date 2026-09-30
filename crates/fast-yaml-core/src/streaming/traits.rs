@@ -22,9 +22,6 @@ pub(super) trait ContextStackOps {
 
     /// Returns a mutable reference to the last (top) context.
     fn last_mut(&mut self) -> Option<&mut Context>;
-
-    /// Returns the number of contexts in the stack.
-    fn len(&self) -> usize;
 }
 
 /// Operations on anchor storage abstraction.
@@ -42,6 +39,13 @@ pub(super) trait AnchorStoreOps {
     ///
     /// Returns `None` if `anchor_id` is out of bounds or the slot is empty.
     fn get(&self, anchor_id: usize) -> Option<&str>;
+
+    /// Stores `name` for `anchor_id` when the slot is empty.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `anchor_id` is out of bounds. Call `ensure_capacity` first.
+    fn set_name(&mut self, anchor_id: usize, name: &str);
 
     /// Sets anchor name to "anchorN" if slot is empty, returns reference to the name.
     ///

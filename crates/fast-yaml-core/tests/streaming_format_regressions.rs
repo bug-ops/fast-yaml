@@ -6,10 +6,12 @@
 use std::fmt::Write;
 
 use fast_yaml_core::streaming::format_streaming;
-use fast_yaml_core::{EmitterConfig, Parser};
+use fast_yaml_core::{
+    EmitError, Emitter, EmitterConfig, Indent, LimitKind, MaxDepth, ParseError, Parser, Value,
+};
 
 fn fmt(input: &str, indent: usize) -> String {
-    let config = EmitterConfig::new().with_indent(indent);
+    let config = EmitterConfig::new().with_indent(Indent::new(indent).unwrap());
     format_streaming(input, &config).unwrap()
 }
 
@@ -343,11 +345,9 @@ fn alias_key_at_mapping_root() {
 }
 
 #[test]
-fn indent_out_of_range_is_normalized() {
+fn widest_indent_keeps_block_scalar_indicator_valid() {
     let input = "e: |1\n  lead\n x\n";
-    let mut config = EmitterConfig::new();
-
-    config.indent = 12;
+    let config = EmitterConfig::new().with_indent(Indent::MAX);
     let out = format_streaming(input, &config).unwrap();
     assert_eq!(out, "e: |9\n          lead\n         x\n");
     assert_eq!(format_streaming(&out, &config).unwrap(), out);
@@ -355,8 +355,11 @@ fn indent_out_of_range_is_normalized() {
         Parser::parse_all(input).unwrap(),
         Parser::parse_all(&out).unwrap()
     );
+}
 
-    config.indent = 0;
+#[test]
+fn narrowest_indent_is_one_space() {
+    let config = EmitterConfig::new().with_indent(Indent::MIN);
     let out = format_streaming("k:\n  - a\n", &config).unwrap();
     assert_eq!(out, "k:\n - a\n");
 }
@@ -385,4 +388,67 @@ fn deep_nesting_keeps_column_stack_balanced() {
             Parser::parse_all(&once).unwrap()
         );
     }
+}
+
+fn on_stack<T: Send + 'static>(mib: usize, f: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .stack_size(mib * 1024 * 1024)
+        .spawn(f)
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+#[test]
+fn max_depth_bounds_the_formatter_and_defaults_to_256() {
+    let nested = |depth: usize| format!("{}v\n", "- ".repeat(depth));
+    let config = EmitterConfig::new();
+    assert!(format_streaming(&nested(256), &config).is_ok());
+    let err = format_streaming(&nested(257), &config).unwrap_err();
+    let EmitError::Parse(ParseError::LimitExceeded { kind, line, .. }) = err else {
+        panic!("depth error expected, got {err:?}");
+    };
+    assert_eq!(kind, LimitKind::Depth(MaxDepth::DEFAULT));
+    assert_eq!(line, 1);
+
+    let shallow = EmitterConfig::new().with_max_depth(MaxDepth::new(2).unwrap());
+    assert!(format_streaming(&nested(2), &shallow).is_ok());
+    assert!(format_streaming(&nested(3), &shallow).is_err());
+}
+
+#[test]
+fn formatter_at_max_depth_fits_a_2_mib_stack() {
+    on_stack(2, || {
+        let config = EmitterConfig::new().with_max_depth(MaxDepth::MAX);
+        let seqs = format!("{}v\n", "- ".repeat(512));
+        let out = format_streaming(&seqs, &config).unwrap();
+        assert_eq!(format_streaming(&out, &config).unwrap(), out);
+        let mut maps = String::new();
+        for i in 0..511 {
+            writeln!(maps, "{}k:", "  ".repeat(i)).unwrap();
+        }
+        writeln!(maps, "{}v: 1", "  ".repeat(511)).unwrap();
+        let out = format_streaming(&maps, &config).unwrap();
+        assert_eq!(format_streaming(&out, &config).unwrap(), out);
+    });
+}
+
+#[test]
+fn emitting_at_max_depth_fits_a_small_stack() {
+    // saphyr's recursive block emitter needs about 2 MiB at depth 512 in release, more in debug
+    let mib = if cfg!(debug_assertions) { 8 } else { 2 };
+    on_stack(mib, || {
+        let mut doc = Value::Int(1);
+        for _ in 0..512 {
+            doc = Value::Sequence(vec![doc]);
+        }
+        let block = EmitterConfig::new().with_max_depth(MaxDepth::MAX);
+        let flow = block.clone().with_default_flow_style(Some(true));
+        for config in [&block, &flow] {
+            let out = Emitter::emit_str_with_config(&doc, config).unwrap();
+            assert!(out.contains('1'));
+        }
+        // dropping a 512-deep value recurses; leak it to keep the test about emission
+        std::mem::forget(doc);
+    });
 }

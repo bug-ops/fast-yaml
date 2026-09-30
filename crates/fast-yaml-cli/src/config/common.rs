@@ -56,20 +56,21 @@ impl CommonConfig {
 mod tests {
     use super::*;
     use crate::config::Verbosity;
+    use fast_yaml_core::Indent;
 
     #[test]
     fn test_default_config() {
         let config = CommonConfig::default();
         assert!(!config.output.is_quiet());
         assert!(!config.output.is_verbose());
-        assert_eq!(config.formatter.indent(), 2);
+        assert_eq!(config.formatter.indent(), Indent::DEFAULT);
     }
 
     #[test]
     fn test_new() {
         let config = CommonConfig::new();
         assert!(!config.output.is_quiet());
-        assert_eq!(config.formatter.indent(), 2);
+        assert_eq!(config.formatter.indent(), Indent::DEFAULT);
     }
 
     #[test]
@@ -81,21 +82,21 @@ mod tests {
 
     #[test]
     fn test_with_formatter() {
-        let formatter = FormatterConfig::new().with_indent(4);
+        let formatter = FormatterConfig::new().with_indent(Indent::new(4).unwrap());
         let config = CommonConfig::new().with_formatter(formatter);
-        assert_eq!(config.formatter.indent(), 4);
+        assert_eq!(config.formatter.indent().get(), 4);
     }
 
     #[test]
     fn test_builder_chaining() {
         let output = OutputConfig::new().with_verbosity(Verbosity::Verbose);
-        let formatter = FormatterConfig::new().with_indent(4);
+        let formatter = FormatterConfig::new().with_indent(Indent::new(4).unwrap());
 
         let config = CommonConfig::new()
             .with_output(output)
             .with_formatter(formatter);
 
         assert!(config.output.is_verbose());
-        assert_eq!(config.formatter.indent(), 4);
+        assert_eq!(config.formatter.indent().get(), 4);
     }
 }

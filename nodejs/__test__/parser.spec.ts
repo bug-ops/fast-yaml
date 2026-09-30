@@ -400,3 +400,58 @@ describe('Core API - Serializer', () => {
     });
   });
 });
+
+describe('loader key order and aliases', () => {
+  it('keeps the first position and the last value of a duplicate key', () => {
+    expect(Object.entries(safeLoad('b: 1\na: 2\nb: 3\n') as object)).toEqual([
+      ['b', 3],
+      ['a', 2],
+    ]);
+  });
+
+  it('rejects a recursive alias', () => {
+    expect(() => safeLoad('&a [*a]')).toThrow(/still being defined/);
+  });
+});
+
+describe('merge tag and verbatim core tags', () => {
+  it.each(['!!merge <<', "!!merge '<<'", '!!merge merge', '!<tag:yaml.org,2002:merge> <<'])(
+    'treats %s as a merge key',
+    (key) => {
+      const doc = `b: &b {x: 1, y: 2}\nm:\n  ${key}: *b\n  k: 0\n`;
+      expect((safeLoad(doc) as { m: object }).m).toEqual({ x: 1, y: 2, k: 0 });
+    },
+  );
+
+  it('applies verbatim core tags like the shorthand', () => {
+    expect(safeLoad('x: !<tag:yaml.org,2002:int> "7"')).toEqual({ x: 7 });
+    expect(safeLoad('x: !<tag:yaml.org,2002:str> 7')).toEqual({ x: '7' });
+  });
+});
+
+describe('keys that share a JavaScript property name', () => {
+  it.each(['1: a\n1.0: b\n', "1: a\n'1': b\n", "true: a\n'true': b\n"])(
+    'throws for %j',
+    (doc) => {
+      expect(() => safeLoad(doc)).toThrow(/same JavaScript property/);
+    },
+  );
+
+  it('keeps equal big-integer spellings as one key', () => {
+    expect(safeLoad('+99999999999999999999: a\n99999999999999999999: b\n')).toEqual({
+      '99999999999999999999': 'b',
+    });
+  });
+});
+
+describe('BOMs and non-printable characters', () => {
+  it('drops a BOM in a later document prefix', () => {
+    const doc = 'a: 1\n...\n\uFEFFb: 2\n...\n\uFEFF%YAML 1.2\n---\nc: 3\n';
+    expect(safeLoadAll(doc)).toEqual([{ a: 1 }, { b: 2 }, { c: 3 }]);
+  });
+
+  it.each(['\u0000', '\u007F', '\u0086', '\uFFFE', '\uFFFF'])('rejects U+%j', (char) => {
+    expect(() => safeLoad(`a: x${char}y\n`)).toThrow(/not allowed in YAML/);
+  });
+});
+

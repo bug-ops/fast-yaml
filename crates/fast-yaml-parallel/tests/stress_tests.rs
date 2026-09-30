@@ -33,7 +33,7 @@ fn test_large_individual_documents() {
 
     // Verify each document has 1000 keys
     for doc in &docs {
-        if let Some(hash) = doc.as_mapping() {
+        if let fast_yaml_core::Value::Mapping(hash) = doc {
             assert_eq!(hash.len(), 1000);
         }
     }

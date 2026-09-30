@@ -404,15 +404,38 @@ fn test_bom_parse_stdin() {
 }
 
 #[test]
-fn test_bom_format_drops_bom() {
+fn test_bom_format_keeps_bom() {
     Command::cargo_bin("fy")
         .unwrap()
         .arg("format")
         .write_stdin("\u{FEFF}a: 1\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("a: 1"))
-        .stdout(predicate::str::contains("\u{FEFF}").not());
+        .stdout("\u{FEFF}a: 1\n");
+}
+
+#[test]
+fn test_bom_file_is_unchanged_by_format_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("bom.yaml");
+    std::fs::write(&file, "\u{FEFF}a: 1\nb:\n  - x\n").unwrap();
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["format", "--dry-run"])
+        .arg(&file)
+        .assert()
+        .success()
+        .code(0);
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["format", "-i"])
+        .arg(&file)
+        .assert()
+        .success();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "\u{FEFF}a: 1\nb:\n  - x\n"
+    );
 }
 
 #[test]

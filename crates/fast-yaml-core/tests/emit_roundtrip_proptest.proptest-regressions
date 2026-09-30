@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 061b98d55d78594ef7e9f71c9413eda0c6037c947da879b1c97de48e9efd2da5 # shrinks to doc = Mapping(Mapping({String("line1\nline2"): Null})), indent = 1
+cc 052d0cb3b9944d555e3ed249b9c134270c76d658984ccb41c2d21b6b2bffdc33 # shrinks to doc = String("  indented\n  body"), indent = 1

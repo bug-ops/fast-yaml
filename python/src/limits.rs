@@ -2,15 +2,17 @@
 
 use std::fmt::Display;
 
-use fast_yaml_core::ParseLimits;
 use fast_yaml_core::limits::{AliasBytes, Bounded, Bounds, Depth};
+use fast_yaml_core::{Indent, ParseLimits, Width};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
 
 /// Builds the `ValueError` shared by all limit options.
-pub fn range_error(option: &str, max: usize, got: impl Display) -> PyErr {
-    PyValueError::new_err(format!("{option} must be between 1 and {max}, got {got}"))
+pub fn range_error(option: &str, min: usize, max: usize, got: impl Display) -> PyErr {
+    PyValueError::new_err(format!(
+        "{option} must be between {min} and {max}, got {got}"
+    ))
 }
 
 /// Extracts `arg` as `usize`: negative and oversized integers raise `ValueError`, `bool` and non-integers `TypeError`.
@@ -21,9 +23,9 @@ fn extract_usize(option: &str, max: usize, arg: &Bound<'_, PyAny>) -> PyResult<u
         )));
     }
     match arg.extract::<i128>() {
-        Ok(value) => usize::try_from(value).map_err(|_| range_error(option, max, value)),
+        Ok(value) => usize::try_from(value).map_err(|_| range_error(option, 1, max, value)),
         Err(e) if e.is_instance_of::<PyOverflowError>(arg.py()) => {
-            Err(range_error(option, max, arg.str()?))
+            Err(range_error(option, 1, max, arg.str()?))
         }
         Err(e) => Err(e),
     }
@@ -35,7 +37,17 @@ pub fn bounded<K: Bounds>(option: &str, arg: Option<&Bound<'_, PyAny>>) -> PyRes
         return Ok(Bounded::DEFAULT);
     };
     let raw = extract_usize(option, K::MAX, arg)?;
-    Bounded::new(raw).map_err(|e| range_error(option, e.max, e.value))
+    Bounded::new(raw).map_err(|e| range_error(option, e.min, e.max, e.value))
+}
+
+/// Validates an `indent` value in `1..=9`.
+pub fn indent(raw: usize) -> PyResult<Indent> {
+    Indent::new(raw).map_err(|e| range_error("indent", e.min, e.max, e.value))
+}
+
+/// Validates a `width` value in `20..=1000`.
+pub fn width(raw: usize) -> PyResult<Width> {
+    Width::new(raw).map_err(|e| range_error("width", e.min, e.max, e.value))
 }
 
 /// Builds [`ParseLimits`] from the optional Python keyword arguments.
