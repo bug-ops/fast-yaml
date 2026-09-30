@@ -138,7 +138,7 @@ pub struct BatchConfig {
     pub sort_keys: Option<bool>,
     /// Maximum collection nesting depth (integer, 1..=512, default: 256);
     /// applies to `processFiles`, not to `formatFiles` (fixed formatter depth limit).
-    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
     pub max_depth: Option<f64>,
     /// Maximum estimated alias-expansion bytes per file (integer, 1..=1073741824,
     /// default: 67108864); applies to `processFiles` only; peak memory can reach workers x this budget

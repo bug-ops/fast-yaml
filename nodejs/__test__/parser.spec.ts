@@ -187,6 +187,13 @@ person:
       }
     );
 
+    it('should report the line and column of the offending << key', () => {
+      expect(() => safeLoad('a: 1\nm:\n  k: 0\n  <<: 1\n')).toThrow(/at line 4, column 3/);
+      expect(() => safeLoad('a: 1\n---\nb: 2\n---\nm:\n  <<: [5]\n')).toThrow(
+        /at line 6, column 3/
+      );
+    });
+
     it.each(['*s', '[*s]'])('should reject a !!set merge source %s', (merge) => {
       expect(() => safeLoad(`s: &s !!set {x, y}\nm:\n  <<: ${merge}\n`)).toThrow(/merge key/);
     });

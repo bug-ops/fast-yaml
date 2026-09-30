@@ -1,6 +1,37 @@
 use crate::limits::{LimitKind, MaxTagBytes};
 use crate::merge::MergeError;
+use saphyr_parser::Span;
 use thiserror::Error;
+
+/// Start of a node in the source text, as reported in error messages.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{ParseError, Parser};
+///
+/// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
+/// let ParseError::Merge { line, column, .. } = err else { panic!("merge error expected") };
+/// assert_eq!((line, column), (2, 3));
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourcePosition {
+    /// Line number (1-indexed).
+    pub line: usize,
+    /// Column number (1-indexed, in characters).
+    pub column: usize,
+}
+
+impl From<Span> for SourcePosition {
+    // Char-based column, 1-indexed like saphyr's own errors; no source text to convert from.
+    #[allow(clippy::disallowed_methods)]
+    fn from(span: Span) -> Self {
+        Self {
+            line: span.start.line(),
+            column: span.start.col() + 1,
+        }
+    }
+}
 
 /// Errors that can occur during YAML parsing.
 #[derive(Error, Debug)]
@@ -22,8 +53,27 @@ pub enum ParseError {
     },
 
     /// A `<<` merge key has a value that cannot be merged.
-    #[error(transparent)]
-    Merge(#[from] MergeError),
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{MergeError, ParseError, Parser};
+    ///
+    /// let err = Parser::parse_str("a: 1\nm:\n  <<: 1\n").unwrap_err();
+    /// assert!(matches!(
+    ///     err,
+    ///     ParseError::Merge { error: MergeError::NotMapping, line: 3, column: 3 }
+    /// ));
+    /// ```
+    #[error("{error} at line {line}, column {column}")]
+    Merge {
+        /// Why the merge value is rejected.
+        error: MergeError,
+        /// Line number of the offending `<<` key (1-indexed).
+        line: usize,
+        /// Column number of the offending `<<` key (1-indexed, in characters).
+        column: usize,
+    },
 }
 
 impl ParseError {
@@ -42,6 +92,9 @@ impl ParseError {
     /// let ParseError::Scanner(scan) = err else { panic!("scanner error expected") };
     /// assert!(scan.marker().line() > 4);
     /// assert!(scan.marker().index() >= 20);
+    ///
+    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().relocated(4, 20);
+    /// assert!(matches!(err, ParseError::Merge { line: 6, column: 3, .. }));
     /// ```
     // Marker fields are char-based; shifted by char counts, no source text to convert from.
     #[allow(clippy::disallowed_methods)]
@@ -60,7 +113,15 @@ impl ParseError {
                 line: line + lines,
                 column,
             },
-            merge @ Self::Merge(_) => merge,
+            Self::Merge {
+                error,
+                line,
+                column,
+            } => Self::Merge {
+                error,
+                line: line + lines,
+                column,
+            },
         }
     }
 }

@@ -162,3 +162,32 @@ fn parse_error_index_with_empty_documents_on_parallel_path() {
         other => panic!("expected Error::Parse, got {other:?}"),
     }
 }
+
+#[test]
+fn merge_error_position_is_whole_input_on_parallel_path() {
+    let mut input = String::new();
+    for i in 0..8 {
+        writeln!(input, "---\nk{i}: {i}").unwrap();
+    }
+    input.push_str("---\nm:\n  <<: 1\n");
+    let expected = match Parser::parse_all(&input).unwrap_err() {
+        fast_yaml_core::ParseError::Merge { line, column, .. } => (line, column),
+        other => panic!("expected ParseError::Merge, got {other:?}"),
+    };
+    assert_eq!(expected, (19, 3));
+    let configs = [
+        Config::new()
+            .with_workers(Some(2))
+            .with_sequential_threshold(0),
+        Config::new().with_workers(Some(0)),
+    ];
+    for config in &configs {
+        match parse_parallel_with_config(&input, config).unwrap_err() {
+            Error::Parse {
+                source: fast_yaml_core::ParseError::Merge { line, column, .. },
+                ..
+            } => assert_eq!((line, column), expected),
+            other => panic!("expected a merge error, got {other:?}"),
+        }
+    }
+}

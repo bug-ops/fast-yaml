@@ -55,10 +55,23 @@ fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
 | `max_input_bytes` (`LintConfig` only) | 100 MiB | 1..=1 GiB |
 
 Out-of-range values raise `ValueError`; non-integers (including `bool`) raise `TypeError`.
-Depth 512 needs about 1 MiB of thread stack and can abort the process on stacks of 512 KiB or less; the default of 256 is safe.
+Depth 512 needs about 1 MiB of thread stack (up to 983 KiB measured in release builds) and can abort the process on stacks of 512 KiB or less; the default of 256 is safe.
 The dumper keeps a fixed depth of 256, so data parsed deeper may fail to dump.
 The alias budget is per stream, so parallel and batch runs can use up to workers x budget.
 `max_input_bytes` bounds linting work on oversized input; the source is already in memory when checked, so it is not a memory bound.
+
+## Numeric Keys
+
+YAML treats `1`, `true` and `1.0` as three different keys, but a Python `dict` or `set` considers them equal.
+Instead of silently dropping one, `safe_load` raises `ValueError` with the key's line and column when a mapping or `!!set` holds such keys (`parse_parallel` raises the same error without a position); repeating a key of the same type is still an ordinary duplicate (last value wins).
+This differs from PyYAML, which keeps only one of them.
+`.nan` keys collapse to a single entry, as in the Rust core.
+
+```python
+fast_yaml.safe_load("1: a\ntrue: b\n")
+# ValueError: YAML parse error: bool key true is distinct in YAML but equal as a
+#   Python dict key to a key of type int at line 2, column 1
+```
 
 ## Features
 

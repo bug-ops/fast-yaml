@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/Python/Node.js**: a `<<` value other than a mapping or a sequence of mappings, or a `!!set`, is now an error (#481) (#494)
 - **Core**: `!!set` elements are never merge keys, and `canonicalize` returns `Result<Value, MergeError>` (#481) (#494)
 - **Core**: `ParseError::Merge` is added, `MergeTarget` requires `reject`, and `MergeSource::Ignored` becomes `Set`/`Other` (#481) (#494)
+- **Core**: `ParseError::Merge` becomes a struct variant `{ error, line, column }` so an invalid `<<` value is reported at its key's position in core, CLI, Python and Node.js (#492) (#511)
+- **Python**: `safe_load` and `parse_parallel` raise `ValueError` when a mapping or `!!set` holds keys YAML keeps distinct but a Python dict would merge (`1`, `true`, `1.0`), instead of silently keeping one; NaN keys collapse to one entry like in core (#489) (#511)
 - **CLI**: `fy parse`, `lint` and `convert` exit 1 on an invalid `<<` value instead of ignoring it (#481) (#494)
 - **Core**: the flow emitter quotes a string `<<` key so dumped data reloads unchanged (#478) (#494)
 - **Core**: `DecimalBigInt` is replaced by radix-aware `BigInt`/`IntRadix`, and `canonicalize` stores integers beyond `i64` as plain `Representation` with canonical decimal text (#495)

@@ -7,12 +7,13 @@
 use std::collections::{HashMap, HashSet};
 
 use fast_yaml_core::merge::{MergeError, MergeSource, MergeTarget, merge_into};
-use fast_yaml_core::{LimitGuard, ParseError, ParseLimits};
+use fast_yaml_core::{LimitGuard, ParseError, ParseLimits, SourcePosition};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PySet};
+use pyo3::types::{PyDict, PyFloat, PyList, PySet};
 use saphyr_parser::{Event, Parser, ScalarStyle, ScanError, StrInput};
 
+use crate::numeric_keys::{KeyClash, NumericKeys};
 use crate::repr_to_python;
 
 /// Parse all YAML documents from `input` into Python objects.
@@ -23,7 +24,9 @@ use crate::repr_to_python;
 ///
 /// # Errors
 ///
-/// Returns `PyValueError` on invalid YAML syntax or when `limits` are exceeded.
+/// Returns `PyValueError` on invalid YAML syntax, when `limits` are exceeded, or when a
+/// mapping or set holds keys that YAML keeps distinct but Python equality would merge
+/// (`1`, `true` and `1.0`).
 pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Vec<Py<PyAny>>> {
     let source =
         fast_yaml_core::reject_nul(fast_yaml_core::strip_bom(input)).map_err(|e| limit_err(&e))?;
@@ -32,6 +35,8 @@ pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Ve
         anchors: HashMap::new(),
         merge_key_anchors: HashSet::new(),
         guard: LimitGuard::new(limits),
+        nan: None,
+        last: START,
     };
     let docs = loader.load_stream(py)?;
     // Replicate fast-yaml-core: inject implicit null for non-empty, zero-doc streams
@@ -42,6 +47,13 @@ pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Ve
     }
 }
 
+const START: SourcePosition = SourcePosition { line: 1, column: 1 };
+
+/// The position of a key that `merge_into` reported on; it only reports keys it was given.
+fn known(at: Option<SourcePosition>) -> SourcePosition {
+    at.unwrap_or_else(|| unreachable!("a merge failure names a key that has a position"))
+}
+
 struct EventLoader<'input> {
     parser: Parser<'input, StrInput<'input>>,
     /// Anchor id → Python object, used to resolve YAML aliases.
@@ -50,20 +62,25 @@ struct EventLoader<'input> {
     merge_key_anchors: HashSet<usize>,
     /// Enforces depth and alias limits before any recursion or aliasing happens.
     guard: LimitGuard,
+    /// The one NaN object of this load: `nan != nan`, so dict lookups only collapse NaN keys by identity.
+    nan: Option<Py<PyAny>>,
+    /// SourcePosition of the latest event; stands in for the end of the stream, which has no span.
+    last: SourcePosition,
 }
 
 impl<'input> EventLoader<'input> {
-    /// Advance the parser and return the next meaningful event.
-    fn next(&mut self) -> PyResult<Event<'input>> {
+    /// Advance the parser and return the next meaningful event with its source position.
+    fn next(&mut self) -> PyResult<(Event<'input>, SourcePosition)> {
         loop {
             match self.parser.next_event() {
                 Some(Ok((Event::Nothing, _))) => {}
                 Some(Ok((ev, span))) => {
                     self.guard.observe(&ev, span).map_err(|e| limit_err(&e))?;
-                    return Ok(ev);
+                    self.last = span.into();
+                    return Ok((ev, self.last));
                 }
                 Some(Err(ref e)) => return Err(scan_err(e)),
-                None => return Ok(Event::StreamEnd),
+                None => return Ok((Event::StreamEnd, self.last)),
             }
         }
     }
@@ -74,7 +91,7 @@ impl<'input> EventLoader<'input> {
 
         let mut docs = Vec::new();
         loop {
-            match self.next()? {
+            match self.next()?.0 {
                 Event::StreamEnd => break,
                 Event::DocumentStart(_) => docs.push(self.load_document(py)?),
                 _ => {} // ignore stray events, including DocumentEnd
@@ -91,10 +108,12 @@ impl<'input> EventLoader<'input> {
         let mut stack: Vec<OpenNode> = Vec::new();
         loop {
             let mut merge_key = false;
-            let finished = match self.next()? {
+            let (event, at) = self.next()?;
+            let finished = match event {
                 Event::Scalar(s, style, anchor_id, tag) => {
                     merge_key = style == ScalarStyle::Plain && tag.is_none() && s == "<<";
                     let value = repr_to_python(py, &s, style, tag.as_deref())?;
+                    let value = self.share_nan(py, value);
                     self.store_anchor(anchor_id, &value, py);
                     if merge_key && anchor_id > 0 {
                         self.merge_key_anchors.insert(anchor_id);
@@ -136,7 +155,7 @@ impl<'input> EventLoader<'input> {
                 Event::DocumentStart(_) | Event::StreamStart | Event::Nothing => py.None(),
             };
             match stack.last_mut() {
-                Some(parent) => parent.accept(py, finished, merge_key)?,
+                Some(parent) => parent.accept(py, finished, merge_key, at)?,
                 None => return Ok(finished),
             }
         }
@@ -147,6 +166,32 @@ impl<'input> EventLoader<'input> {
             self.anchors.insert(anchor_id, value.clone_ref(py));
         }
     }
+
+    /// Replaces every NaN with the load's single NaN object so NaN keys collapse like in core.
+    fn share_nan(&mut self, py: Python<'_>, value: Py<PyAny>) -> Py<PyAny> {
+        let is_nan = value
+            .bind(py)
+            .cast_exact::<PyFloat>()
+            .is_ok_and(|float| float.value().is_nan());
+        if is_nan {
+            self.nan.get_or_insert(value).clone_ref(py)
+        } else {
+            value
+        }
+    }
+}
+
+/// A `<<` value and the position of its key.
+struct MergeValue {
+    value: Py<PyAny>,
+    at: SourcePosition,
+}
+
+/// An explicit mapping pair and the position of its key.
+struct Pair {
+    key: Py<PyAny>,
+    value: Py<PyAny>,
+    at: SourcePosition,
 }
 
 /// What an open container collects as its children arrive.
@@ -154,22 +199,22 @@ enum Children {
     Sequence(Vec<Py<PyAny>>),
     /// The last merge (`<<`) value and explicit pairs, plus a key awaiting its value.
     Mapping {
-        merge: Option<Py<PyAny>>,
-        explicit: Vec<(Py<PyAny>, Py<PyAny>)>,
+        merge: Option<MergeValue>,
+        explicit: Vec<Pair>,
         key: Option<PendingKey>,
     },
     /// `!!set`: keys only, plus a key awaiting its (ignored) null value.
     Set {
-        keys: Vec<Py<PyAny>>,
-        key: Option<Py<PyAny>>,
+        keys: Vec<(Py<PyAny>, SourcePosition)>,
+        key: Option<(Py<PyAny>, SourcePosition)>,
     },
 }
 
 /// A mapping key whose value has not arrived yet.
 enum PendingKey {
     /// The plain, untagged scalar `<<`; quoted or tagged forms are ordinary keys.
-    Merge,
-    Key(Py<PyAny>),
+    Merge(SourcePosition),
+    Key(Py<PyAny>, SourcePosition),
 }
 
 /// A container whose closing event has not been seen yet.
@@ -208,7 +253,13 @@ impl OpenNode {
     }
 
     /// Take the next completed child node; `merge_key` marks a plain untagged `<<` scalar.
-    fn accept(&mut self, py: Python<'_>, value: Py<PyAny>, merge_key: bool) -> PyResult<()> {
+    fn accept(
+        &mut self,
+        py: Python<'_>,
+        value: Py<PyAny>,
+        merge_key: bool,
+        at: SourcePosition,
+    ) -> PyResult<()> {
         match &mut self.children {
             Children::Sequence(items) => items.push(value),
             Children::Mapping {
@@ -216,7 +267,7 @@ impl OpenNode {
                 explicit,
                 key,
             } => match key.take() {
-                None if merge_key => *key = Some(PendingKey::Merge),
+                None if merge_key => *key = Some(PendingKey::Merge(at)),
                 None => {
                     // Reject unhashable complex keys with the same error as the original pipeline
                     let bound = value.bind(py);
@@ -225,18 +276,23 @@ impl OpenNode {
                             "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
                         ));
                     }
-                    *key = Some(PendingKey::Key(value));
+                    *key = Some(PendingKey::Key(value, at));
                 }
-                Some(PendingKey::Merge) => {
+                Some(PendingKey::Merge(key_at)) => {
                     // A repeated `<<` keeps only the last value, but every value must be valid
-                    if let Some(earlier) = merge.replace(value) {
-                        build_mapping(py, Some(earlier), Vec::new())?;
+                    let next = MergeValue { value, at: key_at };
+                    if let Some(earlier) = merge.replace(next) {
+                        build_mapping(py, Some(earlier), &[])?;
                     }
                 }
-                Some(PendingKey::Key(k)) => explicit.push((k, value)),
+                Some(PendingKey::Key(k, key_at)) => explicit.push(Pair {
+                    key: k,
+                    value,
+                    at: key_at,
+                }),
             },
             Children::Set { keys, key } => match key.take() {
-                None => *key = Some(value),
+                None => *key = Some((value, at)),
                 Some(k) => keys.push(k),
             },
         }
@@ -247,31 +303,79 @@ impl OpenNode {
     fn finish(self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         match self.children {
             Children::Sequence(items) => Ok(PyList::new(py, &items)?.into_any().unbind()),
-            Children::Set { keys, .. } => Ok(PySet::new(py, &keys)?.into_any().unbind()),
+            Children::Set { keys, .. } => build_set(py, &keys),
             Children::Mapping {
                 merge, explicit, ..
-            } => build_mapping(py, merge, explicit),
+            } => build_mapping(py, merge, &explicit),
         }
     }
 }
 
+/// Why a mapping could not be built.
+enum PyMergeFailure {
+    /// A `<<` value that is neither a mapping nor a sequence of mappings.
+    Rejected(MergeError),
+    /// Keys that YAML keeps distinct but a Python dict would merge.
+    Clash(KeyClash, KeyOrigin),
+    Py(PyErr),
+}
+
+impl From<PyErr> for PyMergeFailure {
+    fn from(err: PyErr) -> Self {
+        Self::Py(err)
+    }
+}
+
+/// Where the incoming key of a clash came from.
+#[derive(Clone, Copy)]
+enum KeyOrigin {
+    /// Absorbed from a `<<` source.
+    Merged,
+    /// The explicit pair with this index.
+    Explicit(usize),
+}
+
 /// `PyDict` sink for [`merge_into`].
-struct PyMergeTarget<'py>(Bound<'py, PyDict>);
+///
+/// Relies on the [`MergeTarget::set`] contract (one call per explicit pair, in order) to map a
+/// failure back to the pair's source position.
+struct PyMergeTarget<'py> {
+    dict: Bound<'py, PyDict>,
+    numeric: NumericKeys<'py>,
+    /// Explicit pairs applied so far; `set` is only called for those.
+    explicit_seen: usize,
+}
+
+impl<'py> PyMergeTarget<'py> {
+    fn new(py: Python<'py>) -> Self {
+        Self {
+            dict: PyDict::new(py),
+            numeric: NumericKeys::new(py),
+            explicit_seen: 0,
+        }
+    }
+
+    fn check(&mut self, key: &Bound<'py, PyAny>, origin: KeyOrigin) -> Result<(), PyMergeFailure> {
+        self.numeric
+            .record(key)?
+            .map_or(Ok(()), |clash| Err(PyMergeFailure::Clash(clash, origin)))
+    }
+}
 
 impl<'py> MergeTarget for PyMergeTarget<'py> {
     type Node = Bound<'py, PyAny>;
-    type Error = PyErr;
+    type Error = PyMergeFailure;
     type Entries = Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>;
     type Items = Vec<Bound<'py, PyAny>>;
 
-    fn reject(error: MergeError) -> PyErr {
-        PyValueError::new_err(format!("YAML parse error: {error}"))
+    fn reject(error: MergeError) -> PyMergeFailure {
+        PyMergeFailure::Rejected(error)
     }
 
     fn classify(
         &self,
         node: Bound<'py, PyAny>,
-    ) -> PyResult<MergeSource<Self::Entries, Self::Items>> {
+    ) -> Result<MergeSource<Self::Entries, Self::Items>, PyMergeFailure> {
         if let Ok(dict) = node.cast::<PyDict>() {
             return Ok(MergeSource::Mapping(dict.iter().collect()));
         }
@@ -284,15 +388,27 @@ impl<'py> MergeTarget for PyMergeTarget<'py> {
         Ok(MergeSource::Other)
     }
 
-    fn set_if_absent(&mut self, key: Bound<'py, PyAny>, value: Bound<'py, PyAny>) -> PyResult<()> {
-        if self.0.contains(&key)? {
+    fn set_if_absent(
+        &mut self,
+        key: Bound<'py, PyAny>,
+        value: Bound<'py, PyAny>,
+    ) -> Result<(), PyMergeFailure> {
+        self.check(&key, KeyOrigin::Merged)?;
+        if self.dict.contains(&key)? {
             return Ok(());
         }
-        self.0.set_item(key, value)
+        Ok(self.dict.set_item(key, value)?)
     }
 
-    fn set(&mut self, key: Bound<'py, PyAny>, value: Bound<'py, PyAny>) -> PyResult<()> {
-        self.0.set_item(key, value)
+    fn set(
+        &mut self,
+        key: Bound<'py, PyAny>,
+        value: Bound<'py, PyAny>,
+    ) -> Result<(), PyMergeFailure> {
+        let index = self.explicit_seen;
+        self.explicit_seen += 1;
+        self.check(&key, KeyOrigin::Explicit(index))?;
+        Ok(self.dict.set_item(key, value)?)
     }
 }
 
@@ -301,18 +417,55 @@ impl<'py> MergeTarget for PyMergeTarget<'py> {
 /// Key order and precedence follow [`fast_yaml_core::merge`].
 fn build_mapping(
     py: Python<'_>,
-    merge: Option<Py<PyAny>>,
-    explicit: Vec<(Py<PyAny>, Py<PyAny>)>,
+    merge: Option<MergeValue>,
+    explicit: &[Pair],
 ) -> PyResult<Py<PyAny>> {
-    let mut target = PyMergeTarget(PyDict::new(py));
+    let merge_at = merge.as_ref().map(|m| m.at);
+    let mut target = PyMergeTarget::new(py);
     merge_into(
         &mut target,
-        merge.map(|m| m.into_bound(py)),
+        merge.map(|m| m.value.into_bound(py)),
         explicit
-            .into_iter()
-            .map(|(k, v)| (k.into_bound(py), v.into_bound(py))),
-    )?;
-    Ok(target.0.into_any().unbind())
+            .iter()
+            .map(|p| (p.key.bind(py).clone(), p.value.bind(py).clone())),
+    )
+    .map_err(|failure| match failure {
+        PyMergeFailure::Rejected(error) => {
+            let SourcePosition { line, column } = known(merge_at);
+            limit_err(&ParseError::Merge {
+                error,
+                line,
+                column,
+            })
+        }
+        PyMergeFailure::Clash(clash, origin) => {
+            let at = match origin {
+                KeyOrigin::Merged => merge_at,
+                KeyOrigin::Explicit(index) => explicit.get(index).map(|p| p.at),
+            };
+            clash_err(&clash, known(at))
+        }
+        PyMergeFailure::Py(err) => err,
+    })?;
+    Ok(target.dict.into_any().unbind())
+}
+
+/// Build a `PySet` from `!!set` keys.
+fn build_set(py: Python<'_>, keys: &[(Py<PyAny>, SourcePosition)]) -> PyResult<Py<PyAny>> {
+    let mut numeric = NumericKeys::new(py);
+    for (key, at) in keys {
+        if let Some(clash) = numeric.record(key.bind(py))? {
+            return Err(clash_err(&clash, *at));
+        }
+    }
+    let members: Vec<_> = keys.iter().map(|(key, _)| key.bind(py)).collect();
+    Ok(PySet::new(py, members)?.into_any().unbind())
+}
+
+fn clash_err(clash: &KeyClash, SourcePosition { line, column }: SourcePosition) -> PyErr {
+    PyValueError::new_err(format!(
+        "YAML parse error: {clash} at line {line}, column {column}"
+    ))
 }
 
 fn scan_err(e: &ScanError) -> PyErr {

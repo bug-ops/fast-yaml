@@ -158,6 +158,27 @@ fn duplicate_merge_key_through_alias_rejects_invalid_earlier_value() {
 }
 
 #[test]
+fn invalid_merge_value_reports_key_position_on_every_command() {
+    let yaml = "a: 1\nm:\n  k: 0\n  <<: 1\n";
+    for args in [&["convert", "json"][..], &["lint"], &["parse"]] {
+        let output = run(args, yaml);
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("at line 4, column 3"), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
+fn invalid_merge_value_position_is_absolute_in_later_documents() {
+    for args in [&["convert", "json"][..], &["parse"], &["lint"]] {
+        let output = run(args, "a: 1\n---\nb: 2\n---\nm:\n  <<: [5]\n");
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("at line 6, column 3"), "{args:?}: {stderr}");
+    }
+}
+
+#[test]
 fn lint_fails_on_invalid_merge_value() {
     let output = run(&["lint"], "m:\n  <<: 1\n  k: 0\n");
     assert_eq!(output.status.code(), Some(1), "{output:?}");
