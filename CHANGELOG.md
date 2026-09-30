@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix 24 failing doctests in `fast-yaml-core` and `fast-yaml-linter` and run doctests in CI (#345)
 - Make `fy format` batch mode refuse files containing comments unless `--strip-comments` is given, instead of silently stripping them in place (#348)
 - Make `fy format --dry-run` never write in single-file and stdin modes (#348)
+- Fix `empty-values` panic on non-ASCII keys, char/byte offset mix-ups in `truthy`, the source mapper and line-based rules, and lone-CR line splitting; `get_line` no longer includes the trailing `\r` (#350)
 
 ## [0.6.6] - 2026-08-26
 
