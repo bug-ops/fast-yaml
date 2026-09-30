@@ -49,11 +49,11 @@ pub struct Cli {
 /// Discovery and parallelism flags shared by every batch-capable subcommand.
 #[derive(Args, Debug)]
 pub struct BatchArgs {
-    /// Include files matching glob pattern (can be repeated)
+    /// Include files matching glob pattern, case-insensitive (can be repeated; default: *.yaml, *.yml)
     #[arg(long)]
     pub include: Vec<String>,
 
-    /// Exclude files matching glob pattern (can be repeated)
+    /// Exclude files matching glob pattern, case-insensitive (can be repeated)
     #[arg(long)]
     pub exclude: Vec<String>,
 

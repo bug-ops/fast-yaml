@@ -38,11 +38,8 @@ pub fn execute_batch(
         .discover_source(&target.source)
         .context("Failed to discover files")?;
 
-    // Handle empty result
+    // Only an empty --stdin-files list gets here
     if files.is_empty() {
-        if !common.output.is_quiet() {
-            eprintln!("No YAML files found");
-        }
         return Ok(ExitCode::Success);
     }
 

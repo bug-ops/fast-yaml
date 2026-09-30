@@ -10,6 +10,7 @@
 use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
+use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
 /// Helper to create fy command
@@ -191,8 +192,8 @@ fn test_batch_empty_directory() {
 
     fy().args(["format", "-i", dir.to_str().unwrap()])
         .assert()
-        .success()
-        .stderr(predicate::str::contains("No YAML files found"));
+        .code(1)
+        .stderr(predicate::str::contains("no YAML files found"));
 }
 
 #[test]
@@ -494,7 +495,7 @@ fn test_dry_run_two_missing_paths_fails() {
     .assert()
     .code(1)
     .stderr(predicate::str::contains("path does not exist"))
-    .stderr(predicate::str::contains("No YAML files found").not());
+    .stderr(predicate::str::contains("no YAML files found").not());
 }
 
 #[test]
@@ -986,4 +987,271 @@ fn test_include_exclude_without_paths_fail() {
                 "batch options (--jobs, --include, --exclude) need input",
             ));
     }
+}
+
+const NO_FILES: &str = "no YAML files found";
+
+fn write(dir: &Path, name: &str, content: &str) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, content).unwrap();
+    path
+}
+
+#[test]
+fn test_batch_uppercase_extension_found_in_directory() {
+    let temp = TempDir::new().unwrap();
+    let upper = write(temp.path(), "UP.YAML", "a:  1\n");
+
+    fy().args(["format", "-i", temp.path().to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&upper).unwrap(), "a: 1\n");
+}
+
+#[test]
+fn test_batch_user_include_is_case_insensitive() {
+    let temp = TempDir::new().unwrap();
+    let file = write(temp.path(), "a.YML", "a:  1\n");
+
+    fy().args([
+        "format",
+        "-i",
+        "--include",
+        "*.yml",
+        temp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "a: 1\n");
+}
+
+#[test]
+fn test_batch_exclude_is_case_insensitive() {
+    let temp = TempDir::new().unwrap();
+    let secret = write(temp.path(), "KEY.YAML", "a:  1\n");
+    let other = write(temp.path(), "ok.yaml", "b:  2\n");
+
+    fy().args([
+        "format",
+        "-i",
+        "--exclude",
+        "**/key.yaml",
+        temp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    assert_eq!(fs::read_to_string(&secret).unwrap(), "a:  1\n");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "b: 2\n");
+}
+
+#[test]
+fn test_batch_exclude_matches_dot_slash_path() {
+    let temp = TempDir::new().unwrap();
+    let notes = write(temp.path(), "notes.txt", "a:  1\n");
+    write(temp.path(), "ok.yaml", "b:  2\n");
+
+    fy().current_dir(temp.path())
+        .args([
+            "format",
+            "-i",
+            "--exclude",
+            "notes.txt",
+            "./notes.txt",
+            "ok.yaml",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&notes).unwrap(), "a:  1\n");
+}
+
+#[test]
+fn test_batch_exclude_drops_explicit_file() {
+    let temp = TempDir::new().unwrap();
+    let skipped = write(temp.path(), "skip.yaml", "a:  1\n");
+    let other = write(temp.path(), "ok.yaml", "b:  2\n");
+
+    fy().args([
+        "format",
+        "-i",
+        "--exclude",
+        "**/skip.yaml",
+        skipped.to_str().unwrap(),
+        other.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    assert_eq!(fs::read_to_string(&skipped).unwrap(), "a:  1\n");
+    assert_eq!(fs::read_to_string(&other).unwrap(), "b: 2\n");
+}
+
+#[test]
+fn test_batch_non_yaml_glob_fails() {
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "notes.txt", "a: 1\n");
+    let pattern = temp.path().join("notes*");
+
+    fy().args(["format", "--dry-run", pattern.to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(NO_FILES));
+}
+
+#[test]
+fn test_batch_mixed_empty_glob_and_file_succeeds() {
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "notes.txt", "a: 1\n");
+    let ok = write(temp.path(), "ok.yaml", "b: 2\n");
+    let pattern = temp.path().join("notes*");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        pattern.to_str().unwrap(),
+        ok.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("Completed: 1 file"));
+}
+
+#[test]
+fn test_batch_unmatched_glob_with_file_still_fails() {
+    let temp = TempDir::new().unwrap();
+    let ok = write(temp.path(), "ok.yaml", "b: 2\n");
+    let pattern = temp.path().join("nomatch*");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        pattern.to_str().unwrap(),
+        ok.to_str().unwrap(),
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("glob pattern matched no files"));
+}
+
+#[test]
+fn test_batch_exclude_all_fails() {
+    let temp = TempDir::new().unwrap();
+    write(temp.path(), "a.yaml", "a: 1\n");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        "--exclude",
+        "*.yaml",
+        temp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains(NO_FILES));
+}
+
+#[test]
+fn test_batch_no_files_fails_even_when_quiet() {
+    let temp = TempDir::new().unwrap();
+    let dir = temp.path().join("empty");
+    fs::create_dir(&dir).unwrap();
+
+    fy().args(["-q", "format", "--dry-run", dir.to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains(NO_FILES));
+}
+
+#[cfg(unix)]
+#[test]
+fn test_batch_symlink_and_target_processed_once() {
+    let temp = TempDir::new().unwrap();
+    let target = write(temp.path(), "a.yaml", "a: 1\n");
+    let link = temp.path().join("link.yaml");
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    fy().args([
+        "format",
+        "--dry-run",
+        target.to_str().unwrap(),
+        link.to_str().unwrap(),
+    ])
+    .assert()
+    .success()
+    .stderr(predicate::str::contains("Completed: 1 file"));
+}
+
+#[test]
+fn test_stdin_files_empty_list_succeeds() {
+    fy().args(["format", "--dry-run", "--stdin-files"])
+        .write_stdin("")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_stdin_files_blank_and_comment_lines_succeed() {
+    fy().args(["format", "--dry-run", "--stdin-files"])
+        .write_stdin("\n   \r\n# comment\n")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_stdin_files_crlf_and_padding() {
+    let temp = TempDir::new().unwrap();
+    let first = write(temp.path(), "a.yaml", "a:  1\n");
+    let second = write(temp.path(), "b.yaml", "b:  2\n");
+
+    fy().args(["format", "-i", "--stdin-files"])
+        .write_stdin(format!(
+            "\r\n  {}  \r\n\n{}\r\n",
+            first.display(),
+            second.display()
+        ))
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&first).unwrap(), "a: 1\n");
+    assert_eq!(fs::read_to_string(&second).unwrap(), "b: 2\n");
+}
+
+#[test]
+fn test_batch_explicit_uppercase_extension_is_accepted() {
+    let temp = TempDir::new().unwrap();
+    let upper = write(temp.path(), "UP.YAML", "a:  1\n");
+    let lower = write(temp.path(), "m1.yaml", "b:  2\n");
+
+    fy().args([
+        "format",
+        "-i",
+        upper.to_str().unwrap(),
+        lower.to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    assert_eq!(fs::read_to_string(&upper).unwrap(), "a: 1\n");
+    assert_eq!(fs::read_to_string(&lower).unwrap(), "b: 2\n");
+}
+
+#[test]
+fn test_stdin_files_exclude_all_fails() {
+    let temp = TempDir::new().unwrap();
+    let yaml = write(temp.path(), "a.yaml", "a: 1\n");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        "--stdin-files",
+        "--exclude",
+        "*.yaml",
+    ])
+    .write_stdin(format!("{}\n", yaml.display()))
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains(NO_FILES));
 }
