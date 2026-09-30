@@ -43,7 +43,7 @@ pub mod source;
 pub mod tokenizer;
 
 pub use config::{ConfigFile, ConfigFileError};
-pub use context::{LineMetadata, LintContext, SourceContext};
+pub use context::{LineMetadata, LintContext, MAX_CONTEXT_COLUMNS, SourceContext};
 pub use diagnostic::{
     ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Suggestion,
 };

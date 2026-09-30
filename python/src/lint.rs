@@ -236,7 +236,15 @@ pub struct PyContextLine {
     #[pyo3(get)]
     pub content: String,
 
-    /// Highlight ranges (column start, column end).
+    /// Number of chars of the line dropped before `content`.
+    #[pyo3(get)]
+    pub column_offset: usize,
+
+    /// Whether chars of the line were dropped after `content`.
+    #[pyo3(get)]
+    pub truncated_end: bool,
+
+    /// Highlight ranges (column start, column end) in absolute line columns.
     #[pyo3(get)]
     pub highlights: Vec<(usize, usize)>,
 }
@@ -244,19 +252,27 @@ pub struct PyContextLine {
 #[pymethods]
 impl PyContextLine {
     #[new]
-    #[pyo3(signature = (line_number, content, highlights))]
-    const fn new(line_number: usize, content: String, highlights: Vec<(usize, usize)>) -> Self {
+    #[pyo3(signature = (line_number, content, highlights, column_offset=0, truncated_end=false))]
+    const fn new(
+        line_number: usize,
+        content: String,
+        highlights: Vec<(usize, usize)>,
+        column_offset: usize,
+        truncated_end: bool,
+    ) -> Self {
         Self {
             line_number,
             content,
+            column_offset,
+            truncated_end,
             highlights,
         }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "ContextLine(line_number={}, content={:?}, highlights={:?})",
-            self.line_number, self.content, self.highlights
+            "ContextLine(line_number={}, content={:?}, highlights={:?}, column_offset={}, truncated_end={})",
+            self.line_number, self.content, self.highlights, self.column_offset, self.truncated_end
         )
     }
 }
@@ -299,6 +315,8 @@ impl From<RustDiagnosticContext> for PyDiagnosticContext {
             .map(|line| PyContextLine {
                 line_number: line.line_number,
                 content: line.content,
+                column_offset: line.column_offset,
+                truncated_end: line.truncated_end,
                 highlights: line.highlights,
             })
             .collect();
@@ -762,6 +780,8 @@ impl PyTextFormatter {
                         .map(|py_line| RustContextLine {
                             line_number: py_line.line_number,
                             content: py_line.content,
+                            column_offset: py_line.column_offset,
+                            truncated_end: py_line.truncated_end,
                             highlights: py_line.highlights,
                         })
                         .collect(),
@@ -847,6 +867,8 @@ impl PyJsonFormatter {
                         .map(|py_line| RustContextLine {
                             line_number: py_line.line_number,
                             content: py_line.content,
+                            column_offset: py_line.column_offset,
+                            truncated_end: py_line.truncated_end,
                             highlights: py_line.highlights,
                         })
                         .collect(),
