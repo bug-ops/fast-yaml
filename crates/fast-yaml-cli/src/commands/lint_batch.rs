@@ -1,5 +1,6 @@
 //! Batch lint command execution.
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -8,74 +9,46 @@ use rayon::prelude::*;
 
 use crate::cli::LintFormat;
 use crate::config::CommonConfig;
-use crate::discovery::{DiscoveryConfig, FileDiscovery};
+use crate::discovery::FileDiscovery;
 use crate::error::ExitCode;
-
-/// Configuration for batch lint execution.
-#[derive(Debug, Clone)]
-pub struct LintBatchConfig {
-    /// Common configuration
-    pub common: CommonConfig,
-    /// Discovery-specific configuration
-    pub discovery: DiscoveryConfig,
-    /// Lint configuration
-    pub lint_config: LintConfig,
-    /// Lint output format
-    pub format: LintFormat,
-}
-
-impl LintBatchConfig {
-    pub fn new(common: CommonConfig, lint_config: LintConfig, format: LintFormat) -> Self {
-        Self {
-            common,
-            discovery: DiscoveryConfig::new(),
-            lint_config,
-            format,
-        }
-    }
-
-    #[must_use]
-    pub fn with_discovery(mut self, discovery: DiscoveryConfig) -> Self {
-        self.discovery = discovery;
-        self
-    }
-}
+use crate::invocation::BatchTarget;
 
 /// Execute batch linting on multiple files.
 ///
 /// # Errors
 ///
 /// Returns error if file discovery fails.
-pub fn execute_lint_batch(config: &LintBatchConfig, paths: &[PathBuf]) -> Result<ExitCode> {
-    let discovery = FileDiscovery::new(config.discovery.clone())
+pub fn execute_lint_batch(
+    common: &CommonConfig,
+    target: &BatchTarget,
+    lint_config: &LintConfig,
+    format: LintFormat,
+) -> Result<ExitCode> {
+    let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
 
     let files = discovery
-        .discover(paths)
+        .discover_source(&target.source)
         .context("Failed to discover files")?;
 
     if files.is_empty() {
-        if !config.common.output.is_quiet() {
+        if !common.output.is_quiet() {
             eprintln!("No YAML files found");
         }
         return Ok(ExitCode::Success);
     }
 
-    let workers = config
-        .common
-        .parallel
-        .workers()
-        .unwrap_or_else(rayon::current_num_threads);
+    let workers = target
+        .workers
+        .map_or_else(rayon::current_num_threads, NonZeroUsize::get);
 
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()
         .context("Failed to build thread pool")?;
 
-    let lint_config = config.lint_config.clone();
-    let format = config.format.clone();
-    let use_color = config.common.output.use_color();
-    let is_quiet = config.common.output.is_quiet();
+    let use_color = common.output.use_color();
+    let is_quiet = common.output.is_quiet();
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 

@@ -3,8 +3,6 @@ use thiserror::Error;
 
 /// Exit codes for CLI application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-// Not all exit codes are currently used, but they form a complete set for CLI error handling
-#[allow(dead_code)]
 pub enum ExitCode {
     /// Operation completed successfully
     Success = 0,

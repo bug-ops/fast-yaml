@@ -1,127 +1,75 @@
 //! Batch format command execution.
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
-use fast_yaml_core::emitter::EmitterConfig;
+use anyhow::{Context, Result};
 use fast_yaml_parallel::{
     BatchResult as ParallelBatchResult, CommentPolicy, FileProcessor, FormatOutput,
 };
 
 use crate::commands::format::error_message;
-use crate::config::CommonConfig;
-use crate::discovery::{DiscoveryConfig, FileDiscovery};
+use crate::config::{CommonConfig, ParallelConfig};
+use crate::discovery::FileDiscovery;
 use crate::error::ExitCode;
+use crate::invocation::BatchTarget;
 use crate::reporter::{ReportEvent, Reporter};
 
-/// Configuration for batch format execution using composed configs.
-#[derive(Debug, Clone)]
-pub struct BatchConfig {
-    /// Common configuration (formatter, output, parallel settings)
-    pub common: CommonConfig,
-    /// Discovery-specific configuration
-    pub discovery: DiscoveryConfig,
-    /// Batch-specific settings
-    pub dry_run: bool,
-    pub in_place: bool,
-    /// Allow formatting files that contain comments (comments are dropped)
-    pub strip_comments: bool,
-}
-
-impl BatchConfig {
-    pub fn new(common: CommonConfig) -> Self {
-        Self {
-            common,
-            discovery: DiscoveryConfig::new(),
-            dry_run: false,
-            in_place: false,
-            strip_comments: false,
-        }
-    }
-
-    #[must_use]
-    pub fn with_discovery(mut self, discovery: DiscoveryConfig) -> Self {
-        self.discovery = discovery;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_dry_run(mut self, dry_run: bool) -> Self {
-        self.dry_run = dry_run;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_strip_comments(mut self, strip_comments: bool) -> Self {
-        self.strip_comments = strip_comments;
-        self
-    }
-
-    #[must_use]
-    pub const fn with_in_place(mut self, in_place: bool) -> Self {
-        self.in_place = in_place;
-        self
-    }
+/// What a batch format run does with the formatted files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchWrite {
+    /// Rewrite files that change
+    InPlace,
+    /// Report what would change without writing
+    DryRun,
 }
 
 /// Execute batch formatting on multiple files.
 pub fn execute_batch(
-    config: &BatchConfig,
-    paths: &[PathBuf],
-    stdin_files: bool,
+    common: &CommonConfig,
+    target: &BatchTarget,
+    write: BatchWrite,
+    comments: CommentPolicy,
 ) -> Result<ExitCode> {
-    // Create file discovery
-    let discovery = FileDiscovery::new(config.discovery.clone())
+    let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
 
-    // Discover files
-    let files = if stdin_files {
-        discovery
-            .discover_from_stdin()
-            .context("Failed to read file list from stdin")?
-    } else {
-        discovery
-            .discover(paths)
-            .context("Failed to discover files")?
-    };
+    let files = discovery
+        .discover_source(&target.source)
+        .context("Failed to discover files")?;
 
     // Handle empty result
     if files.is_empty() {
-        if !config.common.output.is_quiet() {
+        if !common.output.is_quiet() {
             eprintln!("No YAML files found");
         }
         return Ok(ExitCode::Success);
     }
 
     // Create reporter
-    let reporter = Reporter::new(config.common.output.clone());
+    let reporter = Reporter::new(common.output.clone());
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 
-    let emitter_config = EmitterConfig::new()
-        .with_indent(config.common.formatter.indent() as usize)
-        .with_width(config.common.formatter.width());
+    let emitter_config = common.formatter.to_emitter_config();
 
-    let comments = if config.strip_comments {
-        CommentPolicy::Strip
-    } else {
-        CommentPolicy::Reject
-    };
+    let processor = FileProcessor::with_config(
+        ParallelConfig::new().with_workers(target.workers.map(NonZeroUsize::get)),
+    );
 
-    let processor = FileProcessor::with_config(config.common.parallel.clone());
-
-    let result = if config.dry_run {
-        let formatted = processor.format_files(&file_paths, &emitter_config, comments);
-        convert_format_results_to_batch_result(formatted)
-    } else if config.in_place {
-        processor.format_in_place(&file_paths, &emitter_config, comments)
-    } else {
-        bail!("use -i to format files in-place or --dry-run to preview changes");
+    let result = match write {
+        BatchWrite::DryRun => {
+            let formatted = processor.format_files(&file_paths, &emitter_config, comments);
+            convert_format_results_to_batch_result(formatted)
+        }
+        BatchWrite::InPlace => processor.format_in_place(&file_paths, &emitter_config, comments),
     };
 
     // In dry-run mode, 'changed' means "would change"; in in-place mode it means "formatted".
-    let would_change = if config.dry_run { result.changed } else { 0 };
-    let formatted = if config.dry_run { 0 } else { result.changed };
+    let (would_change, formatted) = match write {
+        BatchWrite::DryRun => (result.changed, 0),
+        BatchWrite::InPlace => (0, result.changed),
+    };
 
     reporter.report(ReportEvent::BatchSummary {
         total: result.total,

@@ -2,10 +2,10 @@
 
 #![allow(clippy::missing_const_for_fn)]
 
-use super::{FormatterConfig, IoConfig, OutputConfig, ParallelConfig};
+use super::{FormatterConfig, OutputConfig};
 use crate::cli::Cli;
 
-/// Common configuration aggregating output, formatter, I/O, and parallel settings.
+/// Common configuration aggregating output and formatter settings.
 ///
 /// Use this when a command needs multiple configuration aspects.
 /// This eliminates the need to pass many individual parameters.
@@ -15,14 +15,11 @@ pub struct CommonConfig {
     pub output: OutputConfig,
     /// Formatter configuration (indent, width)
     pub formatter: FormatterConfig,
-    /// I/O configuration (in-place, output path)
-    pub io: IoConfig,
-    /// Parallel processing configuration (workers, mmap threshold)
-    pub parallel: ParallelConfig,
 }
 
 impl CommonConfig {
     /// Creates a new common configuration with default values.
+    #[cfg(test)]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -36,14 +33,11 @@ impl CommonConfig {
         Self {
             output: OutputConfig::from_cli(cli.quiet, cli.verbose, cli.no_color),
             formatter: FormatterConfig::default(),
-            io: IoConfig::new()
-                .with_in_place(cli.in_place)
-                .with_output_path(cli.output.clone()),
-            parallel: ParallelConfig::default(),
         }
     }
 
     /// Sets the output configuration.
+    #[cfg(test)]
     #[must_use]
     pub fn with_output(mut self, output: OutputConfig) -> Self {
         self.output = output;
@@ -56,26 +50,11 @@ impl CommonConfig {
         self.formatter = formatter;
         self
     }
-
-    /// Sets the I/O configuration.
-    #[must_use]
-    pub fn with_io(mut self, io: IoConfig) -> Self {
-        self.io = io;
-        self
-    }
-
-    /// Sets the parallel processing configuration.
-    #[must_use]
-    pub fn with_parallel(mut self, parallel: ParallelConfig) -> Self {
-        self.parallel = parallel;
-        self
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_default_config() {
@@ -83,16 +62,13 @@ mod tests {
         assert!(!config.output.is_quiet());
         assert!(!config.output.is_verbose());
         assert_eq!(config.formatter.indent(), 2);
-        assert!(!config.io.is_in_place());
     }
 
     #[test]
     fn test_new() {
         let config = CommonConfig::new();
         assert!(!config.output.is_quiet());
-        assert!(!config.output.is_verbose());
         assert_eq!(config.formatter.indent(), 2);
-        assert!(!config.io.is_in_place());
     }
 
     #[test]
@@ -110,28 +86,15 @@ mod tests {
     }
 
     #[test]
-    fn test_with_io() {
-        let io = IoConfig::new().with_in_place(true);
-        let config = CommonConfig::new().with_io(io);
-        assert!(config.io.is_in_place());
-    }
-
-    #[test]
     fn test_builder_chaining() {
         let output = OutputConfig::new().with_verbose(true);
         let formatter = FormatterConfig::new().with_indent(4);
-        let io = IoConfig::new().with_output_path(Some(PathBuf::from("out.yaml")));
 
         let config = CommonConfig::new()
             .with_output(output)
-            .with_formatter(formatter)
-            .with_io(io);
+            .with_formatter(formatter);
 
         assert!(config.output.is_verbose());
         assert_eq!(config.formatter.indent(), 4);
-        assert_eq!(
-            config.io.output_path(),
-            Some(PathBuf::from("out.yaml").as_path())
-        );
     }
 }

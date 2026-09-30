@@ -456,7 +456,89 @@ fn test_single_file_dry_run_missing_file_fails() {
     fy().args(["format", "--dry-run", missing.to_str().unwrap()])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Failed to read file"));
+        .stderr(predicate::str::contains("path does not exist"));
+}
+
+#[test]
+fn test_dry_run_missing_and_clean_path_fails() {
+    let temp = TempDir::new().unwrap();
+    let missing = temp.path().join("nonexist.yaml");
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+
+    fy().args([
+        "format",
+        "--dry-run",
+        missing.to_str().unwrap(),
+        clean.to_str().unwrap(),
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("path does not exist"));
+
+    assert_eq!(fs::read_to_string(&clean).unwrap(), "key: value\n");
+}
+
+#[test]
+fn test_dry_run_two_missing_paths_fails() {
+    let temp = TempDir::new().unwrap();
+    let missing = temp.path().join("nonexist.yaml");
+    let other = temp.path().join("other.yaml");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        missing.to_str().unwrap(),
+        other.to_str().unwrap(),
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("path does not exist"))
+    .stderr(predicate::str::contains("No YAML files found").not());
+}
+
+#[test]
+fn test_in_place_missing_path_writes_nothing() {
+    let temp = TempDir::new().unwrap();
+    let missing = temp.path().join("nonexist.yaml");
+    let messy = temp.path().join("messy.yaml");
+    fs::write(&messy, "key:   value\n").unwrap();
+
+    fy().args([
+        "format",
+        "-i",
+        missing.to_str().unwrap(),
+        messy.to_str().unwrap(),
+    ])
+    .assert()
+    .code(1)
+    .stderr(predicate::str::contains("path does not exist"));
+
+    assert_eq!(fs::read_to_string(&messy).unwrap(), "key:   value\n");
+}
+
+#[test]
+fn test_zero_match_glob_is_not_an_error() {
+    let temp = TempDir::new().unwrap();
+    let pattern = temp.path().join("*.nomatch");
+
+    fy().args(["format", "--dry-run", pattern.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("No YAML files found"));
+}
+
+#[test]
+fn test_single_file_dry_run_summary_is_singular() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+
+    fy().args(["format", "--dry-run", clean.to_str().unwrap()])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Completed: 1 file "))
+        .stderr(predicate::str::contains("1 files").not());
 }
 
 #[test]
@@ -757,4 +839,71 @@ fn test_single_file_in_place_skips_write_when_already_formatted() {
 
     assert_eq!(fs::metadata(&file).unwrap().modified().unwrap(), before);
     assert_eq!(fs::read_to_string(&file).unwrap(), "key: value\n");
+}
+
+#[test]
+fn test_empty_dir_without_mode_flag_fails_with_hint() {
+    let temp = TempDir::new().unwrap();
+
+    fy().args(["format", temp.path().to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("--dry-run"));
+}
+
+#[test]
+fn test_in_place_without_file_fails() {
+    fy().args(["format", "-i"])
+        .write_stdin("")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("requires a file argument"));
+}
+
+#[test]
+fn test_in_place_without_subcommand_fails() {
+    fy().arg("-i")
+        .write_stdin("")
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("requires a file argument"));
+}
+
+#[test]
+fn test_literal_bracket_filename_formats_in_place() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a[1].yaml");
+    fs::write(&file, "key:   value\n").unwrap();
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "key: value\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_broken_symlink_path_fails() {
+    let temp = TempDir::new().unwrap();
+    let link = temp.path().join("link.yaml");
+    std::os::unix::fs::symlink(temp.path().join("gone.yaml"), &link).unwrap();
+
+    fy().args(["format", "--dry-run", link.to_str().unwrap()])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("broken symbolic link"));
+}
+
+#[test]
+fn test_in_place_with_dry_run_leaves_file_untouched() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("messy.yaml");
+    fs::write(&file, "key:   value\n").unwrap();
+
+    fy().args(["format", "-i", "--dry-run", file.to_str().unwrap()])
+        .assert()
+        .code(5);
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "key:   value\n");
 }

@@ -1,10 +1,19 @@
 //! Reporter implementation for unified CLI output.
 
-use super::events::{FileOutcome, ReportEvent};
+use super::events::ReportEvent;
 use crate::config::OutputConfig;
 use std::io::{self, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
+
+/// Formats a count with a correctly pluralized "file" noun.
+fn file_count(total: usize) -> String {
+    if total == 1 {
+        "1 file".to_string()
+    } else {
+        format!("{total} files")
+    }
+}
 
 /// Universal reporter that handles all CLI output.
 ///
@@ -52,36 +61,8 @@ impl Reporter {
     #[allow(clippy::needless_pass_by_value)]
     pub fn report(&self, event: ReportEvent<'_>) -> io::Result<()> {
         match event {
-            ReportEvent::Progress {
-                current,
-                total,
-                path,
-            } => {
-                if self.config.is_verbose() && !self.config.is_quiet() {
-                    self.write_progress(current, total, path)?;
-                }
-            }
-            ReportEvent::FileResult {
-                path,
-                outcome,
-                duration,
-            } => {
-                if self.config.is_verbose() && !self.config.is_quiet() {
-                    self.write_file_result(path, outcome, duration)?;
-                }
-            }
             ReportEvent::Error { path, message } => {
                 self.write_error(path, message)?;
-            }
-            ReportEvent::Warning { message } => {
-                if !self.config.is_quiet() {
-                    self.write_warning(message)?;
-                }
-            }
-            ReportEvent::Info { message } => {
-                if !self.config.is_quiet() {
-                    self.write_info(message)?;
-                }
             }
             ReportEvent::Success { message } => {
                 if !self.config.is_quiet() {
@@ -119,33 +100,6 @@ impl Reporter {
         Ok(())
     }
 
-    fn write_progress(&self, current: usize, total: usize, path: &Path) -> io::Result<()> {
-        let mut lock = self.stderr.lock();
-        writeln!(lock, "[{}/{}] {}", current, total, path.display())
-    }
-
-    fn write_file_result(
-        &self,
-        path: &Path,
-        outcome: FileOutcome,
-        duration: Duration,
-    ) -> io::Result<()> {
-        let mut lock = self.stderr.lock();
-        let outcome_str = match outcome {
-            FileOutcome::Formatted => "formatted",
-            FileOutcome::Unchanged => "unchanged",
-            FileOutcome::Skipped => "skipped",
-            FileOutcome::Failed => "failed",
-        };
-        writeln!(
-            lock,
-            "{} ({} in {:.2}ms)",
-            path.display(),
-            outcome_str,
-            duration.as_secs_f64() * 1000.0
-        )
-    }
-
     #[allow(clippy::uninlined_format_args)]
     fn write_error(&self, path: Option<&Path>, message: &str) -> io::Result<()> {
         let mut lock = self.stderr.lock();
@@ -172,36 +126,6 @@ impl Reporter {
         } else {
             writeln!(lock, "error: {}", message)
         }
-    }
-
-    #[allow(clippy::uninlined_format_args)]
-    fn write_warning(&self, message: &str) -> io::Result<()> {
-        let mut lock = self.stderr.lock();
-        #[cfg(feature = "colors")]
-        if self.config.use_color() {
-            use colored::Colorize;
-            return writeln!(lock, "{} {}", "warning:".yellow().bold(), message);
-        }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.use_color();
-        }
-        writeln!(lock, "warning: {}", message)
-    }
-
-    #[allow(clippy::uninlined_format_args)]
-    fn write_info(&self, message: &str) -> io::Result<()> {
-        let mut lock = self.stdout.lock();
-        #[cfg(feature = "colors")]
-        if self.config.use_color() {
-            use colored::Colorize;
-            return writeln!(lock, "{} {}", "info:".cyan(), message);
-        }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.use_color();
-        }
-        writeln!(lock, "info: {}", message)
     }
 
     #[allow(clippy::uninlined_format_args)]
@@ -263,9 +187,9 @@ impl Reporter {
             writeln!(lock)?;
             writeln!(
                 lock,
-                "{} {} files in {:.2}ms",
+                "{} {} in {:.2}ms",
                 "Completed:".bold(),
-                total,
+                file_count(total),
                 duration.as_secs_f64() * 1000.0
             )?;
             if formatted > 0 {
@@ -290,8 +214,8 @@ impl Reporter {
         writeln!(lock)?;
         writeln!(
             lock,
-            "Completed: {} files in {:.2}ms",
-            total,
+            "Completed: {} in {:.2}ms",
+            file_count(total),
             duration.as_secs_f64() * 1000.0
         )?;
         if formatted > 0 {
@@ -337,20 +261,6 @@ mod tests {
     }
 
     #[test]
-    fn test_report_progress_quiet_mode() {
-        let config = OutputConfig::new().with_quiet(true);
-        let reporter = Reporter::new(config);
-        let path = PathBuf::from("test.yaml");
-
-        let result = reporter.report(ReportEvent::Progress {
-            current: 1,
-            total: 10,
-            path: &path,
-        });
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_report_error_always_shown() {
         let config = OutputConfig::new().with_quiet(true);
         let reporter = Reporter::new(config);
@@ -364,14 +274,10 @@ mod tests {
     }
 
     #[test]
-    fn test_report_warning_quiet_mode() {
-        let config = OutputConfig::new().with_quiet(true);
-        let reporter = Reporter::new(config);
-
-        let result = reporter.report(ReportEvent::Warning {
-            message: "Test warning",
-        });
-        assert!(result.is_ok());
+    fn test_file_count_pluralization() {
+        assert_eq!(file_count(0), "0 files");
+        assert_eq!(file_count(1), "1 file");
+        assert_eq!(file_count(2), "2 files");
     }
 
     #[test]

@@ -629,3 +629,50 @@ fn test_format_multiline_plain_and_single_quoted_roundtrip() {
         assert_format_roundtrips(input);
     }
 }
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_missing_path_with_clean_file_fails() {
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("nonexist.yaml");
+    let clean = dir.path().join("clean.yaml");
+    std::fs::write(&clean, "key: value\n").unwrap();
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .arg(&missing)
+        .arg(&clean)
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("path does not exist"));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_zero_match_glob_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    let pattern = dir.path().join("*.nomatch");
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .arg(&pattern)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("No YAML files found"));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_directory_succeeds() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("clean.yaml"), "key: value\n").unwrap();
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .arg(dir.path())
+        .assert()
+        .success();
+}
