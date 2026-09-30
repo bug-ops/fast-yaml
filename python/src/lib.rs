@@ -577,7 +577,8 @@ fn container_children<'py>(
 ///     The parsed YAML document as Python objects (dict, list, str, int, float, bool, None)
 ///
 /// Raises:
-///     `ValueError`: If the YAML is invalid or input exceeds size limit (100MB)
+///     `ValueError`: If the YAML is invalid or input exceeds size limit (100MB), or it holds
+///         a decimal integer beyond the i64 range with more digits than `sys.get_int_max_str_digits()` (CPython's `int()` limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Merge keys:
 ///     `<<` entries come first, explicit keys override them in place, and for `<<: [*a, *b]`
@@ -629,7 +630,8 @@ fn safe_load(
 ///     A list of parsed YAML documents
 ///
 /// Raises:
-///     `ValueError`: If the YAML is invalid, input exceeds size limit (100MB), or a limit is out of range
+///     `ValueError`: If the YAML is invalid, input exceeds size limit (100MB), a limit is out of range, or it holds
+///         a decimal integer beyond the i64 range with more digits than `sys.get_int_max_str_digits()` (CPython's `int()` limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Merge keys:
 ///     Resolved per document with the same rules as `safe_load`.
@@ -683,6 +685,7 @@ fn safe_load_all(
 ///
 /// Raises:
 ///     TypeError: If the object contains types that cannot be serialized
+///     ValueError: If an int has more digits than `sys.get_int_max_str_digits()` (CPython's limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Example:
 ///     >>> import fast_yaml
@@ -810,6 +813,7 @@ fn estimate_dump_yaml_size(yaml: &YamlOwned) -> usize {
 ///
 /// Raises:
 ///     TypeError: If object cannot be serialized or stream invalid
+///     ValueError: If an int has more digits than `sys.get_int_max_str_digits()` (CPython's limit; `sys.set_int_max_str_digits()` raises it)
 ///     IOError: If write fails
 ///
 /// Example:
@@ -943,7 +947,8 @@ fn yaml_to_sort_key(yaml: &YamlOwned) -> String {
 ///
 /// Raises:
 ///     TypeError: If any object cannot be serialized
-///     ValueError: If total output size exceeds 100MB limit
+///     ValueError: If total output size exceeds 100MB limit, or an int has more digits than
+///         `sys.get_int_max_str_digits()` (CPython's limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Security:
 ///     Maximum output size is limited to 100MB to prevent memory exhaustion.
@@ -1024,7 +1029,8 @@ fn safe_dump_all(
 ///     The parsed YAML document as Python objects
 ///
 /// Raises:
-///     ValueError: If the YAML is invalid or input exceeds size limit (100MB)
+///     ValueError: If the YAML is invalid, input exceeds size limit (100MB), or it holds
+///         a decimal integer beyond the i64 range with more digits than `sys.get_int_max_str_digits()` (CPython's `int()` limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Merge keys:
 ///     Resolved with the same rules as `safe_load`.
@@ -1067,7 +1073,8 @@ fn load(
 ///     A list of parsed YAML documents
 ///
 /// Raises:
-///     ValueError: If the YAML is invalid or input exceeds size limit (100MB)
+///     ValueError: If the YAML is invalid, input exceeds size limit (100MB), or it holds
+///         a decimal integer beyond the i64 range with more digits than `sys.get_int_max_str_digits()` (CPython's `int()` limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Example:
 ///     >>> import fast_yaml
@@ -1112,6 +1119,7 @@ fn load_all(
 ///
 /// Raises:
 ///     TypeError: If the object contains types that cannot be serialized
+///     ValueError: If an int has more digits than `sys.get_int_max_str_digits()` (CPython's limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Example:
 ///     >>> import fast_yaml
@@ -1182,7 +1190,8 @@ fn dump(
 ///
 /// Raises:
 ///     TypeError: If any object cannot be serialized
-///     ValueError: If total output size exceeds 100MB limit
+///     ValueError: If total output size exceeds 100MB limit, or an int has more digits than
+///         `sys.get_int_max_str_digits()` (CPython's limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Example:
 ///     >>> import fast_yaml

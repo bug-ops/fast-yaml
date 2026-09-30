@@ -145,7 +145,10 @@ def safe_load(
         The parsed YAML document as Python objects
 
     Raises:
-        ValueError: If the YAML is invalid, input exceeds 100MB limit, or a limit is out of range
+        ValueError: If the YAML is invalid, input exceeds 100MB limit, a limit is out of range,
+            or it holds a decimal integer beyond the i64 range with more digits than
+                ``sys.get_int_max_str_digits()`` (CPython's ``int()`` limit;
+            ``sys.set_int_max_str_digits()`` raises it)
     """
     ...
 
@@ -168,7 +171,10 @@ def safe_load_all(
         A list of parsed YAML documents
 
     Raises:
-        ValueError: If the YAML is invalid, input exceeds 100MB limit, or a limit is out of range
+        ValueError: If the YAML is invalid, input exceeds 100MB limit, a limit is out of range,
+            or it holds a decimal integer beyond the i64 range with more digits than
+                ``sys.get_int_max_str_digits()`` (CPython's ``int()`` limit;
+            ``sys.set_int_max_str_digits()`` raises it)
     """
     ...
 
@@ -197,6 +203,8 @@ def safe_dump(
 
     Raises:
         TypeError: If the object cannot be serialized
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it)
 
     Note:
         The allow_unicode parameter is accepted for PyYAML compatibility,
@@ -229,6 +237,8 @@ def safe_dump_all(
 
     Raises:
         TypeError: If any object cannot be serialized
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it)
     """
     ...
 
@@ -298,6 +308,10 @@ def load(
 
     Raises:
         YAMLError: If the YAML is invalid
+        ValueError: If the YAML holds a decimal integer beyond the i64 range with more digits than
+            ``sys.get_int_max_str_digits()`` (CPython's ``int()`` limit;
+                ``sys.set_int_max_str_digits()``
+            raises it)
     """
     ...
 
@@ -323,6 +337,10 @@ def load_all(
 
     Raises:
         YAMLError: If the YAML is invalid
+        ValueError: If the YAML holds a decimal integer beyond the i64 range with more digits than
+            ``sys.get_int_max_str_digits()`` (CPython's ``int()`` limit;
+                ``sys.set_int_max_str_digits()``
+            raises it)
     """
     ...
 
@@ -347,6 +365,8 @@ def dump(
 
     Raises:
         TypeError: If the object cannot be serialized
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it)
     """
     ...
 
@@ -371,6 +391,8 @@ def dump_all(
 
     Raises:
         TypeError: If any object cannot be serialized
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it)
     """
     ...
 
@@ -472,10 +494,15 @@ class lint:  # noqa: N801
         (e.g. ``{"line-length": {"max": 120}}``). Unknown rules, option keys,
         wrong types and invalid severities raise ``ValueError``. Order of
         application: keyword arguments, then ``rules``, then ``disabled_rules``.
+
+        ``max_input_bytes`` (1..=1 GiB, default 100 MiB) rejects larger sources
+        with ``ValueError``. It bounds linting work on oversized input; the
+        source is already in memory when checked, so it is not a memory bound.
         """
 
         max_line_length: int | None
         indent_size: int
+        max_input_bytes: int
 
         def __init__(
             self,
@@ -488,9 +515,11 @@ class lint:  # noqa: N801
             rules: Mapping[str, str | Mapping[str, object]] | None = None,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
+            max_input_bytes: int | None = None,
         ) -> None: ...
         def with_max_depth(self, depth: int | None) -> "lint.LintConfig": ...
         def with_max_alias_bytes(self, bytes: int | None) -> "lint.LintConfig": ...
+        def with_max_input_bytes(self, bytes: int | None) -> "lint.LintConfig": ...
         def with_max_line_length(self, max: int | None) -> "lint.LintConfig": ...
         def with_indent_size(self, size: int) -> "lint.LintConfig": ...
         def with_disabled_rule(self, code: str) -> "lint.LintConfig": ...
@@ -509,7 +538,14 @@ class lint:  # noqa: N801
         def __init__(self, config: "lint.LintConfig | None" = None) -> None: ...
         @staticmethod
         def with_all_rules() -> "lint.Linter": ...
-        def lint(self, source: str) -> list["lint.Diagnostic"]: ...
+        def lint(self, source: str) -> list["lint.Diagnostic"]:
+            """Lint YAML source.
+
+            Raises:
+                ValueError: If the YAML cannot be parsed at all, or the source exceeds
+                    ``max_input_bytes`` (default 100 MiB)
+            """
+            ...
         def __repr__(self) -> str: ...
 
     class TextFormatter:
@@ -526,7 +562,12 @@ class lint:  # noqa: N801
 
     @staticmethod
     def lint(source: str, config: "lint.LintConfig | None" = None) -> list["lint.Diagnostic"]:
-        """Lint YAML source with optional configuration."""
+        """Lint YAML source with optional configuration.
+
+        Raises:
+            ValueError: If the YAML cannot be parsed at all, or the source exceeds
+                ``max_input_bytes`` (default 100 MiB)
+        """
         ...
 
     @staticmethod
@@ -579,7 +620,9 @@ class parallel:  # noqa: N801
             List of parsed YAML documents
 
         Raises:
-            ValueError: If parsing fails or limits exceeded
+            ValueError: If parsing fails, limits are exceeded, or a document holds a decimal
+                integer beyond the i64 range with more digits than ``sys.get_int_max_str_digits()``
+                    (CPython's ``int()`` limit)
         """
         ...
 
@@ -611,7 +654,8 @@ class parallel:  # noqa: N801
 
         Raises:
             TypeError: If any object cannot be serialized
-            ValueError: If document count exceeds 100,000
+            ValueError: If document count exceeds 100,000, or an int has more digits than
+                ``sys.get_int_max_str_digits()`` (CPython's limit)
 
         Example:
             >>> import fast_yaml

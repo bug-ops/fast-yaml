@@ -315,7 +315,8 @@ fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> usize {
 ///     List of parsed YAML documents
 ///
 /// Raises:
-///     `ValueError`: If parsing fails or limits exceeded
+///     `ValueError`: If parsing fails, limits are exceeded, or a document holds
+///         a decimal integer beyond the i64 range with more digits than `sys.get_int_max_str_digits()` (CPython's `int()` limit; `sys.set_int_max_str_digits()` raises it)
 ///
 /// Performance:
 ///     - Single document: Falls back to sequential parsing
@@ -388,7 +389,7 @@ fn parse_parallel(
 ///
 /// Raises:
 ///     TypeError: If any object cannot be serialized
-///     ValueError: If limits exceeded
+///     ValueError: If limits exceeded, or an int has more digits than `sys.get_int_max_str_digits()` (CPython's limit)
 ///
 /// Example:
 ///     >>> from fast_yaml._core.parallel import dump_parallel

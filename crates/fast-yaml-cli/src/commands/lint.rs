@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
 use fast_yaml_linter::{
     ConfigFile, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
     config::IndentSize,
@@ -51,7 +51,8 @@ impl LintCommand {
             args.indent_size,
             args.allow_duplicate_keys,
         )
-        .with_parse_limits(args.parse_limits);
+        .with_parse_limits(args.parse_limits)
+        .with_max_input_bytes(MaxInputBytes::MAX);
         Ok(Self {
             config,
             lint_config,
@@ -206,6 +207,19 @@ mod tests {
             input,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn test_build_lifts_input_size_limit() {
+        let input = stdin_input("a: 1");
+        let cmd = build_no_config(
+            create_test_config(true, false, false, 2),
+            None,
+            LintFormat::Text,
+            None,
+            &input,
+        );
+        assert_eq!(cmd.lint_config.max_input_bytes, MaxInputBytes::MAX);
     }
 
     #[test]

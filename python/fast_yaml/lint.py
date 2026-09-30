@@ -61,7 +61,8 @@ def lint(source: str, config: LintConfig | None = None) -> list[Diagnostic]:
         List of diagnostics sorted by location
 
     Raises:
-        ValueError: If YAML is completely unparseable
+        ValueError: If YAML is completely unparseable, or the source exceeds
+            the configured ``max_input_bytes`` (default 100 MiB)
 
     Example:
         >>> import fast_yaml.lint as yaml_lint

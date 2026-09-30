@@ -113,7 +113,10 @@ def safe_load(
         The parsed YAML document as Python objects (dict, list, str, int, float, bool, None).
 
     Raises:
-        ValueError: If the YAML is invalid or a limit is out of range.
+        ValueError: If the YAML is invalid, a limit is out of range, or it holds a decimal
+            integer beyond the i64 range with more digits than ``sys.get_int_max_str_digits()``
+                (CPython's ``int()`` limit;
+            ``sys.set_int_max_str_digits()`` raises it).
         TypeError: If a limit is not an int (``bool`` included).
 
     Example:
@@ -158,7 +161,10 @@ def safe_load_all(
         Parsed YAML documents.
 
     Raises:
-        ValueError: If the YAML is invalid or a limit is out of range.
+        ValueError: If the YAML is invalid, a limit is out of range, or it holds a decimal
+            integer beyond the i64 range with more digits than ``sys.get_int_max_str_digits()``
+                (CPython's ``int()`` limit;
+            ``sys.set_int_max_str_digits()`` raises it).
         TypeError: If a limit is not an int (``bool`` included).
 
     Example:
@@ -210,6 +216,8 @@ def safe_dump(
 
     Raises:
         TypeError: If the object contains types that cannot be serialized.
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it).
 
     Example:
         >>> import fast_yaml
@@ -263,6 +271,10 @@ def safe_dump_all(
 
     Returns:
         A YAML string if stream is None, otherwise None.
+
+    Raises:
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it).
 
     Example:
         >>> import fast_yaml
@@ -322,6 +334,8 @@ def safe_dump_to(
 
     Raises:
         TypeError: If object cannot be serialized or stream invalid
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it).
         IOError: If write fails
 
     Example:
@@ -373,7 +387,10 @@ def load(
         The parsed YAML document as Python objects.
 
     Raises:
-        ValueError: If the YAML is invalid or a limit is out of range.
+        ValueError: If the YAML is invalid, a limit is out of range, or it holds a decimal
+            integer beyond the i64 range with more digits than ``sys.get_int_max_str_digits()``
+                (CPython's ``int()`` limit;
+            ``sys.set_int_max_str_digits()`` raises it).
         TypeError: If a limit is not an int (``bool`` included).
 
     Example:
@@ -428,6 +445,12 @@ def load_all(
 
     Yields:
         Parsed YAML documents.
+
+    Raises:
+        ValueError: If a document holds a decimal integer beyond the i64 range with more digits than
+            ``sys.get_int_max_str_digits()`` (CPython's ``int()`` limit;
+                ``sys.set_int_max_str_digits()``
+            raises it).
 
     Example:
         >>> import fast_yaml
@@ -491,6 +514,8 @@ def dump(
 
     Raises:
         TypeError: If the object contains types that cannot be serialized.
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it).
 
     Example:
         >>> import fast_yaml
@@ -555,6 +580,10 @@ def dump_all(
 
     Returns:
         A YAML string if stream is None, otherwise None.
+
+    Raises:
+        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
+            limit; ``sys.set_int_max_str_digits()`` raises it).
 
     Example:
         >>> import fast_yaml

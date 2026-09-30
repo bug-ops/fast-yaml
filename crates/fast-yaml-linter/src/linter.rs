@@ -9,7 +9,7 @@ use crate::context::lines_of;
 use crate::directives::Directives;
 use crate::rules::{DocumentEndPresence, DocumentStartPresence};
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
-use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits};
 use fast_yaml_core::{Parser, ScalarOwned, Value};
 
 /// Configuration for the linter.
@@ -34,6 +34,8 @@ pub struct LintConfig {
     pub custom_rules: HashMap<CustomRuleCode, RuleSettings<NoOptions>>,
     /// Resource limits applied when parsing the source.
     pub parse_limits: ParseLimits,
+    /// Largest source accepted for linting; bounds work on oversized input, not memory.
+    pub max_input_bytes: MaxInputBytes,
 }
 
 impl LintConfig {
@@ -123,6 +125,28 @@ impl LintConfig {
     #[must_use]
     pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
         self.parse_limits = limits;
+        self
+    }
+
+    /// Sets the largest source, in bytes, accepted for linting.
+    ///
+    /// Bounds the work done on oversized input. The source is already in memory when the
+    /// check runs, so this is not a memory bound.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::MaxInputBytes;
+    /// use fast_yaml_linter::{LintConfig, Linter};
+    ///
+    /// let max = MaxInputBytes::new(8).unwrap();
+    /// let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
+    /// assert!(linter.lint("a: 1\n").is_ok());
+    /// assert!(linter.lint("a: 1\nb: 2\n").is_err());
+    /// ```
+    #[must_use]
+    pub const fn with_max_input_bytes(mut self, max: MaxInputBytes) -> Self {
+        self.max_input_bytes = max;
         self
     }
 
@@ -354,7 +378,8 @@ impl Linter {
     ///
     /// # Errors
     ///
-    /// Returns `LintError::ParseError` if the YAML cannot be parsed.
+    /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
+    /// and `LintError::ParseError` if the YAML cannot be parsed.
     ///
     /// # Examples
     ///
@@ -366,6 +391,7 @@ impl Linter {
     /// let diagnostics = linter.lint(yaml).unwrap();
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
+        self.config.max_input_bytes.check(source.len())?;
         let (source, bom_len) = split_bom(source);
         let docs = Parser::parse_all_with_limits(source, &self.config.parse_limits)?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
@@ -416,9 +442,11 @@ impl Linter {
     ///
     /// # Errors
     ///
-    /// Returns `LintError::ParseError` if `source` contains a NUL character, which the
+    /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
+    /// and `LintError::ParseError` if `source` contains a NUL character, which the
     /// tokenizer would otherwise treat as end of input.
     pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
+        self.config.max_input_bytes.check(source.len())?;
         let (source, bom_len) = split_bom(source);
         fast_yaml_core::reject_nul(source)?;
         let directives = Directives::from_source(source, &self.config, &self.registry);
@@ -487,6 +515,9 @@ pub enum LintError {
     /// Failed to parse YAML.
     #[error("failed to parse YAML: {0}")]
     ParseError(#[from] fast_yaml_core::ParseError),
+    /// Source exceeds the configured input size limit.
+    #[error(transparent)]
+    InputTooLarge(#[from] InputTooLarge),
 }
 
 /// Returns a `Vec` where `result[i]` is the 1-based line number at which
@@ -746,6 +777,45 @@ mod tests {
                 fast_yaml_core::ParseError::LimitExceeded { .. }
             ))
         ));
+    }
+
+    #[test]
+    fn test_lint_honors_max_input_bytes() {
+        let max = MaxInputBytes::new(5).unwrap();
+        let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
+        assert!(linter.lint("a: 1\n").is_ok());
+        assert!(matches!(
+            linter.lint("a: 1\n#"),
+            Err(LintError::InputTooLarge(InputTooLarge { size: 6, .. }))
+        ));
+    }
+
+    #[test]
+    fn test_lint_value_honors_max_input_bytes() {
+        let max = MaxInputBytes::new(8).unwrap();
+        let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
+        let value = Value::Value(ScalarOwned::Null);
+        assert!(linter.lint_value("a: 1\n", &value).is_ok());
+        assert!(matches!(
+            linter.lint_value("a: 1\nb: 2\n", &value),
+            Err(LintError::InputTooLarge(_))
+        ));
+    }
+
+    #[test]
+    fn test_max_input_bytes_counts_bom() {
+        let max = MaxInputBytes::new(6).unwrap();
+        let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
+        assert!(linter.lint("a: 1\n").is_ok());
+        assert!(matches!(
+            linter.lint("\u{feff}a: 1\n"),
+            Err(LintError::InputTooLarge(InputTooLarge { size: 8, .. }))
+        ));
+    }
+
+    #[test]
+    fn test_max_input_bytes_defaults() {
+        assert_eq!(LintConfig::new().max_input_bytes, MaxInputBytes::DEFAULT);
     }
 
     #[test]

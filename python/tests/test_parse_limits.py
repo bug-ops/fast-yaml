@@ -268,3 +268,62 @@ def test_batch_builder_none_restores_default_behavior(tmp_path):
     path.write_text(NESTED_300)
     config = batch.BatchConfig(max_depth=MAX_DEPTH).with_max_depth(None)
     assert batch.process_files([str(path)], config).failed == 1
+
+
+TOO_LARGE = r"input size \d+ bytes exceeds maximum allowed 16 bytes"
+MAX_INPUT_BYTES = 1 << 30
+SOURCE_16 = "a: " + "x" * 12 + "\n"
+
+
+class TestMaxInputBytes:
+    def test_boundary(self):
+        assert len(SOURCE_16) == 16
+        config = lint.LintConfig(max_input_bytes=16)
+        lint.lint(SOURCE_16, config)
+        with pytest.raises(ValueError, match=TOO_LARGE):
+            lint.lint(SOURCE_16 + "#", config)
+
+    def test_linter_class(self):
+        linter = lint.Linter(lint.LintConfig(max_input_bytes=16))
+        linter.lint(SOURCE_16)
+        with pytest.raises(ValueError, match=TOO_LARGE):
+            linter.lint(SOURCE_16 + "#")
+
+    def test_counts_utf8_bytes(self):
+        source = "a: " + "é" * 7 + "\n"
+        assert len(source) < 16 < len(source.encode())
+        with pytest.raises(ValueError, match=TOO_LARGE):
+            lint.lint(source, lint.LintConfig(max_input_bytes=16))
+
+    def test_builder(self):
+        config = lint.LintConfig().with_max_input_bytes(16)
+        with pytest.raises(ValueError, match=TOO_LARGE):
+            lint.lint(SOURCE_16 + "#", config)
+
+    def test_builder_none_resets_to_default(self):
+        config = lint.LintConfig(max_input_bytes=16).with_max_input_bytes(None)
+        lint.lint(SOURCE_16 + "#", config)
+
+    @pytest.mark.parametrize("value", [0, -1, MAX_INPUT_BYTES + 1, 2**200])
+    def test_out_of_range(self, value):
+        message = rf"max_input_bytes must be between 1 and {MAX_INPUT_BYTES}, got {value}"
+        with pytest.raises(ValueError, match=message):
+            lint.LintConfig(max_input_bytes=value)
+        with pytest.raises(ValueError, match=message):
+            lint.LintConfig().with_max_input_bytes(value)
+
+    @pytest.mark.parametrize("value", [True, False, 1.5, "x"])
+    def test_wrong_type(self, value):
+        with pytest.raises(TypeError):
+            lint.LintConfig(max_input_bytes=value)
+        with pytest.raises(TypeError):
+            lint.LintConfig().with_max_input_bytes(value)
+
+    def test_getter(self):
+        assert lint.LintConfig().max_input_bytes == 100 * MIB
+        assert lint.LintConfig(max_input_bytes=16).max_input_bytes == 16
+        assert lint.LintConfig().with_max_input_bytes(32).max_input_bytes == 32
+
+    def test_bounds_accepted(self):
+        lint.LintConfig(max_input_bytes=1)
+        lint.LintConfig(max_input_bytes=MAX_INPUT_BYTES)

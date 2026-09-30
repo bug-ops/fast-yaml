@@ -203,6 +203,7 @@ const aliasBomb = (levels: number, width: number): string =>
 
 const RAISED_BOMB = aliasBomb(7, 8);
 const MAX_ALIAS_BYTES = 1_073_741_824;
+const MAX_INPUT_BYTES = 1_073_741_824;
 
 describe('Configurable parse limits', () => {
   it('keeps default limits when options are absent', () => {
@@ -263,6 +264,36 @@ describe('Configurable parse limits', () => {
     expect(() => parseParallel('a: 1', { maxAliasBytes: value })).toThrow(message);
     expect(() => lint('a: 1', { maxAliasBytes: value })).toThrow(message);
     expect(() => processFiles([], { maxAliasBytes: value })).toThrow(message);
+  });
+
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['2.5', 2.5],
+    ['NaN', Number.NaN],
+    ['too large', MAX_INPUT_BYTES + 1],
+  ])('rejects maxInputBytes %s', (_name, value) => {
+    const message = /maxInputBytes must be between 1 and 1073741824, got /;
+    expect(() => lint('a: 1', { maxInputBytes: value })).toThrow(message);
+    expect(() => new Linter({ maxInputBytes: value })).toThrow(message);
+  });
+
+  it('enforces maxInputBytes in the linter by UTF-8 byte count', () => {
+    const tooLarge = /input size \d+ bytes exceeds maximum allowed 16 bytes/;
+    const source = `a: ${'x'.repeat(12)}\n`;
+    expect(() => lint(source, { maxInputBytes: 16 })).not.toThrow();
+    expect(() => lint(`${source}#`, { maxInputBytes: 16 })).toThrow(tooLarge);
+    expect(() => new Linter({ maxInputBytes: 16 }).lint(`${source}#`)).toThrow(tooLarge);
+    const multibyte = `a: ${'\u00e9'.repeat(7)}\n`;
+    expect(multibyte.length).toBeLessThan(16);
+    expect(() => lint(multibyte, { maxInputBytes: 16 })).toThrow(tooLarge);
+  });
+
+  it('accepts the bounds 1 and MAX for maxInputBytes', () => {
+    expect(() => new Linter({ maxInputBytes: 1 })).not.toThrow();
+    expect(() => new Linter({ maxInputBytes: MAX_INPUT_BYTES })).not.toThrow();
+    expect(() => lint('a: 1', { maxInputBytes: MAX_INPUT_BYTES })).not.toThrow();
+    expect(() => lint('', { maxInputBytes: 1 })).not.toThrow();
   });
 
   it('applies limits to parseParallel and parseParallelAsync', async () => {

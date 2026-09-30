@@ -216,6 +216,125 @@ impl fmt::Display for MaxAliasBytes {
     }
 }
 
+/// Input larger than the configured [`MaxInputBytes`].
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxInputBytes;
+///
+/// let err = MaxInputBytes::new(4).unwrap().check(5).unwrap_err();
+/// assert_eq!(err.to_string(), "input size 5 bytes exceeds maximum allowed 4 bytes");
+/// ```
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("input size {size} bytes exceeds maximum allowed {limit} bytes")]
+pub struct InputTooLarge {
+    /// Size of the rejected input in bytes.
+    pub size: usize,
+    /// The limit that was exceeded.
+    pub limit: MaxInputBytes,
+}
+
+/// Maximum size, in bytes, of a source text accepted for processing.
+///
+/// Bounds the work done on oversized input. The source is already in memory when the check runs, so
+/// this is not a memory bound. Valid values lie between `1` and [`MAX`](Self::MAX) inclusive.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxInputBytes;
+///
+/// assert_eq!(MaxInputBytes::default(), MaxInputBytes::DEFAULT);
+/// let max = MaxInputBytes::new(4).unwrap();
+/// assert!(max.check(4).is_ok());
+/// assert!(max.check(5).is_err());
+/// assert!(MaxInputBytes::new(0).is_err());
+/// assert!(MaxInputBytes::new(MaxInputBytes::MAX.get() + 1).is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaxInputBytes(usize);
+
+impl MaxInputBytes {
+    /// Default limit: 100 MiB of source text.
+    pub const DEFAULT: Self = Self(100 * 1024 * 1024);
+
+    /// Largest accepted limit: 1 GiB.
+    pub const MAX: Self = Self(1 << 30);
+
+    /// Smallest accepted limit: one byte.
+    pub const MIN: Self = Self(1);
+
+    /// Creates a limit of `bytes` source bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitRangeError`] when `bytes` is outside `1` to [`MAX`](Self::MAX) inclusive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::MaxInputBytes;
+    ///
+    /// assert_eq!(MaxInputBytes::new(1 << 30), Ok(MaxInputBytes::MAX));
+    /// assert_eq!(MaxInputBytes::new(0).unwrap_err().max, 1 << 30);
+    /// ```
+    pub const fn new(bytes: usize) -> Result<Self, LimitRangeError> {
+        if bytes < Self::MIN.0 || bytes > Self::MAX.0 {
+            Err(LimitRangeError {
+                value: bytes,
+                max: Self::MAX.0,
+            })
+        } else {
+            Ok(Self(bytes))
+        }
+    }
+
+    /// Returns the limit as a plain number.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+
+    /// Checks a source length against the limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InputTooLarge`] when `len` exceeds the limit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::MaxInputBytes;
+    ///
+    /// let max = MaxInputBytes::new(8).unwrap();
+    /// assert!(max.check(8).is_ok());
+    /// assert_eq!(max.check(9).unwrap_err().size, 9);
+    /// ```
+    pub const fn check(self, len: usize) -> Result<(), InputTooLarge> {
+        if len > self.0 {
+            Err(InputTooLarge {
+                size: len,
+                limit: self,
+            })
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Default for MaxInputBytes {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl fmt::Display for MaxInputBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Maximum bytes of resolved `%TAG` prefix text the parser may materialize over a whole stream.
 ///
 /// The parser copies the full prefix into every tagged node, so a long prefix reused by many
@@ -777,6 +896,42 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn max_input_bytes_new_enforces_range() {
+        assert_eq!(MaxInputBytes::new(1), Ok(MaxInputBytes::MIN));
+        assert_eq!(
+            MaxInputBytes::new(MaxInputBytes::MAX.get()),
+            Ok(MaxInputBytes::MAX)
+        );
+        for value in [0, MaxInputBytes::MAX.get() + 1] {
+            assert_eq!(
+                MaxInputBytes::new(value),
+                Err(LimitRangeError {
+                    value,
+                    max: MaxInputBytes::MAX.get()
+                })
+            );
+        }
+        assert_eq!(
+            MaxInputBytes::new(MaxInputBytes::DEFAULT.get()),
+            Ok(MaxInputBytes::DEFAULT)
+        );
+    }
+
+    #[test]
+    fn max_input_bytes_check_boundary() {
+        let max = MaxInputBytes::new(8).unwrap();
+        assert!(max.check(0).is_ok());
+        assert!(max.check(8).is_ok());
+        assert_eq!(
+            max.check(9),
+            Err(InputTooLarge {
+                size: 9,
+                limit: max
+            })
+        );
     }
 
     #[test]
