@@ -673,7 +673,9 @@ double: "quoted""#;
         let yaml = "key: null";
         let config = EmitterConfig::default();
         let result = format_streaming(yaml, &config).unwrap();
-        assert!(result.contains("null") || result.contains('~'));
+        assert_eq!(result, "key: null\n");
+        assert_eq!(format_streaming("key: ~", &config).unwrap(), "key: ~\n");
+        assert_eq!(format_streaming("key:", &config).unwrap(), "key: null\n");
     }
 
     #[test]
