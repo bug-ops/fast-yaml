@@ -47,6 +47,7 @@ pub mod error;
 pub mod limits;
 /// YAML 1.1 merge key (`<<`) resolution shared by the core loader and bindings.
 pub mod merge;
+mod merge_check;
 /// YAML parser for deserializing strings to documents.
 pub mod parser;
 /// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.

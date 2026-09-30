@@ -102,6 +102,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core/CLI/Linter/Node.js**: an invalid `<<` value hidden by a later duplicate key is now rejected, and parse, lint and format report the first invalid merge in document order at its `<<` key (#515) (#516) (#528)
+- **Core/CLI/Linter**: an invalid `<<` now wins over a later syntax error, and `lint` no longer reports the duplicate key that hides it (#515) (#528)
 - **CLI/Parallel/Linter**: UTF-16 and UTF-32 input, including lint config files, fails with an "unsupported encoding" message naming the encoding instead of a generic UTF-8 error (#334) (#524)
 - **Core/CLI/Parallel**: `fy format` and the batch formatters reject an invalid `<<` value instead of passing it through (#505) (#520)
 - **Core/CLI/Node.js**: merge errors report line, column and document of the rejected `<<` key (#504) (#520)

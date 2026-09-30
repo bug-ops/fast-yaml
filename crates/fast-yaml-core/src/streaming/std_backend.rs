@@ -171,7 +171,7 @@ fn format_with_names(
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend, input);
 
     let mut guard = super::tag_budget_guard();
-    let mut merge_keys = super::merge_check::MergeKeyValidator::default();
+    let mut merge_keys = crate::merge_check::MergeKeyValidator::default();
     for result in parser {
         let (event, span) = result.map_err(ParseError::from)?;
         guard

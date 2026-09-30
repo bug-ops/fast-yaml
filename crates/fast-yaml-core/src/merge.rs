@@ -14,7 +14,6 @@
 //! - a merge value must be a mapping or a sequence of mappings, anything else is a [`MergeError`].
 
 use std::collections::HashSet;
-use std::num::NonZeroUsize;
 
 use saphyr_parser::{Event, ScalarStyle, Tag};
 use thiserror::Error;
@@ -25,43 +24,6 @@ use crate::value::{Map, Value};
 ///
 /// It contains NUL, which input validation rejects, so no document can spell it.
 const SET_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0";
-
-/// Handle of the per-key tag that keeps repeated plain `<<` keys distinct after loading.
-const MERGE_KEY_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0merge";
-
-/// One-based ordinal of a tagged `<<` key, in order of appearance in the stream.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct MergeKeyId(NonZeroUsize);
-
-impl MergeKeyId {
-    /// The id of the key that follows `recorded` earlier keys.
-    pub(crate) const fn after(recorded: usize) -> Self {
-        Self(NonZeroUsize::MIN.saturating_add(recorded))
-    }
-
-    /// Zero-based position of this key in a table of all keys.
-    pub(crate) const fn index(self) -> usize {
-        self.0.get() - 1
-    }
-}
-
-pub(crate) fn merge_key_tag(id: MergeKeyId) -> Tag {
-    Tag {
-        handle: MERGE_KEY_MARKER_HANDLE.into(),
-        suffix: id.0.to_string(),
-    }
-}
-
-pub(crate) fn merge_key_id(tag: &Tag) -> Option<MergeKeyId> {
-    if !is_merge_key_marker(tag) {
-        return None;
-    }
-    tag.suffix.parse().ok().map(MergeKeyId)
-}
-
-pub(crate) fn is_merge_key_marker(tag: &Tag) -> bool {
-    tag.handle == MERGE_KEY_MARKER_HANDLE
-}
 
 /// Whether `tag` is the core-schema `!!set` tag.
 pub(crate) fn is_core_set_tag(tag: &Tag) -> bool {

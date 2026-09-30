@@ -298,3 +298,34 @@ fn parse_accepts_valid_merge_keys_in_later_documents() {
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
+
+#[test]
+fn parse_and_format_agree_on_hidden_and_ordered_merge_errors() {
+    const NOT_MAPPING: &str = "requires a mapping or a sequence of mappings";
+    const SET_SOURCE: &str = "cannot merge a `!!set`";
+    for (yaml, kind, position) in [
+        ("x: {<<: 1}\nx: 2\n", NOT_MAPPING, "at line 1, column 5"),
+        (
+            "m: {<<: 1, x: {<<: !!set {a}}}\n",
+            NOT_MAPPING,
+            "at line 1, column 5",
+        ),
+        (
+            "m: {x: {<<: !!set {a}}, <<: 1}\n",
+            SET_SOURCE,
+            "at line 1, column 9",
+        ),
+    ] {
+        for command in ["parse", "format", "lint"] {
+            let output = run(&[command], yaml);
+            assert_eq!(
+                output.status.code(),
+                Some(1),
+                "{command} {yaml:?}: {output:?}"
+            );
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let expected = format!("merge key `<<` {kind} {position}");
+            assert!(stderr.contains(&expected), "{command} {yaml:?}: {stderr}");
+        }
+    }
+}
