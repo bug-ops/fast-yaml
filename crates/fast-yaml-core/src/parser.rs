@@ -1,8 +1,8 @@
 use crate::error::{ParseError, ParseResult, SourcePosition};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::merge::{
-    MergeError, MergeKeyId, MergeSource, MergeTarget, is_merge_key_marker, is_set_marker,
-    merge_into, merge_key_id, merge_key_tag, set_marker_tag,
+    MergeError, MergeKeyId, MergeKeyTracker, MergeSource, MergeTarget, NodeRole, is_core_set_tag,
+    is_merge_key_marker, is_set_marker, merge_into, merge_key_id, merge_key_tag, set_marker_tag,
 };
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::{Map, Value};
@@ -11,7 +11,7 @@ use saphyr_parser::{
     Event, Marker, Parser as SaphyrParser, ScalarStyle, Span, SpannedEventReceiver, Tag,
 };
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// Parser for YAML documents.
 ///
@@ -66,12 +66,11 @@ impl Parser {
     pub fn parse_str_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Option<Value>> {
         let (docs, positions) =
             load_documents_with_budget(input, &StreamBudget::new(*limits), Bom::Strip)?;
-        let mut docs = docs.into_iter();
-        let first = docs
-            .next()
-            .map(|doc| canonicalize_located(doc, &positions))
-            .transpose()?;
-        docs.try_for_each(|doc| canonicalize_located(doc, &positions).map(drop))?;
+        let mut first = None;
+        for (index, doc) in docs.into_iter().enumerate() {
+            let doc = canonicalize_located(doc, index, &positions)?;
+            first.get_or_insert(doc);
+        }
         Ok(first)
     }
 
@@ -181,7 +180,8 @@ fn canonicalize_documents(
     (docs, positions): (Vec<Value>, MergeKeyPositions),
 ) -> ParseResult<Vec<Value>> {
     docs.into_iter()
-        .map(|doc| canonicalize_located(doc, &positions))
+        .enumerate()
+        .map(|(index, doc)| canonicalize_located(doc, index, &positions))
         .collect()
 }
 
@@ -335,8 +335,13 @@ pub fn canonicalize(value: Value) -> Result<Value, MergeError> {
     canonicalize_value(value, &mut Blame::default())
 }
 
-/// [`canonicalize`] that reports a rejected merge value at the source position of its `<<` key.
-fn canonicalize_located(value: Value, positions: &MergeKeyPositions) -> ParseResult<Value> {
+/// [`canonicalize`] that reports a rejected merge value at the source position of its `<<` key
+/// and the index of the document holding it.
+fn canonicalize_located(
+    value: Value,
+    document: usize,
+    positions: &MergeKeyPositions,
+) -> ParseResult<Value> {
     let mut blame = Blame::default();
     canonicalize_value(value, &mut blame).map_err(|error| {
         let SourcePosition { line, column } = blame
@@ -347,6 +352,7 @@ fn canonicalize_located(value: Value, positions: &MergeKeyPositions) -> ParseRes
             error,
             line,
             column,
+            document,
         }
     })
 }
@@ -544,16 +550,14 @@ fn is_merge_key(key: &Value) -> bool {
 /// tags, and [`canonicalize`] must tell sets from mappings to resolve `<<` correctly.
 fn mark_set(event: Event<'_>) -> Event<'_> {
     match event {
-        Event::MappingStart(anchor, Some(tag))
-            if tag.is_yaml_core_schema() && tag.suffix == "set" =>
-        {
+        Event::MappingStart(anchor, Some(tag)) if is_core_set_tag(&tag) => {
             Event::MappingStart(anchor, Some(Cow::Owned(set_marker_tag())))
         }
         other => other,
     }
 }
 
-/// Tags every plain `<<` key with a unique marker tag.
+/// Tags every plain `<<` key with a unique marker tag and records its source position.
 ///
 /// The loader collapses equal keys, which would hide an invalid earlier `<<` value from
 /// [`canonicalize`]. The tag only makes the keys unequal; the scalar text stays `<<`, so an
@@ -561,10 +565,7 @@ fn mark_set(event: Event<'_>) -> Event<'_> {
 /// NUL, which input validation rejects.
 #[derive(Default)]
 struct MergeKeyTagger {
-    /// Open containers: whether each is a mapping, and how many child nodes it has received.
-    frames: Vec<(bool, usize)>,
-    /// Anchors on plain `<<` scalars; an alias to one in key position is a merge key too.
-    merge_anchors: HashSet<usize>,
+    tracker: MergeKeyTracker,
     positions: MergeKeyPositions,
 }
 
@@ -575,38 +576,13 @@ impl MergeKeyTagger {
     }
 
     fn tag<'a>(&mut self, event: Event<'a>, span: Span) -> Event<'a> {
-        let is_key = match event {
-            Event::Scalar(..)
-            | Event::Alias(_)
-            | Event::MappingStart(..)
-            | Event::SequenceStart(..) => {
-                self.frames.last_mut().is_some_and(|(mapping, children)| {
-                    *children += 1;
-                    *mapping && *children % 2 == 1
-                })
-            }
-            _ => false,
-        };
-        if let Event::Scalar(s, ScalarStyle::Plain, anchor @ 1.., None) = &event
-            && s == "<<"
-        {
-            self.merge_anchors.insert(*anchor);
+        if self.tracker.observe(&event) != Some(NodeRole::MergeKey) {
+            return event;
         }
         match event {
-            Event::MappingStart(..) => self.frames.push((true, 0)),
-            Event::SequenceStart(..) => self.frames.push((false, 0)),
-            Event::MappingEnd | Event::SequenceEnd => {
-                self.frames.pop();
-            }
-            Event::Scalar(s, ScalarStyle::Plain, anchor, None) if is_key && s == "<<" => {
-                return self.marked(s, anchor, span);
-            }
-            Event::Alias(id) if is_key && self.merge_anchors.contains(&id) => {
-                return self.marked(Cow::Borrowed("<<"), 0, span);
-            }
-            _ => {}
+            Event::Scalar(text, _, anchor, _) => self.marked(text, anchor, span),
+            _ => self.marked(Cow::Borrowed("<<"), 0, span),
         }
-        event
     }
 }
 
@@ -1261,6 +1237,7 @@ m:
                 error,
                 line,
                 column,
+                ..
             }) => (error, line, column),
             other => panic!("merge error expected, got {other:?}"),
         }
@@ -1328,8 +1305,38 @@ m:
         let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3"
+            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3 (document 1)"
         );
+    }
+
+    #[test]
+    fn test_merge_error_document_index() {
+        let yaml = "a: 1\n---\nb: 2\n---\nm:\n  <<: 1\n";
+        let budget = StreamBudget::new(ParseLimits::default());
+        for err in [
+            Parser::parse_str(yaml).unwrap_err(),
+            Parser::parse_all(yaml).unwrap_err(),
+            Parser::parse_chunk_with_budget(yaml, &budget).unwrap_err(),
+        ] {
+            assert_eq!(err.document_index(), Some(2));
+            assert!(err.to_string().ends_with("(document 3)"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_relocated_shifts_merge_document() {
+        let err = Parser::parse_all("m: {<<: 1}\n")
+            .unwrap_err()
+            .relocated(4, 20, 3);
+        assert!(matches!(
+            err,
+            ParseError::Merge {
+                line: 5,
+                column: 5,
+                document: 3,
+                ..
+            }
+        ));
     }
 
     #[test]

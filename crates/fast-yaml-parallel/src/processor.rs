@@ -99,7 +99,7 @@ fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<V
 fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> Result<Vec<Value>> {
     Parser::parse_chunk_with_budget(chunk.content, budget).map_err(|source| Error::Parse {
         index: chunk.index,
-        source: source.relocated(chunk.origin.line, chunk.origin.char_index),
+        source: source.relocated(chunk.origin.line, chunk.origin.char_index, chunk.index),
     })
 }
 

@@ -209,6 +209,87 @@ fn parse_rejects_invalid_merge_value_in_any_document() {
     }
 }
 
+const INVALID_MERGES: &[&str] = &[
+    "m:\n  <<: 1\n",
+    "m:\n  <<:\n  k: 0\n",
+    "m:\n  <<: [1]\n",
+    "m:\n  <<: [[{x: 1}]]\n",
+    "m:\n  <<: [{x: 1}, 5]\n",
+    "x: 1\n---\nm:\n  <<: [1]\n",
+    "x: 1\n---\ny: 2\n---\nm: {<<: 1}\n",
+    "a: &a [1]\nm:\n  <<: *a\n",
+    "a: &a text\nm:\n  <<: *a\n",
+    "s: &s !!set {x, y}\nm:\n  <<: *s\n",
+    "s: &s !!set {x, y}\nm:\n  <<: [*s]\n",
+];
+
+#[test]
+fn format_rejects_invalid_merge_values() {
+    for yaml in INVALID_MERGES {
+        let output = run(&["format"], yaml);
+        assert_eq!(output.status.code(), Some(1), "{yaml}: {output:?}");
+        assert!(output.stdout.is_empty(), "{yaml}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("merge key"), "{yaml}: {stderr}");
+        assert_eq!(run(&["parse"], yaml).status.code(), Some(1), "{yaml}");
+    }
+}
+
+#[test]
+fn format_accepts_valid_merge_values() {
+    for yaml in [
+        "b: &b {x: 1}\nm:\n  <<: *b\n  k: 0\n",
+        "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: [*a, *b]\n",
+        "m:\n  <<: !!map {x: 1}\n",
+        "m:\n  '<<': 1\n  \"<<\": 2\n",
+        "s: !!set {k, <<}\n",
+    ] {
+        let output = run(&["format"], yaml);
+        assert_eq!(output.status.code(), Some(0), "{yaml}: {output:?}");
+        assert_eq!(run(&["parse"], yaml).status.code(), Some(0), "{yaml}");
+    }
+}
+
+#[test]
+fn format_of_valid_merge_keys_is_idempotent() {
+    for yaml in [
+        "a: &a {x: 1}\nm:\n  <<: *a\n",
+        "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: [*a, *b]\n",
+        "a: &a {x: 1}\nm: {<<: *a, k: 0}\n",
+        "a: &a {x: 1}\nm: {<<: [*a], k: 0}\n",
+    ] {
+        let once = run(&["format"], yaml);
+        assert_eq!(once.status.code(), Some(0), "{yaml}: {once:?}");
+        let once = String::from_utf8(once.stdout).unwrap();
+        let twice = run(&["format"], &once);
+        assert_eq!(twice.status.code(), Some(0), "{once}: {twice:?}");
+        assert_eq!(String::from_utf8(twice.stdout).unwrap(), once, "{yaml}");
+    }
+}
+
+#[test]
+fn format_rejects_self_referencing_merge_value() {
+    for yaml in ["m: &a {<<: *a}\n", "m: &a [{<<: *a}]\n"] {
+        let output = run(&["format"], yaml);
+        assert_eq!(output.status.code(), Some(1), "{yaml}: {output:?}");
+        assert_eq!(run(&["parse"], yaml).status.code(), Some(1), "{yaml}");
+    }
+}
+
+#[test]
+fn merge_error_reports_document_line_and_column() {
+    let yaml = "x: 1\n---\ny: 2\n---\nm:\n  <<: 1\n";
+    for command in ["format", "parse", "lint"] {
+        let output = run(&[command], yaml);
+        assert_eq!(output.status.code(), Some(1), "{command}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("line 6, column 3 (document 3)"),
+            "{command}: {stderr}"
+        );
+    }
+}
+
 #[test]
 fn parse_accepts_valid_merge_keys_in_later_documents() {
     let output = run(
