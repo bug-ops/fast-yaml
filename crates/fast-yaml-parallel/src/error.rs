@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use fast_yaml_core::DecodeError;
 use fast_yaml_core::ParseError as CoreParseError;
 use thiserror::Error;
 
@@ -31,12 +32,15 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    /// File is not valid UTF-8.
-    #[error("file is not valid UTF-8: {source}")]
-    Utf8 {
-        /// The underlying UTF-8 error.
+    /// File content is not UTF-8 text (unsupported encoding or invalid bytes).
+    #[error("{source}")]
+    Decode {
+        /// Path to the file that failed.
+        path: PathBuf,
+
+        /// The underlying decode error from fast-yaml-core.
         #[source]
-        source: std::str::Utf8Error,
+        source: DecodeError,
     },
 
     /// Failed to format a file.
@@ -99,12 +103,6 @@ pub enum Error {
 
 /// Result type for parallel operations.
 pub type Result<T> = std::result::Result<T, Error>;
-
-impl From<std::str::Utf8Error> for Error {
-    fn from(source: std::str::Utf8Error) -> Self {
-        Self::Utf8 { source }
-    }
-}
 
 #[cfg(test)]
 mod tests {

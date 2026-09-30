@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#524)
 - **Core**: `ParseError::Merge` becomes a struct variant `Merge { error, line, column, document }`, `From<MergeError> for ParseError` is removed, and `ParseError::relocated` takes a document count (#504) (#520)
 - **Core/Python/Node.js**: only a plain untagged `<<` is a merge key; quoted and tagged forms are ordinary keys (#478) (#494)
 - **Core/Python/Node.js**: a `<<` value other than a mapping or a sequence of mappings, or a `!!set`, is now an error (#481) (#494)
@@ -55,6 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Core**: `decode_input`, `decode_input_owned`, `DecodeError` and `UnsupportedEncoding` detect UTF-16/UTF-32 byte order marks when decoding raw input bytes (#334) (#524)
+- **CI**: `test-core-no-arena` job builds and tests `fast-yaml-core` without the `arena` feature (#410) (#524)
 - **Linter/Python/Node.js**: `max_input_bytes`/`maxInputBytes` lint option (1 B to 1 GiB, default 100 MiB) backed by core `MaxInputBytes` and `LintError::InputTooLarge` (#436) (#510)
 - **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
 - `--max-depth` and `--max-alias-bytes` on `fy parse`/`convert`/`lint`, plus `max_depth`/`max_alias_bytes` (`maxDepth`/`maxAliasBytes`) options in `fast-yaml-parallel`, the linter, and the Python and Node.js loaders, `ParallelConfig`, `LintConfig` and `BatchConfig` (#433)
@@ -97,6 +100,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CLI/Parallel/Linter**: UTF-16 and UTF-32 input, including lint config files, fails with an "unsupported encoding" message naming the encoding instead of a generic UTF-8 error (#334) (#524)
 - **Core/CLI/Parallel**: `fy format` and the batch formatters reject an invalid `<<` value instead of passing it through (#505) (#520)
 - **Core/CLI/Node.js**: merge errors report line, column and document of the rejected `<<` key (#504) (#520)
 - **Parallel**: `parse_files` reports the failing merge document index in `Error::Parse` instead of 0, and its message numbers documents from 1 (#503) (#520)
