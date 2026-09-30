@@ -3,7 +3,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use fast_yaml_core::{ParseError, Parser};
+use fast_yaml_core::{DecodeError, ParseError, Parser, decode_input_owned};
 use serde_norway::Value;
 
 use crate::config::{IndentSize, RuleConfigError, RuleName, RulesConfig};
@@ -50,6 +50,15 @@ pub enum ConfigFileError {
         path: PathBuf,
         /// Underlying I/O error.
         source: std::io::Error,
+    },
+
+    /// The config file is not UTF-8 text (unsupported encoding or invalid bytes).
+    #[error("failed to decode config file '{}'", .path.display())]
+    Decode {
+        /// Path that failed.
+        path: PathBuf,
+        /// Why the bytes could not be decoded.
+        source: DecodeError,
     },
 
     /// The config text parsed under the core parser but failed in `serde_norway`, for example
@@ -124,7 +133,11 @@ impl ConfigFile {
     /// the default [`fast_yaml_core::limits::ParseLimits`] exceeded), or when `rules:` contains an
     /// unknown rule, an unknown or mistyped option, or an invalid severity.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
-        let content = std::fs::read_to_string(path).map_err(|source| ConfigFileError::Io {
+        let bytes = std::fs::read(path).map_err(|source| ConfigFileError::Io {
+            path: path.to_owned(),
+            source,
+        })?;
+        let content = decode_input_owned(bytes).map_err(|source| ConfigFileError::Decode {
             path: path.to_owned(),
             source,
         })?;
@@ -275,6 +288,16 @@ mod tests {
     fn test_load_missing_file_returns_error() {
         let result = ConfigFile::load(Path::new("/nonexistent/path/.fast-yaml.yaml"));
         assert!(matches!(result, Err(ConfigFileError::Io { .. })));
+    }
+
+    #[test]
+    fn test_load_utf16_config_returns_decode_error() {
+        let mut f = NamedTempFile::new().unwrap();
+        f.write_all(&[0xFF, 0xFE, b'r', 0x00]).unwrap();
+        let err = ConfigFile::load(f.path()).unwrap_err();
+        assert!(matches!(err, ConfigFileError::Decode { .. }), "{err:?}");
+        let source = std::error::Error::source(&err).unwrap().to_string();
+        assert!(source.contains("UTF-16LE"), "{source}");
     }
 
     #[test]

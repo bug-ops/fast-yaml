@@ -39,6 +39,8 @@
 pub mod comments;
 /// YAML emitter for serializing documents to strings.
 pub mod emitter;
+/// Byte-level input decoding with byte order mark detection.
+pub mod encoding;
 /// Error types for parsing and emitting operations.
 pub mod error;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
@@ -61,6 +63,7 @@ pub mod streaming;
 
 pub use comments::{find_comments, has_comments};
 pub use emitter::{Emitter, EmitterConfig};
+pub use encoding::{DecodeError, UnsupportedEncoding, decode_input, decode_input_owned};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition};
 pub use limits::{
     DumpBudget, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
