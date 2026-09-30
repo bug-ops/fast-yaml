@@ -19,7 +19,7 @@ use crate::parser::strip_bom;
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML.
+/// Returns a [`ParseError`] if `input` is not valid YAML.
 ///
 /// # Examples
 ///
@@ -46,7 +46,7 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML.
+/// Returns a [`ParseError`] if `input` is not valid YAML.
 ///
 /// # Examples
 ///
