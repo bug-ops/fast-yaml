@@ -1,5 +1,6 @@
 //! Rule to check octal value representations.
 
+use crate::context::lines_of;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
@@ -83,7 +84,7 @@ impl super::LintRule for OctalValuesRule {
         }
 
         let mut diagnostics = Vec::new();
-        for (line_idx, line) in source.lines().enumerate() {
+        for (line_idx, line) in lines_of(source).enumerate() {
             let line_num = line_idx + 1;
             let line_offset = context.source_context().get_line_offset(line_num);
             self.check_line(

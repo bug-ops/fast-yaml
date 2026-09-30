@@ -1,5 +1,6 @@
 //! Rule to detect duplicate anchor definitions in YAML documents.
 
+use crate::context::source_lines;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
@@ -96,10 +97,7 @@ fn scan_duplicate_anchors(
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut state = ScanState::new();
 
-    // We need byte offsets of line starts for Span construction.
-    let mut line_start_offset: usize = 0;
-
-    for (line_idx, line) in source.lines().enumerate() {
+    for (line_idx, (line_start_offset, line)) in source_lines(source).enumerate() {
         let line_number = line_idx + 1; // 1-indexed
 
         // ── Document boundary: reset anchor map ──────────────────────────
@@ -108,7 +106,6 @@ fn scan_duplicate_anchors(
             && is_document_start(line)
         {
             seen.clear();
-            line_start_offset += line.len() + 1;
             continue;
         }
 
@@ -117,7 +114,6 @@ fn scan_duplicate_anchors(
             && state.block_scalar.is_none()
             && line.trim_start().starts_with('#')
         {
-            line_start_offset += line.len() + 1;
             continue;
         }
 
@@ -129,7 +125,6 @@ fn scan_duplicate_anchors(
                 state.block_scalar = None;
             } else {
                 // Still inside block scalar content — skip anchor scanning.
-                line_start_offset += line.len() + 1;
                 continue;
             }
         }
@@ -159,8 +154,6 @@ fn scan_duplicate_anchors(
             &mut diagnostics,
             severity,
         );
-
-        line_start_offset += line.len() + 1; // +1 for the '\n'
     }
 
     diagnostics

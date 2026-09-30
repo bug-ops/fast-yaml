@@ -1,5 +1,6 @@
 //! Main linter engine and configuration.
 
+use crate::context::lines_of;
 use crate::{Diagnostic, LintContext, Severity, config::RuleConfig, rules::RuleRegistry};
 use fast_yaml_core::{Parser, ScalarOwned, Value};
 use std::collections::{HashMap, HashSet};
@@ -528,8 +529,8 @@ fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
     let mut starts = Vec::with_capacity(doc_count);
     starts.push(1usize);
 
-    for (idx, line) in source.lines().enumerate() {
-        if line.trim_end_matches('\r') == "---" {
+    for (idx, line) in lines_of(source).enumerate() {
+        if line == "---" {
             starts.push(idx + 2); // line after `---` (1-based)
             if starts.len() == doc_count {
                 break;

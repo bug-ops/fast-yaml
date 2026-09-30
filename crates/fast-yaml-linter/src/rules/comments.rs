@@ -49,7 +49,6 @@ impl super::LintRule for CommentsRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let comments = context.comments();
 
         let rule_config = config.get_rule_config(self.code());
@@ -96,7 +95,7 @@ impl super::LintRule for CommentsRule {
                 // Find the line and check spacing before '#'
                 let line_num = comment.span.start.line;
                 let line_offset = context.source_context().get_line_offset(line_num);
-                if let Some(line) = source.lines().nth(line_num - 1) {
+                if let Some(line) = context.source_context().get_line(line_num) {
                     let comment_col = comment.span.start.offset - line_offset;
 
                     // Count spaces before '#'

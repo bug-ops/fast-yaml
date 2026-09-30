@@ -53,17 +53,12 @@ impl<'a> SourceMapper<'a> {
                 continue;
             };
 
-            let line_start_offset = self.context.get_line_offset(line_num);
-            let start = Location::new(line_num, col + 1, line_start_offset + col);
-            let end = Location::new(
-                line_num,
-                col + key.len() + 1,
-                line_start_offset + col + key.len(),
-            );
+            let start = self.context.line_start(line_num).add_bytes(col);
+            let span = self.context.span_at(start, key.len());
             self.key_positions
                 .entry(key.to_string())
                 .or_default()
-                .push(Span::new(start, end));
+                .push(span);
         }
     }
 
@@ -173,8 +168,10 @@ impl<'a> SourceMapper<'a> {
 
             // Check if it's a word boundary before the key
             let is_start_boundary = absolute_pos == 0 || {
-                let char_before = content.chars().nth(absolute_pos - 1).unwrap();
-                !char_before.is_alphanumeric() && char_before != '_'
+                content[..absolute_pos]
+                    .chars()
+                    .next_back()
+                    .is_none_or(|c| !c.is_alphanumeric() && c != '_')
             };
 
             if is_start_boundary {
@@ -185,7 +182,11 @@ impl<'a> SourceMapper<'a> {
                 }
             }
 
-            search_pos = absolute_pos + 1;
+            search_pos = absolute_pos
+                + content[absolute_pos..]
+                    .chars()
+                    .next()
+                    .map_or(1, char::len_utf8);
         }
 
         None
@@ -211,21 +212,10 @@ impl<'a> SourceMapper<'a> {
     /// ```
     pub fn find_colon_after_key(&self, key_span: Span) -> Option<Location> {
         let line = self.context.get_line(key_span.end.line)?;
-        let key_end_col = key_span.end.column.saturating_sub(1);
-
-        if key_end_col >= line.len() {
-            return None;
-        }
-
-        // Search for ':' after key
-        let rest = &line[key_end_col..];
-        rest.find(':').map(|offset| {
-            Location::new(
-                key_span.end.line,
-                key_end_col + offset + 1,
-                key_span.end.offset + offset,
-            )
-        })
+        let line_start = self.context.get_line_offset(key_span.end.line);
+        let key_end = key_span.end.offset.checked_sub(line_start)?;
+        let offset = line_start + key_end + line.get(key_end..)?.find(':')?;
+        Some(self.context.offset_to_location(offset))
     }
 
     /// Finds all occurrences of a specific character in the source.
@@ -248,10 +238,10 @@ impl<'a> SourceMapper<'a> {
 
         for line_num in 1..=self.context.line_count() {
             if let Some(line) = self.context.get_line(line_num) {
-                for (col, c) in line.chars().enumerate() {
-                    if c == ch && !Self::is_inside_string_at(line, col) {
-                        let offset = self.context.get_line_offset(line_num) + col;
-                        locations.push(Location::new(line_num, col + 1, offset));
+                let line_start = self.context.get_line_offset(line_num);
+                for (idx, c) in line.char_indices() {
+                    if c == ch && !Self::is_inside_string_at(line, idx) {
+                        locations.push(self.context.offset_to_location(line_start + idx));
                     }
                 }
             }
@@ -260,14 +250,14 @@ impl<'a> SourceMapper<'a> {
         locations
     }
 
-    /// Checks if a position is inside a quoted string.
-    fn is_inside_string_at(line: &str, col: usize) -> bool {
+    /// Checks if a byte position within `line` is inside a quoted string.
+    fn is_inside_string_at(line: &str, byte_pos: usize) -> bool {
         let mut in_single = false;
         let mut in_double = false;
         let mut escape = false;
 
-        for (i, ch) in line.chars().enumerate() {
-            if i >= col {
+        for (i, ch) in line.char_indices() {
+            if i >= byte_pos {
                 break;
             }
 
@@ -408,6 +398,12 @@ mod tests {
             SourceMapper::find_key_in_line("username: John", "name"),
             None
         );
+    }
+
+    #[test]
+    fn test_find_key_in_line_non_ascii_neighbours() {
+        assert_eq!(SourceMapper::find_key_in_line("aé: 1, é: 2", "é"), Some(8));
+        assert_eq!(SourceMapper::find_key_in_line("éé: 1", "é"), None);
     }
 
     #[test]

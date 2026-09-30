@@ -1,9 +1,6 @@
 //! Rule to check truthy value representations.
 
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 use std::collections::HashSet;
 
@@ -88,7 +85,7 @@ impl super::LintRule for TruthyRule {
 
         for (line_idx, (line, metadata)) in lines.iter().zip(line_metadata).enumerate() {
             let line_num = line_idx + 1;
-            let line_offset = context.source_context().get_line_offset(line_num);
+            let line_start = context.source_context().line_start(line_num);
 
             // Skip comment lines using cached metadata
             if metadata.is_comment {
@@ -120,15 +117,12 @@ impl super::LintRule for TruthyRule {
                         None
                     };
                     if let Some(msg) = key_msg {
-                        let key_start = line.find(key_trimmed).unwrap_or(0);
-                        let offset = line_offset + key_start;
+                        let key_start = key_part.len() - key_part.trim_start().len();
                         let severity =
                             config.get_effective_severity(self.code(), self.default_severity());
-                        let location = Location::new(line_num, 1, offset);
-                        let span = Span::new(
-                            location,
-                            Location::new(line_num, 1, offset + key_trimmed.len()),
-                        );
+                        let span = context
+                            .source_context()
+                            .span_at(line_start.add_bytes(key_start), key_trimmed.len());
                         diagnostics.push(
                             DiagnosticBuilder::new(self.code(), severity, msg, span)
                                 .build_with_context(context.source_context()),
@@ -173,15 +167,13 @@ impl super::LintRule for TruthyRule {
                     None
                 };
                 if let Some(msg) = val_msg {
-                    let value_start = line.find(value_token).unwrap_or(colon_pos + 1);
-                    let offset = line_offset + value_start;
+                    let value_start =
+                        colon_pos + 1 + value_part.len() - value_part.trim_start().len();
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
-                    let location = Location::new(line_num, 1, offset);
-                    let span = Span::new(
-                        location,
-                        Location::new(line_num, 1, offset + value_token.len()),
-                    );
+                    let span = context
+                        .source_context()
+                        .span_at(line_start.add_bytes(value_start), value_token.len());
                     diagnostics.push(
                         DiagnosticBuilder::new(self.code(), severity, msg, span)
                             .build_with_context(context.source_context()),
@@ -232,15 +224,13 @@ impl super::LintRule for TruthyRule {
                     None
                 };
                 if let Some(msg) = list_msg {
-                    let value_start = line.find(value_token).unwrap_or(hyphen_pos + 1);
-                    let offset = line_offset + value_start;
+                    let value_start =
+                        hyphen_pos + 1 + after_hyphen.len() - after_hyphen.trim_start().len();
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
-                    let location = Location::new(line_num, 1, offset);
-                    let span = Span::new(
-                        location,
-                        Location::new(line_num, 1, offset + value_token.len()),
-                    );
+                    let span = context
+                        .source_context()
+                        .span_at(line_start.add_bytes(value_start), value_token.len());
                     diagnostics.push(
                         DiagnosticBuilder::new(self.code(), severity, msg, span)
                             .build_with_context(context.source_context()),

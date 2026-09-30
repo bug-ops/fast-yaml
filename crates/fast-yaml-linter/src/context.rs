@@ -29,6 +29,49 @@ use std::sync::OnceLock;
 pub struct SourceContext<'a> {
     source: &'a str,
     line_starts: Vec<usize>,
+    line_ends: Vec<usize>,
+}
+
+/// Yields `(start, end)` byte bounds of every line, excluding terminators.
+///
+/// Lines end at `\n`, `\r\n` or a lone `\r`, matching saphyr's line counting. A final empty
+/// line after a trailing terminator (and the sole line of an empty source) is included.
+/// This is the single source of truth for line splitting in the crate.
+fn line_bounds(source: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
+    let bytes = source.as_bytes();
+    let mut start = 0;
+    let mut done = false;
+    std::iter::from_fn(move || {
+        if done {
+            return None;
+        }
+        let end = bytes[start..]
+            .iter()
+            .position(|b| matches!(b, b'\n' | b'\r'))
+            .map_or(bytes.len(), |rel| start + rel);
+        let line_start = start;
+        if end == bytes.len() {
+            done = true;
+        } else {
+            let crlf = bytes[end] == b'\r' && bytes.get(end + 1) == Some(&b'\n');
+            start = end + 1 + usize::from(crlf);
+        }
+        Some((line_start, end))
+    })
+}
+
+/// Yields `(byte_start, line)` for each line, like `str::lines` but with [`line_bounds`] splitting.
+///
+/// Use this instead of `str::lines` so line indices always agree with [`SourceContext`].
+pub fn source_lines(source: &str) -> impl Iterator<Item = (usize, &str)> {
+    line_bounds(source)
+        .filter(|&(start, _)| start < source.len())
+        .map(|(start, end)| (start, &source[start..end]))
+}
+
+/// Line-only variant of [`source_lines`].
+pub fn lines_of(source: &str) -> impl Iterator<Item = &str> {
+    source_lines(source).map(|(_, line)| line)
 }
 
 impl<'a> SourceContext<'a> {
@@ -46,21 +89,18 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn new(source: &'a str) -> Self {
-        let mut line_starts = vec![0];
-
-        for (idx, ch) in source.char_indices() {
-            if ch == '\n' {
-                line_starts.push(idx + 1);
-            }
-        }
+        let (line_starts, line_ends) = line_bounds(source).unzip();
 
         Self {
             source,
             line_starts,
+            line_ends,
         }
     }
 
-    /// Gets a specific line by number (1-indexed).
+    /// Gets a specific line by number (1-indexed), without its line terminator.
+    ///
+    /// `\n`, `\r\n` and lone `\r` all terminate a line.
     ///
     /// Returns `None` if the line number is out of bounds.
     ///
@@ -82,14 +122,7 @@ impl<'a> SourceContext<'a> {
             return None;
         }
 
-        let start = self.line_starts[line_number - 1];
-        let end = if line_number < self.line_starts.len() {
-            self.line_starts[line_number] - 1
-        } else {
-            self.source.len()
-        };
-
-        Some(&self.source[start..end])
+        Some(&self.source[self.line_starts[line_number - 1]..self.line_ends[line_number - 1]])
     }
 
     /// Extracts context lines around a span.
@@ -200,7 +233,18 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn offset_to_location(&self, offset: usize) -> Location {
-        let offset = offset.min(self.source.len());
+        self.location_at(ByteOffset::new(offset))
+    }
+
+    /// Typed, total form of [`offset_to_location`](Self::offset_to_location).
+    ///
+    /// Offsets past the end are clamped and offsets inside a multi-byte char are floored to
+    /// the char start, so this never panics.
+    pub(crate) fn location_at(&self, offset: ByteOffset) -> Location {
+        let mut offset = offset.get().min(self.source.len());
+        while !self.source.is_char_boundary(offset) {
+            offset -= 1;
+        }
 
         let line_idx = match self.line_starts.binary_search(&offset) {
             Ok(idx) => idx,
@@ -293,6 +337,19 @@ impl<'a> SourceContext<'a> {
         Span::new(self.location_of(span.start), self.location_of(span.end))
     }
 
+    /// Converts a byte range to a [`Span`] with line and char-column locations.
+    pub(crate) fn span_of_bytes(&self, range: ByteRange) -> Span {
+        Span::new(
+            self.location_at(range.start()),
+            self.location_at(range.end()),
+        )
+    }
+
+    /// Builds a [`Span`] covering `len` bytes starting at `start`.
+    pub(crate) fn span_at(&self, start: ByteOffset, len: usize) -> Span {
+        self.span_of_bytes(ByteRange::new(start, start.add_bytes(len)))
+    }
+
     /// Converts a saphyr span to a byte range.
     pub(crate) fn byte_range_of(&self, span: SaphyrSpan) -> ByteRange {
         ByteRange::new(
@@ -368,6 +425,60 @@ mod tests {
         let loc = ctx.offset_to_location(7);
         assert_eq!(loc.line, 1);
         assert_eq!(loc.column, 8);
+    }
+
+    #[test]
+    fn test_line_endings_lf_crlf_lone_cr() {
+        for source in ["a\nб\nc", "a\r\nб\r\nc", "a\rб\rc"] {
+            let ctx = SourceContext::new(source);
+            assert_eq!(ctx.line_count(), 3, "{source:?}");
+            assert_eq!(ctx.get_line(1), Some("a"));
+            assert_eq!(ctx.get_line(2), Some("б"));
+            assert_eq!(ctx.get_line(3), Some("c"));
+            let loc = ctx.offset_to_location(ctx.get_line_offset(3));
+            assert_eq!((loc.line, loc.column), (3, 1));
+        }
+        assert_eq!(SourceContext::new("a\r\nb").get_line_offset(2), 3);
+        assert_eq!(SourceContext::new("a\rb").get_line_offset(2), 2);
+    }
+
+    #[test]
+    fn test_lines_of_matches_str_lines_without_lone_cr() {
+        for source in [
+            "",
+            "a",
+            "a\n",
+            "a\n\n",
+            "a\r\nb\r\n",
+            "\n",
+            "a\r\n\r\nb",
+            "é\nж\r\n",
+        ] {
+            let expected: Vec<&str> = source.lines().collect();
+            let actual: Vec<&str> = lines_of(source).collect();
+            assert_eq!(actual, expected, "{source:?}");
+            assert_eq!(LintContext::new(source).lines(), expected.as_slice());
+        }
+    }
+
+    #[test]
+    fn test_source_lines_lone_cr_and_offsets() {
+        let source = "a\rб\r\nc\n";
+        let got: Vec<_> = source_lines(source).collect();
+        assert_eq!(got, [(0, "a"), (2, "б"), (6, "c")]);
+        let ctx = SourceContext::new(source);
+        for (i, (start, line)) in got.iter().enumerate() {
+            assert_eq!(ctx.get_line_offset(i + 1), *start);
+            assert_eq!(ctx.get_line(i + 1), Some(*line));
+        }
+    }
+
+    #[test]
+    fn test_location_at_is_total() {
+        let ctx = SourceContext::new("ключ: 1");
+        assert_eq!(ctx.offset_to_location(3).column, 2);
+        assert_eq!(ctx.offset_to_location(1000).column, 8);
+        assert_eq!(ctx.span_at(ByteOffset::new(6), 100).end.offset, 11);
     }
 
     #[test]
@@ -672,7 +783,7 @@ impl<'a> LintContext<'a> {
     /// ```
     #[must_use]
     pub fn lines(&self) -> &[&'a str] {
-        self.lines.get_or_init(|| self.source.lines().collect())
+        self.lines.get_or_init(|| lines_of(self.source).collect())
     }
 
     /// Returns pre-computed metadata for each line.
