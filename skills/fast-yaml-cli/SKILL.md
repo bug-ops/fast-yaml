@@ -440,6 +440,6 @@ After install, verify: `fy --version`
 
 ## Compatibility
 
-- **Rust version requirement:** 1.88.0+ (per `rust-version` in `Cargo.toml`)
+- **Rust version requirement:** 1.91.0+ (per `rust-version` in `Cargo.toml`)
 - **YAML spec:** YAML 1.2.2 (via `yaml-rust2` and `saphyr-parser`)
 - **Platforms:** Linux (x86_64, aarch64), macOS (x86_64, aarch64), Windows (manual binary)

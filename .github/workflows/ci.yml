@@ -206,7 +206,7 @@ jobs:
 
   # MSRV check - runs in parallel
   msrv:
-    name: Check MSRV (1.88.0)
+    name: Check MSRV (1.91.0)
     needs: [changes]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true'
     runs-on: ubuntu-latest
@@ -214,10 +214,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install Rust 1.88.0
+      - name: Install Rust 1.91.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: "1.88.0"
+          toolchain: "1.91.0"
 
 
       - name: Cache Cargo
