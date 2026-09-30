@@ -72,6 +72,21 @@ fn test_convert_yaml_to_json() {
 }
 
 #[test]
+fn test_convert_json_big_integer_key_and_value() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("9223372036854775808: -99999999999999999999\n!!int 99999999999999999999: x")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "\"9223372036854775808\": \"-99999999999999999999\"",
+        ))
+        .stdout(predicate::str::contains("\"99999999999999999999\": \"x\""));
+}
+
+#[test]
 fn test_convert_json_to_yaml() {
     Command::cargo_bin("fy")
         .unwrap()
