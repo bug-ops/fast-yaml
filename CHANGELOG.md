@@ -32,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Node.js**: numeric options reject negative, fractional, `NaN` and out-of-range values with `InvalidArg` instead of wrapping or truncating (#434)
 - **Node.js**: `LintConfig.rules` is read under depth and node limits, so deep or cyclic values throw an `InvalidArg` error instead of crashing the process, and `BigInt` values are rejected (#423) (#434)
 - **Node.js**: `processFiles`, `formatFiles` and `formatFilesInPlace` throw errors instead of returning them (#434)
-- **Core/Python**: `<<` merge keys share one implementation, so merged keys come first in every binding and a repeated `<<` keeps the last (#465) (#391) (#TBD)
+- **Core/Python**: `<<` merge keys share one implementation, so merged keys come first in every binding and a repeated `<<` keeps the last (#465) (#391) (#475)
 
 ### Added
 
