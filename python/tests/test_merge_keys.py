@@ -36,7 +36,11 @@ ORDERED_CASES = [
         [("y", 2)],
         id="repeated-merge-last-wins",
     ),
-    pytest.param("b: &b {x: 1, y: 2}\nm: {k: 0, <<: *b, y: 9}\n", [("x", 1), ("y", 9), ("k", 0)], id="flow-mapping"),
+    pytest.param(
+        "b: &b {x: 1, y: 2}\nm: {k: 0, <<: *b, y: 9}\n",
+        [("x", 1), ("y", 9), ("k", 0)],
+        id="flow-mapping",
+    ),
     pytest.param("m:\n  <<: {}\n  k: 0\n", [("k", 0)], id="empty-source"),
     pytest.param(
         "a: &a {x: 1}\nm:\n  <<: [*a, 5, null, [{w: 0}], {z: 3}]\n  k: 0\n",

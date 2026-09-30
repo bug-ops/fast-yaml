@@ -153,7 +153,9 @@ person:
     });
 
     it('should apply sequence merges in forward order with the earlier item winning', () => {
-      const result = safeLoad('a: &a {x: 1, p: A}\nb: &b {y: 2, p: B}\nm:\n  <<: [*a, *b]\n  k: 0\n') as {
+      const result = safeLoad(
+        'a: &a {x: 1, p: A}\nb: &b {y: 2, p: B}\nm:\n  <<: [*a, *b]\n  k: 0\n'
+      ) as {
         m: Record<string, unknown>;
       };
       expect(Object.entries(result.m)).toEqual([
