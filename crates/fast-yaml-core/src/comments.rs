@@ -3,7 +3,7 @@
 //! The formatter re-emits the parsed value tree and drops comments, so callers that must not
 //! lose them need to know beforehand whether the input has any.
 
-use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser, ScalarStyle};
+use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle};
 
 use crate::error::ParseResult;
 use crate::parser::strip_bom;
@@ -29,7 +29,8 @@ use crate::parser::strip_bom;
 /// ```
 pub fn has_comments(input: &str) -> ParseResult<bool> {
     let chars: Vec<char> = strip_bom(input).chars().collect();
-    let mut parser = SaphyrParser::new(BufferedInput::new(chars.iter().copied()));
+    let line_starts = line_starts(&chars);
+    let mut parser = SaphyrParser::new_from_str(strip_bom(input));
     let mut cursor = 0usize;
 
     while let Some(event) = parser.next_event() {
@@ -37,9 +38,10 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
         let Event::Scalar(_, style, _, _) = event else {
             continue;
         };
-        // `chars` is indexed by char offsets, which is what `Marker::index` yields
-        #[allow(clippy::disallowed_methods)]
-        let (start, end) = (span.start.index(), span.end.index());
+        let (start, end) = (
+            char_offset(&line_starts, span.start),
+            char_offset(&line_starts, span.end),
+        );
         if start == end || start < cursor {
             continue;
         }
@@ -54,6 +56,27 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
     }
 
     Ok(gap_has_comment(&chars, cursor, chars.len()))
+}
+
+/// Char offsets at which each line starts, splitting like saphyr (`\n`, `\r\n`, lone `\r`).
+fn line_starts(chars: &[char]) -> Vec<usize> {
+    let mut starts = vec![0];
+    for (i, &c) in chars.iter().enumerate() {
+        let ends_line = c == '\n' || (c == '\r' && chars.get(i + 1) != Some(&'\n'));
+        if ends_line {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+/// Converts a marker's line and column to a char offset; `Marker::index` is unusable because
+/// saphyr adds byte counts to it after non-ASCII directive names.
+#[allow(clippy::disallowed_methods)]
+fn char_offset(line_starts: &[usize], marker: Marker) -> usize {
+    line_starts
+        .get(marker.line().wrapping_sub(1))
+        .map_or(usize::MAX, |start| start + marker.col())
 }
 
 fn gap_has_comment(chars: &[char], from: usize, to: usize) -> bool {
@@ -88,6 +111,20 @@ mod tests {
 
     fn has(input: &str) -> bool {
         has_comments(input).unwrap()
+    }
+
+    #[test]
+    fn unterminated_directive_is_an_error() {
+        assert!(has_comments("%").is_err());
+        assert!(has_comments("a: 1\n%").is_err());
+    }
+
+    #[test]
+    fn non_ascii_directive_does_not_shift_offsets() {
+        assert!(has("%FOO ééééé\n---\na: b # c\n"));
+        assert!(!has("%FOO ééééé\n---\na: \"x # y\"\n"));
+        assert!(has("%ééééé x\n---\na: b # c\n"));
+        assert!(!has("%FOO 日本語日本語\n---\na: 'x # y'\n"));
     }
 
     #[test]

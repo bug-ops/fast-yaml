@@ -5,7 +5,7 @@ use crate::{
     SourceContext, Span,
 };
 use fast_yaml_core::Value;
-use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser};
+use saphyr_parser::{Event, Parser as SaphyrParser};
 use std::collections::HashMap;
 
 /// Rule to detect duplicate keys in YAML mappings.
@@ -67,8 +67,7 @@ fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<D
     let mut duplicates = Vec::new();
     let mut scopes: Vec<ScopeKind> = Vec::new();
 
-    let input = BufferedInput::new(source.chars());
-    let mut parser = SaphyrParser::new(input);
+    let mut parser = SaphyrParser::new_from_str(source);
 
     while let Some(Ok(ev)) = parser.next_event() {
         let (event, span) = ev;

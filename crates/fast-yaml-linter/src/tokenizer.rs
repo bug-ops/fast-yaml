@@ -4,7 +4,7 @@ use crate::{
     Location, SourceContext, Span,
     source::offset::{ByteOffset, ByteRange},
 };
-use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser, ScalarStyle};
+use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 /// Types of tokens in YAML flow syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -417,8 +417,7 @@ struct ScalarRanges {
 /// On parse error, returns the ranges collected before the error and records where
 /// parsing stopped.
 fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRanges {
-    let input = BufferedInput::new(source.chars());
-    let mut parser = SaphyrParser::new(input);
+    let mut parser = SaphyrParser::new_from_str(source);
     let mut ranges = ScalarRanges {
         block: Vec::new(),
         quoted: Vec::new(),

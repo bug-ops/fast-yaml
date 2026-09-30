@@ -5,7 +5,7 @@ use crate::{
     SourceContext, Span,
 };
 use fast_yaml_core::Value;
-use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser, ScalarStyle};
+use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 use super::LintRule;
 
@@ -87,8 +87,7 @@ impl super::LintRule for QuotedStringsRule {
         let mut diagnostics = Vec::new();
         let mut scopes: Vec<ScopeKind> = Vec::new();
 
-        let input = BufferedInput::new(source.chars());
-        let mut parser = SaphyrParser::new(input);
+        let mut parser = SaphyrParser::new_from_str(source);
 
         while let Some(Ok(ev)) = parser.next_event() {
             let (event, span) = ev;

@@ -3,9 +3,7 @@ use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::Value;
 use saphyr::{ScalarOwned, YamlLoader};
-use saphyr_parser::{
-    BufferedInput, Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag,
-};
+use saphyr_parser::{Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag};
 
 /// Parser for YAML documents.
 ///
@@ -136,7 +134,8 @@ fn load_documents(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> 
 }
 
 fn load_documents_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-    let mut parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
+    // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
+    let mut parser = SaphyrParser::new_from_str(strip_bom(input));
     let mut loader = YamlLoader::<Value>::default();
     loader.early_parse(false);
     let mut guard = LimitGuard::with_budget(budget.clone());
@@ -321,6 +320,25 @@ fn resolve_merge_keys(map: crate::value::Map) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unterminated_directive_errors_instead_of_hanging() {
+        for input in [
+            "%",
+            "%YAML",
+            "%TAG",
+            "%FOO",
+            "\n%",
+            "a\n...\n%",
+            "---\n%",
+            "a: 1\n%",
+            "\u{feff}%",
+            "a\n...\n%FOO bar",
+        ] {
+            assert!(Parser::parse_all(input).is_err(), "{input:?}");
+            assert!(Parser::parse_str(input).is_err(), "{input:?}");
+        }
+    }
 
     #[test]
     fn test_parse_str_simple() {
