@@ -319,7 +319,7 @@ impl Linter {
     /// # Errors
     ///
     /// Returns an error if the configuration is invalid.
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(config: Option<LintConfig>) -> napi::Result<Self> {
         let inner = match config {
             Some(cfg) => RustLinter::with_config(to_rust_lint_config(cfg)?),
@@ -329,7 +329,7 @@ impl Linter {
     }
 
     /// Creates a linter with all default rules enabled.
-    #[napi(factory)]
+    #[napi(factory, catch_unwind)]
     pub fn with_all_rules() -> Self {
         Self {
             inner: RustLinter::with_all_rules(),
@@ -341,7 +341,7 @@ impl Linter {
     /// # Errors
     ///
     /// Returns an error if the YAML cannot be parsed.
-    #[napi]
+    #[napi(catch_unwind)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn lint(&self, source: String) -> napi::Result<Vec<Diagnostic>> {
         self.inner
@@ -365,7 +365,7 @@ impl Linter {
 /// const { lint } = require('@fast-yaml/core');
 /// const diagnostics = lint('key: value\nkey: duplicate');
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn lint(source: String, config: Option<LintConfig>) -> napi::Result<Vec<Diagnostic>> {
     let linter = match config {

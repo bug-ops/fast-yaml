@@ -16,6 +16,8 @@ crate-type = ["cdylib"]
 [features]
 default = ["json-output"]
 json-output = ["fast-yaml-linter/json-output"]
+# Exposes panicking exports for tests; must not be enabled in release builds
+test-panic = []
 
 [dependencies]
 fast-yaml-core = { workspace = true }

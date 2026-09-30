@@ -6,9 +6,10 @@ use crate::conversion::yaml_to_js;
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
     Env, Result as NapiResult, Task,
-    bindgen_prelude::{AsyncTask, Unknown},
+    bindgen_prelude::{AsyncTask, Unknown, panic_to_error},
 };
 use napi_derive::napi;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Maximum thread count allowed.
 const MAX_THREADS: u32 = 128;
@@ -166,7 +167,7 @@ fn to_static(v: Unknown<'_>) -> Unknown<'static> {
 /// const docs = parseParallel(yaml);
 /// console.log(docs.length); // 3
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn parse_parallel(
     env: Env,
@@ -221,20 +222,50 @@ impl Task for ParseParallelTask {
     type JsValue = Vec<Unknown<'static>>;
 
     fn compute(&mut self) -> NapiResult<Self::Output> {
-        // Validate config in compute phase to properly return errors to user
-        let rust_config = self.config.to_rust_config()?;
+        contain_panic(|| {
+            // Validate config in compute phase to properly return errors to user
+            let rust_config = self.config.to_rust_config()?;
 
-        parse_parallel_with_config(&self.yaml_str, &rust_config)
-            .map_err(|e| napi::Error::from_reason(e.to_string()))
+            parse_parallel_with_config(&self.yaml_str, &rust_config)
+                .map_err(|e| napi::Error::from_reason(e.to_string()))
+        })
     }
 
     fn resolve(&mut self, env: Env, output: Self::Output) -> NapiResult<Self::JsValue> {
-        let mut js_docs = Vec::with_capacity(output.len());
-        for value in &output {
-            js_docs.push(to_static(yaml_to_js(&env, value)?));
-        }
-        Ok(js_docs)
+        contain_panic(|| {
+            let mut js_docs = Vec::with_capacity(output.len());
+            for value in &output {
+                js_docs.push(to_static(yaml_to_js(&env, value)?));
+            }
+            Ok(js_docs)
+        })
     }
+}
+
+/// Task that panics in `compute`, used to verify worker-thread panic containment.
+#[cfg(feature = "test-panic")]
+pub struct PanicTask;
+
+#[cfg(feature = "test-panic")]
+impl Task for PanicTask {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> NapiResult<Self::Output> {
+        contain_panic(|| panic!("test-panic: intentional async panic"))
+    }
+
+    fn resolve(&mut self, _env: Env, _output: Self::Output) -> NapiResult<Self::JsValue> {
+        Ok(())
+    }
+}
+
+/// Runs `f`, converting a panic into a JS-visible error.
+///
+/// `AsyncTask` phases run outside the `#[napi(catch_unwind)]` trampolines, where an
+/// unwinding panic would abort the Node process.
+pub(crate) fn contain_panic<T>(f: impl FnOnce() -> NapiResult<T>) -> NapiResult<T> {
+    catch_unwind(AssertUnwindSafe(f)).map_err(panic_to_error)?
 }
 
 /// Parse multi-document YAML in parallel (asynchronous).
@@ -260,7 +291,7 @@ impl Task for ParseParallelTask {
 /// const docs = await parseParallelAsync(yaml);
 /// console.log(docs); // [{ foo: 1 }, { bar: 2 }]
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn parse_parallel_async(
     yaml_str: String,

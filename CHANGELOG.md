@@ -42,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
 - Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)
+- Fix Node.js bindings aborting the process on a Rust panic; panics in sync and async exports now throw a catchable JS `Error` (#404)
 - Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#385)
 - Fix quadratic lint time on large files in `key-ordering` key lookup and flow-token block-scalar checks (#385)
 - Fix `fy format --dry-run` always reporting "would change": output is compared with the input in single-file, batch and stdin modes (#397)

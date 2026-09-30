@@ -43,7 +43,9 @@
   "scripts": {
     "build": "napi build --platform --release",
     "build:debug": "napi build --platform",
+    "build:test": "napi build --platform --features test-panic",
     "test": "vitest run",
+    "test:panic": "vitest run __test__/panic.spec.ts",
     "test:watch": "vitest",
     "test:verbose": "vitest run --reporter=verbose",
     "test:coverage": "vitest run --coverage",
