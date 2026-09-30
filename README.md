@@ -173,6 +173,41 @@ for diag in diagnostics:
     print(f"{diag.severity}: {diag.message} at line {diag.span.start.line}")
 ```
 
+### Inline Lint Directives
+
+Suppress diagnostics from within the YAML file (all surfaces: CLI, Python, Node.js):
+
+```yaml
+# fy: disable-file
+```
+
+`disable-file` suppresses the whole file. It must be an own-line comment before any YAML content; blank lines, other comments and `%YAML`/`%TAG` lines may precede it, `---` may not. Other verbs:
+
+```yaml
+# fy: disable line-length trailing-whitespace
+long: value
+# fy: enable line-length
+a: 1
+a: 2  # fy: disable-line duplicate-key
+# fy: disable-line duplicate-key
+a: 3
+```
+
+`disable` / `enable` open and close a block and must be own-line comments (inline ones are rejected with a warning); an inline `disable-line` covers its own line, a full-line one covers the next line. Text after the rule names (`# fy: disable x  # note`) is reported as a `lint-directive` warning; the names before it still apply, and a directive with no names plus trailing text is ignored. A block `disable` carries across `---` into following documents.
+
+- Verbs: `disable`, `enable`, `disable-line`, `disable-file`; with no rule names they apply to all rules. The `rule:` prefix on names is optional (`rule:line-length`).
+- `# yamllint ...` is accepted as an alias for `# fy: ...`; yamllint names map to fast-yaml codes (`key-duplicates` -> `duplicate-key`, `anchors` -> `invalid-anchor` + `undefined-alias`, `trailing-spaces` -> `trailing-whitespace`).
+- Unknown or malformed rule names, unknown `fy:` verbs, trailing text and misplaced `disable-file` produce one `lint-directive` warning per directive comment (severity and enablement are configurable like any rule, but a directive cannot suppress it). A directive whose names are all unknown suppresses nothing.
+- Syntax errors are never suppressed.
+
+**Limitations**
+
+- Matching is by the line where a diagnostic's span starts. An inline `disable-line` on the last line of a multi-line scalar or flow collection misses diagnostics reported on its first line.
+- Diagnostics inside block scalar bodies cannot carry a comment; use `disable` / `enable` around them.
+- `duplicate-key` is reported on the second occurrence of the key.
+- `document-start` and `empty-values` report at line 1 (`1:1`), so a full-line `disable-line` on line 1 (which targets line 2) misses them; use `disable` on line 1 or `disable-file`.
+- `lint-directive` is config-only and cannot be named in a directive.
+
 ### Parallel Processing (Document-Level)
 
 ```python

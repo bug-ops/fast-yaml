@@ -21,6 +21,7 @@ mod indentation;
 mod invalid_anchors;
 mod key_ordering;
 mod line_length;
+mod lint_directive;
 mod new_line_at_end_of_file;
 mod new_lines;
 mod octal_values;
@@ -46,6 +47,7 @@ pub use indentation::{IndentationOptions, IndentationRule};
 pub use invalid_anchors::{InvalidAnchorsOptions, InvalidAnchorsRule};
 pub use key_ordering::{KeyOrderingOptions, KeyOrderingRule};
 pub use line_length::{LineLengthOptions, LineLengthRule};
+pub use lint_directive::LintDirectiveRule;
 pub use new_line_at_end_of_file::NewLineAtEndOfFileRule;
 pub use new_lines::{LineEndingType, NewLinesOptions, NewLinesRule};
 pub use octal_values::{OctalValuesOptions, OctalValuesRule};
@@ -194,7 +196,7 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 23);
+    /// assert_eq!(registry.rules().len(), 24);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
@@ -273,7 +275,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 23);
+        assert_eq!(registry.rules().len(), 24);
     }
 
     #[test]
@@ -300,6 +302,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 23);
+        assert_eq!(registry.rules().len(), 24);
     }
 }

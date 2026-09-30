@@ -1,0 +1,9 @@
+# yamllint disable rule:key-duplicates
+a: 1
+a: 2
+# yamllint enable rule:key-duplicates
+b: 1
+b: 2
+c: 1  
+# yamllint disable-line rule:trailing-spaces
+d: 1  

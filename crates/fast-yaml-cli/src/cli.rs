@@ -223,6 +223,9 @@ pub enum Command {
 
     #[cfg(feature = "linter")]
     /// Lint YAML with diagnostics
+    ///
+    /// Diagnostics can be suppressed inline with `# fy: disable [rules]`, `# fy: enable [rules]`,
+    /// `# fy: disable-line [rules]` and `# fy: disable-file` (`# yamllint ...` is also accepted).
     Lint {
         /// Input paths (files, directories, or glob patterns).
         /// If empty, reads from stdin.

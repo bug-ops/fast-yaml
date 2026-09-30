@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
 - `--max-depth` and `--max-alias-bytes` on `fy parse`/`convert`/`lint`, plus `max_depth`/`max_alias_bytes` (`maxDepth`/`maxAliasBytes`) options in `fast-yaml-parallel`, the linter, and the Python and Node.js loaders, `ParallelConfig`, `LintConfig` and `BatchConfig` (#433)
+- **Linter**: inline suppression directives `# fy: disable|enable|disable-line|disable-file` (and `# yamllint ...`) with a `lint-directive` diagnostic for invalid ones; `fast-yaml-core` adds `find_comments`; `DiagnosticCode` is now `Ord` (#437)
 
 ### Changed
 

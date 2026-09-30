@@ -29,6 +29,7 @@
 
 mod context;
 mod diagnostic;
+mod directives;
 mod echo;
 mod linter;
 mod location;
