@@ -164,11 +164,21 @@ describe('Batch Processing', () => {
   });
 
   describe('BatchConfig', () => {
+    it('reports a per-file error for files larger than maxInputBytes', () => {
+      const big = path.join(tmpDir, 'big.yaml');
+      fs.writeFileSync(big, `key: ${'x'.repeat(200)}\n`);
+      const result = processFiles([big], { maxInputBytes: 64 });
+      expect(result.total).toBe(1);
+      expect(result.failed).toBe(1);
+      expect(result.errors[0].path).toBe(big);
+      expect(result.errors[0].message).toMatch(/exceeds maximum allowed 64 bytes/);
+    });
+
     it('should accept all options', () => {
       const config: BatchConfig = {
         workers: 4,
         mmapThreshold: 1024 * 1024,
-        maxInputSize: 50 * 1024 * 1024,
+        maxInputBytes: 50 * 1024 * 1024,
         sequentialThreshold: 2048,
         indent: 4,
         width: 120,

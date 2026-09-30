@@ -6,6 +6,7 @@
 use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
+use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes};
 use fast_yaml_linter::config::{IndentSize, RuleName};
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
@@ -515,7 +516,10 @@ impl PyLintConfig {
             .with_max_line_length(parse_max_line_length(max_line_length)?)
             .with_indent_size(parse_indent_size(indent_size)?)
             .with_parse_limits(parse_limits)
-            .with_max_input_bytes(limits::max_input_bytes(max_input_bytes)?);
+            .with_max_input_bytes(limits::bounded::<InputBytes>(
+                "max_input_bytes",
+                max_input_bytes,
+            )?);
 
         if require_document_start {
             inner = inner.with_document_start(MarkerPresence::Required);
@@ -576,7 +580,7 @@ impl PyLintConfig {
     /// Depth 512 needs about 1 MiB of thread stack and can abort on stacks of 512 KiB or less.
     fn with_max_depth(&self, depth: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
-            max_depth: limits::max_depth(depth)?,
+            max_depth: limits::bounded::<Depth>("max_depth", depth)?,
             ..self.inner.parse_limits
         };
         Ok(Self {
@@ -587,7 +591,7 @@ impl PyLintConfig {
     /// Sets the alias-expansion budget in bytes (1..=1 GiB, default 64 MiB); `None` resets to the default.
     fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
-            max_alias_bytes: limits::max_alias_bytes(bytes)?,
+            max_alias_bytes: limits::bounded::<AliasBytes>("max_alias_bytes", bytes)?,
             ..self.inner.parse_limits
         };
         Ok(Self {
@@ -603,7 +607,7 @@ impl PyLintConfig {
             inner: self
                 .inner
                 .clone()
-                .with_max_input_bytes(limits::max_input_bytes(bytes)?),
+                .with_max_input_bytes(limits::bounded::<InputBytes>("max_input_bytes", bytes)?),
         })
     }
 

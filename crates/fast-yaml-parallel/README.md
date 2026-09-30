@@ -125,18 +125,20 @@ assert!(result.is_success());
 |--------|---------|-------------|
 | `workers` | Auto (CPU cores) | Number of worker threads. `None` = auto, `Some(0)` = sequential |
 | `mmap_threshold` | 512 KB | Use memory-mapped I/O for files larger than this |
-| `max_input_size` | 100 MB | Maximum input size (DoS protection) |
+| `max_input_bytes` | 100 MB | Maximum input size (DoS protection); files are checked before being read |
+| `max_documents` | 100 000 | Maximum documents per input (DoS protection); checked before parsing |
 | `sequential_threshold` | 4 KB | Skip parallelism for inputs smaller than this |
 
 ### Configuration Example
 
 ```rust
-use fast_yaml_parallel::Config;
+use fast_yaml_parallel::{Config, MaxDocuments, MaxInputBytes};
 
 let config = Config::new()
     .with_workers(Some(8))              // 8 threads
     .with_mmap_threshold(1024 * 1024)   // 1 MB mmap threshold
-    .with_max_input_size(50 * 1024 * 1024) // 50 MB max
+    .with_max_input_bytes(MaxInputBytes::new(50 * 1024 * 1024)?) // 50 MB max
+    .with_max_documents(MaxDocuments::new(1_000)?)               // 1000 documents max
     .with_sequential_threshold(8192);   // 8 KB sequential threshold
 ```
 

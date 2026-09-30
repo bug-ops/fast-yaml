@@ -7,14 +7,10 @@ use crate::Schema;
 use crate::conversion::yaml_to_js;
 use crate::limits::parse_limits;
 use fast_yaml_core::Parser;
+use fast_yaml_core::limits::MaxInputBytes;
 use napi::{Env, bindgen_prelude::*};
 use napi_derive::napi;
 use saphyr::{ScalarOwned, YamlOwned};
-
-/// Maximum input size in bytes for `safe_load`/`safe_load_all` (100MB).
-///
-/// This limit prevents denial-of-service attacks via extremely large inputs.
-const MAX_INPUT_SIZE: usize = 100 * 1024 * 1024;
 
 /// Options for YAML parsing (js-yaml compatible).
 #[napi(object)]
@@ -100,15 +96,8 @@ pub fn safe_load(
         Err(e) => return throw_and_undefined(env, &e.reason),
     };
     // Validate input size to prevent DoS attacks
-    if yaml_str.len() > MAX_INPUT_SIZE {
-        return throw_and_undefined(
-            env,
-            &format!(
-                "input size {} exceeds maximum allowed {} (100MB)",
-                yaml_str.len(),
-                MAX_INPUT_SIZE
-            ),
-        );
+    if let Err(e) = MaxInputBytes::DEFAULT.check(yaml_str.len()) {
+        return throw_and_undefined(env, &e.to_string());
     }
 
     // Parse YAML string
@@ -177,15 +166,8 @@ pub fn safe_load_all(
         }
     };
     // Validate input size to prevent DoS attacks
-    if yaml_str.len() > MAX_INPUT_SIZE {
-        env.throw_error(
-            &format!(
-                "input size {} exceeds maximum allowed {} (100MB)",
-                yaml_str.len(),
-                MAX_INPUT_SIZE
-            ),
-            None,
-        )?;
+    if let Err(e) = MaxInputBytes::DEFAULT.check(yaml_str.len()) {
+        env.throw_error(&e.to_string(), None)?;
         return Ok(Vec::new());
     }
 
@@ -300,11 +282,6 @@ pub fn load_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_max_input_size() {
-        assert_eq!(MAX_INPUT_SIZE, 100 * 1024 * 1024);
-    }
 
     #[test]
     fn test_parse_simple() {

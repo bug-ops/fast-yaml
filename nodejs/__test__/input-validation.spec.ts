@@ -45,10 +45,10 @@ const cases: OptionCase[] = [
   { name: 'workers', call: (v) => processFiles([], { workers: v }), valid: 2, outOfRange: [129] },
   { name: 'mmapThreshold', call: (v) => processFiles([], { mmapThreshold: v }), valid: 1024 },
   {
-    name: 'maxInputSize (batch)',
-    call: (v) => processFiles([], { maxInputSize: v }),
+    name: 'maxInputBytes (batch)',
+    call: (v) => processFiles([], { maxInputBytes: v }),
     valid: 1024,
-    outOfRange: [1024 ** 3 + 1],
+    outOfRange: [0, 1024 ** 3 + 1],
   },
   {
     name: 'sequentialThreshold',
@@ -70,8 +70,8 @@ const cases: OptionCase[] = [
     outOfRange: [0],
   },
   {
-    name: 'maxInputSize (parallel)',
-    call: (v) => parseParallel(MULTI, { maxInputSize: v }),
+    name: 'maxInputBytes (parallel)',
+    call: (v) => parseParallel(MULTI, { maxInputBytes: v }),
     valid: 1024 * 1024,
     outOfRange: [0, 1024 ** 3 + 1],
   },
@@ -145,13 +145,13 @@ describe('numeric option validation', () => {
   it('enforces maxDocuments', () => {
     expect(parseParallel(MULTI, { maxDocuments: 2 })).toHaveLength(2);
     expect(() => parseParallel(MULTI, { maxDocuments: 1 })).toThrow(
-      /document 2 exceeds the limit of 1 documents/
+      /input has at least 2 documents, more than the maximum of 1/
     );
   });
 
   it('enforces maxDocuments asynchronously', async () => {
     await expect(parseParallelAsync(MULTI, { maxDocuments: 1 })).rejects.toThrow(
-      /document 2 exceeds the limit of 1 documents/
+      /input has at least 2 documents, more than the maximum of 1/
     );
   });
 
@@ -283,5 +283,15 @@ describe('lint rules input hardening', () => {
     const dup = 'k: 1\nk: 2\n';
     const diags = lint(dup, { rules: { 'duplicate-key': { enabled: false } } });
     expect(diags.some((d) => d.code === 'duplicate-key')).toBe(false);
+  });
+});
+
+describe('removed maxInputSize option', () => {
+  const renamed = /maxInputSize was renamed to maxInputBytes/;
+
+  it('throws for ParallelConfig and BatchConfig', () => {
+    expect(() => parseParallel(MULTI, { maxInputSize: 1024 })).toThrow(renamed);
+    expect(() => processFiles([], { maxInputSize: 1024 })).toThrow(renamed);
+    expect(() => formatFiles([], { maxInputSize: 1024 })).toThrow(renamed);
   });
 });

@@ -166,6 +166,16 @@ fn check_value(
                 );
             }
         }
+        Value::Tagged(_, inner) => check_value(
+            inner,
+            context,
+            index,
+            source,
+            case_sensitive,
+            config,
+            diagnostics,
+            cursor,
+        ),
         _ => {}
     }
 }
@@ -253,6 +263,15 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_key_ordering_checks_inside_tagged_set() {
+        let yaml = "s: !!set\n  b:\n  a:\nt: 1";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let context = LintContext::new(yaml);
+        let diagnostics = KeyOrderingRule.check(&context, &value, &LintConfig::default());
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     #[test]

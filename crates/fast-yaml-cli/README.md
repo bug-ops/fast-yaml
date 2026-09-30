@@ -165,11 +165,11 @@ fy lint --max-depth 64 config.yaml
 ### Input size limit
 
 `fy parse`, `fy convert`, `fy format` and `fy lint` reject any input file, including each file of a
-batch run, and stdin larger than `--max-input-size` (1 to 1GiB, default 100MiB; suffixes `KiB`,
-`MiB`, `GiB`).
+batch run, and stdin larger than `--max-input-bytes` (alias `--max-input-size`; 1 to 1GiB, default 100MiB; suffixes `KiB`,
+`MiB`, `GiB`). For `fy lint` the `max-input-bytes` key of `.fast-yaml.yaml` sets the limit when the flag is absent.
 
 ```bash
-fy parse --max-input-size 500MiB huge.yaml
+fy parse --max-input-bytes 500MiB huge.yaml
 ```
 
 ## Commands

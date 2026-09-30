@@ -10,7 +10,8 @@
 use crate::conversion::value_to_python;
 use crate::limits;
 use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
-use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig};
+use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes};
+use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, MaxDocuments};
 use fast_yaml_parallel::{
     Config as RustParallelConfig, Error as ParallelError, parse_parallel as rust_parse_parallel,
     parse_parallel_with_config,
@@ -23,19 +24,13 @@ use rayon::prelude::*;
 /// Maximum thread count allowed (capped by Rust implementation).
 const MAX_THREADS: usize = 128;
 
-/// Maximum input size in bytes (default 100MB, can be configured up to 1GB).
-const ABSOLUTE_MAX_INPUT_SIZE: usize = 1024 * 1024 * 1024; // 1GB
-
-/// Maximum document count (default 100k, can be configured up to 10M).
-const ABSOLUTE_MAX_DOCUMENTS: usize = 10_000_000;
-
 /// Configuration for parallel YAML processing.
 ///
 /// Controls thread pool size, chunking thresholds, and resource limits.
 ///
 /// Examples:
 ///     >>> from `fast_yaml`._core.parallel import `ParallelConfig`
-///     >>> config = `ParallelConfig(thread_count=8`, `max_input_size=200`*1024*1024)
+///     >>> config = `ParallelConfig(thread_count=8`, `max_input_bytes=200`*1024*1024)
 #[pyclass(
     module = "fast_yaml._core.parallel",
     name = "ParallelConfig",
@@ -45,7 +40,6 @@ const ABSOLUTE_MAX_DOCUMENTS: usize = 10_000_000;
 pub struct PyParallelConfig {
     inner: RustParallelConfig,
     auto_tune: bool,
-    max_documents: usize,
 }
 
 #[pymethods]
@@ -55,8 +49,8 @@ impl PyParallelConfig {
         thread_count=None,
         min_chunk_size=4096,
         max_chunk_size=10*1024*1024,
-        max_input_size=100*1024*1024,
-        max_documents=100_000,
+        max_input_bytes=None,
+        max_documents=None,
         auto_tune=true,
         max_depth=None,
         max_alias_bytes=None
@@ -66,8 +60,8 @@ impl PyParallelConfig {
         thread_count: Option<usize>,
         min_chunk_size: usize,
         max_chunk_size: usize,
-        max_input_size: usize,
-        max_documents: usize,
+        max_input_bytes: Option<&Bound<'_, PyAny>>,
+        max_documents: Option<&Bound<'_, PyAny>>,
         auto_tune: bool,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
@@ -94,24 +88,17 @@ impl PyParallelConfig {
             ));
         }
 
-        // Validate input size limit (max 1GB to prevent OOM)
-        if max_input_size == 0 || max_input_size > ABSOLUTE_MAX_INPUT_SIZE {
-            return Err(PyValueError::new_err(format!(
-                "max_input_size must be between 1 and {ABSOLUTE_MAX_INPUT_SIZE} (1GB)"
-            )));
-        }
-
-        // Validate document count limit (max 10M to prevent resource exhaustion)
-        if max_documents == 0 || max_documents > ABSOLUTE_MAX_DOCUMENTS {
-            return Err(PyValueError::new_err(format!(
-                "max_documents must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
-            )));
-        }
-
         let config = RustParallelConfig::new()
             .with_workers(thread_count)
             .with_sequential_threshold(min_chunk_size)
-            .with_max_input_size(max_input_size)
+            .with_max_input_bytes(limits::bounded::<InputBytes>(
+                "max_input_bytes",
+                max_input_bytes,
+            )?)
+            .with_max_documents(limits::bounded::<Documents>(
+                "max_documents",
+                max_documents,
+            )?)
             .with_parse_limits(parse_limits);
 
         // Note: max_chunk_size is validated but not stored in new Config API
@@ -120,7 +107,6 @@ impl PyParallelConfig {
         Ok(Self {
             inner: config,
             auto_tune,
-            max_documents,
         })
     }
 
@@ -143,45 +129,40 @@ impl PyParallelConfig {
         Ok(Self {
             inner: self.inner.clone().with_workers(count),
             auto_tune: self.auto_tune,
-            max_documents: self.max_documents,
         })
     }
 
-    /// Sets maximum total input size in bytes.
+    /// Sets maximum total input size in bytes; `None` resets to the default.
     ///
-    /// Default: 100MB (max: 1GB)
+    /// Default: 100 MiB (max: 1 GiB)
     ///
     /// Raises:
-    ///     `ValueError`: If size is 0 or exceeds 1GB
-    fn with_max_input_size(&self, size: usize) -> PyResult<Self> {
-        if size == 0 || size > ABSOLUTE_MAX_INPUT_SIZE {
-            return Err(PyValueError::new_err(format!(
-                "max_input_size must be between 1 and {ABSOLUTE_MAX_INPUT_SIZE} (1GB)"
-            )));
-        }
+    ///     `ValueError`: If bytes is outside 1..=1 GiB
+    ///     `TypeError`: If bytes is not an int (`bool` included)
+    fn with_max_input_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_max_input_size(size),
-            auto_tune: self.auto_tune,
-            max_documents: self.max_documents,
+            inner: self
+                .inner
+                .clone()
+                .with_max_input_bytes(limits::bounded::<InputBytes>("max_input_bytes", bytes)?),
+            ..self.clone()
         })
     }
 
-    /// Sets maximum number of documents allowed.
+    /// Sets maximum number of documents allowed; `None` resets to the default.
     ///
     /// Default: 100,000 (max: 10M)
     ///
     /// Raises:
-    ///     `ValueError`: If count is 0 or exceeds 10M
-    fn with_max_documents(&self, count: usize) -> PyResult<Self> {
-        if count == 0 || count > ABSOLUTE_MAX_DOCUMENTS {
-            return Err(PyValueError::new_err(format!(
-                "max_documents must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
-            )));
-        }
+    ///     `ValueError`: If count is outside 1..=10M
+    ///     `TypeError`: If count is not an int (`bool` included)
+    fn with_max_documents(&self, count: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone(),
-            auto_tune: self.auto_tune,
-            max_documents: count,
+            inner: self
+                .inner
+                .clone()
+                .with_max_documents(limits::bounded::<Documents>("max_documents", count)?),
+            ..self.clone()
         })
     }
 
@@ -200,7 +181,6 @@ impl PyParallelConfig {
         Ok(Self {
             inner: self.inner.clone().with_sequential_threshold(size),
             auto_tune: self.auto_tune,
-            max_documents: self.max_documents,
         })
     }
 
@@ -220,7 +200,6 @@ impl PyParallelConfig {
         Ok(Self {
             inner: self.inner.clone(),
             auto_tune: self.auto_tune,
-            max_documents: self.max_documents,
         })
     }
 
@@ -234,7 +213,6 @@ impl PyParallelConfig {
         Self {
             inner: self.inner.clone(),
             auto_tune: enabled,
-            max_documents: self.max_documents,
         }
     }
 
@@ -248,7 +226,7 @@ impl PyParallelConfig {
     ///     `TypeError`: If depth is not an int (`bool` included)
     fn with_max_depth(&self, depth: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = fast_yaml_core::ParseLimits {
-            max_depth: limits::max_depth(depth)?,
+            max_depth: limits::bounded::<Depth>("max_depth", depth)?,
             ..self.inner.parse_limits()
         };
         Ok(Self {
@@ -266,7 +244,7 @@ impl PyParallelConfig {
     ///     `TypeError`: If bytes is not an int (`bool` included)
     fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = fast_yaml_core::ParseLimits {
-            max_alias_bytes: limits::max_alias_bytes(bytes)?,
+            max_alias_bytes: limits::bounded::<AliasBytes>("max_alias_bytes", bytes)?,
             ..self.inner.parse_limits()
         };
         Ok(Self {
@@ -336,28 +314,12 @@ fn parse_parallel(
     source: &str,
     config: Option<PyParallelConfig>,
 ) -> PyResult<Py<PyAny>> {
-    // Capture max_documents before releasing GIL
-    let max_documents = config.as_ref().map(|cfg| cfg.max_documents);
-
-    // Release GIL for parallel processing
     let result = py.detach(|| match config {
         Some(cfg) => parse_parallel_with_config(source, &cfg.inner),
         None => rust_parse_parallel(source),
     });
 
     let values = result.map_err(|e: ParallelError| PyValueError::new_err(e.to_string()))?;
-
-    // Enforce document count limit
-    if let Some(limit) = max_documents
-        && values.len() > limit
-    {
-        return Err(PyValueError::new_err(format!(
-            "document count {} exceeds max_documents limit {}. Consider increasing \
-             max_documents or processing in batches.",
-            values.len(),
-            limit
-        )));
-    }
 
     // Convert Vec<Value> to Python list with pre-allocated capacity
     let mut py_values = Vec::with_capacity(values.len());
@@ -430,14 +392,11 @@ fn dump_parallel(
         yaml_values.push(yaml);
     }
 
-    // Validate against config limits
-    let max_docs = config.map_or(100_000, |cfg| cfg.max_documents);
-    if yaml_values.len() > max_docs {
+    let max_docs = config.map_or(MaxDocuments::DEFAULT, |cfg| cfg.inner.max_documents());
+    if yaml_values.len() > max_docs.get() {
         return Err(PyValueError::new_err(format!(
-            "document count {} exceeds max_documents limit {}. Consider increasing \
-             max_documents or processing in batches.",
+            "input has {} documents, more than the maximum of {max_docs}",
             yaml_values.len(),
-            max_docs
         )));
     }
 

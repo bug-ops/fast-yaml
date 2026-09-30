@@ -5,7 +5,7 @@
 //! same message shape as the core `LimitRangeError`.
 
 use fast_yaml_core::limits::{
-    LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits,
+    Bounded, Bounds, LimitRangeError, MaxDocuments, MaxInputBytes, ParseLimits,
 };
 use napi::Result as NapiResult;
 
@@ -15,38 +15,35 @@ fn core_error(option: &str, e: LimitRangeError) -> napi::Error {
     range_error(option, 1, e.max as u64, e.value)
 }
 
-fn max_depth(value: Option<f64>) -> NapiResult<MaxDepth> {
-    const OPTION: &str = "maxDepth";
+/// Validates an optional limit of kind `K`, defaulting to [`Bounded::DEFAULT`].
+pub(crate) fn bounded<K: Bounds>(option: &str, value: Option<f64>) -> NapiResult<Bounded<K>> {
     value.map_or_else(
-        || Ok(MaxDepth::default()),
+        || Ok(Bounded::default()),
         |v| {
-            let n = checked_uint(OPTION, v, 1, MaxDepth::MAX.get() as u64)?;
-            MaxDepth::new(n).map_err(|e| core_error(OPTION, e))
+            let n = checked_uint(option, v, 1, K::MAX as u64)?;
+            Bounded::new(n).map_err(|e| core_error(option, e))
         },
     )
 }
 
-fn max_alias_bytes(value: Option<f64>) -> NapiResult<MaxAliasBytes> {
-    const OPTION: &str = "maxAliasBytes";
-    value.map_or_else(
-        || Ok(MaxAliasBytes::default()),
-        |v| {
-            let n = checked_uint(OPTION, v, 1, MaxAliasBytes::MAX.get() as u64)?;
-            MaxAliasBytes::new(n).map_err(|e| core_error(OPTION, e))
-        },
-    )
+/// Rejects the removed `maxInputSize` option so a lowered limit is never silently ignored.
+pub(crate) fn reject_legacy_max_input_size(value: Option<f64>) -> NapiResult<()> {
+    value.map_or(Ok(()), |_| {
+        Err(napi::Error::new(
+            napi::Status::InvalidArg,
+            "maxInputSize was renamed to maxInputBytes",
+        ))
+    })
 }
 
 /// Validates an optional `maxInputBytes` value, defaulting to [`MaxInputBytes::DEFAULT`].
 pub(crate) fn max_input_bytes(value: Option<f64>) -> NapiResult<MaxInputBytes> {
-    const OPTION: &str = "maxInputBytes";
-    value.map_or_else(
-        || Ok(MaxInputBytes::default()),
-        |v| {
-            let n = checked_uint(OPTION, v, 1, MaxInputBytes::MAX.get() as u64)?;
-            MaxInputBytes::new(n).map_err(|e| core_error(OPTION, e))
-        },
-    )
+    bounded("maxInputBytes", value)
+}
+
+/// Validates an optional `maxDocuments` value, defaulting to [`MaxDocuments::DEFAULT`].
+pub(crate) fn max_documents(value: Option<f64>) -> NapiResult<MaxDocuments> {
+    bounded("maxDocuments", value)
 }
 
 /// Validates the optional `maxDepth` / `maxAliasBytes` pair into [`ParseLimits`].
@@ -57,8 +54,8 @@ pub(crate) fn parse_limits(
     max_alias_bytes_opt: Option<f64>,
 ) -> NapiResult<ParseLimits> {
     Ok(ParseLimits {
-        max_depth: max_depth(max_depth_opt)?,
-        max_alias_bytes: max_alias_bytes(max_alias_bytes_opt)?,
+        max_depth: bounded("maxDepth", max_depth_opt)?,
+        max_alias_bytes: bounded("maxAliasBytes", max_alias_bytes_opt)?,
         ..ParseLimits::default()
     })
 }
@@ -111,6 +108,31 @@ mod tests {
         assert_eq!(
             max_input_bytes(Some(0.0)).unwrap_err().reason,
             "maxInputBytes must be between 1 and 1073741824, got 0"
+        );
+    }
+
+    #[test]
+    fn legacy_max_input_size_is_rejected() {
+        assert!(reject_legacy_max_input_size(None).is_ok());
+        assert_eq!(
+            reject_legacy_max_input_size(Some(1.0)).unwrap_err().reason,
+            "maxInputSize was renamed to maxInputBytes"
+        );
+    }
+
+    #[test]
+    fn max_documents_defaults_and_bounds() {
+        assert_eq!(max_documents(None).unwrap(), MaxDocuments::DEFAULT);
+        assert_eq!(
+            max_documents(Some(10_000_000.0)).unwrap(),
+            MaxDocuments::MAX
+        );
+        for v in [0.0, -1.0, 1.5, f64::NAN, 10_000_001.0] {
+            assert!(max_documents(Some(v)).is_err(), "{v}");
+        }
+        assert_eq!(
+            max_documents(Some(0.0)).unwrap_err().reason,
+            "maxDocuments must be between 1 and 10000000, got 0"
         );
     }
 

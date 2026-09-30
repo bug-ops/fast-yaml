@@ -1,5 +1,6 @@
 //! Thread safety and concurrency tests.
 
+use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -265,14 +266,18 @@ fn test_config_builder_concurrent() {
     let handles: Vec<_> = (1..=10)
         .map(|i| {
             thread::spawn(move || {
+                let yaml = format!("---\nthread: {i}");
                 let config = Config::new()
                     .with_workers(Some(i))
                     .with_sequential_threshold(1024 * i)
-                    .with_max_input_size(10 * 1024 * 1024);
+                    .with_max_input_bytes(MaxInputBytes::new(yaml.len()).unwrap());
 
-                let yaml = format!("---\nthread: {i}");
                 let docs = parse_parallel_with_config(&yaml, &config).unwrap();
                 assert_eq!(docs.len(), 1);
+
+                let tighter =
+                    config.with_max_input_bytes(MaxInputBytes::new(yaml.len() - 1).unwrap());
+                assert!(parse_parallel_with_config(&yaml, &tighter).is_err());
             })
         })
         .collect();

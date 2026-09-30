@@ -285,7 +285,7 @@ fn enables_rule(entry: &Value) -> bool {
     }
 }
 
-const fn value_kind(value: &Value) -> &'static str {
+pub(super) const fn value_kind(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
         Value::Bool(_) => "a boolean",

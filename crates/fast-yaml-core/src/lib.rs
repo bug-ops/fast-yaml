@@ -70,9 +70,13 @@ pub use encoding::{DecodeError, UnsupportedEncoding, decode_input, decode_input_
 pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition};
 pub use limits::{
     DumpBudget, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
-    MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits, StreamBudget,
+    MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
+    StreamBudget,
 };
-pub use merge::{MergeError, MergeSource, MergeTarget, merge_into};
+pub use merge::{
+    MergeError, MergeKeyValidator, MergeSource, MergeTarget, NodeRole, core_set_tag,
+    is_core_set_tag, merge_into,
+};
 pub use parser::{Parser, canonicalize, reject_nul, strip_bom};
 pub use scalar::{BigInt, IntRadix, ResolvedScalar, resolve_scalar};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

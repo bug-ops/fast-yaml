@@ -18,6 +18,7 @@ use std::collections::HashSet;
 use saphyr_parser::{Event, ScalarStyle, Tag};
 use thiserror::Error;
 
+pub use crate::merge_check::MergeKeyValidator;
 use crate::value::{Map, Value};
 
 /// Handle of the stand-in tag that keeps `!!set` visible after loading.
@@ -26,8 +27,46 @@ use crate::value::{Map, Value};
 const SET_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0";
 
 /// Whether `tag` is the core-schema `!!set` tag.
-pub(crate) fn is_core_set_tag(tag: &Tag) -> bool {
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{Value, core_set_tag, is_core_set_tag};
+///
+/// assert!(is_core_set_tag(&core_set_tag()));
+/// let Some(Value::Tagged(tag, _)) = fast_yaml_core::Parser::parse_str("!!set {a}")? else {
+///     unreachable!()
+/// };
+/// assert!(is_core_set_tag(&tag));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[must_use]
+pub fn is_core_set_tag(tag: &Tag) -> bool {
     tag.is_yaml_core_schema() && tag.suffix == "set"
+}
+
+/// The core-schema `!!set` tag that marks a set in parsed values.
+///
+/// A parsed `!!set` mapping is `Value::Tagged(core_set_tag(), Mapping{key: null, ..})`; use this
+/// to build the same shape by hand.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{Emitter, Map, ScalarOwned, Value, core_set_tag};
+///
+/// let mut members = Map::new();
+/// members.insert(Value::Value(ScalarOwned::String("a".into())), Value::Value(ScalarOwned::Null));
+/// let set = Value::Tagged(core_set_tag(), Box::new(Value::Mapping(members)));
+/// assert!(Emitter::emit_str(&set)?.contains("!!set"));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[must_use]
+pub fn core_set_tag() -> Tag {
+    Tag {
+        handle: "tag:yaml.org,2002:".into(),
+        suffix: "set".into(),
+    }
 }
 
 pub(crate) fn set_marker_tag() -> Tag {
@@ -41,14 +80,20 @@ pub(crate) fn is_set_marker(tag: &Tag) -> bool {
     tag.handle == SET_MARKER_HANDLE && tag.suffix == "set"
 }
 
-/// Structural role of a node within its parent, as seen by [`MergeKeyTracker`].
+/// Structural role of a node within its parent, as reported by
+/// [`MergeKeyValidator::observe`](crate::MergeKeyValidator::observe).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum NodeRole {
+#[non_exhaustive]
+pub enum NodeRole {
+    /// Top-level node of a document.
     Root,
+    /// Item of a sequence.
     Item,
+    /// Ordinary mapping key.
     Key,
     /// Plain untagged `<<` key, or an alias in key position to an anchored one.
     MergeKey,
+    /// Mapping value.
     Value,
 }
 
@@ -56,7 +101,7 @@ pub(crate) enum NodeRole {
 ///
 /// The single definition of which keys are merge keys, shared by the loader and the streaming
 /// formatter.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(crate) struct MergeKeyTracker {
     /// Open containers: whether each is a mapping, and how many child nodes it has received.
     frames: Vec<(bool, usize)>,
@@ -217,7 +262,9 @@ impl MergeTarget for Map {
         Ok(match node {
             Value::Mapping(map) => MergeSource::Mapping(map),
             Value::Sequence(items) => MergeSource::Sequence(items),
-            Value::Tagged(tag, _) if is_set_marker(&tag) => MergeSource::Set,
+            Value::Tagged(tag, _) if is_set_marker(&tag) || is_core_set_tag(&tag) => {
+                MergeSource::Set
+            }
             _ => MergeSource::Other,
         })
     }

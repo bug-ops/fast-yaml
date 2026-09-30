@@ -1,5 +1,6 @@
 //! Integration tests for fast-yaml-parallel using YAML spec fixtures.
 
+use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 use std::fs;
@@ -121,13 +122,16 @@ fn test_parallel_with_min_chunk_size() {
 }
 
 #[test]
-fn test_parallel_with_max_chunk_size() {
+fn test_input_limit_boundary() {
     let yaml = "---\na: 1\n---\nb: 2";
+    let at_limit = Config::new().with_max_input_bytes(MaxInputBytes::new(yaml.len()).unwrap());
+    assert_eq!(
+        parse_parallel_with_config(yaml, &at_limit).unwrap().len(),
+        2
+    );
 
-    // Custom max chunk size
-    let config = Config::new().with_max_input_size(5 * 1024 * 1024);
-    let docs = parse_parallel_with_config(yaml, &config).unwrap();
-    assert_eq!(docs.len(), 2);
+    let below = Config::new().with_max_input_bytes(MaxInputBytes::new(yaml.len() - 1).unwrap());
+    assert!(parse_parallel_with_config(yaml, &below).is_err());
 }
 
 #[test]

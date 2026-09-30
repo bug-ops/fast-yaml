@@ -16,6 +16,13 @@ describe('Core API - Parser', () => {
   });
 
   describe('safeLoad', () => {
+    it('should report complex keys with a readable message', () => {
+      expect(() => safeLoad('? !!set {a}\n: 1')).toThrow(
+        'YAML complex keys (sequences or mappings as keys) are not supported as JavaScript object keys'
+      );
+      expect(() => safeLoad('? [a, b]\n: 1')).toThrow(/complex keys/);
+    });
+
     it('should parse simple YAML', () => {
       const result = safeLoad('name: test\nvalue: 123');
       expect(result).toEqual({ name: 'test', value: 123 });
