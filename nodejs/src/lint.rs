@@ -92,7 +92,11 @@ pub struct ContextLine {
     pub line_number: u32,
     /// Source text content.
     pub content: String,
-    /// Highlight ranges as [[start, end], ...] (column positions).
+    /// Number of chars of the line dropped before `content`.
+    pub column_offset: u32,
+    /// Whether chars of the line were dropped after `content`.
+    pub truncated_end: bool,
+    /// Highlight ranges as [[start, end], ...] (absolute column positions).
     pub highlights: Vec<Vec<u32>>,
 }
 
@@ -101,6 +105,8 @@ impl From<RustContextLine> for ContextLine {
         Self {
             line_number: u32::try_from(line.line_number).unwrap_or(u32::MAX),
             content: line.content,
+            column_offset: u32::try_from(line.column_offset).unwrap_or(u32::MAX),
+            truncated_end: line.truncated_end,
             highlights: line
                 .highlights
                 .into_iter()
