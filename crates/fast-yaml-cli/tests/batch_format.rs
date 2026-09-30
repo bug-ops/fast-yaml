@@ -561,7 +561,7 @@ fn test_bracket_shaped_missing_path_fails() {
     ])
     .assert()
     .failure()
-    .stderr(predicate::str::contains("glob pattern matched no files"));
+    .stderr(predicate::str::contains("path does not exist"));
 }
 
 #[test]
@@ -970,10 +970,10 @@ fn test_in_place_with_dry_run_leaves_file_untouched() {
 
 #[test]
 fn test_malformed_glob_fails() {
-    fy().args(["format", "--dry-run", "a["])
+    fy().args(["format", "--dry-run", "a*["])
         .assert()
         .code(1)
-        .stderr(predicate::str::contains("invalid glob pattern 'a['"));
+        .stderr(predicate::str::contains("invalid glob pattern 'a*['"));
 }
 
 #[test]

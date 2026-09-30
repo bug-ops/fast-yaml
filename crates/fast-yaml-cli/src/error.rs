@@ -18,19 +18,9 @@ pub enum ExitCode {
     WouldChange = 5,
 }
 
-/// Errors that can occur during file discovery.
+/// Why a single path cannot be used as input.
 #[derive(Debug, Error)]
-pub enum DiscoveryError {
-    /// Invalid globset pattern (from include/exclude patterns)
-    #[error("invalid glob pattern '{pattern}': {source}")]
-    InvalidPattern {
-        /// The pattern that was invalid
-        pattern: String,
-        /// The underlying error
-        #[source]
-        source: globset::Error,
-    },
-
+pub enum PathError {
     /// IO error during directory traversal
     #[error("failed to read '{path}': {source}")]
     IoError {
@@ -60,6 +50,65 @@ pub enum DiscoveryError {
     PathNotFound {
         /// The path that was not found
         path: PathBuf,
+    },
+
+    /// A path that must name a regular file does not (for example a directory on stdin)
+    #[error("not a regular file: '{path}'")]
+    NotAFile {
+        /// The offending path
+        path: PathBuf,
+    },
+
+    /// An explicitly named file is rejected by the include patterns
+    #[error(
+        "not matched by the include patterns (default: *.yaml, *.yml; see --include): '{path}'"
+    )]
+    NotIncluded {
+        /// The rejected path
+        path: PathBuf,
+    },
+}
+
+/// Why a `--stdin-files` line was rejected.
+#[derive(Debug, Error)]
+pub enum StdinLineCause {
+    /// The line exceeds the length limit
+    #[error("line exceeds {max} bytes")]
+    TooLong {
+        /// The limit in bytes
+        max: usize,
+    },
+
+    /// The path on the line cannot be used
+    #[error(transparent)]
+    Path(#[from] PathError),
+}
+
+/// Errors that can occur during file discovery.
+#[derive(Debug, Error)]
+pub enum DiscoveryError {
+    /// Invalid globset pattern (from include/exclude patterns)
+    #[error("invalid glob pattern '{pattern}': {source}")]
+    InvalidPattern {
+        /// The pattern that was invalid
+        pattern: String,
+        /// The underlying error
+        #[source]
+        source: globset::Error,
+    },
+
+    /// A single path cannot be used as input
+    #[error(transparent)]
+    Path(#[from] PathError),
+
+    /// A `--stdin-files` line was rejected
+    #[error("rejected --stdin-files line {line}")]
+    StdinLine {
+        /// 1-based line number
+        line: usize,
+        /// Why the line was rejected
+        #[source]
+        cause: StdinLineCause,
     },
 
     /// Glob pattern matched nothing

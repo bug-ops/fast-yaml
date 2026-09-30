@@ -87,6 +87,9 @@ fy format -i -j 8 large-project/
 
 # Read file paths from stdin
 find . -name "*.yaml" | fy format -i --stdin-files
+
+# Changed YAML files only (deleted and non-YAML entries are errors)
+git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy format -i --stdin-files
 ```
 
 > [!TIP]
@@ -186,7 +189,7 @@ fy lint --max-depth 64 config.yaml
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
 | `--jobs` | `-j` | Number of parallel workers (0 = auto) | auto-detect |
-| `--stdin-files` | - | Read file paths from stdin | - |
+| `--stdin-files` | - | Read file paths from stdin; a missing path, directory, non-YAML file or line over 4096 bytes is an error | - |
 | `--include` | - | Include pattern (glob) | all files |
 | `--exclude` | - | Exclude pattern (glob) | none |
 | `--no-recursive` | - | Disable recursive directory traversal | recursive |
