@@ -287,6 +287,10 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 
+      - name: Run doctests
+        # nextest does not run doctests
+        run: cargo test --doc --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
+
 
   # Code coverage (Linux only)
   coverage:

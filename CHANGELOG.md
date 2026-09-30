@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix `fy lint` panic on non-ASCII text before block scalars containing flow delimiters and on unbalanced `{}`/`[]` (#307)
 - Strip a leading UTF-8 BOM before parsing, linting, formatting, and conversion across core, linter, parallel, CLI, and Python; `fy format` now drops the BOM (#331)
+- Make the linter flow tokenizer ignore delimiters inside comments and quoted scalars, fixing false `braces`/`brackets` diagnostics (#345)
+- Fix 24 failing doctests in `fast-yaml-core` and `fast-yaml-linter` and run doctests in CI (#345)
 
 ## [0.6.6] - 2026-08-26
 

@@ -46,7 +46,7 @@ fn strip_inline_comment(line: &str) -> &str {
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(yaml, &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct OctalValuesRule;

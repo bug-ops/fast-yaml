@@ -15,13 +15,14 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_core::Parser;
 /// use fast_yaml_linter::{rules::NewLineAtEndOfFileRule, rules::LintRule, LintConfig};
 ///
 /// let rule = NewLineAtEndOfFileRule;
 /// let yaml = "name: John\n";  // Ends with newline - OK
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let diagnostics = rule.check(yaml, &value, &LintConfig::new());
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &LintConfig::new());
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct NewLineAtEndOfFileRule;

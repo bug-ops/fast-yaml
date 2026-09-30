@@ -42,7 +42,7 @@ impl Token {
 /// Tokenizes flow collection syntax in YAML source.
 ///
 /// Accurately identifies flow syntax elements while ignoring tokens
-/// inside quoted strings.
+/// inside quoted strings and comments.
 ///
 /// # Examples
 ///
@@ -60,6 +60,7 @@ pub struct FlowTokenizer<'a> {
     _source: &'a str,
     context: &'a SourceContext<'a>,
     block_scalar_ranges: Vec<(usize, usize)>,
+    masked_ranges: Vec<(usize, usize)>,
 }
 
 impl<'a> FlowTokenizer<'a> {
@@ -76,16 +77,19 @@ impl<'a> FlowTokenizer<'a> {
     /// ```
     #[must_use]
     pub fn new(source: &'a str, context: &'a SourceContext<'a>) -> Self {
+        let scalars = collect_scalar_ranges(source);
+        let masked_ranges = collect_masked_ranges(source, &scalars);
         Self {
             _source: source,
             context,
-            block_scalar_ranges: collect_block_scalar_ranges(source),
+            block_scalar_ranges: scalars.block,
+            masked_ranges,
         }
     }
 
     /// Finds all tokens of a specific type in the source.
     ///
-    /// Ignores tokens inside quoted strings.
+    /// Ignores tokens inside quoted strings and comments.
     ///
     /// # Examples
     ///
@@ -110,7 +114,7 @@ impl<'a> FlowTokenizer<'a> {
 
                 let mut char_col = 0usize;
                 for (byte_col, c) in line.char_indices() {
-                    if c == ch && !Self::is_inside_string_at(line, byte_col) {
+                    if c == ch && !self.is_masked(line_start_offset + byte_col) {
                         // For hyphen, only match at start of line or after whitespace
                         if token_type == TokenType::Hyphen
                             && !Self::is_list_item_hyphen(line, byte_col)
@@ -170,8 +174,8 @@ impl<'a> FlowTokenizer<'a> {
     /// let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
     /// let tokens = tokenizer.find_in_span(span);
     ///
-    /// // Should find {, :, }
-    /// assert_eq!(tokens.len(), 3);
+    /// // Should find `:`, `{`, `:`, `}`
+    /// assert_eq!(tokens.len(), 4);
     /// ```
     #[must_use]
     pub fn find_in_span(&self, span: Span) -> Vec<Token> {
@@ -199,7 +203,7 @@ impl<'a> FlowTokenizer<'a> {
                     }
 
                     // Skip if inside string
-                    if Self::is_inside_string_at(line, byte_col) {
+                    if self.is_masked(offset) {
                         char_col += 1;
                         continue;
                     }
@@ -358,33 +362,12 @@ impl<'a> FlowTokenizer<'a> {
         in_plain_scalar
     }
 
-    /// Checks if a position is inside a quoted string.
-    ///
-    /// Handles both single and double quotes with escape sequences.
-    fn is_inside_string_at(line: &str, byte_col: usize) -> bool {
-        let mut in_single = false;
-        let mut in_double = false;
-        let mut escape = false;
-
-        for (byte_i, ch) in line.char_indices() {
-            if byte_i >= byte_col {
-                break;
-            }
-
-            if escape {
-                escape = false;
-                continue;
-            }
-
-            match ch {
-                '\\' if in_single || in_double => escape = true,
-                '\'' if !in_double => in_single = !in_single,
-                '"' if !in_single => in_double = !in_double,
-                _ => {}
-            }
-        }
-
-        in_single || in_double
+    /// Checks if a byte offset falls inside a comment or quoted scalar.
+    fn is_masked(&self, offset: usize) -> bool {
+        let idx = self
+            .masked_ranges
+            .partition_point(|&(start, _)| start <= offset);
+        idx > 0 && offset < self.masked_ranges[idx - 1].1
     }
 
     /// Checks if a hyphen at a position is a list item marker.
@@ -420,16 +403,27 @@ impl<'a> FlowTokenizer<'a> {
     }
 }
 
-/// Collects byte ranges of all block scalar values (`|` literal, `>` folded) in `source`.
+/// Byte ranges of scalars that the parser reports as block or quoted.
+struct ScalarRanges {
+    block: Vec<(usize, usize)>,
+    quoted: Vec<(usize, usize)>,
+    /// Byte offset from which the parser produced no events because of a syntax error.
+    unparsed_from: Option<usize>,
+}
+
+/// Collects byte ranges of block scalars (`|` literal, `>` folded) and quoted scalars.
 ///
-/// Returns a list of `(start_byte, end_byte)` pairs covering the scalar content
-/// (end is one past its last byte).
 /// Saphyr reports char indices, which are converted to byte offsets here.
-/// On parse error, returns whatever ranges were collected before the error.
-fn collect_block_scalar_ranges(source: &str) -> Vec<(usize, usize)> {
+/// On parse error, returns the ranges collected before the error and records where
+/// parsing stopped.
+fn collect_scalar_ranges(source: &str) -> ScalarRanges {
     let input = BufferedInput::new(source.chars());
     let mut parser = SaphyrParser::new(input);
-    let mut ranges = Vec::new();
+    let mut ranges = ScalarRanges {
+        block: Vec::new(),
+        quoted: Vec::new(),
+        unparsed_from: None,
+    };
 
     let char_to_byte: Vec<usize> = source
         .char_indices()
@@ -443,10 +437,143 @@ fn collect_block_scalar_ranges(source: &str) -> Vec<(usize, usize)> {
             .unwrap_or(source.len())
     };
 
-    while let Some(Ok((event, span))) = parser.next_event() {
-        if let Event::Scalar(_, ScalarStyle::Literal | ScalarStyle::Folded, ..) = event {
-            ranges.push((to_byte(span.start.index()), to_byte(span.end.index())));
+    let mut parsed_until = 0usize;
+    loop {
+        match parser.next_event() {
+            Some(Ok((event, span))) => {
+                let range = (to_byte(span.start.index()), to_byte(span.end.index()));
+                parsed_until = range.1;
+                if let Event::Scalar(_, style, ..) = event {
+                    match style {
+                        ScalarStyle::Literal | ScalarStyle::Folded => ranges.block.push(range),
+                        ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
+                            ranges.quoted.push(range);
+                        }
+                        ScalarStyle::Plain => {}
+                    }
+                }
+            }
+            Some(Err(_)) => {
+                ranges.unparsed_from = Some(parsed_until);
+                break;
+            }
+            None => break,
         }
+    }
+
+    ranges
+}
+
+/// Collects sorted byte ranges of comments and quoted scalars in `source`.
+///
+/// Quoted scalars come from the parser. A `#` starts a comment only at the start of
+/// a line or after whitespace. Past a parse error, quotes are detected heuristically
+/// (opening after whitespace or a flow indicator, closing at the latest at end of
+/// line) so that stray quotes cannot mask the rest of the file.
+fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<(usize, usize)> {
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Code,
+        Comment,
+        Single,
+        Double,
+    }
+
+    let mut ranges = Vec::new();
+    let mut mode = Mode::Code;
+    let mut start = 0usize;
+    let mut prev = None::<char>;
+    let mut block_idx = 0usize;
+    let mut quoted_idx = 0usize;
+    let mut chars = source.char_indices().peekable();
+
+    while let Some((offset, ch)) = chars.next() {
+        match mode {
+            Mode::Code => {
+                while scalars
+                    .block
+                    .get(block_idx)
+                    .is_some_and(|&(_, end)| end <= offset)
+                {
+                    block_idx += 1;
+                }
+                if scalars
+                    .block
+                    .get(block_idx)
+                    .is_some_and(|&(block_start, _)| block_start <= offset)
+                {
+                    prev = None;
+                    continue;
+                }
+
+                while scalars
+                    .quoted
+                    .get(quoted_idx)
+                    .is_some_and(|&(_, end)| end <= offset)
+                {
+                    quoted_idx += 1;
+                }
+                if let Some(&(quoted_start, quoted_end)) = scalars.quoted.get(quoted_idx)
+                    && quoted_start <= offset
+                {
+                    if quoted_start == offset {
+                        ranges.push((quoted_start, quoted_end));
+                    }
+                    prev = Some(ch);
+                    continue;
+                }
+
+                let at_boundary = prev.is_none_or(char::is_whitespace);
+                let guess_quotes = scalars.unparsed_from.is_some_and(|from| offset >= from);
+                match ch {
+                    '#' if at_boundary => {
+                        mode = Mode::Comment;
+                        start = offset;
+                    }
+                    '\'' | '"'
+                        if guess_quotes
+                            && (at_boundary || prev.is_some_and(|p| "[{,:".contains(p))) =>
+                    {
+                        mode = if ch == '"' {
+                            Mode::Double
+                        } else {
+                            Mode::Single
+                        };
+                        start = offset;
+                    }
+                    _ => {}
+                }
+                prev = Some(ch);
+            }
+            Mode::Comment | Mode::Single | Mode::Double if ch == '\n' => {
+                ranges.push((start, offset));
+                mode = Mode::Code;
+                prev = Some(ch);
+            }
+            Mode::Comment => {}
+            Mode::Single => {
+                if ch == '\'' && chars.next_if(|&(_, next)| next == '\'').is_none() {
+                    ranges.push((start, offset + 1));
+                    mode = Mode::Code;
+                    prev = Some(ch);
+                }
+            }
+            Mode::Double => match ch {
+                '\\' => {
+                    chars.next();
+                }
+                '"' => {
+                    ranges.push((start, offset + 1));
+                    mode = Mode::Code;
+                    prev = Some(ch);
+                }
+                _ => {}
+            },
+        }
+    }
+
+    if !matches!(mode, Mode::Code) {
+        ranges.push((start, source.len()));
     }
 
     ranges
@@ -556,32 +683,186 @@ mod tests {
         let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
         let tokens = tokenizer.find_in_span(span);
 
-        // Should find {, :, }
-        assert!(tokens.len() >= 3);
+        // Should find `:`, `{`, `:`, `}`
+        assert_eq!(tokens.len(), 4);
+    }
+
+    fn count(yaml: &str, token_type: TokenType) -> usize {
+        let context = SourceContext::new(yaml);
+        FlowTokenizer::new(yaml, &context)
+            .find_all(token_type)
+            .len()
     }
 
     #[test]
-    fn test_is_inside_string_at() {
-        let line = r#"text: "hello: world""#;
-
-        assert!(!FlowTokenizer::is_inside_string_at(line, 5)); // At first colon
-        assert!(FlowTokenizer::is_inside_string_at(line, 13)); // At second colon (inside string)
+    fn test_comment_delimiters_ignored() {
+        assert_eq!(count("# a { b\nkey: value", TokenType::BraceOpen), 0);
+        assert_eq!(
+            count("key: value  # [ not a bracket", TokenType::BracketOpen),
+            0
+        );
+        assert_eq!(
+            count("key: [a, b] # ] trailing", TokenType::BracketClose),
+            1
+        );
     }
 
     #[test]
-    fn test_is_inside_string_single_quotes() {
-        let line = "text: 'hello: world'";
-
-        assert!(!FlowTokenizer::is_inside_string_at(line, 5)); // At first colon
-        assert!(FlowTokenizer::is_inside_string_at(line, 13)); // At second colon (inside string)
+    fn test_comment_inside_multiline_flow_sequence() {
+        let yaml = "key: [\n  a, # open [ here\n  b\n]\n";
+        assert_eq!(count(yaml, TokenType::BracketOpen), 1);
+        assert_eq!(count(yaml, TokenType::BracketClose), 1);
     }
 
     #[test]
-    fn test_is_inside_string_escaped() {
-        let line = r#"text: "escaped \" quote: here""#;
+    fn test_hash_without_whitespace_is_not_comment() {
+        assert_eq!(count("k: [a#b, c]", TokenType::Comma), 1);
+    }
 
-        assert!(!FlowTokenizer::is_inside_string_at(line, 5)); // At first colon
-        assert!(FlowTokenizer::is_inside_string_at(line, 24)); // At second colon (inside string)
+    #[test]
+    fn test_hash_inside_quotes_is_not_comment() {
+        let yaml = "a: \"x # y\" # z\nb: {c: d}";
+        assert_eq!(count(yaml, TokenType::BraceOpen), 1);
+        assert_eq!(count(yaml, TokenType::Colon), 3);
+    }
+
+    #[test]
+    fn test_quoted_delimiters_ignored() {
+        assert_eq!(count("a: \"x { y\"", TokenType::BraceOpen), 0);
+        assert_eq!(count("a: 'x [ y'", TokenType::BracketOpen), 0);
+        assert_eq!(count("a: 'it''s { here'", TokenType::BraceOpen), 0);
+        assert_eq!(count(r#"a: "say \" { done""#, TokenType::BraceOpen), 0);
+    }
+
+    #[test]
+    fn test_multiline_quoted_scalars() {
+        assert_eq!(
+            count("a: \"first {\n  second\"\nb: {c: d}", TokenType::BraceOpen),
+            1
+        );
+        assert_eq!(
+            count("a: 'first [\n  second'\nb: [1]", TokenType::BracketOpen),
+            1
+        );
+    }
+
+    #[test]
+    fn test_apostrophe_in_plain_scalar_does_not_open_quote() {
+        let yaml = "a: it's fine\nb: {c: d}";
+        assert_eq!(count(yaml, TokenType::BraceOpen), 1);
+    }
+
+    #[test]
+    fn test_non_ascii_comments_and_quotes() {
+        let yaml = "# héllo { 名前\nk: \"日本 [ 語\" # ✓ }\nl: {é: 1}";
+        assert_eq!(count(yaml, TokenType::BraceOpen), 1);
+        assert_eq!(count(yaml, TokenType::BraceClose), 1);
+        assert_eq!(count(yaml, TokenType::BracketOpen), 0);
+        let context = SourceContext::new(yaml);
+        let braces = FlowTokenizer::new(yaml, &context).find_all(TokenType::BraceOpen);
+        assert_eq!(braces[0].span.start.line, 3);
+        assert_eq!(braces[0].span.start.column, 4);
+    }
+
+    #[test]
+    fn test_find_in_span_ignores_comments_and_quotes() {
+        let yaml = "a: {b: \"c, d\"} # e, f }";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let span = Span::new(
+            Location::new(1, 1, 0),
+            Location::new(1, yaml.len() + 1, yaml.len()),
+        );
+        let commas = tokenizer
+            .find_in_span(span)
+            .into_iter()
+            .filter(|t| t.token_type == TokenType::Comma)
+            .count();
+        assert_eq!(commas, 0);
+    }
+
+    #[test]
+    fn test_mid_plain_scalar_quote_does_not_mask_rest() {
+        for head in [
+            "a: foo \"bar {\n",
+            "a: don 't {x\n",
+            "note: the '90s were great\n",
+            "a: foo\n  'bar\n",
+        ] {
+            let yaml = format!("{head}b: [1,2 ,3]\n");
+            assert_eq!(count(&yaml, TokenType::Comma), 2, "{yaml}");
+        }
+    }
+
+    #[test]
+    fn test_unterminated_quote_after_parse_error_stops_at_line_end() {
+        let yaml = "a: [x, 'oops\nb: {c: d}\n";
+        assert_eq!(count(yaml, TokenType::BraceOpen), 1);
+    }
+
+    #[test]
+    fn test_crlf_comment() {
+        assert_eq!(count("# c {\r\nk: {a: 1}\r\n", TokenType::BraceOpen), 1);
+    }
+
+    #[test]
+    fn test_comment_at_eof_without_newline() {
+        assert_eq!(count("k: v # {", TokenType::BraceOpen), 0);
+    }
+
+    #[test]
+    fn test_double_quote_escaped_backslash_before_closing_quote() {
+        assert_eq!(count(r#"k: "a\\" # {"#, TokenType::BraceOpen), 0);
+        assert_eq!(
+            count("k: \"a \\\n  { b\"\nm: {c: d}", TokenType::BraceOpen),
+            1
+        );
+    }
+
+    #[test]
+    fn test_quotes_after_flow_indicators() {
+        assert_eq!(count(r#"k: {"a":1}"#, TokenType::Colon), 2);
+        assert_eq!(count("k: [a,'b ,c',d]", TokenType::Comma), 2);
+    }
+
+    #[test]
+    fn test_hash_in_url_and_tab_before_comment() {
+        assert_eq!(count("u: http://x/#frag'{", TokenType::BraceOpen), 0);
+        assert_eq!(count("k: [a]\t# ] [", TokenType::BracketClose), 1);
+    }
+
+    #[test]
+    fn test_tag_and_anchor_prefixed_quotes() {
+        assert_eq!(count("a: !!str 'x {'", TokenType::BraceOpen), 0);
+        assert_eq!(count("a: &a \"y [\"", TokenType::BracketOpen), 0);
+    }
+
+    #[test]
+    fn test_block_scalar_variants_with_quotes() {
+        for header in ["|+", ">", "|-"] {
+            let yaml = format!("a: {header}\n  it 'x {{\n  \"y\n\nb: [1, 2]\n");
+            assert_eq!(count(&yaml, TokenType::BracketOpen), 1, "{yaml}");
+        }
+        let yaml = "- |\n  echo 'x {\n- [1]\n";
+        assert_eq!(count(yaml, TokenType::BracketOpen), 1);
+    }
+
+    #[test]
+    fn test_find_in_span_starting_inside_multiline_quote() {
+        let yaml = "a: \"first {\n  second, }\"\nb: {c: d}";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let start = yaml.find("second").unwrap();
+        let span = Span::new(Location::new(2, 3, start), Location::new(3, 9, yaml.len()));
+        let tokens = tokenizer.find_in_span(span);
+        assert!(tokens.iter().all(|t| t.span.start.line == 3));
+        assert_eq!(tokens.len(), 4);
+    }
+
+    #[test]
+    fn test_quote_in_block_scalar_does_not_mask_following_yaml() {
+        let yaml = "run: |\n  echo 'unterminated\nlist: [1, 2]\n";
+        assert_eq!(count(yaml, TokenType::BracketOpen), 1);
     }
 
     #[test]
@@ -733,7 +1014,7 @@ mod tests {
     #[test]
     fn test_collect_block_scalar_ranges_literal() {
         let yaml = "key: |\n  content [bracket]\n";
-        let ranges = collect_block_scalar_ranges(yaml);
+        let ranges = collect_scalar_ranges(yaml).block;
         assert_eq!(ranges.len(), 1);
         // Range must cover the block scalar content
         let (start, end) = ranges[0];
@@ -745,7 +1026,7 @@ mod tests {
     #[test]
     fn test_block_scalar_ranges_are_byte_offsets_with_non_ascii_prefix() {
         let yaml = "# ———\nrun: |\n  echo\n  tail }\nc: {a: b}\n";
-        let ranges = collect_block_scalar_ranges(yaml);
+        let ranges = collect_scalar_ranges(yaml).block;
         assert_eq!(ranges.len(), 1);
         let (start, end) = ranges[0];
         assert!(yaml[start..].starts_with("echo"));
