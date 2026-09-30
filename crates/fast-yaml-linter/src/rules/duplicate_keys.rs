@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
@@ -56,17 +57,6 @@ impl super::LintRule for DuplicateKeysRule {
     }
 }
 
-/// Scope stack entry to track mapping vs sequence nesting.
-enum ScopeKind {
-    /// A YAML mapping. Tracks seen keys and whether the next scalar is a key.
-    Mapping {
-        seen: HashMap<String, usize>, // key → 1-indexed line of first occurrence
-        expecting_key: bool,
-    },
-    /// A YAML sequence. No key tracking needed.
-    Sequence,
-}
-
 /// A repeated key occurrence.
 struct DuplicateKey {
     key: String,
@@ -77,88 +67,52 @@ struct DuplicateKey {
 /// Parses raw YAML events and collects duplicate key occurrences.
 fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<DuplicateKey> {
     let mut duplicates = Vec::new();
-    let mut scopes: Vec<ScopeKind> = Vec::new();
+    let mut roles = RoleTracker::default();
+    // Keys seen so far (key -> 1-indexed line of first occurrence), one map per open mapping.
+    let mut seen: Vec<HashMap<String, usize>> = Vec::new();
 
     let mut parser = SaphyrParser::new_from_str(source);
 
-    while let Some(Ok(ev)) = parser.next_event() {
-        let (event, span) = ev;
-
+    while let Some(Ok((event, span))) = parser.next_event() {
         match event {
             Event::MappingStart(..) => {
-                scopes.push(ScopeKind::Mapping {
-                    seen: HashMap::new(),
-                    expecting_key: true,
-                });
+                roles.start_mapping(source, source_context.byte_range_of(span));
+                seen.push(HashMap::new());
             }
-
-            Event::MappingEnd => {
-                scopes.pop();
-                // The mapping was a value in the parent scope; parent now expects the next key.
-                advance_parent_to_key(&mut scopes);
-            }
-
             Event::SequenceStart(..) => {
-                scopes.push(ScopeKind::Sequence);
+                roles.start_sequence(source, source_context.byte_range_of(span));
             }
-
-            Event::SequenceEnd => {
-                scopes.pop();
-                // The sequence was a value; parent now expects the next key.
-                advance_parent_to_key(&mut scopes);
+            Event::MappingEnd => {
+                roles.leave();
+                seen.pop();
             }
-
+            Event::SequenceEnd => roles.leave(),
             Event::Scalar(ref value, ..) => {
-                match scopes.last_mut() {
-                    Some(ScopeKind::Mapping {
-                        seen,
-                        expecting_key,
-                    }) => {
-                        if *expecting_key {
-                            let key = value.as_ref().to_owned();
-                            if let Some(&first_line) = seen.get(&key) {
-                                duplicates.push(DuplicateKey {
-                                    key,
-                                    first_line,
-                                    span: source_context.span_of(span),
-                                });
-                            } else {
-                                seen.insert(key, span.start.line());
-                            }
-                            *expecting_key = false; // next scalar in this mapping is a value
-                        } else {
-                            *expecting_key = true; // value consumed, next is a key
-                        }
-                    }
-                    Some(ScopeKind::Sequence) | None => {
-                        // No key/value alternation for sequences or top-level scalars.
-                    }
+                if roles.node() != NodeRole::MappingKey {
+                    continue;
+                }
+                let Some(keys) = seen.last_mut() else {
+                    continue;
+                };
+                let key = value.as_ref().to_owned();
+                if let Some(&first_line) = keys.get(&key) {
+                    duplicates.push(DuplicateKey {
+                        key,
+                        first_line,
+                        span: source_context.span_of(span),
+                    });
+                } else {
+                    keys.insert(key, span.start.line());
                 }
             }
-
-            // An alias node acts as a value in the current scope. When it appears
-            // as the value of a mapping entry (expecting_key == false), advance the
-            // parent mapping back to expecting the next key — same as MappingEnd /
-            // SequenceEnd. This fixes false negatives when `<<: *anchor` precedes
-            // duplicate keys: without this, expecting_key is never flipped back to
-            // true, so subsequent real keys are misclassified as values and skipped.
             Event::Alias(..) => {
-                advance_parent_to_key(&mut scopes);
+                roles.node();
             }
-
             _ => {}
         }
     }
 
     duplicates
-}
-
-/// After a nested mapping or sequence ends, the parent mapping (if any) should
-/// advance to expecting its next key.
-const fn advance_parent_to_key(scopes: &mut [ScopeKind]) {
-    if let Some(ScopeKind::Mapping { expecting_key, .. }) = scopes.last_mut() {
-        *expecting_key = true;
-    }
 }
 
 fn scan_duplicate_keys(
@@ -340,5 +294,48 @@ mod tests {
         let diags = run(yaml);
         assert_eq!(diags.len(), 1, "expected 1 diagnostic, got {}", diags.len());
         assert!(diags[0].message.contains("duplicate key 'key'"));
+    }
+
+    #[test]
+    fn test_collection_key_does_not_shift_key_value_roles() {
+        let diags = run("? [a, b]\n: 1\nk: 1\nk: 2\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key 'k'"));
+    }
+
+    #[test]
+    fn test_mapping_key_keys_are_scoped_to_the_inner_mapping() {
+        assert!(run("? {a: 1}\n: {a: 2}\na: 3\n").is_empty());
+        assert_eq!(run("? {a: 1, a: 2}\n: x\n").len(), 1);
+    }
+
+    #[test]
+    fn test_alias_key_keeps_roles_aligned() {
+        let diags = run("x: &v k\n*v : 1\nk2: 1\nk2: 2\n");
+        assert_eq!(diags.len(), 1);
+    }
+
+    #[test]
+    fn test_alias_values_keep_roles_aligned() {
+        let diags = run("a: &v 1\nb: *v\nb: *v\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("'b'"));
+    }
+
+    #[test]
+    fn test_nested_flow_duplicate() {
+        assert_eq!(run("{a: {b: 1, b: 2}}").len(), 1);
+    }
+
+    #[test]
+    fn test_repeated_collection_key_is_not_reported() {
+        assert!(run("? [a, b]\n: 1\n? [a, b]\n: 2\n").is_empty());
+    }
+
+    #[test]
+    fn test_duplicate_after_collection_key() {
+        let diags = run("? {x: 1}\n: v\nk: 1\nk: 2\n");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].span.start.line, 4);
     }
 }

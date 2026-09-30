@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
+use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::source::offset::ByteOffset;
@@ -160,18 +160,23 @@ fn collect_empty_values(
             },
             Event::MappingStart(..) => {
                 pending = None;
-                roles.node();
-                roles.enter_mapping(CollectionStyle::of_start(source, range));
+                roles.start_mapping(source, range);
             }
             Event::SequenceStart(..) => {
                 pending = None;
-                roles.node();
-                roles.enter_sequence(CollectionStyle::of_start(source, range));
+                roles.start_sequence(source, range);
             }
             Event::MappingEnd | Event::SequenceEnd => roles.leave(),
             Event::Alias(..) => {
                 pending = None;
-                roles.node();
+                if roles.node() == NodeRole::MappingKey {
+                    pending = source
+                        .get(range.start().get()..range.end().get())
+                        .map(|text| PendingKey {
+                            text: text.to_owned(),
+                            end: range.end(),
+                        });
+                }
             }
             _ => {}
         }
@@ -180,13 +185,26 @@ fn collect_empty_values(
     found
 }
 
-/// Offset of the `:` that follows `from` after optional blanks, if there is one.
+/// Offset of the `:` that follows `from` after blanks, line breaks and comment lines, if any.
+///
+/// An explicit key (`? a`) carries its `:` on a later line.
 fn colon_after(source: &str, from: ByteOffset) -> Option<ByteOffset> {
-    let rest = source.get(from.get()..)?;
-    let blanks = rest.len() - rest.trim_start_matches([' ', '\t']).len();
-    rest.get(blanks..)?
-        .starts_with(':')
-        .then(|| from.add_bytes(blanks))
+    let mut pos = from.get();
+    loop {
+        let rest = source.get(pos..)?;
+        pos += rest.len() - rest.trim_start_matches([' ', '\t', '\r', '\n']).len();
+        let rest = source.get(pos..)?;
+        if rest.starts_with('#') {
+            pos += rest.find('\n').unwrap_or(rest.len());
+        } else {
+            let indicator = rest.strip_prefix(':')?;
+            return indicator
+                .chars()
+                .next()
+                .is_none_or(|c| c.is_whitespace() || matches!(c, ',' | '[' | ']' | '{' | '}'))
+                .then(|| ByteOffset::new(pos));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -459,7 +477,24 @@ mod tests {
 
     #[test]
     fn test_explicit_key_without_value_is_not_reported() {
-        assert!(empty_positions("? a\n: \n? b\n").is_empty());
+        assert!(empty_positions("? a\n? b\n").is_empty());
+    }
+
+    #[test]
+    fn test_explicit_key_with_empty_value_is_reported_at_colon() {
+        assert_eq!(empty_positions("? a\n:\n"), [(2, 1)]);
+        assert_eq!(empty_positions("? a\n# note\n: \n? b\n"), [(3, 1)]);
+        assert_eq!(empty_positions("k:\n  ? a\n  :\n"), [(3, 3)]);
+    }
+
+    #[test]
+    fn test_alias_key_with_empty_value_is_reported() {
+        assert_eq!(empty_positions("x: &v k\n*v :\n"), [(2, 4)]);
+    }
+
+    #[test]
+    fn test_tagged_empty_values_are_skipped() {
+        assert!(empty_positions("a: !!null\nb: !!str\n? c\n: !!null\n").is_empty());
     }
 
     #[test]
@@ -499,5 +534,19 @@ mod tests {
         // Currently no detection due to is_in_block_sequence_with_implicit_null
         // returning false (implementation limitation noted in code)
         assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_colon_prefixed_key_is_not_a_value_indicator() {
+        assert!(empty_positions("? a\n:x: 1\n").is_empty());
+    }
+
+    #[test]
+    fn test_explicit_key_layout_variants() {
+        assert_eq!(empty_positions("? a\n: # c\n"), [(2, 1)]);
+        assert_eq!(empty_positions("? a\n\n\n\n:\n"), [(5, 1)]);
+        assert_eq!(empty_positions("? a\r\n:\r\n"), [(2, 1)]);
+        assert!(empty_positions("? a\n# : x\n: v\n").is_empty());
+        assert_eq!(empty_positions("? a\n# : x\n:\n"), [(3, 1)]);
     }
 }

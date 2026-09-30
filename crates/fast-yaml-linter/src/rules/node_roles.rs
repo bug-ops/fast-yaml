@@ -51,9 +51,9 @@ enum Scope {
 
 /// Tracks which role each node of an event stream plays.
 ///
-/// Call [`node`](Self::node) for every scalar, alias and collection start, then
-/// [`enter_mapping`](Self::enter_mapping) / [`enter_sequence`](Self::enter_sequence) for a
-/// collection start, and [`leave`](Self::leave) for every collection end.
+/// Call [`node`](Self::node) for every scalar and alias, [`start_mapping`](Self::start_mapping) /
+/// [`start_sequence`](Self::start_sequence) for every collection start, and
+/// [`leave`](Self::leave) for every collection end.
 #[derive(Default)]
 pub struct RoleTracker {
     scopes: Vec<Scope>,
@@ -75,6 +75,18 @@ impl RoleTracker {
             Some(Scope::Sequence { .. }) => NodeRole::SequenceItem,
             None => NodeRole::Root,
         }
+    }
+
+    /// Handles a mapping start event: assigns its role, then opens it with the style read from `range`.
+    pub fn start_mapping(&mut self, source: &str, range: ByteRange) {
+        self.node();
+        self.enter_mapping(CollectionStyle::of_start(source, range));
+    }
+
+    /// Handles a sequence start event: assigns its role, then opens it with the style read from `range`.
+    pub fn start_sequence(&mut self, source: &str, range: ByteRange) {
+        self.node();
+        self.enter_sequence(CollectionStyle::of_start(source, range));
     }
 
     /// Opens a mapping; it is a flow mapping whenever it sits inside a flow collection.
