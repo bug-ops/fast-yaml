@@ -8,7 +8,7 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
-use fast_yaml_core::Value;
+use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
 use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 use super::LintRule;
@@ -459,7 +459,7 @@ impl QuotedStringsRule {
         }
 
         // Numbers need quotes to be treated as strings
-        if s.parse::<f64>().is_ok() {
+        if resolves_to_number(s) {
             return true;
         }
 
@@ -522,8 +522,16 @@ impl QuotedStringsRule {
         }
 
         // Numeric values
-        s.parse::<f64>().is_ok()
+        resolves_to_number(s)
     }
+}
+
+/// Whether a plain `s` loads as an integer or float under the core schema.
+fn resolves_to_number(s: &str) -> bool {
+    matches!(
+        resolve_scalar(s, ScalarStyle::Plain, None),
+        ResolvedScalar::Int(_) | ResolvedScalar::BigInt(_) | ResolvedScalar::Float(_)
+    )
 }
 
 #[cfg(test)]
@@ -916,5 +924,10 @@ mod tests {
             diagnostics.is_empty(),
             "expected no diagnostics for \\x escape, got: {diagnostics:?}"
         );
+    }
+
+    #[test]
+    fn quotes_that_preserve_a_float_type_are_needed() {
+        assert!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n").is_empty());
     }
 }

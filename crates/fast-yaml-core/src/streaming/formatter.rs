@@ -87,7 +87,7 @@ fn needs_escape(c: char) -> bool {
 /// it starts with an indicator, or reads as a `---` / `...` marker or a `-`/`?`/`:` entry.
 ///
 /// Flow-context plain scalars may legally start with characters such as `|` or `%`.
-fn is_unsafe_plain(value: &str) -> bool {
+pub fn is_unsafe_plain(value: &str) -> bool {
     let followed_by_blank = |rest: &str| rest.is_empty() || rest.starts_with([' ', '\t']);
     value.starts_with([
         '|', '>', '%', '@', '`', '\'', '"', '&', '*', '!', '#', ',', '[', ']', '{', '}',
@@ -99,12 +99,48 @@ fn is_unsafe_plain(value: &str) -> bool {
             .is_some_and(followed_by_blank)
 }
 
+/// Appends `value` as a single-quoted scalar, doubling embedded quotes.
+pub fn write_single_quoted(out: &mut String, value: &str) {
+    out.push('\'');
+    for c in value.chars() {
+        if c == '\'' {
+            out.push_str("''");
+        } else {
+            out.push(c);
+        }
+    }
+    out.push('\'');
+}
+
+/// Appends `value` as a double-quoted scalar, escaping quotes, backslashes and control characters.
+pub fn write_double_quoted(out: &mut String, value: &str) {
+    out.push('"');
+    for c in value.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if c.is_control() => {
+                let _ = write!(out, "\\x{:02X}", u32::from(c));
+            }
+            '\u{FFFE}' | '\u{FFFF}' => {
+                let _ = write!(out, "\\u{:04X}", u32::from(c));
+            }
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 /// Returns the style a scalar must be written in to round-trip its value.
 ///
 /// Plain and single-quoted scalars cannot represent control characters other than tab
 /// (a raw line break is folded on re-parse), so they are promoted to double-quoted.
 /// A plain scalar that block context would misread (see [`is_unsafe_plain`]) is single-quoted.
-fn effective_style(value: &str, style: ScalarStyle) -> ScalarStyle {
+pub fn effective_style(value: &str, style: ScalarStyle) -> ScalarStyle {
     match style {
         ScalarStyle::Plain | ScalarStyle::SingleQuoted if value.chars().any(needs_escape) => {
             ScalarStyle::DoubleQuoted
@@ -596,39 +632,11 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.last_char_newline = false;
             }
             ScalarStyle::SingleQuoted => {
-                self.output.push('\'');
-                // Single quotes: escape single quotes by doubling
-                for c in value.chars() {
-                    if c == '\'' {
-                        self.output.push_str("''");
-                    } else {
-                        self.output.push(c);
-                    }
-                }
-                self.output.push('\'');
+                write_single_quoted(&mut self.output, value);
                 self.last_char_newline = false;
             }
             ScalarStyle::DoubleQuoted => {
-                self.output.push('"');
-                // Double quotes: escape special characters
-                for c in value.chars() {
-                    match c {
-                        '"' => self.output.push_str("\\\""),
-                        '\\' => self.output.push_str("\\\\"),
-                        '\n' => self.output.push_str("\\n"),
-                        '\r' => self.output.push_str("\\r"),
-                        '\t' => self.output.push_str("\\t"),
-                        '\0' => self.output.push_str("\\0"),
-                        c if c.is_control() => {
-                            let _ = write!(self.output, "\\x{:02X}", u32::from(c));
-                        }
-                        '\u{FFFE}' | '\u{FFFF}' => {
-                            let _ = write!(self.output, "\\u{:04X}", u32::from(c));
-                        }
-                        _ => self.output.push(c),
-                    }
-                }
-                self.output.push('"');
+                write_double_quoted(&mut self.output, value);
                 self.last_char_newline = false;
             }
             ScalarStyle::Literal | ScalarStyle::Folded => {

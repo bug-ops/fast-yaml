@@ -34,6 +34,9 @@ mod traits;
 mod arena_backend;
 
 use formatter::Formatted;
+pub(crate) use formatter::{
+    effective_style, is_unsafe_plain, write_double_quoted, write_single_quoted,
+};
 
 // Re-export public API
 pub use std_backend::format_streaming;
