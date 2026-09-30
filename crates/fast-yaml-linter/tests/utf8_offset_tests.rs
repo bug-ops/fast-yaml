@@ -113,6 +113,18 @@ fn truthy_cyrillic_key_fixture() {
 }
 
 #[test]
+fn empty_value_repeated_key_reports_the_empty_one() {
+    let yaml = include_str!("fixtures/edge_cases/empty_value_repeated_key.yaml");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 4, 4, ":");
+}
+
+#[test]
+fn truthy_quoted_key_containing_colon_fixture() {
+    let yaml = include_str!("fixtures/edge_cases/truthy_quoted_key_colon.yaml");
+    assert_single_span(yaml, DiagnosticCode::TRUTHY, 1, 8, "yes");
+}
+
+#[test]
 fn mapper_flow_key_with_non_ascii_neighbours_does_not_panic() {
     let mut mapper = SourceMapper::new("aé: 1, é: 2");
     let span = mapper.find_key_span("é", 1);

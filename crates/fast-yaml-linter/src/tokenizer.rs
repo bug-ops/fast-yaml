@@ -816,6 +816,16 @@ mod tests {
         assert_eq!(count(&yaml, TokenType::BraceClose), 20_001);
     }
 
+    #[test]
+    fn test_many_quoted_scalars_on_one_wide_line_are_linear() {
+        let yaml = format!("k: [{}\"ж\"]", "\"ж\", ".repeat(50_000));
+        let context = SourceContext::new(&yaml);
+        let start = std::time::Instant::now();
+        let ranges = collect_scalar_ranges(&yaml, &context);
+        assert_eq!(ranges.quoted.len(), 50_001);
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    }
+
     fn scan(line: &str, cols: &[usize]) -> Vec<bool> {
         let mut scanner = PlainScalarScanner::new(line);
         cols.iter().map(|&col| scanner.contains(col)).collect()

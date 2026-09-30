@@ -6,10 +6,11 @@ use std::fmt;
 
 use crate::echo::{KEY_LIMIT, echo};
 
+use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 use crate::config::RuleOptions;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
-use std::collections::HashSet;
+use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 /// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
 pub const NON_STANDARD_BOOLS: &[&str] = &[
@@ -190,176 +191,89 @@ impl super::LintRule for TruthyRule {
         Severity::Warning
     }
 
-    #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.truthy.options;
-        let allowed_values: Vec<&str> = options.allowed_values.iter().map(|v| v.as_str()).collect();
-        let check_keys = options.check_keys;
-
-        // Pre-build HashSets for O(1) lookup
-        let non_standard_set: HashSet<&str> = NON_STANDARD_BOOLS.iter().copied().collect();
-        let non_canonical_set: HashSet<&str> = NON_CANONICAL_BOOLS.iter().copied().collect();
-        let allowed_set: HashSet<&str> = allowed_values.iter().copied().collect();
+        let allowed: Vec<&str> = options.allowed_values.iter().map(|v| v.as_str()).collect();
+        let severity = config.rules.truthy.severity_or(self.default_severity());
+        let source_context = context.source_context();
 
         let mut diagnostics = Vec::new();
+        let mut roles = RoleTracker::default();
+        let mut parser = SaphyrParser::new_from_str(context.source());
 
-        // Use cached lines and metadata from context
-        let lines = context.lines();
-        let line_metadata = context.line_metadata();
-
-        for (line_idx, (line, metadata)) in lines.iter().zip(line_metadata).enumerate() {
-            let line_num = line_idx + 1;
-            let line_start = context.source_context().line_start(line_num);
-
-            // Skip comment lines using cached metadata
-            if metadata.is_comment {
-                continue;
-            }
-
-            // Find key-value pairs (after ':')
-            if let Some((key_part, value_part)) = line.split_once(':') {
-                let colon_pos = key_part.len();
-
-                // Check key if configured
-                if check_keys {
-                    let key_trimmed = key_part.trim();
-                    let key_msg = if non_standard_set.contains(key_trimmed)
-                        && !allowed_set.contains(key_trimmed)
-                    {
-                        Some(format!(
-                            "found non-standard truthy key '{key_trimmed}' (use {})",
-                            allowed_values.join(" or ")
-                        ))
-                    } else if non_canonical_set.contains(key_trimmed)
-                        && !allowed_set.contains(key_trimmed)
-                    {
-                        Some(format!(
-                            "found non-canonical boolean key '{key_trimmed}', use 'true' or 'false'"
-                        ))
-                    } else {
-                        None
+        while let Some(Ok((event, span))) = parser.next_event() {
+            match event {
+                Event::Scalar(text, style, _, tag) => {
+                    let slot = match roles.node() {
+                        NodeRole::MappingKey if options.check_keys => Slot::Key,
+                        NodeRole::MappingValue | NodeRole::SequenceItem => Slot::Value,
+                        _ => continue,
                     };
-                    if let Some(msg) = key_msg {
-                        let key_start = key_part.len() - key_part.trim_start().len();
-                        let severity = config.rules.truthy.severity_or(self.default_severity());
-                        let span = context
-                            .source_context()
-                            .span_at(line_start.add_bytes(key_start), key_trimmed.len());
+                    if roles.in_flow() || style != ScalarStyle::Plain || tag.is_some() {
+                        continue;
+                    }
+                    if let Some(msg) = message(slot, &text, &allowed) {
+                        let span = source_context.span_of_bytes(source_context.byte_range_of(span));
                         diagnostics.push(
                             DiagnosticBuilder::new(self.code(), severity, msg, span)
-                                .build_with_context(context.source_context()),
+                                .build_with_context(source_context),
                         );
                     }
                 }
-
-                // Check value
-                let value_trimmed = value_part.trim();
-
-                // Skip if empty, quoted, or starts with flow collection markers
-                if value_trimmed.is_empty()
-                    || value_trimmed.starts_with('"')
-                    || value_trimmed.starts_with('\'')
-                    || value_trimmed.starts_with('[')
-                    || value_trimmed.starts_with('{')
-                {
-                    continue;
+                Event::MappingStart(..) => {
+                    roles.node();
+                    roles.enter_mapping(CollectionStyle::of_start(
+                        context.source(),
+                        source_context.byte_range_of(span),
+                    ));
                 }
-
-                // Extract the value token (before any comment or space)
-                let value_token = value_trimmed
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.split('#').next())
-                    .unwrap_or(value_trimmed);
-
-                let val_msg = if non_standard_set.contains(value_token)
-                    && !allowed_set.contains(value_token)
-                {
-                    Some(format!(
-                        "found non-standard truthy value '{value_token}' (use {})",
-                        allowed_values.join(" or ")
-                    ))
-                } else if non_canonical_set.contains(value_token)
-                    && !allowed_set.contains(value_token)
-                {
-                    Some(format!(
-                        "found non-canonical boolean '{value_token}', use 'true' or 'false'"
-                    ))
-                } else {
-                    None
-                };
-                if let Some(msg) = val_msg {
-                    let value_start =
-                        colon_pos + 1 + value_part.len() - value_part.trim_start().len();
-                    let severity = config.rules.truthy.severity_or(self.default_severity());
-                    let span = context
-                        .source_context()
-                        .span_at(line_start.add_bytes(value_start), value_token.len());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(self.code(), severity, msg, span)
-                            .build_with_context(context.source_context()),
-                    );
+                Event::SequenceStart(..) => {
+                    roles.node();
+                    roles.enter_sequence(CollectionStyle::of_start(
+                        context.source(),
+                        source_context.byte_range_of(span),
+                    ));
                 }
-            }
-
-            // Check list items (after '- ')
-            if let Some((before_hyphen, after_hyphen)) = line.split_once('-') {
-                let hyphen_pos = before_hyphen.len();
-                let value_trimmed = after_hyphen.trim();
-
-                // Skip if this is a mapping key (contains ':')
-                if value_trimmed.contains(':') {
-                    continue;
+                Event::MappingEnd | Event::SequenceEnd => roles.leave(),
+                Event::Alias(..) => {
+                    roles.node();
                 }
-
-                // Skip if empty, quoted, or starts with flow collection markers
-                if value_trimmed.is_empty()
-                    || value_trimmed.starts_with('"')
-                    || value_trimmed.starts_with('\'')
-                    || value_trimmed.starts_with('[')
-                    || value_trimmed.starts_with('{')
-                {
-                    continue;
-                }
-
-                let value_token = value_trimmed
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.split('#').next())
-                    .unwrap_or(value_trimmed);
-
-                let list_msg = if non_standard_set.contains(value_token)
-                    && !allowed_set.contains(value_token)
-                {
-                    Some(format!(
-                        "found non-standard truthy value '{value_token}' (use {})",
-                        allowed_values.join(" or ")
-                    ))
-                } else if non_canonical_set.contains(value_token)
-                    && !allowed_set.contains(value_token)
-                {
-                    Some(format!(
-                        "found non-canonical boolean '{value_token}', use 'true' or 'false'"
-                    ))
-                } else {
-                    None
-                };
-                if let Some(msg) = list_msg {
-                    let value_start =
-                        hyphen_pos + 1 + after_hyphen.len() - after_hyphen.trim_start().len();
-                    let severity = config.rules.truthy.severity_or(self.default_severity());
-                    let span = context
-                        .source_context()
-                        .span_at(line_start.add_bytes(value_start), value_token.len());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(self.code(), severity, msg, span)
-                            .build_with_context(context.source_context()),
-                    );
-                }
+                _ => {}
             }
         }
 
         diagnostics
+    }
+}
+
+/// Whether a scalar is a mapping key or a value.
+#[derive(Clone, Copy)]
+enum Slot {
+    Key,
+    Value,
+}
+
+/// Builds the diagnostic message for a truthy spelling that is not allowed.
+fn message(slot: Slot, text: &str, allowed: &[&str]) -> Option<String> {
+    if allowed.contains(&text) {
+        return None;
+    }
+    let noun = match slot {
+        Slot::Key => "key",
+        Slot::Value => "value",
+    };
+    if NON_STANDARD_BOOLS.contains(&text) {
+        Some(format!(
+            "found non-standard truthy {noun} '{text}' (use {})",
+            allowed.join(" or ")
+        ))
+    } else if NON_CANONICAL_BOOLS.contains(&text) {
+        Some(match slot {
+            Slot::Key => format!("found non-canonical boolean key '{text}', use 'true' or 'false'"),
+            Slot::Value => format!("found non-canonical boolean '{text}', use 'true' or 'false'"),
+        })
+    } else {
+        None
     }
 }
 
@@ -553,5 +467,58 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 2);
+    }
+
+    fn truthy_spans(yaml: &str, config: &LintConfig) -> Vec<(usize, usize, usize)> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        TruthyRule
+            .check(&LintContext::new(yaml), &value, config)
+            .iter()
+            .map(|d| (d.span.start.line, d.span.start.column, d.span.end.column))
+            .collect()
+    }
+
+    #[test]
+    fn test_truthy_quoted_key_containing_colon() {
+        assert_eq!(
+            truthy_spans("\"a:b\": yes\n", &LintConfig::default()),
+            [(1, 8, 11)]
+        );
+        assert_eq!(
+            truthy_spans("'x: y': no\n", &LintConfig::default()),
+            [(1, 9, 11)]
+        );
+    }
+
+    #[test]
+    fn test_truthy_only_whole_scalar_is_reported() {
+        assert!(truthy_spans("a: yes and more\nb: no thanks\n", &LintConfig::default()).is_empty());
+        assert!(truthy_spans("a: !!str yes\n", &LintConfig::default()).is_empty());
+    }
+
+    #[test]
+    fn test_truthy_key_in_quotes_is_not_a_bool_key() {
+        let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
+        assert!(truthy_spans("\"yes\": 1\n", &config).is_empty());
+        assert_eq!(truthy_spans("\"a:b\": 1\nyes: 2\n", &config), [(2, 1, 4)]);
+    }
+
+    #[test]
+    fn test_truthy_flow_pair_in_flow_sequence_is_skipped() {
+        let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
+        assert!(truthy_spans("k: [a: yes]\nm: [ {x: 1}, y: no ]\n", &config).is_empty());
+    }
+
+    #[test]
+    fn test_truthy_after_document_start() {
+        assert_eq!(
+            truthy_spans("---\na: yes\n", &LintConfig::default()),
+            [(2, 4, 7)]
+        );
+    }
+
+    #[test]
+    fn test_truthy_flow_collections_are_skipped() {
+        assert!(truthy_spans("a: [yes, no]\nb: {c: yes}\n", &LintConfig::default()).is_empty());
     }
 }

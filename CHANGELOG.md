@@ -71,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Linter**: `document-start` no longer reports a missing `---` after `%YAML`/`%TAG` directives, `comments-indentation` and flow/scalar scans are linear (also on non-ASCII lines), and the text formatter bounds long context lines (#443) (#444) (#439) (#453)
+- **Linter**: `empty-values` and `truthy` locate keys and values from parser positions, so a repeated key is reported at its own line, quoted keys containing `:` are checked, and `truthy` flags only a whole scalar (#353) (#473)
+- **Linter**: add linearity guard tests for `byte_offset_of` on long non-ASCII lines (#467) (#473)
 - **Parallel/Core**: `parse_parallel` no longer strips a BOM at the start of later chunks or a second leading BOM; adds `Parser::parse_chunk_with_budget` (#406, #455)
 - **Parallel**: documented known divergence from `Parser::parse_all` for column-0 `---` inside top-level block scalars (saphyr behavior) and pinned it in tests (#407, #455)
 - Python `parse_parallel` returns `int` for integers beyond `i64`, matching `safe_load` (#392) (#462)

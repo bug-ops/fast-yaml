@@ -2,13 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 use crate::config::RuleOptions;
+use crate::echo::{KEY_LIMIT, echo};
 use crate::source::offset::ByteOffset;
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
 use fast_yaml_core::Value;
+use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 /// Linting rule for empty values.
 ///
@@ -71,219 +73,120 @@ impl super::LintRule for EmptyValuesRule {
         "Forbids keys with implicit null values (missing explicit 'null' or '~')"
     }
 
-    fn needs_value(&self) -> bool {
-        true
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
 
-    fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.empty_values.options;
-        let forbid_block = options.forbid_in_block_mappings;
-        let forbid_flow = options.forbid_in_flow_mappings;
-        let forbid_block_sequences = options.forbid_in_block_sequences;
-
-        if !forbid_block && !forbid_flow && !forbid_block_sequences {
+        if !options.forbid_in_block_mappings && !options.forbid_in_flow_mappings {
             return Vec::new();
         }
 
-        let mut diagnostics = Vec::new();
         let source_context = context.source_context();
-
-        check_value_for_empty(
-            value,
-            source_context,
-            &mut diagnostics,
-            config,
-            self.code(),
-            forbid_block,
-            forbid_flow,
-            forbid_block_sequences,
-        );
-
-        diagnostics
+        let severity = config.rules.empty_values.severity_or(Severity::Warning);
+        collect_empty_values(context.source(), source_context, options)
+            .into_iter()
+            .map(|EmptyValue { key, colon }| {
+                let span = source_context.span_at(colon, 1);
+                DiagnosticBuilder::new(
+                    self.code(),
+                    severity,
+                    format!("empty value for key '{}'", echo(&key, KEY_LIMIT)),
+                    span,
+                )
+                .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
+                .build_with_context(source_context)
+            })
+            .collect()
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_value_for_empty(
-    value: &Value,
+/// A mapping entry whose value is missing.
+struct EmptyValue {
+    key: String,
+    colon: ByteOffset,
+}
+
+/// Scalar key seen last, awaiting its value.
+struct PendingKey {
+    text: String,
+    end: ByteOffset,
+}
+
+/// Walks parser events and collects entries with an implicit null value.
+///
+/// An implicit null is a zero-width plain scalar without a tag (an anchor is allowed); an
+/// explicit `null`, `~` or `!!null` occupies source text.
+fn collect_empty_values(
+    source: &str,
     source_context: &SourceContext<'_>,
-    diagnostics: &mut Vec<Diagnostic>,
-    config: &LintConfig,
-    code: &str,
-    forbid_block: bool,
-    forbid_flow: bool,
-    forbid_block_sequences: bool,
-) {
-    match value {
-        Value::Mapping(hash) => {
-            for (key, val) in hash {
-                // Check if value is null and has no explicit null in source
-                if val.is_null()
-                    && let Some(key_str) = key.as_str()
-                    && !has_explicit_null_value(key_str, source_context)
-                {
-                    // Determine if it's in a flow or block mapping
-                    let is_flow = is_in_flow_mapping(key_str, source_context);
+    options: &EmptyValuesOptions,
+) -> Vec<EmptyValue> {
+    let mut found = Vec::new();
+    let mut roles = RoleTracker::default();
+    let mut pending: Option<PendingKey> = None;
+    let mut parser = SaphyrParser::new_from_str(source);
 
-                    if ((is_flow && forbid_flow) || (!is_flow && forbid_block))
-                        && let Some(span) = find_empty_value_span(key_str, source_context)
+    while let Some(Ok((event, span))) = parser.next_event() {
+        let range = source_context.byte_range_of(span);
+        match event {
+            Event::Scalar(text, style, _, tag) => match roles.node() {
+                NodeRole::MappingKey => {
+                    pending = Some(PendingKey {
+                        text: text.into_owned(),
+                        end: range.end(),
+                    });
+                }
+                NodeRole::MappingValue => {
+                    let forbidden = if roles.in_flow() {
+                        options.forbid_in_flow_mappings
+                    } else {
+                        options.forbid_in_block_mappings
+                    };
+                    let implicit = range.start() == range.end()
+                        && style == ScalarStyle::Plain
+                        && tag.is_none();
+                    if let (true, true, Some(key)) = (forbidden, implicit, pending.take())
+                        && let Some(colon) = colon_after(source, key.end)
                     {
-                        let severity = config.rules.empty_values.severity_or(Severity::Warning);
-                        diagnostics.push(
-                            DiagnosticBuilder::new(
-                                code,
-                                severity,
-                                format!("empty value for key '{key_str}'"),
-                                span,
-                            )
-                            .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
-                            .build_with_context(source_context),
-                        );
+                        found.push(EmptyValue {
+                            key: key.text,
+                            colon,
+                        });
                     }
                 }
-
-                // Recurse into nested structures
-                check_value_for_empty(
-                    val,
-                    source_context,
-                    diagnostics,
-                    config,
-                    code,
-                    forbid_block,
-                    forbid_flow,
-                    forbid_block_sequences,
-                );
+                NodeRole::SequenceItem | NodeRole::Root => {}
+            },
+            Event::MappingStart(..) => {
+                pending = None;
+                roles.node();
+                roles.enter_mapping(CollectionStyle::of_start(source, range));
             }
-        }
-        Value::Sequence(arr) => {
-            for (idx, item) in arr.iter().enumerate() {
-                // Check for null items in sequences
-                if item.is_null() && forbid_block_sequences {
-                    // Check if this is an implicit null in a block sequence
-                    if is_in_block_sequence_with_implicit_null() {
-                        let severity = config.rules.empty_values.severity_or(Severity::Warning);
-                        // Create a diagnostic for the null item in sequence
-                        // For simplicity, we'll mark the whole source
-                        // A more precise implementation would find the exact list item location
-                        let span = source_context.span_at(ByteOffset::ZERO, 0);
-
-                        diagnostics.push(
-                            DiagnosticBuilder::new(
-                                code,
-                                severity,
-                                format!("empty value in sequence at index {idx}"),
-                                span,
-                            )
-                            .build_with_context(source_context),
-                        );
-                    }
-                }
-
-                check_value_for_empty(
-                    item,
-                    source_context,
-                    diagnostics,
-                    config,
-                    code,
-                    forbid_block,
-                    forbid_flow,
-                    forbid_block_sequences,
-                );
+            Event::SequenceStart(..) => {
+                pending = None;
+                roles.node();
+                roles.enter_sequence(CollectionStyle::of_start(source, range));
             }
-        }
-        _ => {}
-    }
-}
-
-fn has_explicit_null_value(key: &str, source_context: &SourceContext<'_>) -> bool {
-    for line_num in 1..=source_context.line_count() {
-        if let Some(line) = source_context.get_line(line_num) {
-            let trimmed = line.trim_start();
-            if let Some(after_key) = trimmed.strip_prefix(key)
-                && let Some(after_colon) = after_key.strip_prefix(':')
-            {
-                let after_colon = after_colon.trim();
-                if after_colon.starts_with("null")
-                    || after_colon.starts_with('~')
-                    || after_colon.starts_with("Null")
-                    || after_colon.starts_with("NULL")
-                    || after_colon.starts_with("!!")
-                    || after_colon.starts_with('!')
-                {
-                    return true;
-                }
+            Event::MappingEnd | Event::SequenceEnd => roles.leave(),
+            Event::Alias(..) => {
+                pending = None;
+                roles.node();
             }
+            _ => {}
         }
     }
 
-    false
+    found
 }
 
-/// Byte offsets within `line` of every `key:` occurrence that sits after a `{`.
-fn flow_key_positions<'l>(line: &'l str, key_colon: &'l str) -> impl Iterator<Item = usize> + 'l {
-    let mut search_from = 0;
-    std::iter::from_fn(move || {
-        while let Some(rel) = line.get(search_from..)?.find(key_colon) {
-            let abs_pos = search_from + rel;
-            let (before, rest) = line.split_at_checked(abs_pos)?;
-            search_from = abs_pos + rest.chars().next().map_or(1, char::len_utf8);
-            let before_ok = before
-                .chars()
-                .next_back()
-                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '-'));
-            if before_ok && before.contains('{') {
-                return Some(abs_pos);
-            }
-        }
-        None
-    })
-}
-
-fn is_in_flow_mapping(key: &str, source_context: &SourceContext<'_>) -> bool {
-    let key_colon = format!("{key}:");
-    (1..=source_context.line_count())
-        .filter_map(|n| source_context.get_line(n))
-        .any(|line| flow_key_positions(line, &key_colon).next().is_some())
-}
-
-fn find_empty_value_span(key: &str, source_context: &SourceContext<'_>) -> Option<Span> {
-    let key_colon = format!("{key}:");
-    for line_num in 1..=source_context.line_count() {
-        let Some(line) = source_context.get_line(line_num) else {
-            continue;
-        };
-        let trimmed = line.trim_start();
-
-        let colon_in_line = if trimmed
-            .strip_prefix(key)
-            .is_some_and(|rest| rest.starts_with(':'))
-        {
-            Some(line.len() - trimmed.len() + key.len())
-        } else {
-            flow_key_positions(line, &key_colon)
-                .next()
-                .map(|pos| pos + key.len())
-        };
-
-        if let Some(colon) = colon_in_line {
-            let start = source_context.line_start(line_num).add_bytes(colon);
-            return Some(source_context.span_at(start, 1));
-        }
-    }
-
-    None
-}
-
-const fn is_in_block_sequence_with_implicit_null() -> bool {
-    // For now, we'll return false to avoid false positives
-    // A full implementation would need to track which array items
-    // are from block sequences vs flow sequences and check for implicit nulls
-    // This is complex and would require source position tracking during parsing
-    false
+/// Offset of the `:` that follows `from` after optional blanks, if there is one.
+fn colon_after(source: &str, from: ByteOffset) -> Option<ByteOffset> {
+    let rest = source.get(from.get()..)?;
+    let blanks = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+    rest.get(blanks..)?
+        .starts_with(':')
+        .then(|| from.add_bytes(blanks))
 }
 
 #[cfg(test)]
@@ -494,6 +397,93 @@ mod tests {
             diagnostics[0].span.start.line, 2,
             "diagnostic must be on line 2"
         );
+    }
+
+    fn empty_positions(yaml: &str) -> Vec<(usize, usize)> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        EmptyValuesRule
+            .check(&LintContext::new(yaml), &value, &LintConfig::new())
+            .iter()
+            .map(|d| (d.span.start.line, d.span.start.column))
+            .collect()
+    }
+
+    #[test]
+    fn test_empty_key_reported_at_its_own_line() {
+        assert_eq!(empty_positions("a:\n  b:\nc:\n  b: 1\n"), [(2, 4)]);
+        assert_eq!(empty_positions("a:\n  b: 1\nc:\n  b:\n"), [(4, 4)]);
+        assert_eq!(
+            empty_positions("a:\n  b: 1\nc:\n  b: 2\nd: {b: 1}\ne:\n  b:\n"),
+            [(7, 4)]
+        );
+    }
+
+    #[test]
+    fn test_quoted_key_with_colon() {
+        assert_eq!(empty_positions("\"a:b\":\nc: 1\n"), [(1, 6)]);
+        assert_eq!(empty_positions("'a b':\n"), [(1, 6)]);
+    }
+
+    #[test]
+    fn test_explicit_forms_are_not_empty() {
+        assert!(empty_positions("a: !!null\nc: ~\nd: ''\ne: null\n").is_empty());
+    }
+
+    #[test]
+    fn test_flow_empty_values() {
+        assert_eq!(empty_positions("m: {a: 1, b:, c: 2}\n"), [(1, 12)]);
+    }
+
+    #[test]
+    fn test_key_without_colon_is_not_reported() {
+        assert!(empty_positions("? a\n").is_empty());
+        assert!(empty_positions("{a, b: 1}\n").is_empty());
+    }
+
+    #[test]
+    fn test_flow_pair_in_flow_sequence_is_flow() {
+        assert_eq!(empty_positions("k: [a: ]\n"), [(1, 6)]);
+        let only_block =
+            config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
+        let yaml = "k: [a: ]\nm:\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let diags = EmptyValuesRule.check(&LintContext::new(yaml), &value, &only_block);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].span.start.line, 2);
+    }
+
+    #[test]
+    fn test_anchored_empty_value_is_reported() {
+        assert_eq!(empty_positions("k: &x\n"), [(1, 2)]);
+    }
+
+    #[test]
+    fn test_explicit_key_without_value_is_not_reported() {
+        assert!(empty_positions("? a\n: \n? b\n").is_empty());
+    }
+
+    #[test]
+    fn test_crlf_and_multibyte_keys() {
+        assert_eq!(
+            empty_positions("ключ:\r\nдва: 1\r\nтри:\r\n"),
+            [(1, 5), (3, 4)]
+        );
+    }
+
+    #[test]
+    fn test_long_key_is_truncated_in_message() {
+        let yaml = format!("{}:\n", "k".repeat(300));
+        let value = Parser::parse_str(&yaml).unwrap().unwrap();
+        let diags = EmptyValuesRule.check(&LintContext::new(&yaml), &value, &LintConfig::new());
+        assert!(diags[0].message.len() < 120, "{}", diags[0].message);
+    }
+
+    #[test]
+    fn test_many_keys_are_linear() {
+        let yaml: String = (0..20_000).map(|_| "- k:\n").collect();
+        let start = std::time::Instant::now();
+        assert_eq!(empty_positions(&yaml).len(), 20_000);
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
