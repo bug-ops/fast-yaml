@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::cli::LintFormat;
 use crate::config::CommonConfig;
 use crate::error::ExitCode;
+use crate::file_filter::FileFilter;
 use crate::io::InputSource;
 
 /// CLI arguments for the lint command, separated from `CommonConfig`.
@@ -36,7 +37,14 @@ pub struct LintCommand {
     config: CommonConfig,
     /// Resolved lint configuration (exposed for batch reuse).
     pub lint_config: LintConfig,
+    /// Files the config file selects or drops (exposed for batch discovery).
+    pub file_filter: FileFilter,
     format: LintFormat,
+}
+
+fn split_config(config: ConfigFile) -> (LintConfig, FileFilter) {
+    let (lint_config, selection) = config.into_parts();
+    (lint_config, FileFilter::new(selection))
 }
 
 impl LintCommand {
@@ -45,14 +53,15 @@ impl LintCommand {
     /// # Errors
     ///
     /// Returns error if an explicit `--config` path cannot be read or parsed.
-    pub fn build(config: CommonConfig, args: LintArgs, input_path: Option<&Path>) -> Result<Self> {
-        let file = Self::load_config_file(args.config_path, args.no_config, input_path)?;
+    pub fn build(config: CommonConfig, args: LintArgs, input: &InputSource) -> Result<Self> {
+        let file = Self::load_config_file(args.config_path, args.no_config, input)?;
         let max_input_bytes = args
             .max_input_bytes
             .or(file.max_input_bytes)
             .unwrap_or(MaxInputBytes::DEFAULT);
+        let (file_lint_config, file_filter) = split_config(file);
         let lint_config = ConfigFile::merge_cli_overrides(
-            file.into_lint_config(),
+            file_lint_config,
             args.max_line_length,
             args.indent_size,
             args.allow_duplicate_keys,
@@ -62,6 +71,7 @@ impl LintCommand {
         Ok(Self {
             config,
             lint_config,
+            file_filter,
             format: args.format,
         })
     }
@@ -70,7 +80,7 @@ impl LintCommand {
     fn load_config_file(
         config_path: Option<PathBuf>,
         no_config: bool,
-        input_path: Option<&Path>,
+        input: &InputSource,
     ) -> Result<ConfigFile> {
         if no_config {
             return Ok(ConfigFile::default());
@@ -85,7 +95,8 @@ impl LintCommand {
 
         // Auto-discovery: start from CWD (matches yamllint behavior)
         let start_dir = std::env::current_dir().unwrap_or_else(|_| {
-            input_path
+            input
+                .file_path()
                 .and_then(|p| p.parent().map(Path::to_owned))
                 .unwrap_or_else(|| PathBuf::from("."))
         });
@@ -99,6 +110,26 @@ impl LintCommand {
         }
 
         Ok(ConfigFile::default())
+    }
+
+    /// Returns whether the config file's `ignore` drops the file at `path`.
+    ///
+    /// A path that cannot be canonicalized is not ignored, so the read error surfaces later.
+    #[must_use]
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        self.file_filter.has_ignore()
+            && path
+                .canonicalize()
+                .is_ok_and(|canonical| self.file_filter.is_ignored(&canonical, false))
+    }
+
+    /// Reports a file that the config file ignores: no diagnostics and a success exit code.
+    #[must_use]
+    pub fn execute_ignored(&self) -> ExitCode {
+        if matches!(self.format, LintFormat::Json) {
+            print!("{}", JsonFormatter::new(true).format(&[], ""));
+        }
+        ExitCode::Success
     }
 
     /// Execute lint command
@@ -209,7 +240,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            input.file_path(),
+            input,
         )
         .unwrap()
     }
@@ -244,7 +275,7 @@ mod tests {
                 max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         )
         .unwrap()
     }
@@ -395,7 +426,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         )
         .unwrap();
         let result = cmd.execute(&input);
@@ -417,7 +448,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         );
         assert!(result.is_err());
     }
@@ -440,7 +471,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         )
         .unwrap();
         assert_eq!(
@@ -469,7 +500,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         )
         .unwrap();
         let result = cmd.execute(&input);
@@ -494,7 +525,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         )
         .unwrap();
         // CLI value wins over config file value
@@ -521,7 +552,7 @@ mod tests {
                 max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            None,
+            &stdin_input(""),
         )
         .unwrap();
         assert!(cmd.lint_config.rules.duplicate_key.enabled);

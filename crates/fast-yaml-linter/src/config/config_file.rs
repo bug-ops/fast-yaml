@@ -8,14 +8,20 @@ use fast_yaml_core::{DecodeError, ParseError, Parser, decode_input_owned};
 use serde_norway::Value;
 
 use crate::config::rules::value_kind;
-use crate::config::{IndentSize, RuleConfigError, RuleName, RulesConfig};
-use crate::echo::{KEY_LIMIT, echo};
+use crate::config::{
+    IgnorePatterns, IndentSize, Preset, RuleConfigError, RuleName, RulesConfig, YamlFiles,
+};
+use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::linter::LintConfig;
 
 /// Depth limit for config file discovery walk-up.
 const MAX_DISCOVERY_DEPTH: usize = 20;
 
 /// Top-level structure of a `.fast-yaml.yaml` config file.
+///
+/// With `extends: default` or `extends: relaxed` the rules start from the matching yamllint
+/// preset (see [`Preset`]); without `extends` they start from the fast-yaml defaults. `ignore`
+/// and `yaml-files` select the files `fy lint` visits and follow yamllint's semantics.
 ///
 /// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
 /// suffixes) that caps the input the linter accepts. Omit it from files shared with yamllint.
@@ -27,7 +33,7 @@ const MAX_DISCOVERY_DEPTH: usize = 20;
 /// use fast_yaml_linter::ConfigFile;
 ///
 /// let config = ConfigFile::load(Path::new(".fast-yaml.yaml")).unwrap();
-/// let lint_config = config.into_lint_config();
+/// let (lint_config, files) = config.into_parts();
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct ConfigFile {
@@ -35,16 +41,69 @@ pub struct ConfigFile {
     pub rules: RulesConfig,
     /// Input size limit from `max-input-bytes`, or `None` when the file does not set it.
     pub max_input_bytes: Option<MaxInputBytes>,
+    /// The `ignore` and `yaml-files` settings.
+    pub selection: FileSelection,
+}
+
+/// The `ignore` and `yaml-files` settings of a config file.
+#[derive(Debug, Clone, Default)]
+pub struct FileSelection {
+    /// Files excluded from linting (`ignore`), anchored at the config file's directory.
+    pub ignore: Option<IgnorePatterns>,
+    /// File-name patterns that select the files of a directory walk (`yaml-files`).
+    pub yaml_files: Option<YamlFiles>,
+}
+
+/// Top-level keys of a config file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TopLevelKey {
+    /// `rules`
+    Rules,
+    /// `extends`
+    Extends,
+    /// `ignore`
+    Ignore,
+    /// `yaml-files`
+    YamlFiles,
+    /// `max-input-bytes`
+    MaxInputBytes,
+}
+
+impl TopLevelKey {
+    /// Returns the key as written in the config file.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rules => "rules",
+            Self::Extends => "extends",
+            Self::Ignore => "ignore",
+            Self::YamlFiles => "yaml-files",
+            Self::MaxInputBytes => "max-input-bytes",
+        }
+    }
+
+    fn parse(key: &str) -> Option<Self> {
+        [
+            Self::Rules,
+            Self::Extends,
+            Self::Ignore,
+            Self::YamlFiles,
+            Self::MaxInputBytes,
+        ]
+        .into_iter()
+        .find(|candidate| candidate.as_str() == key)
+    }
+}
+
+impl std::fmt::Display for TopLevelKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 /// Top-level keys yamllint accepts that fast-yaml does not implement.
-const YAMLLINT_TOP_LEVEL_KEYS: [&str; 5] = [
-    "extends",
-    "ignore",
-    "ignore-from-file",
-    "yaml-files",
-    "locale",
-];
+const YAMLLINT_TOP_LEVEL_KEYS: [&str; 2] = ["ignore-from-file", "locale"];
 
 /// Errors from config file loading.
 #[derive(Debug, thiserror::Error)]
@@ -140,7 +199,7 @@ pub enum ConfigFileError {
 
     /// A top-level key is not recognized.
     #[error(
-        "config file '{}': unknown top-level key '{}', expected 'rules' or 'max-input-bytes'",
+        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'yaml-files' or 'max-input-bytes'",
         .path.display(),
         echo(.key, KEY_LIMIT)
     )]
@@ -150,6 +209,72 @@ pub enum ConfigFileError {
         /// The unknown key.
         key: String,
     },
+
+    /// The value of `extends`, `ignore` or `yaml-files` is invalid.
+    #[error(
+        "config file '{}': invalid '{key}': {}",
+        .path.display(),
+        echo(.message, MESSAGE_LIMIT)
+    )]
+    InvalidKey {
+        /// Path that failed.
+        path: PathBuf,
+        /// The key with the invalid value.
+        key: TopLevelKey,
+        /// What is wrong with the value.
+        message: String,
+    },
+}
+
+/// Values of the top-level keys, collected before any of them is applied.
+#[derive(Default)]
+struct TopLevel {
+    rules: Value,
+    extends: Option<Preset>,
+    ignore: Option<Vec<String>>,
+    yaml_files: Option<Vec<String>>,
+    max_input_bytes: Option<MaxInputBytes>,
+}
+
+fn string_items(value: Value, what: &str) -> Result<Vec<String>, String> {
+    let Value::Sequence(items) = value else {
+        return Err(format!("expected a list of {what}"));
+    };
+    items
+        .into_iter()
+        .enumerate()
+        .map(|(index, item)| match item {
+            Value::String(text) => Ok(text),
+            _ => Err(format!("item {index} is not a string")),
+        })
+        .collect()
+}
+
+fn ignore_lines(value: Value) -> Result<Vec<String>, String> {
+    match value {
+        Value::String(text) => Ok(text.lines().map(str::to_owned).collect()),
+        other => string_items(other, "patterns or a string with one pattern per line"),
+    }
+}
+
+fn preset_of(value: &Value) -> Result<Preset, String> {
+    let Value::String(name) = value else {
+        return Err("expected 'default' or 'relaxed'".to_owned());
+    };
+    name.parse::<Preset>()
+        .map_err(|error| format!("{error}; extending a config file is not implemented"))
+}
+
+/// Canonical directory of the config file, the anchor of `ignore` patterns.
+fn config_root(path: &Path) -> Result<PathBuf, ConfigFileError> {
+    let dir = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    dir.canonicalize().map_err(|source| ConfigFileError::Io {
+        path: path.to_owned(),
+        source,
+    })
 }
 
 impl ConfigFile {
@@ -189,40 +314,88 @@ impl ConfigFile {
                 });
             }
         };
-        let mut rules_value = Value::Null;
-        let mut max_input_bytes = None;
+        let top = Self::collect_keys(path, entries)?;
+        let invalid_rules = |source| ConfigFileError::InvalidRules {
+            path: path.to_owned(),
+            source,
+        };
+        let rules = if let Some(preset) = top.extends {
+            let mut rules = preset.rules();
+            rules.apply_over_preset(top.rules).map_err(invalid_rules)?;
+            rules
+        } else {
+            let mut rules = RulesConfig::default();
+            rules.apply(top.rules).map_err(invalid_rules)?;
+            rules
+        };
+        let invalid_key =
+            |key, error: crate::config::InvalidPathPattern| ConfigFileError::InvalidKey {
+                path: path.to_owned(),
+                key,
+                message: error.to_string(),
+            };
+        let ignore = top
+            .ignore
+            .map(|lines| {
+                IgnorePatterns::new(&config_root(path)?, &lines)
+                    .map_err(|error| invalid_key(TopLevelKey::Ignore, error))
+            })
+            .transpose()?;
+        let yaml_files = top
+            .yaml_files
+            .map(|lines| {
+                YamlFiles::new(&lines).map_err(|error| invalid_key(TopLevelKey::YamlFiles, error))
+            })
+            .transpose()?;
+        Ok(Self {
+            rules,
+            max_input_bytes: top.max_input_bytes,
+            selection: FileSelection { ignore, yaml_files },
+        })
+    }
+
+    fn collect_keys(
+        path: &Path,
+        entries: serde_norway::Mapping,
+    ) -> Result<TopLevel, ConfigFileError> {
+        let mut top = TopLevel::default();
         for (key, value) in entries {
             let key = match key {
                 Value::String(key) => key,
                 other => format!("{other:?}"),
             };
-            if key == "rules" {
-                rules_value = value;
-            } else if key == "max-input-bytes" {
-                max_input_bytes = Some(parse_max_input_bytes(path, &value)?);
-            } else if YAMLLINT_TOP_LEVEL_KEYS.contains(&key.as_str()) {
-                return Err(ConfigFileError::UnsupportedKey {
-                    path: path.to_owned(),
-                    key,
+            let Some(known) = TopLevelKey::parse(&key) else {
+                return Err(if YAMLLINT_TOP_LEVEL_KEYS.contains(&key.as_str()) {
+                    ConfigFileError::UnsupportedKey {
+                        path: path.to_owned(),
+                        key,
+                    }
+                } else {
+                    ConfigFileError::UnknownKey {
+                        path: path.to_owned(),
+                        key,
+                    }
                 });
-            } else {
-                return Err(ConfigFileError::UnknownKey {
-                    path: path.to_owned(),
-                    key,
-                });
+            };
+            let invalid = |message| ConfigFileError::InvalidKey {
+                path: path.to_owned(),
+                key: known,
+                message,
+            };
+            match known {
+                TopLevelKey::Rules => top.rules = value,
+                TopLevelKey::Extends => top.extends = Some(preset_of(&value).map_err(invalid)?),
+                TopLevelKey::Ignore => top.ignore = Some(ignore_lines(value).map_err(invalid)?),
+                TopLevelKey::YamlFiles => {
+                    top.yaml_files =
+                        Some(string_items(value, "file name patterns").map_err(invalid)?);
+                }
+                TopLevelKey::MaxInputBytes => {
+                    top.max_input_bytes = Some(parse_max_input_bytes(path, &value)?);
+                }
             }
         }
-        let mut rules = RulesConfig::default();
-        rules
-            .apply(rules_value)
-            .map_err(|source| ConfigFileError::InvalidRules {
-                path: path.to_owned(),
-                source,
-            })?;
-        Ok(Self {
-            rules,
-            max_input_bytes,
-        })
+        Ok(top)
     }
 
     /// Walk up the directory tree from `start_dir` looking for `.fast-yaml.yaml`
@@ -246,14 +419,20 @@ impl ConfigFile {
         None
     }
 
-    /// Convert into a `LintConfig` carrying the configured rules.
+    /// Splits into the `LintConfig` of the configured rules and the file selection.
+    ///
+    /// The file selection is not part of a `LintConfig`, so it is returned explicitly for the
+    /// caller that discovers files.
     #[must_use]
-    pub fn into_lint_config(self) -> LintConfig {
-        LintConfig {
-            rules: self.rules,
-            max_input_bytes: self.max_input_bytes.unwrap_or_default(),
-            ..LintConfig::default()
-        }
+    pub fn into_parts(self) -> (LintConfig, FileSelection) {
+        (
+            LintConfig {
+                rules: self.rules,
+                max_input_bytes: self.max_input_bytes.unwrap_or_default(),
+                ..LintConfig::default()
+            },
+            self.selection,
+        )
     }
 
     /// Apply CLI flag overrides on top of a config-derived `LintConfig`.
@@ -350,15 +529,12 @@ mod tests {
         let cfg = load_str("max-input-bytes: 4096\n").unwrap();
         assert_eq!(cfg.max_input_bytes, Some(MaxInputBytes::new(4096).unwrap()));
         assert_eq!(
-            cfg.into_lint_config().max_input_bytes,
+            cfg.into_parts().0.max_input_bytes,
             MaxInputBytes::new(4096).unwrap()
         );
         let unset = load_str("rules: {}\n").unwrap();
         assert_eq!(unset.max_input_bytes, None);
-        assert_eq!(
-            unset.into_lint_config().max_input_bytes,
-            MaxInputBytes::DEFAULT
-        );
+        assert_eq!(unset.into_parts().0.max_input_bytes, MaxInputBytes::DEFAULT);
     }
 
     #[test]
@@ -444,13 +620,7 @@ mod tests {
 
     #[test]
     fn test_yamllint_top_level_keys_are_unsupported() {
-        for key in [
-            "extends",
-            "ignore",
-            "ignore-from-file",
-            "yaml-files",
-            "locale",
-        ] {
+        for key in ["ignore-from-file", "locale"] {
             let err = load_str(&format!("{key}: default\nrules: {{}}\n")).unwrap_err();
             assert!(
                 matches!(err, ConfigFileError::UnsupportedKey { .. }),
@@ -523,10 +693,11 @@ mod tests {
     }
 
     #[test]
-    fn test_into_lint_config_disables_rule() {
+    fn test_into_parts_disables_rule() {
         let lint_config = load_str("rules:\n  key-ordering:\n    enabled: false\n")
             .unwrap()
-            .into_lint_config();
+            .into_parts()
+            .0;
         assert!(!lint_config.is_rule_enabled("key-ordering"));
     }
 
@@ -536,7 +707,8 @@ mod tests {
         assert_eq!(long_line.len(), 61);
         let lint_config = load_str("rules:\n  line-length:\n    max: 50\n")
             .unwrap()
-            .into_lint_config();
+            .into_parts()
+            .0;
         let diagnostics = Linter::with_config(lint_config).lint(long_line).unwrap();
         assert!(diagnostics.iter().any(|d| d.code.as_str() == "line-length"));
     }
@@ -544,7 +716,7 @@ mod tests {
     #[test]
     fn test_line_length_default_not_triggered_for_short_line() {
         let short_line = "name: this-line-is-about-sixty-characters-long-no-more-here";
-        let lint_config = load_str("rules: {}").unwrap().into_lint_config();
+        let lint_config = load_str("rules: {}").unwrap().into_parts().0;
         let diagnostics = Linter::with_config(lint_config).lint(short_line).unwrap();
         assert!(!diagnostics.iter().any(|d| d.code.as_str() == "line-length"));
     }
@@ -554,7 +726,8 @@ mod tests {
         let yaml = "list:\n  - item\n";
         let lint_config = load_str("rules:\n  indentation:\n    indent-size: 4\n")
             .unwrap()
-            .into_lint_config();
+            .into_parts()
+            .0;
         let diagnostics = Linter::with_config(lint_config).lint(yaml).unwrap();
         assert!(diagnostics.iter().any(|d| d.code.as_str() == "indentation"));
     }
@@ -562,7 +735,7 @@ mod tests {
     #[test]
     fn test_indentation_default_not_triggered_for_2space() {
         let yaml = "list:\n  - item\n";
-        let lint_config = load_str("rules: {}").unwrap().into_lint_config();
+        let lint_config = load_str("rules: {}").unwrap().into_parts().0;
         let diagnostics = Linter::with_config(lint_config).lint(yaml).unwrap();
         assert!(!diagnostics.iter().any(|d| d.code.as_str() == "indentation"));
     }
@@ -631,6 +804,142 @@ mod tests {
             load_str(&yaml),
             Err(ConfigFileError::Rejected { .. })
         ));
+    }
+
+    fn load_in(dir: &tempfile::TempDir, content: &str) -> Result<ConfigFile, ConfigFileError> {
+        let path = dir.path().join(".fast-yaml.yaml");
+        std::fs::write(&path, content).unwrap();
+        ConfigFile::load(&path)
+    }
+
+    fn invalid_key(error: ConfigFileError) -> (TopLevelKey, String) {
+        match error {
+            ConfigFileError::InvalidKey { key, message, .. } => (key, message),
+            other => panic!("expected InvalidKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extends_starts_from_the_preset() {
+        let default = load_str("extends: default\n").unwrap();
+        assert_eq!(default.rules, Preset::Default.rules());
+        let relaxed = load_str("extends: relaxed\nrules:\n  line-length: {max: 120}\n").unwrap();
+        assert_eq!(
+            relaxed.rules.line_length.options.max,
+            NonZeroUsize::new(120)
+        );
+        assert_eq!(
+            relaxed.rules.line_length.severity,
+            Some(crate::Severity::Warning)
+        );
+        assert!(!relaxed.rules.comments.enabled);
+    }
+
+    #[test]
+    fn key_order_does_not_matter_for_extends() {
+        let first = load_str("extends: relaxed\nrules:\n  colons: disable\n").unwrap();
+        let last = load_str("rules:\n  colons: disable\nextends: relaxed\n").unwrap();
+        assert_eq!(first.rules, last.rules);
+        assert!(!last.rules.colons.enabled);
+    }
+
+    #[test]
+    fn rules_override_enables_a_preset_disabled_rule_with_error_severity() {
+        for rules in [
+            "quoted-strings: enable",
+            "quoted-strings: {quote-type: single}",
+            "quoted-strings: warning",
+        ] {
+            let cfg = load_str(&format!("extends: default\nrules:\n  {rules}\n")).unwrap();
+            assert!(cfg.rules.quoted_strings.enabled, "{rules}");
+            assert_eq!(
+                cfg.rules.quoted_strings.options.required,
+                crate::rules::QuoteRequirement::Always,
+                "{rules}"
+            );
+        }
+        let cfg = load_str("extends: relaxed\nrules:\n  truthy: {check-keys: false}\n").unwrap();
+        assert!(cfg.rules.truthy.enabled);
+        assert_eq!(cfg.rules.truthy.severity, Some(crate::Severity::Error));
+        let cfg = load_str("extends: default\nrules:\n  document-end: enable\n").unwrap();
+        assert_eq!(
+            cfg.rules.document_end.severity,
+            Some(crate::Severity::Error)
+        );
+    }
+
+    #[test]
+    fn without_extends_a_mapping_does_not_enable_a_disabled_rule() {
+        let cfg = load_str("rules:\n  braces: {enabled: false}\n").unwrap();
+        assert!(!cfg.rules.braces.enabled);
+        assert_eq!(
+            cfg.rules.quoted_strings,
+            RulesConfig::default().quoted_strings
+        );
+    }
+
+    #[test]
+    fn invalid_extends_is_reported() {
+        for (content, needle) in [
+            (
+                "extends: ./base.yaml\n",
+                "extending a config file is not implemented",
+            ),
+            ("extends: strict\n", "'default' or 'relaxed'"),
+            ("extends: [default]\n", "expected 'default' or 'relaxed'"),
+        ] {
+            let (key, message) = invalid_key(load_str(content).unwrap_err());
+            assert_eq!(key, TopLevelKey::Extends);
+            assert!(message.contains(needle), "{content}: {message}");
+        }
+    }
+
+    #[test]
+    fn ignore_accepts_a_block_string_or_a_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        for content in [
+            "ignore: |\n  vendor/\n  # comment\n  *.tmp.yaml\n",
+            "ignore: ['vendor/', '*.tmp.yaml']\n",
+        ] {
+            let ignore = load_in(&dir, content).unwrap().selection.ignore.unwrap();
+            assert!(
+                ignore.matches(&root.join("vendor/a.yaml"), false),
+                "{content}"
+            );
+            assert!(
+                ignore.matches(&root.join("x/a.tmp.yaml"), false),
+                "{content}"
+            );
+            assert!(!ignore.matches(&root.join("a.yaml"), false), "{content}");
+        }
+    }
+
+    #[test]
+    fn invalid_ignore_and_yaml_files_are_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        for (content, key) in [
+            ("ignore: 5\n", TopLevelKey::Ignore),
+            ("ignore: [a, 1]\n", TopLevelKey::Ignore),
+            ("ignore: ~\n", TopLevelKey::Ignore),
+            ("ignore: ['{a']\n", TopLevelKey::Ignore),
+            ("yaml-files: '*.yaml'\n", TopLevelKey::YamlFiles),
+            ("yaml-files: [1]\n", TopLevelKey::YamlFiles),
+            ("yaml-files: ['{a']\n", TopLevelKey::YamlFiles),
+        ] {
+            let (found, message) = invalid_key(load_in(&dir, content).unwrap_err());
+            assert_eq!(found, key, "{content}");
+            assert!(!message.is_empty());
+        }
+    }
+
+    #[test]
+    fn yaml_files_match_file_names() {
+        let cfg = load_str("yaml-files: ['*.yaml.j2']\n").unwrap();
+        let files = cfg.selection.yaml_files.unwrap();
+        assert!(files.matches(Path::new("dir/a.yaml.j2")));
+        assert!(!files.matches(Path::new("dir/a.yaml")));
+        assert!(cfg.selection.ignore.is_none());
     }
 
     #[test]

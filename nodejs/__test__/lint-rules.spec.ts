@@ -88,6 +88,27 @@ describe('config errors', () => {
     expect(() => lint('a: 1\n', bad({ colons: { 'max-space-after': 1 } }))).toThrow(/colons/);
   });
 
+  it.each([
+    ['key-duplicates', 'duplicate-key'],
+    ['trailing-spaces', 'trailing-whitespace'],
+    ['anchors', 'invalid-anchor'],
+  ])('renamed yamllint rule %s hints at %s', (yamllint, ours) => {
+    expect(() => lint('a: 1\n', bad({ [yamllint]: 'enable' }))).toThrow(
+      new RegExp(`unknown rule '${yamllint}'; yamllint's '${yamllint}' is '${ours}' in fast-yaml`)
+    );
+  });
+
+  it('unknown rule without a yamllint alias has no hint', () => {
+    let message = '';
+    try {
+      lint('a: 1\n', bad({ 'no-such-rule': 'enable' }));
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain("unknown rule 'no-such-rule'");
+    expect(message).not.toContain('yamllint');
+  });
+
   it('unknown rule', () => {
     expect(() => lint('a: 1\n', bad({ 'no-such-rule': 'error' }))).toThrow(
       /unknown rule 'no-such-rule'/
@@ -183,10 +204,45 @@ describe('yamllint forms and shorthands', () => {
     );
   });
 
-  it('document-end present: false is unsupported', () => {
-    expect(() => lint('a: 1\n', bad({ 'document-end': { present: false } }))).toThrow(
-      /rule 'document-end'.*not implemented by fast-yaml/
-    );
+  it('document-end present: false forbids the marker', () => {
+    const rules = { rules: { 'document-end': { present: false } } } as LintConfig;
+    const messages = lint('a: 1\n...\n', rules)
+      .filter((d) => d.code === 'document-end')
+      .map((d) => d.message);
+    expect(messages).toEqual(["document end marker '...' is forbidden"]);
+    expect(codes('a: 1\n', rules)).not.toContain('document-end');
+  });
+
+  it('quoted-strings extra-required regex flags matching plain scalars', () => {
+    const config = {
+      rules: { 'quoted-strings': { 'extra-required': ['^http://', '\\.md$'] } },
+    } as LintConfig;
+    const messages = lint('a: http://x\nb: README.md\nc: plain\n', config)
+      .filter((d) => d.code === 'quoted-strings')
+      .map((d) => d.message);
+    expect(messages).toEqual(['string should be quoted', 'string should be quoted']);
+  });
+
+  it('quoted-strings extra-allowed regex keeps plain scalars', () => {
+    const config = {
+      rules: { 'quoted-strings': { 'extra-allowed': ['^ftp://'] } },
+    } as LintConfig;
+    const messages = lint('a: ftp://x\nb: "ftp://x"\nc: "plain"\n', config)
+      .filter((d) => d.code === 'quoted-strings')
+      .map((d) => d.message);
+    expect(messages).toEqual(['string does not need quotes']);
+  });
+
+  it('invalid regex names rule, option and index', () => {
+    expect(() =>
+      lint('a: 1\n', bad({ 'quoted-strings': { 'extra-required': ['ok', '(?=x)'] } }))
+    ).toThrow(/rule 'quoted-strings', option 'extra-required'.*pattern 1.*look-around/);
+  });
+
+  it('extra-allowed with required: always is rejected', () => {
+    expect(() =>
+      lint('a: 1\n', bad({ 'quoted-strings': { required: 'always', 'extra-allowed': ['a'] } }))
+    ).toThrow(/extra-allowed.*only-when-needed/);
   });
 
   it.each([

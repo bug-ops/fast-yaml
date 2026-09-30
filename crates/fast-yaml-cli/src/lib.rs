@@ -11,3 +11,5 @@
 pub mod discovery;
 /// Error types and exit codes for CLI operations
 pub mod error;
+/// Config-file selection of the files `fy lint` visits (`ignore`, `yaml-files`)
+pub mod file_filter;

@@ -10,7 +10,7 @@ use fast_yaml_linter::{
     Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
     Suggestion as RustSuggestion,
     config::{IndentSize, RuleConfigError, RuleName},
-    rules::{DocumentEndPresence, DocumentStartPresence},
+    rules::MarkerPresence,
 };
 use napi_derive::napi;
 use std::{num::NonZeroUsize, str::FromStr};
@@ -267,10 +267,10 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
         rust = rust.with_indent_size(IndentSize::try_from(indent).map_err(config_error)?);
     }
     if config.require_document_start == Some(true) {
-        rust = rust.with_document_start(DocumentStartPresence::Required);
+        rust = rust.with_document_start(MarkerPresence::Required);
     }
     if config.require_document_end == Some(true) {
-        rust = rust.with_document_end(DocumentEndPresence::Required);
+        rust = rust.with_document_end(MarkerPresence::Required);
     }
     if config.allow_duplicate_keys == Some(true) {
         rust = rust.with_disabled_rule(RuleName::DuplicateKey);

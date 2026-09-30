@@ -41,13 +41,6 @@ pub trait RuleOptions:
     /// Option names where `null` is a meaningful value rather than an error.
     const NULLABLE: &'static [&'static str] = &[];
 
-    /// Explains why a value of an otherwise known option is not implemented.
-    ///
-    /// Returns a hint for the user when yamllint accepts `value` but fast-yaml cannot honor it.
-    fn unsupported_value(_key: &str, _value: &Value) -> Option<&'static str> {
-        None
-    }
-
     /// Lists options whose current value cannot take effect together with the others.
     ///
     /// Only conflicts on an option that the applied patch sets are reported, so a value left
@@ -128,13 +121,31 @@ impl<O> RuleSettings<O> {
 }
 
 /// Error returned when a string is not the code of a built-in rule.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+///
+/// When the name is one of the few yamllint rule names that fast-yaml spells differently,
+/// the message points at the fast-yaml name. This is a hint only; the yamllint name is not
+/// accepted.
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-#[error("unknown rule '{}'", echo(.name, KEY_LIMIT))]
 pub struct UnknownRuleError {
     /// The rejected rule name.
     pub name: String,
+    /// The fast-yaml rule that yamllint knows under the rejected name.
+    pub yamllint_alias: Option<RuleName>,
 }
+
+impl fmt::Display for UnknownRuleError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = echo(&self.name, KEY_LIMIT);
+        write!(f, "unknown rule '{name}'")?;
+        if let Some(alias) = self.yamllint_alias {
+            write!(f, "; yamllint's '{name}' is '{alias}' in fast-yaml")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for UnknownRuleError {}
 
 /// Errors produced while applying rule configuration.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -257,6 +268,23 @@ impl std::borrow::Borrow<str> for CustomRuleCode {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum EnableOnOverride {
+    Yes,
+    No,
+}
+
+/// Whether an entry that does not mention `enabled` still switches a preset-disabled rule on.
+fn enables_rule(entry: &Value) -> bool {
+    match entry {
+        Value::Mapping(map) => !map.contains_key("enabled"),
+        Value::String(text) => {
+            !text.eq_ignore_ascii_case("enable") && !text.eq_ignore_ascii_case("disable")
+        }
+        _ => false,
+    }
+}
+
 pub(super) const fn value_kind(value: &Value) -> &'static str {
     match value {
         Value::Null => "null",
@@ -352,19 +380,19 @@ fn apply_mapping<O: RuleOptions>(
                         .to_owned(),
                 });
             }
+            "ignore" | "ignore-from-file" => {
+                return Err(RuleConfigError::UnsupportedOption {
+                    rule,
+                    key,
+                    hint: Some("use the top-level 'ignore' key to skip files for every rule"),
+                });
+            }
             _ => {
                 if O::YAMLLINT_UNSUPPORTED.contains(&key.as_str()) {
                     return Err(RuleConfigError::UnsupportedOption {
                         rule,
                         key,
                         hint: None,
-                    });
-                }
-                if let Some(hint) = O::unsupported_value(&key, &value) {
-                    return Err(RuleConfigError::UnsupportedOption {
-                        rule,
-                        key,
-                        hint: Some(hint),
                     });
                 }
                 if value.is_null() && !O::NULLABLE.contains(&key.as_str()) {
@@ -620,7 +648,25 @@ impl FromStr for RuleName {
         Self::ALL
             .into_iter()
             .find(|name| name.as_str() == s)
-            .ok_or_else(|| UnknownRuleError { name: s.to_owned() })
+            .ok_or_else(|| UnknownRuleError {
+                name: s.to_owned(),
+                yamllint_alias: Self::from_yamllint_name(s),
+            })
+    }
+}
+
+impl RuleName {
+    /// Rules whose yamllint name differs from the fast-yaml name.
+    const YAMLLINT_NAMES: [(&'static str, Self); 3] = [
+        ("key-duplicates", Self::DuplicateKey),
+        ("trailing-spaces", Self::TrailingWhitespace),
+        ("anchors", Self::InvalidAnchor),
+    ];
+
+    fn from_yamllint_name(name: &str) -> Option<Self> {
+        Self::YAMLLINT_NAMES
+            .into_iter()
+            .find_map(|(yamllint, rule)| (yamllint == name).then_some(rule))
     }
 }
 
@@ -653,7 +699,24 @@ impl RulesConfig {
         &mut self,
         deserializer: D,
     ) -> Result<(), RuleConfigError> {
-        let entries = match buffer(deserializer)? {
+        self.apply_entries(buffer(deserializer)?, EnableOnOverride::No)
+    }
+
+    /// Applies the `rules:` section of a config that extends a preset.
+    ///
+    /// Like [`RulesConfig::apply`], except that a severity name or a mapping without an
+    /// `enabled` key also turns a rule on, as in yamllint where such an entry replaces the
+    /// preset's disabled rule.
+    pub(crate) fn apply_over_preset(&mut self, value: Value) -> Result<(), RuleConfigError> {
+        self.apply_entries(value, EnableOnOverride::Yes)
+    }
+
+    fn apply_entries(
+        &mut self,
+        value: Value,
+        enable_on_override: EnableOnOverride,
+    ) -> Result<(), RuleConfigError> {
+        let entries = match value {
             Value::Null => return Ok(()),
             Value::Mapping(entries) => entries,
             other => {
@@ -674,7 +737,11 @@ impl RulesConfig {
                 });
             };
             let rule = RuleName::from_str(&name).map_err(RuleConfigError::UnknownRule)?;
+            let enables = enable_on_override == EnableOnOverride::Yes && enables_rule(&entry);
             next.apply_value(rule, entry)?;
+            if enables {
+                next.set_enabled(rule, true);
+            }
         }
         *self = next;
         Ok(())
@@ -717,7 +784,7 @@ impl RulesConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::{QuoteRequirement, RuleRegistry};
+    use crate::rules::RuleRegistry;
 
     fn apply(rules: &mut RulesConfig, yaml: &str) -> Result<(), RuleConfigError> {
         rules.apply(serde_norway::Deserializer::from_str(yaml))
@@ -916,18 +983,6 @@ mod tests {
     }
 
     #[test]
-    fn document_end_present_false_is_refused_with_hint() {
-        let message = error_of("document-end: {present: false}");
-        assert!(message.contains("document-end"), "{message}");
-        assert!(message.contains("disable the rule"), "{message}");
-        let rules = applied("document-end: {present: true}");
-        assert_eq!(
-            rules.document_end.options.present,
-            crate::rules::DocumentEndPresence::Required
-        );
-    }
-
-    #[test]
     fn whole_rules_config_round_trips_through_entries() {
         let mut original = RulesConfig::default();
         apply(
@@ -1001,23 +1056,6 @@ mod tests {
     }
 
     #[test]
-    fn inert_extra_patterns_are_rejected() {
-        for yaml in [
-            "quoted-strings: {required: false, extra-required: [a]}",
-            "quoted-strings: {required: always, extra-required: [a]}",
-            "quoted-strings: {required: never, extra-allowed: [a]}",
-            "quoted-strings: {extra-allowed: [a]}",
-        ] {
-            let message = error_of(yaml);
-            assert!(message.contains("has no effect"), "{yaml}: {message}");
-        }
-        let rules = applied("quoted-strings: {extra-required: [a]}");
-        assert_eq!(rules.quoted_strings.options.extra_required, ["a"]);
-        let rules = applied("quoted-strings: {required: true, extra-allowed: [a]}");
-        assert_eq!(rules.quoted_strings.options.extra_allowed, ["a"]);
-    }
-
-    #[test]
     fn hostile_names_are_bounded_and_escaped() {
         let long = "x".repeat(100_000);
         assert!(error_of(&format!("{long}: error")).len() < 1_000);
@@ -1047,57 +1085,6 @@ mod tests {
     }
 
     #[test]
-    fn stale_extra_patterns_do_not_block_changing_required() {
-        let mut rules = applied("quoted-strings: {extra-required: [a]}");
-        apply(&mut rules, "quoted-strings: {required: always}").unwrap();
-        assert_eq!(
-            rules.quoted_strings.options.required,
-            QuoteRequirement::Always
-        );
-        let mut rules = applied("quoted-strings: {required: always, extra-allowed: [a]}");
-        apply(&mut rules, "quoted-strings: {required: false}").unwrap();
-        assert_eq!(
-            rules.quoted_strings.options.required,
-            QuoteRequirement::NotRequired
-        );
-    }
-
-    #[test]
-    fn conflict_is_reported_for_the_option_the_patch_sets() {
-        let mut rules = applied("quoted-strings: {required: always}");
-        let message = apply(&mut rules, "quoted-strings: {extra-required: [a]}")
-            .unwrap_err()
-            .to_string();
-        assert!(message.contains("extra-required"), "{message}");
-        let message = error_of("quoted-strings: {required: false, extra-required: [a]}");
-        assert!(message.contains("extra-required"), "{message}");
-        let mut rules = applied("quoted-strings: {extra-required: [a]}");
-        apply(
-            &mut rules,
-            "quoted-strings: {required: always, extra-required: []}",
-        )
-        .unwrap();
-        assert!(rules.quoted_strings.options.extra_required.is_empty());
-    }
-
-    #[test]
-    fn regex_patterns_are_rejected() {
-        for pattern in [
-            "'^http'", "'.*:.*'", "'a|b'", "'(x)'", "'a$'", "'[ab]'", "'a+'", "'a?'", "'a{2}'",
-            "'a\\\\b'",
-        ] {
-            let yaml = format!("quoted-strings: {{extra-required: [{pattern}]}}");
-            let message = error_of(&yaml);
-            assert!(message.contains("plain substrings"), "{pattern}: {message}");
-            assert!(message.contains("extra-required"), "{pattern}: {message}");
-        }
-        let message = error_of("quoted-strings: {required: always, extra-allowed: ['^ftp']}");
-        assert!(message.contains("extra-allowed"), "{message}");
-        let rules = applied("quoted-strings: {extra-required: ['http', 'a.b']}");
-        assert_eq!(rules.quoted_strings.options.extra_required, ["http", "a.b"]);
-    }
-
-    #[test]
     fn custom_rule_code_validation() {
         assert_eq!(
             CustomRuleCode::new("").unwrap_err(),
@@ -1108,6 +1095,82 @@ mod tests {
             Err(RuleConfigError::ReservedRuleCode { .. })
         ));
         assert_eq!(CustomRuleCode::new("mine").unwrap().as_str(), "mine");
+    }
+
+    #[test]
+    fn renamed_yamllint_rules_get_a_hint() {
+        for (yamllint, ours) in [
+            ("key-duplicates", "duplicate-key"),
+            ("trailing-spaces", "trailing-whitespace"),
+            ("anchors", "invalid-anchor"),
+        ] {
+            let message = error_of(&format!("{yamllint}: enable"));
+            assert_eq!(
+                message,
+                format!(
+                    "unknown rule '{yamllint}'; yamllint's '{yamllint}' is '{ours}' in fast-yaml"
+                )
+            );
+        }
+        assert!(!error_of("no-such-rule: enable").contains("yamllint"));
+    }
+
+    #[test]
+    fn per_rule_ignore_is_explicitly_unsupported() {
+        for key in ["ignore", "ignore-from-file"] {
+            let message = error_of(&format!("braces: {{{key}: vendor/}}"));
+            assert!(
+                message.contains("braces") && message.contains(key),
+                "{message}"
+            );
+            assert!(message.contains("supported by yamllint"), "{message}");
+            assert!(message.contains("top-level 'ignore'"), "{message}");
+        }
+    }
+
+    fn over_preset(rules: &mut RulesConfig, yaml: &str) {
+        let value = serde_norway::from_str(yaml).unwrap();
+        rules.apply_over_preset(value).unwrap();
+    }
+
+    #[test]
+    fn preset_override_enables_on_mapping_and_severity_but_not_on_disable() {
+        let mut rules = RulesConfig::default();
+        for name in RuleName::ALL {
+            rules.set_enabled(name, false);
+        }
+        over_preset(
+            &mut rules,
+            "braces: {max-spaces-inside: 1}\nbrackets: warning\ncolons: {}\n\
+             commas: enable\nhyphens: disable\nindentation: {enabled: false, indent-size: 4}\n\
+             line-length: ~",
+        );
+        assert!(rules.braces.enabled);
+        assert!(rules.brackets.enabled);
+        assert_eq!(rules.brackets.severity, Some(Severity::Warning));
+        assert!(rules.colons.enabled);
+        assert!(rules.commas.enabled);
+        assert!(!rules.hyphens.enabled);
+        assert!(!rules.indentation.enabled);
+        assert_eq!(rules.indentation.options.indent_size.get(), 4);
+        assert!(!rules.line_length.enabled);
+    }
+
+    #[test]
+    fn plain_apply_keeps_a_disabled_rule_disabled() {
+        let mut rules = applied("braces: disable");
+        apply(&mut rules, "braces: {max-spaces-inside: 1}").unwrap();
+        assert!(!rules.braces.enabled);
+    }
+
+    #[test]
+    fn failed_preset_override_leaves_config_unchanged() {
+        let mut rules = RulesConfig::default();
+        rules.set_enabled(RuleName::Braces, false);
+        let before = rules.clone();
+        let value = serde_norway::from_str("braces: {max-spaces-inside: 1}\ncolons: loud").unwrap();
+        assert!(rules.apply_over_preset(value).is_err());
+        assert_eq!(rules, before);
     }
 
     #[test]

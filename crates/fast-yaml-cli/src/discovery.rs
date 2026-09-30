@@ -3,10 +3,13 @@
 use std::collections::HashSet;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::error::{DiscoveryError, PathError, StdinLineCause};
+use crate::file_filter::FileFilter;
 
 /// Maximum number of paths that can be read from stdin.
 const MAX_STDIN_PATHS: usize = 100_000;
@@ -17,13 +20,36 @@ const MAX_LINE_LENGTH: usize = 4096;
 /// Maximum number of glob matches to prevent memory exhaustion.
 const MAX_GLOB_MATCHES: usize = 100_000;
 
+/// Glob patterns that select files by name, and whether the user gave them.
+///
+/// The provenance matters because a lint config's `yaml-files` replaces the default patterns
+/// but never an explicit `--include`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncludePatterns {
+    /// Built-in `*.yaml` and `*.yml`
+    Default,
+    /// Patterns from `--include`
+    User(Vec<String>),
+}
+
+impl IncludePatterns {
+    /// Returns the glob patterns to compile.
+    #[must_use]
+    pub fn patterns(&self) -> Vec<String> {
+        match self {
+            Self::Default => vec!["*.yaml".into(), "*.yml".into()],
+            Self::User(patterns) => patterns.clone(),
+        }
+    }
+}
+
 /// Configuration for file discovery.
 ///
 /// Include and exclude patterns are matched case-insensitively.
 #[derive(Debug, Clone)]
 pub struct DiscoveryConfig {
-    /// Glob patterns for files to include (e.g., "*.yaml", "*.yml")
-    pub include_patterns: Vec<String>,
+    /// Glob patterns for files to include (default: "*.yaml", "*.yml")
+    pub include: IncludePatterns,
     /// Glob patterns for files/directories to exclude (e.g., "**/vendor/**")
     pub exclude_patterns: Vec<String>,
     /// Maximum recursion depth (None = unlimited)
@@ -34,17 +60,20 @@ pub struct DiscoveryConfig {
     pub respect_gitignore: bool,
     /// Whether to follow symbolic links
     pub follow_symlinks: bool,
+    /// File selection from a lint config file (`ignore`, `yaml-files`)
+    pub file_filter: FileFilter,
 }
 
 impl Default for DiscoveryConfig {
     fn default() -> Self {
         Self {
-            include_patterns: vec!["*.yaml".into(), "*.yml".into()],
+            include: IncludePatterns::Default,
             exclude_patterns: vec![],
             max_depth: Some(100),
             include_hidden: false,
             respect_gitignore: true,
             follow_symlinks: false,
+            file_filter: FileFilter::default(),
         }
     }
 }
@@ -59,7 +88,14 @@ impl DiscoveryConfig {
     /// Set include patterns (builder pattern).
     #[must_use]
     pub fn with_include_patterns(mut self, patterns: Vec<String>) -> Self {
-        self.include_patterns = patterns;
+        self.include = IncludePatterns::User(patterns);
+        self
+    }
+
+    /// Set the config-file file selection (builder pattern).
+    #[must_use]
+    pub fn with_file_filter(mut self, filter: FileFilter) -> Self {
+        self.file_filter = filter;
         self
     }
 
@@ -199,6 +235,24 @@ pub struct DiscoveredFile {
     pub origin: DiscoveryOrigin,
 }
 
+/// Files collected so far, and whether the config `ignore` dropped any candidate.
+#[derive(Default)]
+struct Found {
+    files: Vec<DiscoveredFile>,
+    seen: HashSet<PathBuf>,
+    dropped_by_config: bool,
+}
+
+impl Found {
+    /// A run that found nothing is an error unless the config `ignore` dropped something.
+    fn finish(self, empty_is_ok: bool) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
+        if self.files.is_empty() && !self.dropped_by_config && !empty_is_ok {
+            return Err(DiscoveryError::NoYamlFiles);
+        }
+        Ok(self.files)
+    }
+}
+
 /// File discovery engine.
 #[derive(Debug)]
 pub struct FileDiscovery {
@@ -210,7 +264,7 @@ pub struct FileDiscovery {
 impl FileDiscovery {
     /// Create a new file discovery instance.
     pub fn new(config: DiscoveryConfig) -> Result<Self, DiscoveryError> {
-        let include_matcher = build_globset(&config.include_patterns)?;
+        let include_matcher = build_globset(&config.include.patterns())?;
         let exclude_matcher = build_globset(&config.exclude_patterns)?;
 
         Ok(Self {
@@ -227,7 +281,8 @@ impl FileDiscovery {
     /// Returns an error if a file cannot be canonicalized, a glob matches nothing, a stdin line
     /// is overlong or names a missing path, a directory or a file the include patterns reject,
     /// or stdin cannot be read, or every input is filtered out
-    /// ([`DiscoveryError::NoYamlFiles`]). An empty stdin list yields no files and no error.
+    /// ([`DiscoveryError::NoYamlFiles`]). An empty stdin list yields no files and no error, and
+    /// neither does a run whose candidates were all dropped by the config file's `ignore`.
     pub fn discover_source(
         &self,
         source: &BatchSource,
@@ -249,34 +304,22 @@ impl FileDiscovery {
     ///
     /// Returns an error if a file cannot be canonicalized or is rejected by the include patterns,
     /// or a glob is malformed or matches nothing, or no file remains after filtering
-    /// ([`DiscoveryError::NoYamlFiles`]).
+    /// ([`DiscoveryError::NoYamlFiles`]). Dropping every candidate through the config file's
+    /// `ignore` is not an error and yields no files.
     pub fn discover(&self, paths: &[InputPath]) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
-        // Heuristic: estimate 10 files per input path
-        let estimated_capacity = paths.len().saturating_mul(10);
-        let mut discovered = Vec::with_capacity(estimated_capacity);
-        let mut seen = HashSet::new();
+        let mut found = Found::default();
 
         for path in paths {
             match path {
                 InputPath::File(file) => {
-                    self.discover_file(
-                        file,
-                        DiscoveryOrigin::DirectPath,
-                        &mut discovered,
-                        &mut seen,
-                    )?;
+                    self.discover_file(file, DiscoveryOrigin::DirectPath, &mut found)?;
                 }
-                InputPath::Dir(dir) => self.discover_directory(dir, &mut discovered, &mut seen),
-                InputPath::Glob(pattern) => {
-                    self.discover_glob(pattern, &mut discovered, &mut seen)?;
-                }
+                InputPath::Dir(dir) => self.discover_directory(dir, &mut found),
+                InputPath::Glob(pattern) => self.discover_glob(pattern, &mut found)?,
             }
         }
 
-        if discovered.is_empty() {
-            return Err(DiscoveryError::NoYamlFiles);
-        }
-        Ok(discovered)
+        found.finish(false)
     }
 
     /// Discover files from stdin (one path per line).
@@ -296,8 +339,7 @@ impl FileDiscovery {
         &self,
         reader: R,
     ) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
-        let mut discovered = Vec::new();
-        let mut seen = HashSet::new();
+        let mut found = Found::default();
         let mut count = 0;
         let mut listed = 0_usize;
 
@@ -328,28 +370,20 @@ impl FileDiscovery {
                 });
             }
 
-            self.discover_file(
-                Path::new(trimmed),
-                DiscoveryOrigin::StdinList,
-                &mut discovered,
-                &mut seen,
-            )
-            .map_err(|e| DiscoveryError::StdinLine {
-                line: count,
-                cause: e.into(),
-            })?;
+            self.discover_file(Path::new(trimmed), DiscoveryOrigin::StdinList, &mut found)
+                .map_err(|e| DiscoveryError::StdinLine {
+                    line: count,
+                    cause: e.into(),
+                })?;
         }
 
-        if listed > 0 && discovered.is_empty() {
-            return Err(DiscoveryError::NoYamlFiles);
-        }
-        Ok(discovered)
+        found.finish(listed == 0)
     }
 
     /// Check if a single path should be included.
     #[must_use]
     pub fn should_include(&self, path: &Path) -> bool {
-        !self.is_excluded(path) && self.matches_include(path)
+        !self.is_excluded(path) && self.matches_include(path, false)
     }
 
     fn is_excluded(&self, path: &Path) -> bool {
@@ -357,17 +391,27 @@ impl FileDiscovery {
             .is_match(path.strip_prefix(".").unwrap_or(path))
     }
 
-    fn matches_include(&self, path: &Path) -> bool {
-        path.file_name()
-            .is_some_and(|file_name| self.include_matcher.is_match(file_name))
+    /// Matches the file name against the include patterns.
+    ///
+    /// Without `--include`, a config's `yaml-files` replaces the defaults for files found by a
+    /// walk or glob, while a file named explicitly also passes the defaults (yamllint lints
+    /// explicit files whatever `yaml-files` says).
+    fn matches_include(&self, path: &Path, explicit: bool) -> bool {
+        let by_name = || {
+            path.file_name()
+                .is_some_and(|file_name| self.include_matcher.is_match(file_name))
+        };
+        match (&self.config.include, self.config.file_filter.selects(path)) {
+            (IncludePatterns::Default, Some(selected)) => selected || (explicit && by_name()),
+            _ => by_name(),
+        }
     }
 
     fn discover_file(
         &self,
         path: &Path,
         origin: DiscoveryOrigin,
-        discovered: &mut Vec<DiscoveredFile>,
-        seen: &mut HashSet<PathBuf>,
+        found: &mut Found,
     ) -> Result<(), PathError> {
         if self.is_excluded(path) {
             return Ok(());
@@ -386,7 +430,23 @@ impl FileDiscovery {
                 path: path.to_path_buf(),
             });
         }
-        if !self.matches_include(path) {
+        let canonicalize = || path.canonicalize().map_err(|e| classify_io_error(path, e));
+        let mut ignored_by_config = |canonical: &Path| {
+            let ignored = self.config.file_filter.is_ignored(canonical, false);
+            found.dropped_by_config |= ignored;
+            ignored
+        };
+
+        // An explicit file that config `ignore` drops is skipped before the include check
+        let early = if explicit {
+            Some(canonicalize()?)
+        } else {
+            None
+        };
+        if early.as_deref().is_some_and(&mut ignored_by_config) {
+            return Ok(());
+        }
+        if !self.matches_include(path, explicit) {
             return if explicit {
                 Err(PathError::NotIncluded {
                     path: path.to_path_buf(),
@@ -396,14 +456,20 @@ impl FileDiscovery {
             };
         }
 
-        // Canonicalize for deduplication
-        let canonical = path
-            .canonicalize()
-            .map_err(|e| classify_io_error(path, e))?;
+        // Canonicalize for deduplication and config `ignore` matching
+        let canonical = if let Some(canonical) = early {
+            canonical
+        } else {
+            let canonical = canonicalize()?;
+            if ignored_by_config(&canonical) {
+                return Ok(());
+            }
+            canonical
+        };
 
         // Dedup by canonical path
-        if seen.insert(canonical.clone()) {
-            discovered.push(DiscoveredFile {
+        if found.seen.insert(canonical.clone()) {
+            found.files.push(DiscoveredFile {
                 path: canonical,
                 origin,
             });
@@ -412,12 +478,7 @@ impl FileDiscovery {
         Ok(())
     }
 
-    fn discover_directory(
-        &self,
-        dir: &Path,
-        discovered: &mut Vec<DiscoveredFile>,
-        seen: &mut HashSet<PathBuf>,
-    ) {
+    fn discover_directory(&self, dir: &Path, found: &mut Found) {
         let mut builder = ignore::WalkBuilder::new(dir);
         builder
             .hidden(!self.config.include_hidden)
@@ -428,6 +489,28 @@ impl FileDiscovery {
 
         if let Some(depth) = self.config.max_depth {
             builder.max_depth(Some(depth));
+        }
+
+        let dropped_dir = Arc::new(AtomicBool::new(false));
+        if self.config.file_filter.has_ignore()
+            && let Ok(root) = dir.canonicalize()
+        {
+            let filter = self.config.file_filter.clone();
+            let prune = filter.can_prune();
+            let dir = dir.to_owned();
+            let dropped_dir = Arc::clone(&dropped_dir);
+            builder.filter_entry(move |entry| {
+                let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+                let ignored = is_dir
+                    && entry
+                        .path()
+                        .strip_prefix(&dir)
+                        .is_ok_and(|relative| filter.is_ignored(&root.join(relative), true));
+                if ignored {
+                    dropped_dir.store(true, Ordering::Relaxed);
+                }
+                !(ignored && prune)
+            });
         }
 
         for entry in builder.build() {
@@ -443,17 +526,13 @@ impl FileDiscovery {
             if entry.file_type().is_some_and(|ft| ft.is_file()) {
                 let path = entry.path();
                 // Ignore errors for individual files during directory walk
-                let _ = self.discover_file(path, DiscoveryOrigin::DirectoryWalk, discovered, seen);
+                let _ = self.discover_file(path, DiscoveryOrigin::DirectoryWalk, found);
             }
         }
+        found.dropped_by_config |= dropped_dir.load(Ordering::Relaxed);
     }
 
-    fn discover_glob(
-        &self,
-        pattern: &str,
-        discovered: &mut Vec<DiscoveredFile>,
-        seen: &mut HashSet<PathBuf>,
-    ) -> Result<(), DiscoveryError> {
+    fn discover_glob(&self, pattern: &str, found: &mut Found) -> Result<(), DiscoveryError> {
         let glob = glob::glob(pattern).map_err(|source| DiscoveryError::GlobSyntax {
             pattern: pattern.to_owned(),
             source,
@@ -475,12 +554,7 @@ impl FileDiscovery {
                 Ok(path) => {
                     if path.is_file() {
                         // Ignore errors for individual files during glob expansion
-                        let _ = self.discover_file(
-                            &path,
-                            DiscoveryOrigin::GlobExpansion,
-                            discovered,
-                            seen,
-                        );
+                        let _ = self.discover_file(&path, DiscoveryOrigin::GlobExpansion, found);
                     }
                 }
                 Err(e) => {
@@ -556,7 +630,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = DiscoveryConfig::default();
-        assert_eq!(config.include_patterns, vec!["*.yaml", "*.yml"]);
+        assert_eq!(config.include, IncludePatterns::Default);
         assert!(config.exclude_patterns.is_empty());
         assert_eq!(config.max_depth, Some(100));
         assert!(!config.include_hidden);
@@ -574,7 +648,10 @@ mod tests {
             .with_gitignore(false)
             .with_follow_symlinks(true);
 
-        assert_eq!(config.include_patterns, vec!["*.yml"]);
+        assert_eq!(
+            config.include,
+            IncludePatterns::User(vec!["*.yml".to_string()])
+        );
         assert_eq!(config.exclude_patterns, vec!["**/vendor/**"]);
         assert_eq!(config.max_depth, Some(5));
         assert!(config.include_hidden);

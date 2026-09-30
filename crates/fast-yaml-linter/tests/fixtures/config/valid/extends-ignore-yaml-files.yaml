@@ -1,0 +1,17 @@
+extends: relaxed
+
+ignore: |
+  vendor/
+  !vendor/keep.yaml
+  *.generated.yaml
+
+yaml-files:
+  - "*.yaml"
+  - "*.yml"
+  - "*.yaml.j2"
+
+rules:
+  line-length:
+    max: 120
+  quoted-strings:
+    quote-type: single

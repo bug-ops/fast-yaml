@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use std::num::NonZeroU8;
 use std::str::FromStr;
 
-use crate::echo::{KEY_LIMIT, echo};
+use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 
 use serde::de::{self, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -339,6 +339,316 @@ where
     T: BoolOrName,
 {
     deserializer.deserialize_any(BoolOrNameVisitor(PhantomData))
+}
+
+/// Whether a document boundary marker (`---` or `...`) is required, forbidden or allowed.
+///
+/// Accepts `true` (required), `false` (forbidden), `required`, `forbidden` and `allowed`.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::MarkerPresence;
+///
+/// assert_eq!(MarkerPresence::default(), MarkerPresence::Allowed);
+/// let parsed: MarkerPresence = serde_norway::from_str("false").unwrap();
+/// assert_eq!(parsed, MarkerPresence::Forbidden);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MarkerPresence {
+    /// The marker must be present.
+    Required,
+    /// The marker must be absent.
+    Forbidden,
+    /// Either form is accepted.
+    #[default]
+    Allowed,
+}
+
+impl BoolOrName for MarkerPresence {
+    const EXPECTING: &'static str = "a boolean, 'required', 'forbidden' or 'allowed'";
+
+    fn from_bool(value: bool) -> Result<Self, &'static str> {
+        Ok(if value {
+            Self::Required
+        } else {
+            Self::Forbidden
+        })
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "required" => Some(Self::Required),
+            "forbidden" => Some(Self::Forbidden),
+            "allowed" => Some(Self::Allowed),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for MarkerPresence {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Required => "required",
+            Self::Forbidden => "forbidden",
+            Self::Allowed => "allowed",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for MarkerPresence {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_bool_or_name(deserializer)
+    }
+}
+
+/// Compiled-size budget of one regular expression and of a whole list, in bytes.
+const SIZE_LIMIT: usize = 10 << 20;
+
+/// Longest accepted regular expression source, in bytes.
+const MAX_PATTERN_LEN: usize = 256;
+
+/// Most patterns accepted in one [`PatternList`].
+const MAX_PATTERNS: usize = 64;
+
+const REGEX_SYNTAX_HINT: &str = "Rust regex syntax: look-around and backreferences are unsupported";
+
+const SIZE_HINT: &str = "use ASCII classes such as [A-Za-z0-9_] instead of \\w to shrink it";
+
+/// Why a single regular expression was rejected.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidRegexPattern {
+    /// The source exceeds the length cap.
+    #[error("pattern is {len} bytes long, the limit is {MAX_PATTERN_LEN}")]
+    TooLong {
+        /// Length of the rejected source in bytes.
+        len: usize,
+    },
+    /// The expression does not parse.
+    #[error(
+        "invalid regular expression '{}': {} ({REGEX_SYNTAX_HINT})",
+        echo(.pattern, MESSAGE_LIMIT),
+        echo(.message, MESSAGE_LIMIT)
+    )]
+    Syntax {
+        /// The rejected source.
+        pattern: String,
+        /// Compiler diagnostic on one line.
+        message: String,
+    },
+    /// The expression compiles to more than the size budget.
+    #[error(
+        "regular expression '{}' compiles to more than {limit} bytes; {SIZE_HINT}",
+        echo(.pattern, MESSAGE_LIMIT)
+    )]
+    TooBig {
+        /// The rejected source.
+        pattern: String,
+        /// The exceeded budget in bytes.
+        limit: usize,
+    },
+}
+
+impl InvalidRegexPattern {
+    fn from_build_error(pattern: &str, error: &regex::Error) -> Self {
+        match error {
+            regex::Error::CompiledTooBig(limit) => Self::TooBig {
+                pattern: pattern.to_owned(),
+                limit: *limit,
+            },
+            other => {
+                let text = other.to_string();
+                let message = text
+                    .lines()
+                    .rev()
+                    .find_map(|line| line.strip_prefix("error: "))
+                    .map_or_else(|| text.replace('\n', " "), str::to_owned);
+                Self::Syntax {
+                    pattern: pattern.to_owned(),
+                    message,
+                }
+            }
+        }
+    }
+}
+
+/// Error returned when a pattern list cannot be built.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum InvalidPatternList {
+    /// One pattern is not an accepted regular expression.
+    #[error("pattern {index}: {reason}")]
+    Pattern {
+        /// Zero-based position in the list.
+        index: usize,
+        /// Why the pattern was rejected.
+        reason: InvalidRegexPattern,
+    },
+    /// The list holds more than the allowed number of patterns.
+    #[error("too many patterns, the limit is {MAX_PATTERNS}")]
+    TooMany,
+    /// The patterns are valid alone but too large to compile together.
+    #[error("the patterns are too large to compile together: {message}")]
+    TooLarge {
+        /// Compiler diagnostic.
+        message: String,
+    },
+}
+
+/// An ordered list of regular expressions matched as "any of" with `re.search` semantics.
+///
+/// Uses Rust regex syntax: look-around and backreferences are unsupported. The count and the
+/// length of each source are checked before anything is compiled; the list is then compiled
+/// once into a single set.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::PatternList;
+///
+/// let list = PatternList::new(["^http", "\\.md$"]).unwrap();
+/// assert!(list.is_match("http://x"));
+/// assert!(list.is_match("README.md"));
+/// assert!(!list.is_match("plain"));
+/// assert!(PatternList::new(["(?=a)"]).is_err());
+/// assert!(PatternList::default().is_empty());
+/// ```
+#[derive(Debug, Clone)]
+pub struct PatternList {
+    sources: Vec<Box<str>>,
+    set: regex::RegexSet,
+}
+
+impl Default for PatternList {
+    fn default() -> Self {
+        Self {
+            sources: Vec::new(),
+            set: regex::RegexSet::empty(),
+        }
+    }
+}
+
+impl PatternList {
+    /// Builds a list, rejecting more than `MAX_PATTERNS` patterns before compiling any of them.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidPatternList`] when a pattern is invalid, the list is too long, or the
+    /// combined expressions exceed the compiled-size budget.
+    pub fn new<I, S>(sources: I) -> Result<Self, InvalidPatternList>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let sources = sources
+            .into_iter()
+            .take(MAX_PATTERNS + 1)
+            .map(|source| Box::from(source.as_ref()))
+            .collect::<Vec<Box<str>>>();
+        Self::from_sources(sources)
+    }
+
+    fn from_sources(sources: Vec<Box<str>>) -> Result<Self, InvalidPatternList> {
+        if sources.len() > MAX_PATTERNS {
+            return Err(InvalidPatternList::TooMany);
+        }
+        if let Some((index, source)) = sources
+            .iter()
+            .enumerate()
+            .find(|(_, source)| source.len() > MAX_PATTERN_LEN)
+        {
+            return Err(InvalidPatternList::Pattern {
+                index,
+                reason: InvalidRegexPattern::TooLong { len: source.len() },
+            });
+        }
+        let set = regex::RegexSetBuilder::new(sources.iter().map(AsRef::<str>::as_ref))
+            .size_limit(SIZE_LIMIT)
+            .dfa_size_limit(SIZE_LIMIT)
+            .build()
+            .map_err(|error| Self::locate_failure(&sources, &error))?;
+        Ok(Self { sources, set })
+    }
+
+    /// Finds the pattern that made the set fail; only runs on the error path.
+    fn locate_failure(sources: &[Box<str>], error: &regex::Error) -> InvalidPatternList {
+        sources
+            .iter()
+            .enumerate()
+            .find_map(|(index, source)| {
+                regex::RegexBuilder::new(source)
+                    .size_limit(SIZE_LIMIT)
+                    .dfa_size_limit(SIZE_LIMIT)
+                    .build()
+                    .err()
+                    .map(|error| InvalidPatternList::Pattern {
+                        index,
+                        reason: InvalidRegexPattern::from_build_error(source, &error),
+                    })
+            })
+            .unwrap_or_else(|| InvalidPatternList::TooLarge {
+                message: error.to_string(),
+            })
+    }
+
+    /// Returns `true` when any pattern matches anywhere in `haystack`.
+    #[must_use]
+    pub fn is_match(&self, haystack: &str) -> bool {
+        self.set.is_match(haystack)
+    }
+
+    /// Returns `true` when the list holds no patterns.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.sources.is_empty()
+    }
+
+    /// Returns the pattern sources in order.
+    pub fn sources(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.sources.iter().map(AsRef::as_ref)
+    }
+}
+
+impl PartialEq for PatternList {
+    fn eq(&self, other: &Self) -> bool {
+        self.sources == other.sources
+    }
+}
+
+impl Eq for PatternList {}
+
+impl Serialize for PatternList {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.sources())
+    }
+}
+
+struct PatternListVisitor;
+
+impl<'de> Visitor<'de> for PatternListVisitor {
+    type Value = PatternList;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "a list of at most {MAX_PATTERNS} regular expressions")
+    }
+
+    fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> Result<PatternList, A::Error> {
+        let mut sources = Vec::new();
+        while let Some(source) = seq.next_element::<String>()? {
+            if sources.len() == MAX_PATTERNS {
+                return Err(de::Error::custom(InvalidPatternList::TooMany));
+            }
+            sources.push(source.into_boxed_str());
+        }
+        PatternList::from_sources(sources).map_err(de::Error::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for PatternList {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_seq(PatternListVisitor)
+    }
 }
 
 #[cfg(test)]
