@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix `fy format` dropping leading spaces of block scalars: emit the indentation indicator and stop extra blank lines after them (#367)
 - Fix `fy format` emitting empty values with trailing whitespace: omitted nulls are now written as `null` (#367)
 - Bump Node.js dev dependency `js-yaml` to 5.4.2 to fix GHSA-r3ph-w7gj-g6xm (#368)
+- Fix `fy format` emitting alias keys without a space before `:` and writing plain/single-quoted scalars with control characters (e.g. newlines) raw; they are now double-quoted (#NNN)
 - Fix `quoted-strings` and `duplicate-key` spans and false positives on non-ASCII text and CRLF sources (#347)
 - Fix `fy lint` panic on non-ASCII text before block scalars containing flow delimiters and on unbalanced `{}`/`[]` (#307)
 - Strip a leading UTF-8 BOM before parsing, linting, formatting, and conversion across core, linter, parallel, CLI, and Python; `fy format` now drops the BOM (#331)

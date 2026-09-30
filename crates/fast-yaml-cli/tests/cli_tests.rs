@@ -451,3 +451,85 @@ fn test_format_null_values_emit_null_and_lint_clean() {
         assert!(!lint.contains("trailing-whitespace"), "got {lint}");
     }
 }
+
+fn convert_json_stdin(input: &str) -> String {
+    let out = Command::cargo_bin("fy")
+        .unwrap()
+        .args(["convert", "json"])
+        .write_stdin(input.to_owned())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    String::from_utf8(out).unwrap()
+}
+
+fn assert_format_roundtrips(input: &str) -> String {
+    let once = format_stdin(input);
+    assert_eq!(format_stdin(&once), once, "not idempotent for {input:?}");
+    assert_eq!(
+        convert_json_stdin(&once),
+        convert_json_stdin(input),
+        "value changed: {input:?} -> {once:?}"
+    );
+    once
+}
+
+#[test]
+fn test_format_alias_key_keeps_space_before_colon() {
+    assert_eq!(
+        assert_format_roundtrips("&k a: 1\n? *k\n: 2\n"),
+        "&k a: 1\n*k : 2\n"
+    );
+    assert_eq!(
+        assert_format_roundtrips("- &k a\n- *k : 1\n"),
+        "- &k a\n- *k : 1\n"
+    );
+    assert_format_roundtrips("x:\n  y:\n    &k a: 1\n    *k : 2\n");
+    assert_format_roundtrips("x: {&k a: 1, *k : 2}\n");
+}
+
+#[test]
+fn test_format_multiline_quoted_scalars_stay_valid() {
+    assert_eq!(
+        assert_format_roundtrips("? 'a\n\n  b'\n: 1\n"),
+        "\"a\\nb\": 1\n"
+    );
+    assert_eq!(assert_format_roundtrips("- 'a\n\n  b'\n"), "- \"a\\nb\"\n");
+    assert_format_roundtrips("k: 'a\n\n  b'\n");
+    assert_format_roundtrips("k: a\n\n  b\n");
+    assert_format_roundtrips("? &k 'a\n\n  b'\n: 1\n");
+    assert_format_roundtrips("? !!str 'a\n\n  b'\n: 1\n");
+    assert_format_roundtrips("'a\n\n  b'\n");
+}
+
+#[test]
+fn test_format_escapes_del_c1_and_non_characters() {
+    assert_eq!(
+        assert_format_roundtrips("k: \"a\\x7Fb\\x85c\\uFFFEd\"\n"),
+        "k: \"a\\x7Fb\\x85c\\uFFFEd\"\n"
+    );
+}
+
+#[test]
+fn test_format_block_scalar_under_alias_key_roundtrips() {
+    assert_format_roundtrips("&k a: 1\nb:\n  c:\n    *k : |\n      text\n");
+    assert_format_roundtrips("- &k a\n- *k : |\n    text\n");
+}
+
+#[test]
+fn test_format_indent_4_alias_key_in_nested_mapping() {
+    let input = "&k a: 1\nx:\n  y:\n    *k : \"p\\nq\"\n    z: 2\n";
+    let once = Command::cargo_bin("fy")
+        .unwrap()
+        .args(["format", "--indent", "4"])
+        .write_stdin(input.to_owned())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let once = String::from_utf8(once).unwrap();
+    assert_eq!(convert_json_stdin(&once), convert_json_stdin(input));
+}
