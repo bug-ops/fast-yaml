@@ -10,22 +10,7 @@ use saphyr_parser::{Event, ScalarStyle, Span, Tag};
 
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH};
-use crate::emitter::EmitterConfig;
-
-/// Return the YAML chomp indicator suffix for a block scalar value.
-///
-/// - `"+"` (keep) if `value` ends with two or more newlines (trailing blank lines)
-/// - `""` (clip, default) if `value` ends with exactly one newline
-/// - `"-"` (strip) if `value` does not end with a newline
-fn chomp_indicator(value: &str) -> &'static str {
-    if value.ends_with("\n\n") {
-        "+"
-    } else if value.ends_with('\n') {
-        ""
-    } else {
-        "-"
-    }
-}
+use crate::emitter::{EmitterConfig, block_scalar_header};
 
 /// Writes a tag in its shortest re-parseable form.
 ///
@@ -116,6 +101,9 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     /// The first item of a sequence opened inline after an outer "- " must not
     /// call `write_indent` — the outer dash already positioned the cursor.
     first_item_after_dash: bool,
+    /// Column of the innermost key or dash owning the scalar being written;
+    /// block scalar bodies are indented `config.indent` past it.
+    node_col: usize,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -138,6 +126,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             pending_space: false,
             first_key_after_dash: false,
             first_item_after_dash: false,
+            node_col: 0,
             backend,
         }
     }
@@ -277,6 +266,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 } else {
                     self.write_indent();
                 }
+                self.node_col = self.current_column();
                 self.output.push_str("- ");
                 self.last_char_newline = false;
             }
@@ -286,6 +276,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 } else {
                     self.write_indent();
                 }
+                self.node_col = self.current_column();
                 if block_key {
                     self.output.push_str("? ");
                     self.last_char_newline = false;
@@ -293,7 +284,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
             // Root level scalar needs no prefix; mapping value emits pending space.
             // Explicit* are consumed by begin_explicit_value and never current here.
-            Context::Root | Context::ExplicitKey | Context::ExplicitValue => {}
+            Context::Root => self.node_col = 0,
+            Context::ExplicitKey | Context::ExplicitValue => {}
             Context::MappingValue => {
                 if self.pending_space {
                     self.output.push(' ');
@@ -303,7 +295,9 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
         }
 
-        if self.emit_properties(anchor_id, tag) {
+        let wrote_properties = self.emit_properties(anchor_id, tag);
+        let tagged_empty = tag.is_some() && style == ScalarStyle::Plain && value.is_empty();
+        if wrote_properties && !tagged_empty {
             self.output.push(' ');
         }
 
@@ -348,6 +342,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 // Fix special floats for YAML 1.2 compliance; an explicit tag pins the type.
                 let fixed = match typing {
                     ScalarTyping::Tagged => value,
+                    ScalarTyping::Implicit if value.is_empty() => "null",
                     ScalarTyping::Implicit => super::fix_special_float_value(value),
                 };
                 self.output.push_str(fixed);
@@ -384,16 +379,16 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.last_char_newline = false;
             }
             ScalarStyle::Literal => {
-                self.output.push('|');
-                self.output.push_str(chomp_indicator(value));
+                self.output
+                    .push_str(&block_scalar_header('|', value, self.config.indent));
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
                 // write_block_scalar_lines always ends with newline
                 self.last_char_newline = true;
             }
             ScalarStyle::Folded => {
-                self.output.push('>');
-                self.output.push_str(chomp_indicator(value));
+                self.output
+                    .push_str(&block_scalar_header('>', value, self.config.indent));
                 self.output.push('\n');
                 self.write_block_scalar_lines(value);
                 // write_block_scalar_lines always ends with newline
@@ -550,12 +545,17 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         }
     }
 
+    /// Column of the cursor within the current output line.
+    fn current_column(&self) -> usize {
+        self.output.len() - self.output.rfind('\n').map_or(0, |pos| pos + 1)
+    }
+
     /// Write indentation for block scalar content (literal/folded styles).
     ///
     /// Empty lines are emitted as bare `\n` (no trailing spaces) to match
     /// the non-streaming path in `emitter.rs`.
     fn write_block_scalar_lines(&mut self, value: &str) {
-        let indent_chars = self.indent_level.saturating_mul(self.config.indent);
+        let indent_chars = self.node_col + self.config.indent;
 
         // `lines()` yields interior blank lines and drops only the final terminator,
         // which is exactly what keep (+) chomping needs.
@@ -647,12 +647,21 @@ mod tests {
 
     #[test]
     fn tags_preserved_on_collections() {
-        assert_eq!(
-            assert_stable("s: !!set {a, b}\n"),
-            "s: !!set\n  a: \n  b: \n"
-        );
+        // Omitted set values become explicit nulls (#319), so events differ by design
+        let set = fmt("s: !!set {a, b}\n");
+        assert_eq!(set, "s: !!set\n  a: null\n  b: null\n");
+        assert_eq!(fmt(&set), set);
         assert_eq!(assert_stable("- !!seq [a]\n"), "- !!seq\n  - a\n");
         assert_eq!(assert_stable("&a !!map {k: v}\n"), "&a !!map\nk: v\n");
+    }
+
+    #[test]
+    fn tagged_empty_scalar_stays_empty_without_trailing_space() {
+        for yaml in ["a: !!str\nb: 1\n", "- !!str\n- x\n"] {
+            let out = assert_stable(yaml);
+            assert!(out.contains("!!str\n"), "{out:?}");
+            assert!(!out.lines().any(|l| l.ends_with(' ')), "{out:?}");
+        }
     }
 
     #[test]

@@ -367,17 +367,21 @@ fn test_bom_convert_json_to_yaml() {
         .stdout(predicate::str::contains("a: 1"));
 }
 
-fn format_stdin(input: &str) -> String {
+fn fy_stdout(args: &[&str], stdin: &str) -> String {
     let out = Command::cargo_bin("fy")
         .unwrap()
-        .arg("format")
-        .write_stdin(input.to_owned())
+        .args(args)
+        .write_stdin(stdin.to_owned())
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
     String::from_utf8(out).unwrap()
+}
+
+fn format_stdin(input: &str) -> String {
+    fy_stdout(&["format"], input)
 }
 
 #[test]
@@ -396,4 +400,54 @@ fn test_format_keep_chomp_is_idempotent() {
 fn test_format_complex_keys_stay_valid() {
     let out = format_stdin("? [a, b]\n: c\n");
     assert_eq!(out, "?\n  - a\n  - b\n: c\n");
+}
+
+// Regression tests for #318 (block scalar indentation indicator) and #319 (empty null values)
+#[test]
+fn test_format_block_scalar_leading_space_round_trips() {
+    let input = "a: |2\n   x\nb: >1\n  y\nc: |2+\n   z\n\nd:\n  - |1-\n   w\n";
+    for indent in ["2", "3", "4", "8"] {
+        let once = fy_stdout(&["format", "--indent", indent], input);
+        let twice = fy_stdout(&["format", "--indent", indent], &once);
+        assert_eq!(once, twice, "not idempotent at indent {indent}");
+        assert_eq!(
+            fy_stdout(&["convert", "json"], input),
+            fy_stdout(&["convert", "json"], &once),
+            "value changed at indent {indent}: {once:?}"
+        );
+    }
+}
+
+#[test]
+fn test_format_block_scalar_compact_and_root_round_trips() {
+    for input in ["- a: |2\n     x\n", "|2\n   root\n"] {
+        for indent in ["2", "3", "4", "8"] {
+            let once = fy_stdout(&["format", "--indent", indent], input);
+            assert_eq!(once, fy_stdout(&["format", "--indent", indent], &once));
+            assert_eq!(
+                fy_stdout(&["convert", "json"], input),
+                fy_stdout(&["convert", "json"], &once),
+                "{input:?} at indent {indent}: {once:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_format_null_values_emit_null_and_lint_clean() {
+    let input = "a:\nb: 1\nc:\n  - \n  - !!set {x, y}\n";
+    let once = fy_stdout(&["format"], input);
+    assert!(!once.lines().any(|l| l.ends_with(' ')), "got {once:?}");
+    assert!(once.contains("a: null\n"), "got {once:?}");
+    assert_eq!(once, fy_stdout(&["format"], &once));
+    assert_eq!(
+        fy_stdout(&["convert", "json"], input),
+        fy_stdout(&["convert", "json"], &once)
+    );
+    #[cfg(feature = "linter")]
+    {
+        let lint = fy_stdout(&["lint"], &once);
+        assert!(!lint.contains("empty-values"), "got {lint}");
+        assert!(!lint.contains("trailing-whitespace"), "got {lint}");
+    }
 }
