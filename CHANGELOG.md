@@ -9,11 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core**: the `streaming` feature is removed; the streaming formatter is always compiled and is the only `Emitter::format*` path; `Parser::parse_all_preserving_styles` and `streaming::is_streaming_suitable` are removed (#408)
 - **Build**: MSRV raised to Rust 1.91 and workspace resolver switched to 3; `ordered-float` updated to 5.5 (#399)
 - **Core**: `EmitError` gains `DepthLimitExceeded` and `AnchorLimitExceeded` variants returned by `format_streaming`, `format_streaming_arena`, and `Emitter::format*`; exhaustive matches must handle them (#371) (#383)
 
 ### Changed
 
+- Python/Node.js `format_files` and `fast-yaml-parallel` now use the streaming formatter, so output matches `fy format` (`null` instead of `~`, anchors, duplicate keys and `---` kept, no `YAML scanner error:` prefix on parse errors) (#408)
 - **Breaking:** `fast-yaml-parallel` `format_files`/`format_in_place` take a `CommentPolicy`, `format_files` returns `FormatOutput { formatted, changed }`, and `Error::CommentsWouldBeStripped` is added; Python and Node.js bindings keep stripping comments (#397)
 - **Breaking:** Python and Node.js `format_files_in_place` now report untouched files as `Unchanged` instead of `Success` (#397)
 - **Breaking:** `fy format --dry-run` exits with code 5 when any file would change (1 still means a failure) (#397)
@@ -39,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
+- Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)
 - Fix Node.js bindings aborting the process on a Rust panic; panics in sync and async exports now throw a catchable JS `Error` (#404)
 - Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#385)
 - Fix quadratic lint time on large files in `key-ordering` key lookup and flow-token block-scalar checks (#385)

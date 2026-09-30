@@ -2,7 +2,6 @@
 //! folded and keep-chomp block scalars (#356) and empty flow collections (#355).
 //!
 //! Every case asserts the exact output, idempotency and value preservation.
-#![cfg(feature = "streaming")]
 
 use std::fmt::Write;
 

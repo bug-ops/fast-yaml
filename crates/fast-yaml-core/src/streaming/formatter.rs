@@ -1095,10 +1095,11 @@ mod tests {
 
     fn format_all_backends(yaml: &str) -> Vec<Result<String, EmitError>> {
         let config = EmitterConfig::default();
-        let mut results = vec![format_streaming(yaml, &config)];
-        #[cfg(feature = "arena")]
-        results.push(crate::streaming::format_streaming_arena(yaml, &config));
-        results
+        vec![
+            format_streaming(yaml, &config),
+            #[cfg(feature = "arena")]
+            crate::streaming::format_streaming_arena(yaml, &config),
+        ]
     }
 
     fn assert_depth_error(yaml: &str) {

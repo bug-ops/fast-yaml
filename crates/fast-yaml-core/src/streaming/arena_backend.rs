@@ -159,7 +159,7 @@ impl<'bump> FormatterBackend for ArenaBackend<'bump> {
 /// # Examples
 ///
 /// ```
-/// # #[cfg(all(feature = "streaming", feature = "arena"))]
+/// # #[cfg(feature = "arena")]
 /// # {
 /// use fast_yaml_core::streaming::format_streaming_arena;
 /// use fast_yaml_core::EmitterConfig;

@@ -86,6 +86,15 @@ describe('Batch Processing', () => {
       }
     });
 
+    it('should preserve explicit tags', () => {
+      const taggedPath = path.join(tmpDir, 'tagged.yaml');
+      fs.writeFileSync(taggedPath, 'a: !!str 1\nb: !custom x\n');
+      const [r] = formatFiles([taggedPath]);
+      expect(r.error).toBeUndefined();
+      expect(r.content).toContain('a: !!str 1');
+      expect(r.content).toContain('b: !custom x');
+    });
+
     it('should handle invalid files', () => {
       const invalidPath = path.join(tmpDir, 'invalid.yaml');
       fs.writeFileSync(invalidPath, 'invalid: [\n');
