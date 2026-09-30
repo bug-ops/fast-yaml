@@ -87,8 +87,8 @@ pub enum Command {
         #[arg(long)]
         no_recursive: bool,
 
-        /// Show what would be changed without modifying files
-        #[arg(short = 'n', long)]
+        /// Never write any file; only print a summary of what would change
+        #[arg(short = 'n', long, conflicts_with = "output")]
         dry_run: bool,
 
         /// Suppress the error when YAML comments are detected.

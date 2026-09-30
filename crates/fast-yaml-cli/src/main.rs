@@ -130,6 +130,7 @@ fn run() -> Result<ExitCode> {
                 )
                 .with_discovery(discovery_config)
                 .with_dry_run(dry_run)
+                .with_strip_comments(strip_comments)
                 .with_in_place(cli.in_place);
 
                 commands::format_batch::execute_batch(&batch_config, &paths, stdin_files)?
@@ -145,7 +146,8 @@ fn run() -> Result<ExitCode> {
                         .with_indent(indent)
                         .with_width(width),
                 );
-                let cmd = commands::format::FormatCommand::new(format_config, strip_comments);
+                let cmd = commands::format::FormatCommand::new(format_config, strip_comments)
+                    .with_dry_run(dry_run);
                 cmd.execute(&input, &output)?;
                 ExitCode::Success
             } else {
@@ -159,8 +161,21 @@ fn run() -> Result<ExitCode> {
                         .with_indent(indent)
                         .with_width(width),
                 );
-                let cmd = commands::format::FormatCommand::new(format_config, strip_comments);
+                let cmd = commands::format::FormatCommand::new(format_config, strip_comments)
+                    .with_dry_run(dry_run);
                 cmd.execute(&input, &output)?;
+                if dry_run {
+                    reporter::Reporter::new(common_config.output.clone()).report(
+                        reporter::ReportEvent::BatchSummary {
+                            total: 1,
+                            formatted: 0,
+                            unchanged: 0,
+                            would_change: 1,
+                            failed: 0,
+                            duration: std::time::Duration::ZERO,
+                        },
+                    )?;
+                }
                 ExitCode::Success
             }
         }
