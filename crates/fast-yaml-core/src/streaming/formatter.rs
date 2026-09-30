@@ -9,6 +9,7 @@ use std::fmt::Write;
 
 use saphyr_parser::{Event, ScalarStyle, Span, Tag};
 
+use super::directives::DirectiveScanner;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH, MAX_IMPLICIT_KEY_CHARS};
 use crate::emitter::{EmitterConfig, MAX_INDENT, MIN_INDENT, block_scalar_header};
@@ -172,7 +173,7 @@ fn push_tag_text(out: &mut String, text: &str, form: TagForm) {
 }
 
 /// Whether a scalar carries an explicit tag that pins its type.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum ScalarTyping {
     Tagged,
     Implicit,
@@ -219,6 +220,8 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     name_owner: HashMap<String, usize>,
     /// Cleared when an alias would bind to a different anchor than the parser resolved.
     aliases_resolve: bool,
+    /// Directive lines of the source, re-emitted before the documents that had them.
+    directives: DirectiveScanner<'a>,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -231,7 +234,13 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     /// * `config` - Emitter configuration (indent, `explicit_start`, etc.)
     /// * `output_capacity` - Initial capacity for output buffer
     /// * `backend` - Backend providing context stack and anchor storage
-    pub fn new(config: &'a EmitterConfig, output_capacity: usize, backend: B) -> Self {
+    /// * `source` - Input text, scanned for `%YAML` / `%TAG` directives
+    pub fn new(
+        config: &'a EmitterConfig,
+        output_capacity: usize,
+        backend: B,
+        source: &'a str,
+    ) -> Self {
         Self {
             config,
             indent: config.indent.clamp(MIN_INDENT, MAX_INDENT),
@@ -248,6 +257,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             docs_started: 0,
             name_owner: HashMap::new(),
             aliases_resolve: true,
+            directives: DirectiveScanner::new(source),
             backend,
         }
     }
@@ -357,7 +367,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     ///
     /// Returns [`EmitError::DepthLimitExceeded`] or [`EmitError::AnchorLimitExceeded`] when
     /// the document exceeds the formatter limits.
-    pub fn format_event(&mut self, event: Event<'_>, _span: Span) -> EmitResult<()> {
+    pub fn format_event(&mut self, event: Event<'_>, span: Span) -> EmitResult<()> {
         if !matches!(event, Event::SequenceEnd | Event::MappingEnd) {
             self.flush_pending_start()?;
         }
@@ -366,6 +376,13 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             Event::DocumentStart(explicit) => {
                 self.anchor_base = self.max_anchor_id;
                 if explicit || self.config.explicit_start || self.docs_started > 0 {
+                    if explicit && let Some(directives) = self.directives.before(span.start.line())
+                    {
+                        if self.docs_started > 0 {
+                            self.output.push_str("...\n");
+                        }
+                        self.output.push_str(&directives);
+                    }
                     self.output.push_str("---");
                     self.pending_newline = true;
                     self.last_char_newline = false;
@@ -570,11 +587,10 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     fn emit_value_with_style(&mut self, value: &str, style: ScalarStyle, typing: ScalarTyping) {
         match style {
             ScalarStyle::Plain => {
-                // Fix special floats for YAML 1.2 compliance; an explicit tag pins the type.
-                let fixed = match typing {
-                    ScalarTyping::Tagged => value,
-                    ScalarTyping::Implicit if value.is_empty() => "null",
-                    ScalarTyping::Implicit => super::fix_special_float_value(value),
+                let fixed = if typing == ScalarTyping::Implicit && value.is_empty() {
+                    "null"
+                } else {
+                    value
                 };
                 self.output.push_str(fixed);
                 self.last_char_newline = false;
