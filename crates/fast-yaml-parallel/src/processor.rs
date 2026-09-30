@@ -619,6 +619,8 @@ mod tests {
         "... junk\na: 1\n",
         "%\n...x\r",
         "a\n...\n%YAML 1.2\nb\n",
+        "b: &b {x: 1, y: 2}\nm:\n  k: 0\n  <<: *b\n  y: 9\n",
+        "a: &a {x: 1, p: A}\nb: &b {y: 2, p: B}\nm:\n  <<: [*a, *b]\n  k: 0\n---\nc: &c {z: 1}\nd:\n  <<: *c\n",
     ];
 
     #[test]

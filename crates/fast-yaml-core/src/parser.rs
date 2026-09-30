@@ -1,9 +1,11 @@
 use crate::error::{ParseError, ParseResult};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
+use crate::merge::merge_into;
 use crate::scalar::{ResolvedScalar, resolve_scalar};
-use crate::value::Value;
+use crate::value::{Map, Value};
 use saphyr::{ScalarOwned, YamlLoader};
 use saphyr_parser::{Marker, Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag};
+use std::sync::LazyLock;
 
 /// Parser for YAML documents.
 ///
@@ -298,8 +300,8 @@ fn canonicalize_sequence(mut seq: Vec<Value>) -> Value {
     Value::Sequence(seq)
 }
 
-fn canonicalize_mapping(map: crate::value::Map) -> Value {
-    let mut canonicalized = crate::value::Map::with_capacity(map.len());
+fn canonicalize_mapping(map: Map) -> Value {
+    let mut canonicalized = Map::with_capacity(map.len());
     for (k, v) in map {
         canonicalized.insert(canonicalize(k), canonicalize(v));
     }
@@ -368,44 +370,16 @@ fn coerce_tagged_scalar(tag: &Tag, inner: &Value) -> Option<Value> {
 
 /// Resolve YAML 1.1 merge keys (`<<`) in a canonicalized mapping.
 ///
-/// Explicit keys always win over merged keys.
-fn resolve_merge_keys(map: crate::value::Map) -> Value {
-    let merge_key = Value::Value(ScalarOwned::String("<<".into()));
-    if !map.contains_key(&merge_key) {
+/// See [`crate::merge`] for the key order and precedence rules.
+fn resolve_merge_keys(mut map: Map) -> Value {
+    static MERGE_KEY: LazyLock<Value> =
+        LazyLock::new(|| Value::Value(ScalarOwned::String("<<".into())));
+    let Some(merge) = map.remove(&*MERGE_KEY) else {
         return Value::Mapping(map);
-    }
+    };
 
-    let mut result: crate::value::Map = crate::value::Map::new();
-    let mut merges: Vec<Value> = Vec::new();
-
-    for (k, v) in map {
-        if k == merge_key {
-            merges.push(v);
-        } else {
-            result.insert(k, v);
-        }
-    }
-
-    for merge_val in merges {
-        match merge_val {
-            Value::Mapping(merge_map) => {
-                for (mk, mv) in merge_map {
-                    result.entry(mk).or_insert(mv);
-                }
-            }
-            Value::Sequence(seq) => {
-                for item in seq {
-                    if let Value::Mapping(merge_map) = item {
-                        for (mk, mv) in merge_map {
-                            result.entry(mk).or_insert(mv);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
+    let mut result = Map::with_capacity(map.len());
+    let Ok(()) = merge_into(&mut result, Some(merge), map);
     Value::Mapping(result)
 }
 
@@ -720,21 +694,168 @@ merged:
   <<: [*a, *b]
   z: 3
 ";
-        let result = Parser::parse_str(yaml).unwrap().unwrap();
-        let Value::Mapping(root) = result else {
-            panic!("expected mapping")
-        };
-        let m_key = Value::Value(ScalarOwned::String("merged".into()));
-        let Value::Mapping(m) = root[&m_key].clone() else {
-            panic!("expected mapping")
-        };
+        assert_eq!(merged_entries(yaml, "merged"), ["x: 1", "y: 2", "z: 3"]);
+    }
 
-        let x = Value::Value(ScalarOwned::String("x".into()));
-        let y = Value::Value(ScalarOwned::String("y".into()));
-        let z = Value::Value(ScalarOwned::String("z".into()));
-        assert!(m.contains_key(&x), "x should be merged from *a");
-        assert!(m.contains_key(&y), "y should be merged from *b");
-        assert!(m.contains_key(&z), "z should be present");
+    fn sub_mapping(doc: &Value, key: &str) -> Map {
+        let Value::Mapping(root) = doc else {
+            panic!("expected mapping")
+        };
+        let Value::Mapping(m) = root[&Value::Value(ScalarOwned::String(key.into()))].clone() else {
+            panic!("expected mapping")
+        };
+        m
+    }
+
+    fn entry_texts(m: &Map) -> Vec<String> {
+        m.iter()
+            .map(|(k, v)| format!("{}: {}", scalar_text(k), scalar_text(v)))
+            .collect()
+    }
+
+    fn merged_entries(yaml: &str, key: &str) -> Vec<String> {
+        entry_texts(&sub_mapping(
+            &Parser::parse_str(yaml).unwrap().unwrap(),
+            key,
+        ))
+    }
+
+    fn scalar_text(v: &Value) -> String {
+        match v {
+            Value::Value(ScalarOwned::String(s)) => s.clone(),
+            Value::Value(ScalarOwned::Integer(i)) => i.to_string(),
+            Value::Value(ScalarOwned::Null) => "null".to_owned(),
+            other => format!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_merge_key_order_merged_first() {
+        let yaml = "b: &b {x: 1, y: 2}
+m:
+  k: 0
+  <<: *b
+  y: 9
+";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "y: 9", "k: 0"]);
+        let yaml = "b: &b {x: 1, y: 2}
+m:
+  <<: *b
+  k: 0
+  y: 9
+";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "y: 9", "k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_sequence_earlier_wins_forward_order() {
+        let yaml = "a: &a {x: 1, p: A}
+b: &b {y: 2, p: B}
+m:
+  <<: [*a, *b]
+  k: 0
+";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "p: A", "y: 2", "k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_nested_anchor_and_inline() {
+        let yaml = "a: &a {x: 1}
+b: &b
+  <<: *a
+  y: 2
+m:
+  <<: *b
+  z: 3
+";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "y: 2", "z: 3"]);
+        assert_eq!(
+            merged_entries(
+                "m:
+  <<: {x: 1}
+  y: 2
+",
+                "m"
+            ),
+            ["x: 1", "y: 2"]
+        );
+    }
+
+    #[test]
+    fn test_merge_key_repeated_last_wins() {
+        let yaml = "a: &a {x: 1}
+b: &b {y: 2}
+m:
+  <<: *a
+  <<: *b
+";
+        assert_eq!(merged_entries(yaml, "m"), ["y: 2"]);
+    }
+
+    #[test]
+    fn test_merge_key_non_mapping_ignored() {
+        for merge in ["1", "null", "[1]", "[[{x: 1}]]", "text"] {
+            let yaml = format!("m:\n  <<: {merge}\n  k: 0\n");
+            assert_eq!(merged_entries(&yaml, "m"), ["k: 0"], "{merge}");
+        }
+    }
+
+    #[test]
+    fn test_merge_key_flow_mapping_not_first() {
+        let yaml = "b: &b {x: 1, y: 2}\nm: {k: 0, <<: *b, y: 9}\n";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "y: 9", "k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_quoted_is_merged_today() {
+        let yaml = "b: &b {x: 1}\nm:\n  '<<': *b\n  k: 0\n";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_empty_source() {
+        assert_eq!(merged_entries("m:\n  <<: {}\n  k: 0\n", "m"), ["k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_mixed_sequence() {
+        let yaml = "a: &a {x: 1}\nm:\n  <<: [*a, 5, null, [{w: 0}], {z: 3}]\n  k: 0\n";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "z: 3", "k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_set_source() {
+        let yaml = "s: &s !!set {x, y}\nm:\n  <<: *s\n  k: 0\n";
+        assert_eq!(merged_entries(yaml, "m"), ["x: null", "y: null", "k: 0"]);
+    }
+
+    #[test]
+    fn test_merge_key_multi_document() {
+        let docs = Parser::parse_all(
+            "a: &a {x: 1}\nm:\n  <<: *a\n---\nb: &b {y: 2}\nm:\n  k: 0\n  <<: *b\n",
+        )
+        .unwrap();
+        let entries: Vec<Vec<String>> = docs
+            .iter()
+            .map(|doc| entry_texts(&sub_mapping(doc, "m")))
+            .collect();
+        assert_eq!(entries, [vec!["x: 1"], vec!["y: 2", "k: 0"]]);
+    }
+
+    #[test]
+    fn test_merge_key_shallow() {
+        let yaml = "b: &b {n: {p: 1, q: 2}}
+m:
+  <<: *b
+  n: {p: 9}
+";
+        let doc = Parser::parse_str(yaml).unwrap().unwrap();
+        let Value::Mapping(n) =
+            sub_mapping(&doc, "m")[&Value::Value(ScalarOwned::String("n".into()))].clone()
+        else {
+            panic!("expected mapping")
+        };
+        assert_eq!(n.len(), 1);
     }
 
     #[test]

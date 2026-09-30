@@ -138,6 +138,34 @@ person:
       expect(() => safeLoadAll(large)).toThrow(/exceeds maximum/);
     });
   });
+
+  describe('merge keys', () => {
+    // Non-numeric keys only: JS objects reorder integer-like keys first
+    it('should place merged keys before explicit keys and let explicit keys win in place', () => {
+      const result = safeLoad('b: &b {x: 1, y: 2}\nm:\n  k: 0\n  <<: *b\n  y: 9\n') as {
+        m: Record<string, number>;
+      };
+      expect(Object.entries(result.m)).toEqual([
+        ['x', 1],
+        ['y', 9],
+        ['k', 0],
+      ]);
+    });
+
+    it('should apply sequence merges in forward order with the earlier item winning', () => {
+      const result = safeLoad(
+        'a: &a {x: 1, p: A}\nb: &b {y: 2, p: B}\nm:\n  <<: [*a, *b]\n  k: 0\n'
+      ) as {
+        m: Record<string, unknown>;
+      };
+      expect(Object.entries(result.m)).toEqual([
+        ['x', 1],
+        ['p', 'A'],
+        ['y', 2],
+        ['k', 0],
+      ]);
+    });
+  });
 });
 
 describe('Core API - Serializer', () => {
