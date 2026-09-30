@@ -1,7 +1,8 @@
 import math
 
-import fast_yaml
 import pytest
+
+import fast_yaml
 
 CASES = [
     ('!!int "7"', 7),
