@@ -3,6 +3,8 @@
 //! The formatter re-emits the parsed value tree and drops comments, so callers that must not
 //! lose them need to know beforehand whether the input has any.
 
+use std::ops::{ControlFlow, Range};
+
 use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle};
 
 use crate::error::ParseResult;
@@ -28,6 +30,54 @@ use crate::parser::strip_bom;
 /// assert!(has_comments("a: foo\n  \"bar\nb: 1 # real comment\n").unwrap());
 /// ```
 pub fn has_comments(input: &str) -> ParseResult<bool> {
+    let mut found = false;
+    scan_comments(input, |_, _| {
+        found = true;
+        ControlFlow::Break(())
+    })?;
+    Ok(found)
+}
+
+/// Returns the byte range of every YAML comment in `input`, from `#` to the end of its line.
+///
+/// Ranges exclude the line terminator, are relative to `input` (a leading BOM is counted), and
+/// come in source order. Detection follows the same rules as [`has_comments`].
+///
+/// # Errors
+///
+/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::find_comments;
+///
+/// let input = "a: 1 # one\nb: \"# not\"\n# two\n";
+/// let found: Vec<&str> = find_comments(input).unwrap().into_iter().map(|r| &input[r]).collect();
+/// assert_eq!(found, ["# one", "# two"]);
+/// ```
+pub fn find_comments(input: &str) -> ParseResult<Vec<Range<usize>>> {
+    let stripped = strip_bom(input);
+    let bom_len = input.len() - stripped.len();
+    let mut ranges = Vec::new();
+    // (char index, byte offset) of the last range end; hits arrive in source order.
+    let mut pos = (0usize, bom_len);
+    scan_comments(input, |chars, hash| {
+        let start = pos.1 + byte_len(&chars[pos.0..hash]);
+        let end = line_end(chars, hash);
+        let end_byte = start + byte_len(&chars[hash..end]);
+        ranges.push(start..end_byte);
+        pos = (end, end_byte);
+        ControlFlow::Continue(())
+    })?;
+    Ok(ranges)
+}
+
+/// Feeds the chars and the index of each comment's `#` to `on_hit`, stopping early on `Break`.
+fn scan_comments(
+    input: &str,
+    mut on_hit: impl FnMut(&[char], usize) -> ControlFlow<()>,
+) -> ParseResult<()> {
     let chars: Vec<char> = strip_bom(input).chars().collect();
     let line_starts = line_starts(&chars);
     let mut parser = SaphyrParser::new_from_str(strip_bom(input));
@@ -45,8 +95,8 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
         if start == end || start < cursor {
             continue;
         }
-        if gap_has_comment(&chars, cursor, start) {
-            return Ok(true);
+        if scan_gap(&chars, cursor, start, &mut on_hit).is_break() {
+            return Ok(());
         }
         cursor = match style {
             ScalarStyle::SingleQuoted => skip_quoted(&chars, start, '\''),
@@ -55,7 +105,8 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
         };
     }
 
-    Ok(gap_has_comment(&chars, cursor, chars.len()))
+    let _ = scan_gap(&chars, cursor, chars.len(), &mut on_hit);
+    Ok(())
 }
 
 /// Char offsets at which each line starts, splitting like saphyr (`\n`, `\r\n`, lone `\r`).
@@ -79,10 +130,34 @@ fn char_offset(line_starts: &[usize], marker: Marker) -> usize {
         .map_or(usize::MAX, |start| start + marker.col())
 }
 
-fn gap_has_comment(chars: &[char], from: usize, to: usize) -> bool {
+fn scan_gap(
+    chars: &[char],
+    from: usize,
+    to: usize,
+    on_hit: &mut impl FnMut(&[char], usize) -> ControlFlow<()>,
+) -> ControlFlow<()> {
     let to = to.min(chars.len());
-    (from..to)
-        .any(|i| chars[i] == '#' && (i == 0 || matches!(chars[i - 1], ' ' | '\t' | '\n' | '\r')))
+    let mut i = from;
+    while i < to {
+        if chars[i] == '#' && (i == 0 || matches!(chars[i - 1], ' ' | '\t' | '\n' | '\r')) {
+            on_hit(chars, i)?;
+            i = line_end(chars, i);
+        }
+        i += 1;
+    }
+    ControlFlow::Continue(())
+}
+
+fn byte_len(chars: &[char]) -> usize {
+    chars.iter().map(|c| c.len_utf8()).sum()
+}
+
+/// Index of the line terminator at or after `from`, or `chars.len()`.
+fn line_end(chars: &[char], from: usize) -> usize {
+    chars[from..]
+        .iter()
+        .position(|&c| c == '\n' || c == '\r')
+        .map_or(chars.len(), |p| from + p)
 }
 
 /// Returns the index just past the closing quote of the scalar opened at `open`.
@@ -262,6 +337,44 @@ mod tests {
         assert!(!has("\u{e9}: \"\u{fc} # x\"\n"));
         assert!(has("k: \u{1F600}\u{1F600} # c\n"));
         assert!(!has("k: \"\u{1F600} # x\"\nz: 1\n"));
+    }
+
+    fn ranges(input: &str) -> Vec<&str> {
+        find_comments(input)
+            .unwrap()
+            .into_iter()
+            .map(|r| &input[r])
+            .collect()
+    }
+
+    #[test]
+    fn find_comments_byte_ranges_after_non_ascii() {
+        assert_eq!(ranges("\u{e9}: \u{1F600} # c\nb: 1 # d\n"), ["# c", "# d"]);
+    }
+
+    #[test]
+    fn find_comments_bom_offsets_are_input_relative() {
+        let input = "\u{FEFF}a: 1 # c\n";
+        let found = find_comments(input).unwrap();
+        let hash = input.find('#').unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], hash..input.len() - 1);
+    }
+
+    #[test]
+    fn find_comments_skips_scalars() {
+        assert!(ranges("a: 'x # y'\nb: \"p # q\"\nc: \"m\n  # n\"\n").is_empty());
+        assert!(ranges("s: |\n  # body\n  text\n").is_empty());
+    }
+
+    #[test]
+    fn find_comments_single_range_per_line() {
+        assert_eq!(ranges("a: 1 # x # y\n"), ["# x # y"]);
+    }
+
+    #[test]
+    fn find_comments_line_endings() {
+        assert_eq!(ranges("a: 1 # x\r\nb: 2 # y\rc: 3\n"), ["# x", "# y"]);
     }
 
     #[test]

@@ -695,3 +695,70 @@ fn test_lint_rejects_unknown_rule_in_config() {
         .failure()
         .stderr(predicate::str::contains("unknown rule 'no-such-rule'"));
 }
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_directive_suppresses_duplicate_key() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .write_stdin("key: value1\nkey: value2  # fy: disable-line duplicate-key\n")
+        .assert()
+        .success();
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_directive_in_file_and_batch_dir() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("a.yaml");
+    std::fs::write(&file, "# fy: disable-file\nk: 1\nk: 2\n").unwrap();
+    std::fs::write(
+        dir.path().join("b.yaml"),
+        "# yamllint disable rule:key-duplicates\nk: 1\nk: 2\n",
+    )
+    .unwrap();
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .arg(&file)
+        .assert()
+        .success();
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .arg(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_directive_severity_from_config_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().join("fy.yaml");
+    std::fs::write(&config, "rules:\n  lint-directive:\n    severity: error\n").unwrap();
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg("--config")
+        .arg(&config)
+        .write_stdin("# fy: disable no-such-rule\nk: 1\n")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains("error[lint-directive]"));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_directive_unknown_rule_reported_in_json() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config", "--format", "json"])
+        .write_stdin("# fy: disable no-such-rule\nk: 1\n")
+        .assert()
+        .stdout(predicate::str::contains("\"lint-directive\""))
+        .stdout(predicate::str::contains("no-such-rule"));
+}

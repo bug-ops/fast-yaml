@@ -64,7 +64,7 @@ pub struct Diagnostic {
 /// let code = DiagnosticCode::new("duplicate-key");
 /// assert_eq!(code.as_str(), "duplicate-key");
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "json-output", serde(transparent))]
 pub struct DiagnosticCode(String);
@@ -118,6 +118,8 @@ impl DiagnosticCode {
     pub const KEY_ORDERING: &'static str = "key-ordering";
     /// Predefined code for float values.
     pub const FLOAT_VALUES: &'static str = "float-values";
+    /// Predefined code for problems in inline lint directives (config-only, never suppressible).
+    pub const LINT_DIRECTIVE: &'static str = "lint-directive";
 
     /// Creates a new diagnostic code.
     ///
