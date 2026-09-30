@@ -43,10 +43,14 @@ impl Parser {
 
     /// Parse a single YAML document, enforcing explicit [`ParseLimits`].
     ///
+    /// Returns the first document, but every document is validated, so an invalid merge key in
+    /// a later document is an error just as in [`Parser::parse_all_with_limits`].
+    ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
-    /// `ParseError::LimitExceeded` if the input exceeds `limits`.
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, `ParseError::Merge` if any
+    /// document has an invalid `<<` value, or `ParseError::LimitExceeded` if the input exceeds
+    /// `limits`.
     ///
     /// # Examples
     ///
@@ -59,8 +63,10 @@ impl Parser {
     /// assert!(matches!(err, ParseError::LimitExceeded { .. }));
     /// ```
     pub fn parse_str_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Option<Value>> {
-        let docs = load_documents(input, limits)?;
-        Ok(docs.into_iter().next().map(canonicalize).transpose()?)
+        let mut docs = load_documents(input, limits)?.into_iter();
+        let first = docs.next().map(canonicalize).transpose()?;
+        docs.try_for_each(|doc| canonicalize(doc).map(drop))?;
+        Ok(first)
     }
 
     /// Parse all YAML documents from a string.
@@ -795,6 +801,44 @@ development:
             !matches!(v, Value::Value(ScalarOwned::Integer(_))),
             "!!int 1.0e20 should not produce a saturated integer, got {v:?}"
         );
+    }
+
+    #[test]
+    fn parse_str_validates_merge_keys_in_every_document() {
+        for yaml in [
+            "x: 1\n---\nm:\n  <<: [1]",
+            "x: 1\n---\ny: 2\n---\nm:\n  <<: 1",
+        ] {
+            assert!(
+                matches!(Parser::parse_str(yaml), Err(ParseError::Merge(_))),
+                "{yaml}"
+            );
+            assert!(Parser::parse_all(yaml).is_err(), "{yaml}");
+        }
+    }
+
+    #[test]
+    fn parse_str_accepts_valid_merge_keys_in_later_documents() {
+        let yaml = "x: 1\n---\nb: &b {y: 2}\nm:\n  <<: *b\n---\nz: 3";
+        assert_eq!(
+            Parser::parse_str(yaml).unwrap(),
+            Parser::parse_all(yaml).unwrap().into_iter().next()
+        );
+        let Some(Value::Mapping(first)) = Parser::parse_str(yaml).unwrap() else {
+            panic!("expected mapping")
+        };
+        assert_eq!(first.len(), 1);
+    }
+
+    #[test]
+    fn parse_str_with_limits_enforces_limits_in_last_document() {
+        let limits = ParseLimits {
+            max_depth: crate::limits::MaxDepth::new(2).unwrap(),
+            ..ParseLimits::default()
+        };
+        let err =
+            Parser::parse_str_with_limits("a: 1\n---\nb: 2\n---\n[[[1]]]\n", &limits).unwrap_err();
+        assert!(matches!(err, ParseError::LimitExceeded { .. }));
     }
 
     #[test]

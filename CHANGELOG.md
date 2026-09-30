@@ -83,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Core/Node.js/Python**: `-0x8000000000000000` loads as `i64::MIN`, and equal big-integer spellings (`+99..9`, `99..9`, hex) give one mapping key and the same Node.js key and value text (#477) (#464) (#480) (#495)
+- **Core/CLI**: `Parser::parse_str`, `fy parse` and `parse_files` validate merge keys in every document, not only the first (#501) (#502)
 - **CLI**: `fy convert` keeps integers beyond `i64` exact in both directions; YAML to JSON now emits them as JSON numbers instead of strings and canonicalizes big-integer JSON map keys (#466, #476)
 - **Python**: `safe_dump`, `dump_all` and `dump_parallel` accept integers beyond `i64` as values and keys instead of raising `OverflowError` (beyond the int-to-str digit limit they raise `ValueError`) (#463, #476)
 - **Core**: `Emitter::emit_str` no longer panics on literal/folded big-integer scalars and no longer emits core tags as `tag:yaml.org,2002:!int` (#483) (#485)

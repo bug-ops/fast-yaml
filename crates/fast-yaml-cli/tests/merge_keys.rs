@@ -171,3 +171,28 @@ fn flow_dump_of_json_merge_key_is_quoted() {
     let json = to_json(&String::from_utf8(output.stdout).unwrap());
     assert_eq!(json["m"], serde_json::json!({"<<": 1}));
 }
+
+#[test]
+fn parse_rejects_invalid_merge_value_in_any_document() {
+    for yaml in [
+        "x: 1\n---\nm:\n  <<: [1]\n",
+        "x: 1\n---\ny: 2\n---\nm:\n  <<: 1\n",
+    ] {
+        let parse = run(&["parse"], yaml);
+        assert_eq!(parse.status.code(), Some(1), "{yaml}: {parse:?}");
+        assert!(
+            String::from_utf8_lossy(&parse.stderr).contains("merge key"),
+            "{yaml}"
+        );
+        assert_eq!(run(&["lint"], yaml).status.code(), Some(1), "{yaml}");
+    }
+}
+
+#[test]
+fn parse_accepts_valid_merge_keys_in_later_documents() {
+    let output = run(
+        &["parse"],
+        "x: 1\n---\nb: &b {y: 2}\nm:\n  <<: *b\n---\nz: 3\n",
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
