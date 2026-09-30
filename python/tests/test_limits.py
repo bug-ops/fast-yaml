@@ -29,7 +29,10 @@ TAGBOMB = (
 
 
 TAGPREFIX = (
-    "%TAG !e! tag:e.com," + "a" * 100_000 + "\n---\n" + "".join(f"k{i}: !e!x v\n" for i in range(1_000))
+    "%TAG !e! tag:e.com,"
+    + "a" * 100_000
+    + "\n---\n"
+    + "".join(f"k{i}: !e!x v\n" for i in range(1_000))
 )
 
 
