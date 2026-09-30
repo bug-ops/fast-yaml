@@ -55,6 +55,6 @@ pub mod streaming;
 
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
-pub use limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
+pub use limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, MaxTagBytes, ParseLimits};
 pub use parser::{Parser, canonicalize, strip_bom};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

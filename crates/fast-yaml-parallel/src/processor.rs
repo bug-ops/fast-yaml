@@ -162,6 +162,23 @@ mod tests {
     }
 
     #[test]
+    fn test_process_parallel_rejects_tag_prefix_amplification() {
+        let mut yaml = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
+        yaml.extend((0..1_000).map(|i| format!("k{i}: !e!x v\n")));
+        let err = process_parallel(&yaml, &Config::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Parse {
+                source: fast_yaml_core::ParseError::LimitExceeded {
+                    kind: fast_yaml_core::LimitKind::TagBytes(_),
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn test_process_parallel_with_thread_limit() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
         let config = Config::new().with_workers(Some(2));

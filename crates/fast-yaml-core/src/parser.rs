@@ -1119,7 +1119,7 @@ merged:
     mod limits {
         use super::*;
         use crate::error::ParseError;
-        use crate::limits::{LimitKind, MaxAliasBytes, MaxDepth, NODE_BYTES};
+        use crate::limits::{LimitKind, MaxAliasBytes, MaxDepth, MaxTagBytes, NODE_BYTES};
         use std::fmt::Write as _;
 
         const BOMB: &str = "a0: &a0 [x,x,x,x,x,x,x,x,x]\n\
@@ -1392,6 +1392,82 @@ merged:
                     ..
                 })
             ));
+        }
+
+        fn tag_limits(bytes: usize) -> ParseLimits {
+            ParseLimits {
+                max_tag_bytes: MaxTagBytes::new(bytes),
+                ..ParseLimits::default()
+            }
+        }
+
+        fn tag_doc(directive: &str, tag: &str, uses: usize) -> String {
+            let long = "a".repeat(200);
+            let directive = directive.replace("PREFIX", &long);
+            let mut doc = format!("{directive}\n---\n");
+            for i in 0..uses {
+                writeln!(doc, "k{i}: {tag} v").unwrap();
+            }
+            doc
+        }
+
+        #[test]
+        fn tag_prefix_reuse_over_budget_is_rejected() {
+            let doc = tag_doc("%TAG !e! tag:e.com,PREFIX", "!e!x", 10);
+            let per_use = 200 + "tag:e.com,".len() - crate::limits::TAG_PREFIX_ALLOWANCE;
+            assert!(Parser::parse_all_with_limits(&doc, &tag_limits(per_use * 10)).is_ok());
+            assert!(matches!(
+                Parser::parse_all_with_limits(&doc, &tag_limits(per_use * 10 - 1)),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::TagBytes(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn tag_prefix_overrides_are_rejected() {
+            for (directive, tag) in [
+                ("%TAG !! tag:e.com,PREFIX", "!!x"),
+                ("%TAG ! tag:e.com,PREFIX", "!x"),
+            ] {
+                let doc = tag_doc(directive, tag, 10);
+                assert!(
+                    matches!(
+                        Parser::parse_all_with_limits(&doc, &tag_limits(1_000)),
+                        Err(ParseError::LimitExceeded {
+                            kind: LimitKind::TagBytes(_),
+                            ..
+                        })
+                    ),
+                    "{directive}"
+                );
+            }
+        }
+
+        #[test]
+        fn tag_prefix_on_collections_is_rejected() {
+            let long = "a".repeat(200);
+            let mut doc = format!("%TAG !e! tag:e.com,{long}\n---\n");
+            for _ in 0..10 {
+                doc.push_str("- !e!m {a: 1}\n- !e!s [1]\n");
+            }
+            assert!(matches!(
+                Parser::parse_all_with_limits(&doc, &tag_limits(1_000)),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::TagBytes(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn many_core_tags_stay_free_under_default_budget() {
+            let mut doc = String::new();
+            for i in 0..10_000 {
+                writeln!(doc, "k{i}: !!str v").unwrap();
+            }
+            assert!(Parser::parse_all(&doc).is_ok());
         }
 
         #[test]

@@ -1,4 +1,4 @@
-use crate::limits::LimitKind;
+use crate::limits::{LimitKind, MaxTagBytes};
 use thiserror::Error;
 
 /// Errors that can occur during YAML parsing.
@@ -64,6 +64,13 @@ pub enum EmitError {
     AnchorLimitExceeded {
         /// Maximum number of anchor definitions per document the formatter supports.
         limit: usize,
+    },
+
+    /// `%TAG` prefix expansion exceeds the tag budget.
+    #[error("tag prefix expansion exceeds {limit} bytes")]
+    TagLimitExceeded {
+        /// Maximum bytes of expanded tag prefixes per stream.
+        limit: MaxTagBytes,
     },
 }
 

@@ -128,9 +128,10 @@ impl FormatterBackend for StdBackend {
 ///
 /// # Errors
 ///
-/// Returns `EmitError::Emit` if the parser encounters invalid YAML, and
+/// Returns `EmitError::Emit` if the parser encounters invalid YAML,
 /// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
-/// document exceeds the formatter's nesting or per-document anchor limits.
+/// document exceeds the formatter's nesting or per-document anchor limits, and
+/// `EmitError::TagLimitExceeded` if `%TAG` prefix expansion exceeds the tag budget.
 ///
 /// # Examples
 ///
@@ -164,8 +165,12 @@ pub fn format_streaming(input: &str, config: &EmitterConfig) -> EmitResult<Strin
     *backend.anchor_store_mut() = anchor_names;
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend);
 
+    let mut guard = super::tag_budget_guard();
     for result in parser {
         let (event, span) = result.map_err(|e| EmitError::Emit(e.to_string()))?;
+        guard
+            .observe(&event, span)
+            .map_err(super::tag_budget_error)?;
         formatter.format_event(event, span)?;
     }
 

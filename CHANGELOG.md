@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Write files in `fy format` via a secure atomic writer (no predictable `.tmp`, mode and symlinks preserved) (#364)
+- **Breaking:** cap `%TAG` prefix expansion (64 MiB per stream) in parse, lint, convert and `fy format`; adds `LimitKind::TagBytes`, `EmitError::TagLimitExceeded`, `MaxTagBytes` and `ParseLimits::max_tag_bytes` (#389)
+- `fy format` now rejects a cross-document alias (`--- &a [x]` then `--- *a`) as an unknown anchor, matching `fy parse` (#389)
 
 ### Fixed
 
