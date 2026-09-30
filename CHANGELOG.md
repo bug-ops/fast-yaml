@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: the `empty-values` rule no longer has the unreachable `forbid_in_block_sequences` option; configs that set it now fail (#440)
 - **Core**: `MaxDepth::new` and `MaxAliasBytes::new` now return `Result<_, LimitRangeError>` (depth 1..=512, alias bytes 1..=1 GiB); `LintConfig` gains a public `parse_limits` field; Node.js `processFiles`/`formatFiles`/`formatFilesInPlace` now throw instead of returning the error as a value (#433)
 - **Core**: the `streaming` feature is removed; the streaming formatter is always compiled and is the only `Emitter::format*` path; `Parser::parse_all_preserving_styles` and `streaming::is_streaming_suitable` are removed (#408)
 - **Build**: MSRV raised to Rust 1.91 and workspace resolver switched to 3; `ordered-float` updated to 5.5 (#399)
@@ -56,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
+- **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
+- **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
 - The `label-on-issue` workflow no longer re-creates the removed `status:needs-triage` label on new issues (#413) (#414)
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
 - Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)
