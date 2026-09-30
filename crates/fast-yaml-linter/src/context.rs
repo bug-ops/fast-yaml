@@ -7,6 +7,7 @@ use crate::{
     source::offset::{ByteOffset, ByteRange},
 };
 use saphyr_parser::{Marker, Span as SaphyrSpan};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// Extracts source code context for diagnostics.
@@ -644,6 +645,7 @@ pub struct LintContext<'a> {
     comments: OnceLock<Vec<Comment>>,
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
+    key_index: OnceLock<KeyIndex<'a>>,
     /// 1-based line number where the current document starts within `source`.
     doc_start_line: usize,
 }
@@ -670,6 +672,7 @@ impl<'a> LintContext<'a> {
             comments: OnceLock::new(),
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
+            key_index: OnceLock::new(),
             doc_start_line: 1,
         }
     }
@@ -825,6 +828,55 @@ impl<'a> LintContext<'a> {
                 })
                 .collect()
         })
+    }
+
+    /// Returns the lazily built first-key-per-line index, shared by all documents of a run.
+    pub(crate) fn key_index(&self) -> &KeyIndex<'a> {
+        self.key_index.get_or_init(|| KeyIndex::build(self))
+    }
+}
+
+/// Extracts the unquoted key preceding the first colon of a source line.
+///
+/// Quotes are stripped only when the key is a complete quoted scalar.
+pub fn line_key(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    let raw_key = trimmed[..trimmed.find(':')?].trim();
+    let unquoted = ['"', '\'']
+        .into_iter()
+        .find_map(|q| raw_key.strip_prefix(q)?.strip_suffix(q))
+        .unwrap_or(raw_key);
+    Some(unquoted)
+}
+
+/// Per-lint-run index from key text to the ascending 1-based lines whose first-colon key equals it.
+pub struct KeyIndex<'a>(HashMap<&'a str, Vec<usize>>);
+
+impl<'a> KeyIndex<'a> {
+    fn build(context: &LintContext<'a>) -> Self {
+        let mut map: HashMap<&str, Vec<usize>> = HashMap::new();
+        for (line_idx, (line, metadata)) in context
+            .lines()
+            .iter()
+            .zip(context.line_metadata())
+            .enumerate()
+        {
+            if metadata.is_empty || metadata.is_comment {
+                continue;
+            }
+            if let Some(key) = line_key(line) {
+                map.entry(key).or_default().push(line_idx + 1);
+            }
+        }
+        Self(map)
+    }
+
+    /// Locates `key` on the first indexed line at or after `*cursor` and advances `*cursor` past it.
+    pub(crate) fn locate(&self, key: &str, cursor: &mut usize) -> Option<usize> {
+        let lines = self.0.get(key)?;
+        let line_num = *lines.get(lines.partition_point(|&l| l < *cursor))?;
+        *cursor = line_num + 1;
+        Some(line_num)
     }
 }
 

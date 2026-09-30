@@ -230,9 +230,10 @@ impl<'a> FlowTokenizer<'a> {
 
     /// Checks if a byte offset falls inside a block scalar range.
     fn is_in_block_scalar(&self, offset: ByteOffset) -> bool {
-        self.block_scalar_ranges
-            .iter()
-            .any(|range| range.contains(offset))
+        let idx = self
+            .block_scalar_ranges
+            .partition_point(|range| range.start() <= offset);
+        idx > 0 && self.block_scalar_ranges[idx - 1].contains(offset)
     }
 
     /// Builds a one-character token at 0-indexed `char_col` on `line`.
@@ -432,7 +433,16 @@ fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRan
                 parsed_until = range.end();
                 if let Event::Scalar(_, style, ..) = event {
                     match style {
-                        ScalarStyle::Literal | ScalarStyle::Folded => ranges.block.push(range),
+                        ScalarStyle::Literal | ScalarStyle::Folded => {
+                            debug_assert!(
+                                ranges
+                                    .block
+                                    .last()
+                                    .is_none_or(|last| last.end() <= range.start()),
+                                "block scalar ranges must be sorted and disjoint"
+                            );
+                            ranges.block.push(range);
+                        }
                         ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
                             ranges.quoted.push(range);
                         }
@@ -1019,6 +1029,46 @@ mod tests {
         assert!(range.end().get() <= yaml.len());
         let stray = yaml.find("tail }").unwrap() + 5;
         assert!(range.contains(ByteOffset::new(stray)));
+    }
+
+    #[test]
+    fn test_is_in_block_scalar_lookup_across_multiple_ranges() {
+        let yaml = "a: |\n  {x}\nb: {y: 1}\nc: >\n  [z]\nd: [w]\n";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let inside = |needle: &str| {
+            tokenizer.is_in_block_scalar(ByteOffset::new(yaml.find(needle).unwrap()))
+        };
+        assert!(inside("{x}"));
+        assert!(inside("[z]"));
+        assert!(!inside("{y"));
+        assert!(!inside("[w]"));
+        assert!(!inside("a:"));
+        assert_eq!(tokenizer.find_all(TokenType::BraceOpen).len(), 1);
+        assert_eq!(tokenizer.find_all(TokenType::BracketOpen).len(), 1);
+    }
+
+    #[test]
+    fn test_is_in_block_scalar_range_boundaries() {
+        let yaml = "a: |\n  {x}\nb: >\n  [y]\n";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let ranges = collect_scalar_ranges(yaml, &context).block;
+        assert_eq!(ranges.len(), 2);
+        for range in &ranges {
+            assert!(tokenizer.is_in_block_scalar(range.start()));
+            assert!(!tokenizer.is_in_block_scalar(range.end()));
+        }
+        assert!(!tokenizer.is_in_block_scalar(ByteOffset::ZERO));
+    }
+
+    #[test]
+    fn test_is_in_block_scalar_empty_block() {
+        let yaml = "a: |\nb: {c: 1}\n";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        assert!(!tokenizer.is_in_block_scalar(ByteOffset::new(yaml.find('{').unwrap())));
+        assert_eq!(tokenizer.find_all(TokenType::BraceOpen).len(), 1);
     }
 
     #[test]
