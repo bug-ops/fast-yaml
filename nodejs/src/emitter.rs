@@ -6,7 +6,7 @@
 use crate::conversion::js_to_yaml;
 use crate::options::{U32_MAX, checked_opt_uint};
 use fast_yaml_core::{DumpBudget, MaxOutputBytes};
-use napi::{Env, Result as NapiResult, bindgen_prelude::*};
+use napi::{Env, bindgen_prelude::*};
 use napi_derive::napi;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
@@ -14,7 +14,7 @@ use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 ///
 /// An `Err` returned from a `#[napi]` function reaches JS as a returned value instead of a
 /// thrown exception, so every fallible dump path routes through here.
-fn throw_or_default<T: Default>(env: Env, result: NapiResult<T>) -> NapiResult<T> {
+fn throw_or_default<T: Default>(env: Env, result: napi::Result<T>) -> napi::Result<T> {
     match result {
         Ok(value) => Ok(value),
         Err(e) => {
@@ -25,14 +25,14 @@ fn throw_or_default<T: Default>(env: Env, result: NapiResult<T>) -> NapiResult<T
 }
 
 /// Fails when `output` is larger than [`MaxOutputBytes::DEFAULT`].
-fn check_output_size(output: String) -> NapiResult<String> {
+fn check_output_size(output: String) -> napi::Result<String> {
     MaxOutputBytes::DEFAULT
         .check(output.len())
         .map_err(|kind| napi::Error::from_reason(kind.to_string()))?;
     Ok(output)
 }
 
-fn emitter_config(opts: &DumpOptions) -> NapiResult<fast_yaml_core::EmitterConfig> {
+fn emitter_config(opts: &DumpOptions) -> napi::Result<fast_yaml_core::EmitterConfig> {
     let indent = checked_opt_uint("indent", opts.indent, 0, U32_MAX)?.unwrap_or(2);
     let width = checked_opt_uint("width", opts.width, 0, U32_MAX)?.unwrap_or(80);
     Ok(fast_yaml_core::EmitterConfig::new()
@@ -118,12 +118,12 @@ pub fn safe_dump(
     env: Env,
     data: Unknown<'static>,
     options: Option<DumpOptions>,
-) -> NapiResult<String> {
+) -> napi::Result<String> {
     let opts = options.unwrap_or_default();
     throw_or_default(env, dump_one(env, data, &opts))
 }
 
-fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> NapiResult<String> {
+fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> napi::Result<String> {
     let mut budget = DumpBudget::default();
     let mut yaml = js_to_yaml(env, data, &mut budget)?;
     if opts.sort_keys.unwrap_or(false) {
@@ -170,12 +170,12 @@ pub fn safe_dump_all(
     env: Env,
     documents: Vec<Unknown<'static>>,
     options: Option<DumpOptions>,
-) -> NapiResult<String> {
+) -> napi::Result<String> {
     let opts = options.unwrap_or_default();
     throw_or_default(env, dump_many(env, documents, &opts))
 }
 
-fn dump_many(env: Env, documents: Vec<Unknown>, opts: &DumpOptions) -> NapiResult<String> {
+fn dump_many(env: Env, documents: Vec<Unknown>, opts: &DumpOptions) -> napi::Result<String> {
     let mut budget = DumpBudget::default();
     let mut yamls = Vec::with_capacity(documents.len());
     for doc in documents {

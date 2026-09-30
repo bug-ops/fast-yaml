@@ -7,7 +7,8 @@ use std::ops::{ControlFlow, Range};
 
 use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle};
 
-use crate::error::ParseResult;
+use crate::error::{ParseError, ParseResult};
+use crate::limits::DocumentCursor;
 use crate::parser::strip_bom;
 
 /// Returns `true` if `input` contains at least one YAML comment.
@@ -18,7 +19,7 @@ use crate::parser::strip_bom;
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML.
+/// Returns a [`ParseError`] if `input` is not valid YAML.
 ///
 /// # Examples
 ///
@@ -45,7 +46,7 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML.
+/// Returns a [`ParseError`] if `input` is not valid YAML.
 ///
 /// # Examples
 ///
@@ -82,9 +83,14 @@ fn scan_comments(
     let line_starts = line_starts(&chars);
     let mut parser = SaphyrParser::new_from_str(crate::parser::reject_nul(strip_bom(input))?);
     let mut cursor = 0usize;
+    let mut document = DocumentCursor::default();
 
     while let Some(event) = parser.next_event() {
-        let (event, span) = event?;
+        let (event, span) = event.map_err(|error| ParseError::Scanner {
+            error,
+            document: document.index(),
+        })?;
+        document.observe(&event);
         let Event::Scalar(_, style, _, _) = event else {
             continue;
         };

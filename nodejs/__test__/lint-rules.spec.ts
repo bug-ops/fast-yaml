@@ -111,6 +111,19 @@ describe('config errors', () => {
     expect(() => lint('a: 1\n', bad(['error']))).toThrow();
   });
 
+  it.each([5, 'error', true, []])('non-object rules %j names the rules field', (rules) => {
+    expect(() => lint('a: 1\n', bad(rules))).toThrow(/^.*rules must be an object.*got/);
+  });
+
+  it.each([
+    [[], /rule 'colons'/],
+    [5, /rule 'colons'/],
+    [{ enabled: 'yes' }, /rule 'colons', option 'enabled'/],
+    [{ 'max-spaces-after': 'a' }, /rule 'colons', option 'max-spaces-after'/],
+  ])('bad entry %j for a rule names the rule key', (entry, pattern) => {
+    expect(() => lint('a: 1\n', bad({ colons: entry }))).toThrow(pattern);
+  });
+
   it('unknown disabled rule', () => {
     expect(() => lint('a: 1\n', { disabledRules: ['no-such-rule'] })).toThrow(/no-such-rule/);
   });

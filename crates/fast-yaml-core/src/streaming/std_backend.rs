@@ -173,7 +173,10 @@ fn format_with_names(
     let mut guard = super::tag_budget_guard();
     let mut merge_keys = crate::merge_check::MergeKeyValidator::default();
     for result in parser {
-        let (event, span) = result.map_err(ParseError::from)?;
+        let (event, span) = result.map_err(|error| ParseError::Scanner {
+            error,
+            document: guard.document(),
+        })?;
         guard
             .observe(&event, span)
             .map_err(super::tag_budget_error)?;

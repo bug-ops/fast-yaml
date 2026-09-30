@@ -7,7 +7,7 @@ use crate::Schema;
 use crate::conversion::yaml_to_js;
 use crate::limits::parse_limits;
 use fast_yaml_core::Parser;
-use napi::{Env, Result as NapiResult, bindgen_prelude::*};
+use napi::{Env, bindgen_prelude::*};
 use napi_derive::napi;
 use saphyr::{ScalarOwned, YamlOwned};
 
@@ -41,7 +41,7 @@ pub struct LoadOptions {
 }
 
 impl LoadOptions {
-    fn parse_limits(&self) -> NapiResult<fast_yaml_core::limits::ParseLimits> {
+    fn parse_limits(&self) -> napi::Result<fast_yaml_core::limits::ParseLimits> {
         parse_limits(self.max_depth, self.max_alias_bytes)
     }
 }
@@ -67,7 +67,7 @@ fn to_static(v: Unknown<'_>) -> Unknown<'static> {
 /// After `env.throw_error`, NAPI-RS discards the return value and propagates the pending
 /// JS exception. The sentinel `undefined` is never observed by JavaScript callers.
 #[inline]
-fn throw_and_undefined(env: Env, msg: &str) -> NapiResult<Unknown<'static>> {
+fn throw_and_undefined(env: Env, msg: &str) -> napi::Result<Unknown<'static>> {
     env.throw_error(msg, None)?;
     let undef = ().into_unknown(&env)?;
     Ok(to_static(undef))
@@ -111,7 +111,7 @@ pub fn safe_load(
     env: Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> NapiResult<Unknown<'static>> {
+) -> napi::Result<Unknown<'static>> {
     let limits = match options.unwrap_or_default().parse_limits() {
         Ok(l) => l,
         Err(e) => return throw_and_undefined(env, &e.reason),
@@ -188,7 +188,7 @@ pub fn safe_load_all(
     env: Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> NapiResult<Vec<Unknown<'static>>> {
+) -> napi::Result<Vec<Unknown<'static>>> {
     let limits = match options.unwrap_or_default().parse_limits() {
         Ok(l) => l,
         Err(e) => {
@@ -272,7 +272,7 @@ pub fn load(
     env: Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> NapiResult<Unknown<'static>> {
+) -> napi::Result<Unknown<'static>> {
     // Schema is ignored (safe by default); limits are honoured
     safe_load(env, yaml_str, options)
 }
@@ -312,7 +312,7 @@ pub fn load_all(
     env: Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> NapiResult<Vec<Unknown<'static>>> {
+) -> napi::Result<Vec<Unknown<'static>>> {
     // Schema is ignored (safe by default); limits are honoured
     safe_load_all(env, yaml_str, options)
 }

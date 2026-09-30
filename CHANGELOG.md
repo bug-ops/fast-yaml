@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core**: `ParseError::Scanner` becomes a struct variant `{ error, document }`, `LimitExceeded` gains `document`, `From<ScanError> for ParseError` is removed and `document_index()` returns `usize` (#517) (#530)
+- **Core/Parallel**: error texts end with ` (document N)` from the second document on, and parallel `Error::Parse` displays `failed to parse YAML: ...` (#517) (#530)
+- **Parallel**: `Config::with_max_documents` and `Error::DocumentLimitExceeded` are added; the limit is checked while chunking (#435) (#530)
+- **Node.js**: `ParallelConfig.maxChunkSize` is removed, `maxDocuments` is enforced (default 100000), and `NapiResult` is dropped from the typings (#435) (#530)
 - **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#524)
 - **Core**: `ParseError::Merge` becomes a struct variant `Merge { error, line, column, document }`, `From<MergeError> for ParseError` is removed, and `ParseError::relocated` takes a document count (#504) (#520)
 - **CLI**: `fy format`/`fy lint` exit 1 when every input is filtered out or a directory has no YAML files, even with `-q`; an empty `--stdin-files` list still exits 0 (#514) (#523)
@@ -102,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core**: a repeated mapping key keeps its first position with the last value for every key form, as Python `safe_load` does (#522) (#530)
+- **Core/Parallel**: scanner, limit and NUL errors in later documents report the real document index (#517) (#530)
+- **Python**: `safe_dump_to` splits output on char boundaries instead of raising `ValueError` on multi-byte characters (#527) (#530)
+- **Node.js**: `LintConfig.rules` type errors name their cause and a non-object `rules` is rejected (#435) (#530)
 - **Core/CLI/Linter/Node.js**: an invalid `<<` value hidden by a later duplicate key is now rejected, and parse, lint and format report the first invalid merge in document order at its `<<` key (#515) (#516) (#528)
 - **Core/CLI/Linter**: an invalid `<<` now wins over a later syntax error, and `lint` no longer reports the duplicate key that hides it (#515) (#528)
 - **CLI/Parallel/Linter**: UTF-16 and UTF-32 input, including lint config files, fails with an "unsupported encoding" message naming the encoding instead of a generic UTF-8 error (#334) (#524)

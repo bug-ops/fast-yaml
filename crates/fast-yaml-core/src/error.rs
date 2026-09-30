@@ -33,16 +33,33 @@ impl From<Span> for SourcePosition {
     }
 }
 
+/// Renders " (document N)" for every document after the first, nothing for the first.
+struct InDocument(usize);
+
+impl std::fmt::Display for InDocument {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            0 => Ok(()),
+            index => write!(f, " (document {})", index + 1),
+        }
+    }
+}
+
 /// Errors that can occur during YAML parsing.
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum ParseError {
     /// YAML scanner error from saphyr.
-    #[error("YAML scanner error: {0}")]
-    Scanner(saphyr::ScanError),
+    #[error("YAML scanner error: {error}{}", InDocument(*.document))]
+    Scanner {
+        /// Underlying scanner error.
+        error: saphyr::ScanError,
+        /// Zero-based index of the document in the stream.
+        document: usize,
+    },
 
     /// Input exceeds a configured resource limit (nesting depth or alias expansion).
-    #[error("YAML resource limit exceeded at line {line}, column {column}: {kind}")]
+    #[error("YAML resource limit exceeded at line {line}, column {column}: {kind}{}", InDocument(*.document))]
     LimitExceeded {
         /// Which limit was exceeded.
         kind: LimitKind,
@@ -50,6 +67,8 @@ pub enum ParseError {
         line: usize,
         /// Column number of the offending event (1-indexed, in characters).
         column: usize,
+        /// Zero-based index of the document in the stream.
+        document: usize,
     },
 
     /// A `<<` merge key has a value that cannot be merged.
@@ -65,7 +84,7 @@ pub enum ParseError {
     ///     ParseError::Merge { error: MergeError::NotMapping, line: 4, column: 3, document: 1 }
     /// ));
     /// ```
-    #[error("{error} at line {line}, column {column} (document {})", .document + 1)]
+    #[error("{error} at line {line}, column {column}{}", InDocument(*.document))]
     Merge {
         /// Why the merge value is rejected.
         error: MergeError,
@@ -91,7 +110,7 @@ impl ParseError {
     /// use fast_yaml_core::{ParseError, Parser};
     ///
     /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 20, 0);
-    /// let ParseError::Scanner(scan) = err else { panic!("scanner error expected") };
+    /// let ParseError::Scanner { error: scan, .. } = err else { panic!("scanner error expected") };
     /// assert!(scan.marker().line() > 4);
     /// assert!(scan.marker().index() >= 20);
     ///
@@ -103,17 +122,26 @@ impl ParseError {
     #[must_use]
     pub fn relocated(self, lines: usize, chars: usize, documents: usize) -> Self {
         match self {
-            Self::Scanner(e) => {
-                let m = e.marker();
-                Self::Scanner(saphyr::ScanError::new(
-                    saphyr_parser::Marker::new(m.index() + chars, m.line() + lines, m.col()),
-                    e.info().to_owned(),
-                ))
+            Self::Scanner { error, document } => {
+                let m = error.marker();
+                Self::Scanner {
+                    error: saphyr::ScanError::new(
+                        saphyr_parser::Marker::new(m.index() + chars, m.line() + lines, m.col()),
+                        error.info().to_owned(),
+                    ),
+                    document: document + documents,
+                }
             }
-            Self::LimitExceeded { kind, line, column } => Self::LimitExceeded {
+            Self::LimitExceeded {
+                kind,
+                line,
+                column,
+                document,
+            } => Self::LimitExceeded {
                 kind,
                 line: line + lines,
                 column,
+                document: document + documents,
             },
             Self::Merge {
                 error,
@@ -129,10 +157,10 @@ impl ParseError {
         }
     }
 
-    /// Zero-based index of the document the error belongs to, when the error records one.
+    /// Zero-based index of the document the error belongs to.
     ///
-    /// Only merge errors are located within a multi-document stream; every other variant
-    /// returns `None`.
+    /// Every variant records the document in which it was detected. A scanner error that
+    /// falls between two documents is attributed to the document that would follow.
     ///
     /// # Examples
     ///
@@ -140,14 +168,16 @@ impl ParseError {
     /// use fast_yaml_core::Parser;
     ///
     /// let err = Parser::parse_all("a: 1\n---\nm: {<<: 1}\n").unwrap_err();
-    /// assert_eq!(err.document_index(), Some(1));
-    /// assert_eq!(Parser::parse_all("a: [").unwrap_err().document_index(), None);
+    /// assert_eq!(err.document_index(), 1);
+    /// assert_eq!(Parser::parse_all("a: 1\n---\nb: [\n").unwrap_err().document_index(), 1);
+    /// assert_eq!(Parser::parse_all("a: [").unwrap_err().document_index(), 0);
     /// ```
     #[must_use]
-    pub const fn document_index(&self) -> Option<usize> {
+    pub const fn document_index(&self) -> usize {
         match self {
-            Self::Merge { document, .. } => Some(*document),
-            Self::Scanner(_) | Self::LimitExceeded { .. } => None,
+            Self::Scanner { document, .. }
+            | Self::LimitExceeded { document, .. }
+            | Self::Merge { document, .. } => *document,
         }
     }
 }
@@ -190,12 +220,6 @@ pub enum EmitError {
     },
 }
 
-impl From<saphyr::ScanError> for ParseError {
-    fn from(err: saphyr::ScanError) -> Self {
-        Self::Scanner(err)
-    }
-}
-
 pub(crate) const fn from_saphyr(err: saphyr::EmitError) -> EmitError {
     let saphyr::EmitError::FmtError(source) = err;
     EmitError::Format(source)
@@ -217,6 +241,7 @@ mod tests {
             kind: LimitKind::Depth(crate::limits::MaxDepth::new(8).unwrap()),
             line: 3,
             column: 7,
+            document: 0,
         };
         let msg = err.to_string();
         assert!(msg.contains("limit exceeded"));

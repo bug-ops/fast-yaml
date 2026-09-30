@@ -70,11 +70,6 @@ const cases: OptionCase[] = [
     outOfRange: [0],
   },
   {
-    name: 'maxChunkSize',
-    call: (v) => parseParallel(MULTI, { maxChunkSize: v }),
-    valid: 1024 * 1024,
-  },
-  {
     name: 'maxInputSize (parallel)',
     call: (v) => parseParallel(MULTI, { maxInputSize: v }),
     valid: 1024 * 1024,
@@ -128,6 +123,36 @@ describe('numeric option validation', () => {
     expect(() => lint(YAML, { indentSize: 16 })).not.toThrow();
     expect(() => processFiles([], { workers: 0 })).not.toThrow();
     expect(() => new Mark('f', 4294967295, 4294967295)).not.toThrow();
+  });
+
+  it('accepts negative zero as zero', () => {
+    const mark = new Mark('f', -0, -0);
+    expect(mark.line).toBe(0);
+    expect(mark.column).toBe(0);
+    expect(() => processFiles([], { workers: -0 })).not.toThrow();
+    expect(() => parseParallel(MULTI, { threadCount: -0 })).not.toThrow();
+  });
+
+  it('accepts exactly 2**32 - 1 in u32 options', () => {
+    const max = 2 ** 32 - 1;
+    expect(() => processFiles([], { mmapThreshold: max })).not.toThrow();
+    expect(() => processFiles([], { sequentialThreshold: max })).not.toThrow();
+    expect(() => formatFiles([], { indent: max })).not.toThrow();
+    expect(() => formatFilesInPlace([], { width: max })).not.toThrow();
+    expect(() => parseParallel(MULTI, { minChunkSize: max })).not.toThrow();
+  });
+
+  it('enforces maxDocuments', () => {
+    expect(parseParallel(MULTI, { maxDocuments: 2 })).toHaveLength(2);
+    expect(() => parseParallel(MULTI, { maxDocuments: 1 })).toThrow(
+      /document 2 exceeds the limit of 1 documents/
+    );
+  });
+
+  it('enforces maxDocuments asynchronously', async () => {
+    await expect(parseParallelAsync(MULTI, { maxDocuments: 1 })).rejects.toThrow(
+      /document 2 exceeds the limit of 1 documents/
+    );
   });
 
   it('rejects invalid values asynchronously', async () => {

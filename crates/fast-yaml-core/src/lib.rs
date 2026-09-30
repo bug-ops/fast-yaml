@@ -45,6 +45,7 @@ pub mod encoding;
 pub mod error;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
 pub mod limits;
+mod loader;
 /// YAML 1.1 merge key (`<<`) resolution shared by the core loader and bindings.
 pub mod merge;
 mod merge_check;

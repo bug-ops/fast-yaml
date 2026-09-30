@@ -7,10 +7,11 @@ use crate::limits::parse_limits;
 use crate::options::{U32_MAX, checked_opt_uint};
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
-    Env, Result as NapiResult, Task,
+    Env, Task,
     bindgen_prelude::{AsyncTask, Unknown, panic_to_error},
 };
 use napi_derive::napi;
+use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Maximum thread count allowed.
@@ -21,6 +22,9 @@ const ABSOLUTE_MAX_INPUT_SIZE: u64 = 1024 * 1024 * 1024;
 
 /// Maximum document count (default 100k, can be configured up to 10M).
 const ABSOLUTE_MAX_DOCUMENTS: u64 = 10_000_000;
+
+/// Document count allowed when `maxDocuments` is unset.
+const DEFAULT_MAX_DOCUMENTS: usize = 100_000;
 
 /// Configuration for parallel YAML processing.
 ///
@@ -46,9 +50,6 @@ pub struct ParallelConfig {
     /// Minimum bytes per chunk (default: 4096).
     pub min_chunk_size: Option<f64>,
 
-    /// Maximum bytes per chunk (default: 10MB).
-    pub max_chunk_size: Option<f64>,
-
     /// Maximum total input size in bytes (default: 100MB, max: 1GB).
     pub max_input_size: Option<f64>,
 
@@ -64,9 +65,19 @@ pub struct ParallelConfig {
     pub max_alias_bytes: Option<f64>,
 }
 
+/// Maps a parallel-parse failure to a JS error; the document cap is an argument error.
+fn parse_error(error: &fast_yaml_parallel::Error) -> napi::Error {
+    match error {
+        fast_yaml_parallel::Error::DocumentLimitExceeded { .. } => {
+            napi::Error::new(napi::Status::InvalidArg, error.to_string())
+        }
+        other => napi::Error::from_reason(other.to_string()),
+    }
+}
+
 impl ParallelConfig {
     /// Convert to Rust parallel config with validation.
-    fn to_rust_config(&self) -> NapiResult<RustParallelConfig> {
+    fn to_rust_config(&self) -> napi::Result<RustParallelConfig> {
         let thread_count = checked_opt_uint("threadCount", self.thread_count, 0, MAX_THREADS)?;
         let max_input_size = checked_opt_uint(
             "maxInputSize",
@@ -74,25 +85,19 @@ impl ParallelConfig {
             1,
             ABSOLUTE_MAX_INPUT_SIZE,
         )?;
-        checked_opt_uint(
+        let max_documents = checked_opt_uint(
             "maxDocuments",
             self.max_documents,
             1,
             ABSOLUTE_MAX_DOCUMENTS,
         )?;
         let min_chunk_size = checked_opt_uint("minChunkSize", self.min_chunk_size, 1, U32_MAX)?;
-        let max_chunk_size = checked_opt_uint("maxChunkSize", self.max_chunk_size, 0, U32_MAX)?;
 
-        let min_chunk = min_chunk_size.unwrap_or(4096);
-        let max_chunk = max_chunk_size.unwrap_or(10 * 1024 * 1024);
-        if max_chunk < min_chunk {
-            return Err(napi::Error::new(
-                napi::Status::InvalidArg,
-                "maxChunkSize must be >= minChunkSize",
-            ));
-        }
-
-        let mut config = RustParallelConfig::new();
+        let max_documents = NonZeroUsize::new(max_documents.unwrap_or(DEFAULT_MAX_DOCUMENTS))
+            .ok_or_else(|| {
+                napi::Error::new(napi::Status::InvalidArg, "maxDocuments must be at least 1")
+            })?;
+        let mut config = RustParallelConfig::new().with_max_documents(max_documents);
 
         if let Some(count) = thread_count {
             config = config.with_workers(Some(count));
@@ -164,7 +169,7 @@ pub fn parse_parallel(
     env: Env,
     yaml_str: String,
     config: Option<ParallelConfig>,
-) -> NapiResult<Vec<Unknown<'static>>> {
+) -> napi::Result<Vec<Unknown<'static>>> {
     // Convert config
     let rust_config = match config.unwrap_or_default().to_rust_config() {
         Ok(c) => c,
@@ -178,7 +183,9 @@ pub fn parse_parallel(
     let values = match parse_parallel_with_config(&yaml_str, &rust_config) {
         Ok(v) => v,
         Err(e) => {
-            env.throw_error(&e.to_string(), None)?;
+            let e = parse_error(&e);
+            let code = (e.status != napi::Status::GenericFailure).then(|| e.status.as_ref());
+            env.throw_error(&e.reason, code)?;
             return Ok(Vec::new());
         }
     };
@@ -212,17 +219,16 @@ impl Task for ParseParallelTask {
     type Output = Vec<fast_yaml_parallel::Value>;
     type JsValue = Vec<Unknown<'static>>;
 
-    fn compute(&mut self) -> NapiResult<Self::Output> {
+    fn compute(&mut self) -> napi::Result<Self::Output> {
         contain_panic(|| {
             // Validate config in compute phase to properly return errors to user
             let rust_config = self.config.to_rust_config()?;
 
-            parse_parallel_with_config(&self.yaml_str, &rust_config)
-                .map_err(|e| napi::Error::from_reason(e.to_string()))
+            parse_parallel_with_config(&self.yaml_str, &rust_config).map_err(|e| parse_error(&e))
         })
     }
 
-    fn resolve(&mut self, env: Env, output: Self::Output) -> NapiResult<Self::JsValue> {
+    fn resolve(&mut self, env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         contain_panic(|| {
             let mut js_docs = Vec::with_capacity(output.len());
             for value in &output {
@@ -242,11 +248,11 @@ impl Task for PanicTask {
     type Output = ();
     type JsValue = ();
 
-    fn compute(&mut self) -> NapiResult<Self::Output> {
+    fn compute(&mut self) -> napi::Result<Self::Output> {
         contain_panic(|| panic!("test-panic: intentional async panic"))
     }
 
-    fn resolve(&mut self, _env: Env, _output: Self::Output) -> NapiResult<Self::JsValue> {
+    fn resolve(&mut self, _env: Env, _output: Self::Output) -> napi::Result<Self::JsValue> {
         Ok(())
     }
 }
@@ -255,7 +261,7 @@ impl Task for PanicTask {
 ///
 /// `AsyncTask` phases run outside the `#[napi(catch_unwind)]` trampolines, where an
 /// unwinding panic would abort the Node process.
-pub(crate) fn contain_panic<T>(f: impl FnOnce() -> NapiResult<T>) -> NapiResult<T> {
+pub(crate) fn contain_panic<T>(f: impl FnOnce() -> napi::Result<T>) -> napi::Result<T> {
     catch_unwind(AssertUnwindSafe(f)).map_err(panic_to_error)?
 }
 
@@ -311,7 +317,6 @@ mod tests {
         let config = ParallelConfig {
             thread_count: Some(4.0),
             min_chunk_size: Some(2048.0),
-            max_chunk_size: Some(5_242_880.0),
             max_input_size: Some(52_428_800.0),
             max_documents: Some(50_000.0),
             ..Default::default()
@@ -325,10 +330,9 @@ mod tests {
         };
         assert!(config.to_rust_config().is_err());
 
-        // Invalid chunk sizes
+        // Invalid chunk size
         let config = ParallelConfig {
-            min_chunk_size: Some(10000.0),
-            max_chunk_size: Some(1000.0),
+            min_chunk_size: Some(0.0),
             ..Default::default()
         };
         assert!(config.to_rust_config().is_err());

@@ -9,7 +9,7 @@ use fast_yaml_linter::{
     DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig, Linter as RustLinter,
     Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
     Suggestion as RustSuggestion,
-    config::{IndentSize, RuleName},
+    config::{IndentSize, RuleConfigError, RuleName},
     rules::{DocumentEndPresence, DocumentStartPresence},
 };
 use napi_derive::napi;
@@ -276,7 +276,12 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
         rust = rust.with_disabled_rule(RuleName::DuplicateKey);
     }
     if let Some(rules) = &config.rules {
-        rust.rules.apply(&rules.0).map_err(config_error)?;
+        rust.rules.apply(&rules.0).map_err(|e| match e {
+            RuleConfigError::Malformed { message } => {
+                config_error(format!("rules must be an object: {message}"))
+            }
+            other => config_error(other),
+        })?;
     }
     for code in config.disabled_rules.iter().flatten() {
         rust = rust.with_disabled_rule(RuleName::from_str(code).map_err(config_error)?);

@@ -738,6 +738,35 @@ pub struct LimitGuard {
     max_anchor_seen: usize,
     // Anchors below this id belong to earlier documents and are out of scope.
     doc_anchor_floor: usize,
+    cursor: DocumentCursor,
+}
+
+/// Tracks which document of a stream the next event belongs to.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct DocumentCursor {
+    started: usize,
+    open: bool,
+}
+
+impl DocumentCursor {
+    pub(crate) const fn observe(&mut self, event: &Event<'_>) {
+        match event {
+            Event::DocumentStart(_) => {
+                self.started += 1;
+                self.open = true;
+            }
+            Event::DocumentEnd => self.open = false,
+            _ => {}
+        }
+    }
+
+    pub(crate) const fn index(self) -> usize {
+        if self.open {
+            self.started - 1
+        } else {
+            self.started
+        }
+    }
 }
 
 impl LimitGuard {
@@ -756,7 +785,16 @@ impl LimitGuard {
             completed: HashMap::new(),
             max_anchor_seen: 0,
             doc_anchor_floor: 0,
+            cursor: DocumentCursor::default(),
         }
+    }
+
+    /// Zero-based index of the document the next event belongs to.
+    ///
+    /// Between two documents this is the index of the document that follows.
+    #[must_use]
+    pub const fn document(&self) -> usize {
+        self.cursor.index()
     }
 
     /// Accounts for one parser event.
@@ -767,6 +805,7 @@ impl LimitGuard {
     /// [`ParseError::Scanner`] for an alias that refers to an anchor from a previous
     /// document (anchors do not cross document boundaries).
     pub fn observe(&mut self, event: &Event<'_>, span: Span) -> ParseResult<()> {
+        self.cursor.observe(event);
         match event {
             Event::DocumentStart(_) => {
                 self.completed.clear();
@@ -775,10 +814,7 @@ impl LimitGuard {
             Event::SequenceStart(anchor, tag) | Event::MappingStart(anchor, tag) => {
                 self.charge_tag_prefix(tag.as_deref(), span)?;
                 if self.stack.len() >= self.budget.limits.max_depth.get() {
-                    return Err(Self::exceeded(
-                        LimitKind::Depth(self.budget.limits.max_depth),
-                        span,
-                    ));
+                    return Err(self.exceeded(LimitKind::Depth(self.budget.limits.max_depth), span));
                 }
                 self.max_anchor_seen = self.max_anchor_seen.max(*anchor);
                 self.stack.push(Frame {
@@ -825,14 +861,15 @@ impl LimitGuard {
         let Some(tag) = tag else { return Ok(()) };
         self.budget
             .charge_tag_prefix(tag.handle.len().saturating_sub(TAG_PREFIX_ALLOWANCE))
-            .map_err(|kind| Self::exceeded(kind, span))
+            .map_err(|kind| self.exceeded(kind, span))
     }
 
     fn observe_alias(&mut self, id: usize, span: Span) -> ParseResult<()> {
         if id < self.doc_anchor_floor {
-            return Err(
-                ScanError::new_str(span.start, "while parsing node, found unknown anchor").into(),
-            );
+            return Err(ParseError::Scanner {
+                error: ScanError::new_str(span.start, "while parsing node, found unknown anchor"),
+                document: self.document(),
+            });
         }
         // Absent means the anchor's collection is still open (`&a [*a]`); the loader yields one node.
         let subtree = self.completed.get(&id).copied().unwrap_or(Subtree {
@@ -841,12 +878,9 @@ impl LimitGuard {
         });
         self.budget
             .charge_alias(subtree.bytes)
-            .map_err(|kind| Self::exceeded(kind, span))?;
+            .map_err(|kind| self.exceeded(kind, span))?;
         if self.stack.len().saturating_add(subtree.height) > self.budget.limits.max_depth.get() {
-            return Err(Self::exceeded(
-                LimitKind::Depth(self.budget.limits.max_depth),
-                span,
-            ));
+            return Err(self.exceeded(LimitKind::Depth(self.budget.limits.max_depth), span));
         }
         self.complete(0, subtree);
         Ok(())
@@ -862,9 +896,14 @@ impl LimitGuard {
         }
     }
 
-    fn exceeded(kind: LimitKind, span: Span) -> ParseError {
+    fn exceeded(&self, kind: LimitKind, span: Span) -> ParseError {
         let SourcePosition { line, column } = span.into();
-        ParseError::LimitExceeded { kind, line, column }
+        ParseError::LimitExceeded {
+            kind,
+            line,
+            column,
+            document: self.document(),
+        }
     }
 }
 

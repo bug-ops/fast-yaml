@@ -33,7 +33,7 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
     validate_input_size(input, config)?;
 
     // Step 2: Chunk documents
-    let chunks = chunk_documents(fast_yaml_core::strip_bom(input));
+    let chunks = chunk_documents(fast_yaml_core::strip_bom(input), config.max_documents())?;
 
     // A BOM-only stream is one null document, like `Parser::parse_all`.
     if chunks.is_empty() && !input.is_empty() {
@@ -97,9 +97,12 @@ fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<V
 ///
 /// Error marks are relocated to whole-input coordinates.
 fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> Result<Vec<Value>> {
-    Parser::parse_chunk_with_budget(chunk.content, budget).map_err(|source| Error::Parse {
-        index: chunk.index,
-        source: source.relocated(chunk.origin.line, chunk.origin.char_index, chunk.index),
+    Parser::parse_chunk_with_budget(chunk.content, budget).map_err(|source| {
+        let source = source.relocated(chunk.origin.line, chunk.origin.char_index, chunk.index);
+        Error::Parse {
+            index: source.document_index(),
+            source,
+        }
     })
 }
 
@@ -228,7 +231,7 @@ mod tests {
         let parallel = || Config::new().with_sequential_threshold(0);
 
         let nested = "a: 1\n---\n[[[1]]]\n---\nb: 2\n";
-        assert!(chunk_documents(nested).len() >= 3);
+        assert!(chunk_documents(nested, None).unwrap().len() >= 3);
         let depth = parallel().with_parse_limits(ParseLimits {
             max_depth: MaxDepth::new(2).unwrap(),
             ..ParseLimits::default()
@@ -246,7 +249,7 @@ mod tests {
         assert!(process_parallel(nested, &parallel()).is_ok());
 
         let aliased = "a: &x [1, 2, 3]\nb: *x\n---\nc: &y [1, 2, 3]\nd: *y\n";
-        assert!(chunk_documents(aliased).len() >= 2);
+        assert!(chunk_documents(aliased, None).unwrap().len() >= 2);
         let alias = parallel().with_parse_limits(ParseLimits {
             max_alias_bytes: MaxAliasBytes::new(300).unwrap(),
             ..ParseLimits::default()
@@ -273,7 +276,7 @@ mod tests {
             "a".repeat(4_000)
         );
         let stream = doc.repeat(CHUNKS);
-        let chunks = chunk_documents(&stream);
+        let chunks = chunk_documents(&stream, None).unwrap();
         assert!(chunks.len() >= CHUNKS);
         let fresh = || {
             StreamBudget::new(ParseLimits {

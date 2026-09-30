@@ -1,5 +1,6 @@
 //! Error types for parallel processing operations.
 
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use fast_yaml_core::DecodeError;
@@ -10,8 +11,8 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to parse a document; displayed with a one-based document number.
-    #[error("failed to parse document {}: {source}", .index + 1)]
+    /// Failed to parse a document; the source error names the document when it is not the first.
+    #[error("failed to parse YAML: {source}")]
     Parse {
         /// Zero-based index of the document that failed.
         index: usize,
@@ -19,6 +20,16 @@ pub enum Error {
         /// The underlying parse error from fast-yaml-core.
         #[source]
         source: CoreParseError,
+    },
+
+    /// The input holds more documents than [`Config::with_max_documents`](crate::Config::with_max_documents) allows.
+    #[error("document {} exceeds the limit of {max} documents", .index + 1)]
+    DocumentLimitExceeded {
+        /// The configured limit.
+        max: NonZeroUsize,
+
+        /// Zero-based index of the first document past the limit.
+        index: usize,
     },
 
     /// File I/O error.
@@ -113,15 +124,16 @@ mod tests {
     #[test]
     fn test_parse_error_display_includes_cause() {
         let err = Error::Parse {
-            index: 0,
+            index: 1,
             source: CoreParseError::LimitExceeded {
                 kind: LimitKind::Depth(MaxDepth::DEFAULT),
                 line: 1,
                 column: 1,
+                document: 1,
             },
         };
         let text = err.to_string();
-        assert!(text.contains("document 1"), "{text}");
+        assert_eq!(text.matches("document 2").count(), 1, "{text}");
         assert!(text.contains("nesting depth exceeds 256"), "{text}");
     }
 }

@@ -149,7 +149,7 @@ fn parse_error_index_matches_stream_position() {
 fn merge_error_location_uses_stream_document_index() {
     let input = "---\na: 1\n---\nb: 2\n---\nm:\n  <<: 1\n";
     let expected = Parser::parse_all(input).unwrap_err();
-    assert_eq!(expected.document_index(), Some(2));
+    assert_eq!(expected.document_index(), 2);
     let config = Config::new()
         .with_workers(Some(2))
         .with_sequential_threshold(0);
@@ -225,6 +225,35 @@ fn merge_error_position_is_whole_input_on_parallel_path() {
                 ..
             } => assert_eq!((line, column), expected),
             other => panic!("expected a merge error, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn scanner_and_limit_errors_agree_on_document_index_with_parse_all() {
+    let config = Config::new()
+        .with_workers(Some(2))
+        .with_sequential_threshold(0);
+    for input in [
+        "a: 1\n---\nb: 2\n---\nc: \0\n",
+        "a: 1\n---\nb: 2\n---\nc: [\n",
+        "a: &x 1\n---\nb: 2\n---\nc: *x\n",
+        "\0",
+        "a: 1\n---\n\0",
+        "a: 1\n...\n\0\n",
+        "a: 1\n---\nb: 2\n...\n\0\n",
+    ] {
+        let expected = Parser::parse_all(input).unwrap_err();
+        for result in [
+            parse_parallel(input),
+            parse_parallel_with_config(input, &config),
+        ] {
+            let Err(Error::Parse { index, source }) = result else {
+                panic!("expected Error::Parse for {input:?}");
+            };
+            assert_eq!(index, expected.document_index(), "{input:?}");
+            assert_eq!(source.document_index(), index, "{input:?}");
+            assert_eq!(source.to_string(), expected.to_string(), "{input:?}");
         }
     }
 }

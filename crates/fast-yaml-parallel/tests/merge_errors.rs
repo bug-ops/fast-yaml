@@ -1,7 +1,8 @@
 //! Merge-key errors in batch file processing: document index and formatter rejection.
 
-use fast_yaml_core::EmitterConfig;
-use fast_yaml_parallel::{CommentPolicy, Error, FileProcessor};
+use fast_yaml_core::limits::MaxDepth;
+use fast_yaml_core::{EmitterConfig, ParseLimits};
+use fast_yaml_parallel::{CommentPolicy, Config, Error, FileProcessor};
 use std::fs;
 use tempfile::TempDir;
 
@@ -29,10 +30,24 @@ fn parse_files_reports_the_failing_document_index() {
 }
 
 #[test]
-fn parse_files_reports_index_zero_for_non_merge_errors() {
+fn parse_files_reports_the_failing_document_index_for_scanner_errors() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("broken.yaml");
-    fs::write(&path, "x: 1\n---\na: [\n").unwrap();
+    fs::write(&path, "x: 1\n---\ny: 2\n---\na: [\n").unwrap();
+
+    let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
+
+    let Some((_, Error::Parse { index, .. })) = result.errors.first() else {
+        panic!("expected a parse error");
+    };
+    assert_eq!(*index, 2);
+}
+
+#[test]
+fn parse_files_reports_index_zero_for_first_document_errors() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("broken.yaml");
+    fs::write(&path, "a: [\n---\nx: 1\n").unwrap();
 
     let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
 
@@ -40,6 +55,30 @@ fn parse_files_reports_index_zero_for_non_merge_errors() {
         panic!("expected a parse error");
     };
     assert_eq!(*index, 0);
+}
+
+#[test]
+fn parse_files_reports_the_failing_document_index_for_limit_errors() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("deep.yaml");
+    let deep = format!("{}1{}", "[".repeat(10), "]".repeat(10));
+    fs::write(&path, format!("x: 1\n---\ny: 2\n---\nz: {deep}\n")).unwrap();
+
+    let limits = ParseLimits {
+        max_depth: MaxDepth::new(4).unwrap(),
+        ..ParseLimits::default()
+    };
+    let processor = FileProcessor::with_config(Config::new().with_parse_limits(limits));
+    let result = processor.parse_files(std::slice::from_ref(&path));
+
+    let Some((_, Error::Parse { index, source })) = result.errors.first() else {
+        panic!("expected a parse error");
+    };
+    assert!(
+        matches!(source, fast_yaml_core::ParseError::LimitExceeded { .. }),
+        "{source:?}"
+    );
+    assert_eq!(*index, 2);
 }
 
 #[test]
@@ -66,8 +105,8 @@ fn error_message_uses_one_based_document_numbers() {
     let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
 
     let text = result.errors[0].1.to_string();
-    assert!(text.starts_with("failed to parse document 2:"), "{text}");
-    assert!(text.contains("(document 2)"), "{text}");
+    assert!(text.starts_with("failed to parse YAML:"), "{text}");
+    assert_eq!(text.matches("document 2").count(), 1, "{text}");
 }
 
 #[test]
