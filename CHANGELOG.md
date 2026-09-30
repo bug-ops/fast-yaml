@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#PR)
+- **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#524)
 - **Core/Python/Node.js**: only a plain untagged `<<` is a merge key; quoted and tagged forms are ordinary keys (#478) (#494)
 - **Core/Python/Node.js**: a `<<` value other than a mapping or a sequence of mappings, or a `!!set`, is now an error (#481) (#494)
 - **Core**: `!!set` elements are never merge keys, and `canonicalize` returns `Result<Value, MergeError>` (#481) (#494)
@@ -53,8 +53,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Core**: `decode_input`, `decode_input_owned`, `DecodeError` and `UnsupportedEncoding` detect UTF-16/UTF-32 byte order marks when decoding raw input bytes (#334) (#PR)
-- **CI**: `test-core-no-arena` job builds and tests `fast-yaml-core` without the `arena` feature (#410) (#PR)
+- **Core**: `decode_input`, `decode_input_owned`, `DecodeError` and `UnsupportedEncoding` detect UTF-16/UTF-32 byte order marks when decoding raw input bytes (#334) (#524)
+- **CI**: `test-core-no-arena` job builds and tests `fast-yaml-core` without the `arena` feature (#410) (#524)
 - **Linter/Python/Node.js**: `max_input_bytes`/`maxInputBytes` lint option (1 B to 1 GiB, default 100 MiB) backed by core `MaxInputBytes` and `LintError::InputTooLarge` (#436) (#510)
 - **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
 - `--max-depth` and `--max-alias-bytes` on `fy parse`/`convert`/`lint`, plus `max_depth`/`max_alias_bytes` (`maxDepth`/`maxAliasBytes`) options in `fast-yaml-parallel`, the linter, and the Python and Node.js loaders, `ParallelConfig`, `LintConfig` and `BatchConfig` (#433)
@@ -97,7 +97,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **CLI/Parallel/Linter**: UTF-16 and UTF-32 input, including lint config files, fails with an "unsupported encoding" message naming the encoding instead of a generic UTF-8 error (#334) (#PR)
+- **CLI/Parallel/Linter**: UTF-16 and UTF-32 input, including lint config files, fails with an "unsupported encoding" message naming the encoding instead of a generic UTF-8 error (#334) (#524)
 - **Core/Node.js/Python**: `-0x8000000000000000` loads as `i64::MIN`, and equal big-integer spellings (`+99..9`, `99..9`, hex) give one mapping key and the same Node.js key and value text (#477) (#464) (#480) (#495)
 - **Core/CLI**: `Parser::parse_str`, `fy parse` and `parse_files` validate merge keys in every document, not only the first (#501) (#502)
 - **CLI**: `fy convert` keeps integers beyond `i64` exact in both directions; YAML to JSON now emits them as JSON numbers instead of strings and canonicalizes big-integer JSON map keys (#466, #476)
