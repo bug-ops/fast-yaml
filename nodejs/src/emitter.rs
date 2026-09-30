@@ -4,28 +4,43 @@
 //! JavaScript objects to YAML strings.
 
 use crate::conversion::js_to_yaml;
+use fast_yaml_core::{DumpBudget, MaxOutputBytes};
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
-/// Maximum output size in bytes for `safe_dump`/`safe_dump_all` (100MB).
-///
-/// This limit prevents memory exhaustion attacks.
-const MAX_OUTPUT_SIZE: usize = 100 * 1024 * 1024;
-
-/// Converts `data` to YAML, throwing a JS exception on failure.
+/// Raises `result`'s error as a JS exception, returning a placeholder JS never observes.
 ///
 /// An `Err` returned from a `#[napi]` function reaches JS as a returned value instead of a
-/// thrown exception, so the exception is raised explicitly and `None` tells the caller to
-/// return a placeholder that JS never observes.
-fn convert_or_throw(env: Env, data: Unknown) -> NapiResult<Option<YamlOwned>> {
-    match js_to_yaml(env, data) {
-        Ok(yaml) => Ok(Some(yaml)),
+/// thrown exception, so every fallible dump path routes through here.
+fn throw_or_default<T: Default>(env: Env, result: NapiResult<T>) -> NapiResult<T> {
+    match result {
+        Ok(value) => Ok(value),
         Err(e) => {
             env.throw_error(&e.reason, None)?;
-            Ok(None)
+            Ok(T::default())
         }
     }
+}
+
+/// Fails when `output` is larger than [`MaxOutputBytes::DEFAULT`].
+fn check_output_size(output: String) -> NapiResult<String> {
+    MaxOutputBytes::DEFAULT
+        .check(output.len())
+        .map_err(|kind| napi::Error::from_reason(kind.to_string()))?;
+    Ok(output)
+}
+
+fn emitter_config(opts: &DumpOptions) -> fast_yaml_core::EmitterConfig {
+    fast_yaml_core::EmitterConfig::new()
+        .with_indent(opts.indent.unwrap_or(2) as usize)
+        .with_width(opts.width.unwrap_or(80) as usize)
+        .with_default_flow_style(opts.default_flow_style)
+        .with_explicit_start(opts.explicit_start.unwrap_or(false))
+}
+
+fn emit_error(e: impl std::fmt::Display) -> napi::Error {
+    napi::Error::from_reason(format!("YAML emit error: {e}"))
 }
 
 /// Options for YAML serialization.
@@ -102,31 +117,18 @@ pub fn safe_dump(
     options: Option<DumpOptions>,
 ) -> NapiResult<String> {
     let opts = options.unwrap_or_default();
+    throw_or_default(env, dump_one(env, data, &opts))
+}
 
-    // Convert JavaScript to YAML
-    let Some(mut yaml) = convert_or_throw(env, data)? else {
-        return Ok(String::new());
-    };
-
-    // Sort keys if requested
+fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> NapiResult<String> {
+    let mut budget = DumpBudget::default();
+    let mut yaml = js_to_yaml(env, data, &mut budget)?;
     if opts.sort_keys.unwrap_or(false) {
         yaml = sort_yaml_keys(&yaml);
     }
-
-    // Create emitter configuration from options
-    let config = fast_yaml_core::EmitterConfig::new()
-        .with_indent(opts.indent.unwrap_or(2) as usize)
-        .with_width(opts.width.unwrap_or(80) as usize)
-        .with_default_flow_style(opts.default_flow_style)
-        .with_explicit_start(opts.explicit_start.unwrap_or(false));
-
-    // Serialize to string using EmitterConfig.
-    // Note: fast_yaml_core::Emitter already estimates output size and pre-allocates
-    // the output String buffer to minimize allocations during YAML emission.
-    let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config)
-        .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
-
-    Ok(output)
+    let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &emitter_config(opts))
+        .map_err(emit_error)?;
+    check_output_size(output)
 }
 
 /// Serialize multiple JavaScript objects to a YAML string with document separators.
@@ -167,44 +169,22 @@ pub fn safe_dump_all(
     options: Option<DumpOptions>,
 ) -> NapiResult<String> {
     let opts = options.unwrap_or_default();
+    throw_or_default(env, dump_many(env, documents, &opts))
+}
 
-    // Pre-allocate Vec for converted documents to avoid reallocation.
-    // For multi-document YAML files, this prevents Vec capacity doubling.
+fn dump_many(env: Env, documents: Vec<Unknown>, opts: &DumpOptions) -> NapiResult<String> {
+    let mut budget = DumpBudget::default();
     let mut yamls = Vec::with_capacity(documents.len());
     for doc in documents {
-        let Some(mut yaml) = convert_or_throw(env, doc)? else {
-            return Ok(String::new());
-        };
-
-        // Sort keys if requested
+        let mut yaml = js_to_yaml(env, doc, &mut budget)?;
         if opts.sort_keys.unwrap_or(false) {
             yaml = sort_yaml_keys(&yaml);
         }
-
         yamls.push(yaml);
     }
-
-    // Create emitter configuration from options
-    let config = fast_yaml_core::EmitterConfig::new()
-        .with_indent(opts.indent.unwrap_or(2) as usize)
-        .with_width(opts.width.unwrap_or(80) as usize)
-        .with_default_flow_style(opts.default_flow_style)
-        .with_explicit_start(opts.explicit_start.unwrap_or(false));
-
-    // Serialize all documents using EmitterConfig
-    let output = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &config)
-        .map_err(|e| napi::Error::from_reason(format!("YAML emit error: {e}")))?;
-
-    // Check output size to prevent memory exhaustion
-    if output.len() > MAX_OUTPUT_SIZE {
-        return Err(napi::Error::from_reason(format!(
-            "output size {} exceeds maximum allowed {} (100MB)",
-            output.len(),
-            MAX_OUTPUT_SIZE
-        )));
-    }
-
-    Ok(output)
+    let output = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &emitter_config(opts))
+        .map_err(emit_error)?;
+    check_output_size(output)
 }
 
 /// Helper function to recursively sort dictionary keys in YAML
@@ -247,8 +227,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_max_output_size() {
-        assert_eq!(MAX_OUTPUT_SIZE, 100 * 1024 * 1024);
+    fn test_check_output_size() {
+        assert!(check_output_size("ok".to_string()).is_ok());
+        let over = "x".repeat(MaxOutputBytes::DEFAULT.get() + 1);
+        assert!(check_output_size(over).is_err());
     }
 
     #[test]

@@ -387,5 +387,5 @@ class TestDumpOptions:
         """dump_all() enforces 100MB output size limit."""
         # Create large dataset that would exceed 100MB when serialized
         large_docs = [{"key": "x" * 10000000} for _ in range(20)]
-        with pytest.raises(ValueError, match="exceeds maximum"):
+        with pytest.raises(ValueError, match="output size exceeds"):
             fast_yaml.dump_all(large_docs)

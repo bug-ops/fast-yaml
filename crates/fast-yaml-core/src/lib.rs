@@ -60,7 +60,10 @@ pub mod streaming;
 pub use comments::has_comments;
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
-pub use limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, MaxTagBytes, ParseLimits};
+pub use limits::{
+    DumpBudget, LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, MaxDumpNodes, MaxOutputBytes,
+    MaxTagBytes, ParseLimits,
+};
 pub use parser::{Parser, canonicalize, strip_bom};
 pub use scalar::{DecimalBigInt, ResolvedScalar, resolve_scalar};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};
