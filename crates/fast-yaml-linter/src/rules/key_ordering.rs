@@ -1,5 +1,6 @@
 //! Rule to check key ordering in mappings.
 
+use crate::context::KeyIndex;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
@@ -62,10 +63,12 @@ impl super::LintRule for KeyOrderingRule {
 
         let mut diagnostics = Vec::new();
         let mut cursor = context.doc_start_line();
+        let index = context.key_index();
 
         check_value(
             value,
             context,
+            index,
             source,
             case_sensitive,
             config,
@@ -91,6 +94,7 @@ impl super::LintRule for KeyOrderingRule {
 fn check_value(
     value: &Value,
     context: &LintContext<'_>,
+    index: &KeyIndex<'_>,
     source: &str,
     case_sensitive: bool,
     config: &LintConfig,
@@ -105,7 +109,7 @@ fn check_value(
                 let Some(key) = key_value.as_str() else {
                     continue;
                 };
-                if let Some(line_num) = locate_key(key, context, cursor) {
+                if let Some(line_num) = index.locate(key, cursor) {
                     key_positions.push((key.to_string(), line_num));
                 }
                 // Recurse into the value immediately after finding its key so
@@ -114,6 +118,7 @@ fn check_value(
                 check_value(
                     nested_value,
                     context,
+                    index,
                     source,
                     case_sensitive,
                     config,
@@ -136,6 +141,7 @@ fn check_value(
                 check_value(
                     item,
                     context,
+                    index,
                     source,
                     case_sensitive,
                     config,
@@ -146,48 +152,6 @@ fn check_value(
         }
         _ => {}
     }
-}
-
-/// Locates a single `key` in the source, scanning forward from `*cursor`.
-///
-/// Returns the 1-based line number if found, and advances `*cursor` past it.
-fn locate_key(key: &str, context: &LintContext<'_>, cursor: &mut usize) -> Option<usize> {
-    let lines = context.lines();
-    let line_metadata = context.line_metadata();
-
-    for (line_idx, (line, metadata)) in lines
-        .iter()
-        .zip(line_metadata)
-        .enumerate()
-        .skip(*cursor - 1)
-    {
-        let line_num = line_idx + 1;
-
-        if metadata.is_empty || metadata.is_comment {
-            continue;
-        }
-
-        let trimmed = line.trim_start();
-        let Some(colon_pos) = trimmed.find(':') else {
-            continue;
-        };
-
-        let raw_key = trimmed[..colon_pos].trim();
-        let unquoted = if (raw_key.starts_with('\'') && raw_key.ends_with('\''))
-            || (raw_key.starts_with('"') && raw_key.ends_with('"'))
-        {
-            &raw_key[1..raw_key.len() - 1]
-        } else {
-            raw_key
-        };
-
-        if unquoted == key {
-            *cursor = line_num + 1;
-            return Some(line_num);
-        }
-    }
-
-    None
 }
 
 /// Compares consecutive key pairs and pushes a diagnostic for each violation.
@@ -452,5 +416,108 @@ mod tests {
             "expected 2 diagnostics, got {}",
             diagnostics.len()
         );
+    }
+
+    fn check_yaml(yaml: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let context = LintContext::new(yaml);
+        KeyOrderingRule.check(&context, &value, &LintConfig::default())
+    }
+
+    #[test]
+    fn test_line_key_strips_only_complete_quotes() {
+        assert_eq!(crate::context::line_key("  \"a\": 1"), Some("a"));
+        assert_eq!(crate::context::line_key("'a': 1"), Some("a"));
+        assert_eq!(crate::context::line_key("\"\": 1"), Some(""));
+        assert_eq!(crate::context::line_key("\": 1"), Some("\""));
+        assert_eq!(crate::context::line_key("' : 1"), Some("'"));
+        assert_eq!(crate::context::line_key("\"a': 1"), Some("\"a'"));
+        assert_eq!(crate::context::line_key("no colon"), None);
+    }
+
+    /// Regression test for #351: a lone quote before a colon must not panic.
+    #[test]
+    fn test_key_ordering_lone_quote_in_key_does_not_panic() {
+        let diagnostics = check_yaml("b: \"a\n ':\"\na: 1\n");
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_key_ordering_flow_map_keys_are_not_located() {
+        let diagnostics = check_yaml("m: {z: 1, a: 2}\nn: 1\nk: 2\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("key 'k'"));
+    }
+
+    #[test]
+    fn test_key_ordering_sequence_item_keys() {
+        let diagnostics =
+            check_yaml("items:\n  - b: 1\n    a: 2\n  - b: 3\n    a: 4\nz: 1\ny: 2\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("key 'y'"));
+    }
+
+    #[test]
+    fn test_key_ordering_duplicate_key_names_use_cursor() {
+        let diagnostics = check_yaml("a:\n  x: 1\n  y: 2\nb:\n  x: 1\n  y: 2\n");
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn test_key_ordering_order_violation_reports_line() {
+        let diagnostics = check_yaml("c: 1\n# note\n\nb: 2\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span.start.line, 4);
+    }
+
+    #[test]
+    fn test_key_index_locate_advances_cursor() {
+        let yaml = "a: 1\nb: 2\na: 3\n";
+        let context = LintContext::new(yaml);
+        let index = context.key_index();
+        let mut cursor = 1;
+        assert_eq!(index.locate("a", &mut cursor), Some(1));
+        assert_eq!(index.locate("a", &mut cursor), Some(3));
+        assert_eq!(index.locate("a", &mut cursor), None);
+        assert_eq!(cursor, 4);
+        assert_eq!(index.locate("missing", &mut cursor), None);
+    }
+
+    #[test]
+    fn test_key_ordering_lone_quote_in_block_scalar() {
+        let diagnostics = check_yaml("b: |\n  \":\n  ':\na: 1\n");
+        assert_eq!(diagnostics.len(), 1);
+    }
+
+    #[test]
+    fn test_key_ordering_empty_key() {
+        let diagnostics = check_yaml("\"\": 1\nb: 2\na: 3\n");
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].span.start.line, 3);
+    }
+
+    #[test]
+    fn test_key_ordering_multi_document_lines() {
+        let yaml = "b: 1\na: 2\n---\nd: 1\nc: 2\n";
+        let mut ctx = LintContext::new(yaml);
+        let lines: Vec<usize> = [(1, "b: 1\na: 2\n"), (4, "d: 1\nc: 2\n")]
+            .into_iter()
+            .flat_map(|(start, doc)| {
+                let value = Parser::parse_str(doc).unwrap().unwrap();
+                ctx.set_doc_start_line(start);
+                KeyOrderingRule.check(&ctx, &value, &LintConfig::default())
+            })
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(lines, [2, 5]);
+    }
+
+    #[test]
+    fn test_key_ordering_unicode_keys() {
+        let diagnostics = check_yaml("\"日本\": 1\nключ: 2\nabc: 3\n");
+        assert_eq!(diagnostics.len(), 2);
+        assert!(diagnostics[0].message.contains("key 'ключ'"));
+        assert!(diagnostics[1].message.contains("key 'abc'"));
+        assert_eq!(diagnostics[1].span.start.line, 3);
     }
 }

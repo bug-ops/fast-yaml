@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#NNN)
+- Fix quadratic lint time on large files in `key-ordering` key lookup and flow-token block-scalar checks (#NNN)
 - Make `parse_parallel` match `Parser::parse_all`: empty documents are kept as null and `Error::Parse` indices align with the real stream (#364)
 - `fy format` returns an error instead of silently dropping anchors or nesting levels beyond 4096 anchors per document or 256 levels (#371) (#383)
 - `fy format` emits scalar mapping keys longer than 1024 characters in explicit `? ` form so the output re-parses (#378) (#383)
