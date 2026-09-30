@@ -35,6 +35,8 @@
 #![warn(dead_code)]
 
 use anyhow::Result;
+#[cfg(feature = "linter")]
+use fast_yaml_cli::file_filter;
 use fast_yaml_cli::{discovery, error};
 use fast_yaml_parallel::CommentPolicy;
 
@@ -179,23 +181,27 @@ fn run() -> Result<ExitCode> {
                     args,
                     &InputSource::from_stdin(cli.max_input_size)?,
                 )?,
-                Target::File(path) => lint_input(
-                    common_config,
-                    args,
-                    &InputSource::from_file(&path, cli.max_input_size)?,
-                )?,
-                Target::Batch(target) => {
+                Target::File(path) => {
+                    // Config first: an ignored file must not be read.
+                    let placeholder = empty_input(io::input::InputOrigin::File(path.clone()));
+                    let cmd =
+                        commands::lint::LintCommand::build(common_config, args, &placeholder)?;
+                    if cmd.is_ignored(&path) {
+                        cmd.execute_ignored()
+                    } else {
+                        cmd.execute(&InputSource::from_file(&path, cli.max_input_size)?)?
+                    }
+                }
+                Target::Batch(mut target) => {
                     // Synthetic stdin input: config discovery is CWD-based, same as yamllint.
-                    let stdin_fallback = InputSource {
-                        content: String::new(),
-                        origin: io::input::InputOrigin::Stdin,
-                    };
+                    let stdin_fallback = empty_input(io::input::InputOrigin::Stdin);
                     let format = args.format;
                     let cmd = commands::lint::LintCommand::build(
                         common_config.clone(),
                         args,
                         &stdin_fallback,
                     )?;
+                    target.discovery.file_filter = cmd.file_filter.clone();
                     commands::lint_batch::execute_lint_batch(
                         &common_config,
                         &target,
@@ -222,6 +228,15 @@ fn stdin_write_mode(intent: EditIntent, output: Option<std::path::PathBuf>) -> R
         anyhow::bail!("--in-place (-i) requires a file argument");
     }
     WriteMode::new(intent, output, None)
+}
+
+/// Content-free input that only tells config discovery where the run started.
+#[cfg(feature = "linter")]
+const fn empty_input(origin: io::input::InputOrigin) -> InputSource {
+    InputSource {
+        content: String::new(),
+        origin,
+    }
 }
 
 #[cfg(feature = "linter")]

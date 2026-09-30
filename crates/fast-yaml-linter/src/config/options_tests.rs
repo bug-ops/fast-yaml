@@ -6,17 +6,17 @@ use serde_norway::Value;
 
 use super::test_support::config_with_rule;
 use super::{
-    EmptyInsideLimit, IndentSize, Limit, NoOptions, RuleConfigError, RuleName, RuleOptions,
-    RulesConfig,
+    EmptyInsideLimit, IndentSize, Limit, NoOptions, PatternList, RuleConfigError, RuleName,
+    RuleOptions, RulesConfig,
 };
 use crate::Linter;
 use crate::rules::{
-    ColonsOptions, CommasOptions, CommentsOptions, DocumentEndOptions, DocumentEndPresence,
-    DocumentStartOptions, DocumentStartPresence, DuplicateKeysOptions, EmptyLinesOptions,
-    EmptyValuesOptions, FloatValuesOptions, FlowCollectionOptions, Forbid, HyphensOptions,
-    IndentationOptions, InvalidAnchorsOptions, KeyOrderingOptions, LineEndingType,
-    LineLengthOptions, NewLinesOptions, OctalValuesOptions, QuoteRequirement, QuoteType,
-    QuotedStringsOptions, TruthyOptions, TruthySpelling,
+    ColonsOptions, CommasOptions, CommentsOptions, DocumentEndOptions, DocumentStartOptions,
+    DuplicateKeysOptions, EmptyLinesOptions, EmptyValuesOptions, FloatValuesOptions,
+    FlowCollectionOptions, Forbid, HyphensOptions, IndentationOptions, InvalidAnchorsOptions,
+    KeyOrderingOptions, LineEndingType, LineLengthOptions, MarkerPresence, NewLinesOptions,
+    OctalValuesOptions, QuoteRequirement, QuoteType, QuotedStringsOptions, TruthyOptions,
+    TruthySpelling,
 };
 
 fn apply(rules: &mut RulesConfig, yaml: &str) -> Result<(), RuleConfigError> {
@@ -119,8 +119,8 @@ fn every_options_type_round_trips_with_non_default_values() {
             round_trip(&QuotedStringsOptions {
                 quote_type,
                 required,
-                extra_required: vec!["a".to_owned()],
-                extra_allowed: vec!["b".to_owned(), "c".to_owned()],
+                extra_required: PatternList::new(["a"]).unwrap(),
+                extra_allowed: PatternList::new(["b", "c"]).unwrap(),
             });
         }
     }
@@ -132,13 +132,17 @@ fn every_options_type_round_trips_with_non_default_values() {
         round_trip(&NewLinesOptions { line_ending });
     }
     for present in [
-        DocumentStartPresence::Required,
-        DocumentStartPresence::Forbidden,
-        DocumentStartPresence::Allowed,
+        MarkerPresence::Required,
+        MarkerPresence::Forbidden,
+        MarkerPresence::Allowed,
     ] {
         round_trip(&DocumentStartOptions { present });
     }
-    for present in [DocumentEndPresence::Required, DocumentEndPresence::Allowed] {
+    for present in [
+        MarkerPresence::Required,
+        MarkerPresence::Forbidden,
+        MarkerPresence::Allowed,
+    ] {
         round_trip(&DocumentEndOptions { present });
     }
     round_trip(&EmptyValuesOptions {
@@ -177,14 +181,14 @@ fn bool_forms_of_yamllint_options() {
             .document_start
             .options
             .present,
-        DocumentStartPresence::Required
+        MarkerPresence::Required
     );
     assert_eq!(
         applied("document-start: {present: false}")
             .document_start
             .options
             .present,
-        DocumentStartPresence::Forbidden
+        MarkerPresence::Forbidden
     );
     assert_eq!(
         applied("quoted-strings: {required: true}")
@@ -476,6 +480,159 @@ fn assert_unsupported_keys_are_not_fields<O: RuleOptions>() {
             "'{key}' is listed as unsupported but is a real option"
         );
     }
+}
+
+#[test]
+fn document_end_present_false_is_forbidden() {
+    assert_eq!(
+        applied("document-end: {present: false}")
+            .document_end
+            .options
+            .present,
+        MarkerPresence::Forbidden
+    );
+    assert_eq!(
+        applied("document-end: {present: forbidden}")
+            .document_end
+            .options
+            .present,
+        MarkerPresence::Forbidden
+    );
+}
+
+#[test]
+fn extra_patterns_are_regular_expressions() {
+    let rules = applied("quoted-strings: {extra-required: ['^http', 'a|b']}");
+    let patterns = &rules.quoted_strings.options.extra_required;
+    assert!(patterns.is_match("http://x") && patterns.is_match("xb"));
+    assert!(!patterns.is_match("x http"));
+    let rules = applied("quoted-strings: {extra-allowed: ['\\.md$']}");
+    assert!(rules.quoted_strings.options.extra_allowed.is_match("a.md"));
+}
+
+#[test]
+fn invalid_regex_names_rule_option_index_and_hint() {
+    let message = error_of("quoted-strings: {extra-required: ['ok', '(?=x)']}");
+    for needle in [
+        "quoted-strings",
+        "extra-required",
+        "pattern 1",
+        "look-around and backreferences are unsupported",
+    ] {
+        assert!(message.contains(needle), "{needle}: {message}");
+    }
+}
+
+#[test]
+fn over_long_and_pathological_patterns_are_rejected() {
+    let long = "a".repeat(257);
+    let message = error_of(&format!("quoted-strings: {{extra-required: ['{long}']}}"));
+    assert!(message.contains("256"), "{message}");
+    let message = error_of("quoted-strings: {extra-required: ['(a{1000}){1000}']}");
+    assert!(message.contains("extra-required"), "{message}");
+    assert!(message.contains("compiles to more than"), "{message}");
+    assert!(!message.contains("look-around"), "{message}");
+}
+
+#[test]
+fn syntax_errors_are_single_line_with_the_hint() {
+    let message = error_of("quoted-strings: {extra-required: ['(?=x)']}");
+    assert!(
+        !message.contains('\n') && !message.contains("\\n"),
+        "{message}"
+    );
+    assert!(message.contains("look-around"), "{message}");
+}
+
+#[test]
+fn control_characters_in_patterns_are_escaped() {
+    let message = error_of("quoted-strings: {extra-required: [\"(\\e[2J\"]}");
+    assert!(!message.contains('\u{1b}'), "{message:?}");
+}
+
+#[test]
+fn too_many_patterns_are_rejected_before_compiling() {
+    let start = std::time::Instant::now();
+    let many = vec![r"'\w{1,20}[a-z]+x'"; 2000].join(", ");
+    let message = error_of(&format!("quoted-strings: {{extra-required: [{many}]}}"));
+    assert!(message.contains("64"), "{message}");
+    let aliased = vec!["*a"; 2000].join(", ");
+    let message = error_of(&format!(
+        "x: &a '\\w{{1,20}}[a-z]+x'\nquoted-strings: {{extra-required: [{aliased}]}}"
+    ));
+    assert!(!message.is_empty());
+    assert!(start.elapsed().as_secs() < 5);
+    assert!(PatternList::new(vec!["a"; 65]).is_err());
+}
+
+#[test]
+fn unicode_heavy_patterns_fit_the_budget() {
+    let rules = applied(r"quoted-strings: {extra-required: ['\w{1,40}']}");
+    assert!(rules.quoted_strings.options.extra_required.is_match("é"));
+    let heavy = vec![r"'\w+\d\s'"; 64].join(", ");
+    let rules = applied(&format!("quoted-strings: {{extra-required: [{heavy}]}}"));
+    assert!(rules.quoted_strings.options.extra_required.is_match("é1 "));
+}
+
+#[test]
+fn pattern_list_matches_any_of_the_individual_patterns() {
+    let sources = ["^a", "b$", r"\d{2}", "x.z", "^$"];
+    let list = PatternList::new(sources).unwrap();
+    let singles: Vec<_> = sources
+        .iter()
+        .map(|source| regex::Regex::new(source).unwrap())
+        .collect();
+    for haystack in ["abc", "zzb", "12", "x-z", "", "q", "a1", "b1", "9"] {
+        assert_eq!(
+            list.is_match(haystack),
+            singles.iter().any(|single| single.is_match(haystack)),
+            "{haystack:?}"
+        );
+    }
+}
+
+#[test]
+fn extra_options_conflict_with_required_modes() {
+    for yaml in [
+        "quoted-strings: {required: always, extra-required: [a]}",
+        "quoted-strings: {required: never, extra-required: [a]}",
+        "quoted-strings: {required: always, extra-allowed: [a]}",
+        "quoted-strings: {required: false, extra-allowed: [a]}",
+    ] {
+        let message = error_of(yaml);
+        assert!(message.contains("extra-"), "{yaml}: {message}");
+    }
+    applied("quoted-strings: {required: false, extra-required: [a]}");
+    applied("quoted-strings: {extra-required: [a], extra-allowed: [b]}");
+}
+
+#[test]
+fn stale_extra_patterns_do_not_block_changing_required() {
+    let mut rules = applied("quoted-strings: {extra-required: [a]}");
+    assert!(apply(&mut rules, "quoted-strings: {required: always}").is_ok());
+    assert_eq!(
+        rules.quoted_strings.options.required,
+        QuoteRequirement::Always
+    );
+}
+
+#[test]
+fn conflict_names_the_option_the_patch_sets() {
+    let mut rules = applied("quoted-strings: {required: always}");
+    let message = apply(&mut rules, "quoted-strings: {extra-required: [a]}")
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("extra-required"), "{message}");
+}
+
+#[test]
+fn patterns_round_trip_through_serde() {
+    let list = PatternList::new(["^a", r"b\d"]).unwrap();
+    let value = serde_norway::to_value(&list).unwrap();
+    assert_eq!(
+        serde_norway::from_value::<PatternList>(value).unwrap(),
+        list
+    );
 }
 
 #[test]

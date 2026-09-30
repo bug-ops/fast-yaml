@@ -1,0 +1,5 @@
+rules:
+  quoted-strings:
+    required: only-when-needed
+    extra-required: ['^http', '\.md$']
+    extra-allowed: ['^ftp://']

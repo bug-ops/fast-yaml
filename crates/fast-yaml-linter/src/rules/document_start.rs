@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{BoolOrName, RuleOptions, deserialize_bool_or_name};
+use crate::config::{MarkerPresence, RuleOptions};
 use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
 use crate::{
@@ -35,63 +35,12 @@ use fast_yaml_core::Value;
 /// ```
 pub struct DocumentStartRule;
 
-/// Whether the document start marker `---` is required.
-///
-/// Accepts `true` (required), `false` (forbidden), `required`, `forbidden` and `allowed`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DocumentStartPresence {
-    /// The marker must be present.
-    Required,
-    /// The marker must be absent.
-    Forbidden,
-    /// Either form is accepted.
-    #[default]
-    Allowed,
-}
-
-impl BoolOrName for DocumentStartPresence {
-    const EXPECTING: &'static str = "a boolean, 'required', 'forbidden' or 'allowed'";
-
-    fn from_bool(value: bool) -> Result<Self, &'static str> {
-        Ok(if value {
-            Self::Required
-        } else {
-            Self::Forbidden
-        })
-    }
-
-    fn from_name(name: &str) -> Option<Self> {
-        match name {
-            "required" => Some(Self::Required),
-            "forbidden" => Some(Self::Forbidden),
-            "allowed" => Some(Self::Allowed),
-            _ => None,
-        }
-    }
-}
-
-impl Serialize for DocumentStartPresence {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(match self {
-            Self::Required => "required",
-            Self::Forbidden => "forbidden",
-            Self::Allowed => "allowed",
-        })
-    }
-}
-
-impl<'de> Deserialize<'de> for DocumentStartPresence {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_bool_or_name(deserializer)
-    }
-}
-
 /// Options of the document-start rule.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
 pub struct DocumentStartOptions {
     /// Whether `---` is required, forbidden or allowed.
-    pub present: DocumentStartPresence,
+    pub present: MarkerPresence,
 }
 
 impl RuleOptions for DocumentStartOptions {}
@@ -117,13 +66,11 @@ impl super::LintRule for DocumentStartRule {
         let source = context.source();
         let source_context = context.source_context();
         match config.rules.document_start.options.present {
-            DocumentStartPresence::Required => {
-                check_required(source, source_context, config, self.code())
-            }
-            DocumentStartPresence::Forbidden => {
+            MarkerPresence::Required => check_required(source, source_context, config, self.code()),
+            MarkerPresence::Forbidden => {
                 check_forbidden(source, source_context, config, self.code())
             }
-            DocumentStartPresence::Allowed => Vec::new(),
+            MarkerPresence::Allowed => Vec::new(),
         }
     }
 }

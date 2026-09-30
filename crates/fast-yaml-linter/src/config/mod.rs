@@ -3,17 +3,24 @@
 pub mod config_file;
 #[cfg(test)]
 mod options_tests;
+mod path_patterns;
+mod preset;
 mod rules;
 mod values;
 
-pub use config_file::{ConfigFile, ConfigFileError};
+pub use config_file::{ConfigFile, ConfigFileError, FileSelection, TopLevelKey};
+pub use path_patterns::{IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, YamlFiles};
+pub use preset::{Preset, UnknownPresetError};
 pub(crate) use rules::default_rules;
 pub use rules::{
     CustomRuleCode, NoOptions, OptionConflict, RuleConfigError, RuleName, RuleOptions,
     RuleSettings, RulesConfig, UnknownRuleError,
 };
 pub(crate) use values::{BoolOrName, deserialize_bool_or_name};
-pub use values::{EmptyInsideLimit, IndentSize, InvalidIndentSize, Limit};
+pub use values::{
+    EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList, InvalidRegexPattern,
+    Limit, MarkerPresence, PatternList,
+};
 
 #[cfg(test)]
 pub(crate) mod test_support {

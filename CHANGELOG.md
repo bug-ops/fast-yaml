@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Node.js**: `ParallelConfig.maxChunkSize` is removed, `maxDocuments` is enforced (default 100000), and `NapiResult` is dropped from the typings (#435) (#530)
 - **CLI**: `fy` now fails on any input file or stdin above 100 MiB (single-file, stdin and `fy lint` batch were unbounded); raise with `--max-input-size` (#342) (#534)
 - **CLI**: `--quiet` together with `--verbose` exits 2 wherever the flags are placed, including on both sides of the subcommand (#330) (#534)
+- **Linter**: `DocumentStartPresence` and `DocumentEndPresence` are replaced by `MarkerPresence`, and `document-end` `present: false` forbids `...`
+- **Linter**: `quoted-strings` `extra-required`/`extra-allowed` are regular expressions (`PatternList`, errors name the pattern index in the message), `extra-allowed` needs `only-when-needed`, `extra-required` is rejected with `always`/`never`, redundant quotes report only "does not need quotes", a plain scalar matching `extra-required` is reported, and a needed comma keeps quotes inside flow collections
+- **Linter**: `RuleOptions::unsupported_value` is removed, `UnknownRuleError` gains `yamllint_alias`, and per-rule `ignore`/`ignore-from-file` are explicit `UnsupportedOption` errors
+- **Linter**: config files accept `extends`, `ignore` and `yaml-files` (`extends: <file>` is an `InvalidKey` error), `ConfigFile` gains `ignore`/`yaml_files`, `into_lint_config` is replaced by `into_parts`, and `InvalidPathPattern` is an enum
+- **CLI**: `DiscoveryConfig.include_patterns` becomes `include: IncludePatterns`, and `fy lint` exits 0 when the config `ignore` drops every input
 - **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#524)
 - **Core**: `ParseError::Merge` becomes a struct variant `Merge { error, line, column, document }`, `From<MergeError> for ParseError` is removed, and `ParseError::relocated` takes a document count (#504) (#520)
 - **CLI**: `fy format`/`fy lint` exit 1 when every input is filtered out or a directory has no YAML files, even with `-q`; an empty `--stdin-files` list still exits 0 (#514) (#523)
@@ -66,6 +71,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **CLI**: global `--max-input-size` flag (1 B to 1 GiB, suffixes `KiB`/`MiB`/`GiB`) capping every input file and stdin (#342) (#534)
 - **Core**: `#![forbid(unsafe_code)]` in `fast-yaml-core` (#342) (#534)
+- **Linter/CLI/Python/Node.js**: `document-end: {present: false}` flags `...` at column 0, and `quoted-strings` `extra-required`/`extra-allowed` take regular expressions
+- **Linter/CLI**: config `extends: default|relaxed` presets, `ignore` and `yaml-files` with yamllint semantics, and a yamllint rule-name hint in the unknown-rule error
 - **Core**: `decode_input`, `decode_input_owned`, `DecodeError` and `UnsupportedEncoding` detect UTF-16/UTF-32 byte order marks when decoding raw input bytes (#334) (#524)
 - **CI**: `test-core-no-arena` job builds and tests `fast-yaml-core` without the `arena` feature (#410) (#524)
 - **Linter/Python/Node.js**: `max_input_bytes`/`maxInputBytes` lint option (1 B to 1 GiB, default 100 MiB) backed by core `MaxInputBytes` and `LintError::InputTooLarge` (#436) (#510)
