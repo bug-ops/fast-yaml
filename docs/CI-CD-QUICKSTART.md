@@ -198,9 +198,16 @@ cargo make watch-test -- test_name_pattern
 - Windows (stable)
 
 **Python Tests**:
-- Linux: Python 3.9, 3.10, 3.11, 3.12
-- macOS: Python 3.9, 3.11, 3.12
-- Windows: Python 3.9, 3.11, 3.12
+- Linux: Python 3.10, 3.14
+- macOS: Python 3.14
+- Windows: Python 3.14
+
+The Python wheel is abi3 (`cp310-abi3`), so one build per platform covers every supported interpreter; CI tests the floor (3.10) and the newest release (3.14).
+
+**Node.js Tests**:
+- Linux: Node 22, 24
+- macOS: Node 24
+- Windows: Node 24
 
 ### Caching
 
@@ -486,7 +493,7 @@ A: Yes, but not recommended. Use `cargo make test` for quick checks, `cargo make
 A: CI is already optimized with caching and parallelization. Local speedup: use watch mode and debug builds.
 
 **Q: What if CI fails but works locally?**
-A: Test on multiple platforms (Linux, macOS, Windows) and Python versions (3.9-3.12). Use Docker for Linux testing.
+A: Test on multiple platforms (Linux, macOS, Windows) and Python versions (3.10-3.14). Use Docker for Linux testing.
 
 **Q: How often should I run `cargo make ci-all`?**
 A: Before pushing to main or opening a PR. Use `cargo make dev` during development.
