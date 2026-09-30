@@ -86,7 +86,9 @@ def test_set_collision_reports_position():
 @pytest.mark.parametrize(
     ("doc", "incoming"),
     [
-        pytest.param("18446744073709551616: a\n18446744073709551616.0: b\n", "float key", id="big-int-float"),
+        pytest.param(
+            "18446744073709551616: a\n18446744073709551616.0: b\n", "float key", id="big-int-float"
+        ),
         pytest.param("0x1: a\ntrue: b\n", "bool key true", id="hex-int-bool"),
         pytest.param("!!int 1: a\ntrue: b\n", "bool key true", id="tagged-int-bool"),
         pytest.param("!!int 1: a\n!!float 1: b\n", "float key 1.0", id="tagged-int-float"),
