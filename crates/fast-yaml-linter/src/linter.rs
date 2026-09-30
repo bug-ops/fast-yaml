@@ -911,12 +911,44 @@ mod tests {
             .filter(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES)
             .collect();
 
-        assert!(
-            empty_diags.len() >= 2,
-            "empty-values should fire in both documents, got {} diagnostics: {:?}",
-            empty_diags.len(),
-            empty_diags
-        );
+        assert_eq!(empty_diags.len(), 2, "{empty_diags:?}");
+    }
+
+    fn empty_value_lines(yaml: &str) -> Vec<usize> {
+        Linter::with_all_rules()
+            .lint(yaml)
+            .unwrap()
+            .iter()
+            .filter(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES)
+            .map(|d| d.span.start.line)
+            .collect()
+    }
+
+    #[test]
+    fn test_multidoc_empty_values_reported_once_each() {
+        assert_eq!(empty_value_lines("a:\n---\nb:\n...\n---\nc: yes\n"), [1, 3]);
+        assert_eq!(empty_value_lines("a:\n---\nb:\n---\nc:\n"), [1, 3, 5]);
+    }
+
+    #[test]
+    fn test_many_documents_empty_values_are_linear() {
+        let yaml = "---\na:\n".repeat(3000);
+        let start = std::time::Instant::now();
+        assert_eq!(empty_value_lines(&yaml).len(), 3000);
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_multidoc_truthy_positions_after_document_start() {
+        let diags = Linter::with_all_rules()
+            .lint("a: yes\n---\nb: no\n")
+            .unwrap();
+        let lines: Vec<usize> = diags
+            .iter()
+            .filter(|d| d.code.as_str() == crate::DiagnosticCode::TRUTHY)
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(lines, [1, 3]);
     }
 
     #[test]
