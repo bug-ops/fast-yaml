@@ -202,7 +202,7 @@ pub fn pair_delimiters<'t>(opens: &'t [Token], closes: &'t [Token]) -> Vec<(&'t 
     matched.sort_unstable_by_key(|&(open_idx, _)| open_idx);
     matched
         .into_iter()
-        .map(|(open_idx, close)| (&opens[open_idx], close))
+        .filter_map(|(open_idx, close)| Some((opens.get(open_idx)?, close)))
         .collect()
 }
 

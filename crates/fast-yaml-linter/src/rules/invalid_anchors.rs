@@ -176,14 +176,12 @@ fn scan_line_for_anchors(
     let bytes = line.as_bytes();
     let mut i = 0;
 
-    while i < bytes.len() {
-        let b = bytes[i];
-
+    while let Some(&b) = bytes.get(i) {
         match state.quote {
             QuoteState::Single => {
                 if b == b'\'' {
                     // Check for escaped single quote `''`
-                    if i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                    if bytes.get(i + 1) == Some(&b'\'') {
                         i += 2;
                     } else {
                         state.quote = QuoteState::None;
@@ -232,7 +230,7 @@ fn scan_line_for_anchors(
                 let name_start = i + 1;
                 let name_end = find_anchor_name_end(bytes, name_start);
                 if name_end > name_start {
-                    let name = &line[name_start..name_end];
+                    let name = line.get(name_start..name_end).unwrap_or_default();
                     let col = i + 1; // 1-indexed column of `&`
                     let offset = line_start_offset + i;
 
@@ -324,8 +322,8 @@ fn strip_inline_comment(line: &str) -> &str {
     let mut in_single = false;
     let mut in_double = false;
     let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
+    while let Some(&byte) = bytes.get(i) {
+        match byte {
             b'\'' if !in_double => {
                 in_single = !in_single;
                 i += 1;
@@ -338,7 +336,7 @@ fn strip_inline_comment(line: &str) -> &str {
                 i += 2;
             }
             b'#' if !in_single && !in_double => {
-                return &line[..i];
+                return line.get(..i).unwrap_or(line);
             }
             _ => {
                 i += 1;
@@ -351,7 +349,10 @@ fn strip_inline_comment(line: &str) -> &str {
 /// Finds the end byte index of an anchor name starting at `start` in `bytes`.
 fn find_anchor_name_end(bytes: &[u8], start: usize) -> usize {
     let mut end = start;
-    while end < bytes.len() && !ANCHOR_TERMINATORS.contains(&bytes[end]) {
+    while bytes
+        .get(end)
+        .is_some_and(|b| !ANCHOR_TERMINATORS.contains(b))
+    {
         end += 1;
     }
     end

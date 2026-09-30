@@ -25,6 +25,7 @@ thiserror = { workspace = true }
 [dev-dependencies]
 criterion = { workspace = true }
 indoc = { workspace = true }
+proptest = { workspace = true }
 
 [[bench]]
 name = "arena_benchmark"

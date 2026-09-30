@@ -1,6 +1,7 @@
 //! YAML linter with rich diagnostics
 //!
 #![forbid(unsafe_code)]
+#![cfg_attr(not(test), warn(clippy::string_slice, clippy::indexing_slicing))]
 //!
 //! This crate provides a comprehensive YAML linting engine with:
 //! - Precise error location tracking (line, column, byte offset)

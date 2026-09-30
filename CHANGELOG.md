@@ -19,8 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI**: `is-terminal` dependency dropped in favor of `std::io::IsTerminal` (#411)
 - **Core**: `EmitError` gains `DepthLimitExceeded` and `AnchorLimitExceeded` variants returned by `format_streaming`, `format_streaming_arena`, and `Emitter::format*`; exhaustive matches must handle them (#371) (#383)
 
+### Added
+
+- **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
+
 ### Changed
 
+- **CI**: all GitHub Actions pinned to commit SHAs, Dependabot auto-merge checks the PR author instead of `github.actor`, and actionlint/zizmor plus a nightly fuzz workflow are added (#432)
 - Python/Node.js `format_files` and `fast-yaml-parallel` now use the streaming formatter, so output matches `fy format` (`null` instead of `~`, anchors, duplicate keys and `---` kept, no `YAML scanner error:` prefix on parse errors) (#408)
 - Workspace hygiene: restore the `dead_code` lint and delete dead items, remove ignored binding `[profile.release]` sections (#411)
 - **Breaking:** `fast-yaml-parallel` `format_files`/`format_in_place` take a `CommentPolicy`, `format_files` returns `FormatOutput { formatted, changed }`, and `Error::CommentsWouldBeStripped` is added; Python and Node.js bindings keep stripping comments (#397)

@@ -16,12 +16,14 @@ use super::LintRule as _;
 /// skips quoted values, so the approximation is sufficient for value scanning.
 fn strip_inline_comment(line: &str) -> &str {
     let bytes = line.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'#' && (i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') {
-            return &line[..i];
-        }
-        i += 1;
+    let comment_start = bytes.iter().enumerate().position(|(i, &b)| {
+        b == b'#'
+            && i.checked_sub(1)
+                .and_then(|prev| bytes.get(prev))
+                .is_none_or(|&p| p == b' ' || p == b'\t')
+    });
+    if let Some(i) = comment_start {
+        return line.get(..i).unwrap_or(line);
     }
     line
 }
@@ -124,20 +126,17 @@ impl OctalValuesRule {
         }
 
         // Find value parts (after : or -)
-        let parts: Vec<(usize, &str)> = line_without_comment.find(':').map_or_else(
-            || {
-                if line_without_comment.trim_start().starts_with('-') {
-                    line_without_comment
-                        .find('-')
-                        .map_or_else(Vec::new, |hyphen_pos| {
-                            vec![(hyphen_pos + 1, &line_without_comment[hyphen_pos + 1..])]
-                        })
-                } else {
-                    vec![]
-                }
-            },
-            |colon_pos| vec![(colon_pos + 1, &line_without_comment[colon_pos + 1..])],
-        );
+        let parts: Vec<(usize, &str)> = line_without_comment
+            .split_once(':')
+            .or_else(|| {
+                line_without_comment
+                    .trim_start()
+                    .starts_with('-')
+                    .then(|| line_without_comment.split_once('-'))
+                    .flatten()
+            })
+            .map(|(before, after)| vec![(before.len() + 1, after)])
+            .unwrap_or_default();
 
         for (part_start_in_line, part) in parts {
             let trimmed = part.trim_start();
@@ -190,37 +189,34 @@ impl OctalValuesRule {
 
             // Check for implicit octal (leading zero followed by octal digits)
             if forbid_implicit
-                && value_token.starts_with('0')
-                && value_token.len() > 1
+                && let Some(rest) = value_token.strip_prefix('0')
+                && !rest.is_empty()
                 && !value_token.starts_with("0o")
                 && !value_token.starts_with("0x")
+                && rest.chars().all(|c| c.is_ascii_digit() && c < '8')
             {
-                let rest = &value_token[1..];
-                if !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit() && c < '8') {
-                    let value_offset = line_offset + trim_offset_in_line;
-                    let col = trim_offset_in_line + 1;
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
-                    let span = Span::new(
-                        Location::new(line_num, col, value_offset),
-                        Location::new(
-                            line_num,
-                            col + value_token.len(),
-                            value_offset + value_token.len(),
+                let value_offset = line_offset + trim_offset_in_line;
+                let col = trim_offset_in_line + 1;
+                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                let span = Span::new(
+                    Location::new(line_num, col, value_offset),
+                    Location::new(
+                        line_num,
+                        col + value_token.len(),
+                        value_offset + value_token.len(),
+                    ),
+                );
+                diagnostics.push(
+                    DiagnosticBuilder::new(
+                        self.code(),
+                        severity,
+                        format!(
+                            "found implicit octal value '{value_token}' (use quoted string or explicit '0o' prefix)"
                         ),
-                    );
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            format!(
-                                "found implicit octal value '{value_token}' (use quoted string or explicit '0o' prefix)"
-                            ),
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
-                    );
-                }
+                        span,
+                    )
+                    .build_with_context(context.source_context()),
+                );
             }
         }
     }

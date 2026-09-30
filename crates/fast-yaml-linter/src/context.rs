@@ -46,7 +46,9 @@ fn line_bounds(source: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
         if done {
             return None;
         }
-        let end = bytes[start..]
+        let end = bytes
+            .get(start..)
+            .unwrap_or_default()
             .iter()
             .position(|b| matches!(b, b'\n' | b'\r'))
             .map_or(bytes.len(), |rel| start + rel);
@@ -54,7 +56,7 @@ fn line_bounds(source: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
         if end == bytes.len() {
             done = true;
         } else {
-            let crlf = bytes[end] == b'\r' && bytes.get(end + 1) == Some(&b'\n');
+            let crlf = bytes.get(end) == Some(&b'\r') && bytes.get(end + 1) == Some(&b'\n');
             start = end + 1 + usize::from(crlf);
         }
         Some((line_start, end))
@@ -67,7 +69,7 @@ fn line_bounds(source: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
 pub fn source_lines(source: &str) -> impl Iterator<Item = (usize, &str)> {
     line_bounds(source)
         .filter(|&(start, _)| start < source.len())
-        .map(|(start, end)| (start, &source[start..end]))
+        .filter_map(|(start, end)| Some((start, source.get(start..end)?)))
 }
 
 /// Line-only variant of [`source_lines`].
@@ -119,11 +121,9 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn get_line(&self, line_number: usize) -> Option<&'a str> {
-        if line_number == 0 || line_number > self.line_starts.len() {
-            return None;
-        }
-
-        Some(&self.source[self.line_starts[line_number - 1]..self.line_ends[line_number - 1]])
+        let idx = line_number.checked_sub(1)?;
+        self.source
+            .get(*self.line_starts.get(idx)?..*self.line_ends.get(idx)?)
     }
 
     /// Extracts context lines around a span.
@@ -211,9 +211,9 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn get_snippet(&self, span: Span) -> &'a str {
-        let start = span.start.offset.min(self.source.len());
-        let end = span.end.offset.min(self.source.len());
-        &self.source[start..end]
+        let start = self.source.floor_char_boundary(span.start.offset);
+        let end = self.source.floor_char_boundary(span.end.offset);
+        self.source.get(start..end).unwrap_or_default()
     }
 
     /// Converts a byte offset to a Location.
@@ -250,9 +250,13 @@ impl<'a> SourceContext<'a> {
         };
 
         let line = line_idx + 1;
-        let line_start = self.line_starts[line_idx];
+        let line_start = self.line_starts.get(line_idx).copied().unwrap_or_default();
 
-        let column = self.source[line_start..offset].chars().count() + 1;
+        let column = self
+            .source
+            .get(line_start..offset)
+            .map_or(0, |prefix| prefix.chars().count())
+            + 1;
 
         Location::new(line, column, offset)
     }
@@ -295,10 +299,11 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn get_line_offset(&self, line_num: usize) -> usize {
-        if line_num == 0 || line_num > self.line_starts.len() {
-            return 0;
-        }
-        self.line_starts[line_num - 1]
+        line_num
+            .checked_sub(1)
+            .and_then(|idx| self.line_starts.get(idx))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// Typed twin of [`get_line_offset`](Self::get_line_offset).
@@ -838,7 +843,7 @@ impl<'a> LintContext<'a> {
 /// Quotes are stripped only when the key is a complete quoted scalar.
 pub fn line_key(line: &str) -> Option<&str> {
     let trimmed = line.trim_start();
-    let raw_key = trimmed[..trimmed.find(':')?].trim();
+    let raw_key = trimmed.split_once(':')?.0.trim();
     let unquoted = ['"', '\'']
         .into_iter()
         .find_map(|q| raw_key.strip_prefix(q)?.strip_suffix(q))

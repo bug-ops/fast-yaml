@@ -79,7 +79,7 @@ impl super::LintRule for NewLinesRule {
         for (idx, &byte) in bytes.iter().enumerate() {
             if byte == b'\n' {
                 // Check if preceded by \r
-                let has_cr = idx > 0 && bytes[idx - 1] == b'\r';
+                let has_cr = idx.checked_sub(1).and_then(|prev| bytes.get(prev)) == Some(&b'\r');
                 let actual = if has_cr {
                     LineEnding::Dos
                 } else {

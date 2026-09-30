@@ -93,8 +93,11 @@ fn check_spaces_after_hyphen(
     }
 
     // Skip document separators (---)
-    let after = &source[hyphen_offset..];
-    if after.starts_with("---") {
+    let starts_separator = source
+        .as_bytes()
+        .get(hyphen_offset..)
+        .is_some_and(|after| after.starts_with(b"---"));
+    if starts_separator {
         let next = source.as_bytes().get(hyphen_offset + 3);
         if next.is_none_or(|&b| b == b'\n' || b == b'\r' || b == b' ') {
             return None;
@@ -107,7 +110,7 @@ fn check_spaces_after_hyphen(
 
     let bytes = source.as_bytes();
     while offset < bytes.len() {
-        if bytes[offset] == b' ' {
+        if bytes.get(offset) == Some(&b' ') {
             spaces += 1;
             offset += 1;
         } else {

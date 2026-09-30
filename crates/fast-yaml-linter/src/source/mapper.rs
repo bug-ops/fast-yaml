@@ -67,8 +67,8 @@ impl<'a> SourceMapper<'a> {
     /// Handles block mapping syntax: `<whitespace><key>: <value>` or `<key>:`.
     /// Returns the key string and its byte column offset within the line.
     fn extract_key_from_line(line: &str) -> Option<(&str, usize)> {
-        let trimmed_start = line.len() - line.trim_start().len();
-        let content = &line[trimmed_start..];
+        let content = line.trim_start();
+        let trimmed_start = line.len() - content.len();
 
         if content.is_empty() || content.starts_with('#') {
             return None;
@@ -82,11 +82,11 @@ impl<'a> SourceMapper<'a> {
                 '\'' if !in_double => in_single = !in_single,
                 '"' if !in_single => in_double = !in_double,
                 ':' if !in_single && !in_double => {
-                    let key = &content[..i];
+                    let (key, after) = content.split_at_checked(i)?;
+                    let after = after.get(1..)?;
                     if key.is_empty() || key.contains(|c: char| c.is_whitespace()) {
                         return None;
                     }
-                    let after = &content[i + 1..];
                     if after.is_empty() || after.starts_with(' ') || after.starts_with('\t') {
                         return Some((key, trimmed_start));
                     }

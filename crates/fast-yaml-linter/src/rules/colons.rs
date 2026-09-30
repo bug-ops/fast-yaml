@@ -110,36 +110,22 @@ impl super::LintRule for ColonsRule {
 fn is_url_or_time(source: &str, colon_offset: usize) -> bool {
     let bytes = source.as_bytes();
 
-    // Check for URL schemes: http://, https://, ftp://, etc.
-    if colon_offset >= 4 {
-        let before = &bytes[colon_offset.saturating_sub(4)..colon_offset];
-        if before == b"http" || before == b"sftp" {
-            return true;
-        }
-    }
-
-    if colon_offset >= 5 {
-        let before = &bytes[colon_offset.saturating_sub(5)..colon_offset];
-        if before == b"https" {
-            return true;
-        }
-    }
-
-    if colon_offset >= 3 {
-        let before = &bytes[colon_offset.saturating_sub(3)..colon_offset];
-        if before == b"ftp" {
-            return true;
-        }
+    let head = bytes.get(..colon_offset).unwrap_or_default();
+    if [b"http".as_slice(), b"https", b"sftp", b"ftp"]
+        .iter()
+        .any(|scheme| head.ends_with(scheme))
+    {
+        return true;
     }
 
     // Check for time format: digit:digit (bytes are ASCII)
-    if colon_offset > 0 && colon_offset + 1 < bytes.len() {
-        let before = bytes[colon_offset - 1];
-        let after = bytes[colon_offset + 1];
-
-        if before.is_ascii_digit() && after.is_ascii_digit() {
-            return true;
-        }
+    if let (Some(before), Some(after)) = (
+        colon_offset.checked_sub(1).and_then(|i| bytes.get(i)),
+        bytes.get(colon_offset + 1),
+    ) && before.is_ascii_digit()
+        && after.is_ascii_digit()
+    {
+        return true;
     }
 
     false
@@ -165,7 +151,7 @@ fn check_spaces_before_colon(
 
     while offset > 0 {
         offset -= 1;
-        if bytes[offset] == b' ' {
+        if bytes.get(offset) == Some(&b' ') {
             spaces += 1;
         } else {
             break;
@@ -219,7 +205,7 @@ fn check_spaces_after_colon(
     let mut offset = colon_offset + 1;
 
     while offset < bytes.len() {
-        if bytes[offset] == b' ' {
+        if bytes.get(offset) == Some(&b' ') {
             spaces += 1;
             offset += 1;
         } else {
@@ -232,7 +218,7 @@ fn check_spaces_after_colon(
     // are not "spaces after colon" in a mapping sense — they are just trailing
     // whitespace on a key-only line. Skip the check to avoid false positives.
     let next_is_eol_or_eof =
-        offset >= bytes.len() || bytes[offset] == b'\n' || bytes[offset] == b'\r';
+        offset >= bytes.len() || matches!(bytes.get(offset), Some(b'\n' | b'\r'));
     if next_is_eol_or_eof {
         return None;
     }

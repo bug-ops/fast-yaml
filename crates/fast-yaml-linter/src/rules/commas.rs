@@ -123,7 +123,7 @@ fn check_spaces_before_comma(
 
     while offset > 0 {
         offset -= 1;
-        if bytes[offset] == b' ' {
+        if bytes.get(offset) == Some(&b' ') {
             spaces += 1;
         } else {
             break;
@@ -179,11 +179,11 @@ fn check_spaces_after_comma(
     let mut has_newline = false;
 
     while offset < bytes.len() {
-        if bytes[offset] == b' ' {
+        if bytes.get(offset) == Some(&b' ') {
             spaces += 1;
             offset += 1;
         } else {
-            if bytes[offset] == b'\n' || bytes[offset] == b'\r' {
+            if matches!(bytes.get(offset), Some(b'\n' | b'\r')) {
                 has_newline = true;
             }
             break;

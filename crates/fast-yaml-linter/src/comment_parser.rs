@@ -150,14 +150,15 @@ impl<'a> CommentParser<'a> {
                 // Found comment outside string
                 if ch == '#' && !in_string {
                     let comment_start = offset;
-                    let comment_content = &line[col_idx + 1..];
+                    let comment_content = line.get(col_idx + 1..).unwrap_or_default();
 
                     // Check if it's a shebang
                     let is_shebang =
                         line_idx == 0 && col_idx == 0 && comment_content.starts_with('!');
 
                     // Check if it's inline (has content before it)
-                    let is_inline = col_idx > 0 && !line[..col_idx].trim().is_empty();
+                    let is_inline =
+                        col_idx > 0 && !line.get(..col_idx).unwrap_or_default().trim().is_empty();
 
                     let location_start = self.context.offset_to_location(comment_start);
                     let location_end = self

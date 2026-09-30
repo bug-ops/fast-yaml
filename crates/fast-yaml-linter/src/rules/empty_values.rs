@@ -186,8 +186,10 @@ fn has_explicit_null_value(key: &str, source_context: &SourceContext<'_>) -> boo
     for line_num in 1..=source_context.line_count() {
         if let Some(line) = source_context.get_line(line_num) {
             let trimmed = line.trim_start();
-            if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
-                let after_colon = trimmed[key.len() + 1..].trim();
+            if let Some(after_key) = trimmed.strip_prefix(key)
+                && let Some(after_colon) = after_key.strip_prefix(':')
+            {
+                let after_colon = after_colon.trim();
                 if after_colon.starts_with("null")
                     || after_colon.starts_with('~')
                     || after_colon.starts_with("Null")
@@ -210,8 +212,8 @@ fn flow_key_positions<'l>(line: &'l str, key_colon: &'l str) -> impl Iterator<It
     std::iter::from_fn(move || {
         while let Some(rel) = line.get(search_from..)?.find(key_colon) {
             let abs_pos = search_from + rel;
-            search_from = abs_pos + line[abs_pos..].chars().next().map_or(1, char::len_utf8);
-            let before = &line[..abs_pos];
+            let (before, rest) = line.split_at_checked(abs_pos)?;
+            search_from = abs_pos + rest.chars().next().map_or(1, char::len_utf8);
             let before_ok = before
                 .chars()
                 .next_back()
@@ -239,7 +241,10 @@ fn find_empty_value_span(key: &str, source_context: &SourceContext<'_>) -> Optio
         };
         let trimmed = line.trim_start();
 
-        let colon_in_line = if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
+        let colon_in_line = if trimmed
+            .strip_prefix(key)
+            .is_some_and(|rest| rest.starts_with(':'))
+        {
             Some(line.len() - trimmed.len() + key.len())
         } else {
             flow_key_positions(line, &key_colon)

@@ -422,6 +422,7 @@ dependencies = [
  "indoc",
  "memchr",
  "ordered-float",
+ "proptest",
  "saphyr",
  "saphyr-parser",
  "thiserror",

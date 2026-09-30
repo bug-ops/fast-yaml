@@ -34,6 +34,14 @@ use fast_yaml_core::Value;
 /// ```
 pub struct FloatValuesRule;
 
+fn value_start(line: &str, part_offset: usize, token: &str) -> usize {
+    part_offset
+        + line
+            .get(part_offset..)
+            .and_then(|rest| rest.find(token))
+            .unwrap_or(0)
+}
+
 impl super::LintRule for FloatValuesRule {
     fn code(&self) -> &str {
         DiagnosticCode::FLOAT_VALUES
@@ -87,17 +95,11 @@ impl super::LintRule for FloatValuesRule {
             }
 
             // Find value parts (after : or -)
-            let parts: Vec<(&str, usize)> = line.find(':').map_or_else(
-                || {
-                    if line.trim_start().find('-').is_some() {
-                        let actual_hyphen_pos = line.find('-').unwrap_or(0);
-                        vec![(&line[actual_hyphen_pos + 1..], actual_hyphen_pos + 1)]
-                    } else {
-                        vec![]
-                    }
-                },
-                |colon_pos| vec![(&line[colon_pos + 1..], colon_pos + 1)],
-            );
+            let parts: Vec<(&str, usize)> = line
+                .split_once(':')
+                .or_else(|| line.split_once('-'))
+                .map(|(before, after)| vec![(after, before.len() + 1)])
+                .unwrap_or_default();
 
             for (part, part_offset) in parts {
                 let trimmed = part.trim();
@@ -126,11 +128,8 @@ impl super::LintRule for FloatValuesRule {
                 let bare = value_token.trim_start_matches(['-', '+']);
                 if require_numeral_before_decimal && bare.starts_with('.') {
                     // Check if it's a valid float starting with '.' (e.g. .5, -.5, +.5)
-                    if bare.len() > 1
-                        && bare[1..].chars().next().is_some_and(|c| c.is_ascii_digit())
-                    {
-                        let value_start =
-                            line[part_offset..].find(value_token).unwrap_or(0) + part_offset;
+                    if bare.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
+                        let value_start = value_start(line, part_offset, value_token);
                         let offset = line_offset + value_start;
                         let severity =
                             config.get_effective_severity(self.code(), self.default_severity());
@@ -141,10 +140,9 @@ impl super::LintRule for FloatValuesRule {
                             Location::new(line_num, 1, offset + value_token.len()),
                         );
 
-                        let suggestion = if value_token.starts_with(['-', '+']) {
-                            format!("{}0{}", &value_token[..1], &value_token[1..])
-                        } else {
-                            format!("0{value_token}")
+                        let suggestion = match value_token.split_at_checked(1) {
+                            Some((sign @ ("-" | "+"), rest)) => format!("{sign}0{rest}"),
+                            _ => format!("0{value_token}"),
                         };
                         diagnostics.push(
                             DiagnosticBuilder::new(
@@ -166,8 +164,7 @@ impl super::LintRule for FloatValuesRule {
                         || value_lower.ends_with("e+")
                         || value_lower.ends_with("e-"))
                 {
-                    let value_start =
-                        line[part_offset..].find(value_token).unwrap_or(0) + part_offset;
+                    let value_start = value_start(line, part_offset, value_token);
                     let offset = line_offset + value_start;
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
@@ -191,8 +188,7 @@ impl super::LintRule for FloatValuesRule {
 
                 // Check for NaN
                 if forbid_nan && matches!(value_lower.as_str(), ".nan" | "nan") {
-                    let value_start =
-                        line[part_offset..].find(value_token).unwrap_or(0) + part_offset;
+                    let value_start = value_start(line, part_offset, value_token);
                     let offset = line_offset + value_start;
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
@@ -221,8 +217,7 @@ impl super::LintRule for FloatValuesRule {
                         ".inf" | "-.inf" | "+.inf" | "inf" | "-inf" | "+inf"
                     )
                 {
-                    let value_start =
-                        line[part_offset..].find(value_token).unwrap_or(0) + part_offset;
+                    let value_start = value_start(line, part_offset, value_token);
                     let offset = line_offset + value_start;
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
