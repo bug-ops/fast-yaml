@@ -130,7 +130,7 @@ impl InputPath {
             Ok(_) => Ok(Self::File(path)),
             Err(e) => {
                 let lossy = path.to_string_lossy();
-                if e.kind() == std::io::ErrorKind::NotFound && contains_glob_chars(&lossy) {
+                if is_glob_candidate(e.kind(), &lossy) {
                     Ok(Self::Glob(lossy.into_owned()))
                 } else {
                     Err(classify_io_error(path, e))
@@ -151,6 +151,14 @@ fn classify_io_error(path: impl Into<PathBuf>, source: std::io::Error) -> Discov
         std::io::ErrorKind::PermissionDenied => DiscoveryError::PermissionDenied { path },
         _ => DiscoveryError::IoError { path, source },
     }
+}
+
+/// A missing path with glob characters is a pattern; Windows reports `*` and `?` as invalid names.
+fn is_glob_candidate(kind: std::io::ErrorKind, s: &str) -> bool {
+    matches!(
+        kind,
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidFilename
+    ) && contains_glob_chars(s)
 }
 
 /// Checks if a string contains glob special characters.
@@ -806,6 +814,18 @@ mod tests {
             InputPath::resolve(PathBuf::from(&pattern)).unwrap(),
             InputPath::Glob(pattern)
         );
+    }
+
+    #[test]
+    fn test_is_glob_candidate() {
+        use std::io::ErrorKind;
+        assert!(is_glob_candidate(ErrorKind::NotFound, "dir/*.yaml"));
+        assert!(is_glob_candidate(ErrorKind::InvalidFilename, "dir/*.yaml"));
+        assert!(!is_glob_candidate(ErrorKind::InvalidFilename, "dir/a.yaml"));
+        assert!(!is_glob_candidate(
+            ErrorKind::PermissionDenied,
+            "dir/*.yaml"
+        ));
     }
 
     #[test]
