@@ -1,7 +1,6 @@
 //! Integration tests for the shared secure atomic writer and batch `format_in_place`.
 
-use fast_yaml_core::EmitterConfig;
-use fast_yaml_parallel::{FileProcessor, write_atomic};
+use fast_yaml_parallel::write_atomic;
 use std::fs;
 use tempfile::TempDir;
 
@@ -33,6 +32,8 @@ fn leaves_no_temp_files_behind() {
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use fast_yaml_core::EmitterConfig;
+    use fast_yaml_parallel::FileProcessor;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::Path;
 
