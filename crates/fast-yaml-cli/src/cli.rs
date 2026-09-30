@@ -1,5 +1,7 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{LimitRangeError, MaxAliasBytes, MaxDepth, ParseLimits};
+#[cfg(feature = "linter")]
+use fast_yaml_linter::config::IndentSize;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -237,11 +239,11 @@ pub enum Command {
 
         /// Maximum line length (overrides config file)
         #[arg(long)]
-        max_line_length: Option<usize>,
+        max_line_length: Option<NonZeroUsize>,
 
         /// Indentation size (overrides config file)
         #[arg(long)]
-        indent_size: Option<usize>,
+        indent_size: Option<IndentSize>,
 
         /// Lint output format
         #[arg(long, value_enum, default_value = "text")]

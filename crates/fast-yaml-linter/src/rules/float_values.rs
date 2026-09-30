@@ -1,5 +1,8 @@
 //! Rule to check float value representations.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::RuleOptions;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
@@ -42,6 +45,34 @@ fn value_start(line: &str, part_offset: usize, token: &str) -> usize {
             .unwrap_or(0)
 }
 
+/// Options of the float-values rule.
+#[allow(clippy::struct_excessive_bools)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct FloatValuesOptions {
+    /// Require a digit before the decimal point.
+    pub require_numeral_before_decimal: bool,
+    /// Flag scientific notation.
+    pub forbid_scientific_notation: bool,
+    /// Flag `.nan`.
+    pub forbid_nan: bool,
+    /// Flag `.inf`.
+    pub forbid_inf: bool,
+}
+
+impl Default for FloatValuesOptions {
+    fn default() -> Self {
+        Self {
+            require_numeral_before_decimal: true,
+            forbid_scientific_notation: false,
+            forbid_nan: false,
+            forbid_inf: false,
+        }
+    }
+}
+
+impl RuleOptions for FloatValuesOptions {}
+
 impl super::LintRule for FloatValuesRule {
     fn code(&self) -> &str {
         DiagnosticCode::FLOAT_VALUES
@@ -61,23 +92,11 @@ impl super::LintRule for FloatValuesRule {
 
     #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let rule_config = config.get_rule_config(self.code());
-
-        let require_numeral_before_decimal = rule_config
-            .and_then(|rc| rc.options.get_bool("require-numeral-before-decimal"))
-            .unwrap_or(true);
-
-        let forbid_scientific_notation = rule_config
-            .and_then(|rc| rc.options.get_bool("forbid-scientific-notation"))
-            .unwrap_or(false);
-
-        let forbid_nan = rule_config
-            .and_then(|rc| rc.options.get_bool("forbid-nan"))
-            .unwrap_or(false);
-
-        let forbid_inf = rule_config
-            .and_then(|rc| rc.options.get_bool("forbid-inf"))
-            .unwrap_or(false);
+        let options = &config.rules.float_values.options;
+        let require_numeral_before_decimal = options.require_numeral_before_decimal;
+        let forbid_scientific_notation = options.forbid_scientific_notation;
+        let forbid_nan = options.forbid_nan;
+        let forbid_inf = options.forbid_inf;
 
         let mut diagnostics = Vec::new();
 
@@ -131,8 +150,10 @@ impl super::LintRule for FloatValuesRule {
                     if bare.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
                         let value_start = value_start(line, part_offset, value_token);
                         let offset = line_offset + value_start;
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
+                        let severity = config
+                            .rules
+                            .float_values
+                            .severity_or(self.default_severity());
 
                         let location = Location::new(line_num, 1, offset);
                         let span = Span::new(
@@ -166,8 +187,10 @@ impl super::LintRule for FloatValuesRule {
                 {
                     let value_start = value_start(line, part_offset, value_token);
                     let offset = line_offset + value_start;
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                    let severity = config
+                        .rules
+                        .float_values
+                        .severity_or(self.default_severity());
 
                     let location = Location::new(line_num, 1, offset);
                     let span = Span::new(
@@ -190,8 +213,10 @@ impl super::LintRule for FloatValuesRule {
                 if forbid_nan && matches!(value_lower.as_str(), ".nan" | "nan") {
                     let value_start = value_start(line, part_offset, value_token);
                     let offset = line_offset + value_start;
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                    let severity = config
+                        .rules
+                        .float_values
+                        .severity_or(self.default_severity());
 
                     let location = Location::new(line_num, 1, offset);
                     let span = Span::new(
@@ -219,8 +244,10 @@ impl super::LintRule for FloatValuesRule {
                 {
                     let value_start = value_start(line, part_offset, value_token);
                     let offset = line_offset + value_start;
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                    let severity = config
+                        .rules
+                        .float_values
+                        .severity_or(self.default_severity());
 
                     let location = Location::new(line_num, 1, offset);
                     let span = Span::new(
@@ -248,7 +275,10 @@ impl super::LintRule for FloatValuesRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -288,9 +318,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "float-values",
-            RuleConfig::new().with_option("require-numeral-before-decimal", false),
+        let config = config_with_rule(
+            RuleName::FloatValues,
+            "{require-numeral-before-decimal: false}",
         );
 
         let context = LintContext::new(yaml);
@@ -304,10 +334,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "float-values",
-            RuleConfig::new().with_option("forbid-scientific-notation", true),
-        );
+        let config = config_with_rule(RuleName::FloatValues, "{forbid-scientific-notation: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -334,10 +361,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "float-values",
-            RuleConfig::new().with_option("forbid-nan", true),
-        );
+        let config = config_with_rule(RuleName::FloatValues, "{forbid-nan: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -351,10 +375,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "float-values",
-            RuleConfig::new().with_option("forbid-inf", true),
-        );
+        let config = config_with_rule(RuleName::FloatValues, "{forbid-inf: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -381,11 +402,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "float-values",
-            RuleConfig::new()
-                .with_option("require-numeral-before-decimal", true)
-                .with_option("forbid-scientific-notation", true),
+        let config = config_with_rule(
+            RuleName::FloatValues,
+            "{require-numeral-before-decimal: true, forbid-scientific-notation: true}",
         );
 
         let context = LintContext::new(yaml);
@@ -400,11 +419,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "float-values",
-            RuleConfig::new()
-                .with_option("require-numeral-before-decimal", true)
-                .with_option("forbid-scientific-notation", true),
+        let config = config_with_rule(
+            RuleName::FloatValues,
+            "{require-numeral-before-decimal: true, forbid-scientific-notation: true}",
         );
 
         let context = LintContext::new(yaml);

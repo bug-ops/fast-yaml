@@ -4,7 +4,10 @@
 //! rich error reporting, and configurable linting rules.
 
 use crate::limits;
+use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
+use fast_yaml_linter::config::{IndentSize, RuleName};
+use fast_yaml_linter::rules::{DocumentEndPresence, DocumentStartPresence};
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticCode as RustDiagnosticCode, DiagnosticContext as RustDiagnosticContext,
@@ -12,10 +15,12 @@ use fast_yaml_linter::{
     Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
     Suggestion as RustSuggestion, TextFormatter as RustTextFormatter,
 };
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList};
-use std::collections::HashSet;
+use pyo3::types::{PyList, PyString};
+use serde_norway::{Mapping, Value};
+use std::num::NonZeroUsize;
+use std::str::FromStr;
 
 #[cfg(feature = "json-output")]
 use fast_yaml_linter::JsonFormatter as RustJsonFormatter;
@@ -417,40 +422,29 @@ impl From<RustDiagnostic> for PyDiagnostic {
     }
 }
 
-/// Parses a severity string into `RustSeverity`.
-///
-/// Valid values (case-insensitive): "error", "warning", "info", "hint".
-fn parse_severity(s: &str) -> PyResult<RustSeverity> {
-    match s.to_lowercase().as_str() {
-        "error" => Ok(RustSeverity::Error),
-        "warning" => Ok(RustSeverity::Warning),
-        "info" => Ok(RustSeverity::Info),
-        "hint" => Ok(RustSeverity::Hint),
-        _ => Err(PyValueError::new_err(format!(
-            "Invalid severity '{s}', expected one of: error, warning, info, hint"
-        ))),
-    }
+/// Buffers a Python object into an intermediate YAML value with exact types and bounded size.
+fn to_value(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
+    ValueConverter::default().convert(obj, 0)
 }
 
-/// Parses a Python dict into a `RustRuleConfig`.
-fn parse_rule_config_dict(
-    rule_dict: &Bound<'_, PyDict>,
-) -> PyResult<fast_yaml_linter::config::RuleConfig> {
-    let mut rc = fast_yaml_linter::config::RuleConfig::new();
+fn parse_max_line_length(max: Option<i128>) -> PyResult<Option<NonZeroUsize>> {
+    max.map(|value| {
+        usize::try_from(value)
+            .ok()
+            .and_then(NonZeroUsize::new)
+            .ok_or_else(|| PyValueError::new_err("max_line_length must be a positive integer"))
+    })
+    .transpose()
+}
 
-    if let Some(enabled_val) = rule_dict.get_item("enabled")? {
-        let enabled: bool = enabled_val.extract()?;
-        if !enabled {
-            rc = fast_yaml_linter::config::RuleConfig::disabled();
-        }
-    }
+fn parse_indent_size(size: i128) -> PyResult<IndentSize> {
+    size.to_string()
+        .parse()
+        .map_err(|e: <IndentSize as FromStr>::Err| PyValueError::new_err(e.to_string()))
+}
 
-    if let Some(sev_val) = rule_dict.get_item("severity")? {
-        let sev_str: &str = sev_val.extract()?;
-        rc = rc.with_severity(parse_severity(sev_str)?);
-    }
-
-    Ok(rc)
+fn parse_rule_name(code: &str) -> PyResult<RuleName> {
+    RuleName::from_str(code).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
 /// Configuration for the linter.
@@ -484,8 +478,8 @@ impl PyLintConfig {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        max_line_length: Option<usize>,
-        indent_size: usize,
+        max_line_length: Option<i128>,
+        indent_size: i128,
         require_document_start: bool,
         require_document_end: bool,
         allow_duplicate_keys: bool,
@@ -495,86 +489,62 @@ impl PyLintConfig {
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
-        // Validate indent_size (must be between 1 and 16)
-        if indent_size == 0 || indent_size > 16 {
-            return Err(PyValueError::new_err(
-                "indent_size must be between 1 and 16 (inclusive)",
-            ));
-        }
+        let mut inner = RustLintConfig::new()
+            .with_max_line_length(parse_max_line_length(max_line_length)?)
+            .with_indent_size(parse_indent_size(indent_size)?)
+            .with_parse_limits(parse_limits);
 
-        // Validate max_line_length if provided (must be between 1 and 1000)
-        if let Some(max) = max_line_length
-            && (max == 0 || max > 1000)
-        {
-            return Err(PyValueError::new_err(
-                "max_line_length must be between 1 and 1000 (inclusive)",
-            ));
+        if require_document_start {
+            inner = inner.with_document_start(DocumentStartPresence::Required);
         }
-
-        let mut disabled_rules_set = HashSet::new();
-        if let Some(disabled) = disabled_rules {
-            for rule in disabled.try_iter()? {
-                let rule_str: String = rule?.extract()?;
-                disabled_rules_set.insert(rule_str);
-            }
+        if require_document_end {
+            inner = inner.with_document_end(DocumentEndPresence::Required);
         }
-
-        let mut inner = RustLintConfig {
-            max_line_length,
-            indent_size,
-            require_document_start,
-            require_document_end,
-            allow_duplicate_keys,
-            disabled_rules: disabled_rules_set,
-            rule_configs: std::collections::HashMap::new(),
-            parse_limits,
-        };
+        if allow_duplicate_keys {
+            inner = inner.with_disabled_rule(RuleName::DuplicateKey);
+        }
 
         if let Some(rules_obj) = rules {
-            let rules_dict = rules_obj.cast::<PyDict>()?;
-            for (key, value) in rules_dict.iter() {
-                let code: String = key.extract()?;
-                let rc = if let Ok(sev_str) = value.extract::<&str>() {
-                    // String shorthand: "error" | "warning" | "info" | "hint"
-                    fast_yaml_linter::config::RuleConfig::new()
-                        .with_severity(parse_severity(sev_str)?)
-                } else {
-                    // Object form: dict with optional "severity" and "enabled" keys
-                    let entry = value.cast::<PyDict>()?;
-                    parse_rule_config_dict(entry)?
-                };
-                inner = inner.with_rule_config(code, rc);
+            let value = ValueConverter::default()
+                .convert_rules(&rules_obj, |name| parse_rule_name(name).map(drop))?;
+            inner
+                .rules
+                .apply(value)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+
+        if let Some(disabled) = disabled_rules {
+            if disabled.is_instance_of::<PyString>() {
+                return Err(PyTypeError::new_err(
+                    "disabled_rules must be a sequence of rule codes, not a single string",
+                ));
+            }
+            for rule in disabled.try_iter()? {
+                let code: String = rule?.extract()?;
+                inner = inner.with_disabled_rule(parse_rule_name(&code)?);
             }
         }
 
         Ok(Self { inner })
     }
 
-    /// Sets the maximum line length.
-    fn with_max_line_length(&self, max: Option<usize>) -> PyResult<Self> {
-        // Validate max_line_length if provided
-        if let Some(max_val) = max
-            && (max_val == 0 || max_val > 1000)
-        {
-            return Err(PyValueError::new_err(
-                "max_line_length must be between 1 and 1000 (inclusive)",
-            ));
-        }
+    /// Sets the maximum line length (`None` removes the limit).
+    fn with_max_line_length(&self, max: Option<i128>) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_max_line_length(max),
+            inner: self
+                .inner
+                .clone()
+                .with_max_line_length(parse_max_line_length(max)?),
         })
     }
 
     /// Sets the indentation size.
-    fn with_indent_size(&self, size: usize) -> PyResult<Self> {
-        // Validate indent_size
-        if size == 0 || size > 16 {
-            return Err(PyValueError::new_err(
-                "indent_size must be between 1 and 16 (inclusive)",
-            ));
-        }
+    fn with_indent_size(&self, size: i128) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_indent_size(size),
+            inner: self
+                .inner
+                .clone()
+                .with_indent_size(parse_indent_size(size)?),
         })
     }
 
@@ -603,62 +573,91 @@ impl PyLintConfig {
     }
 
     /// Disables a rule by code.
-    fn with_disabled_rule(&self, code: &str) -> Self {
-        Self {
-            inner: self.inner.clone().with_disabled_rule(code),
-        }
-    }
-
-    /// Applies a per-rule configuration override.
-    ///
-    /// Args:
-    ///     code: Rule code (e.g. "line-length"). Unknown codes are silently accepted.
-    ///     severity: Severity override string ("error" | "warning" | "info" | "hint") or None.
-    ///     enabled: Whether the rule is enabled (None means keep default, True).
-    ///
-    /// Returns:
-    ///     A new LintConfig with the rule config applied.
     ///
     /// Raises:
-    ///     ValueError: If severity string is invalid.
-    #[pyo3(signature = (code, severity=None, enabled=None))]
+    ///     ValueError: If the rule code is unknown.
+    fn with_disabled_rule(&self, code: &str) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_disabled_rule(parse_rule_name(code)?),
+        })
+    }
+
+    /// Applies a per-rule configuration patch.
+    ///
+    /// Args:
+    ///     code: Rule code (e.g. "line-length").
+    ///     severity: Severity override ("error" | "warning" | "info" | "hint", case-insensitive) or None.
+    ///     enabled: Whether the rule is enabled (None keeps the current state).
+    ///     options: Rule-specific options with kebab-case keys (e.g. {"max": 120}) or None.
+    ///
+    /// Returns:
+    ///     A new LintConfig with the patch applied.
+    ///
+    /// Raises:
+    ///     ValueError: If the rule, severity, option key or option value is invalid.
+    #[pyo3(signature = (code, severity=None, enabled=None, options=None))]
     fn with_rule_config(
         &self,
         code: &str,
         severity: Option<&str>,
         enabled: Option<bool>,
+        options: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let mut rc = if enabled == Some(false) {
-            fast_yaml_linter::config::RuleConfig::disabled()
-        } else {
-            fast_yaml_linter::config::RuleConfig::new()
+        let name = parse_rule_name(code)?;
+        let mut entry = match options.map(to_value).transpose()? {
+            Some(Value::Mapping(mapping)) => mapping,
+            Some(_) => return Err(PyValueError::new_err("options must be a mapping")),
+            None => Mapping::new(),
         };
-
-        if let Some(sev_str) = severity {
-            rc = rc.with_severity(parse_severity(sev_str)?);
+        for meta in ["enabled", "severity"] {
+            if entry.contains_key(meta) {
+                return Err(PyValueError::new_err(format!(
+                    "'{meta}' is not a rule option; pass it as the '{meta}' argument"
+                )));
+            }
+        }
+        if let Some(severity) = severity {
+            entry.insert("severity".into(), severity.into());
+        }
+        if let Some(enabled) = enabled {
+            entry.insert("enabled".into(), enabled.into());
         }
 
-        Ok(Self {
-            inner: self.inner.clone().with_rule_config(code, rc),
-        })
+        let mut inner = self.inner.clone();
+        inner
+            .rules
+            .apply_rule(name, Value::Mapping(entry))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        Ok(Self { inner })
     }
 
     /// Gets the maximum line length.
     #[getter]
-    const fn max_line_length(&self) -> Option<usize> {
-        self.inner.max_line_length
+    fn max_line_length(&self) -> Option<usize> {
+        self.inner
+            .rules
+            .line_length
+            .options
+            .max
+            .map(NonZeroUsize::get)
     }
 
     /// Gets the indentation size.
     #[getter]
     const fn indent_size(&self) -> usize {
-        self.inner.indent_size
+        self.inner.rules.indentation.options.indent_size.get()
     }
 
     fn __repr__(&self) -> String {
+        let max = self
+            .max_line_length()
+            .map_or_else(|| "None".to_string(), |max| max.to_string());
         format!(
-            "LintConfig(max_line_length={:?}, indent_size={})",
-            self.inner.max_line_length, self.inner.indent_size
+            "LintConfig(max_line_length={max}, indent_size={})",
+            self.indent_size()
         )
     }
 }

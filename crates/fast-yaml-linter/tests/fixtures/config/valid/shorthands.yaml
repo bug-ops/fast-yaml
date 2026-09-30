@@ -1,0 +1,5 @@
+rules:
+  key-ordering: disable
+  truthy: enable
+  line-length: Warning
+  comments: ~

@@ -1,5 +1,8 @@
 //! Rule to check spacing around commas in flow collections.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{Limit, RuleOptions};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
@@ -19,20 +22,43 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::CommasRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::CommasRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = CommasRule;
 /// let yaml = "list: [1, 2, 3]";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let config = LintConfig::new()
-///     .with_rule_config("commas", RuleConfig::new().with_option("max-spaces-before", 0i64));
+/// let config = LintConfig::default();
 ///
 /// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct CommasRule;
+
+/// Options of the commas rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct CommasOptions {
+    /// Maximum spaces before a comma.
+    pub max_spaces_before: Limit,
+    /// Minimum spaces after a comma.
+    pub min_spaces_after: Limit,
+    /// Maximum spaces after a comma.
+    pub max_spaces_after: Limit,
+}
+
+impl Default for CommasOptions {
+    fn default() -> Self {
+        Self {
+            max_spaces_before: Limit::Max(0),
+            min_spaces_after: Limit::Max(1),
+            max_spaces_after: Limit::Max(1),
+        }
+    }
+}
+
+impl RuleOptions for CommasOptions {}
 
 impl super::LintRule for CommasRule {
     fn code(&self) -> &str {
@@ -56,18 +82,10 @@ impl super::LintRule for CommasRule {
         let source_context = context.source_context();
         let tokenizer = FlowTokenizer::new(source, source_context);
 
-        let rule_config = config.get_rule_config(self.code());
-        let max_spaces_before = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-before"))
-            .unwrap_or(0);
-
-        let min_spaces_after = rule_config
-            .and_then(|rc| rc.options.get_int("min-spaces-after"))
-            .unwrap_or(1);
-
-        let max_spaces_after = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-after"))
-            .unwrap_or(1);
+        let options = &config.rules.commas.options;
+        let max_spaces_before = options.max_spaces_before;
+        let min_spaces_after = options.min_spaces_after;
+        let max_spaces_after = options.max_spaces_after;
 
         let mut diagnostics = Vec::new();
         let commas = tokenizer.find_all(TokenType::Comma);
@@ -108,7 +126,7 @@ fn check_spaces_before_comma(
     source: &str,
     source_context: &SourceContext<'_>,
     comma_offset: usize,
-    max_spaces: i64,
+    max_spaces: Limit,
     code: &str,
     config: &LintConfig,
 ) -> Option<Diagnostic> {
@@ -130,15 +148,8 @@ fn check_spaces_before_comma(
         }
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
+        let severity = config.rules.commas.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(comma_offset);
         let span = Span::new(loc, loc);
 
@@ -163,8 +174,8 @@ fn check_spaces_after_comma(
     source: &str,
     source_context: &SourceContext<'_>,
     comma_offset: usize,
-    min_spaces: i64,
-    max_spaces: i64,
+    min_spaces: Limit,
+    max_spaces: Limit,
     code: &str,
     config: &LintConfig,
 ) -> Option<Diagnostic> {
@@ -190,16 +201,9 @@ fn check_spaces_after_comma(
         }
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
     // Don't check min spaces if followed by newline
-    if min_spaces >= 0 && spaces_i64 < min_spaces && !has_newline {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if min_spaces.unmet_by(spaces) && !has_newline {
+        let severity = config.rules.commas.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(comma_offset + 1);
         let span = Span::new(loc, loc);
 
@@ -216,8 +220,8 @@ fn check_spaces_after_comma(
         );
     }
 
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
+        let severity = config.rules.commas.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(comma_offset + 1);
         let span = Span::new(loc, loc);
 
@@ -240,7 +244,10 @@ fn check_spaces_after_comma(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -304,11 +311,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
-        let config = LintConfig::new().with_rule_config(
-            "commas",
-            RuleConfig::new()
-                .with_option("min-spaces-after", 0i64)
-                .with_option("max-spaces-after", 0i64),
+        let config = config_with_rule(
+            RuleName::Commas,
+            "{min-spaces-after: 0, max-spaces-after: 0}",
         );
 
         let context = LintContext::new(yaml);
@@ -322,10 +327,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
-        let config = LintConfig::new().with_rule_config(
-            "commas",
-            RuleConfig::new().with_option("max-spaces-after", 2i64),
-        );
+        let config = config_with_rule(RuleName::Commas, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -414,11 +416,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
-        let config = LintConfig::new().with_rule_config(
-            "commas",
-            RuleConfig::new()
-                .with_option("max-spaces-before", 0i64)
-                .with_option("min-spaces-after", 1i64),
+        let config = config_with_rule(
+            RuleName::Commas,
+            "{max-spaces-before: 0, min-spaces-after: 1}",
         );
 
         let context = LintContext::new(yaml);

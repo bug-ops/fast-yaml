@@ -30,6 +30,7 @@
   "napi": {
     "binaryName": "fastyaml-rs",
     "packageName": "fastyaml-rs",
+    "dtsHeaderFile": "lint-rules.d.ts",
     "targets": [
       "x86_64-unknown-linux-gnu",
       "x86_64-unknown-linux-musl",

@@ -1,15 +1,20 @@
 //! Main linter engine and configuration.
 
+use std::collections::HashMap;
+use std::num::NonZeroUsize;
+use std::str::FromStr;
+
+use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
 use crate::context::lines_of;
-use crate::{Diagnostic, LintContext, Severity, config::RuleConfig, rules::RuleRegistry};
+use crate::rules::{DocumentEndPresence, DocumentStartPresence};
+use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_core::{Parser, ScalarOwned, Value};
-use std::collections::{HashMap, HashSet};
 
 /// Configuration for the linter.
 ///
-/// Controls linting behavior including rule enablement,
-/// formatting preferences, and validation strictness.
+/// Holds the typed settings of every built-in rule plus the enablement and severity of
+/// custom rules added with [`Linter::add_rule`].
 ///
 /// # Examples
 ///
@@ -17,42 +22,17 @@ use std::collections::{HashMap, HashSet};
 /// use fast_yaml_linter::LintConfig;
 ///
 /// let config = LintConfig::default();
-/// assert_eq!(config.max_line_length, Some(80));
-/// assert_eq!(config.indent_size, 2);
+/// assert_eq!(config.rules.line_length.options.max.map(|max| max.get()), Some(80));
+/// assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LintConfig {
-    /// Maximum line length (None = unlimited).
-    pub max_line_length: Option<usize>,
-    /// Expected indentation size in spaces.
-    pub indent_size: usize,
-    /// Require document start marker (---).
-    pub require_document_start: bool,
-    /// Require document end marker (...).
-    pub require_document_end: bool,
-    /// Allow duplicate keys (non-compliant behavior).
-    pub allow_duplicate_keys: bool,
-    /// Disabled rule codes.
-    pub disabled_rules: HashSet<String>,
-    /// Per-rule configurations.
-    pub rule_configs: HashMap<String, RuleConfig>,
+    /// Settings of the built-in rules.
+    pub rules: RulesConfig,
+    /// Settings of custom rules by code.
+    pub custom_rules: HashMap<CustomRuleCode, RuleSettings<NoOptions>>,
     /// Resource limits applied when parsing the source.
     pub parse_limits: ParseLimits,
-}
-
-impl Default for LintConfig {
-    fn default() -> Self {
-        Self {
-            max_line_length: Some(80),
-            indent_size: 2,
-            require_document_start: false,
-            require_document_end: false,
-            allow_duplicate_keys: false,
-            disabled_rules: HashSet::new(),
-            rule_configs: HashMap::new(),
-            parse_limits: ParseLimits::default(),
-        }
-    }
 }
 
 impl LintConfig {
@@ -64,42 +44,66 @@ impl LintConfig {
     /// use fast_yaml_linter::LintConfig;
     ///
     /// let config = LintConfig::new();
-    /// assert_eq!(config.indent_size, 2);
+    /// assert!(config.rules.line_length.enabled);
     /// ```
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Sets the maximum line length.
+    /// Sets the maximum line length (`None` removes the limit).
+    ///
+    /// Does not change whether the rule is enabled.
     ///
     /// # Examples
     ///
     /// ```
+    /// use std::num::NonZeroUsize;
     /// use fast_yaml_linter::LintConfig;
     ///
-    /// let config = LintConfig::new().with_max_line_length(Some(120));
-    /// assert_eq!(config.max_line_length, Some(120));
+    /// let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(120));
+    /// assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(120));
     /// ```
     #[must_use]
-    pub const fn with_max_line_length(mut self, max: Option<usize>) -> Self {
-        self.max_line_length = max;
+    pub const fn with_max_line_length(mut self, max: Option<NonZeroUsize>) -> Self {
+        self.rules.line_length.options.max = max;
         self
     }
 
-    /// Sets the indentation size.
+    /// Sets the expected indentation size.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::config::IndentSize;
     ///
-    /// let config = LintConfig::new().with_indent_size(4);
-    /// assert_eq!(config.indent_size, 4);
+    /// let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
+    /// assert_eq!(config.rules.indentation.options.indent_size.get(), 4);
     /// ```
     #[must_use]
-    pub const fn with_indent_size(mut self, size: usize) -> Self {
-        self.indent_size = size;
+    pub const fn with_indent_size(mut self, size: IndentSize) -> Self {
+        self.rules.indentation.options.indent_size = size;
+        self
+    }
+
+    /// Sets whether the document start marker (`---`) is required, forbidden or allowed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::rules::DocumentStartPresence;
+    ///
+    /// let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
+    /// assert_eq!(
+    ///     config.rules.document_start.options.present,
+    ///     DocumentStartPresence::Required
+    /// );
+    /// ```
+    #[must_use]
+    pub const fn with_document_start(mut self, presence: DocumentStartPresence) -> Self {
+        self.rules.document_start.options.present = presence;
         self
     }
 
@@ -121,182 +125,111 @@ impl LintConfig {
         self
     }
 
-    /// Disables a rule by code.
+    /// Sets whether the document end marker (`...`) is required or merely allowed.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::{LintConfig, DiagnosticCode};
+    /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::rules::DocumentEndPresence;
     ///
-    /// let config = LintConfig::new()
-    ///     .with_disabled_rule(DiagnosticCode::LINE_LENGTH);
-    ///
-    /// assert!(config.is_rule_disabled(DiagnosticCode::LINE_LENGTH));
+    /// let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
+    /// assert_eq!(config.rules.document_end.options.present, DocumentEndPresence::Required);
     /// ```
     #[must_use]
-    pub fn with_disabled_rule(mut self, code: impl Into<String>) -> Self {
-        self.disabled_rules.insert(code.into());
+    pub const fn with_document_end(mut self, presence: DocumentEndPresence) -> Self {
+        self.rules.document_end.options.present = presence;
         self
     }
 
-    /// Checks if a rule is disabled.
+    /// Disables a built-in rule.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::{LintConfig, DiagnosticCode};
+    /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::config::RuleName;
     ///
-    /// let config = LintConfig::new()
-    ///     .with_disabled_rule(DiagnosticCode::LINE_LENGTH);
-    ///
-    /// assert!(config.is_rule_disabled(DiagnosticCode::LINE_LENGTH));
-    /// assert!(!config.is_rule_disabled(DiagnosticCode::DUPLICATE_KEY));
-    /// ```
-    #[must_use]
-    pub fn is_rule_disabled(&self, code: &str) -> bool {
-        self.disabled_rules.contains(code)
-            || self.rule_configs.get(code).is_some_and(|rc| !rc.enabled)
-    }
-
-    /// Gets the configuration for a specific rule.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{LintConfig, config::RuleConfig};
-    ///
-    /// let mut config = LintConfig::new();
-    /// let rule_config = RuleConfig::new().with_option("max", 120usize);
-    /// config = config.with_rule_config("line-length", rule_config);
-    ///
-    /// assert!(config.get_rule_config("line-length").is_some());
-    /// ```
-    #[must_use]
-    pub fn get_rule_config(&self, rule_code: &str) -> Option<&RuleConfig> {
-        self.rule_configs.get(rule_code)
-    }
-
-    /// Checks if a rule is enabled (not disabled via config or rule-specific config).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{LintConfig, config::RuleConfig};
-    ///
-    /// let config = LintConfig::new()
-    ///     .with_rule_config("line-length", RuleConfig::disabled());
-    ///
+    /// let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
     /// assert!(!config.is_rule_enabled("line-length"));
     /// assert!(config.is_rule_enabled("duplicate-key"));
     /// ```
     #[must_use]
-    pub fn is_rule_enabled(&self, rule_code: &str) -> bool {
-        !self.is_rule_disabled(rule_code)
-            && self.get_rule_config(rule_code).is_none_or(|rc| rc.enabled)
+    pub const fn with_disabled_rule(mut self, rule: RuleName) -> Self {
+        self.rules.set_enabled(rule, false);
+        self
     }
 
-    /// Gets the effective severity for a rule (with per-rule override).
-    ///
-    /// Returns the per-rule severity override if set, otherwise the rule's default severity.
+    /// Sets the enablement and severity of a custom rule.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::{LintConfig, Severity, config::RuleConfig};
+    /// use fast_yaml_linter::{LintConfig, Severity};
+    /// use fast_yaml_linter::config::{CustomRuleCode, NoOptions, RuleSettings};
     ///
+    /// let settings = RuleSettings::<NoOptions> {
+    ///     enabled: false,
+    ///     severity: Some(Severity::Error),
+    ///     options: NoOptions::default(),
+    /// };
     /// let config = LintConfig::new()
-    ///     .with_rule_config(
-    ///         "line-length",
-    ///         RuleConfig::new().with_severity(Severity::Error),
-    ///     );
-    ///
-    /// assert_eq!(
-    ///     config.get_effective_severity("line-length", Severity::Warning),
-    ///     Severity::Error
-    /// );
+    ///     .with_custom_rule(CustomRuleCode::new("my-rule").unwrap(), settings);
+    /// assert!(!config.is_rule_enabled("my-rule"));
+    /// assert_eq!(config.severity_for("my-rule", Severity::Hint), Severity::Error);
     /// ```
     #[must_use]
-    pub fn get_effective_severity(&self, rule_code: &str, default: Severity) -> Severity {
-        self.get_rule_config(rule_code)
-            .and_then(|rc| rc.severity)
-            .unwrap_or(default)
+    pub fn with_custom_rule(
+        mut self,
+        code: CustomRuleCode,
+        settings: RuleSettings<NoOptions>,
+    ) -> Self {
+        self.custom_rules.insert(code, settings);
+        self
     }
 
-    /// Sets whether the document start marker (`---`) is required.
+    /// Returns whether the rule with this code is enabled.
     ///
-    /// When `true`, the linter will warn if a document is missing `---`.
-    /// This is equivalent to setting `present: "required"` via `rule_configs` for
-    /// the `document-start` rule, but `rule_configs` takes priority if both are set.
+    /// Built-in rules are looked up by [`RuleName`], then custom rules; unknown codes are
+    /// enabled.
+    #[must_use]
+    pub fn is_rule_enabled(&self, code: &str) -> bool {
+        RuleName::from_str(code).map_or_else(
+            |_| {
+                self.custom_settings(code)
+                    .is_none_or(|settings| settings.enabled)
+            },
+            |name| self.rules.is_enabled(name),
+        )
+    }
+
+    /// Returns the configured severity of a rule, or `default` when none is set.
+    ///
+    /// Built-in rules are resolved through [`RulesConfig`], custom rules through
+    /// [`LintConfig::custom_rules`]. Custom [`LintRule`](crate::rules::LintRule) implementations call this with their own
+    /// code; built-in rules read their typed settings directly.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::{LintConfig, Severity};
     ///
-    /// let config = LintConfig::new().with_require_document_start(true);
-    /// assert!(config.require_document_start);
+    /// let config = LintConfig::new();
+    /// assert_eq!(config.severity_for("my-rule", Severity::Info), Severity::Info);
     /// ```
     #[must_use]
-    pub const fn with_require_document_start(mut self, require: bool) -> Self {
-        self.require_document_start = require;
-        self
+    pub fn severity_for(&self, code: &str, default: Severity) -> Severity {
+        RuleName::from_str(code).map_or_else(
+            |_| {
+                self.custom_settings(code)
+                    .map_or(default, |settings| settings.severity_or(default))
+            },
+            |name| self.rules.severity(name).unwrap_or(default),
+        )
     }
 
-    /// Sets whether the document end marker (`...`) is required.
-    ///
-    /// When `true`, the linter will warn if a document is missing `...`.
-    /// This is equivalent to setting `present: true` via `rule_configs` for
-    /// the `document-end` rule, but `rule_configs` takes priority if both are set.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::LintConfig;
-    ///
-    /// let config = LintConfig::new().with_require_document_end(true);
-    /// assert!(config.require_document_end);
-    /// ```
-    #[must_use]
-    pub const fn with_require_document_end(mut self, require: bool) -> Self {
-        self.require_document_end = require;
-        self
-    }
-
-    /// Allows or disallows duplicate keys.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::LintConfig;
-    ///
-    /// let config = LintConfig::new().with_allow_duplicate_keys(true);
-    /// assert!(config.allow_duplicate_keys);
-    /// ```
-    #[must_use]
-    pub const fn with_allow_duplicate_keys(mut self, allow: bool) -> Self {
-        self.allow_duplicate_keys = allow;
-        self
-    }
-
-    /// Adds a rule-specific configuration.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{LintConfig, config::RuleConfig};
-    ///
-    /// let config = LintConfig::new()
-    ///     .with_rule_config(
-    ///         "line-length",
-    ///         RuleConfig::new().with_option("max", 120usize),
-    ///     );
-    ///
-    /// assert!(config.get_rule_config("line-length").is_some());
-    /// ```
-    #[must_use]
-    pub fn with_rule_config(mut self, rule_code: impl Into<String>, config: RuleConfig) -> Self {
-        self.rule_configs.insert(rule_code.into(), config);
-        self
+    fn custom_settings(&self, code: &str) -> Option<&RuleSettings<NoOptions>> {
+        self.custom_rules.get(code)
     }
 }
 
@@ -346,8 +279,9 @@ impl Linter {
     ///
     /// ```
     /// use fast_yaml_linter::{Linter, LintConfig};
+    /// use fast_yaml_linter::config::IndentSize;
     ///
-    /// let config = LintConfig::new().with_indent_size(4);
+    /// let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
     /// let linter = Linter::with_config(config);
     /// assert!(!linter.registry().rules().is_empty());
     /// ```
@@ -381,9 +315,10 @@ impl Linter {
     /// # Examples
     ///
     /// ```
+    /// use std::num::NonZeroUsize;
     /// use fast_yaml_linter::{Linter, LintConfig};
     ///
-    /// let config = LintConfig::new().with_max_line_length(Some(120));
+    /// let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(120));
     /// let linter = Linter::with_all_rules_and_config(config);
     /// ```
     #[must_use]
@@ -434,7 +369,7 @@ impl Linter {
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
-            if self.config.is_rule_disabled(rule.code()) {
+            if !self.config.is_rule_enabled(rule.code()) {
                 continue;
             }
 
@@ -479,7 +414,7 @@ impl Linter {
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
-            if self.config.is_rule_disabled(rule.code()) {
+            if !self.config.is_rule_enabled(rule.code()) {
                 continue;
             }
 
@@ -499,11 +434,12 @@ impl Linter {
     ///
     /// ```
     /// use fast_yaml_linter::{Linter, LintConfig};
+    /// use fast_yaml_linter::config::RuleName;
     ///
-    /// let config = LintConfig::new().with_indent_size(4);
+    /// let config = LintConfig::new().with_disabled_rule(RuleName::Colons);
     /// let linter = Linter::with_config(config);
     ///
-    /// assert_eq!(linter.config().indent_size, 4);
+    /// assert!(!linter.config().rules.colons.enabled);
     /// ```
     #[must_use]
     pub const fn config(&self) -> &LintConfig {
@@ -587,7 +523,134 @@ fn shift_offsets(diagnostics: &mut [Diagnostic], bom_len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::test_support::config_with_rule;
+    use crate::rules::LintRule;
     use std::fmt::Write as _;
+
+    fn indent(size: u64) -> IndentSize {
+        IndentSize::try_from(size).unwrap()
+    }
+
+    struct AlwaysFlags;
+
+    impl LintRule for AlwaysFlags {
+        fn code(&self) -> &'static str {
+            "always-flags"
+        }
+
+        fn name(&self) -> &'static str {
+            "Always Flags"
+        }
+
+        fn description(&self) -> &'static str {
+            "Flags every document"
+        }
+
+        fn default_severity(&self) -> Severity {
+            Severity::Hint
+        }
+
+        fn check(
+            &self,
+            context: &LintContext,
+            _value: &Value,
+            config: &LintConfig,
+        ) -> Vec<Diagnostic> {
+            let span = context
+                .source_context()
+                .span_at(context.source_context().line_start(1), 1);
+            vec![
+                crate::DiagnosticBuilder::new(
+                    self.code(),
+                    config.severity_for(self.code(), self.default_severity()),
+                    "flagged",
+                    span,
+                )
+                .build_with_context(context.source_context()),
+            ]
+        }
+    }
+
+    #[test]
+    fn test_custom_rule_runs_with_default_severity() {
+        let mut linter = Linter::with_config(LintConfig::new());
+        linter.add_rule(Box::new(AlwaysFlags));
+        let diagnostics = linter.lint("a: 1\n").unwrap();
+        let flagged: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == "always-flags")
+            .collect();
+        assert_eq!(flagged.len(), 1);
+        assert_eq!(flagged[0].severity, Severity::Hint);
+    }
+
+    #[test]
+    fn test_custom_rule_severity_override_and_disable() {
+        let code = CustomRuleCode::new("always-flags").unwrap();
+        let overridden = RuleSettings::<NoOptions> {
+            severity: Some(Severity::Error),
+            ..RuleSettings::default()
+        };
+        let mut linter =
+            Linter::with_config(LintConfig::new().with_custom_rule(code.clone(), overridden));
+        linter.add_rule(Box::new(AlwaysFlags));
+        let diagnostics = linter.lint("a: 1\n").unwrap();
+        let flagged = diagnostics
+            .iter()
+            .find(|d| d.code.as_str() == "always-flags")
+            .unwrap();
+        assert_eq!(flagged.severity, Severity::Error);
+
+        let disabled = RuleSettings::<NoOptions> {
+            enabled: false,
+            ..RuleSettings::default()
+        };
+        let mut linter = Linter::with_config(LintConfig::new().with_custom_rule(code, disabled));
+        linter.add_rule(Box::new(AlwaysFlags));
+        let diagnostics = linter.lint("a: 1\n").unwrap();
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == "always-flags")
+        );
+    }
+
+    #[test]
+    fn test_builders_do_not_change_enablement() {
+        let config = LintConfig::new()
+            .with_disabled_rule(RuleName::LineLength)
+            .with_max_line_length(NonZeroUsize::new(10));
+        assert!(!config.rules.line_length.enabled);
+        assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(10));
+    }
+
+    #[test]
+    fn test_allow_duplicate_keys_can_be_reenabled_by_rules() {
+        let mut config = LintConfig::new().with_disabled_rule(RuleName::DuplicateKey);
+        config
+            .rules
+            .apply(serde_norway::Deserializer::from_str(
+                "duplicate-key: {enabled: true}",
+            ))
+            .unwrap();
+        let diagnostics = Linter::with_config(config).lint("k: 1\nk: 2\n").unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == "duplicate-key")
+        );
+    }
+
+    #[test]
+    fn test_issue_324_document_start_present_true_is_enforced() {
+        let config = config_with_rule(RuleName::DocumentStart, "{present: true}");
+        let diagnostics = Linter::with_config(config).lint("a: 1\n").unwrap();
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == "document-start")
+        );
+    }
 
     #[test]
     fn test_lint_rejects_deeply_nested_input() {
@@ -678,28 +741,31 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = LintConfig::default();
-        assert_eq!(config.max_line_length, Some(80));
-        assert_eq!(config.indent_size, 2);
-        assert!(!config.require_document_start);
-        assert!(!config.allow_duplicate_keys);
+        assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(80));
+        assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
+        assert_eq!(
+            config.rules.document_start.options.present,
+            DocumentStartPresence::Allowed
+        );
+        assert!(config.rules.duplicate_key.enabled);
     }
 
     #[test]
     fn test_config_builder() {
         let config = LintConfig::new()
-            .with_max_line_length(Some(120))
-            .with_indent_size(4);
+            .with_max_line_length(NonZeroUsize::new(120))
+            .with_indent_size(indent(4));
 
-        assert_eq!(config.max_line_length, Some(120));
-        assert_eq!(config.indent_size, 4);
+        assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(120));
+        assert_eq!(config.rules.indentation.options.indent_size.get(), 4);
     }
 
     #[test]
     fn test_config_disabled_rules() {
-        let config = LintConfig::new().with_disabled_rule("line-length");
+        let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
 
-        assert!(config.is_rule_disabled("line-length"));
-        assert!(!config.is_rule_disabled("duplicate-key"));
+        assert!(!config.is_rule_enabled("line-length"));
+        assert!(config.is_rule_enabled("duplicate-key"));
     }
 
     #[test]
@@ -716,17 +782,19 @@ mod tests {
 
     #[test]
     fn test_linter_with_config() {
-        let config = LintConfig::new().with_indent_size(4);
+        let config = LintConfig::new().with_indent_size(indent(4));
         let linter = Linter::with_config(config);
-        assert_eq!(linter.config().indent_size, 4);
+        assert_eq!(
+            linter.config().rules.indentation.options.indent_size.get(),
+            4
+        );
         assert!(!linter.registry().rules().is_empty());
     }
 
     #[test]
     fn test_linter_with_config_detects_duplicate_keys() {
         let yaml = "key: 1\nkey: 2\n";
-        let config = LintConfig::new().with_allow_duplicate_keys(false);
-        let linter = Linter::with_config(config);
+        let linter = Linter::with_config(LintConfig::new());
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
             diagnostics
@@ -776,7 +844,7 @@ mod tests {
     #[test]
     fn test_linter_disabled_rule() {
         let yaml = "very_long_line: this line is definitely longer than eighty characters and should trigger a warning";
-        let config = LintConfig::new().with_disabled_rule("line-length");
+        let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
         let linter = Linter::with_config(config);
 
         let mut linter = linter;
@@ -791,11 +859,7 @@ mod tests {
     fn test_multidoc_key_ordering_all_documents() {
         // Regression test for #142: key-ordering must fire in ALL documents, not just the first.
         let yaml = "---\nb: 1\na: 2\n---\nd: 1\nc: 2\n";
-        let config = LintConfig::new().with_rule_config(
-            crate::DiagnosticCode::KEY_ORDERING,
-            crate::config::RuleConfig::new(),
-        );
-        let linter = Linter::with_all_rules_and_config(config);
+        let linter = Linter::with_all_rules_and_config(LintConfig::new());
         let diagnostics = linter.lint(yaml).unwrap();
 
         let ordering_diags: Vec<_> = diagnostics
@@ -864,7 +928,7 @@ mod tests {
     #[test]
     fn test_require_document_start_missing() {
         let yaml = "key: value\n";
-        let config = LintConfig::new().with_require_document_start(true);
+        let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -878,7 +942,7 @@ mod tests {
     #[test]
     fn test_require_document_start_present() {
         let yaml = "---\nkey: value\n";
-        let config = LintConfig::new().with_require_document_start(true);
+        let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -892,7 +956,7 @@ mod tests {
     #[test]
     fn test_require_document_end_missing() {
         let yaml = "key: value\n";
-        let config = LintConfig::new().with_require_document_end(true);
+        let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -906,7 +970,7 @@ mod tests {
     #[test]
     fn test_require_document_end_present() {
         let yaml = "key: value\n...\n";
-        let config = LintConfig::new().with_require_document_end(true);
+        let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -918,32 +982,24 @@ mod tests {
     }
 
     #[test]
-    fn test_rule_config_overrides_require_document_start() {
-        // rule_configs with present="forbidden" should override require_document_start=true
+    fn test_document_start_forbidden_flags_existing_marker() {
         let yaml = "---\nkey: value\n";
-        let config = LintConfig::new()
-            .with_require_document_start(true)
-            .with_rule_config(
-                crate::DiagnosticCode::DOCUMENT_START,
-                crate::config::RuleConfig::new().with_option("present", "forbidden"),
-            );
+        let config = config_with_rule(RuleName::DocumentStart, "{present: forbidden}");
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
             diagnostics
                 .iter()
                 .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
-            "rule_config present=forbidden should override require_document_start and flag existing '---'"
+            "present=forbidden must flag an existing '---'"
         );
     }
 
     #[test]
     fn test_linter_rule_config_disabled_suppresses_rule() {
-        // Regression test for #133: RuleConfig::disabled() via with_rule_config should
-        // suppress the rule, not just store it in rule_configs without effect.
+        // Regression test for #133: a rule disabled through configuration must not run.
         let yaml = "very_long_line: this line is definitely longer than eighty characters and should trigger a warning";
-        let config = LintConfig::new()
-            .with_rule_config("line-length", crate::config::RuleConfig::disabled());
+        let config = config_with_rule(RuleName::LineLength, "disable");
         let linter = Linter::with_config(config);
 
         let mut linter = linter;
@@ -953,7 +1009,7 @@ mod tests {
 
         assert!(
             !diagnostics.iter().any(|d| d.code.as_str() == "line-length"),
-            "rule disabled via RuleConfig::disabled() should not produce diagnostics"
+            "a disabled rule should not produce diagnostics"
         );
     }
 

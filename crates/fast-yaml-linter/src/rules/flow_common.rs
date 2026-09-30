@@ -1,7 +1,12 @@
 //! Common utilities for flow collection rules (braces, brackets).
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
-    LintConfig, LintContext, Severity, SourceContext, Span,
+    LintContext, Severity, SourceContext, Span,
+    config::{
+        BoolOrName, EmptyInsideLimit, Limit, RuleOptions, RuleSettings, deserialize_bool_or_name,
+    },
     diagnostic::{Diagnostic, DiagnosticBuilder},
     tokenizer::{FlowTokenizer, Token, TokenType},
 };
@@ -45,28 +50,103 @@ impl FlowCollection {
     }
 }
 
-/// Value of the `forbid` rule option.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Forbid {
+/// Value of the `forbid` option of the braces and brackets rules.
+///
+/// Accepts `false` or `no`, `true` (same as `all`), `non-empty` and `all`; `No` serializes as
+/// `false`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Forbid {
+    /// Flow collections are allowed.
+    #[default]
     No,
+    /// Only non-empty flow collections are forbidden.
     NonEmpty,
+    /// All flow collections are forbidden.
     All,
 }
 
-impl Forbid {
-    fn parse(option: Option<&str>) -> Self {
-        match option {
-            Some("all") => Self::All,
-            Some("non-empty") => Self::NonEmpty,
-            _ => Self::No,
+impl BoolOrName for Forbid {
+    const EXPECTING: &'static str = "a boolean, 'no', 'non-empty' or 'all'";
+
+    fn from_bool(value: bool) -> Result<Self, &'static str> {
+        Ok(if value { Self::All } else { Self::No })
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "no" => Some(Self::No),
+            "non-empty" => Some(Self::NonEmpty),
+            "all" => Some(Self::All),
+            _ => None,
         }
     }
 }
 
+impl Serialize for Forbid {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::No => serializer.serialize_bool(false),
+            Self::NonEmpty => serializer.serialize_str("non-empty"),
+            Self::All => serializer.serialize_str("all"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Forbid {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_bool_or_name(deserializer)
+    }
+}
+
+/// Options shared by the braces and brackets rules.
+///
+/// A set `min-spaces-inside-empty` or `max-spaces-inside-empty` overrides the matching
+/// non-empty limit for empty collections independently of the other one. A minimum above
+/// the maximum is not rejected: as in yamllint it flags every collection.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::{EmptyInsideLimit, Limit};
+/// use fast_yaml_linter::rules::FlowCollectionOptions;
+///
+/// let options = FlowCollectionOptions::default();
+/// assert_eq!(options.max_spaces_inside, Limit::Max(0));
+/// assert_eq!(options.max_spaces_inside_empty, EmptyInsideLimit::Inherit);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct FlowCollectionOptions {
+    /// Which flow collections are forbidden.
+    pub forbid: Forbid,
+    /// Minimum spaces inside non-empty collections.
+    pub min_spaces_inside: Limit,
+    /// Maximum spaces inside non-empty collections.
+    pub max_spaces_inside: Limit,
+    /// Minimum spaces inside empty collections.
+    pub min_spaces_inside_empty: EmptyInsideLimit,
+    /// Maximum spaces inside empty collections.
+    pub max_spaces_inside_empty: EmptyInsideLimit,
+}
+
+impl Default for FlowCollectionOptions {
+    fn default() -> Self {
+        Self {
+            forbid: Forbid::No,
+            min_spaces_inside: Limit::Max(0),
+            max_spaces_inside: Limit::Max(0),
+            min_spaces_inside_empty: EmptyInsideLimit::Inherit,
+            max_spaces_inside_empty: EmptyInsideLimit::Inherit,
+        }
+    }
+}
+
+impl RuleOptions for FlowCollectionOptions {}
+
 /// Runs the shared braces/brackets check for one kind of flow collection.
 pub(crate) fn check_flow_collection(
     context: &LintContext,
-    config: &LintConfig,
+    settings: &RuleSettings<FlowCollectionOptions>,
     code: &str,
     default_severity: Severity,
     kind: FlowCollection,
@@ -74,26 +154,15 @@ pub(crate) fn check_flow_collection(
     let source = context.source();
     let source_context = context.source_context();
     let tokenizer = FlowTokenizer::new(source, source_context);
-
-    let rule_config = config.get_rule_config(code);
-    let forbid = Forbid::parse(rule_config.and_then(|rc| rc.options.get_string("forbid")));
-    let int_option = |key: &str, default: i64| {
-        rule_config
-            .and_then(|rc| rc.options.get_int(key))
-            .unwrap_or(default)
-    };
-    let min_spaces_inside = int_option("min-spaces-inside", 0);
-    let max_spaces_inside = int_option("max-spaces-inside", 0);
-    let min_spaces_inside_empty = int_option("min-spaces-inside-empty", -1);
-    let max_spaces_inside_empty = int_option("max-spaces-inside-empty", -1);
+    let options = &settings.options;
 
     let opens = tokenizer.find_all(kind.open());
     let closes = tokenizer.find_all(kind.close());
     let pairs = pair_delimiters(&opens, &closes);
-    let severity = config.get_effective_severity(code, default_severity);
+    let severity = settings.severity_or(default_severity);
     let mut diagnostics = Vec::new();
 
-    match forbid {
+    match options.forbid {
         Forbid::All => {
             let message = format!("{} forbidden (forbid: all)", kind.noun());
             for token in &opens {
@@ -122,10 +191,17 @@ pub(crate) fn check_flow_collection(
     for (open, close) in &pairs {
         let is_empty = is_empty_collection(source, open.span.end.offset, close.span.start.offset);
 
-        let (min_spaces, max_spaces) = if is_empty && min_spaces_inside_empty >= 0 {
-            (min_spaces_inside_empty, max_spaces_inside_empty)
+        let (min_spaces, max_spaces) = if is_empty {
+            (
+                options
+                    .min_spaces_inside_empty
+                    .resolve(options.min_spaces_inside),
+                options
+                    .max_spaces_inside_empty
+                    .resolve(options.max_spaces_inside),
+            )
         } else {
-            (min_spaces_inside, max_spaces_inside)
+            (options.min_spaces_inside, options.max_spaces_inside)
         };
 
         diagnostics.extend(check_spaces_after_opening(
@@ -136,7 +212,7 @@ pub(crate) fn check_flow_collection(
             min_spaces,
             max_spaces,
             code,
-            config,
+            severity,
             kind.name(),
             open.span,
         ));
@@ -148,7 +224,7 @@ pub(crate) fn check_flow_collection(
             min_spaces,
             max_spaces,
             code,
-            config,
+            severity,
             kind.name(),
             close.span,
         ));
@@ -243,10 +319,10 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
 /// * `source_ctx` - Pre-built source context for diagnostic extraction
 /// * `start_offset` - Byte offset after opening delimiter
 /// * `end_offset` - Byte offset of closing delimiter or next content
-/// * `min_spaces` - Minimum required spaces (-1 to disable)
-/// * `max_spaces` - Maximum allowed spaces (-1 to disable)
+/// * `min_spaces` - Minimum required spaces
+/// * `max_spaces` - Maximum allowed spaces
 /// * `code` - Rule code for diagnostics
-/// * `config` - Lint configuration
+/// * `severity` - Severity of the returned diagnostic
 /// * `collection_name` - Name of collection type (e.g., "braces", "brackets")
 ///
 /// Returns a diagnostic if spacing constraints are violated.
@@ -256,10 +332,10 @@ pub fn check_spaces_after_opening(
     source_ctx: &SourceContext<'_>,
     start_offset: usize,
     end_offset: usize,
-    min_spaces: i64,
-    max_spaces: i64,
+    min_spaces: Limit,
+    max_spaces: Limit,
     code: &str,
-    config: &LintConfig,
+    severity: Severity,
     collection_name: &str,
     opening_span: Span,
 ) -> Option<Diagnostic> {
@@ -271,15 +347,7 @@ pub fn check_spaces_after_opening(
     let content = source.get(start_offset..end)?;
     let spaces = content.chars().take_while(|c| *c == ' ').count();
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
-    if min_spaces >= 0 && spaces_i64 < min_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if min_spaces.unmet_by(spaces) {
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -293,8 +361,7 @@ pub fn check_spaces_after_opening(
         );
     }
 
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -319,10 +386,10 @@ pub fn check_spaces_after_opening(
 /// * `source_ctx` - Pre-built source context for diagnostic extraction
 /// * `start_offset` - Byte offset after opening delimiter or last content
 /// * `end_offset` - Byte offset of closing delimiter
-/// * `min_spaces` - Minimum required spaces (-1 to disable)
-/// * `max_spaces` - Maximum allowed spaces (-1 to disable)
+/// * `min_spaces` - Minimum required spaces
+/// * `max_spaces` - Maximum allowed spaces
 /// * `code` - Rule code for diagnostics
-/// * `config` - Lint configuration
+/// * `severity` - Severity of the returned diagnostic
 /// * `collection_name` - Name of collection type (e.g., "braces", "brackets")
 ///
 /// Returns a diagnostic if spacing constraints are violated.
@@ -332,10 +399,10 @@ pub fn check_spaces_before_closing(
     source_ctx: &SourceContext<'_>,
     start_offset: usize,
     end_offset: usize,
-    min_spaces: i64,
-    max_spaces: i64,
+    min_spaces: Limit,
+    max_spaces: Limit,
     code: &str,
-    config: &LintConfig,
+    severity: Severity,
     collection_name: &str,
     closing_span: Span,
 ) -> Option<Diagnostic> {
@@ -347,15 +414,7 @@ pub fn check_spaces_before_closing(
     let content = source.get(start_offset..end)?;
     let spaces = content.chars().rev().take_while(|c| *c == ' ').count();
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
-    if min_spaces >= 0 && spaces_i64 < min_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if min_spaces.unmet_by(spaces) {
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -369,8 +428,7 @@ pub fn check_spaces_before_closing(
         );
     }
 
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
         return Some(
             DiagnosticBuilder::new(
                 code,
@@ -406,7 +464,6 @@ mod tests {
         let dummy_span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{ key: value}";
         let source_ctx = SourceContext::new(source);
-        let config = LintConfig::default();
 
         // Should pass with 1 space
         let result = check_spaces_after_opening(
@@ -414,10 +471,10 @@ mod tests {
             &source_ctx,
             1,
             13,
-            0,
-            1,
+            Limit::Max(0),
+            Limit::Max(1),
             "test",
-            &config,
+            Severity::Warning,
             "braces",
             dummy_span,
         );
@@ -431,10 +488,10 @@ mod tests {
             &source_ctx2,
             1,
             14,
-            0,
-            1,
+            Limit::Max(0),
+            Limit::Max(1),
             "test",
-            &config,
+            Severity::Warning,
             "braces",
             dummy_span,
         );
@@ -447,7 +504,6 @@ mod tests {
         let dummy_span = Span::new(Location::new(1, 13, 12), Location::new(1, 14, 13));
         let source = "{key: value }";
         let source_ctx = SourceContext::new(source);
-        let config = LintConfig::default();
 
         // Should pass with 1 space
         let result = check_spaces_before_closing(
@@ -455,10 +511,10 @@ mod tests {
             &source_ctx,
             1,
             12,
-            0,
-            1,
+            Limit::Max(0),
+            Limit::Max(1),
             "test",
-            &config,
+            Severity::Warning,
             "braces",
             dummy_span,
         );
@@ -472,10 +528,10 @@ mod tests {
             &source_ctx2,
             1,
             13,
-            0,
-            1,
+            Limit::Max(0),
+            Limit::Max(1),
             "test",
-            &config,
+            Severity::Warning,
             "braces",
             dummy_span,
         );
@@ -488,17 +544,36 @@ mod tests {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{ é }";
         let ctx = SourceContext::new(source);
-        let config = LintConfig::default();
 
         assert!(is_empty_collection(source, 5, 2));
         for (start, end) in [(5, 2), (3, 4), (4, 3)] {
             assert!(
-                check_spaces_after_opening(source, &ctx, start, end, 0, 0, "t", &config, "b", span)
-                    .is_none()
+                check_spaces_after_opening(
+                    source,
+                    &ctx,
+                    start,
+                    end,
+                    Limit::Max(0),
+                    Limit::Max(0),
+                    "t",
+                    Severity::Warning,
+                    "b",
+                    span
+                )
+                .is_none()
             );
             assert!(
                 check_spaces_before_closing(
-                    source, &ctx, start, end, 0, 0, "t", &config, "b", span
+                    source,
+                    &ctx,
+                    start,
+                    end,
+                    Limit::Max(0),
+                    Limit::Max(0),
+                    "t",
+                    Severity::Warning,
+                    "b",
+                    span
                 )
                 .is_none()
             );
@@ -511,14 +586,34 @@ mod tests {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{}";
         let ctx = SourceContext::new(source);
-        let config = LintConfig::default();
 
-        let diag =
-            check_spaces_after_opening(source, &ctx, 1, 1, 1, -1, "t", &config, "braces", span);
+        let diag = check_spaces_after_opening(
+            source,
+            &ctx,
+            1,
+            1,
+            Limit::Max(1),
+            Limit::Disabled,
+            "t",
+            Severity::Warning,
+            "braces",
+            span,
+        );
         assert!(diag.is_some());
         assert!(
-            check_spaces_before_closing(source, &ctx, 1, 1, 1, -1, "t", &config, "braces", span)
-                .is_none()
+            check_spaces_before_closing(
+                source,
+                &ctx,
+                1,
+                1,
+                Limit::Max(1),
+                Limit::Disabled,
+                "t",
+                Severity::Warning,
+                "braces",
+                span
+            )
+            .is_none()
         );
     }
 

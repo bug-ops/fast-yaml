@@ -29,6 +29,7 @@
 
 mod context;
 mod diagnostic;
+mod echo;
 mod linter;
 mod location;
 mod severity;
@@ -48,7 +49,7 @@ pub use diagnostic::{
 pub use formatter::{Formatter, TextFormatter};
 pub use linter::{LintConfig, LintError, Linter};
 pub use location::{Location, Span};
-pub use severity::Severity;
+pub use severity::{ParseSeverityError, Severity};
 
 #[cfg(feature = "json-output")]
 pub use formatter::JsonFormatter;

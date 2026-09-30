@@ -1,7 +1,8 @@
 //! Regression tests for byte/char offset handling with non-ASCII keys and exotic line endings.
 
 use fast_yaml_linter::{
-    Diagnostic, DiagnosticCode, LintConfig, Linter, SourceContext, source::SourceMapper,
+    Diagnostic, DiagnosticCode, LintConfig, Linter, SourceContext, config::Limit,
+    source::SourceMapper,
 };
 
 fn lint_code(yaml: &str, code: &str) -> Vec<Diagnostic> {
@@ -315,10 +316,8 @@ fn mapper_find_colon_after_key_edges() {
 
 #[test]
 fn empty_lines_span_points_at_first_empty_line() {
-    let config = LintConfig::new().with_rule_config(
-        "empty-lines",
-        fast_yaml_linter::config::RuleConfig::new().with_option("max", 1i64),
-    );
+    let mut config = LintConfig::new();
+    config.rules.empty_lines.options.max = Limit::Max(1);
     for yaml in [
         "é: 1\r\n\r\n\r\n\r\nb: 2\r\n",
         "é: 1\r\r\r\rb: 2\r",

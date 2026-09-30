@@ -1,5 +1,8 @@
 //! Rule to check comment formatting.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{Limit, RuleOptions};
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
@@ -18,7 +21,7 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::CommentsRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::CommentsRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = CommentsRule;
@@ -30,6 +33,30 @@ use fast_yaml_core::Value;
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct CommentsRule;
+
+/// Options of the comments rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct CommentsOptions {
+    /// Require a space after `#`.
+    pub require_starting_space: bool,
+    /// Skip the check for a shebang on the first line.
+    pub ignore_shebangs: bool,
+    /// Minimum spaces between content and an inline comment.
+    pub min_spaces_from_content: Limit,
+}
+
+impl Default for CommentsOptions {
+    fn default() -> Self {
+        Self {
+            require_starting_space: true,
+            ignore_shebangs: true,
+            min_spaces_from_content: Limit::Max(2),
+        }
+    }
+}
+
+impl RuleOptions for CommentsOptions {}
 
 impl super::LintRule for CommentsRule {
     fn code(&self) -> &str {
@@ -51,18 +78,10 @@ impl super::LintRule for CommentsRule {
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let comments = context.comments();
 
-        let rule_config = config.get_rule_config(self.code());
-        let require_starting_space = rule_config
-            .and_then(|rc| rc.options.get_bool("require-starting-space"))
-            .unwrap_or(true);
-
-        let ignore_shebangs = rule_config
-            .and_then(|rc| rc.options.get_bool("ignore-shebangs"))
-            .unwrap_or(true);
-
-        let min_spaces_from_content = rule_config
-            .and_then(|rc| rc.options.get_int("min-spaces-from-content"))
-            .unwrap_or(2);
+        let options = &config.rules.comments.options;
+        let require_starting_space = options.require_starting_space;
+        let ignore_shebangs = options.ignore_shebangs;
+        let min_spaces_from_content = options.min_spaces_from_content;
 
         let mut diagnostics = Vec::new();
 
@@ -77,7 +96,7 @@ impl super::LintRule for CommentsRule {
                 && !comment.content.is_empty()
                 && !comment.content.starts_with(' ')
             {
-                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                let severity = config.rules.comments.severity_or(self.default_severity());
 
                 diagnostics.push(
                     DiagnosticBuilder::new(
@@ -91,7 +110,7 @@ impl super::LintRule for CommentsRule {
             }
 
             // Check spacing from content for inline comments
-            if comment.is_inline && min_spaces_from_content > 0 {
+            if comment.is_inline {
                 // Find the line and check spacing before '#'
                 let line_num = comment.span.start.line;
                 let line_offset = context.source_context().get_line_offset(line_num);
@@ -110,16 +129,8 @@ impl super::LintRule for CommentsRule {
                         }
                     }
 
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_possible_wrap,
-                        clippy::cast_lossless
-                    )]
-                    let spaces_i64 = spaces_before as i64;
-
-                    if spaces_i64 < min_spaces_from_content {
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
+                    if min_spaces_from_content.unmet_by(spaces_before) {
+                        let severity = config.rules.comments.severity_or(self.default_severity());
 
                         diagnostics.push(
                             DiagnosticBuilder::new(
@@ -144,7 +155,10 @@ impl super::LintRule for CommentsRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -193,10 +207,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsRule;
-        let config = LintConfig::new().with_rule_config(
-            "comments",
-            RuleConfig::new().with_option("require-starting-space", false),
-        );
+        let config = config_with_rule(RuleName::Comments, "{require-starting-space: false}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -227,10 +238,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsRule;
-        let config = LintConfig::new().with_rule_config(
-            "comments",
-            RuleConfig::new().with_option("min-spaces-from-content", 1i64),
-        );
+        let config = config_with_rule(RuleName::Comments, "{min-spaces-from-content: 1}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -256,10 +264,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsRule;
-        let config = LintConfig::new().with_rule_config(
-            "comments",
-            RuleConfig::new().with_option("ignore-shebangs", false),
-        );
+        let config = config_with_rule(RuleName::Comments, "{ignore-shebangs: false}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

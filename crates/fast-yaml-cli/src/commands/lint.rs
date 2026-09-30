@@ -2,7 +2,9 @@ use anyhow::{Context, Result};
 use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_linter::{
     ConfigFile, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
+    config::IndentSize,
 };
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use crate::cli::LintFormat;
@@ -17,9 +19,9 @@ pub struct LintArgs {
     /// Whether to disable config file auto-discovery (`--no-config`).
     pub no_config: bool,
     /// Maximum line length override (from `--max-line-length`).
-    pub max_line_length: Option<usize>,
+    pub max_line_length: Option<NonZeroUsize>,
     /// Indentation size override (from `--indent-size`).
-    pub indent_size: Option<usize>,
+    pub indent_size: Option<IndentSize>,
     /// Lint output format.
     pub format: LintFormat,
     /// Allow duplicate keys override (from `--allow-duplicate-keys`).
@@ -33,12 +35,6 @@ pub struct LintCommand {
     /// Resolved lint configuration (exposed for batch reuse).
     pub lint_config: LintConfig,
     format: LintFormat,
-}
-
-fn warn_unknown_rules(cfg: &ConfigFile) {
-    for name in cfg.unknown_rules() {
-        eprintln!("warning: unknown rule '{name}' in config file");
-    }
 }
 
 impl LintCommand {
@@ -77,7 +73,6 @@ impl LintCommand {
             // Explicit --config: hard error if missing or invalid
             let cfg = ConfigFile::load(&path)
                 .with_context(|| format!("failed to load config file '{}'", path.display()))?;
-            warn_unknown_rules(&cfg);
             return Ok(cfg.into_lint_config());
         }
 
@@ -94,7 +89,6 @@ impl LintCommand {
             let cfg = ConfigFile::load(&discovered).with_context(|| {
                 format!("failed to load config file '{}'", discovered.display())
             })?;
-            warn_unknown_rules(&cfg);
             return Ok(cfg.into_lint_config());
         }
 
@@ -110,8 +104,11 @@ impl LintCommand {
         let start_time = std::time::Instant::now();
 
         // Apply indent from CommonConfig formatter only when linter config is at default
-        let effective_indent = self.config.formatter.indent() as usize;
-        let lint_config = if self.lint_config.indent_size == 2 && effective_indent != 2 {
+        let effective_indent = self.config.formatter.lint_indent_size();
+        let configured_indent = self.lint_config.rules.indentation.options.indent_size;
+        let lint_config = if configured_indent == IndentSize::default()
+            && effective_indent != IndentSize::default()
+        {
             self.lint_config.clone().with_indent_size(effective_indent)
         } else {
             self.lint_config.clone()
@@ -190,7 +187,7 @@ mod tests {
 
     fn build_no_config(
         config: CommonConfig,
-        max_line_length: Option<usize>,
+        max_line_length: Option<NonZeroUsize>,
         format: LintFormat,
         allow_duplicate_keys: Option<bool>,
         input: &InputSource,
@@ -215,7 +212,13 @@ mod tests {
     fn test_lint_valid_yaml() {
         let input = stdin_input("name: test\nvalue: 123");
         let config = create_test_config(true, false, false, 2);
-        let cmd = build_no_config(config, Some(120), LintFormat::Text, None, &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(120),
+            LintFormat::Text,
+            None,
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ExitCode::Success);
@@ -226,7 +229,13 @@ mod tests {
         let long = "name: this is a very very very very very very very very very very very very very very very very very very long line that exceeds the maximum";
         let input = stdin_input(long);
         let config = create_test_config(true, false, false, 2);
-        let cmd = build_no_config(config, Some(80), LintFormat::Text, None, &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(80),
+            LintFormat::Text,
+            None,
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ExitCode::Success);
@@ -236,7 +245,13 @@ mod tests {
     fn test_lint_invalid_yaml() {
         let input = stdin_input("invalid: [unclosed");
         let config = create_test_config(true, false, false, 2);
-        let cmd = build_no_config(config, Some(120), LintFormat::Text, None, &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(120),
+            LintFormat::Text,
+            None,
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_err());
     }
@@ -245,7 +260,13 @@ mod tests {
     fn test_lint_quiet_mode() {
         let input = stdin_input("name: test");
         let config = create_test_config(true, false, false, 2);
-        let cmd = build_no_config(config, Some(120), LintFormat::Text, None, &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(120),
+            LintFormat::Text,
+            None,
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ExitCode::Success);
@@ -255,7 +276,13 @@ mod tests {
     fn test_lint_json_format() {
         let input = stdin_input("name: test\nvalue: 123");
         let config = create_test_config(false, false, false, 2);
-        let cmd = build_no_config(config, Some(120), LintFormat::Json, None, &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(120),
+            LintFormat::Json,
+            None,
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ExitCode::Success);
@@ -265,7 +292,13 @@ mod tests {
     fn test_lint_duplicate_keys_reported_by_default() {
         let input = stdin_input("key: value1\nkey: value2\nother: data");
         let config = create_test_config(false, false, false, 2);
-        let cmd = build_no_config(config, Some(120), LintFormat::Text, None, &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(120),
+            LintFormat::Text,
+            None,
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ExitCode::LintErrors);
@@ -275,7 +308,13 @@ mod tests {
     fn test_lint_duplicate_keys_allowed_when_flag_set() {
         let input = stdin_input("key: value1\nkey: value2\nother: data");
         let config = create_test_config(false, false, false, 2);
-        let cmd = build_no_config(config, Some(120), LintFormat::Text, Some(true), &input);
+        let cmd = build_no_config(
+            config,
+            NonZeroUsize::new(120),
+            LintFormat::Text,
+            Some(true),
+            &input,
+        );
         let result = cmd.execute(&input);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), ExitCode::Success);
@@ -327,8 +366,7 @@ mod tests {
 
     #[test]
     fn test_config_file_line_length_max_is_loaded() {
-        // Regression: config file line-length.max must set LintConfig::max_line_length,
-        // not just rule_configs, so LineLengthRule::check actually uses it.
+        // Regression: config file line-length.max must reach the typed line-length options.
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
         let input = stdin_input("name: test");
@@ -347,7 +385,10 @@ mod tests {
             &input,
         )
         .unwrap();
-        assert_eq!(cmd.lint_config.max_line_length, Some(50));
+        assert_eq!(
+            cmd.lint_config.rules.line_length.options.max,
+            NonZeroUsize::new(50)
+        );
     }
 
     #[test]
@@ -388,7 +429,7 @@ mod tests {
             LintArgs {
                 config_path: Some(f.path().to_owned()),
                 no_config: false,
-                max_line_length: Some(200),
+                max_line_length: NonZeroUsize::new(200),
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
@@ -398,7 +439,10 @@ mod tests {
         )
         .unwrap();
         // CLI value wins over config file value
-        assert_eq!(cmd.lint_config.max_line_length, Some(200));
+        assert_eq!(
+            cmd.lint_config.rules.line_length.options.max,
+            NonZeroUsize::new(200)
+        );
     }
 
     #[test]
@@ -421,6 +465,6 @@ mod tests {
             &input,
         )
         .unwrap();
-        assert!(!cmd.lint_config.allow_duplicate_keys);
+        assert!(cmd.lint_config.rules.duplicate_key.enabled);
     }
 }

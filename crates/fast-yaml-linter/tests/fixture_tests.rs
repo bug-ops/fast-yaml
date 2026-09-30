@@ -1,6 +1,8 @@
 //! Integration tests using YAML fixtures.
 
-use fast_yaml_linter::{DiagnosticCode, LintConfig, Linter, Severity};
+use std::num::NonZeroUsize;
+
+use fast_yaml_linter::{DiagnosticCode, LintConfig, Linter, Severity, config::RuleName};
 
 #[cfg(test)]
 mod valid_fixtures {
@@ -49,7 +51,7 @@ mod invalid_fixtures {
     #[test]
     fn test_invalid_long_lines() {
         let yaml = include_str!("fixtures/invalid/long_lines.yaml");
-        let config = LintConfig::new().with_max_line_length(Some(80));
+        let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
         let mut linter = Linter::with_config(config);
         linter.add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule));
 
@@ -198,7 +200,7 @@ mod integration_tests {
     #[test]
     fn test_linter_with_disabled_rules() {
         let yaml = include_str!("fixtures/valid/simple.yaml");
-        let config = LintConfig::new().with_disabled_rule(DiagnosticCode::LINE_LENGTH);
+        let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
         let mut linter = Linter::with_config(config);
         linter.add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule));
 
@@ -217,7 +219,7 @@ mod integration_tests {
     #[test]
     fn test_diagnostic_location_accuracy() {
         let yaml = include_str!("fixtures/invalid/long_lines.yaml");
-        let config = LintConfig::new().with_max_line_length(Some(80));
+        let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
         let mut linter = Linter::with_config(config);
         linter.add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule));
 
@@ -260,5 +262,144 @@ mod integration_tests {
 
             assert!(!has_errors, "Expected no errors in {name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod config_fixtures {
+    use std::path::{Path, PathBuf};
+
+    use fast_yaml_linter::{
+        ConfigFile, ConfigFileError, Linter, Severity,
+        config::{Limit, RuleConfigError},
+        rules::{DocumentStartPresence, Forbid, QuoteRequirement, QuoteType},
+    };
+    use std::num::NonZeroUsize;
+
+    fn fixture(relative: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/config")
+            .join(relative)
+    }
+
+    fn load(relative: &str) -> Result<ConfigFile, ConfigFileError> {
+        ConfigFile::load(&fixture(relative))
+    }
+
+    #[test]
+    fn every_valid_config_loads_and_lints() {
+        let mut count = 0;
+        for entry in std::fs::read_dir(fixture("valid")).unwrap() {
+            let path = entry.unwrap().path();
+            let config = ConfigFile::load(&path)
+                .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
+                .into_lint_config();
+            Linter::with_config(config)
+                .lint("a: 1\nb: [1, 2]\nc: {d: e}\n")
+                .unwrap();
+            count += 1;
+        }
+        assert!(count >= 4);
+    }
+
+    #[test]
+    fn full_config_reaches_typed_options() {
+        let rules = load("valid/full.yaml").unwrap().rules;
+        assert_eq!(rules.braces.options.forbid, Forbid::NonEmpty);
+        assert_eq!(rules.brackets.options.max_spaces_inside, Limit::Disabled);
+        assert_eq!(rules.line_length.options.max, NonZeroUsize::new(120));
+        assert_eq!(rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(rules.quoted_strings.options.quote_type, QuoteType::Single);
+        assert!(!rules.comments_indentation.enabled);
+        assert_eq!(rules.document_start.severity, Some(Severity::Error));
+    }
+
+    #[test]
+    fn bool_forms_config() {
+        let rules = load("valid/bool-forms.yaml").unwrap().rules;
+        assert_eq!(
+            rules.document_start.options.present,
+            DocumentStartPresence::Required
+        );
+        assert_eq!(
+            rules.quoted_strings.options.required,
+            QuoteRequirement::NotRequired
+        );
+        assert_eq!(rules.braces.options.forbid, Forbid::All);
+        assert_eq!(rules.brackets.options.forbid, Forbid::No);
+        assert_eq!(rules.line_length.options.max, None);
+    }
+
+    #[test]
+    fn shorthands_config() {
+        let rules = load("valid/shorthands.yaml").unwrap().rules;
+        assert!(!rules.key_ordering.enabled);
+        assert!(rules.truthy.enabled);
+        assert_eq!(rules.line_length.severity, Some(Severity::Warning));
+    }
+
+    #[test]
+    fn invalid_configs_are_rejected_with_rule_and_key() {
+        for (file, needles) in [
+            (
+                "quote-type-typo.yaml",
+                &["quoted-strings", "quote-type", "singel"][..],
+            ),
+            ("unknown-rule.yaml", &["no-such-rule"][..]),
+            ("wrong-type.yaml", &["line-length", "max"][..]),
+            ("unknown-option.yaml", &["line-length", "maxx"][..]),
+            (
+                "unsupported-yamllint-option.yaml",
+                &["indentation", "spaces", "yamllint"][..],
+            ),
+            (
+                "document-end-forbid.yaml",
+                &["document-end", "present", "disable the rule"][..],
+            ),
+            ("bad-severity.yaml", &["braces", "loud"][..]),
+            ("null-option.yaml", &["quoted-strings", "quote-type"][..]),
+            (
+                "inert-extra-required.yaml",
+                &["quoted-strings", "extra-required", "no effect"][..],
+            ),
+        ] {
+            let error = load(&format!("invalid/{file}")).unwrap_err();
+            assert!(
+                matches!(error, ConfigFileError::InvalidRules { .. }),
+                "{file}: {error:?}"
+            );
+            let ConfigFileError::InvalidRules { source, .. } = error else {
+                unreachable!();
+            };
+            let message = source.to_string();
+            for needle in needles {
+                assert!(message.contains(needle), "{file}: {message}");
+            }
+        }
+    }
+
+    #[test]
+    fn top_level_keys_are_validated() {
+        assert!(matches!(
+            load("invalid/top-level-typo.yaml"),
+            Err(ConfigFileError::UnknownKey { .. })
+        ));
+        assert!(matches!(
+            load("invalid/yamllint-extends.yaml"),
+            Err(ConfigFileError::UnsupportedKey { .. })
+        ));
+    }
+
+    #[test]
+    fn unknown_rule_variant_is_reported() {
+        let ConfigFileError::InvalidRules { source, .. } =
+            load("invalid/unknown-rule.yaml").unwrap_err()
+        else {
+            panic!("expected InvalidRules");
+        };
+        let RuleConfigError::UnknownRule(unknown) = source else {
+            panic!("expected UnknownRule");
+        };
+        assert_eq!(unknown.name, "no-such-rule");
     }
 }

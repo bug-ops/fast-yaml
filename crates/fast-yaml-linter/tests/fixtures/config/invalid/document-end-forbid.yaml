@@ -1,0 +1,3 @@
+rules:
+  document-end:
+    present: false

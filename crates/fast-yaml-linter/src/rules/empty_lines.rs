@@ -1,5 +1,8 @@
 //! Rule to check empty lines.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{Limit, RuleOptions};
 use crate::context::source_lines;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
@@ -21,7 +24,7 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::EmptyLinesRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::EmptyLinesRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = EmptyLinesRule;
@@ -33,6 +36,30 @@ use fast_yaml_core::Value;
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct EmptyLinesRule;
+
+/// Options of the empty-lines rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct EmptyLinesOptions {
+    /// Maximum consecutive empty lines inside the document.
+    pub max: Limit,
+    /// Maximum empty lines at the start of the document.
+    pub max_start: Limit,
+    /// Maximum empty lines at the end of the document.
+    pub max_end: Limit,
+}
+
+impl Default for EmptyLinesOptions {
+    fn default() -> Self {
+        Self {
+            max: Limit::Max(2),
+            max_start: Limit::Max(0),
+            max_end: Limit::Max(0),
+        }
+    }
+}
+
+impl RuleOptions for EmptyLinesOptions {}
 
 impl super::LintRule for EmptyLinesRule {
     fn code(&self) -> &str {
@@ -53,18 +80,8 @@ impl super::LintRule for EmptyLinesRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let rule_config = config.get_rule_config(self.code());
-        let max = rule_config
-            .and_then(|rc| rc.options.get_int("max"))
-            .unwrap_or(2);
-
-        let max_start = rule_config
-            .and_then(|rc| rc.options.get_int("max-start"))
-            .unwrap_or(0);
-
-        let max_end = rule_config
-            .and_then(|rc| rc.options.get_int("max-end"))
-            .unwrap_or(0);
+        let options = &config.rules.empty_lines.options;
+        let (max, max_start, max_end) = (options.max, options.max_start, options.max_end);
 
         let mut diagnostics = Vec::new();
         let lines: Vec<(usize, &str)> = source_lines(source).collect();
@@ -95,16 +112,11 @@ impl super::LintRule for EmptyLinesRule {
                         max
                     };
 
-                    #[allow(
-                        clippy::cast_possible_truncation,
-                        clippy::cast_possible_wrap,
-                        clippy::cast_lossless
-                    )]
-                    let empty_count_i64 = empty_count as i64;
-
-                    if limit >= 0 && empty_count_i64 > limit {
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
+                    if limit.exceeded_by(empty_count) {
+                        let severity = config
+                            .rules
+                            .empty_lines
+                            .severity_or(self.default_severity());
 
                         let location =
                             source_context.location_at(source_context.line_start(empty_start_line));
@@ -135,33 +147,26 @@ impl super::LintRule for EmptyLinesRule {
         }
 
         // Check trailing empty lines at end
-        if empty_count > 0 {
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_possible_wrap,
-                clippy::cast_lossless
-            )]
-            let empty_count_i64 = empty_count as i64;
+        if empty_count > 0 && max_end.exceeded_by(empty_count) {
+            let severity = config
+                .rules
+                .empty_lines
+                .severity_or(self.default_severity());
 
-            if max_end >= 0 && empty_count_i64 > max_end {
-                let severity = config.get_effective_severity(self.code(), self.default_severity());
+            let location = source_context.location_at(source_context.line_start(empty_start_line));
+            let span = Span::new(location, location);
 
-                let location =
-                    source_context.location_at(source_context.line_start(empty_start_line));
-                let span = Span::new(location, location);
-
-                diagnostics.push(
-                    DiagnosticBuilder::new(
-                        self.code(),
-                        severity,
-                        format!(
-                            "too many consecutive empty lines at document end (expected at most {max_end}, found {empty_count})"
-                        ),
-                        span,
-                    )
-                    .build_with_context(context.source_context()),
-                );
-            }
+            diagnostics.push(
+                DiagnosticBuilder::new(
+                    self.code(),
+                    severity,
+                    format!(
+                        "too many consecutive empty lines at document end (expected at most {max_end}, found {empty_count})"
+                    ),
+                    span,
+                )
+                .build_with_context(context.source_context()),
+            );
         }
 
         diagnostics
@@ -171,7 +176,10 @@ impl super::LintRule for EmptyLinesRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -211,8 +219,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
-        let config = LintConfig::new()
-            .with_rule_config("empty-lines", RuleConfig::new().with_option("max", 5i64));
+        let config = config_with_rule(RuleName::EmptyLines, "{max: 5}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -239,10 +246,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
-        let config = LintConfig::new().with_rule_config(
-            "empty-lines",
-            RuleConfig::new().with_option("max-start", 2i64),
-        );
+        let config = config_with_rule(RuleName::EmptyLines, "{max-start: 2}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -269,10 +273,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
-        let config = LintConfig::new().with_rule_config(
-            "empty-lines",
-            RuleConfig::new().with_option("max-end", 3i64),
-        );
+        let config = config_with_rule(RuleName::EmptyLines, "{max-end: 3}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -311,8 +312,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
-        let config = LintConfig::new()
-            .with_rule_config("empty-lines", RuleConfig::new().with_option("max", 0i64));
+        let config = config_with_rule(RuleName::EmptyLines, "{max: 0}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

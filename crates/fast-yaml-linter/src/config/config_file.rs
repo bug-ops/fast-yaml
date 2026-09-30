@@ -1,114 +1,49 @@
 //! Config file loading, discovery, and merging into `LintConfig`.
 
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde_norway::Value;
 
-use crate::Severity;
-use crate::config::{RuleConfig, RuleOption};
+use crate::config::{IndentSize, RuleConfigError, RuleName, RulesConfig};
+use crate::echo::{KEY_LIMIT, echo};
 use crate::linter::LintConfig;
-
-/// All known rule codes. Used to validate rule names from config files.
-const KNOWN_RULE_CODES: &[&str] = &[
-    "duplicate-key",
-    "invalid-anchor",
-    "undefined-alias",
-    "indentation",
-    "line-length",
-    "trailing-whitespace",
-    "document-start",
-    "document-end",
-    "empty-values",
-    "new-line-at-end-of-file",
-    "braces",
-    "brackets",
-    "colons",
-    "commas",
-    "hyphens",
-    "comments",
-    "comments-indentation",
-    "empty-lines",
-    "new-lines",
-    "octal-values",
-    "truthy",
-    "quoted-strings",
-    "key-ordering",
-    "float-values",
-];
 
 /// Depth limit for config file discovery walk-up.
 const MAX_DISCOVERY_DEPTH: usize = 20;
 
 /// Top-level structure of a `.fast-yaml.yaml` config file.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConfigFile {
-    /// Map of rule code to per-rule configuration.
-    #[serde(default)]
-    pub rules: HashMap<String, ConfigFileRule>,
-}
-
-/// Per-rule configuration entry from the config file.
-#[derive(Debug, Clone, Deserialize)]
-pub struct ConfigFileRule {
-    /// Whether this rule is enabled.
-    pub enabled: Option<bool>,
-    /// Override the rule's default severity.
-    pub severity: Option<ConfigFileSeverity>,
-    /// Rule-specific options.
-    #[serde(flatten)]
-    pub options: HashMap<String, ConfigFileValue>,
-}
-
-/// Severity value as parsed from the config file.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ConfigFileSeverity {
-    /// Critical error severity.
-    Error,
-    /// Warning severity.
-    Warning,
-    /// Informational severity.
-    Info,
-    /// Hint severity.
-    Hint,
-}
-
-impl From<ConfigFileSeverity> for Severity {
-    fn from(s: ConfigFileSeverity) -> Self {
-        match s {
-            ConfigFileSeverity::Error => Self::Error,
-            ConfigFileSeverity::Warning => Self::Warning,
-            ConfigFileSeverity::Info => Self::Info,
-            ConfigFileSeverity::Hint => Self::Hint,
-        }
-    }
-}
-
-/// Untyped option value from a config file rule block.
 ///
-/// Variant ordering matters for `serde(untagged)`: `Bool` must come before
-/// `Int` because YAML integers are not booleans, but serde tries variants in
-/// order and stops at first match.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum ConfigFileValue {
-    /// Boolean value (true/false).
-    Bool(bool),
-    /// Integer value.
-    Int(i64),
-    /// String value.
-    String(String),
-    /// List of strings.
-    StringList(Vec<String>),
+/// # Examples
+///
+/// ```no_run
+/// use std::path::Path;
+/// use fast_yaml_linter::ConfigFile;
+///
+/// let config = ConfigFile::load(Path::new(".fast-yaml.yaml")).unwrap();
+/// let lint_config = config.into_lint_config();
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct ConfigFile {
+    /// Typed settings of the built-in rules.
+    pub rules: RulesConfig,
 }
+
+/// Top-level keys yamllint accepts that fast-yaml does not implement.
+const YAMLLINT_TOP_LEVEL_KEYS: [&str; 5] = [
+    "extends",
+    "ignore",
+    "ignore-from-file",
+    "yaml-files",
+    "locale",
+];
 
 /// Errors from config file loading.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ConfigFileError {
     /// I/O error reading config file.
-    #[error("failed to read config file '{path}': {source}")]
+    #[error("failed to read config file '{}'", .path.display())]
     Io {
         /// Path that failed.
         path: PathBuf,
@@ -117,12 +52,54 @@ pub enum ConfigFileError {
     },
 
     /// YAML parse error in config file.
-    #[error("failed to parse config file '{path}': {source}")]
+    #[error("failed to parse config file '{}'", .path.display())]
     Parse {
         /// Path that failed.
         path: PathBuf,
         /// Underlying parse error.
         source: serde_norway::Error,
+    },
+
+    /// The `rules:` section is invalid.
+    #[error("invalid rules in config file '{}'", .path.display())]
+    InvalidRules {
+        /// Path that failed.
+        path: PathBuf,
+        /// What is wrong with the rules.
+        source: RuleConfigError,
+    },
+
+    /// The file is not a mapping.
+    #[error("config file '{}': expected a mapping with a 'rules' key", .path.display())]
+    NotAMapping {
+        /// Path that failed.
+        path: PathBuf,
+    },
+
+    /// A top-level key is supported by yamllint but not by fast-yaml.
+    #[error(
+        "config file '{}': top-level key '{}' is supported by yamllint but not implemented by fast-yaml",
+        .path.display(),
+        echo(.key, KEY_LIMIT)
+    )]
+    UnsupportedKey {
+        /// Path that failed.
+        path: PathBuf,
+        /// The unsupported key.
+        key: String,
+    },
+
+    /// A top-level key is not recognized.
+    #[error(
+        "config file '{}': unknown top-level key '{}', expected 'rules'",
+        .path.display(),
+        echo(.key, KEY_LIMIT)
+    )]
+    UnknownKey {
+        /// Path that failed.
+        path: PathBuf,
+        /// The unknown key.
+        key: String,
     },
 }
 
@@ -131,16 +108,54 @@ impl ConfigFile {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigFileError` on I/O or parse failure.
+    /// Returns `ConfigFileError` on I/O or parse failure, or when `rules:` contains an
+    /// unknown rule, an unknown or mistyped option, or an invalid severity.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
         let content = std::fs::read_to_string(path).map_err(|source| ConfigFileError::Io {
             path: path.to_owned(),
             source,
         })?;
-        serde_norway::from_str(&content).map_err(|source| ConfigFileError::Parse {
+        let parse_error = |source| ConfigFileError::Parse {
             path: path.to_owned(),
             source,
-        })
+        };
+        let entries = match serde_norway::from_str(&content).map_err(parse_error)? {
+            Value::Null => serde_norway::Mapping::new(),
+            Value::Mapping(entries) => entries,
+            _ => {
+                return Err(ConfigFileError::NotAMapping {
+                    path: path.to_owned(),
+                });
+            }
+        };
+        let mut rules_value = Value::Null;
+        for (key, value) in entries {
+            let key = match key {
+                Value::String(key) => key,
+                other => format!("{other:?}"),
+            };
+            if key == "rules" {
+                rules_value = value;
+            } else if YAMLLINT_TOP_LEVEL_KEYS.contains(&key.as_str()) {
+                return Err(ConfigFileError::UnsupportedKey {
+                    path: path.to_owned(),
+                    key,
+                });
+            } else {
+                return Err(ConfigFileError::UnknownKey {
+                    path: path.to_owned(),
+                    key,
+                });
+            }
+        }
+        let mut rules = RulesConfig::default();
+        rules
+            .apply(rules_value)
+            .map_err(|source| ConfigFileError::InvalidRules {
+                path: path.to_owned(),
+                source,
+            })?;
+        Ok(Self { rules })
     }
 
     /// Walk up the directory tree from `start_dir` looking for `.fast-yaml.yaml`
@@ -164,104 +179,34 @@ impl ConfigFile {
         None
     }
 
-    /// Returns the configured rule names that are not known rule codes, sorted.
-    ///
-    /// Callers decide how to surface them so typos in the config get feedback.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::ConfigFile;
-    ///
-    /// let cfg: ConfigFile = serde_norway::from_str("rules:\n  no-such-rule:\n    enabled: true\n").unwrap();
-    /// assert_eq!(cfg.unknown_rules(), ["no-such-rule"]);
-    /// ```
-    #[must_use]
-    pub fn unknown_rules(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self
-            .rules
-            .keys()
-            .map(String::as_str)
-            .filter(|name| !KNOWN_RULE_CODES.contains(name))
-            .collect();
-        names.sort_unstable();
-        names
-    }
-
-    /// Convert into a `LintConfig`, applying all `rules:` entries.
+    /// Convert into a `LintConfig` carrying the configured rules.
     #[must_use]
     pub fn into_lint_config(self) -> LintConfig {
-        let mut config = LintConfig::default();
-
-        for (rule_name, rule_cfg) in self.rules {
-            if !KNOWN_RULE_CODES.contains(&rule_name.as_str()) {
-                continue; // reported by `unknown_rules`
-            }
-
-            let enabled = rule_cfg.enabled.unwrap_or(true);
-            let mut rc = if enabled {
-                RuleConfig::new()
-            } else {
-                RuleConfig::disabled()
-            };
-
-            if let Some(sev) = rule_cfg.severity {
-                rc = rc.with_severity(sev.into());
-            }
-
-            for (key, val) in rule_cfg.options {
-                // Special case: line-length.max maps to the top-level LintConfig field because
-                // LineLengthRule reads config.max_line_length directly, not rule_configs.
-                if rule_name == "line-length"
-                    && key == "max"
-                    && let ConfigFileValue::Int(max) = &val
-                    && let Ok(max_usize) = usize::try_from(*max)
-                {
-                    config.max_line_length = Some(max_usize);
-                }
-                // Special case: indentation.indent-size maps to the top-level LintConfig field
-                // because IndentationRule reads config.indent_size directly, not rule_configs.
-                if rule_name == "indentation"
-                    && key == "indent-size"
-                    && let ConfigFileValue::Int(size) = &val
-                    && let Ok(size_usize) = usize::try_from(*size)
-                {
-                    config.indent_size = size_usize;
-                }
-                let opt = match val {
-                    ConfigFileValue::Bool(b) => RuleOption::Bool(b),
-                    ConfigFileValue::Int(i) => RuleOption::Int(i),
-                    ConfigFileValue::String(s) => RuleOption::String(s),
-                    ConfigFileValue::StringList(v) => RuleOption::StringList(v),
-                };
-                rc = rc.with_option(key, opt);
-            }
-
-            config = config.with_rule_config(rule_name, rc);
+        LintConfig {
+            rules: self.rules,
+            ..LintConfig::default()
         }
-
-        config
     }
 
     /// Apply CLI flag overrides on top of a config-derived `LintConfig`.
     /// Only overrides fields where the CLI option was explicitly provided
-    /// (`Some(_)` values).
+    /// (`Some(_)` values). `allow_duplicate_keys: Some(true)` disables the
+    /// `duplicate-key` rule; `Some(false)` leaves it as configured.
     #[must_use]
-    #[allow(clippy::missing_const_for_fn)] // cannot be const: contains if-let with Option
     pub fn merge_cli_overrides(
         mut config: LintConfig,
-        max_line_length: Option<usize>,
-        indent_size: Option<usize>,
+        max_line_length: Option<NonZeroUsize>,
+        indent_size: Option<IndentSize>,
         allow_duplicate_keys: Option<bool>,
     ) -> LintConfig {
-        if let Some(v) = max_line_length {
-            config.max_line_length = Some(v);
+        if let Some(max) = max_line_length {
+            config.rules.line_length.options.max = Some(max);
         }
-        if let Some(v) = indent_size {
-            config.indent_size = v;
+        if let Some(size) = indent_size {
+            config.rules.indentation.options.indent_size = size;
         }
-        if let Some(v) = allow_duplicate_keys {
-            config.allow_duplicate_keys = v;
+        if allow_duplicate_keys == Some(true) {
+            config.rules.set_enabled(RuleName::DuplicateKey, false);
         }
         config
     }
@@ -270,6 +215,7 @@ impl ConfigFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Linter;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -279,15 +225,30 @@ mod tests {
         f
     }
 
+    fn load_str(content: &str) -> Result<ConfigFile, ConfigFileError> {
+        ConfigFile::load(write_temp(content).path())
+    }
+
+    fn rule_error(error: ConfigFileError) -> String {
+        match error {
+            ConfigFileError::InvalidRules { source, .. } => source.to_string(),
+            other => panic!("expected InvalidRules, got {other:?}"),
+        }
+    }
+
+    fn indent(size: u64) -> IndentSize {
+        IndentSize::try_from(size).unwrap()
+    }
+
     #[test]
     fn test_load_valid_config() {
-        let f = write_temp(
+        let cfg = load_str(
             "rules:\n  line-length:\n    enabled: true\n    max: 100\n  key-ordering:\n    enabled: false\n",
-        );
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        assert!(cfg.rules.contains_key("line-length"));
-        assert_eq!(cfg.rules["line-length"].enabled, Some(true));
-        assert_eq!(cfg.rules["key-ordering"].enabled, Some(false));
+        )
+        .unwrap();
+        assert!(cfg.rules.line_length.enabled);
+        assert_eq!(cfg.rules.line_length.options.max, NonZeroUsize::new(100));
+        assert!(!cfg.rules.key_ordering.enabled);
     }
 
     #[test]
@@ -298,139 +259,170 @@ mod tests {
 
     #[test]
     fn test_load_invalid_yaml_returns_parse_error() {
-        let f = write_temp("rules: [broken yaml: {");
-        let result = ConfigFile::load(f.path());
-        assert!(matches!(result, Err(ConfigFileError::Parse { .. })));
+        assert!(matches!(
+            load_str("rules: [broken yaml: {"),
+            Err(ConfigFileError::Parse { .. })
+        ));
+    }
+
+    #[test]
+    fn test_top_level_typo_is_rejected() {
+        let err = load_str("rulez:\n  line-length: {max: 10}\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::UnknownKey { .. }), "{err:?}");
+        let message = err.to_string();
+        assert!(
+            message.contains("rulez") && message.contains("'rules'"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn test_yamllint_top_level_keys_are_unsupported() {
+        for key in [
+            "extends",
+            "ignore",
+            "ignore-from-file",
+            "yaml-files",
+            "locale",
+        ] {
+            let err = load_str(&format!("{key}: default\nrules: {{}}\n")).unwrap_err();
+            assert!(
+                matches!(err, ConfigFileError::UnsupportedKey { .. }),
+                "{key}: {err:?}"
+            );
+            let message = err.to_string();
+            assert!(
+                message.contains(key) && message.contains("yamllint"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_non_mapping_file_is_rejected() {
+        assert!(matches!(
+            load_str("- a\n- b\n"),
+            Err(ConfigFileError::NotAMapping { .. })
+        ));
+        assert!(matches!(
+            load_str("5\n"),
+            Err(ConfigFileError::NotAMapping { .. })
+        ));
+    }
+
+    #[test]
+    fn test_rules_must_be_a_mapping() {
+        let err = load_str("rules: 5\n").unwrap_err();
+        assert!(rule_error(err).contains("mapping of rule names"));
+    }
+
+    #[test]
+    fn test_hostile_key_is_bounded_and_escaped() {
+        let long = "k".repeat(100_000);
+        let err = load_str(&format!("rules:\n  ? {long}\n  : 1\n")).unwrap_err();
+        assert!(rule_error(err).len() < 1_000);
+        let err = load_str("rules:\n  \"a\\e[2Jb\": 1\n").unwrap_err();
+        let message = rule_error(err);
+        assert!(!message.contains('\u{1b}'), "{message:?}");
+        let err = load_str(&format!("? {long}\n: 1\n")).unwrap_err();
+        assert!(err.to_string().len() < 1_000);
+    }
+
+    #[test]
+    fn test_load_without_rules_section_uses_defaults() {
+        assert_eq!(load_str("").unwrap().rules, RulesConfig::default());
+        assert_eq!(load_str("rules:\n").unwrap().rules, RulesConfig::default());
+        assert_eq!(load_str("rules: {}").unwrap().rules, RulesConfig::default());
+    }
+
+    #[test]
+    fn test_unknown_rule_is_hard_error() {
+        let err = load_str("rules:\n  unknown-rule-xyz:\n    enabled: true\n").unwrap_err();
+        assert!(matches!(
+            err,
+            ConfigFileError::InvalidRules {
+                source: RuleConfigError::UnknownRule(_),
+                ..
+            }
+        ));
+        assert!(rule_error(err).contains("unknown-rule-xyz"));
+    }
+
+    #[test]
+    fn test_option_typo_names_rule_and_key() {
+        let err = load_str("rules:\n  quoted-strings:\n    quote-type: singel\n").unwrap_err();
+        let message = rule_error(err);
+        assert!(message.contains("quoted-strings"), "{message}");
+        assert!(message.contains("quote-type"), "{message}");
     }
 
     #[test]
     fn test_into_lint_config_disables_rule() {
-        let f = write_temp("rules:\n  key-ordering:\n    enabled: false\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
+        let lint_config = load_str("rules:\n  key-ordering:\n    enabled: false\n")
+            .unwrap()
+            .into_lint_config();
         assert!(!lint_config.is_rule_enabled("key-ordering"));
     }
 
     #[test]
-    fn test_into_lint_config_sets_options() {
-        let f = write_temp("rules:\n  line-length:\n    max: 100\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-        let rc = lint_config.get_rule_config("line-length").unwrap();
-        assert_eq!(rc.options.get_usize("max"), Some(100));
-    }
-
-    #[test]
-    fn test_line_length_max_sets_top_level_field() {
-        // Regression: line-length.max from config file must propagate to LintConfig::max_line_length
-        // because LineLengthRule reads that field directly, not rule_configs.
-        let f = write_temp("rules:\n  line-length:\n    max: 50\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-        assert_eq!(lint_config.max_line_length, Some(50));
-    }
-
-    #[test]
     fn test_line_length_max_actually_affects_linting() {
-        use crate::Linter;
-        // A 60-character line should trigger a diagnostic when max=50 is set via config file.
         let long_line = "name: a-sixty-character-line-that-exceeds-fifty-chars-limit!!";
         assert_eq!(long_line.len(), 61);
-
-        let f = write_temp("rules:\n  line-length:\n    max: 50\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-
-        let linter = Linter::with_config(lint_config);
-        let diagnostics = linter.lint(long_line).unwrap();
-        assert!(
-            diagnostics.iter().any(|d| d.code.as_str() == "line-length"),
-            "expected line-length diagnostic for 61-char line with max=50"
-        );
+        let lint_config = load_str("rules:\n  line-length:\n    max: 50\n")
+            .unwrap()
+            .into_lint_config();
+        let diagnostics = Linter::with_config(lint_config).lint(long_line).unwrap();
+        assert!(diagnostics.iter().any(|d| d.code.as_str() == "line-length"));
     }
 
     #[test]
     fn test_line_length_default_not_triggered_for_short_line() {
-        use crate::Linter;
-        // Without config, default max_line_length is Some(80). A 60-char line should not trigger.
         let short_line = "name: this-line-is-about-sixty-characters-long-no-more-here";
-        assert!(short_line.len() < 80);
-
-        let f = write_temp("rules: {}");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-
-        let linter = Linter::with_config(lint_config);
-        let diagnostics = linter.lint(short_line).unwrap();
-        assert!(
-            !diagnostics.iter().any(|d| d.code.as_str() == "line-length"),
-            "expected no line-length diagnostic for <80-char line with default config"
-        );
-    }
-
-    #[test]
-    fn test_indentation_indent_size_sets_top_level_field() {
-        // Regression: indentation.indent-size from config file must propagate to
-        // LintConfig::indent_size because IndentationRule reads that field directly.
-        let f = write_temp("rules:\n  indentation:\n    indent-size: 4\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-        assert_eq!(lint_config.indent_size, 4);
+        let lint_config = load_str("rules: {}").unwrap().into_lint_config();
+        let diagnostics = Linter::with_config(lint_config).lint(short_line).unwrap();
+        assert!(!diagnostics.iter().any(|d| d.code.as_str() == "line-length"));
     }
 
     #[test]
     fn test_indentation_indent_size_actually_affects_linting() {
-        use crate::Linter;
-        // With indent-size: 4 set via config, 2-space indented YAML should produce a diagnostic.
         let yaml = "list:\n  - item\n";
-
-        let f = write_temp("rules:\n  indentation:\n    indent-size: 4\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-
-        let linter = Linter::with_config(lint_config);
-        let diagnostics = linter.lint(yaml).unwrap();
-        assert!(
-            diagnostics.iter().any(|d| d.code.as_str() == "indentation"),
-            "expected indentation diagnostic for 2-space indent with indent-size=4 config"
-        );
+        let lint_config = load_str("rules:\n  indentation:\n    indent-size: 4\n")
+            .unwrap()
+            .into_lint_config();
+        let diagnostics = Linter::with_config(lint_config).lint(yaml).unwrap();
+        assert!(diagnostics.iter().any(|d| d.code.as_str() == "indentation"));
     }
 
     #[test]
     fn test_indentation_default_not_triggered_for_2space() {
-        use crate::Linter;
-        // Without config override, default indent_size is 2. 2-space indented YAML is valid.
         let yaml = "list:\n  - item\n";
-
-        let f = write_temp("rules: {}");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let lint_config = cfg.into_lint_config();
-
-        let linter = Linter::with_config(lint_config);
-        let diagnostics = linter.lint(yaml).unwrap();
-        assert!(
-            !diagnostics.iter().any(|d| d.code.as_str() == "indentation"),
-            "expected no indentation diagnostic for 2-space indent with default config"
-        );
+        let lint_config = load_str("rules: {}").unwrap().into_lint_config();
+        let diagnostics = Linter::with_config(lint_config).lint(yaml).unwrap();
+        assert!(!diagnostics.iter().any(|d| d.code.as_str() == "indentation"));
     }
 
     #[test]
     fn test_merge_cli_overrides_takes_precedence() {
-        let base = LintConfig::default();
-        let result = ConfigFile::merge_cli_overrides(base, Some(200), Some(4), Some(true));
-        assert_eq!(result.max_line_length, Some(200));
-        assert_eq!(result.indent_size, 4);
-        assert!(result.allow_duplicate_keys);
+        let result = ConfigFile::merge_cli_overrides(
+            LintConfig::default(),
+            NonZeroUsize::new(200),
+            Some(indent(4)),
+            Some(true),
+        );
+        assert_eq!(result.rules.line_length.options.max, NonZeroUsize::new(200));
+        assert_eq!(result.rules.indentation.options.indent_size.get(), 4);
+        assert!(!result.rules.duplicate_key.enabled);
     }
 
     #[test]
     fn test_merge_cli_overrides_none_does_not_override() {
         let base = LintConfig::new()
-            .with_max_line_length(Some(42))
-            .with_indent_size(3);
-        let result = ConfigFile::merge_cli_overrides(base, None, None, None);
-        assert_eq!(result.max_line_length, Some(42));
-        assert_eq!(result.indent_size, 3);
+            .with_max_line_length(NonZeroUsize::new(42))
+            .with_indent_size(indent(3));
+        let result = ConfigFile::merge_cli_overrides(base, None, None, Some(false));
+        assert_eq!(result.rules.line_length.options.max, NonZeroUsize::new(42));
+        assert_eq!(result.rules.indentation.options.indent_size.get(), 3);
+        assert!(result.rules.duplicate_key.enabled);
     }
 
     #[test]
@@ -459,33 +451,5 @@ mod tests {
     fn test_discover_returns_none_when_not_found() {
         let found = ConfigFile::discover(Path::new("/"));
         assert!(found.is_none());
-    }
-
-    #[test]
-    fn test_unknown_rules_returned() {
-        let f = write_temp(
-            "rules:\n  unknown-rule-xyz:\n    enabled: true\n  truthy:\n    enabled: true\n",
-        );
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        assert_eq!(cfg.unknown_rules(), ["unknown-rule-xyz"]);
-    }
-
-    #[test]
-    fn test_config_file_value_bool_ordering() {
-        let f = write_temp("rules:\n  truthy:\n    allow-bool-values: true\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let rule = &cfg.rules["truthy"];
-        assert!(matches!(
-            rule.options.get("allow-bool-values"),
-            Some(ConfigFileValue::Bool(true))
-        ));
-    }
-
-    #[test]
-    fn test_config_file_severity_deserialization() {
-        let f = write_temp("rules:\n  line-length:\n    severity: warning\n");
-        let cfg = ConfigFile::load(f.path()).unwrap();
-        let rule = &cfg.rules["line-length"];
-        assert!(matches!(rule.severity, Some(ConfigFileSeverity::Warning)));
     }
 }

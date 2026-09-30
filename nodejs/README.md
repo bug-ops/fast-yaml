@@ -194,6 +194,41 @@ interface BatchError {
 }
 ```
 
+## Linting
+
+```typescript
+import { lint, Linter, type LintConfig } from 'fastyaml-rs';
+
+const config: LintConfig = {
+  maxLineLength: 120,
+  rules: {
+    'line-length': { max: 100, severity: 'warning' },
+    'document-start': { present: true },
+    'quoted-strings': { 'quote-type': 'single', required: true },
+    'key-ordering': 'disable',
+    comments: 'info',
+  },
+  disabledRules: ['truthy'],
+};
+
+for (const d of lint('a: 1\n', config)) {
+  console.log(`${d.span.start.line}:${d.span.start.column} ${d.code} ${d.message}`);
+}
+const linter = new Linter(config);
+```
+
+`rules` is the same mapping as `rules:` in the `fy lint --config` file, so option keys are
+kebab-case. An entry is a severity (`error`, `warning`, `info`, `hint`, any case), `'enable'`,
+`'disable'`, or an object with `enabled`, `severity` and the rule's options (see the option table
+in the `fast-yaml-linter` README). Unknown rules, unknown options, wrong types and `null` values
+(except `line-length.max`, where `null` removes the limit) throw an `Error` naming the rule and
+option.
+
+Fields are applied in order: `maxLineLength`, `indentSize`, `requireDocumentStart`,
+`requireDocumentEnd`, `allowDuplicateKeys`, then the `rules` patch, then `disabledRules`, which
+wins. Unset `maxLineLength` keeps the rule default; `0` and an `indentSize` outside 1 to 16
+throw. `requireDocument*: false` leaves the rule unchanged.
+
 ## Parse Limits
 
 `safeLoad`, `safeLoadAll`, `load`, `loadAll`, `parseParallel`, `lint` / `Linter`, and `processFiles` accept two limits (as options, `ParallelConfig`, `LintConfig`, or `BatchConfig`):

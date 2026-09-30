@@ -1,0 +1,44 @@
+rules:
+  braces:
+    forbid: non-empty
+    min-spaces-inside: 1
+    max-spaces-inside: 2
+    min-spaces-inside-empty: 0
+    max-spaces-inside-empty: 1
+  brackets: {forbid: false, max-spaces-inside: -1}
+  colons: {max-spaces-before: 0, max-spaces-after: 2}
+  commas: {max-spaces-before: 0, min-spaces-after: 1, max-spaces-after: 3}
+  hyphens: {max-spaces-after: 1}
+  comments:
+    require-starting-space: false
+    ignore-shebangs: false
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  document-start: {present: required, severity: error}
+  document-end: {present: allowed}
+  empty-lines: {max: 3, max-start: 1, max-end: 1}
+  empty-values:
+    forbid-in-block-mappings: true
+    forbid-in-flow-mappings: false
+    forbid-in-block-sequences: true
+  float-values:
+    require-numeral-before-decimal: true
+    forbid-scientific-notation: true
+    forbid-nan: true
+    forbid-inf: true
+  indentation: {indent-size: 4}
+  key-ordering: {case-sensitive: false, severity: hint}
+  line-length: {max: 120}
+  new-lines: {type: platform}
+  octal-values: {forbid-implicit-octal: true, forbid-explicit-octal: false}
+  quoted-strings:
+    quote-type: single
+    required: only-when-needed
+    extra-required: ['http']
+  truthy:
+    allowed-values: ['true', 'false', yes]
+    check-keys: true
+  duplicate-key: error
+  trailing-whitespace: warning
+  new-line-at-end-of-file: Info
+  invalid-anchor: {enabled: true}
