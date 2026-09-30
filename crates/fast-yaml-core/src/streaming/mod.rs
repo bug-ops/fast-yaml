@@ -22,7 +22,7 @@
 //! assert!(formatted.contains("key: value"));
 //! ```
 
-use crate::error::{EmitError, ParseError};
+use crate::error::{EmitError, EmitResult, ParseError};
 use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
 
 mod formatter;
@@ -31,6 +31,8 @@ mod traits;
 
 #[cfg(feature = "arena")]
 mod arena_backend;
+
+use formatter::Formatted;
 
 // Re-export public API
 pub use std_backend::format_streaming;
@@ -107,13 +109,63 @@ fn fix_special_float_value(value: &str) -> &str {
     }
 }
 
+/// Whether the byte at `i` can start a token: line/input start, whitespace or a flow opener.
+const fn at_token_start(bytes: &[u8], i: usize) -> bool {
+    i == 0
+        || matches!(
+            bytes[i - 1],
+            b' ' | b'\t' | b'\r' | b'\n' | b'[' | b'{' | b','
+        )
+}
+
+/// Whether `c` ends an anchor name in saphyr's scanner (blank, flow indicator, NUL or BOM).
+const fn is_anchor_terminator(c: char) -> bool {
+    matches!(
+        c,
+        ' ' | '\t' | '\r' | '\n' | ',' | '[' | ']' | '{' | '}' | '\0' | '\u{feff}'
+    )
+}
+
+/// Whether `name` can be written back as `&name` and re-scanned as the same anchor.
+fn is_valid_anchor_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.contains(|c: char| {
+            is_anchor_terminator(c)
+                || c.is_control()
+                || c.is_whitespace()
+                || matches!(c, '\u{fffe}' | '\u{ffff}')
+        })
+}
+
+/// Formats `input` with `run`, seeding it with the extracted original anchor names.
+///
+/// The textual scan may be out of sync with the parser. That is detected when the anchor count
+/// differs or an emitted alias would bind to another anchor; the input is then formatted again
+/// with generated, unique `anchor{id}` names.
+fn format_with_anchor_names(
+    input: &str,
+    run: impl Fn(Vec<String>) -> EmitResult<Formatted>,
+) -> EmitResult<String> {
+    let names = extract_anchor_names(input);
+    // Index 0 is a placeholder, so the vector is never empty.
+    let expected = names.len().saturating_sub(1);
+    let formatted = run(names)?;
+    if formatted.max_anchor_id == expected && formatted.aliases_resolve {
+        return Ok(formatted.output);
+    }
+    drop(formatted);
+    run(vec![String::new()]).map(|formatted| formatted.output)
+}
+
 /// Extract original anchor names from YAML input.
 ///
 /// Returns a `Vec` where `index == anchor_id` and `value == original anchor name`.
 /// Index 0 is always an empty string (saphyr anchor IDs start at 1).
 ///
-/// Scans the input for `&name` tokens using the same ordering as saphyr's parser.
-/// Anchors inside quoted strings and comments are skipped.
+/// This is a textual approximation of saphyr's scanner, so ids may diverge from the parser's;
+/// [`format_with_anchor_names`] verifies the count and that no alias would rebind to another
+/// anchor, and regenerates all names otherwise. Names the scanner could not
+/// have produced are stored empty (the formatter then generates `anchor{id}`), keeping ids aligned.
 pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
     // Fast path: no `&` byte means no anchors
     if !input.bytes().any(|b| b == b'&') {
@@ -128,7 +180,7 @@ pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
     while i < len {
         match bytes[i] {
             // Skip single-quoted strings: no escape sequences inside
-            b'\'' => {
+            b'\'' if at_token_start(bytes, i) => {
                 i += 1;
                 while i < len {
                     if bytes[i] == b'\'' {
@@ -145,7 +197,7 @@ pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
                 }
             }
             // Skip double-quoted strings
-            b'"' => {
+            b'"' if at_token_start(bytes, i) => {
                 i += 1;
                 while i < len {
                     if bytes[i] == b'\\' {
@@ -159,34 +211,21 @@ pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
                 }
             }
             // Skip comments to end of line
-            b'#' => {
+            b'#' if i == 0 || bytes[i - 1].is_ascii_whitespace() => {
                 while i < len && bytes[i] != b'\n' {
                     i += 1;
                 }
             }
-            // Block scalar headers: skip lines starting with | or > after whitespace
-            // (content lines follow and may contain `&` that is not an anchor)
-            // We handle this by only treating `&` after valid YAML flow positions.
-            // Anchor: `&` followed by a valid anchor name character
-            b'&' => {
-                i += 1;
-                // Anchor name: [a-zA-Z0-9_-] and other non-space non-special chars
-                let start = i;
-                while i < len {
-                    let b = bytes[i];
-                    // Anchor name ends at whitespace, `{`, `}`, `[`, `]`, `,`, `:`, `#`
-                    if b.is_ascii_whitespace()
-                        || matches!(b, b'{' | b'}' | b'[' | b']' | b',' | b':')
-                    {
-                        break;
-                    }
-                    i += 1;
-                }
-                if i > start
-                    && let Ok(name) = std::str::from_utf8(&bytes[start..i])
-                {
-                    names.push(name.to_owned());
-                }
+            b'&' if at_token_start(bytes, i) => {
+                let rest = &input[i + 1..];
+                let end = rest.find(is_anchor_terminator).unwrap_or(rest.len());
+                let name = &rest[..end];
+                names.push(if is_valid_anchor_name(name) {
+                    name.to_owned()
+                } else {
+                    String::new()
+                });
+                i += 1 + end;
             }
             _ => {
                 i += 1;
@@ -762,6 +801,49 @@ ref3: *a3";
         let names = extract_anchor_names("key: value # &notanchor\nreal: &real\n  v: 1\n");
         assert!(names.contains(&"real".to_owned()));
         assert!(!names.contains(&"notanchor".to_owned()));
+    }
+
+    #[test]
+    fn test_extract_anchor_names_keeps_colon_and_blanks_invalid() {
+        let names = extract_anchor_names("&a:b x\n- &c\u{1}d y\n- &\u{feff}z w\n");
+        assert_eq!(names, ["", "a:b", "", ""]);
+    }
+
+    #[test]
+    fn test_extract_anchor_names_ignores_ampersand_inside_scalar() {
+        let names = extract_anchor_names("a&b: 1\n&c d: 2\n");
+        assert_eq!(names, ["", "c"]);
+    }
+
+    #[test]
+    fn test_anchor_count_mismatch_falls_back_to_generated_names() {
+        let config = EmitterConfig::default();
+        let out = format_streaming("a &b c: 1\n&d e: 2\nf: *d\n", &config).unwrap();
+        assert_eq!(out, "a &b c: 1\n&anchor1 e: 2\nf: *anchor1\n");
+    }
+
+    #[test]
+    fn test_equal_count_misalignment_falls_back_when_alias_would_rebind() {
+        // The scan finds [q, q] (two spurious `&q`, real `&p`/`&q` swallowed by a fake quote):
+        // same count as the parser, but `*p` would resolve to the second `q`.
+        let yaml = "t: Tom &q\nk: [a 'b, &p 1]\nb: &q 2\nc: 'x'\nd: *p\ne: Tom &q\n";
+        assert_eq!(extract_anchor_names(yaml), ["", "q", "q"]);
+        let config = EmitterConfig::default();
+        let out = format_streaming(yaml, &config).unwrap();
+        assert!(out.contains("&anchor1 1"), "{out:?}");
+        assert!(out.contains("&anchor2 2"), "{out:?}");
+        assert!(out.contains("d: *anchor1"), "{out:?}");
+    }
+
+    #[test]
+    fn test_original_anchor_names_are_kept_when_scan_is_correct() {
+        let yaml = "a: it's\nu: http://x/#frag\nk: &first 1\nb: &second 2\nc: *first\nd: *second\n";
+        assert_eq!(extract_anchor_names(yaml), ["", "first", "second"]);
+        let config = EmitterConfig::default();
+        let out = format_streaming(yaml, &config).unwrap();
+        assert!(out.contains("k: &first 1"), "{out:?}");
+        assert!(out.contains("c: *first"), "{out:?}");
+        assert!(out.contains("d: *second"), "{out:?}");
     }
 
     // ── Issue #120: Multi-document streams ──────────────────────────────────

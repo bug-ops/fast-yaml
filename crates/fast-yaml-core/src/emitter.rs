@@ -426,22 +426,34 @@ impl Emitter {
             || prefix.ends_with('\n')
     }
 
-    /// Extract `%YAML` and `%TAG` directive lines that appear before the first `---`.
+    /// Extract `%YAML` and `%TAG` directive lines from the document preamble.
     ///
+    /// The preamble is the run of blank, comment and directive lines before the first
+    /// content line; a `%` line after that is scalar content, not a directive.
     /// Returns the directive block (with a trailing newline) or an empty string.
     fn extract_directives(input: &str) -> String {
         let mut directives = String::new();
         for line in input.lines() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("---") || trimmed.starts_with("...") {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            if !line.starts_with('%') {
                 break;
             }
-            if trimmed.starts_with("%YAML") || trimmed.starts_with("%TAG") {
-                directives.push_str(line);
+            if Self::is_directive(line) {
+                directives.push_str(line.trim_end());
                 directives.push('\n');
             }
         }
         directives
+    }
+
+    /// Whether `line` is a `%YAML` or `%TAG` directive (`%` in column 0, exact name).
+    fn is_directive(line: &str) -> bool {
+        line.strip_prefix("%YAML")
+            .or_else(|| line.strip_prefix("%TAG"))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
     }
 
     /// Format a YAML string with configuration.

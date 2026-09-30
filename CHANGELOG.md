@@ -68,6 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix `braces`/`brackets` dropping the max check for empty collections when only `min-spaces-inside-empty` is set; the empty-collection limits now inherit independently (#426)
 - Fix `document-start: {present: true}` and `quote-type` typos being silently ignored in lint configs (#324) (#426)
+- `fy format` output stays parseable: `%` continuation lines, dropped `...` document ends, invalid anchor names, tagged empty keys and block-ambiguous plain scalars (#429) (#430) (#431) (#441)
 - The `label-on-issue` workflow no longer re-creates the removed `status:needs-triage` label on new issues (#413) (#414)
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
 - Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)
