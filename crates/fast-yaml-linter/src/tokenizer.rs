@@ -1,6 +1,9 @@
 //! Flow collection tokenizer for identifying YAML syntax tokens.
 
-use crate::{Location, SourceContext, Span};
+use crate::{
+    Location, SourceContext, Span,
+    source::offset::{ByteOffset, ByteRange},
+};
 use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser, ScalarStyle};
 
 /// Types of tokens in YAML flow syntax.
@@ -59,8 +62,8 @@ impl Token {
 pub struct FlowTokenizer<'a> {
     _source: &'a str,
     context: &'a SourceContext<'a>,
-    block_scalar_ranges: Vec<(usize, usize)>,
-    masked_ranges: Vec<(usize, usize)>,
+    block_scalar_ranges: Vec<ByteRange>,
+    masked_ranges: Vec<ByteRange>,
 }
 
 impl<'a> FlowTokenizer<'a> {
@@ -77,7 +80,7 @@ impl<'a> FlowTokenizer<'a> {
     /// ```
     #[must_use]
     pub fn new(source: &'a str, context: &'a SourceContext<'a>) -> Self {
-        let scalars = collect_scalar_ranges(source);
+        let scalars = collect_scalar_ranges(source, context);
         let masked_ranges = collect_masked_ranges(source, &scalars);
         Self {
             _source: source,
@@ -110,45 +113,43 @@ impl<'a> FlowTokenizer<'a> {
 
         for line_num in 1..=self.context.line_count() {
             if let Some(line) = self.context.get_line(line_num) {
-                let line_start_offset = self.get_line_start_offset(line_num);
+                let line_start = self.context.line_start(line_num);
 
-                let mut char_col = 0usize;
-                for (byte_col, c) in line.char_indices() {
-                    if c == ch && !self.is_masked(line_start_offset + byte_col) {
-                        // For hyphen, only match at start of line or after whitespace
-                        if token_type == TokenType::Hyphen
-                            && !Self::is_list_item_hyphen(line, byte_col)
-                        {
-                            char_col += 1;
-                            continue;
-                        }
-
-                        let offset = line_start_offset + byte_col;
-
-                        // Skip tokens inside block scalar content (literal `|` or folded `>`)
-                        if self.is_in_block_scalar(offset) {
-                            char_col += 1;
-                            continue;
-                        }
-
-                        // Skip braces/brackets that appear inside block-context plain scalars
-                        // (e.g. template expressions like `${{ var }}`).
-                        if matches!(
-                            token_type,
-                            TokenType::BraceOpen
-                                | TokenType::BraceClose
-                                | TokenType::BracketOpen
-                                | TokenType::BracketClose
-                        ) && Self::is_in_block_plain_scalar_at(line, char_col)
-                        {
-                            char_col += 1;
-                            continue;
-                        }
-                        let start = Location::new(line_num, char_col + 1, offset);
-                        let end = Location::new(line_num, char_col + 2, offset + 1);
-                        tokens.push(Token::new(token_type, Span::new(start, end)));
+                for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
+                    let offset = line_start.add_bytes(byte_col);
+                    if c != ch || self.is_masked(offset) {
+                        continue;
                     }
-                    char_col += 1;
+
+                    // For hyphen, only match at start of line or after whitespace
+                    if token_type == TokenType::Hyphen && !Self::is_list_item_hyphen(line, byte_col)
+                    {
+                        continue;
+                    }
+
+                    let offset = line_start.add_bytes(byte_col);
+
+                    // Skip tokens inside block scalar content (literal `|` or folded `>`)
+                    if self.is_in_block_scalar(offset) {
+                        continue;
+                    }
+
+                    // Skip braces/brackets that appear inside block-context plain scalars
+                    // (e.g. template expressions like `${{ var }}`).
+                    if matches!(
+                        token_type,
+                        TokenType::BraceOpen
+                            | TokenType::BraceClose
+                            | TokenType::BracketOpen
+                            | TokenType::BracketClose
+                    ) && Self::is_in_block_plain_scalar_at(line, char_col)
+                    {
+                        continue;
+                    }
+
+                    tokens.push(Self::single_char_token(
+                        token_type, line_num, char_col, offset,
+                    ));
                 }
             }
         }
@@ -184,27 +185,23 @@ impl<'a> FlowTokenizer<'a> {
         // Single-pass scan of only the span range
         for line_num in span.start.line..=span.end.line {
             if let Some(line) = self.context.get_line(line_num) {
-                let line_start_offset = self.get_line_start_offset(line_num);
+                let line_start = self.context.line_start(line_num);
 
-                let mut char_col = 0usize;
-                for (byte_col, c) in line.char_indices() {
-                    let offset = line_start_offset + byte_col;
+                for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
+                    let offset = line_start.add_bytes(byte_col);
 
                     // Skip if outside span bounds
-                    if offset < span.start.offset || offset >= span.end.offset {
-                        char_col += 1;
+                    if offset.get() < span.start.offset || offset.get() >= span.end.offset {
                         continue;
                     }
 
                     // Skip tokens inside block scalar content
                     if self.is_in_block_scalar(offset) {
-                        char_col += 1;
                         continue;
                     }
 
                     // Skip if inside string
                     if self.is_masked(offset) {
-                        char_col += 1;
                         continue;
                     }
 
@@ -221,11 +218,8 @@ impl<'a> FlowTokenizer<'a> {
                     };
 
                     if let Some(tt) = token_type {
-                        let start = Location::new(line_num, char_col + 1, offset);
-                        let end = Location::new(line_num, char_col + 2, offset + 1);
-                        tokens.push(Token::new(tt, Span::new(start, end)));
+                        tokens.push(Self::single_char_token(tt, line_num, char_col, offset));
                     }
-                    char_col += 1;
                 }
             }
         }
@@ -235,10 +229,22 @@ impl<'a> FlowTokenizer<'a> {
     }
 
     /// Checks if a byte offset falls inside a block scalar range.
-    fn is_in_block_scalar(&self, offset: usize) -> bool {
+    fn is_in_block_scalar(&self, offset: ByteOffset) -> bool {
         self.block_scalar_ranges
             .iter()
-            .any(|&(start, end)| offset >= start && offset < end)
+            .any(|range| range.contains(offset))
+    }
+
+    /// Builds a one-character token at 0-indexed `char_col` on `line`.
+    const fn single_char_token(
+        token_type: TokenType,
+        line: usize,
+        char_col: usize,
+        offset: ByteOffset,
+    ) -> Token {
+        let start = Location::new(line, char_col + 1, offset.get());
+        let end = Location::new(line, char_col + 2, offset.get() + 1);
+        Token::new(token_type, Span::new(start, end))
     }
 
     /// Checks if a position is inside a block-context plain scalar.
@@ -363,11 +369,11 @@ impl<'a> FlowTokenizer<'a> {
     }
 
     /// Checks if a byte offset falls inside a comment or quoted scalar.
-    fn is_masked(&self, offset: usize) -> bool {
+    fn is_masked(&self, offset: ByteOffset) -> bool {
         let idx = self
             .masked_ranges
-            .partition_point(|&(start, _)| start <= offset);
-        idx > 0 && offset < self.masked_ranges[idx - 1].1
+            .partition_point(|range| range.start() <= offset);
+        idx > 0 && self.masked_ranges[idx - 1].contains(offset)
     }
 
     /// Checks if a hyphen at a position is a list item marker.
@@ -394,29 +400,22 @@ impl<'a> FlowTokenizer<'a> {
             TokenType::Hyphen => '-',
         }
     }
-
-    /// Gets the byte offset where a line starts.
-    ///
-    /// Uses pre-computed offsets from `SourceContext` for O(1) access.
-    fn get_line_start_offset(&self, line_num: usize) -> usize {
-        self.context.get_line_offset(line_num)
-    }
 }
 
 /// Byte ranges of scalars that the parser reports as block or quoted.
 struct ScalarRanges {
-    block: Vec<(usize, usize)>,
-    quoted: Vec<(usize, usize)>,
+    block: Vec<ByteRange>,
+    quoted: Vec<ByteRange>,
     /// Byte offset from which the parser produced no events because of a syntax error.
-    unparsed_from: Option<usize>,
+    unparsed_from: Option<ByteOffset>,
 }
 
 /// Collects byte ranges of block scalars (`|` literal, `>` folded) and quoted scalars.
 ///
-/// Saphyr reports char indices, which are converted to byte offsets here.
+/// Each range covers the scalar content (end is one past its last byte).
 /// On parse error, returns the ranges collected before the error and records where
 /// parsing stopped.
-fn collect_scalar_ranges(source: &str) -> ScalarRanges {
+fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRanges {
     let input = BufferedInput::new(source.chars());
     let mut parser = SaphyrParser::new(input);
     let mut ranges = ScalarRanges {
@@ -425,24 +424,12 @@ fn collect_scalar_ranges(source: &str) -> ScalarRanges {
         unparsed_from: None,
     };
 
-    let char_to_byte: Vec<usize> = source
-        .char_indices()
-        .map(|(byte, _)| byte)
-        .chain(std::iter::once(source.len()))
-        .collect();
-    let to_byte = |char_index: usize| {
-        char_to_byte
-            .get(char_index)
-            .copied()
-            .unwrap_or(source.len())
-    };
-
-    let mut parsed_until = 0usize;
+    let mut parsed_until = ByteOffset::ZERO;
     loop {
         match parser.next_event() {
             Some(Ok((event, span))) => {
-                let range = (to_byte(span.start.index()), to_byte(span.end.index()));
-                parsed_until = range.1;
+                let range = context.byte_range_of(span);
+                parsed_until = range.end();
                 if let Event::Scalar(_, style, ..) = event {
                     match style {
                         ScalarStyle::Literal | ScalarStyle::Folded => ranges.block.push(range),
@@ -464,43 +451,45 @@ fn collect_scalar_ranges(source: &str) -> ScalarRanges {
     ranges
 }
 
+/// Scanner state of [`collect_masked_ranges`].
+#[derive(Clone, Copy)]
+enum Mode {
+    Code,
+    Comment,
+    Single,
+    Double,
+}
+
 /// Collects sorted byte ranges of comments and quoted scalars in `source`.
 ///
 /// Quoted scalars come from the parser. A `#` starts a comment only at the start of
 /// a line or after whitespace. Past a parse error, quotes are detected heuristically
 /// (opening after whitespace or a flow indicator, closing at the latest at end of
 /// line) so that stray quotes cannot mask the rest of the file.
-fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<(usize, usize)> {
-    #[derive(Clone, Copy)]
-    enum Mode {
-        Code,
-        Comment,
-        Single,
-        Double,
-    }
-
+fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange> {
     let mut ranges = Vec::new();
     let mut mode = Mode::Code;
-    let mut start = 0usize;
+    let mut start = ByteOffset::ZERO;
     let mut prev = None::<char>;
     let mut block_idx = 0usize;
     let mut quoted_idx = 0usize;
     let mut chars = source.char_indices().peekable();
 
-    while let Some((offset, ch)) = chars.next() {
+    while let Some((byte, ch)) = chars.next() {
+        let offset = ByteOffset::new(byte);
         match mode {
             Mode::Code => {
                 while scalars
                     .block
                     .get(block_idx)
-                    .is_some_and(|&(_, end)| end <= offset)
+                    .is_some_and(|range| range.end() <= offset)
                 {
                     block_idx += 1;
                 }
                 if scalars
                     .block
                     .get(block_idx)
-                    .is_some_and(|&(block_start, _)| block_start <= offset)
+                    .is_some_and(|range| range.start() <= offset)
                 {
                     prev = None;
                     continue;
@@ -509,15 +498,15 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<(usize, us
                 while scalars
                     .quoted
                     .get(quoted_idx)
-                    .is_some_and(|&(_, end)| end <= offset)
+                    .is_some_and(|range| range.end() <= offset)
                 {
                     quoted_idx += 1;
                 }
-                if let Some(&(quoted_start, quoted_end)) = scalars.quoted.get(quoted_idx)
-                    && quoted_start <= offset
+                if let Some(&quoted) = scalars.quoted.get(quoted_idx)
+                    && quoted.start() <= offset
                 {
-                    if quoted_start == offset {
-                        ranges.push((quoted_start, quoted_end));
+                    if quoted.start() == offset {
+                        ranges.push(quoted);
                     }
                     prev = Some(ch);
                     continue;
@@ -546,14 +535,14 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<(usize, us
                 prev = Some(ch);
             }
             Mode::Comment | Mode::Single | Mode::Double if ch == '\n' => {
-                ranges.push((start, offset));
+                ranges.push(ByteRange::new(start, offset));
                 mode = Mode::Code;
                 prev = Some(ch);
             }
             Mode::Comment => {}
             Mode::Single => {
                 if ch == '\'' && chars.next_if(|&(_, next)| next == '\'').is_none() {
-                    ranges.push((start, offset + 1));
+                    ranges.push(ByteRange::new(start, offset.add_bytes(1)));
                     mode = Mode::Code;
                     prev = Some(ch);
                 }
@@ -563,7 +552,7 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<(usize, us
                     chars.next();
                 }
                 '"' => {
-                    ranges.push((start, offset + 1));
+                    ranges.push(ByteRange::new(start, offset.add_bytes(1)));
                     mode = Mode::Code;
                     prev = Some(ch);
                 }
@@ -573,7 +562,7 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<(usize, us
     }
 
     if !matches!(mode, Mode::Code) {
-        ranges.push((start, source.len()));
+        ranges.push(ByteRange::new(start, ByteOffset::new(source.len())));
     }
 
     ranges
@@ -1014,25 +1003,22 @@ mod tests {
     #[test]
     fn test_collect_block_scalar_ranges_literal() {
         let yaml = "key: |\n  content [bracket]\n";
-        let ranges = collect_scalar_ranges(yaml).block;
+        let ranges = collect_scalar_ranges(yaml, &SourceContext::new(yaml)).block;
         assert_eq!(ranges.len(), 1);
-        // Range must cover the block scalar content
-        let (start, end) = ranges[0];
-        // The word "bracket" is inside the range
         let bracket_pos = yaml.find('[').unwrap();
-        assert!(bracket_pos >= start && bracket_pos < end);
+        assert!(ranges[0].contains(ByteOffset::new(bracket_pos)));
     }
 
     #[test]
     fn test_block_scalar_ranges_are_byte_offsets_with_non_ascii_prefix() {
         let yaml = "# ———\nrun: |\n  echo\n  tail }\nc: {a: b}\n";
-        let ranges = collect_scalar_ranges(yaml).block;
+        let ranges = collect_scalar_ranges(yaml, &SourceContext::new(yaml)).block;
         assert_eq!(ranges.len(), 1);
-        let (start, end) = ranges[0];
-        assert!(yaml[start..].starts_with("echo"));
-        assert!(end <= yaml.len());
+        let range = ranges[0];
+        assert!(yaml[range.start().get()..].starts_with("echo"));
+        assert!(range.end().get() <= yaml.len());
         let stray = yaml.find("tail }").unwrap() + 5;
-        assert!(stray >= start && stray < end);
+        assert!(range.contains(ByteOffset::new(stray)));
     }
 
     #[test]

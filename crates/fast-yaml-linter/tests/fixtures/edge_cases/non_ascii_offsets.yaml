@@ -1,0 +1,8 @@
+—: "é"
+ключ: "simple"
+"名前": 'plain'
+🎉: { a: 1 }
+données: [ 1, 2 ]
+emoji: "🎉 party"
+escaped: "\u00e9"
+тире: "—"

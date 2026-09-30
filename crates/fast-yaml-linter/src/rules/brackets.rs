@@ -1,12 +1,8 @@
 //! Rule to check flow sequence brackets `[]` formatting.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    rules::flow_common::{
-        check_spaces_after_opening, check_spaces_before_closing, is_empty_collection,
-        pair_delimiters,
-    },
-    tokenizer::{FlowTokenizer, TokenType},
+    Diagnostic, DiagnosticCode, LintConfig, LintContext, Severity,
+    rules::flow_common::{FlowCollection, check_flow_collection},
 };
 use fast_yaml_core::Value;
 
@@ -24,7 +20,7 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::BracketsRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::BracketsRule, rules::LintRule, LintConfig, LintContext, config::RuleConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = BracketsRule;
@@ -34,7 +30,7 @@ use fast_yaml_core::Value;
 /// let config = LintConfig::new()
 ///     .with_rule_config("brackets", RuleConfig::new().with_option("forbid", "no"));
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct BracketsRule;
@@ -56,124 +52,14 @@ impl super::LintRule for BracketsRule {
         Severity::Warning
     }
 
-    #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
-        let source_context = context.source_context();
-        let tokenizer = FlowTokenizer::new(source, source_context);
-
-        let rule_config = config.get_rule_config(self.code());
-        let forbid = rule_config
-            .and_then(|rc| rc.options.get_string("forbid"))
-            .unwrap_or("no");
-
-        let min_spaces_inside = rule_config
-            .and_then(|rc| rc.options.get_int("min-spaces-inside"))
-            .unwrap_or(0);
-
-        let max_spaces_inside = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-inside"))
-            .unwrap_or(0);
-
-        let min_spaces_inside_empty = rule_config
-            .and_then(|rc| rc.options.get_int("min-spaces-inside-empty"))
-            .unwrap_or(-1);
-
-        let max_spaces_inside_empty = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-inside-empty"))
-            .unwrap_or(-1);
-
-        let mut diagnostics = Vec::new();
-
-        let open_brackets = tokenizer.find_all(TokenType::BracketOpen);
-        let close_brackets = tokenizer.find_all(TokenType::BracketClose);
-        let pairs = pair_delimiters(&open_brackets, &close_brackets);
-
-        // Check forbid option
-        match forbid {
-            "all" => {
-                for token in &open_brackets {
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "flow sequence forbidden (forbid: all)",
-                            token.span,
-                        )
-                        .build_with_context(source_context),
-                    );
-                }
-                return diagnostics;
-            }
-            "non-empty" => {
-                // Check if sequence is non-empty
-                for (open, close) in &pairs {
-                    if !is_empty_collection(source, open.span.end.offset, close.span.start.offset) {
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
-                        diagnostics.push(
-                            DiagnosticBuilder::new(
-                                self.code(),
-                                severity,
-                                "non-empty flow sequence forbidden (forbid: non-empty)",
-                                open.span,
-                            )
-                            .build_with_context(source_context),
-                        );
-                    }
-                }
-                return diagnostics;
-            }
-            _ => {} // "no" - continue with spacing checks
-        }
-
-        // Check spacing
-        for (open, close) in &pairs {
-            let is_empty =
-                is_empty_collection(source, open.span.end.offset, close.span.start.offset);
-
-            let (min_spaces, max_spaces) = if is_empty && min_spaces_inside_empty >= 0 {
-                (min_spaces_inside_empty, max_spaces_inside_empty)
-            } else {
-                (min_spaces_inside, max_spaces_inside)
-            };
-
-            // Check spaces after opening bracket
-            if let Some(diag) = check_spaces_after_opening(
-                source,
-                source_context,
-                open.span.end.offset,
-                close.span.start.offset,
-                min_spaces,
-                max_spaces,
-                self.code(),
-                config,
-                "brackets",
-                open.span,
-            ) {
-                diagnostics.push(diag);
-            }
-
-            // Check spaces before closing bracket
-            if let Some(diag) = check_spaces_before_closing(
-                source,
-                source_context,
-                open.span.end.offset,
-                close.span.start.offset,
-                min_spaces,
-                max_spaces,
-                self.code(),
-                config,
-                "brackets",
-                close.span,
-            ) {
-                diagnostics.push(diag);
-            }
-        }
-
-        diagnostics
+        check_flow_collection(
+            context,
+            config,
+            self.code(),
+            self.default_severity(),
+            FlowCollection::Sequence,
+        )
     }
 }
 
@@ -397,6 +283,20 @@ mod tests {
         );
         let diagnostics = BracketsRule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    }
+
+    #[test]
+    fn test_brackets_non_ascii_key_location() {
+        let yaml = "—: [ 1 ]\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let config = LintConfig::new().with_rule_config(
+            "brackets",
+            RuleConfig::new().with_option("forbid", "non-empty"),
+        );
+        let diagnostics = BracketsRule.check(&LintContext::new(yaml), &value, &config);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        let start = diagnostics[0].span.start;
+        assert_eq!((start.column, start.offset), (4, 5));
     }
 
     #[test]

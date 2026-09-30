@@ -1,10 +1,161 @@
 //! Common utilities for flow collection rules (braces, brackets).
 
 use crate::{
-    LintConfig, Severity, SourceContext, Span,
+    LintConfig, LintContext, Severity, SourceContext, Span,
     diagnostic::{Diagnostic, DiagnosticBuilder},
-    tokenizer::Token,
+    tokenizer::{FlowTokenizer, Token, TokenType},
 };
+
+/// The two flow collection kinds checked by the braces and brackets rules.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FlowCollection {
+    /// Flow mapping `{}`.
+    Mapping,
+    /// Flow sequence `[]`.
+    Sequence,
+}
+
+impl FlowCollection {
+    const fn open(self) -> TokenType {
+        match self {
+            Self::Mapping => TokenType::BraceOpen,
+            Self::Sequence => TokenType::BracketOpen,
+        }
+    }
+
+    const fn close(self) -> TokenType {
+        match self {
+            Self::Mapping => TokenType::BraceClose,
+            Self::Sequence => TokenType::BracketClose,
+        }
+    }
+
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Mapping => "flow mapping",
+            Self::Sequence => "flow sequence",
+        }
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Mapping => "braces",
+            Self::Sequence => "brackets",
+        }
+    }
+}
+
+/// Value of the `forbid` rule option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Forbid {
+    No,
+    NonEmpty,
+    All,
+}
+
+impl Forbid {
+    fn parse(option: Option<&str>) -> Self {
+        match option {
+            Some("all") => Self::All,
+            Some("non-empty") => Self::NonEmpty,
+            _ => Self::No,
+        }
+    }
+}
+
+/// Runs the shared braces/brackets check for one kind of flow collection.
+pub(crate) fn check_flow_collection(
+    context: &LintContext,
+    config: &LintConfig,
+    code: &str,
+    default_severity: Severity,
+    kind: FlowCollection,
+) -> Vec<Diagnostic> {
+    let source = context.source();
+    let source_context = context.source_context();
+    let tokenizer = FlowTokenizer::new(source, source_context);
+
+    let rule_config = config.get_rule_config(code);
+    let forbid = Forbid::parse(rule_config.and_then(|rc| rc.options.get_string("forbid")));
+    let int_option = |key: &str, default: i64| {
+        rule_config
+            .and_then(|rc| rc.options.get_int(key))
+            .unwrap_or(default)
+    };
+    let min_spaces_inside = int_option("min-spaces-inside", 0);
+    let max_spaces_inside = int_option("max-spaces-inside", 0);
+    let min_spaces_inside_empty = int_option("min-spaces-inside-empty", -1);
+    let max_spaces_inside_empty = int_option("max-spaces-inside-empty", -1);
+
+    let opens = tokenizer.find_all(kind.open());
+    let closes = tokenizer.find_all(kind.close());
+    let pairs = pair_delimiters(&opens, &closes);
+    let severity = config.get_effective_severity(code, default_severity);
+    let mut diagnostics = Vec::new();
+
+    match forbid {
+        Forbid::All => {
+            let message = format!("{} forbidden (forbid: all)", kind.noun());
+            for token in &opens {
+                diagnostics.push(
+                    DiagnosticBuilder::new(code, severity, message.as_str(), token.span)
+                        .build_with_context(source_context),
+                );
+            }
+            return diagnostics;
+        }
+        Forbid::NonEmpty => {
+            let message = format!("non-empty {} forbidden (forbid: non-empty)", kind.noun());
+            for (open, close) in &pairs {
+                if !is_empty_collection(source, open.span.end.offset, close.span.start.offset) {
+                    diagnostics.push(
+                        DiagnosticBuilder::new(code, severity, message.as_str(), open.span)
+                            .build_with_context(source_context),
+                    );
+                }
+            }
+            return diagnostics;
+        }
+        Forbid::No => {}
+    }
+
+    for (open, close) in &pairs {
+        let is_empty = is_empty_collection(source, open.span.end.offset, close.span.start.offset);
+
+        let (min_spaces, max_spaces) = if is_empty && min_spaces_inside_empty >= 0 {
+            (min_spaces_inside_empty, max_spaces_inside_empty)
+        } else {
+            (min_spaces_inside, max_spaces_inside)
+        };
+
+        diagnostics.extend(check_spaces_after_opening(
+            source,
+            source_context,
+            open.span.end.offset,
+            close.span.start.offset,
+            min_spaces,
+            max_spaces,
+            code,
+            config,
+            kind.name(),
+            open.span,
+        ));
+        diagnostics.extend(check_spaces_before_closing(
+            source,
+            source_context,
+            open.span.end.offset,
+            close.span.start.offset,
+            min_spaces,
+            max_spaces,
+            code,
+            config,
+            kind.name(),
+            close.span,
+        ));
+    }
+
+    diagnostics
+}
 
 /// Pairs opening and closing delimiter tokens by nesting depth.
 ///

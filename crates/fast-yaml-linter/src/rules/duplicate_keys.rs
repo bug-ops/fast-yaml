@@ -1,7 +1,8 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+    SourceContext, Span,
 };
 use fast_yaml_core::Value;
 use saphyr_parser::{BufferedInput, Event, Parser as SaphyrParser};
@@ -47,18 +48,23 @@ impl super::LintRule for DuplicateKeysRule {
 enum ScopeKind {
     /// A YAML mapping. Tracks seen keys and whether the next scalar is a key.
     Mapping {
-        seen: HashMap<String, (usize, usize)>, // key → (1-indexed line, 1-indexed col)
+        seen: HashMap<String, usize>, // key → 1-indexed line of first occurrence
         expecting_key: bool,
     },
     /// A YAML sequence. No key tracking needed.
     Sequence,
 }
 
+/// A repeated key occurrence.
+struct DuplicateKey {
+    key: String,
+    first_line: usize,
+    span: Span,
+}
+
 /// Parses raw YAML events and collects duplicate key occurrences.
-///
-/// Returns a list of `(key, first_line, dup_line, dup_col)` (all 1-indexed).
-fn collect_duplicates(source: &str) -> Vec<(String, usize, usize, usize)> {
-    let mut duplicates: Vec<(String, usize, usize, usize)> = Vec::new();
+fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<DuplicateKey> {
+    let mut duplicates = Vec::new();
     let mut scopes: Vec<ScopeKind> = Vec::new();
 
     let input = BufferedInput::new(source.chars());
@@ -92,10 +98,6 @@ fn collect_duplicates(source: &str) -> Vec<(String, usize, usize, usize)> {
             }
 
             Event::Scalar(ref value, ..) => {
-                // saphyr Marker: line() is 1-indexed, col() is 0-indexed.
-                let scalar_line = span.start.line();
-                let scalar_col = span.start.col() + 1; // convert to 1-indexed
-
                 match scopes.last_mut() {
                     Some(ScopeKind::Mapping {
                         seen,
@@ -103,10 +105,14 @@ fn collect_duplicates(source: &str) -> Vec<(String, usize, usize, usize)> {
                     }) => {
                         if *expecting_key {
                             let key = value.as_ref().to_owned();
-                            if let Some(&(first_line, _)) = seen.get(&key) {
-                                duplicates.push((key, first_line, scalar_line, scalar_col));
+                            if let Some(&first_line) = seen.get(&key) {
+                                duplicates.push(DuplicateKey {
+                                    key,
+                                    first_line,
+                                    span: source_context.span_of(span),
+                                });
                             } else {
-                                seen.insert(key, (scalar_line, scalar_col));
+                                seen.insert(key, span.start.line());
                             }
                             *expecting_key = false; // next scalar in this mapping is a value
                         } else {
@@ -149,39 +155,25 @@ fn scan_duplicate_keys(
     source_context: &SourceContext<'_>,
     severity: Severity,
 ) -> Vec<Diagnostic> {
-    collect_duplicates(source)
+    collect_duplicates(source, source_context)
         .into_iter()
-        .map(|(key, first_line, dup_line, dup_col)| {
-            let span = span_for_key(source, dup_line, dup_col, key.len());
-            DiagnosticBuilder::new(
-                DiagnosticCode::DUPLICATE_KEY,
-                severity,
-                format!("duplicate key '{key}' (first defined at line {first_line})"),
-                span,
-            )
-            .with_suggestion("remove this duplicate key or rename it", span, None)
-            .build_with_context(source_context)
-        })
+        .map(
+            |DuplicateKey {
+                 key,
+                 first_line,
+                 span,
+             }| {
+                DiagnosticBuilder::new(
+                    DiagnosticCode::DUPLICATE_KEY,
+                    severity,
+                    format!("duplicate key '{key}' (first defined at line {first_line})"),
+                    span,
+                )
+                .with_suggestion("remove this duplicate key or rename it", span, None)
+                .build_with_context(source_context)
+            },
+        )
         .collect()
-}
-
-/// Constructs a [`crate::Span`] for a key at the given 1-indexed line and column.
-fn span_for_key(source: &str, line: usize, col: usize, key_len: usize) -> crate::Span {
-    use crate::{Location, Span};
-
-    let line_start_offset: usize = source
-        .lines()
-        .take(line.saturating_sub(1))
-        .map(|l| l.len() + 1) // +1 for the newline byte
-        .sum();
-
-    let col_offset = col.saturating_sub(1);
-    let start_offset = line_start_offset + col_offset;
-
-    Span::new(
-        Location::new(line, col, start_offset),
-        Location::new(line, col + key_len, start_offset + key_len),
-    )
 }
 
 #[cfg(test)]
@@ -309,6 +301,35 @@ mod tests {
             "column should be 1-indexed at indent 2; got {}",
             diags[0].span.start.column
         );
+    }
+
+    /// Regression tests for #308: spans of non-ASCII keys and CRLF sources.
+    #[test]
+    fn test_non_ascii_duplicate_key_span() {
+        let diags = run("ключ: 1\nключ: 2\n");
+        assert_eq!(diags.len(), 1);
+        let span = diags[0].span;
+        assert_eq!(
+            (span.start.line, span.start.column, span.start.offset),
+            (2, 1, 12)
+        );
+        assert_eq!((span.end.column, span.end.offset), (5, 20));
+    }
+
+    #[test]
+    fn test_non_ascii_flow_duplicate_key_span() {
+        let diags = run("{é: 1, é: 2}");
+        assert_eq!(diags.len(), 1);
+        let span = diags[0].span;
+        assert_eq!((span.start.column, span.start.offset), (8, 8));
+        assert_eq!((span.end.column, span.end.offset), (9, 10));
+    }
+
+    #[test]
+    fn test_crlf_duplicate_key_offset() {
+        let diags = run("a: 1\r\na: 2\r\n");
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].span.start.offset, 6);
     }
 
     /// Regression test for #188: duplicate keys after `<<: *anchor` must be detected.
