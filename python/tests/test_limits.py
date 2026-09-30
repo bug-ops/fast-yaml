@@ -1,7 +1,8 @@
 """Resource-limit and cyclic-structure tests (#336, #337)."""
 
-import fast_yaml
 import pytest
+
+import fast_yaml
 
 DEEP = "- " * 20_000 + "x"
 BOMB = "a0: &a0 [x,x,x,x,x,x,x,x,x]\n" + "".join(
@@ -9,13 +10,19 @@ BOMB = "a0: &a0 [x,x,x,x,x,x,x,x,x]\n" + "".join(
 )
 
 
-STRBOMB = 'a0: &a0 "' + "x" * 1024 + '"\n' + "".join(
-    f"a{i}: &a{i} [{','.join([f'*a{i - 1}'] * 9)}]\n" for i in range(1, 7)
+STRBOMB = (
+    'a0: &a0 "'
+    + "x" * 1024
+    + '"\n'
+    + "".join(f"a{i}: &a{i} [{','.join([f'*a{i - 1}'] * 9)}]\n" for i in range(1, 7))
 )
 
 
-TAGBOMB = 'a0: &a0 !<tag:' + "x" * 10_000 + '> ""\n' + "".join(
-    f"a{i}: &a{i} [{','.join([f'*a{i - 1}'] * 9)}]\n" for i in range(1, 6)
+TAGBOMB = (
+    "a0: &a0 !<tag:"
+    + "x" * 10_000
+    + '> ""\n'
+    + "".join(f"a{i}: &a{i} [{','.join([f'*a{i - 1}'] * 9)}]\n" for i in range(1, 6))
 )
 
 
@@ -40,13 +47,17 @@ def _self_dict():
     return d
 
 
-@pytest.mark.parametrize("text", [DEEP, BOMB, STRBOMB, TAGBOMB], ids=["deep", "bomb", "strbomb", "tagbomb"])
+@pytest.mark.parametrize(
+    "text", [DEEP, BOMB, STRBOMB, TAGBOMB], ids=["deep", "bomb", "strbomb", "tagbomb"]
+)
 def test_safe_load_rejects_hostile_input(text):
     with pytest.raises(ValueError, match="limit exceeded"):
         fast_yaml.safe_load(text)
 
 
-@pytest.mark.parametrize("text", [DEEP, BOMB, STRBOMB, TAGBOMB], ids=["deep", "bomb", "strbomb", "tagbomb"])
+@pytest.mark.parametrize(
+    "text", [DEEP, BOMB, STRBOMB, TAGBOMB], ids=["deep", "bomb", "strbomb", "tagbomb"]
+)
 def test_safe_load_all_rejects_hostile_input(text):
     with pytest.raises(ValueError, match="limit exceeded"):
         list(fast_yaml.safe_load_all(text))
