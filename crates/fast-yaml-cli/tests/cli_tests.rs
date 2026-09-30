@@ -775,7 +775,7 @@ fn test_lint_missing_path_with_clean_file_fails() {
 
 #[test]
 #[cfg(feature = "linter")]
-fn test_lint_zero_match_glob_succeeds() {
+fn test_lint_zero_match_glob_fails() {
     let dir = tempfile::tempdir().unwrap();
     let pattern = dir.path().join("*.nomatch");
 
@@ -784,8 +784,22 @@ fn test_lint_zero_match_glob_succeeds() {
         .args(["lint", "--no-config"])
         .arg(&pattern)
         .assert()
-        .success()
-        .stderr(predicate::str::contains("No YAML files found"));
+        .failure()
+        .stderr(predicate::str::contains("glob pattern matched no files"));
+}
+
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_batch_flags_without_input_fail() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["lint", "--no-config"])
+        .arg("-j2")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "batch options (--jobs, --include, --exclude) need input",
+        ));
 }
 
 #[test]

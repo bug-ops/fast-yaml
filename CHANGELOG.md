@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core**: the flow emitter quotes a string `<<` key so dumped data reloads unchanged (#478) (#494)
 - **Core**: `DecimalBigInt` is replaced by radix-aware `BigInt`/`IntRadix`, and `canonicalize` stores integers beyond `i64` as plain `Representation` with canonical decimal text (#495)
 - **Core/CLI/Python/Node.js**: hex and octal integers beyond `i64` load as big integers instead of strings, up to 14284 significant bits (#495)
+- **CLI**: `fy format`/`fy lint` exit 1 when a glob matches nothing or is malformed, or a `--stdin-files` line names a missing path; `--jobs`/`--include`/`--exclude` without paths now fail instead of printing "No YAML files found" (they never read stdin) (#402) (#PR)
+- **Linter**: `ConfigFile::load` vets config with the core parser limits, so deeply nested configs fail fast and syntax errors become `ConfigFileError::Rejected` instead of `Parse` (#424) (#PR)
 - **Node.js**: minimum supported Node.js raised from 20 to 22 (Node 20 is EOL); CI covers 22 and 24 (#472)
 - **Linter**: diagnostic context lines are windowed to 120 chars around the highlight, and `ContextLine` gains `column_offset`/`truncated_end` (Python, Node.js and JSON output too), fixing quadratic memory on long lines (#454) (#468)
 - **Core**: `canonicalize` keeps integers overflowing `i64` as `Value::Representation` instead of `ScalarOwned::String`, so consumers can tell them from strings, and adds `value::scalar_key_text`; CLI and Node.js output is unchanged (#392) (#462)

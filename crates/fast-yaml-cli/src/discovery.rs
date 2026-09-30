@@ -222,7 +222,8 @@ impl FileDiscovery {
     ///
     /// # Errors
     ///
-    /// Returns an error if a file cannot be canonicalized or stdin cannot be read.
+    /// Returns an error if a file cannot be canonicalized, a glob matches nothing, a stdin line
+    /// names a missing path, or stdin cannot be read.
     pub fn discover_source(
         &self,
         source: &BatchSource,
@@ -238,7 +239,12 @@ impl FileDiscovery {
     /// Paths can be:
     /// - Regular files (included directly if matching patterns)
     /// - Directories (walked recursively)
-    /// - Glob patterns (expanded)
+    /// - Glob patterns (expanded; matching nothing is an error)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a file cannot be canonicalized or a glob is malformed or matches
+    /// nothing.
     pub fn discover(&self, paths: &[InputPath]) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
         // Heuristic: estimate 10 files per input path
         let estimated_capacity = paths.len().saturating_mul(10);
@@ -257,7 +263,7 @@ impl FileDiscovery {
                 }
                 InputPath::Dir(dir) => self.discover_directory(dir, &mut discovered, &mut seen),
                 InputPath::Glob(pattern) => {
-                    self.discover_glob(pattern, &mut discovered, &mut seen);
+                    self.discover_glob(pattern, &mut discovered, &mut seen)?;
                 }
             }
         }
@@ -271,6 +277,10 @@ impl FileDiscovery {
     }
 
     /// Discover files from any `BufRead` source (for testing).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a line names a path that does not exist, or the reader fails.
     pub fn discover_from_reader<R: BufRead>(
         &self,
         reader: R,
@@ -302,7 +312,10 @@ impl FileDiscovery {
             }
 
             let path = PathBuf::from(trimmed);
-            if path.is_file() {
+            let meta = path
+                .metadata()
+                .map_err(|e| classify_io_error(path.clone(), e))?;
+            if meta.is_file() {
                 self.discover_file(
                     &path,
                     DiscoveryOrigin::StdinList,
@@ -396,15 +409,17 @@ impl FileDiscovery {
         pattern: &str,
         discovered: &mut Vec<DiscoveredFile>,
         seen: &mut HashSet<PathBuf>,
-    ) {
-        let Ok(glob) = glob::glob(pattern) else {
-            eprintln!("Warning: invalid glob pattern: {pattern}");
-            return;
-        };
+    ) -> Result<(), DiscoveryError> {
+        let glob = glob::glob(pattern).map_err(|source| DiscoveryError::GlobSyntax {
+            pattern: pattern.to_owned(),
+            source,
+        })?;
 
         let mut match_count = 0;
         for entry in glob {
-            match_count += 1;
+            if entry.is_ok() {
+                match_count += 1;
+            }
             if match_count > MAX_GLOB_MATCHES {
                 eprintln!(
                     "Warning: glob pattern '{pattern}' exceeded {MAX_GLOB_MATCHES} matches, stopping"
@@ -429,6 +444,13 @@ impl FileDiscovery {
                 }
             }
         }
+
+        if match_count == 0 {
+            return Err(DiscoveryError::GlobNoMatch {
+                pattern: pattern.to_owned(),
+            });
+        }
+        Ok(())
     }
 }
 
@@ -850,5 +872,40 @@ mod tests {
     fn test_permission_denied_continues() {
         // Testing permission errors requires platform-specific setup
         // This is better suited for integration tests
+    }
+
+    #[test]
+    fn test_zero_match_glob_errors() {
+        let temp = TempDir::new().unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let pattern = temp.path().join("nomatch*.yaml");
+
+        let err = discovery.discover(&[input(pattern)]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::GlobNoMatch { .. }));
+    }
+
+    #[test]
+    fn test_malformed_glob_errors() {
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let err = discovery
+            .discover(&[InputPath::Glob("[".to_owned())])
+            .unwrap_err();
+        assert!(matches!(err, DiscoveryError::GlobSyntax { .. }));
+    }
+
+    #[test]
+    fn test_stdin_missing_line_errors() {
+        let temp = TempDir::new().unwrap();
+        let clean = temp.path().join("clean.yaml");
+        fs::write(&clean, "a: 1\n").unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let list = format!(
+            "{}\n{}\n",
+            temp.path().join("gone.yaml").display(),
+            clean.display()
+        );
+
+        let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
+        assert!(matches!(err, DiscoveryError::PathNotFound { .. }));
     }
 }

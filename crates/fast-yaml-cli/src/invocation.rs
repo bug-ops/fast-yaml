@@ -50,7 +50,8 @@ impl Target {
     ///
     /// # Errors
     ///
-    /// Returns an error if a path does not exist and is not a glob pattern.
+    /// Returns an error if a path does not exist and is not a glob pattern, or if batch flags
+    /// are given with neither paths nor `--stdin-files`.
     pub fn resolve(
         paths: Vec<PathBuf>,
         stdin_files: bool,
@@ -67,6 +68,7 @@ impl Target {
 
         Ok(match (args.requests_batch(), resolved.as_slice()) {
             (false, []) => Self::Stdin,
+            (true, []) => return Err(DiscoveryError::NoInput),
             (false, [InputPath::File(path)]) => Self::File(path.clone()),
             _ => Self::Batch(BatchTarget::new(BatchSource::Paths(resolved), args)),
         })
@@ -98,6 +100,12 @@ mod tests {
     fn test_no_paths_is_stdin() {
         let target = Target::resolve(vec![], false, &args(&[], 0)).unwrap();
         assert!(matches!(target, Target::Stdin));
+    }
+
+    #[test]
+    fn test_batch_flags_without_paths_error() {
+        let err = Target::resolve(vec![], false, &args(&[], 2)).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoInput));
     }
 
     #[test]

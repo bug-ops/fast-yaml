@@ -168,6 +168,7 @@ pub enum Command {
     /// Format YAML with consistent style
     Format {
         /// Input paths (files, directories, or glob patterns).
+        /// A missing path or a glob matching nothing is an error.
         /// If empty and no --stdin-files, reads from stdin
         #[arg(value_name = "PATHS")]
         paths: Vec<PathBuf>,
@@ -180,7 +181,7 @@ pub enum Command {
         #[arg(long, default_value = "80")]
         width: usize,
 
-        /// Read file paths from stdin (one per line)
+        /// Read file paths from stdin (one per line; a missing path is an error)
         #[arg(long, conflicts_with = "paths")]
         stdin_files: bool,
 
@@ -228,6 +229,7 @@ pub enum Command {
     /// `# fy: disable-line [rules]` and `# fy: disable-file` (`# yamllint ...` is also accepted).
     Lint {
         /// Input paths (files, directories, or glob patterns).
+        /// A missing path or a glob matching nothing is an error.
         /// If empty, reads from stdin.
         #[arg(value_name = "PATHS")]
         paths: Vec<PathBuf>,
