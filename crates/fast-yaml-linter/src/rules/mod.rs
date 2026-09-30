@@ -24,6 +24,7 @@ mod line_length;
 mod lint_directive;
 mod new_line_at_end_of_file;
 mod new_lines;
+mod node_roles;
 mod octal_values;
 mod quoted_strings;
 mod trailing_whitespace;

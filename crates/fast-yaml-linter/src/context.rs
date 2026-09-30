@@ -556,6 +556,20 @@ mod tests {
     }
 
     #[test]
+    fn test_byte_offset_lookups_on_long_wide_line_are_linear() {
+        let source = format!("k: [{}]", "ж ,".repeat(100_000));
+        let ctx = SourceContext::new(&source);
+        let chars = source.chars().count();
+        let start = std::time::Instant::now();
+        let total: usize = (0..chars)
+            .step_by(3)
+            .map(|col| ctx.byte_offset_of(Marker::new(0, 1, col)).get())
+            .sum();
+        assert!(total > 0);
+        assert!(start.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
     fn test_crlf_wide_line_columns() {
         let source = "яя: 1\r\nz: 2\r\n";
         let ctx = SourceContext::new(source);
