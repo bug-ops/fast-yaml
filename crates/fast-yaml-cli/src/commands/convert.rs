@@ -69,7 +69,8 @@ impl ConvertCommand {
     fn json_to_yaml(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
         // Parse JSON
         let json_value: serde_json::Value =
-            serde_json::from_str(input.as_str()).context("Failed to parse JSON")?;
+            serde_json::from_str(fast_yaml_core::strip_bom(input.as_str()))
+                .context("Failed to parse JSON")?;
 
         // Convert to YAML Value
         let yaml_value = json_to_value(&json_value)?;

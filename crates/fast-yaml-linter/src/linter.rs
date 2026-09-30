@@ -404,6 +404,7 @@ impl Linter {
     /// let diagnostics = linter.lint(yaml).unwrap();
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
+        let (source, bom_len) = split_bom(source);
         let docs = Parser::parse_all(source)?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
         let mut context = LintContext::new(source);
@@ -427,6 +428,7 @@ impl Linter {
             }
         }
 
+        shift_offsets(&mut diagnostics, bom_len);
         diagnostics.sort_by_key(|d| d.span.start);
         Ok(diagnostics)
     }
@@ -449,6 +451,7 @@ impl Linter {
     /// ```
     #[must_use]
     pub fn lint_value(&self, source: &str, value: &Value) -> Vec<Diagnostic> {
+        let (source, bom_len) = split_bom(source);
         let context = LintContext::new(source);
         let mut diagnostics = Vec::new();
 
@@ -461,6 +464,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
+        shift_offsets(&mut diagnostics, bom_len);
         diagnostics.sort_by_key(|d| d.span.start);
 
         diagnostics
@@ -534,6 +538,26 @@ fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
     }
 
     starts
+}
+
+/// Strips a leading BOM and returns the stripped text with the BOM's byte length.
+fn split_bom(source: &str) -> (&str, usize) {
+    let stripped = fast_yaml_core::strip_bom(source);
+    (stripped, source.len() - stripped.len())
+}
+
+/// Rebases span offsets onto the original file, which still contains the BOM.
+fn shift_offsets(diagnostics: &mut [Diagnostic], bom_len: usize) {
+    if bom_len == 0 {
+        return;
+    }
+    let spans = diagnostics.iter_mut().flat_map(|d| {
+        std::iter::once(&mut d.span).chain(d.suggestions.iter_mut().map(|s| &mut s.span))
+    });
+    for span in spans {
+        span.start.offset += bom_len;
+        span.end.offset += bom_len;
+    }
 }
 
 #[cfg(test)]
@@ -820,5 +844,40 @@ mod tests {
             !diagnostics.iter().any(|d| d.code.as_str() == "line-length"),
             "rule disabled via RuleConfig::disabled() should not produce diagnostics"
         );
+    }
+
+    #[test]
+    fn test_lint_bom_input_keeps_line_column_and_shifts_offset() {
+        let linter = Linter::with_all_rules();
+        let plain = linter.lint("# c\na: 1").unwrap();
+        let bom = linter.lint("\u{FEFF}# c\na: 1").unwrap();
+        assert!(!plain.is_empty());
+        assert_eq!(plain.len(), bom.len());
+        for (p, b) in plain.iter().zip(&bom) {
+            assert_eq!(p.code, b.code);
+            assert_eq!(
+                (p.span.start.line, p.span.start.column),
+                (b.span.start.line, b.span.start.column)
+            );
+            assert_eq!(b.span.start.offset, p.span.start.offset + 3);
+            assert_eq!(b.span.end.offset, p.span.end.offset + 3);
+        }
+    }
+
+    #[test]
+    fn test_lint_value_bom_shifts_offset() {
+        let linter = Linter::with_all_rules();
+        let src = "a: 1";
+        let value = fast_yaml_core::Parser::parse_str(src).unwrap().unwrap();
+        let plain = linter.lint_value(src, &value);
+        let bom = linter.lint_value("\u{FEFF}a: 1", &value);
+        assert!(!plain.is_empty());
+        assert_eq!(bom[0].span.start.offset, plain[0].span.start.offset + 3);
+    }
+
+    #[test]
+    fn test_lint_bom_before_mapping_no_error() {
+        let diagnostics = Linter::with_all_rules().lint("\u{FEFF}a: 1\n").unwrap();
+        assert!(diagnostics.is_empty(), "unexpected: {diagnostics:?}");
     }
 }

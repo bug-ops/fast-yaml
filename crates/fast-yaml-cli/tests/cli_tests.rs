@@ -264,3 +264,105 @@ fn test_lint_verbose_mode() {
         .success()
         .stderr(predicate::str::contains("Lint time:"));
 }
+
+const BOM_YAML: &str = "\u{FEFF}# c\na: 1\n";
+
+#[test]
+fn test_bom_parse_stdin() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("parse")
+        .write_stdin(BOM_YAML)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("valid"));
+}
+
+#[test]
+fn test_bom_format_drops_bom() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .write_stdin("\u{FEFF}a: 1\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a: 1"))
+        .stdout(predicate::str::contains("\u{FEFF}").not());
+}
+
+#[test]
+fn test_bom_lint_stdin_reports_bom_relative_offsets() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg("--format")
+        .arg("json")
+        .write_stdin("\u{FEFF}a: 1   \n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("trailing-whitespace"))
+        .stdout(predicate::str::contains("\"column\": 5"))
+        .stdout(predicate::str::contains("\"offset\": 7"));
+}
+
+#[test]
+fn test_bom_only_convert_json_yields_null() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("\u{FEFF}")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("null"));
+}
+
+#[test]
+fn test_double_bom_strips_only_one() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("\u{FEFF}\u{FEFF}a: 1\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"\u{FEFF}a\": 1"));
+}
+
+#[test]
+fn test_bom_lint_directory() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("bom.yaml"), "\u{FEFF}# c\na: 1\n").unwrap();
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .arg(dir.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("mapping values are not allowed").not());
+}
+
+#[test]
+fn test_bom_convert_yaml_to_json_key_has_no_bom() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("\u{FEFF}a: 1\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"a\": 1"))
+        .stdout(predicate::str::contains("\u{FEFF}").not());
+}
+
+#[test]
+fn test_bom_convert_json_to_yaml() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("yaml")
+        .write_stdin("\u{FEFF}{\"a\": 1}")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("a: 1"));
+}

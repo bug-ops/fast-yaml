@@ -145,6 +145,7 @@ impl FormatterBackend for StdBackend {
 /// # }
 /// ```
 pub fn format_streaming(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+    let input = crate::parser::strip_bom(input);
     let parser = Parser::new_from_str(input);
 
     // Output is typically 10-20% larger than input due to formatting
@@ -254,5 +255,12 @@ mod tests {
         assert_eq!(backend.anchor_store().len(), 0);
         backend.anchor_store_mut().ensure_capacity(3);
         assert!(backend.anchor_store().len() >= 4);
+    }
+
+    #[test]
+    fn test_format_streaming_strips_bom() {
+        let out = format_streaming("\u{FEFF}# c\na: 1\n", &EmitterConfig::default()).unwrap();
+        assert!(!out.contains('\u{FEFF}'));
+        assert!(out.contains("a: 1"));
     }
 }

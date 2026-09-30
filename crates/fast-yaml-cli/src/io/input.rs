@@ -96,4 +96,13 @@ mod tests {
         };
         assert_eq!(input.file_path(), None);
     }
+
+    #[test]
+    fn test_from_file_keeps_bom() {
+        let mut temp_file = NamedTempFile::new().unwrap();
+        write!(temp_file, "\u{FEFF}a: 1").unwrap();
+
+        let input = InputSource::from_file(temp_file.path()).unwrap();
+        assert_eq!(input.as_str(), "\u{FEFF}a: 1");
+    }
 }

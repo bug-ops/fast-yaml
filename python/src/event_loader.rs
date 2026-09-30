@@ -24,7 +24,7 @@ use crate::repr_to_python;
 /// Returns `PyValueError` on invalid YAML syntax.
 pub fn load_all(py: Python<'_>, input: &str) -> PyResult<Vec<Py<PyAny>>> {
     let mut loader = EventLoader {
-        parser: Parser::new_from_str(input),
+        parser: Parser::new_from_str(fast_yaml_core::strip_bom(input)),
         anchors: HashMap::new(),
     };
     let docs = loader.load_stream(py)?;

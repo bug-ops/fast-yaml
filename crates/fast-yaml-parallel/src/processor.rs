@@ -32,7 +32,7 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
     validate_input_size(input, config)?;
 
     // Step 2: Chunk documents
-    let chunks = chunk_documents(input);
+    let chunks = chunk_documents(fast_yaml_core::strip_bom(input));
 
     // Step 3: Check if parallelism is worthwhile
     if should_use_sequential(&chunks, config) {
@@ -392,5 +392,12 @@ mod tests {
         let config = Config::new().with_max_input_size(5);
         let result = process_parallel("---\nlarge content", &config);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_process_parallel_bom_before_document_start() {
+        let yaml = "\u{FEFF}---\nfoo: 1\n---\nbar: 2";
+        let docs = process_parallel(yaml, &Config::default()).unwrap();
+        assert_eq!(docs.len(), 2);
     }
 }
