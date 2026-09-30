@@ -234,6 +234,10 @@ fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
 ///   applying explicit YAML core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
 ///   when present (#203).
 /// - Handle `True`, `TRUE`, `False`, `FALSE`, `Null` mixed-case variants.
+/// - Keep integers that overflow `i64` as `Value::Representation` so they stay distinguishable
+///   from strings and usable as mapping keys: parsed scalars keep their source style and tag,
+///   while an explicit `Value::Tagged` wrapper with a core `!!int` tag is replaced by an untagged
+///   plain representation. Every other scalar is resolved to a typed `Value::Value`.
 /// - Resolve YAML 1.1 merge keys (`<<: *anchor`) into parent mappings (#204).
 ///
 /// Recursion depth equals the nesting depth of `value`, which [`ParseLimits`] bounds for
@@ -276,14 +280,13 @@ fn canonicalize_scalar(value: Value) -> Value {
     match value {
         Value::Representation(s, style, tag) => {
             let resolved = resolve_scalar(&s, style, tag.as_ref());
-            // `Str` and `BigInt` borrow all of `s`, so the owned text is reused.
-            Value::Value(
-                if matches!(resolved, ResolvedScalar::Str(_) | ResolvedScalar::BigInt(_)) {
-                    ScalarOwned::String(s)
-                } else {
-                    scalar_to_owned(resolved)
-                },
-            )
+            match resolved {
+                // Kept unresolved so consumers can tell a big integer from a string.
+                ResolvedScalar::BigInt(_) => Value::Representation(s, style, tag),
+                // `Str` borrows all of `s`, so the owned text is reused.
+                ResolvedScalar::Str(_) => Value::Value(ScalarOwned::String(s)),
+                other => scalar_to_value(other),
+            }
         }
         Value::Value(ScalarOwned::String(ref s)) => match s.as_str() {
             "True" | "TRUE" => Value::Value(ScalarOwned::Boolean(true)),
@@ -296,15 +299,19 @@ fn canonicalize_scalar(value: Value) -> Value {
 }
 
 /// Converts a resolved scalar to its owned core value; strings are copied.
-fn scalar_to_owned(resolved: ResolvedScalar<'_>) -> ScalarOwned {
-    match resolved {
+///
+/// Integers beyond `i64` become a plain `Value::Representation` holding their decimal text.
+fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
+    Value::Value(match resolved {
         ResolvedScalar::Null => ScalarOwned::Null,
         ResolvedScalar::Bool(b) => ScalarOwned::Boolean(b),
         ResolvedScalar::Int(i) => ScalarOwned::Integer(i),
         ResolvedScalar::Float(f) => ScalarOwned::FloatingPoint(f.into()),
-        ResolvedScalar::BigInt(big) => ScalarOwned::String(big.as_str().into()),
+        ResolvedScalar::BigInt(big) => {
+            return Value::Representation(big.as_str().into(), ScalarStyle::Plain, None);
+        }
         ResolvedScalar::Str(s) => ScalarOwned::String(s.into()),
-    }
+    })
 }
 
 /// Coerce a core-schema-tagged string scalar; `None` when the tag is not a core-schema tag.
@@ -316,7 +323,7 @@ fn coerce_tagged_scalar(tag: &Tag, inner: &Value) -> Option<Value> {
         return None;
     };
     let resolved = resolve_scalar(s, ScalarStyle::Plain, Some(tag));
-    Some(Value::Value(scalar_to_owned(resolved)))
+    Some(scalar_to_value(resolved))
 }
 
 /// Resolve YAML 1.1 merge keys (`<<`) in a canonicalized mapping.
@@ -700,8 +707,8 @@ merged:
 
         let v = get_mapping_val("x: 9223372036854775808", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "i64::MAX+1 should become String, got {v:?}"
+            matches!(v, Value::Representation(ref s, _, None) if s == "9223372036854775808"),
+            "i64::MAX+1 should stay Representation, got {v:?}"
         );
     }
 
@@ -715,19 +722,75 @@ merged:
 
         let v = get_mapping_val("x: +99999999999999999999", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "+overflow should be String, got {v:?}"
+            matches!(v, Value::Representation(ref s, _, None) if s == "+99999999999999999999"),
+            "+overflow should stay Representation, got {v:?}"
         );
     }
 
     #[test]
-    fn test_large_integer_preserved_as_string() {
+    fn test_large_integer_preserved_as_representation() {
         let big =
             "99999999999999999999999999999999999999999999999999999999999999999999999999999999";
         let v = get_mapping_val(&format!("x: {big}"), "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == big),
+            matches!(v, Value::Representation(ref s, _, None) if s == big),
             "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_quoted_large_integer_stays_string() {
+        let v = get_mapping_val("x: \"9223372036854775808\"", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "9223372036854775808"),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_large_integer_stays_representation() {
+        let v = get_mapping_val("x: !!int 9223372036854775808", "x");
+        assert!(
+            matches!(v, Value::Representation(ref s, _, Some(_)) if s == "9223372036854775808"),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_tagged_wrapper_large_integer() {
+        let tag = Tag {
+            handle: "tag:yaml.org,2002:".into(),
+            suffix: "int".into(),
+        };
+        let inner = Value::Value(ScalarOwned::String("9223372036854775808".into()));
+        let v = canonicalize(Value::Tagged(tag, Box::new(inner)));
+        assert!(
+            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == "9223372036854775808"),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_tagged_str_large_integer_is_string() {
+        let v = get_mapping_val("x: !!str 9223372036854775808", "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "9223372036854775808"),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_large_integer_as_mapping_key_stays_representation() {
+        let root = Parser::parse_str("9223372036854775808: x")
+            .unwrap()
+            .unwrap();
+        let Value::Mapping(map) = root else {
+            panic!("expected mapping")
+        };
+        let key = map.keys().next().unwrap();
+        assert!(
+            matches!(key, Value::Representation(s, _, None) if s == "9223372036854775808"),
+            "got {key:?}"
         );
     }
 
@@ -754,7 +817,7 @@ merged:
         let big = "-99999999999999999999999999999999";
         let v = get_mapping_val(&format!("x: {big}"), "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == big),
+            matches!(v, Value::Representation(ref s, _, None) if s == big),
             "got {v:?}"
         );
     }

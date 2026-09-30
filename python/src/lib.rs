@@ -29,7 +29,7 @@ use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
+use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString};
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 use saphyr_parser::{ScalarStyle, Tag};
 
@@ -475,7 +475,22 @@ fn python_scalar_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Option<YamlOwned>> 
     Ok(Some(YamlOwned::Value(scalar)))
 }
 
-/// Collect the children of a list, dict, other iterable, or `items()` provider.
+/// Flatten an `items()` iterable of `(key, value)` pairs into `[k, v, k, v, ...]`.
+fn collect_pairs<'py>(items: &Bound<'py, PyAny>) -> PyResult<Vec<Bound<'py, PyAny>>> {
+    let mut children = Vec::new();
+    for item in items.try_iter()? {
+        let pair = item?
+            .cast_into::<pyo3::types::PyTuple>()
+            .ok()
+            .filter(|pair| pair.len() == 2)
+            .ok_or_else(|| PyTypeError::new_err("items() must yield (key, value) pairs"))?;
+        children.push(pair.get_item(0)?);
+        children.push(pair.get_item(1)?);
+    }
+    Ok(children)
+}
+
+/// Collect the children of a list, dict, `collections.abc.Mapping`, other iterable, or `items()` provider.
 fn container_children<'py>(
     obj: &Bound<'py, PyAny>,
     depth: usize,
@@ -499,23 +514,22 @@ fn container_children<'py>(
         }
         return Ok((Shape::Mapping, children));
     }
+    if let Ok(mapping) = obj.cast::<PyMapping>() {
+        enter_container(depth)?;
+        budget
+            .charge_nodes(mapping.len()?.saturating_mul(2))
+            .map_err(limit_error)?;
+        return Ok((Shape::Mapping, collect_pairs(mapping.items()?.as_any())?));
+    }
     if let Ok(iter) = obj.try_iter() {
         enter_container(depth)?;
         let children = iter.collect::<PyResult<Vec<_>>>()?;
         budget.charge_nodes(children.len()).map_err(limit_error)?;
         return Ok((Shape::Sequence, children));
     }
-    if let Ok(items) = obj.call_method0("items")
-        && let Ok(iter) = items.try_iter()
-    {
+    if let Ok(items) = obj.call_method0("items") {
         enter_container(depth)?;
-        let mut children = Vec::new();
-        for item in iter {
-            if let Ok(tuple) = item?.cast_into::<pyo3::types::PyTuple>() {
-                children.push(tuple.get_item(0)?);
-                children.push(tuple.get_item(1)?);
-            }
-        }
+        let children = collect_pairs(&items)?;
         budget.charge_nodes(children.len()).map_err(limit_error)?;
         return Ok((Shape::Mapping, children));
     }

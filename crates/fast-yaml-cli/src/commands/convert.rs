@@ -97,22 +97,12 @@ impl ConvertCommand {
 /// Returns an error for non-scalar key types (mappings, sequences, aliases)
 /// that have no meaningful string representation.
 fn yaml_key_to_string(key: &Value) -> Result<String> {
-    use Value as YValue;
-    use fast_yaml_core::value::ScalarOwned;
-
-    match key {
-        YValue::Value(scalar) => Ok(match scalar {
-            ScalarOwned::Null => "null".to_string(),
-            ScalarOwned::Boolean(b) => b.to_string(),
-            ScalarOwned::Integer(i) => i.to_string(),
-            ScalarOwned::FloatingPoint(f) => f.to_string(),
-            ScalarOwned::String(s) => s.clone(),
-        }),
-        _ => Err(anyhow::anyhow!(
+    fast_yaml_core::value::scalar_key_text(key).ok_or_else(|| {
+        anyhow::anyhow!(
             "Unsupported YAML map key type: only scalar keys (string, number, boolean, null) \
              can be converted to JSON"
-        )),
-    }
+        )
+    })
 }
 
 /// Convert `fast_yaml_core::Value` to `serde_json::Value`
