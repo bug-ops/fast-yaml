@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `ConfigFile::warn_unknown_rules` replaced by `unknown_rules`, which returns names instead of printing to stderr (#411)
 - **CLI**: `is-terminal` dependency dropped in favor of `std::io::IsTerminal` (#411)
 - **Core**: `EmitError` gains `DepthLimitExceeded` and `AnchorLimitExceeded` variants returned by `format_streaming`, `format_streaming_arena`, and `Emitter::format*`; exhaustive matches must handle them (#371) (#383)
+- **Node.js**: numeric options reject negative, fractional, `NaN` and out-of-range values with `InvalidArg` instead of wrapping or truncating
+- **Node.js**: `LintConfig.rules` is read under depth and node limits, so deep or cyclic values throw an `InvalidArg` error instead of crashing the process (#423) (#434)
+- **Node.js**: `processFiles`, `formatFiles` and `formatFilesInPlace` throw errors instead of returning them
 
 ### Added
 

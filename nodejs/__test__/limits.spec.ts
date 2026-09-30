@@ -326,7 +326,7 @@ describe('Batch config validation', () => {
     ['formatFiles', formatFiles],
     ['formatFilesInPlace', formatFilesInPlace],
   ])('%s throws for workers above the maximum', (_name, fn) => {
-    expect(() => fn([], { workers: 129 })).toThrow(/workers 129 exceeds maximum 128/);
+    expect(() => fn([], { workers: 129 })).toThrow(/workers must be between 0 and 128, got 129/);
   });
 
   it.each([

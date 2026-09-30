@@ -143,6 +143,10 @@ export declare class Mark {
    * * `name` - The source name (e.g., filename)
    * * `line` - The line number (0-indexed)
    * * `column` - The column number (0-indexed)
+   *
+   * # Errors
+   *
+   * Returns an `InvalidArg` error if `line` or `column` is not an integer in `0..=4294967295`.
    */
   constructor(name: string, line: number, column: number)
   /**
@@ -249,12 +253,12 @@ export interface DumpOptions {
   allowUnicode?: boolean
   /**
    * Indentation width in spaces (default: 2).
-   * Valid range: 1-9 (values outside this range will be clamped).
+   * Must be an integer; values outside 1-9 are clamped.
    */
   indent?: number
   /**
    * Maximum line width for wrapping (default: 80).
-   * Valid range: 20-1000 (values outside this range will be clamped).
+   * Must be an integer; values outside 20-1000 are clamped.
    */
   width?: number
   /**
@@ -397,7 +401,8 @@ export interface LintConfig {
    * or an object with `enabled`, `severity` and the rule's own options
    * (kebab-case keys, as in the `fy lint --config` file). Unknown rules, unknown
    * options, wrong types and `null` (except `line-length.max`) are errors.
-   * `disabledRules` is applied last and wins over `enabled: true`.
+   * `disabledRules` is applied last and wins over `enabled: true`. The value is read
+   * under depth and size limits, so deeply nested or cyclic input is an `InvalidArg` error.
    */
   rules?: LintRulesConfig
   /**
