@@ -266,8 +266,8 @@ an entry does not mention keep their current values. A limit of `-1` disables th
 | `commas` | `max-spaces-before` (0), `min-spaces-after` (1), `max-spaces-after` (1) |
 | `hyphens` | `max-spaces-after` (1) |
 | `comments` | `require-starting-space` (true), `ignore-shebangs` (true), `min-spaces-from-content` (2) |
-| `document-start` | `present` (allowed) |
-| `document-end` | `present` (allowed; `true` or `required` to require `...`) |
+| `document-start` | `present` (allowed; `true`/`required`, `false`/`forbidden`, `allowed`) |
+| `document-end` | `present` (allowed; `true`/`required` needs a final `...`, `false`/`forbidden` flags every `...` at column 0) |
 | `empty-lines` | `max` (2), `max-start` (0), `max-end` (0) |
 | `empty-values` | `forbid-in-block-mappings` (true), `forbid-in-flow-mappings` (true), `forbid-in-block-sequences` (true) |
 | `float-values` | `require-numeral-before-decimal` (true), `forbid-scientific-notation` (false), `forbid-nan` (false), `forbid-inf` (false) |
@@ -276,7 +276,7 @@ an entry does not mention keep their current values. A limit of `-1` disables th
 | `line-length` | `max` (80, `null` for no limit) |
 | `new-lines` | `type` (unix; unix, dos or platform) |
 | `octal-values` | `forbid-implicit-octal` (true), `forbid-explicit-octal` (true) |
-| `quoted-strings` | `quote-type` (any), `required` (only-when-needed), `extra-required` ([], only with `only-when-needed`), `extra-allowed` ([], only with `always`); patterns are plain substrings and regular expression syntax is rejected; a patch only checks the pattern option it sets |
+| `quoted-strings` | `quote-type` (any), `required` (only-when-needed), `extra-required` ([] regexes; not with `always` or `never`), `extra-allowed` ([] regexes; only with `only-when-needed`); see "Regular expressions" below |
 | `truthy` | `allowed-values` (['true', 'false'], quoted), `check-keys` (false) |
 | `duplicate-key`, `invalid-anchor`, `trailing-whitespace`, `new-line-at-end-of-file`, `comments-indentation` | none |
 
@@ -286,8 +286,59 @@ yamllint it flags every collection.
 
 Options that yamllint has but fast-yaml does not implement (for example
 `line-length.allow-non-breakable-words`, `indentation.spaces`, `key-ordering.ignored-keys`,
-`quoted-strings.check-keys`) and `document-end: {present: false}` are rejected explicitly
+`quoted-strings.check-keys`) are rejected explicitly
 instead of being ignored.
+
+#### Regular expressions
+
+`quoted-strings.extra-required` and `extra-allowed` take regular expressions matched with
+Python `re.search` semantics (anywhere in the value) against string scalars that are not keys:
+
+- a plain scalar matching `extra-required` is reported as "string should be quoted" under
+  `required: false` and `only-when-needed`;
+- under `only-when-needed`, quotes that are not needed are kept when the value matches
+  `extra-required` or `extra-allowed`, and a plain scalar matching only `extra-allowed` stays unquoted (one also matching `extra-required` is reported).
+
+The syntax is Rust regex, not Python `re`: look-around and backreferences are unsupported, `\Z`
+is written `\z`, and `$` does not match before a trailing newline. Each option holds at most 64
+patterns of at most 256 bytes, and a pattern that compiles to more than 10 MiB is rejected.
+Errors name the rule, the option and the pattern index.
+
+#### Config file (yamllint compatibility)
+
+```yaml
+extends: relaxed                 # default | relaxed
+ignore: |                        # block string or list, gitignore syntax
+  vendor/
+  !vendor/keep.yaml
+yaml-files: ['*.yaml', '*.yml', '*.yaml.j2']
+rules:
+  line-length: {max: 120}
+  quoted-strings: {quote-type: single}   # enables the rule the preset disabled
+```
+
+- `extends` starts from the yamllint `default` or `relaxed` preset, with yamllint's option
+  defaults and `error` severity (`warning` where the preset says so). Without `extends` the
+  fast-yaml defaults apply. `extends: <file>` is not implemented.
+- Under `extends`, a rule the preset disables is enabled again by `enable`, a severity name or a
+  mapping without `enabled`, and reports `error` unless a severity is given.
+- `extends` is not full yamllint parity: it reproduces the preset's rule set, severities and
+  the options fast-yaml has, but not options fast-yaml lacks (`indentation.spaces: consistent`,
+  `indentation.indent-sequences`, `indentation.check-multi-line-strings`,
+  `line-length.allow-non-breakable-words`, `line-length.allow-non-breakable-inline-mappings`,
+  `key-ordering.ignored-keys`, `quoted-strings.allow-quoted-quotes`/`check-keys`,
+  `key-duplicates.forbid-duplicated-merge-keys`, `anchors.forbid-*`), so rules that depend on
+  them behave differently. Rule semantics also differ from yamllint in places.
+- `ignore` patterns are anchored at the directory of the config file, are case-sensitive, and
+  apply to directory walks and explicit paths. `!` re-includes a file. `fy lint` exits 0 when
+  `ignore` drops every input.
+- `yaml-files` matches the file name only (`sub/*.j2` matches nothing) and replaces the default
+  `*.yaml`/`*.yml` for directory walks and globs. An explicit path is linted when it matches
+  the default patterns or `yaml-files` (and is not dropped by `ignore`), and `--include`
+  overrides `yaml-files`. `ignore` and `yaml-files` each take at most 1024 lines.
+- yamllint rule names that differ are hinted, not accepted: `key-duplicates` is
+  `duplicate-key`, `trailing-spaces` is `trailing-whitespace`, `anchors` is `invalid-anchor`.
+  `ignore-from-file`, `locale` and per-rule `ignore` are rejected explicitly.
 
 Custom rules added with `Linter::add_rule` are configured with
 `LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through

@@ -34,7 +34,7 @@ export interface RuleOptionsByRule {
   }
   'comments-indentation': {}
   'document-start': { present?: boolean | 'required' | 'forbidden' | 'allowed' }
-  'document-end': { present?: true | 'required' | 'allowed' }
+  'document-end': { present?: boolean | 'required' | 'forbidden' | 'allowed' }
   'empty-lines': { max?: number; 'max-start'?: number; 'max-end'?: number }
   'empty-values': {
     'forbid-in-block-mappings'?: boolean

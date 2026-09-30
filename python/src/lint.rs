@@ -7,7 +7,7 @@ use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_linter::config::{IndentSize, RuleName};
-use fast_yaml_linter::rules::{DocumentEndPresence, DocumentStartPresence};
+use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticCode as RustDiagnosticCode, DiagnosticContext as RustDiagnosticContext,
@@ -518,10 +518,10 @@ impl PyLintConfig {
             .with_max_input_bytes(limits::max_input_bytes(max_input_bytes)?);
 
         if require_document_start {
-            inner = inner.with_document_start(DocumentStartPresence::Required);
+            inner = inner.with_document_start(MarkerPresence::Required);
         }
         if require_document_end {
-            inner = inner.with_document_end(DocumentEndPresence::Required);
+            inner = inner.with_document_end(MarkerPresence::Required);
         }
         if allow_duplicate_keys {
             inner = inner.with_disabled_rule(RuleName::DuplicateKey);

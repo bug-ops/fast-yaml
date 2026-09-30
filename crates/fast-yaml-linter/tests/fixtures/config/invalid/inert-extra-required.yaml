@@ -1,4 +1,4 @@
 rules:
   quoted-strings:
-    required: false
-    extra-required: ['http']
+    required: always
+    extra-required: ['^http']

@@ -271,8 +271,8 @@ mod config_fixtures {
 
     use fast_yaml_linter::{
         ConfigFile, ConfigFileError, Linter, Severity,
-        config::{Limit, RuleConfigError},
-        rules::{DocumentStartPresence, Forbid, QuoteRequirement, QuoteType},
+        config::{Limit, RuleConfigError, TopLevelKey},
+        rules::{Forbid, MarkerPresence, QuoteRequirement, QuoteType},
     };
     use std::num::NonZeroUsize;
 
@@ -293,7 +293,8 @@ mod config_fixtures {
             let path = entry.unwrap().path();
             let config = ConfigFile::load(&path)
                 .unwrap_or_else(|error| panic!("{}: {error}", path.display()))
-                .into_lint_config();
+                .into_parts()
+                .0;
             Linter::with_config(config)
                 .lint("a: 1\nb: [1, 2]\nc: {d: e}\n")
                 .unwrap();
@@ -319,7 +320,7 @@ mod config_fixtures {
         let rules = load("valid/bool-forms.yaml").unwrap().rules;
         assert_eq!(
             rules.document_start.options.present,
-            DocumentStartPresence::Required
+            MarkerPresence::Required
         );
         assert_eq!(
             rules.quoted_strings.options.required,
@@ -328,6 +329,24 @@ mod config_fixtures {
         assert_eq!(rules.braces.options.forbid, Forbid::All);
         assert_eq!(rules.brackets.options.forbid, Forbid::No);
         assert_eq!(rules.line_length.options.max, None);
+    }
+
+    #[test]
+    fn document_end_forbidden_and_quoted_regex_config() {
+        let rules = load("valid/document-end-forbidden.yaml").unwrap().rules;
+        assert_eq!(
+            rules.document_end.options.present,
+            MarkerPresence::Forbidden
+        );
+        let options = load("valid/quoted-regex.yaml")
+            .unwrap()
+            .rules
+            .quoted_strings
+            .options;
+        assert!(options.extra_required.is_match("http://x"));
+        assert!(options.extra_required.is_match("README.md"));
+        assert!(options.extra_allowed.is_match("ftp://x"));
+        assert!(!options.extra_allowed.is_match("a ftp://x"));
     }
 
     #[test]
@@ -352,15 +371,15 @@ mod config_fixtures {
                 "unsupported-yamllint-option.yaml",
                 &["indentation", "spaces", "yamllint"][..],
             ),
-            (
-                "document-end-forbid.yaml",
-                &["document-end", "present", "disable the rule"][..],
-            ),
             ("bad-severity.yaml", &["braces", "loud"][..]),
             ("null-option.yaml", &["quoted-strings", "quote-type"][..]),
             (
                 "inert-extra-required.yaml",
-                &["quoted-strings", "extra-required", "no effect"][..],
+                &["quoted-strings", "extra-required", "cannot be combined"][..],
+            ),
+            (
+                "always-extra-allowed.yaml",
+                &["quoted-strings", "extra-allowed", "only-when-needed"][..],
             ),
         ] {
             let error = load(&format!("invalid/{file}")).unwrap_err();
@@ -384,10 +403,80 @@ mod config_fixtures {
             load("invalid/top-level-typo.yaml"),
             Err(ConfigFileError::UnknownKey { .. })
         ));
-        assert!(matches!(
-            load("invalid/yamllint-extends.yaml"),
-            Err(ConfigFileError::UnsupportedKey { .. })
-        ));
+        for (file, key, needle) in [
+            (
+                "yamllint-extends.yaml",
+                TopLevelKey::Extends,
+                "extending a config file is not implemented",
+            ),
+            (
+                "extends-unknown-preset.yaml",
+                TopLevelKey::Extends,
+                "'default' or 'relaxed'",
+            ),
+        ] {
+            let error = load(&format!("invalid/{file}")).unwrap_err();
+            let ConfigFileError::InvalidKey {
+                key: found,
+                message,
+                ..
+            } = error
+            else {
+                panic!("{file}: expected InvalidKey, got {error:?}");
+            };
+            assert_eq!(found, key, "{file}");
+            assert!(message.contains(needle), "{file}: {message}");
+        }
+    }
+
+    #[test]
+    fn extends_ignore_and_yaml_files_config() {
+        let config = load("valid/extends-ignore-yaml-files.yaml").unwrap();
+        assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(120));
+        assert_eq!(config.rules.line_length.severity, Some(Severity::Warning));
+        assert!(config.rules.quoted_strings.enabled);
+        assert_eq!(
+            config.rules.quoted_strings.options.quote_type,
+            QuoteType::Single
+        );
+        assert_eq!(
+            config.rules.quoted_strings.options.required,
+            QuoteRequirement::Always
+        );
+        assert!(!config.rules.document_start.enabled);
+
+        let root = fixture("valid").canonicalize().unwrap();
+        let ignore = config.selection.ignore.unwrap();
+        assert!(ignore.matches(&root.join("vendor/a.yaml"), false));
+        assert!(!ignore.matches(&root.join("vendor/keep.yaml"), false));
+        assert!(ignore.matches(&root.join("x/a.generated.yaml"), false));
+        let yaml_files = config.selection.yaml_files.unwrap();
+        assert!(yaml_files.matches(Path::new("t.yaml.j2")));
+        assert!(!yaml_files.matches(Path::new("t.json")));
+    }
+
+    #[test]
+    fn yamllint_rule_name_and_per_rule_ignore_are_explained() {
+        for (file, needles) in [
+            (
+                "yamllint-rule-name.yaml",
+                &["key-duplicates", "duplicate-key"][..],
+            ),
+            (
+                "per-rule-ignore.yaml",
+                &["braces", "ignore", "top-level"][..],
+            ),
+        ] {
+            let ConfigFileError::InvalidRules { source, .. } =
+                load(&format!("invalid/{file}")).unwrap_err()
+            else {
+                panic!("{file}: expected InvalidRules");
+            };
+            let message = source.to_string();
+            for needle in needles {
+                assert!(message.contains(needle), "{file}: {message}");
+            }
+        }
     }
 
     #[test]

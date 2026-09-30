@@ -79,6 +79,25 @@ class TestConfigErrors:
         with pytest.raises(ValueError, match="unknown rule 'no-such-rule'"):
             lint.LintConfig(rules={"no-such-rule": "error"})
 
+    @pytest.mark.parametrize(
+        ("yamllint", "ours"),
+        [
+            ("key-duplicates", "duplicate-key"),
+            ("trailing-spaces", "trailing-whitespace"),
+            ("anchors", "invalid-anchor"),
+        ],
+    )
+    def test_renamed_yamllint_rule_gets_hint(self, yamllint: str, ours: str):
+        with pytest.raises(
+            ValueError, match=f"unknown rule '{yamllint}'; yamllint's '{yamllint}' is '{ours}'"
+        ):
+            lint.LintConfig(rules={yamllint: "enable"})
+
+    def test_unknown_rule_has_no_yamllint_hint(self):
+        with pytest.raises(ValueError) as info:
+            lint.LintConfig(rules={"no-such-rule": "enable"})
+        assert "yamllint" not in str(info.value)
+
     def test_quote_type_typo_names_rule_and_key(self):
         with pytest.raises(ValueError, match="rule 'quoted-strings', option 'quote-type'.*singel"):
             lint.LintConfig(rules={"quoted-strings": {"quote-type": "singel"}})
@@ -101,7 +120,46 @@ class TestConfigErrors:
 
     def test_unsupported_yamllint_option(self):
         with pytest.raises(ValueError, match="supported by yamllint but not implemented"):
-            lint.LintConfig(rules={"document-end": {"present": False}})
+            lint.LintConfig(rules={"indentation": {"spaces": 2}})
+
+    def test_document_end_present_false_forbids_marker(self):
+        config = lint.LintConfig(rules={"document-end": {"present": False}})
+        diagnostics = [
+            d for d in lint.lint("a: 1\n...\n", config) if d.code == "document-end"
+        ]
+        assert [d.message for d in diagnostics] == ["document end marker '...' is forbidden"]
+        assert "document-end" not in codes(lint.lint("a: 1\n", config))
+
+    def test_extra_required_regex_flags_plain_scalar(self):
+        config = lint.LintConfig(
+            rules={"quoted-strings": {"extra-required": ["^http://", r"\.md$"]}}
+        )
+        found = [d for d in lint.lint("a: http://x\nb: README.md\nc: plain\n", config)]
+        assert [d.message for d in found if d.code == "quoted-strings"] == [
+            "string should be quoted",
+            "string should be quoted",
+        ]
+
+    def test_extra_allowed_regex_keeps_plain_scalar(self):
+        config = lint.LintConfig(rules={"quoted-strings": {"extra-allowed": ["^ftp://"]}})
+        messages = [
+            d.message
+            for d in lint.lint('a: ftp://x\nb: "ftp://x"\nc: "plain"\n', config)
+            if d.code == "quoted-strings"
+        ]
+        assert messages == ["string does not need quotes"]
+
+    def test_invalid_regex_names_rule_option_and_index(self):
+        with pytest.raises(
+            ValueError, match=r"rule 'quoted-strings', option 'extra-required'.*pattern 1.*look-around"
+        ):
+            lint.LintConfig(rules={"quoted-strings": {"extra-required": ["ok", "(?=x)"]}})
+
+    def test_extra_allowed_with_always_is_rejected(self):
+        with pytest.raises(ValueError, match="extra-allowed.*only-when-needed"):
+            lint.LintConfig(
+                rules={"quoted-strings": {"required": "always", "extra-allowed": ["a"]}}
+            )
 
     @pytest.mark.parametrize(
         "build",

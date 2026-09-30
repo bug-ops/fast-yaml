@@ -1,0 +1,3 @@
+rules:
+  braces:
+    ignore: vendor/

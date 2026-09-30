@@ -30,14 +30,15 @@ mod quoted_strings;
 mod trailing_whitespace;
 mod truthy;
 
+pub use crate::config::MarkerPresence;
 pub use braces::BracesRule;
 pub use brackets::BracketsRule;
 pub use colons::{ColonsOptions, ColonsRule};
 pub use commas::{CommasOptions, CommasRule};
 pub use comments::{CommentsOptions, CommentsRule};
 pub use comments_indentation::CommentsIndentationRule;
-pub use document_end::{DocumentEndOptions, DocumentEndPresence, DocumentEndRule};
-pub use document_start::{DocumentStartOptions, DocumentStartPresence, DocumentStartRule};
+pub use document_end::{DocumentEndOptions, DocumentEndRule};
+pub use document_start::{DocumentStartOptions, DocumentStartRule};
 pub use duplicate_keys::{DuplicateKeysOptions, DuplicateKeysRule};
 pub use empty_lines::{EmptyLinesOptions, EmptyLinesRule};
 pub use empty_values::{EmptyValuesOptions, EmptyValuesRule};

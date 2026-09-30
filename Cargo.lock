@@ -433,7 +433,9 @@ name = "fast-yaml-linter"
 version = "0.6.6"
 dependencies = [
  "fast-yaml-core",
+ "ignore",
  "indoc",
+ "regex",
  "saphyr-parser",
  "serde",
  "serde_json",

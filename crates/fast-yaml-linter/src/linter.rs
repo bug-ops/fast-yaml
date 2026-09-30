@@ -7,7 +7,7 @@ use std::str::FromStr;
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
 use crate::context::lines_of;
 use crate::directives::Directives;
-use crate::rules::{DocumentEndPresence, DocumentStartPresence};
+use crate::rules::MarkerPresence;
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits};
 use fast_yaml_core::{Parser, ScalarOwned, Value};
@@ -96,16 +96,16 @@ impl LintConfig {
     ///
     /// ```
     /// use fast_yaml_linter::LintConfig;
-    /// use fast_yaml_linter::rules::DocumentStartPresence;
+    /// use fast_yaml_linter::rules::MarkerPresence;
     ///
-    /// let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
+    /// let config = LintConfig::new().with_document_start(MarkerPresence::Required);
     /// assert_eq!(
     ///     config.rules.document_start.options.present,
-    ///     DocumentStartPresence::Required
+    ///     MarkerPresence::Required
     /// );
     /// ```
     #[must_use]
-    pub const fn with_document_start(mut self, presence: DocumentStartPresence) -> Self {
+    pub const fn with_document_start(mut self, presence: MarkerPresence) -> Self {
         self.rules.document_start.options.present = presence;
         self
     }
@@ -156,13 +156,13 @@ impl LintConfig {
     ///
     /// ```
     /// use fast_yaml_linter::LintConfig;
-    /// use fast_yaml_linter::rules::DocumentEndPresence;
+    /// use fast_yaml_linter::rules::MarkerPresence;
     ///
-    /// let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
-    /// assert_eq!(config.rules.document_end.options.present, DocumentEndPresence::Required);
+    /// let config = LintConfig::new().with_document_end(MarkerPresence::Required);
+    /// assert_eq!(config.rules.document_end.options.present, MarkerPresence::Required);
     /// ```
     #[must_use]
-    pub const fn with_document_end(mut self, presence: DocumentEndPresence) -> Self {
+    pub const fn with_document_end(mut self, presence: MarkerPresence) -> Self {
         self.rules.document_end.options.present = presence;
         self
     }
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
         assert_eq!(
             config.rules.document_start.options.present,
-            DocumentStartPresence::Allowed
+            MarkerPresence::Allowed
         );
         assert!(config.rules.duplicate_key.enabled);
     }
@@ -1054,7 +1054,7 @@ mod tests {
     #[test]
     fn test_require_document_start_missing() {
         let yaml = "key: value\n";
-        let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
+        let config = LintConfig::new().with_document_start(MarkerPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -1068,7 +1068,7 @@ mod tests {
     #[test]
     fn test_require_document_start_present() {
         let yaml = "---\nkey: value\n";
-        let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
+        let config = LintConfig::new().with_document_start(MarkerPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -1082,7 +1082,7 @@ mod tests {
     #[test]
     fn test_require_document_end_missing() {
         let yaml = "key: value\n";
-        let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
+        let config = LintConfig::new().with_document_end(MarkerPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(
@@ -1096,7 +1096,7 @@ mod tests {
     #[test]
     fn test_require_document_end_present() {
         let yaml = "key: value\n...\n";
-        let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
+        let config = LintConfig::new().with_document_end(MarkerPresence::Required);
         let linter = Linter::with_all_rules_and_config(config);
         let diagnostics = linter.lint(yaml).unwrap();
         assert!(

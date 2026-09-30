@@ -60,7 +60,10 @@ fn invalid_configs_fail_with_actionable_messages() {
             "unsupported-yamllint-option.yaml",
             &["indentation", "spaces", "yamllint"][..],
         ),
-        ("document-end-forbid.yaml", &["document-end", "present"][..]),
+        (
+            "always-extra-allowed.yaml",
+            &["quoted-strings", "extra-allowed"][..],
+        ),
         ("bad-severity.yaml", &["braces", "loud"][..]),
         ("null-option.yaml", &["quoted-strings", "quote-type"][..]),
     ] {
@@ -107,13 +110,13 @@ fn top_level_typo_in_config_exits_one() {
 }
 
 #[test]
-fn yamllint_top_level_key_is_reported_as_unsupported() {
+fn extending_a_config_file_is_reported_as_unsupported() {
     lint(&fixture("invalid/yamllint-extends.yaml"))
         .write_stdin("a: 1\n")
         .assert()
         .code(1)
         .stderr(predicate::str::contains("extends"))
-        .stderr(predicate::str::contains("yamllint"));
+        .stderr(predicate::str::contains("not implemented"));
 }
 
 #[test]
@@ -123,7 +126,7 @@ fn inert_extra_required_is_rejected() {
         .assert()
         .code(1)
         .stderr(predicate::str::contains("extra-required"))
-        .stderr(predicate::str::contains("no effect"));
+        .stderr(predicate::str::contains("cannot be combined"));
 }
 
 #[test]
@@ -145,7 +148,8 @@ fn every_valid_fixture_config_is_accepted() {
         "full.yaml",
         "bool-forms.yaml",
         "shorthands.yaml",
-        "quoted-always.yaml",
+        "quoted-regex.yaml",
+        "document-end-forbidden.yaml",
     ] {
         lint(&fixture(&format!("valid/{name}")))
             .write_stdin("a: 1\n")

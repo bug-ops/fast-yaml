@@ -2,8 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{BoolOrName, OptionConflict, RuleOptions, deserialize_bool_or_name};
-use crate::echo::{KEY_LIMIT, echo};
+use crate::config::{
+    BoolOrName, OptionConflict, PatternList, RuleOptions, deserialize_bool_or_name,
+};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
@@ -121,56 +122,42 @@ pub struct QuotedStringsOptions {
     pub quote_type: QuoteType,
     /// When strings have to be quoted.
     pub required: QuoteRequirement,
-    /// Substrings that keep quotes on a string; only valid with `required: only-when-needed`.
+    /// Regular expressions for values that must be quoted; invalid with `always` and `never`.
     ///
-    /// Patterns are matched as plain substrings. Regular expression syntax (`^ $ * + ? ( ) [ ]
-    /// { } | \`) is rejected because yamllint's regular expressions are not supported.
-    pub extra_required: Vec<String>,
-    /// Substrings that may stay unquoted; only valid with `required: always`.
-    ///
-    /// Matched like `extra_required`.
-    pub extra_allowed: Vec<String>,
+    /// Matched with `re.search` semantics against plain scalars (flagged as unquoted) and, under
+    /// `only-when-needed`, against quoted scalars (keeping their quotes).
+    pub extra_required: PatternList,
+    /// Regular expressions for values that may stay unquoted; valid only with `only-when-needed`.
+    pub extra_allowed: PatternList,
 }
 
-/// Characters that mark a pattern as a regular expression.
-const REGEX_SYNTAX: [char; 13] = [
-    '^', '$', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '\\',
-];
+impl QuotedStringsOptions {
+    fn quotes_redundant_for(&self, value: &str) -> bool {
+        !self.extra_required.is_match(value) && !self.extra_allowed.is_match(value)
+    }
+}
 
 impl RuleOptions for QuotedStringsOptions {
     const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["allow-quoted-quotes", "check-keys"];
 
     fn conflicts(&self) -> Vec<OptionConflict> {
         let mut conflicts = Vec::new();
-        for (key, patterns, applies, needs) in [
-            (
-                "extra-required",
-                &self.extra_required,
-                self.required == QuoteRequirement::OnlyWhenNeeded,
-                "'only-when-needed'",
-            ),
-            (
-                "extra-allowed",
-                &self.extra_allowed,
-                self.required == QuoteRequirement::Always,
-                "'always' or true",
-            ),
-        ] {
-            if !patterns.is_empty() && !applies {
-                conflicts.push(OptionConflict {
-                    key,
-                    message: format!("has no effect unless `required` is {needs}"),
-                });
-            }
-            if let Some(pattern) = patterns.iter().find(|p| p.contains(REGEX_SYNTAX)) {
-                conflicts.push(OptionConflict {
-                    key,
-                    message: format!(
-                        "pattern '{}' uses regular expression syntax; patterns are matched as plain substrings, regular expressions are not supported",
-                        echo(pattern, KEY_LIMIT)
-                    ),
-                });
-            }
+        if !self.extra_required.is_empty()
+            && matches!(
+                self.required,
+                QuoteRequirement::Always | QuoteRequirement::Never
+            )
+        {
+            conflicts.push(OptionConflict {
+                key: "extra-required",
+                message: "cannot be combined with `required: always` or `never`".to_owned(),
+            });
+        }
+        if !self.extra_allowed.is_empty() && self.required != QuoteRequirement::OnlyWhenNeeded {
+            conflicts.push(OptionConflict {
+                key: "extra-allowed",
+                message: "is valid only with `required: only-when-needed`".to_owned(),
+            });
         }
         conflicts
     }
@@ -195,10 +182,6 @@ impl super::LintRule for QuotedStringsRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let options = &config.rules.quoted_strings.options;
-        let (quote_type, required) = (options.quote_type, options.required);
-        let (extra_required, extra_allowed) = (&options.extra_required, &options.extra_allowed);
-
         let mut diagnostics = Vec::new();
         let mut roles = RoleTracker::default();
 
@@ -217,6 +200,7 @@ impl super::LintRule for QuotedStringsRule {
                     roles.node();
                 }
                 Event::Scalar(ref value, style, ..) => {
+                    let in_flow = roles.in_flow();
                     let is_key = roles.node() == NodeRole::MappingKey;
                     self.check_scalar(
                         source,
@@ -226,11 +210,8 @@ impl super::LintRule for QuotedStringsRule {
                         value,
                         style,
                         is_key,
+                        in_flow,
                         context.source_context().span_of(span),
-                        quote_type,
-                        required,
-                        extra_required,
-                        extra_allowed,
                     );
                 }
 
@@ -254,111 +235,62 @@ impl QuotedStringsRule {
         value: &str,
         style: ScalarStyle,
         is_key: bool,
+        in_flow: bool,
         scalar_span: Span,
-        quote_type: QuoteType,
-        required: QuoteRequirement,
-        extra_required: &[String],
-        extra_allowed: &[String],
     ) {
+        let options = &config.rules.quoted_strings.options;
+        let severity = config
+            .rules
+            .quoted_strings
+            .severity_or(self.default_severity());
+        let mut report = |message: &str| {
+            diagnostics.push(
+                DiagnosticBuilder::new(self.code(), severity, message, scalar_span)
+                    .build_with_context(source_ctx),
+            );
+        };
+
         match style {
             ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
-                let quote_char = if style == ScalarStyle::SingleQuoted {
-                    '\''
-                } else {
-                    '"'
-                };
-                if quote_type == QuoteType::Single && quote_char == '"' {
-                    let severity = config
-                        .rules
-                        .quoted_strings
-                        .severity_or(self.default_severity());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "string should use single quotes",
-                            scalar_span,
-                        )
-                        .build_with_context(source_ctx),
-                    );
-                } else if quote_type == QuoteType::Double && quote_char == '\'' {
-                    let severity = config
-                        .rules
-                        .quoted_strings
-                        .severity_or(self.default_severity());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "string should use double quotes",
-                            scalar_span,
-                        )
-                        .build_with_context(source_ctx),
-                    );
-                }
-
-                if required == QuoteRequirement::OnlyWhenNeeded {
+                if options.required == QuoteRequirement::OnlyWhenNeeded {
                     let has_escape = style == ScalarStyle::DoubleQuoted
                         && (Self::has_yaml_escape(value)
                             || Self::has_source_unicode_hex_escape(
                                 source,
                                 scalar_span.start.offset,
                             ));
-                    let needs = has_escape
-                        || Self::needs_quotes(value)
-                        || extra_required.iter().any(|p| value.contains(p.as_str()));
-                    if !needs {
-                        let severity = config
-                            .rules
-                            .quoted_strings
-                            .severity_or(self.default_severity());
-                        diagnostics.push(
-                            DiagnosticBuilder::new(
-                                self.code(),
-                                severity,
-                                "string does not need quotes",
-                                scalar_span,
-                            )
-                            .build_with_context(source_ctx),
-                        );
+                    let needed =
+                        has_escape || Self::needs_quotes(value) || (in_flow && value.contains(','));
+                    if !needed {
+                        if options.quotes_redundant_for(value) {
+                            report("string does not need quotes");
+                        }
+                        return;
                     }
-                } else if required == QuoteRequirement::Never {
-                    let severity = config
-                        .rules
-                        .quoted_strings
-                        .severity_or(self.default_severity());
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "string should not be quoted",
-                            scalar_span,
-                        )
-                        .build_with_context(source_ctx),
-                    );
+                }
+
+                match (options.quote_type, style) {
+                    (QuoteType::Single, ScalarStyle::DoubleQuoted) => {
+                        report("string should use single quotes");
+                    }
+                    (QuoteType::Double, ScalarStyle::SingleQuoted) => {
+                        report("string should use double quotes");
+                    }
+                    _ => {}
+                }
+
+                if options.required == QuoteRequirement::Never {
+                    report("string should not be quoted");
                 }
             }
 
-            // Plain scalars: only check when required == "always" and not a key.
             ScalarStyle::Plain
-                if required == QuoteRequirement::Always
-                    && !is_key
+                if !is_key
                     && !is_scalar_literal(value)
-                    && !extra_allowed.iter().any(|p| value.contains(p.as_str())) =>
+                    && (options.required == QuoteRequirement::Always
+                        || options.extra_required.is_match(value)) =>
             {
-                let severity = config
-                    .rules
-                    .quoted_strings
-                    .severity_or(self.default_severity());
-                diagnostics.push(
-                    DiagnosticBuilder::new(
-                        self.code(),
-                        severity,
-                        "string should be quoted",
-                        scalar_span,
-                    )
-                    .build_with_context(source_ctx),
-                );
+                report("string should be quoted");
             }
 
             // Literal and folded block scalars are intentional; skip.
@@ -509,7 +441,10 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = config_with_rule(RuleName::QuotedStrings, "{quote-type: single}");
+        let config = config_with_rule(
+            RuleName::QuotedStrings,
+            "{quote-type: single, required: not-required}",
+        );
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -523,7 +458,10 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = config_with_rule(RuleName::QuotedStrings, "{quote-type: double}");
+        let config = config_with_rule(
+            RuleName::QuotedStrings,
+            "{quote-type: double, required: not-required}",
+        );
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -590,7 +528,7 @@ mod tests {
 
     #[test]
     fn test_quoted_strings_extra_required() {
-        let yaml = "command: run-script";
+        let yaml = "command: 'run-script'";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
@@ -600,6 +538,126 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         // Should not flag as unnecessary because it contains '-'
         assert!(diagnostics.is_empty());
+    }
+
+    const HOSTS: &str = "[^http://, ^ftp://]";
+
+    #[test]
+    fn extra_required_flags_matching_plain_scalars_when_not_required() {
+        let options = format!("{{required: false, extra-required: {HOSTS}}}");
+        let ok = "- 123\n- \"123\"\n- localhost\n- \"localhost\"\n- \"http://localhost\"\n- \"ftp://localhost\"\n";
+        assert!(messages(ok, &options).is_empty());
+        let bad = "- http://localhost\n- ftp://localhost\n";
+        assert_eq!(
+            messages(bad, &options),
+            ["string should be quoted", "string should be quoted"]
+        );
+    }
+
+    #[test]
+    fn extra_required_flags_matching_plain_scalars_when_only_needed() {
+        let options = format!("{{extra-required: {HOSTS}}}");
+        assert_eq!(
+            messages("- http://localhost\n- localhost\n", &options),
+            ["string should be quoted"]
+        );
+        assert!(messages("- \"http://localhost\"\n", &options).is_empty());
+    }
+
+    #[test]
+    fn extra_allowed_keeps_plain_scalars_when_only_needed() {
+        let options = format!("{{extra-allowed: {HOSTS}}}");
+        let ok = "- 123\n- \"123\"\n- localhost\n- http://localhost\n- ftp://localhost\n- \"http://localhost\"\n";
+        assert!(messages(ok, &options).is_empty());
+        assert_eq!(
+            messages("- \"localhost\"\n", &options),
+            ["string does not need quotes"]
+        );
+    }
+
+    #[test]
+    fn comma_needs_quotes_only_inside_flow_collections() {
+        assert!(messages("e: [ \"a,b\" ]\n", "{}").is_empty());
+        assert!(messages("e: { k: 'a,b' }\n", "{}").is_empty());
+        assert!(messages("e: [ k: 'a,b' ]\n", "{}").is_empty());
+        assert_eq!(
+            messages("e: \"a,b\"\n", "{}"),
+            ["string does not need quotes"]
+        );
+        assert_eq!(
+            messages("e: [ \"a b\" ]\n", "{}"),
+            ["string does not need quotes"]
+        );
+    }
+
+    #[test]
+    fn quote_type_is_still_checked_for_needed_quotes_in_flow() {
+        assert_eq!(
+            messages("e: [ \"a,b\" ]\n", "{quote-type: single}"),
+            ["string should use single quotes"]
+        );
+    }
+
+    #[test]
+    fn plain_value_matching_both_extra_options_is_reported() {
+        let options = "{extra-required: ['http'], extra-allowed: ['^b', 'both']}";
+        assert_eq!(
+            messages("- both-http\n- bare\n", options),
+            ["string should be quoted"]
+        );
+    }
+
+    #[test]
+    fn extra_patterns_use_search_semantics() {
+        let options = "{extra-required: ['b+c']}";
+        assert_eq!(messages("- abbbcd\n", options), ["string should be quoted"]);
+        assert_eq!(messages("- abd\n", options), Vec::<String>::new());
+    }
+
+    #[test]
+    fn redundant_quotes_report_only_the_redundancy() {
+        let options = "{quote-type: single}";
+        assert_eq!(
+            messages("a: \"John\"\n", options),
+            ["string does not need quotes"]
+        );
+        assert_eq!(
+            messages("a: \"x: y\"\n", options),
+            ["string should use single quotes"]
+        );
+    }
+
+    #[test]
+    fn redundant_quotes_matching_extra_patterns_are_silent() {
+        let options = "{quote-type: single, extra-required: ['^J']}";
+        assert!(messages("a: \"John\"\n", options).is_empty());
+    }
+
+    #[test]
+    fn extra_required_does_not_quote_keys_or_non_strings() {
+        let options = "{extra-required: ['.']}";
+        assert!(messages("a.b: 1\nc: 1.5\nd: null\n", options).is_empty());
+    }
+
+    #[test]
+    fn option_conflicts_follow_yamllint() {
+        for options in [
+            "{required: always, extra-required: ['a']}",
+            "{required: always, extra-allowed: ['a']}",
+            "{required: false, extra-allowed: ['a']}",
+            "{required: never, extra-required: ['a']}",
+        ] {
+            let mut rules = crate::config::RulesConfig::default();
+            assert!(
+                rules
+                    .apply_rule(
+                        RuleName::QuotedStrings,
+                        serde_norway::Deserializer::from_str(options)
+                    )
+                    .is_err(),
+                "{options}"
+            );
+        }
     }
 
     #[test]

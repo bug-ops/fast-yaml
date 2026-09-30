@@ -5,11 +5,12 @@ use fast_yaml_linter::{
     config::IndentSize,
 };
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::LintFormat;
 use crate::config::CommonConfig;
 use crate::error::ExitCode;
+use crate::file_filter::FileFilter;
 use crate::io::InputSource;
 
 /// CLI arguments for the lint command, separated from `CommonConfig`.
@@ -34,7 +35,14 @@ pub struct LintCommand {
     config: CommonConfig,
     /// Resolved lint configuration (exposed for batch reuse).
     pub lint_config: LintConfig,
+    /// Files the config file selects or drops (exposed for batch discovery).
+    pub file_filter: FileFilter,
     format: LintFormat,
+}
+
+fn split_config(config: ConfigFile) -> (LintConfig, FileFilter) {
+    let (lint_config, selection) = config.into_parts();
+    (lint_config, FileFilter::new(selection))
 }
 
 impl LintCommand {
@@ -44,7 +52,8 @@ impl LintCommand {
     ///
     /// Returns error if an explicit `--config` path cannot be read or parsed.
     pub fn build(config: CommonConfig, args: LintArgs, input: &InputSource) -> Result<Self> {
-        let file_lint_config = Self::load_lint_config(args.config_path, args.no_config, input)?;
+        let (file_lint_config, file_filter) =
+            Self::load_lint_config(args.config_path, args.no_config, input)?;
         let lint_config = ConfigFile::merge_cli_overrides(
             file_lint_config,
             args.max_line_length,
@@ -56,25 +65,27 @@ impl LintCommand {
         Ok(Self {
             config,
             lint_config,
+            file_filter,
             format: args.format,
         })
     }
 
-    /// Load `LintConfig` from config file (explicit path, auto-discovered, or default).
+    /// Load the config file (explicit path, auto-discovered, or default) as a `LintConfig` and
+    /// the file selection its `ignore` and `yaml-files` keys describe.
     fn load_lint_config(
         config_path: Option<PathBuf>,
         no_config: bool,
         input: &InputSource,
-    ) -> Result<LintConfig> {
+    ) -> Result<(LintConfig, FileFilter)> {
         if no_config {
-            return Ok(LintConfig::default());
+            return Ok((LintConfig::default(), FileFilter::default()));
         }
 
         if let Some(path) = config_path {
             // Explicit --config: hard error if missing or invalid
             let cfg = ConfigFile::load(&path)
                 .with_context(|| format!("failed to load config file '{}'", path.display()))?;
-            return Ok(cfg.into_lint_config());
+            return Ok(split_config(cfg));
         }
 
         // Auto-discovery: start from CWD (matches yamllint behavior)
@@ -90,10 +101,30 @@ impl LintCommand {
             let cfg = ConfigFile::load(&discovered).with_context(|| {
                 format!("failed to load config file '{}'", discovered.display())
             })?;
-            return Ok(cfg.into_lint_config());
+            return Ok(split_config(cfg));
         }
 
-        Ok(LintConfig::default())
+        Ok((LintConfig::default(), FileFilter::default()))
+    }
+
+    /// Returns whether the config file's `ignore` drops the file at `path`.
+    ///
+    /// A path that cannot be canonicalized is not ignored, so the read error surfaces later.
+    #[must_use]
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        self.file_filter.has_ignore()
+            && path
+                .canonicalize()
+                .is_ok_and(|canonical| self.file_filter.is_ignored(&canonical, false))
+    }
+
+    /// Reports a file that the config file ignores: no diagnostics and a success exit code.
+    #[must_use]
+    pub fn execute_ignored(&self) -> ExitCode {
+        if matches!(self.format, LintFormat::Json) {
+            print!("{}", JsonFormatter::new(true).format(&[], ""));
+        }
+        ExitCode::Success
     }
 
     /// Execute lint command
