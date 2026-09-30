@@ -32,10 +32,10 @@ print(yaml_str)  # name: test\nvalue: 123\n
 ## Large Integers
 
 Decimal integers beyond the i64 range load as exact Python `int`s and dump back exactly. Loading such a literal
-with more digits than `sys.get_int_max_str_digits()` (4300 by default), or dumping an `int` with more digits,
+with more digits than `sys.get_int_max_str_digits()` (4300 by default; sign and leading zeros are not counted), or dumping an `int` with more digits,
 raises CPython's `ValueError`; raise the limit with `sys.set_int_max_str_digits()`. Literals that fit i64 never
-hit this limit. Hex and octal integers are capped at 14284 bits (at most 4300 decimal digits), so they fit
-the default limit. PyYAML reads leading-zero literals differently (`0012` is octal there).
+hit this limit. Hex and octal integers are capped at 14284 bits (at most 4300 decimal digits) and are not
+subject to the limit. PyYAML reads leading-zero literals differently (`0012` is octal there).
 
 ## Parse Limits
 

@@ -1,3 +1,4 @@
+use crate::scalar::{ResolvedScalar, resolve_scalar};
 pub use saphyr::MappingOwned as Map;
 pub use saphyr::ScalarOwned;
 /// Wrapper around saphyr's `YamlOwned` type for consistent API.
@@ -18,7 +19,7 @@ pub type Array = Vec<Value>;
 /// Returns the text of a scalar used as a mapping key in string-keyed formats (JSON, JS objects).
 ///
 /// Null, booleans, integers and floats use their canonical text; a `Representation` uses its
-/// stored text, which [`crate::canonicalize`] makes canonical decimal for integers beyond `i64`.
+/// stored text, except that an integer beyond `i64` uses its canonical decimal form.
 /// Returns `None` for collections, aliases and other non-scalar nodes.
 ///
 /// # Examples
@@ -42,7 +43,12 @@ pub fn scalar_key_text(key: &Value) -> Option<String> {
             ScalarOwned::FloatingPoint(f) => f.to_string(),
             ScalarOwned::String(s) => s.clone(),
         }),
-        Value::Representation(s, ..) => Some(s.clone()),
+        Value::Representation(s, style, tag) => {
+            Some(match resolve_scalar(s, *style, tag.as_ref()) {
+                ResolvedScalar::BigInt(big) => big.canonical().into_owned(),
+                _ => s.clone(),
+            })
+        }
         _ => None,
     }
 }

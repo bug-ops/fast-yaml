@@ -1,8 +1,8 @@
 use crate::error::{ParseError, ParseResult, SourcePosition};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::merge::{
-    MergeError, MergeKeyId, is_merge_key_marker, is_set_marker, merge_into, merge_key_id,
-    merge_key_tag, set_marker_tag,
+    MergeError, MergeKeyId, MergeKeyTracker, MergeSource, MergeTarget, NodeRole, is_core_set_tag,
+    is_merge_key_marker, is_set_marker, merge_into, merge_key_id, merge_key_tag, set_marker_tag,
 };
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::{Map, Value};
@@ -11,7 +11,7 @@ use saphyr_parser::{
     Event, Marker, Parser as SaphyrParser, ScalarStyle, Span, SpannedEventReceiver, Tag,
 };
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 /// Parser for YAML documents.
 ///
@@ -66,12 +66,11 @@ impl Parser {
     pub fn parse_str_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Option<Value>> {
         let (docs, positions) =
             load_documents_with_budget(input, &StreamBudget::new(*limits), Bom::Strip)?;
-        let mut docs = docs.into_iter();
-        let first = docs
-            .next()
-            .map(|doc| canonicalize_located(doc, &positions))
-            .transpose()?;
-        docs.try_for_each(|doc| canonicalize_located(doc, &positions).map(drop))?;
+        let mut first = None;
+        for (index, doc) in docs.into_iter().enumerate() {
+            let doc = canonicalize_located(doc, index, &positions)?;
+            first.get_or_insert(doc);
+        }
         Ok(first)
     }
 
@@ -181,7 +180,8 @@ fn canonicalize_documents(
     (docs, positions): (Vec<Value>, MergeKeyPositions),
 ) -> ParseResult<Vec<Value>> {
     docs.into_iter()
-        .map(|doc| canonicalize_located(doc, &positions))
+        .enumerate()
+        .map(|(index, doc)| canonicalize_located(doc, index, &positions))
         .collect()
 }
 
@@ -291,12 +291,17 @@ fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
 /// This function post-processes the tree to:
 /// - Resolve `Value::Representation` nodes (produced by `early_parse = false`) to typed scalars,
 ///   applying explicit YAML core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
-///   when present (#203).
+///   when present (#203). Every scalar other than a big integer becomes a typed `Value::Value`.
 /// - Handle `True`, `TRUE`, `False`, `FALSE`, `Null` mixed-case variants.
 /// - Keep integers that overflow `i64` (decimal, hex or octal) as plain `Value::Representation`
-///   nodes (non-core tags kept, core tags dropped) holding their canonical decimal text, so they stay
-///   distinguishable from strings and equal spellings collapse to one mapping key. Every other
-///   scalar is resolved to a typed `Value::Value`.
+///   nodes (non-core tags kept, core tags dropped), so they stay distinguishable from strings.
+///   Decimal values hold canonical decimal text; hex and octal values keep their source text.
+///   Mapping keys of equal value collapse to one entry whatever their spelling: the first
+///   spelling and its position stay, the last value wins.
+/// - Because the text of a big integer depends on its spelling, `Value` equality for big integers
+///   does too (`0xFF…` and its decimal form are unequal, and `parse(emit(parse(x)))` can differ
+///   from `parse(x)`); compare them through [`resolve_scalar`] and
+///   [`BigInt::canonical`](crate::BigInt::canonical).
 /// - Resolve YAML 1.1 merge keys (`<<: *anchor`) into parent mappings (#204). Only the plain,
 ///   untagged scalar `<<` is a merge key; inside a `!!set` it is an ordinary element.
 ///
@@ -330,8 +335,13 @@ pub fn canonicalize(value: Value) -> Result<Value, MergeError> {
     canonicalize_value(value, &mut Blame::default())
 }
 
-/// [`canonicalize`] that reports a rejected merge value at the source position of its `<<` key.
-fn canonicalize_located(value: Value, positions: &MergeKeyPositions) -> ParseResult<Value> {
+/// [`canonicalize`] that reports a rejected merge value at the source position of its `<<` key
+/// and the index of the document holding it.
+fn canonicalize_located(
+    value: Value,
+    document: usize,
+    positions: &MergeKeyPositions,
+) -> ParseResult<Value> {
     let mut blame = Blame::default();
     canonicalize_value(value, &mut blame).map_err(|error| {
         let SourcePosition { line, column } = blame
@@ -342,6 +352,7 @@ fn canonicalize_located(value: Value, positions: &MergeKeyPositions) -> ParseRes
             error,
             line,
             column,
+            document,
         }
     })
 }
@@ -408,7 +419,7 @@ fn canonicalize_mapping(
     let Value::Mapping(map) = std::mem::replace(slot, Value::Value(ScalarOwned::Null)) else {
         return Ok(());
     };
-    let mut explicit = Map::with_capacity(map.len());
+    let mut explicit = KeyedMap::with_capacity(map.len());
     let mut merge = None;
     let mut merge_id = None;
     for (k, v) in map {
@@ -424,16 +435,16 @@ fn canonicalize_mapping(
             let (mut k, mut v) = (k, v);
             canonicalize_in_place(&mut k, SetElements::No, blame)?;
             canonicalize_in_place(&mut v, SetElements::No, blame)?;
-            explicit.insert(k, v);
+            explicit.set(k, v)?;
         }
     }
     *slot = Value::Mapping(match merge {
-        None => explicit,
+        None => explicit.map,
         Some(merge) => {
-            let mut result = Map::with_capacity(explicit.len());
-            merge_into(&mut result, Some(merge), explicit)
+            let mut result = KeyedMap::with_capacity(explicit.map.len());
+            merge_into(&mut result, Some(merge), explicit.map)
                 .map_err(|e| blamed(e, merge_id, blame))?;
-            result
+            result.map
         }
     });
     Ok(())
@@ -454,6 +465,77 @@ fn merge_key_id_of(key: &Value) -> Option<MergeKeyId> {
     }
 }
 
+/// Identity of a big-integer mapping key: canonical decimal value and tag, independent of spelling.
+#[derive(PartialEq, Eq, Hash)]
+struct BigKey {
+    canonical: String,
+    tag: Option<Tag>,
+}
+
+impl BigKey {
+    fn of(key: &Value) -> Option<Self> {
+        let Value::Representation(s, style, tag) = key else {
+            return None;
+        };
+        match resolve_scalar(s, *style, tag.as_ref()) {
+            ResolvedScalar::BigInt(big) => Some(Self {
+                canonical: big.canonical().into_owned(),
+                tag: tag.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// A mapping under construction in which big-integer keys of equal value collapse whatever their
+/// spelling: the first spelling and its position stay, the last value wins.
+#[derive(Default)]
+struct KeyedMap {
+    map: Map,
+    first_spelling: HashMap<BigKey, Value>,
+}
+
+impl KeyedMap {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            map: Map::with_capacity(capacity),
+            first_spelling: HashMap::new(),
+        }
+    }
+
+    fn first_spelling_of(&mut self, key: Value) -> Value {
+        match BigKey::of(&key) {
+            Some(id) => self.first_spelling.entry(id).or_insert(key).clone(),
+            None => key,
+        }
+    }
+}
+
+impl MergeTarget for KeyedMap {
+    type Node = Value;
+    type Error = MergeError;
+    type Entries = Map;
+    type Items = Vec<Value>;
+
+    fn classify(&self, node: Value) -> Result<MergeSource<Map, Vec<Value>>, MergeError> {
+        self.map.classify(node)
+    }
+
+    fn reject(error: MergeError) -> MergeError {
+        error
+    }
+
+    fn set_if_absent(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
+        let key = self.first_spelling_of(key);
+        self.map.set_if_absent(key, value)
+    }
+
+    fn set(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
+        let key = self.first_spelling_of(key);
+        self.map.set(key, value)
+    }
+}
+
 /// Whether `key` is the plain, untagged scalar `<<`; quoted and tagged forms are ordinary keys.
 fn is_merge_key(key: &Value) -> bool {
     match key {
@@ -468,16 +550,14 @@ fn is_merge_key(key: &Value) -> bool {
 /// tags, and [`canonicalize`] must tell sets from mappings to resolve `<<` correctly.
 fn mark_set(event: Event<'_>) -> Event<'_> {
     match event {
-        Event::MappingStart(anchor, Some(tag))
-            if tag.is_yaml_core_schema() && tag.suffix == "set" =>
-        {
+        Event::MappingStart(anchor, Some(tag)) if is_core_set_tag(&tag) => {
             Event::MappingStart(anchor, Some(Cow::Owned(set_marker_tag())))
         }
         other => other,
     }
 }
 
-/// Tags every plain `<<` key with a unique marker tag.
+/// Tags every plain `<<` key with a unique marker tag and records its source position.
 ///
 /// The loader collapses equal keys, which would hide an invalid earlier `<<` value from
 /// [`canonicalize`]. The tag only makes the keys unequal; the scalar text stays `<<`, so an
@@ -485,10 +565,7 @@ fn mark_set(event: Event<'_>) -> Event<'_> {
 /// NUL, which input validation rejects.
 #[derive(Default)]
 struct MergeKeyTagger {
-    /// Open containers: whether each is a mapping, and how many child nodes it has received.
-    frames: Vec<(bool, usize)>,
-    /// Anchors on plain `<<` scalars; an alias to one in key position is a merge key too.
-    merge_anchors: HashSet<usize>,
+    tracker: MergeKeyTracker,
     positions: MergeKeyPositions,
 }
 
@@ -499,38 +576,13 @@ impl MergeKeyTagger {
     }
 
     fn tag<'a>(&mut self, event: Event<'a>, span: Span) -> Event<'a> {
-        let is_key = match event {
-            Event::Scalar(..)
-            | Event::Alias(_)
-            | Event::MappingStart(..)
-            | Event::SequenceStart(..) => {
-                self.frames.last_mut().is_some_and(|(mapping, children)| {
-                    *children += 1;
-                    *mapping && *children % 2 == 1
-                })
-            }
-            _ => false,
-        };
-        if let Event::Scalar(s, ScalarStyle::Plain, anchor @ 1.., None) = &event
-            && s == "<<"
-        {
-            self.merge_anchors.insert(*anchor);
+        if self.tracker.observe(&event) != Some(NodeRole::MergeKey) {
+            return event;
         }
         match event {
-            Event::MappingStart(..) => self.frames.push((true, 0)),
-            Event::SequenceStart(..) => self.frames.push((false, 0)),
-            Event::MappingEnd | Event::SequenceEnd => {
-                self.frames.pop();
-            }
-            Event::Scalar(s, ScalarStyle::Plain, anchor, None) if is_key && s == "<<" => {
-                return self.marked(s, anchor, span);
-            }
-            Event::Alias(id) if is_key && self.merge_anchors.contains(&id) => {
-                return self.marked(Cow::Borrowed("<<"), 0, span);
-            }
-            _ => {}
+            Event::Scalar(text, _, anchor, _) => self.marked(text, anchor, span),
+            _ => self.marked(Cow::Borrowed("<<"), 0, span),
         }
-        event
     }
 }
 
@@ -585,7 +637,7 @@ fn canonicalize_scalar(slot: &mut Value) {
                 ResolvedScalar::Str(_) => Value::Value(ScalarOwned::String(s)),
                 // A non-core tag survives so the emitter can write it back.
                 ResolvedScalar::BigInt(big) => Value::Representation(
-                    big.canonical().into_owned(),
+                    big.retained_text().into_owned(),
                     ScalarStyle::Plain,
                     tag.filter(|t| !t.is_yaml_core_schema()),
                 ),
@@ -604,8 +656,8 @@ fn canonicalize_scalar(slot: &mut Value) {
 
 /// Converts a resolved scalar to its owned core value; strings are copied.
 ///
-/// Integers beyond `i64` become a plain `Value::Representation` holding their canonical decimal
-/// text.
+/// Integers beyond `i64` become a plain `Value::Representation` holding their
+/// [retained text](crate::BigInt::retained_text).
 pub(crate) fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
     Value::Value(match resolved {
         ResolvedScalar::Null => ScalarOwned::Null,
@@ -613,7 +665,11 @@ pub(crate) fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
         ResolvedScalar::Int(i) => ScalarOwned::Integer(i),
         ResolvedScalar::Float(f) => ScalarOwned::FloatingPoint(f.into()),
         ResolvedScalar::BigInt(big) => {
-            return Value::Representation(big.canonical().into_owned(), ScalarStyle::Plain, None);
+            return Value::Representation(
+                big.retained_text().into_owned(),
+                ScalarStyle::Plain,
+                None,
+            );
         }
         ResolvedScalar::Str(s) => ScalarOwned::String(s.into()),
     })
@@ -1181,6 +1237,7 @@ m:
                 error,
                 line,
                 column,
+                ..
             }) => (error, line, column),
             other => panic!("merge error expected, got {other:?}"),
         }
@@ -1248,8 +1305,38 @@ m:
         let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3"
+            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3 (document 1)"
         );
+    }
+
+    #[test]
+    fn test_merge_error_document_index() {
+        let yaml = "a: 1\n---\nb: 2\n---\nm:\n  <<: 1\n";
+        let budget = StreamBudget::new(ParseLimits::default());
+        for err in [
+            Parser::parse_str(yaml).unwrap_err(),
+            Parser::parse_all(yaml).unwrap_err(),
+            Parser::parse_chunk_with_budget(yaml, &budget).unwrap_err(),
+        ] {
+            assert_eq!(err.document_index(), Some(2));
+            assert!(err.to_string().ends_with("(document 3)"), "{err}");
+        }
+    }
+
+    #[test]
+    fn test_relocated_shifts_merge_document() {
+        let err = Parser::parse_all("m: {<<: 1}\n")
+            .unwrap_err()
+            .relocated(4, 20, 3);
+        assert!(matches!(
+            err,
+            ParseError::Merge {
+                line: 5,
+                column: 5,
+                document: 3,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -1506,10 +1593,10 @@ m:
     }
 
     #[test]
-    fn test_custom_tag_on_big_integer_is_kept_with_canonical_text() {
+    fn test_custom_tag_on_big_integer_is_kept_with_source_text() {
         let v = get_mapping_val("x: !foo 0xFFFFFFFFFFFFFFFFFF", "x");
         assert!(
-            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, Some(_)) if s == "4722366482869645213695"),
+            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, Some(_)) if s == "0xFFFFFFFFFFFFFFFFFF"),
             "got {v:?}"
         );
     }
@@ -1581,16 +1668,15 @@ m:
     }
 
     #[test]
-    fn test_hex_and_octal_overflow_become_canonical_decimal() {
+    fn test_hex_and_octal_overflow_keep_source_text_in_values() {
         for (raw, expected) in [
-            ("0x8000000000000000", "9223372036854775808"),
-            ("-0x8000000000000001", "-9223372036854775809"),
-            ("0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
-            ("0o7777777777777777777777", "73786976294838206463"),
-            ("!!int 0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
-            ("!!int 0o1000000000000000000000", "9223372036854775808"),
-            ("0XDEADBEEFDEADBEEF", "16045690984833335023"),
-            ("0O1000000000000000000000", "9223372036854775808"),
+            ("0x8000000000000000", "0x8000000000000000"),
+            ("-0x8000000000000001", "-0x8000000000000001"),
+            ("0o7777777777777777777777", "0o7777777777777777777777"),
+            ("!!int 0xFFFFFFFFFFFFFFFFFF", "0xFFFFFFFFFFFFFFFFFF"),
+            ("!!int 0o1000000000000000000000", "0o1000000000000000000000"),
+            ("0XDEADBEEFDEADBEEF", "0XDEADBEEFDEADBEEF"),
+            ("+0099999999999999999999", "99999999999999999999"),
         ] {
             let v = get_mapping_val(&format!("x: {raw}"), "x");
             assert!(
@@ -1598,6 +1684,68 @@ m:
                 "{raw}: got {v:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_radix_big_integer_keys_collapse_keeping_first_spelling() {
+        let Some(Value::Mapping(map)) = Parser::parse_str(
+            "0xFFFFFFFFFFFFFFFFFF: a\nz: 0\n4722366482869645213695: b\n0o7777777777777777777777: c\n",
+        )
+        .unwrap() else {
+            unreachable!()
+        };
+        let entries: Vec<_> = map.iter().collect();
+        assert_eq!(entries.len(), 3);
+        assert!(matches!(
+            entries[0].0,
+            Value::Representation(s, _, None) if s == "0xFFFFFFFFFFFFFFFFFF"
+        ));
+        assert_eq!(entries[0].1, &Value::Value(ScalarOwned::String("b".into())));
+        assert!(matches!(
+            entries[2].0,
+            Value::Representation(s, _, None) if s == "0o7777777777777777777777"
+        ));
+    }
+
+    #[test]
+    fn test_equal_keys_collapse_at_first_position_with_last_value() {
+        let Some(Value::Mapping(map)) =
+            Parser::parse_str("0x10: a\nb: 1\n16: c\ntrue: x\nk: 2\nTrue: y\n").unwrap()
+        else {
+            unreachable!()
+        };
+        let entries: Vec<_> = map.iter().collect();
+        let text = |s: &str| Value::Value(ScalarOwned::String(s.into()));
+        assert_eq!(
+            entries,
+            [
+                (&Value::Value(ScalarOwned::Integer(16)), &text("c")),
+                (&text("b"), &Value::Value(ScalarOwned::Integer(1))),
+                (&Value::Value(ScalarOwned::Boolean(true)), &text("y")),
+                (&text("k"), &Value::Value(ScalarOwned::Integer(2))),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_radix_big_integer_keys_collapse_through_merge_and_alias() {
+        let input = "base: &b\n  0xFFFFFFFFFFFFFFFFFF: from-base\n  other: 1\nchild:\n  <<: *b\n  4722366482869645213695: explicit\n";
+        let Some(Value::Mapping(map)) = Parser::parse_str(input).unwrap() else {
+            unreachable!()
+        };
+        let child = map
+            .get(&Value::Value(ScalarOwned::String("child".into())))
+            .unwrap();
+        let Value::Mapping(child) = child else {
+            unreachable!()
+        };
+        assert_eq!(child.len(), 2);
+        let (key, value) = child.iter().next().unwrap();
+        assert!(matches!(
+            key,
+            Value::Representation(s, _, None) if s == "0xFFFFFFFFFFFFFFFFFF"
+        ));
+        assert_eq!(value, &Value::Value(ScalarOwned::String("explicit".into())));
     }
 
     #[test]

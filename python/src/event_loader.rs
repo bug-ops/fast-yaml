@@ -432,11 +432,9 @@ fn build_mapping(
     .map_err(|failure| match failure {
         PyMergeFailure::Rejected(error) => {
             let SourcePosition { line, column } = known(merge_at);
-            limit_err(&ParseError::Merge {
-                error,
-                line,
-                column,
-            })
+            PyValueError::new_err(format!(
+                "YAML parse error: {error} at line {line}, column {column}"
+            ))
         }
         PyMergeFailure::Clash(clash, origin) => {
             let at = match origin {

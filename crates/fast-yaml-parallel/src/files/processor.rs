@@ -112,7 +112,10 @@ impl FileProcessor {
     pub fn parse_files(&self, paths: &[PathBuf]) -> BatchResult {
         self.process(paths, |path, content| {
             fast_yaml_core::Parser::parse_str_with_limits(content, &self.config.parse_limits())
-                .map_err(|source| Error::Parse { index: 0, source })?
+                .map_err(|source| Error::Parse {
+                    index: source.document_index().unwrap_or(0),
+                    source,
+                })?
                 .ok_or_else(|| Error::EmptyDocument {
                     path: path.to_path_buf(),
                 })?;

@@ -13,9 +13,10 @@
 //! - only the plain, untagged scalar `<<` is a merge key; quoted or tagged forms are ordinary keys;
 //! - a merge value must be a mapping or a sequence of mappings, anything else is a [`MergeError`].
 
+use std::collections::HashSet;
 use std::num::NonZeroUsize;
 
-use saphyr_parser::Tag;
+use saphyr_parser::{Event, ScalarStyle, Tag};
 use thiserror::Error;
 
 use crate::value::{Map, Value};
@@ -62,6 +63,11 @@ pub(crate) fn is_merge_key_marker(tag: &Tag) -> bool {
     tag.handle == MERGE_KEY_MARKER_HANDLE
 }
 
+/// Whether `tag` is the core-schema `!!set` tag.
+pub(crate) fn is_core_set_tag(tag: &Tag) -> bool {
+    tag.is_yaml_core_schema() && tag.suffix == "set"
+}
+
 pub(crate) fn set_marker_tag() -> Tag {
     Tag {
         handle: SET_MARKER_HANDLE.into(),
@@ -71,6 +77,76 @@ pub(crate) fn set_marker_tag() -> Tag {
 
 pub(crate) fn is_set_marker(tag: &Tag) -> bool {
     tag.handle == SET_MARKER_HANDLE && tag.suffix == "set"
+}
+
+/// Structural role of a node within its parent, as seen by [`MergeKeyTracker`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NodeRole {
+    Root,
+    Item,
+    Key,
+    /// Plain untagged `<<` key, or an alias in key position to an anchored one.
+    MergeKey,
+    Value,
+}
+
+/// Classifies parser events by their role in the tree, spotting `<<` merge keys.
+///
+/// The single definition of which keys are merge keys, shared by the loader and the streaming
+/// formatter.
+#[derive(Default)]
+pub(crate) struct MergeKeyTracker {
+    /// Open containers: whether each is a mapping, and how many child nodes it has received.
+    frames: Vec<(bool, usize)>,
+    merge_anchors: HashSet<usize>,
+}
+
+impl MergeKeyTracker {
+    /// Feeds the next event; returns the role of the node it starts, `None` for other events.
+    pub(crate) fn observe(&mut self, event: &Event<'_>) -> Option<NodeRole> {
+        let role = match event {
+            Event::Scalar(..)
+            | Event::Alias(_)
+            | Event::MappingStart(..)
+            | Event::SequenceStart(..) => Some(self.next_role(event)),
+            _ => None,
+        };
+        match event {
+            Event::Scalar(s, ScalarStyle::Plain, anchor @ 1.., None) if s == "<<" => {
+                self.merge_anchors.insert(*anchor);
+            }
+            Event::MappingStart(..) => self.frames.push((true, 0)),
+            Event::SequenceStart(..) => self.frames.push((false, 0)),
+            Event::MappingEnd | Event::SequenceEnd => {
+                self.frames.pop();
+            }
+            _ => {}
+        }
+        role
+    }
+
+    fn next_role(&mut self, event: &Event<'_>) -> NodeRole {
+        let Some((mapping, children)) = self.frames.last_mut() else {
+            return NodeRole::Root;
+        };
+        *children += 1;
+        if !*mapping {
+            return NodeRole::Item;
+        }
+        if *children % 2 == 0 {
+            return NodeRole::Value;
+        }
+        let merge_key = match event {
+            Event::Scalar(s, ScalarStyle::Plain, _, None) => s == "<<",
+            Event::Alias(id) => self.merge_anchors.contains(id),
+            _ => false,
+        };
+        if merge_key {
+            NodeRole::MergeKey
+        } else {
+            NodeRole::Key
+        }
+    }
 }
 
 /// Why a `<<` value cannot be merged.

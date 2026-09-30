@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#524)
+- **Core**: `ParseError::Merge` becomes a struct variant `Merge { error, line, column, document }`, `From<MergeError> for ParseError` is removed, and `ParseError::relocated` takes a document count (#504) (#520)
 - **Core/Python/Node.js**: only a plain untagged `<<` is a merge key; quoted and tagged forms are ordinary keys (#478) (#494)
 - **Core/Python/Node.js**: a `<<` value other than a mapping or a sequence of mappings, or a `!!set`, is now an error (#481) (#494)
 - **Core**: `!!set` elements are never merge keys, and `canonicalize` returns `Result<Value, MergeError>` (#481) (#494)
@@ -18,8 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Python**: `safe_load` and `parse_parallel` raise `ValueError` when a mapping or `!!set` holds keys YAML keeps distinct but a Python dict would merge (`1`, `true`, `1.0`), instead of silently keeping one; NaN keys collapse to one entry like in core (#489) (#511)
 - **CLI**: `fy parse`, `lint` and `convert` exit 1 on an invalid `<<` value instead of ignoring it (#481) (#494)
 - **Core**: the flow emitter quotes a string `<<` key so dumped data reloads unchanged (#478) (#494)
-- **Core**: `DecimalBigInt` is replaced by radix-aware `BigInt`/`IntRadix`, and `canonicalize` stores integers beyond `i64` as plain `Representation` with canonical decimal text (#495)
+- **Core**: `DecimalBigInt` is replaced by radix-aware `BigInt`/`IntRadix`, and `canonicalize` stores integers beyond `i64` as plain `Representation` (canonical decimal text, hex and octal keep their source text, equal-valued keys collapse at the first key's position with the last value) (#495) (#521)
 - **Core/CLI/Python/Node.js**: hex and octal integers beyond `i64` load as big integers instead of strings, up to 14284 significant bits (#495)
+- **Python**: `parse_parallel` loads hex and octal integers, as values and keys, like `safe_load` under a lowered `sys.set_int_max_str_digits` (#521)
+- **Python**: `safe_load`/`load` count canonical decimal digits against the int digit limit, so decimals with many leading zeros that used to raise `ValueError` now load (behavior change) (#521)
 - **CLI**: `fy format`/`fy lint` exit 1 when a glob matches nothing or is malformed, or a `--stdin-files` line names a missing path; `--jobs`/`--include`/`--exclude` without paths now fail instead of printing "No YAML files found" (they never read stdin) (#402) (#496)
 - **CLI**: a missing path such as `m[1].yaml` is reported as missing instead of expanded as a glob; a pattern is a glob only with `*` or `?`, so bracket-only globs like `f[12].yaml` are now literal (use `*`, `?` or `[[]`) (#498) (#512)
 - **CLI**: `fy format`/`fy lint` exit 1 on an explicit non-YAML file in batch mode and on `--stdin-files` lines over 4096 bytes, naming a directory or a non-YAML file, instead of skipping them (#497) (#512)
@@ -98,6 +101,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **CLI/Parallel/Linter**: UTF-16 and UTF-32 input, including lint config files, fails with an "unsupported encoding" message naming the encoding instead of a generic UTF-8 error (#334) (#524)
+- **Core/CLI/Parallel**: `fy format` and the batch formatters reject an invalid `<<` value instead of passing it through (#505) (#520)
+- **Core/CLI/Node.js**: merge errors report line, column and document of the rejected `<<` key (#504) (#520)
+- **Parallel**: `parse_files` reports the failing merge document index in `Error::Parse` instead of 0, and its message numbers documents from 1 (#503) (#520)
 - **Core/Node.js/Python**: `-0x8000000000000000` loads as `i64::MIN`, and equal big-integer spellings (`+99..9`, `99..9`, hex) give one mapping key and the same Node.js key and value text (#477) (#464) (#480) (#495)
 - **Core/CLI**: `Parser::parse_str`, `fy parse` and `parse_files` validate merge keys in every document, not only the first (#501) (#502)
 - **CLI**: `fy convert` keeps integers beyond `i64` exact in both directions; YAML to JSON now emits them as JSON numbers instead of strings and canonicalizes big-integer JSON map keys (#466, #476)

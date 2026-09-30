@@ -107,6 +107,36 @@ impl<'a> BigInt<'a> {
         self.radix
     }
 
+    /// Returns the text a parsed tree retains: canonical decimal for decimal literals, the
+    /// literal as written for hex and octal.
+    ///
+    /// Keeping the radix prefix lets arbitrary-precision parsers such as Python's
+    /// `int(text, base)` read power-of-two radixes without a quadratic decimal conversion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
+    /// use saphyr_parser::ScalarStyle;
+    ///
+    /// for (raw, kept) in [
+    ///     ("+0099999999999999999999", "99999999999999999999"),
+    ///     ("0xFFFFFFFFFFFFFFFFFF", "0xFFFFFFFFFFFFFFFFFF"),
+    /// ] {
+    ///     let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
+    ///         unreachable!()
+    ///     };
+    ///     assert_eq!(big.retained_text(), kept);
+    /// }
+    /// ```
+    #[must_use]
+    pub fn retained_text(self) -> Cow<'a, str> {
+        match self.radix {
+            IntRadix::Decimal => self.canonical(),
+            IntRadix::Hex | IntRadix::Octal => Cow::Borrowed(self.text),
+        }
+    }
+
     /// Returns the value as decimal text in JSON integer grammar: no leading `+`, no leading
     /// zeros, no radix prefix.
     ///
