@@ -133,9 +133,9 @@ impl Emitter {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{Emitter, EmitterConfig, Value};
+    /// use fast_yaml_core::{Emitter, EmitterConfig, ScalarOwned, Value};
     ///
-    /// let value = Value::String("test".to_string());
+    /// let value = Value::Value(ScalarOwned::String("test".to_string()));
     /// let config = EmitterConfig::new().with_explicit_start(true);
     /// let yaml = Emitter::emit_str_with_config(&value, &config)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -233,9 +233,9 @@ impl Emitter {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{Emitter, Value};
+    /// use fast_yaml_core::{Emitter, ScalarOwned, Value};
     ///
-    /// let value = Value::String("test".to_string());
+    /// let value = Value::Value(ScalarOwned::String("test".to_string()));
     /// let yaml = Emitter::emit_str(&value)?;
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
@@ -252,11 +252,11 @@ impl Emitter {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{Emitter, EmitterConfig, Value};
+    /// use fast_yaml_core::{Emitter, EmitterConfig, ScalarOwned, Value};
     ///
     /// let docs = vec![
-    ///     Value::String("first".to_string()),
-    ///     Value::String("second".to_string()),
+    ///     Value::Value(ScalarOwned::String("first".to_string())),
+    ///     Value::Value(ScalarOwned::String("second".to_string())),
     /// ];
     /// let config = EmitterConfig::new().with_explicit_start(true);
     /// let yaml = Emitter::emit_all_with_config(&docs, &config)?;
@@ -305,11 +305,11 @@ impl Emitter {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{Emitter, Value};
+    /// use fast_yaml_core::{Emitter, ScalarOwned, Value};
     ///
     /// let docs = vec![
-    ///     Value::String("first".to_string()),
-    ///     Value::String("second".to_string()),
+    ///     Value::Value(ScalarOwned::String("first".to_string())),
+    ///     Value::Value(ScalarOwned::String("second".to_string())),
     /// ];
     /// let yaml = Emitter::emit_all(&docs)?;
     /// assert!(yaml.contains("---"));

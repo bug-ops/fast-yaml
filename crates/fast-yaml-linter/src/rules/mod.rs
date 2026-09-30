@@ -60,7 +60,7 @@ pub use truthy::TruthyRule;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{Diagnostic, LintConfig, Severity, DiagnosticCode};
+/// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity, DiagnosticCode};
 /// use fast_yaml_linter::rules::LintRule;
 /// use fast_yaml_core::Value;
 ///

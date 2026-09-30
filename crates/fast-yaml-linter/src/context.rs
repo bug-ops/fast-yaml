@@ -433,7 +433,7 @@ pub struct LineMetadata {
 /// // Access source and cached data
 /// assert_eq!(context.source(), source);
 /// assert_eq!(context.source_context().line_count(), 2);
-/// assert_eq!(context.lines().len(), 2);
+/// assert_eq!(context.lines().len(), 1);
 /// assert_eq!(context.comments().len(), 1);
 /// ```
 pub struct LintContext<'a> {

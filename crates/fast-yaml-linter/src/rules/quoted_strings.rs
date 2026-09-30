@@ -33,7 +33,7 @@ use super::LintRule;
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
 /// let diagnostics = rule.check(&context, &value, &config);
-/// assert!(diagnostics.is_empty());
+/// assert!(!diagnostics.is_empty());  // Quotes are not needed for `John`
 /// ```
 pub struct QuotedStringsRule;
 

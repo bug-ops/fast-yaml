@@ -16,6 +16,7 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_core::Parser;
 /// use fast_yaml_linter::{rules::DocumentEndRule, rules::LintRule, LintConfig, config::RuleConfig};
 ///
 /// let rule = DocumentEndRule;
@@ -25,7 +26,7 @@ use fast_yaml_core::Value;
 /// let config = LintConfig::new()
 ///     .with_rule_config("document-end", RuleConfig::new().with_option("present", true));
 ///
-/// let diagnostics = rule.check(yaml, &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentEndRule;

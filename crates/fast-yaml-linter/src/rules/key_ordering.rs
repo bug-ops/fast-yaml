@@ -21,7 +21,7 @@ use fast_yaml_core::Value;
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = KeyOrderingRule;
-/// let yaml = "age: 30\nname: John";
+/// let yaml = "name: John\nage: 30";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();

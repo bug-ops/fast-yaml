@@ -441,10 +441,10 @@ impl Linter {
     ///
     /// ```
     /// use fast_yaml_linter::Linter;
-    /// use fast_yaml_core::parse_str;
+    /// use fast_yaml_core::Parser;
     ///
     /// let yaml = "name: John";
-    /// let value = parse_str(yaml).unwrap();
+    /// let value = Parser::parse_str(yaml).unwrap().unwrap();
     ///
     /// let linter = Linter::with_all_rules();
     /// let diagnostics = linter.lint_value(yaml, &value);

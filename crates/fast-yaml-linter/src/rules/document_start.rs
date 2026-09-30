@@ -16,6 +16,7 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_core::Parser;
 /// use fast_yaml_linter::{rules::DocumentStartRule, rules::LintRule, LintConfig, config::RuleConfig};
 ///
 /// let rule = DocumentStartRule;
@@ -25,7 +26,7 @@ use fast_yaml_core::Value;
 /// let config = LintConfig::new()
 ///     .with_rule_config("document-start", RuleConfig::new().with_option("present", "required"));
 ///
-/// let diagnostics = rule.check(yaml, &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentStartRule;

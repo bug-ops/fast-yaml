@@ -32,7 +32,7 @@ use fast_yaml_core::Value;
 /// let config = LintConfig::new()
 ///     .with_rule_config("colons", RuleConfig::new().with_option("max-spaces-after", 1i64));
 ///
-/// let diagnostics = rule.check(yaml, &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct ColonsRule;
