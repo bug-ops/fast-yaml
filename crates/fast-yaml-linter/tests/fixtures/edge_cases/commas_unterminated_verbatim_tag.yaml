@@ -1,0 +1,5 @@
+# Test: commas
+# Expected commas violations: 2 (space before and no space after the comma)
+# The verbatim tag has no closing '>' so it must not mask the comma
+
+a: [x !<y ,z]

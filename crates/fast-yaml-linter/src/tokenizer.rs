@@ -63,6 +63,7 @@ pub struct FlowTokenizer<'a> {
     _source: &'a str,
     context: &'a SourceContext<'a>,
     block_scalar_ranges: Vec<ByteRange>,
+    flow_ranges: Vec<ByteRange>,
     masked_ranges: Vec<ByteRange>,
 }
 
@@ -86,13 +87,15 @@ impl<'a> FlowTokenizer<'a> {
             _source: source,
             context,
             block_scalar_ranges: scalars.block,
+            flow_ranges: scalars.flow,
             masked_ranges,
         }
     }
 
     /// Finds all tokens of a specific type in the source.
     ///
-    /// Ignores tokens inside quoted strings and comments.
+    /// Ignores tokens inside quoted strings and comments; commas are only reported inside
+    /// flow collections.
     ///
     /// # Examples
     ///
@@ -118,6 +121,10 @@ impl<'a> FlowTokenizer<'a> {
                 for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
                     let offset = line_start.add_bytes(byte_col);
                     if c != ch || self.is_masked(offset) {
+                        continue;
+                    }
+
+                    if token_type == TokenType::Comma && !self.is_in_flow(offset) {
                         continue;
                     }
 
@@ -230,11 +237,19 @@ impl<'a> FlowTokenizer<'a> {
 
     /// Checks if a byte offset falls inside a block scalar range.
     fn is_in_block_scalar(&self, offset: ByteOffset) -> bool {
-        let idx = self
-            .block_scalar_ranges
-            .partition_point(|range| range.start() <= offset);
+        Self::in_ranges(&self.block_scalar_ranges, offset)
+    }
+
+    /// Checks if a byte offset falls inside an outermost flow collection.
+    fn is_in_flow(&self, offset: ByteOffset) -> bool {
+        Self::in_ranges(&self.flow_ranges, offset)
+    }
+
+    /// Checks if `offset` falls inside one of the sorted, disjoint `ranges`.
+    fn in_ranges(ranges: &[ByteRange], offset: ByteOffset) -> bool {
+        let idx = ranges.partition_point(|range| range.start() <= offset);
         idx.checked_sub(1)
-            .and_then(|prev| self.block_scalar_ranges.get(prev))
+            .and_then(|prev| ranges.get(prev))
             .is_some_and(|range| range.contains(offset))
     }
 
@@ -373,12 +388,7 @@ impl<'a> FlowTokenizer<'a> {
 
     /// Checks if a byte offset falls inside a comment or quoted scalar.
     fn is_masked(&self, offset: ByteOffset) -> bool {
-        let idx = self
-            .masked_ranges
-            .partition_point(|range| range.start() <= offset);
-        idx.checked_sub(1)
-            .and_then(|prev| self.masked_ranges.get(prev))
-            .is_some_and(|range| range.contains(offset))
+        Self::in_ranges(&self.masked_ranges, offset)
     }
 
     /// Checks if a hyphen at a position is a list item marker.
@@ -408,10 +418,13 @@ impl<'a> FlowTokenizer<'a> {
     }
 }
 
-/// Byte ranges of scalars that the parser reports as block or quoted.
+/// Byte ranges of scalars that the parser reports as block or quoted, and of flow collections.
 struct ScalarRanges {
     block: Vec<ByteRange>,
     quoted: Vec<ByteRange>,
+    /// Outermost flow collections, from the opening to the closing indicator. One that the
+    /// parser never closed extends to the end of the source.
+    flow: Vec<ByteRange>,
     /// Byte offset from which the parser produced no events because of a syntax error.
     unparsed_from: Option<ByteOffset>,
 }
@@ -426,15 +439,37 @@ fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRan
     let mut ranges = ScalarRanges {
         block: Vec::new(),
         quoted: Vec::new(),
+        flow: Vec::new(),
         unparsed_from: None,
     };
 
     let mut parsed_until = ByteOffset::ZERO;
+    let mut flow_open = Vec::<ByteOffset>::new();
     loop {
         match parser.next_event() {
             Some(Ok((event, span))) => {
                 let range = context.byte_range_of(span);
                 parsed_until = range.end();
+                // Block collection events are empty; End events may also cover trailing
+                // whitespace and comments, so the indicator is read from the source.
+                let indicator = (range.start() != range.end())
+                    .then(|| source.as_bytes().get(range.start().get()))
+                    .flatten();
+                match (&event, indicator) {
+                    (Event::SequenceStart(..) | Event::MappingStart(..), Some(b'[' | b'{')) => {
+                        flow_open.push(range.start());
+                    }
+                    (Event::SequenceEnd | Event::MappingEnd, Some(b']' | b'}')) => {
+                        if let Some(open) = flow_open.pop()
+                            && flow_open.is_empty()
+                        {
+                            ranges
+                                .flow
+                                .push(ByteRange::new(open, range.start().add_bytes(1)));
+                        }
+                    }
+                    _ => {}
+                }
                 if let Event::Scalar(_, style, ..) = event {
                     match style {
                         ScalarStyle::Literal | ScalarStyle::Folded => {
@@ -456,6 +491,11 @@ fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRan
             }
             Some(Err(_)) => {
                 ranges.unparsed_from = Some(parsed_until);
+                if let Some(&open) = flow_open.first() {
+                    ranges
+                        .flow
+                        .push(ByteRange::new(open, ByteOffset::new(source.len())));
+                }
                 break;
             }
             None => break,
@@ -475,20 +515,12 @@ enum Mode {
     VerbatimTag,
 }
 
-/// Returns the masking mode opened by `ch`, given the previous and next chars.
-fn opening_mode(
-    ch: char,
-    prev: Option<char>,
-    next: Option<char>,
-    guess_quotes: bool,
-) -> Option<Mode> {
+/// Returns the masking mode opened by `ch`, given the previous char.
+fn opening_mode(ch: char, prev: Option<char>, guess_quotes: bool) -> Option<Mode> {
     let at_boundary = prev.is_none_or(char::is_whitespace);
     match ch {
         '#' if at_boundary => Some(Mode::Comment),
         '%' if prev.is_none_or(|p| matches!(p, '\n' | '\r')) => Some(Mode::Comment),
-        '!' if (at_boundary || prev.is_some_and(|p| "[{,".contains(p))) && next == Some('<') => {
-            Some(Mode::VerbatimTag)
-        }
         '\'' | '"' if guess_quotes && (at_boundary || prev.is_some_and(|p| "[{,:".contains(p))) => {
             Some(if ch == '"' {
                 Mode::Double
@@ -498,6 +530,15 @@ fn opening_mode(
         }
         _ => None,
     }
+}
+
+/// Returns the byte length of the verbatim tag `!<...>` that starts `text`, if `prev` allows
+/// one to start there and its `>` comes before any whitespace or `<`.
+pub(crate) fn verbatim_tag_len(prev: Option<char>, text: &str) -> Option<usize> {
+    let boundary = prev.is_none_or(|p| p.is_whitespace() || "[{,".contains(p));
+    let body = text.strip_prefix("!<").filter(|_| boundary)?;
+    let end = body.find(|c: char| matches!(c, '>' | '<') || c.is_whitespace())?;
+    body.get(end..)?.starts_with('>').then_some(end + 3)
 }
 
 /// Collects sorted byte ranges of comments, directives, verbatim tags and quoted scalars
@@ -554,8 +595,15 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange>
                 }
 
                 let guess_quotes = scalars.unparsed_from.is_some_and(|from| offset >= from);
-                let next = chars.peek().map(|&(_, next)| next);
-                if let Some(opened) = opening_mode(ch, prev, next, guess_quotes) {
+                let opened = if source
+                    .get(byte..)
+                    .is_some_and(|text| verbatim_tag_len(prev, text).is_some())
+                {
+                    Some(Mode::VerbatimTag)
+                } else {
+                    opening_mode(ch, prev, guess_quotes)
+                };
+                if let Some(opened) = opened {
                     mode = opened;
                     start = offset;
                 }
@@ -570,10 +618,6 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange>
             Mode::VerbatimTag => {
                 if ch == '>' {
                     ranges.push(ByteRange::new(start, offset.add_bytes(1)));
-                    mode = Mode::Code;
-                    prev = Some(ch);
-                } else if ch.is_whitespace() {
-                    ranges.push(ByteRange::new(start, offset));
                     mode = Mode::Code;
                     prev = Some(ch);
                 }
@@ -1111,5 +1155,49 @@ mod tests {
         ] {
             assert!(tokenizer.find_all(token_type).is_empty(), "{token_type:?}");
         }
+    }
+
+    #[test]
+    fn test_commas_only_inside_flow_collections() {
+        assert_eq!(count("{a: 1}: x,y\n", TokenType::Comma), 0);
+        assert_eq!(count("k: {a: [1,2], b: 3}\n", TokenType::Comma), 2);
+    }
+
+    #[test]
+    fn test_flow_range_survives_trailing_comment_and_spaces() {
+        for yaml in [
+            "k: [a,b]  # c\nj: [c,d]\n",
+            "k: {a: 1,b: 2}  # z\nj: {c: 3,d: 4}\n",
+            "k: [a,b]   \nj: [c,d]\n",
+            "[a]: b\nj: [c,d]\n",
+        ] {
+            let expected = yaml.matches(',').count();
+            assert_eq!(count(yaml, TokenType::Comma), expected, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_unclosed_flow_extends_to_end_of_source() {
+        assert_eq!(count("k: [a,b\nj: c,d\n", TokenType::Comma), 2);
+    }
+
+    #[test]
+    fn test_many_unterminated_verbatim_tags_are_linear() {
+        let yaml = format!("a: x[{}\n", "!<[".repeat(40_000));
+        let context = SourceContext::new(&yaml);
+        let started = std::time::Instant::now();
+        let _ = FlowTokenizer::new(&yaml, &context);
+        assert!(started.elapsed().as_secs() < 2);
+    }
+
+    #[test]
+    fn test_verbatim_tag_len() {
+        assert_eq!(verbatim_tag_len(None, "!<a#b,c> x"), Some(8));
+        assert_eq!(verbatim_tag_len(Some('['), "!<a>]"), Some(4));
+        assert_eq!(verbatim_tag_len(Some(' '), "!<x,b]"), None);
+        assert_eq!(verbatim_tag_len(Some(' '), "!<x ,b>"), None);
+        assert_eq!(verbatim_tag_len(Some(' '), "!<[!<x>"), None);
+        assert_eq!(verbatim_tag_len(Some('a'), "!<x>"), None);
+        assert_eq!(verbatim_tag_len(None, "!x>"), None);
     }
 }

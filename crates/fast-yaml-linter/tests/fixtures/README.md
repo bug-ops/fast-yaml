@@ -45,6 +45,9 @@ These files test edge cases and special YAML features.
 | `edge_cases/unicode.yaml` | Unicode characters, emojis, RTL text |
 | `edge_cases/multiline.yaml` | Block scalars (literal, folded, various chomping) |
 | `edge_cases/non_ascii_block_scalar_braces.yaml` | Non-ASCII comment before a literal block containing `}` (issue #302) |
+| `edge_cases/commas_block_context.yaml` | Commas in block context are not flow commas (issue #442) |
+| `edge_cases/comments_verbatim_tag.yaml` | `#` inside a verbatim tag is not a comment (issue #445) |
+| `edge_cases/commas_unterminated_verbatim_tag.yaml` | Unterminated verbatim tag does not mask a real comma (issue #446) |
 
 ## Usage in Tests
 

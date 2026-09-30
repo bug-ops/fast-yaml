@@ -1,0 +1,5 @@
+# Test: comments
+# Expected comments violations: 0 (# inside a verbatim tag is not a comment)
+
+a: !<tag:example.com,2026:a#b,c> 1
+b: [!<x#y> 2]

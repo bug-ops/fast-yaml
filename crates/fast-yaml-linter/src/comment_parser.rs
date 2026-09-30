@@ -1,6 +1,7 @@
 //! Comment detection and parsing utilities.
 
 use crate::context::lines_of;
+use crate::tokenizer::verbatim_tag_len;
 use crate::{SourceContext, Span};
 use std::sync::OnceLock;
 
@@ -120,8 +121,25 @@ impl<'a> CommentParser<'a> {
                 }
             }
 
+            let mut tag_end = 0;
             for (col_idx, ch) in line.char_indices() {
                 let offset = line_start_offset + col_idx;
+
+                if col_idx < tag_end {
+                    continue;
+                }
+                if ch == '!'
+                    && !in_string
+                    && let Some(len) = line.get(col_idx..).and_then(|text| {
+                        let prev = line
+                            .get(..col_idx)
+                            .and_then(|before| before.chars().next_back());
+                        verbatim_tag_len(prev, text)
+                    })
+                {
+                    tag_end = col_idx + len;
+                    continue;
+                }
 
                 if escape_next {
                     escape_next = false;
@@ -451,5 +469,28 @@ mod tests {
         let comments = parser.find_all();
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].content, " real comment");
+    }
+
+    #[test]
+    fn test_hash_in_verbatim_tag_is_not_comment() {
+        let yaml = "a: !<a#b,c> 1  # real\nb: [!<x#y> 2]\n";
+        let context = SourceContext::new(yaml);
+        let parser = CommentParser::new(yaml, &context);
+
+        let comments = parser.find_all();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].content, " real");
+    }
+
+    #[test]
+    fn test_verbatim_tag_needs_boundary_and_is_not_special_in_quotes() {
+        let yaml = "a!<x#y>\nb: \"!<x\" # c\n";
+        let context = SourceContext::new(yaml);
+        let parser = CommentParser::new(yaml, &context);
+
+        let comments = parser.find_all();
+        assert_eq!(comments.len(), 2);
+        assert_eq!(comments[0].content, "y>");
+        assert_eq!(comments[1].content, " c");
     }
 }
