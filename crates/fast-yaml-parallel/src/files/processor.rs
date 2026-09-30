@@ -428,6 +428,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_files_rejects_invalid_merge_key_in_later_document() {
+        let dir = TempDir::new().unwrap();
+        let bad = create_test_file(&dir, "bad.yaml", "x: 1\n---\nm:\n  <<: [1]\n");
+        let good = create_test_file(&dir, "good.yaml", "x: 1\n---\nb: &b {y: 2}\nm:\n  <<: *b\n");
+        let result = FileProcessor::new().parse_files(&[bad, good]);
+        assert_eq!(result.failed, 1);
+        assert_eq!(result.success, 1);
+    }
+
+    #[test]
     fn test_file_processor_new() {
         let _processor = FileProcessor::new();
     }
