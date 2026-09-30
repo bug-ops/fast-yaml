@@ -209,7 +209,7 @@ pub struct FormatResult {
 /// const result = processFiles(['file1.yaml', 'file2.yaml']);
 /// console.log(`Processed ${result.total} files, ${result.failed} failed`);
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiResult<BatchResult> {
     let config = config.unwrap_or_default();
@@ -246,7 +246,7 @@ pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiRes
 ///   if (r.content) console.log(r.content);
 /// });
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn format_files(
     paths: Vec<String>,
@@ -303,7 +303,7 @@ pub fn format_files(
 /// const result = formatFilesInPlace(['file1.yaml', 'file2.yaml']);
 /// console.log(`Changed ${result.changed} files`);
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn format_files_in_place(
     paths: Vec<String>,

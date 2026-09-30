@@ -550,7 +550,7 @@ jobs:
         run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Build NodeJS extension
-        run: cd nodejs && pnpm run build:debug
+        run: cd nodejs && pnpm run build:test
 
       - name: Run NodeJS tests
         run: cd nodejs && pnpm test
@@ -659,7 +659,7 @@ jobs:
         run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Build NodeJS extension
-        run: cd nodejs && pnpm run build:debug
+        run: cd nodejs && pnpm run build:test
 
       - name: Run tests with coverage
         run: cd nodejs && pnpm run test:coverage
