@@ -1,6 +1,7 @@
 //! Main linter engine and configuration.
 
 use crate::context::lines_of;
+use crate::directives::Directives;
 use crate::{Diagnostic, LintContext, Severity, config::RuleConfig, rules::RuleRegistry};
 use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_core::{Parser, ScalarOwned, Value};
@@ -411,7 +412,10 @@ impl Linter {
 
     /// Lints YAML source code.
     ///
-    /// Parses the source and runs all enabled rules.
+    /// Parses the source and runs all enabled rules, then applies inline suppression
+    /// directives (`# fy: disable`, `# fy: enable`, `# fy: disable-line`, `# fy: disable-file`,
+    /// also spelled `# yamllint ...`). Problems in directives are reported as `lint-directive`
+    /// diagnostics.
     ///
     /// # Errors
     ///
@@ -430,10 +434,14 @@ impl Linter {
         let (source, bom_len) = split_bom(source);
         let docs = Parser::parse_all_with_limits(source, &self.config.parse_limits)?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
+        let directives = Directives::from_source(source, &self.config, &self.registry);
         let mut context = LintContext::new(source);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
+            if directives.disables_file() {
+                break;
+            }
             if self.config.is_rule_disabled(rule.code()) {
                 continue;
             }
@@ -451,9 +459,7 @@ impl Linter {
             }
         }
 
-        shift_offsets(&mut diagnostics, bom_len);
-        diagnostics.sort_by_key(|d| d.span.start);
-        Ok(diagnostics)
+        Ok(finish(diagnostics, directives, bom_len))
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -475,10 +481,14 @@ impl Linter {
     #[must_use]
     pub fn lint_value(&self, source: &str, value: &Value) -> Vec<Diagnostic> {
         let (source, bom_len) = split_bom(source);
+        let directives = Directives::from_source(source, &self.config, &self.registry);
         let context = LintContext::new(source);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
+            if directives.disables_file() {
+                break;
+            }
             if self.config.is_rule_disabled(rule.code()) {
                 continue;
             }
@@ -487,10 +497,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
-        shift_offsets(&mut diagnostics, bom_len);
-        diagnostics.sort_by_key(|d| d.span.start);
-
-        diagnostics
+        finish(diagnostics, directives, bom_len)
     }
 
     /// Gets the current configuration.
@@ -562,6 +569,18 @@ fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
     }
 
     starts
+}
+
+/// Applies inline directives, rebases spans onto the original file and sorts.
+fn finish(
+    mut diagnostics: Vec<Diagnostic>,
+    directives: Directives,
+    bom_len: usize,
+) -> Vec<Diagnostic> {
+    directives.apply(&mut diagnostics);
+    shift_offsets(&mut diagnostics, bom_len);
+    diagnostics.sort_by_key(|d| d.span.start);
+    diagnostics
 }
 
 /// Strips a leading BOM and returns the stripped text with the BOM's byte length.

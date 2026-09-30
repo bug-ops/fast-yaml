@@ -175,8 +175,38 @@ The linter includes 21+ rules covering syntax, style, and best practices:
 **Anchors & Aliases:**
 - `invalid-anchors` — Validate anchor/alias usage
 
+**Directives:**
+- `lint-directive` — Invalid inline directive (unknown rule or verb, misplaced `disable-file`); config-only, cannot be suppressed by a directive
+
 > [!NOTE]
 > All rules are configurable. Disable specific rules via `LintConfig::with_disabled_rule("rule-name")`.
+
+## Inline Directives
+
+`Linter::lint` and `Linter::lint_value` honor suppression comments in the YAML source:
+
+```yaml
+# fy: disable-file
+```
+
+`disable-file` suppresses the whole file. It must be an own-line comment before any YAML content; blank lines, other comments and `%YAML`/`%TAG` lines may precede it, `---` may not. Block and line scopes:
+
+```yaml
+# fy: disable line-length trailing-whitespace
+long: value
+# fy: enable line-length
+a: 1
+a: 2  # fy: disable-line duplicate-key
+# fy: disable-line duplicate-key
+a: 3
+```
+
+- Verbs: `disable`, `enable`, `disable-line`, `disable-file`; without rule names they apply to all rules. The `rule:` prefix on names is optional.
+- `# yamllint ...` is accepted as an alias; `key-duplicates`, `anchors` and `trailing-spaces` map to `duplicate-key`, `invalid-anchor` + `undefined-alias` and `trailing-whitespace`.
+- A block `disable` carries across `---` into following documents.
+- Unknown rules, unknown `fy:` verbs, malformed names, trailing text and misplaced `disable-file` produce one `lint-directive` diagnostic per directive comment. Unknown names never widen a directive to all rules.
+- `disable` and `enable` must be own-line comments; inline ones are rejected with a warning.
+- Matching is by the line where a diagnostic's span starts; syntax errors are never suppressed.
 
 ## Configuration
 

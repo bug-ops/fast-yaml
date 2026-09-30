@@ -54,7 +54,7 @@ The alias budget is per stream, so parallel and batch runs can use up to workers
 - **YAML 1.2.2 compliant** — Full Core Schema support
 - **Fast** — 5-10x faster than PyYAML
 - **PyYAML compatible** — Drop-in replacement with `load`, `dump`, `Loader`, `Dumper` classes
-- **Linter** — Rich diagnostics with line/column tracking
+- **Linter** — Rich diagnostics with line/column tracking; supports inline `# fy: disable` / `disable-line` / `disable-file` (and `# yamllint ...`) suppression comments
 - **Parallel processing** — Multi-threaded parsing for large files
 - **Batch processing** — Process multiple files in parallel
 - **Type stubs** — Full IDE support with `.pyi` files

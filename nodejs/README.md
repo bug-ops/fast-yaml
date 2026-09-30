@@ -123,6 +123,10 @@ const data = load('key: value');
 const yaml = dump(data);
 ```
 
+### Linting
+
+`lint()` honors inline suppression comments such as `# fy: disable-line duplicate-key`, `# fy: disable` / `# fy: enable` and `# fy: disable-file` (also spelled `# yamllint ...`); invalid directives are reported as `lint-directive` diagnostics. See the [directive reference](https://github.com/bug-ops/fast-yaml#inline-lint-directives).
+
 ## Batch Processing
 
 Process multiple YAML files in parallel:

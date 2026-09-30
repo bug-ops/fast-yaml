@@ -56,7 +56,7 @@ pub mod value;
 /// without building an intermediate DOM representation.
 pub mod streaming;
 
-pub use comments::has_comments;
+pub use comments::{find_comments, has_comments};
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use limits::{

@@ -10,7 +10,7 @@ use crate::config::{RuleConfig, RuleOption};
 use crate::linter::LintConfig;
 
 /// All known rule codes. Used to validate rule names from config files.
-const KNOWN_RULE_CODES: &[&str] = &[
+pub(crate) const KNOWN_RULE_CODES: &[&str] = &[
     "duplicate-key",
     "invalid-anchor",
     "undefined-alias",
@@ -35,6 +35,7 @@ const KNOWN_RULE_CODES: &[&str] = &[
     "quoted-strings",
     "key-ordering",
     "float-values",
+    "lint-directive",
 ];
 
 /// Depth limit for config file discovery walk-up.

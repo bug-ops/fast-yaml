@@ -234,3 +234,28 @@ describe('Per-rule severity overrides', () => {
     }
   });
 });
+
+describe('inline directives', () => {
+  it('disable-line suppresses a diagnostic on its line', () => {
+    const result = lint('key: 1\nkey: 2  # fy: disable-line duplicate-key\n');
+    expect(result.find((d) => d.code === 'duplicate-key')).toBeUndefined();
+  });
+
+  it('unknown rule is reported and suppresses nothing', () => {
+    const result = lint('# fy: disable no-such-rule\nkey: 1\nkey: 2\n');
+    expect(result.find((d) => d.code === 'lint-directive')).toBeDefined();
+    expect(result.find((d) => d.code === 'duplicate-key')).toBeDefined();
+  });
+
+  it('disable-file suppresses everything', () => {
+    expect(lint('# fy: disable-file\nkey: 1\nkey: 2\n')).toHaveLength(0);
+  });
+
+  it('disable/enable open and close a block', () => {
+    const yaml =
+      '# fy: disable duplicate-key\na: 1\na: 2\n# fy: enable duplicate-key\nb: 1\nb: 2\n';
+    const dups = lint(yaml).filter((d) => d.code === 'duplicate-key');
+    expect(dups).toHaveLength(1);
+    expect(dups[0].span.start.line).toBe(6);
+  });
+});
