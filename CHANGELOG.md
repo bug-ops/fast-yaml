@@ -68,6 +68,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Linter**: `document-start` no longer reports a missing `---` after `%YAML`/`%TAG` directives, `comments-indentation` and flow/scalar scans are linear (also on non-ASCII lines), and the text formatter bounds long context lines (#443) (#444) (#439) (#453)
+- **Parallel/Core**: `parse_parallel` no longer strips a BOM at the start of later chunks or a second leading BOM; adds `Parser::parse_chunk_with_budget` (#406, #455)
+- **Parallel**: documented known divergence from `Parser::parse_all` for column-0 `---` inside top-level block scalars (saphyr behavior) and pinned it in tests (#407, #455)
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)

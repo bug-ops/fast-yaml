@@ -120,22 +120,67 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-        Ok(load_documents_with_budget(input, budget)?
+        Ok(load_documents_with_budget(input, budget, Bom::Strip)?
+            .into_iter()
+            .map(canonicalize)
+            .collect())
+    }
+
+    /// Parse all YAML documents of one chunk of a larger stream, without BOM handling.
+    ///
+    /// Same pipeline as [`Parser::parse_all_with_budget`] except that a leading U+FEFF is
+    /// kept as content, matching [`Parser::parse_all`] for a BOM after the stream start: the
+    /// caller strips the stream-leading BOM once (see [`strip_bom`]) before splitting.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds the budget's limits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Parser;
+    /// use fast_yaml_core::limits::{ParseLimits, StreamBudget};
+    ///
+    /// let budget = StreamBudget::new(ParseLimits::default());
+    /// let kept = Parser::parse_chunk_with_budget("\u{FEFF}a: 1", &budget)?;
+    /// let stripped = Parser::parse_all_with_budget("\u{FEFF}a: 1", &budget)?;
+    /// assert_ne!(kept, stripped);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn parse_chunk_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
+        Ok(load_documents_with_budget(input, budget, Bom::Keep)?
             .into_iter()
             .map(canonicalize)
             .collect())
     }
 }
 
+/// Whether a leading U+FEFF is an encoding signature to drop or content to keep.
+#[derive(Clone, Copy)]
+enum Bom {
+    Strip,
+    Keep,
+}
+
 /// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
 /// recurses or clones aliases, then returns the un-canonicalized documents.
 fn load_documents(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
-    load_documents_with_budget(input, &StreamBudget::new(*limits))
+    load_documents_with_budget(input, &StreamBudget::new(*limits), Bom::Strip)
 }
 
-fn load_documents_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
+fn load_documents_with_budget(
+    input: &str,
+    budget: &StreamBudget,
+    bom: Bom,
+) -> ParseResult<Vec<Value>> {
+    let text = match bom {
+        Bom::Strip => strip_bom(input),
+        Bom::Keep => input,
+    };
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
-    let mut parser = SaphyrParser::new_from_str(strip_bom(input));
+    let mut parser = SaphyrParser::new_from_str(text);
     let mut loader = YamlLoader::<Value>::default();
     loader.early_parse(false);
     let mut guard = LimitGuard::with_budget(budget.clone());
@@ -940,6 +985,46 @@ merged:
         assert!(
             matches!(val, Value::Sequence(_)),
             "! on sequence must stay Sequence, got {val:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_chunk_keeps_bom_that_parse_all_strips() {
+        let budget = StreamBudget::new(ParseLimits::default());
+        let key_of = |docs: Vec<Value>| {
+            let Some(Value::Mapping(map)) = docs.into_iter().next() else {
+                panic!("expected mapping");
+            };
+            let Some(Value::Value(ScalarOwned::String(key))) = map.keys().next().cloned() else {
+                panic!("expected string key");
+            };
+            key
+        };
+        let stripped = Parser::parse_all_with_budget("\u{FEFF}a: 1", &budget).unwrap();
+        assert_eq!(key_of(stripped), "a");
+        let kept = Parser::parse_chunk_with_budget("\u{FEFF}a: 1", &budget).unwrap();
+        assert_eq!(key_of(kept), "\u{FEFF}a");
+    }
+
+    #[test]
+    fn test_parse_chunk_bom_only_is_string_document() {
+        let budget = StreamBudget::new(ParseLimits::default());
+        let docs = Parser::parse_chunk_with_budget("\u{FEFF}", &budget).unwrap();
+        assert_eq!(
+            docs,
+            vec![Value::Value(ScalarOwned::String("\u{FEFF}".into()))]
+        );
+        let docs = Parser::parse_all_with_budget("\u{FEFF}", &budget).unwrap();
+        assert_eq!(docs, vec![Value::Value(ScalarOwned::Null)]);
+    }
+
+    #[test]
+    fn test_parse_all_strips_only_one_of_double_bom() {
+        let budget = StreamBudget::new(ParseLimits::default());
+        let docs = Parser::parse_all_with_budget("\u{FEFF}\u{FEFF}", &budget).unwrap();
+        assert_eq!(
+            docs,
+            vec![Value::Value(ScalarOwned::String("\u{FEFF}".into()))]
         );
     }
 

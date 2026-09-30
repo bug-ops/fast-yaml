@@ -97,7 +97,7 @@ fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<V
 ///
 /// Error marks are relocated to whole-input coordinates.
 fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> Result<Vec<Value>> {
-    Parser::parse_all_with_budget(chunk.content, budget).map_err(|source| Error::Parse {
+    Parser::parse_chunk_with_budget(chunk.content, budget).map_err(|source| Error::Parse {
         index: chunk.index,
         source: source.relocated(chunk.origin.line, chunk.origin.char_index),
     })
@@ -641,6 +641,8 @@ mod tests {
             "---\na: 1\n---\nb: 2\n---\nc: [\n",
             "a: 1\r---\rb: 2\r---\rc: [\r",
             "---\nключ: 1\n---\nb: [\n",
+            "a: 1\n...\n\u{FEFF}x: [\n",
+            "日本\n...\n\u{FEFF}\n: v\n",
         ] {
             let expected = Parser::parse_all(input).unwrap_err().to_string();
             let Err(Error::Parse { source, .. }) = process_parallel(input, &sequential()) else {

@@ -8,9 +8,18 @@ const ERROR_INPUTS: &[&str] = &[
     "a:\n  - x\n  ---\n",
     "---\n---\na: 1\n---\nb: 'unclosed\n",
     "a: 1\n---\nb: 'unclosed\n---\nc: 3\n",
+    "日本\n...\n\u{FEFF}\n: v\n",
+    "a: 1\n...\n\u{FEFF}x: [\n",
+    "a: [x\n---\nb: 1\n",
 ];
 
 const INPUTS: &[&str] = &[
+    "a: 1\n...\n\u{FEFF}b: 2\n",
+    "\u{FEFF}\u{FEFF}a: 1\n",
+    "\u{FEFF}\u{FEFF}",
+    "a: 1\r\n...\r\n\u{FEFF}b: 2\r\n",
+    "a: 1\r...\r\u{FEFF}b: 2\r",
+    "a: 1\n...\n\u{FEFF}b: 2\n...\n\u{FEFF}c: 3\n",
     "a: |\n  x\n  ---\n  y\nb: 1\n",
     "|\n ---\n---\nx",
     "a: \"multi\n  ---\n  line\"\nb: 1\n",
