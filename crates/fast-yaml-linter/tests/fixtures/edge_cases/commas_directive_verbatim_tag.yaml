@@ -1,0 +1,4 @@
+%TAG !e! tag:example.com,2026:
+---
+a: !<tag:example.com,2026:x> 1
+b: [1, 2]

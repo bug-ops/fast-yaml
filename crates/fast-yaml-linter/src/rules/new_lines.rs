@@ -1,9 +1,7 @@
 //! Rule to check line ending type.
 
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::source::offset::ByteOffset;
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Linting rule for line endings.
@@ -74,7 +72,6 @@ impl super::LintRule for NewLinesRule {
         let mut diagnostics = Vec::new();
         let bytes = source.as_bytes();
         let mut offset = 0;
-        let mut line_num = 1;
 
         for (idx, &byte) in bytes.iter().enumerate() {
             if byte == b'\n' {
@@ -90,8 +87,7 @@ impl super::LintRule for NewLinesRule {
                     let severity =
                         config.get_effective_severity(self.code(), self.default_severity());
 
-                    let location = Location::new(line_num, 1, offset);
-                    let span = Span::new(location, location);
+                    let span = context.source_context().span_at(ByteOffset::new(offset), 0);
 
                     let expected_str = match expected {
                         LineEnding::Unix => "Unix (\\n)",
@@ -116,7 +112,6 @@ impl super::LintRule for NewLinesRule {
                     );
                 }
 
-                line_num += 1;
                 offset = idx + 1;
             }
         }

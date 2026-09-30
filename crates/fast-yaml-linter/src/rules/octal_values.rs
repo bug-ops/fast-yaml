@@ -1,10 +1,8 @@
 //! Rule to check octal value representations.
 
 use crate::context::lines_of;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::source::offset::ByteOffset;
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 use super::LintRule as _;
@@ -94,7 +92,6 @@ impl super::LintRule for OctalValuesRule {
                 config,
                 &mut diagnostics,
                 line,
-                line_num,
                 line_offset,
                 forbid_implicit,
                 forbid_explicit,
@@ -112,7 +109,6 @@ impl OctalValuesRule {
         config: &LintConfig,
         diagnostics: &mut Vec<Diagnostic>,
         line: &str,
-        line_num: usize,
         line_offset: usize,
         forbid_implicit: bool,
         forbid_explicit: bool,
@@ -163,16 +159,10 @@ impl OctalValuesRule {
                 && let Some(rest) = value_token.strip_prefix("0o")
                 && rest.chars().all(|c| c.is_ascii_digit() && c < '8')
             {
-                let value_offset = line_offset + trim_offset_in_line;
-                let col = trim_offset_in_line + 1;
                 let severity = config.get_effective_severity(self.code(), self.default_severity());
-                let span = Span::new(
-                    Location::new(line_num, col, value_offset),
-                    Location::new(
-                        line_num,
-                        col + value_token.len(),
-                        value_offset + value_token.len(),
-                    ),
+                let span = context.source_context().span_at(
+                    ByteOffset::new(line_offset + trim_offset_in_line),
+                    value_token.len(),
                 );
                 diagnostics.push(
                     DiagnosticBuilder::new(
@@ -195,16 +185,10 @@ impl OctalValuesRule {
                 && !value_token.starts_with("0x")
                 && rest.chars().all(|c| c.is_ascii_digit() && c < '8')
             {
-                let value_offset = line_offset + trim_offset_in_line;
-                let col = trim_offset_in_line + 1;
                 let severity = config.get_effective_severity(self.code(), self.default_severity());
-                let span = Span::new(
-                    Location::new(line_num, col, value_offset),
-                    Location::new(
-                        line_num,
-                        col + value_token.len(),
-                        value_offset + value_token.len(),
-                    ),
+                let span = context.source_context().span_at(
+                    ByteOffset::new(line_offset + trim_offset_in_line),
+                    value_token.len(),
                 );
                 diagnostics.push(
                     DiagnosticBuilder::new(

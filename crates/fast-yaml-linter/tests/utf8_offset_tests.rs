@@ -148,10 +148,19 @@ fn mapper_find_colon_after_key_multibyte() {
     assert_eq!(colon.offset, "x: 1\nключ".len());
 }
 
-/// Lints `yaml` with every rule and checks each span is in-bounds, on char boundaries, ordered.
+/// Lints `yaml` with every rule and checks each span is in-bounds, on char boundaries, ordered,
+/// and that line, column and offset of both ends agree with each other.
 fn assert_spans_valid(yaml: &str) {
     let Ok(diags) = Linter::with_all_rules().lint(yaml) else {
         return;
+    };
+    let body = fast_yaml_core::strip_bom(yaml);
+    let bom_len = yaml.len() - body.len();
+    let ctx = SourceContext::new(body);
+    let expected_location = |offset: usize| {
+        let mut loc = ctx.offset_to_location(offset - bom_len);
+        loc.offset = offset;
+        loc
     };
     for d in diags {
         let spans = std::iter::once(d.span).chain(d.suggestions.iter().map(|s| s.span));
@@ -162,6 +171,8 @@ fn assert_spans_valid(yaml: &str) {
                 yaml.is_char_boundary(s) && yaml.is_char_boundary(e),
                 "{yaml:?}: {d:?}"
             );
+            assert_eq!(span.start, expected_location(s), "{yaml:?}: {d:?}");
+            assert_eq!(span.end, expected_location(e), "{yaml:?}: {d:?}");
         }
     }
 }
@@ -367,4 +378,292 @@ fn truthy_token_positions_for_hyphens_quotes_and_urls() {
     assert!(lint_code("url: http://a.b/yes\n", DiagnosticCode::TRUTHY).is_empty());
     assert!(lint_code("url: \"yes\"\n", DiagnosticCode::TRUTHY).is_empty());
     assert_single_span("ключ-2: yes\r\n", DiagnosticCode::TRUTHY, 1, 9, "yes");
+}
+
+#[test]
+fn spans_consistent_for_non_ascii_rule_inputs() {
+    let inputs = [
+        "ключ: 0755\nдругой: 0o17\n",
+        "ключ: .5\nдругой: 1e3\nx: .nan\ny: .inf\n",
+        "я: &а 1\nб: &а 2\n",
+        "ключ: 1\nб: 2\nа: 3\n",
+        "a: 1\n  ключ: [1,2]\n",
+    ];
+    for yaml in inputs {
+        assert_spans_valid(yaml);
+    }
+}
+
+#[test]
+fn octal_reports_char_column() {
+    let yaml = include_str!("fixtures/edge_cases/octal_cyrillic_key.yaml");
+    assert_single_span(yaml, DiagnosticCode::OCTAL_VALUES, 1, 7, "0755");
+    assert_single_span(
+        "a: 1\nключ: 0o17\n",
+        DiagnosticCode::OCTAL_VALUES,
+        2,
+        7,
+        "0o17",
+    );
+}
+
+#[test]
+fn float_values_report_char_column() {
+    let cfg = LintConfig::default();
+    let yaml = "ключ: .5\n";
+    let diags: Vec<_> = Linter::with_config(cfg)
+        .lint(yaml)
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.code.as_str() == DiagnosticCode::FLOAT_VALUES)
+        .collect();
+    assert!(!diags.is_empty());
+    for d in diags {
+        assert_eq!((d.span.start.line, d.span.start.column), (1, 7), "{d:?}");
+        assert_eq!(SourceContext::new(yaml).get_snippet(d.span), ".5");
+    }
+}
+
+#[test]
+fn duplicate_anchor_reports_char_column() {
+    let yaml = "a: &а 1\nб: &а 2\n";
+    let diags = lint_code(yaml, DiagnosticCode::INVALID_ANCHOR);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let span = diags[0].span;
+    assert_eq!((span.start.line, span.start.column), (2, 4));
+    assert_eq!(SourceContext::new(yaml).get_snippet(span), "&а");
+    assert_eq!(span.end.column, 6);
+}
+
+#[test]
+fn key_ordering_reports_key_position() {
+    let yaml = "б: 1\nа: 2\n";
+    let diags = lint_code(yaml, DiagnosticCode::KEY_ORDERING);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    let span = diags[0].span;
+    assert_eq!(
+        (span.start.line, span.start.column, span.start.offset),
+        (2, 1, 6)
+    );
+    assert_eq!(span.end.column, 2);
+    assert_eq!(SourceContext::new(yaml).get_snippet(span), "а");
+
+    let yaml = "x:\n  б: 1\n  а: 2\n";
+    let diags = lint_code(yaml, DiagnosticCode::KEY_ORDERING);
+    assert_eq!(diags.len(), 1, "{diags:?}");
+    assert_eq!(diags[0].span.start.column, 3);
+    assert_eq!(SourceContext::new(yaml).get_snippet(diags[0].span), "а");
+}
+
+#[test]
+fn line_length_offsets_follow_lines() {
+    let config = LintConfig::new().with_max_line_length(Some(5));
+    let yaml = "ок\nдлинная строка\nx\nещё одна длинная\n";
+    let diags: Vec<_> = Linter::with_config(config)
+        .lint(yaml)
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.code.as_str() == DiagnosticCode::LINE_LENGTH)
+        .collect();
+    let ctx = SourceContext::new(yaml);
+    let got: Vec<_> = diags
+        .iter()
+        .map(|d| {
+            (
+                d.span.start.line,
+                d.span.start.offset,
+                ctx.get_snippet(d.span),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (2, "ок\n".len(), "длинная строка"),
+            (4, "ок\nдлинная строка\nx\n".len(), "ещё одна длинная"),
+        ]
+    );
+    assert_eq!(
+        diags[0].span.end.column,
+        "длинная строка".chars().count() + 1
+    );
+}
+
+#[test]
+fn commas_ignore_directives_and_verbatim_tags() {
+    let flagged = |yaml: &str| lint_code(yaml, DiagnosticCode::COMMAS).len();
+    let fixture = include_str!("fixtures/edge_cases/commas_directive_verbatim_tag.yaml");
+    assert_eq!(flagged(fixture), 0);
+    assert_eq!(flagged("%TAG !e! tag:example.com,2026:\n---\na: 1\n"), 0);
+    assert_eq!(flagged("a: !<tag:example.com,2026:x> 1\n"), 0);
+    assert_eq!(flagged("- !<tag:a.com,2026:x>  v\n"), 0);
+    assert_eq!(flagged("a: [1 ,2]\n"), 2);
+    assert_eq!(flagged("%TAG !e! tag:a.com,2026:\n---\na: [1 ,2]\n"), 2);
+}
+
+fn lint_with(yaml: &str, config: LintConfig, code: &str) -> Vec<Diagnostic> {
+    Linter::with_all_rules_and_config(config)
+        .lint(yaml)
+        .unwrap()
+        .into_iter()
+        .filter(|d| d.code.as_str() == code)
+        .collect()
+}
+
+#[test]
+fn commas_ignore_verbatim_tags_after_flow_indicators() {
+    let flagged = |yaml: &str| lint_code(yaml, DiagnosticCode::COMMAS).len();
+    assert_eq!(flagged("k: [!<a,b> x, y]\n"), 0);
+    assert_eq!(flagged("seq: [!<tag:yaml.org,2002:str> a, b]\n"), 0);
+    assert_eq!(flagged("m: {!<tag:e.com,2000:k> v}\n"), 0);
+    assert_eq!(flagged("k: [a,!<a,b> x]\n"), 1);
+    assert_eq!(flagged("seq: [!<tag:yaml.org,2002:str> a ,b]\n"), 2);
+}
+
+#[test]
+fn commas_ignore_directive_in_lone_cr_file() {
+    let yaml = "%TAG !e! tag:a.com,2026:\r---\ra: 1\r";
+    assert!(lint_code(yaml, DiagnosticCode::COMMAS).is_empty());
+}
+
+#[test]
+fn key_ordering_quoted_key_span_starts_at_quote() {
+    for (yaml, snippet) in [("b: 1\n\"a\": 2\n", "\"a\""), ("b: 1\n'a': 2\n", "'a'")] {
+        let diags = lint_code(yaml, DiagnosticCode::KEY_ORDERING);
+        assert_eq!(diags.len(), 1, "{diags:?}");
+        let span = diags[0].span;
+        assert_eq!((span.start.line, span.start.column), (2, 1), "{yaml:?}");
+        assert_eq!(SourceContext::new(yaml).get_snippet(span), snippet);
+    }
+}
+
+#[test]
+fn document_start_missing_span_is_file_start() {
+    let config = LintConfig::new().with_require_document_start(true);
+    for yaml in ["ключ: 1\n", "ключ: 1\r\n", "\u{feff}ключ: 1\r\n"] {
+        let diags = lint_with(yaml, config.clone(), DiagnosticCode::DOCUMENT_START);
+        assert_eq!(diags.len(), 1, "{yaml:?}");
+        let span = diags[0].span;
+        assert_eq!((span.start.line, span.start.column), (1, 1), "{yaml:?}");
+        assert_eq!(span.start, span.end);
+        assert_eq!(diags[0].suggestions[0].span, span);
+    }
+}
+
+#[test]
+fn document_start_forbidden_reports_char_position() {
+    let config = LintConfig::new().with_rule_config(
+        "document-start",
+        fast_yaml_linter::config::RuleConfig::new().with_option("present", "forbidden"),
+    );
+    let yaml = "# é\r\n---\r\nключ: 1\r\n";
+    let diags = lint_with(yaml, config, DiagnosticCode::DOCUMENT_START);
+    assert_eq!(diags.len(), 1);
+    let span = diags[0].span;
+    assert_eq!((span.start.line, span.start.column), (2, 1));
+    assert_eq!(SourceContext::new(yaml).get_snippet(span), "---");
+}
+
+#[test]
+fn document_end_missing_span_is_eof() {
+    let config = LintConfig::new().with_require_document_end(true);
+    let cases = [
+        ("ключ: 1\n", 2, 1),
+        ("ключ: 1", 1, 8),
+        ("ключ: 1\r\n", 2, 1),
+        ("a: 1\rключ: 1\r", 3, 1),
+    ];
+    for (yaml, line, column) in cases {
+        let diags = lint_with(yaml, config.clone(), DiagnosticCode::DOCUMENT_END);
+        assert_eq!(diags.len(), 1, "{yaml:?}");
+        let loc = diags[0].span.start;
+        assert_eq!(
+            (loc.line, loc.column, loc.offset),
+            (line, column, yaml.len()),
+            "{yaml:?}"
+        );
+        assert_eq!(diags[0].span.end, loc);
+        assert_eq!(diags[0].suggestions[0].span, diags[0].span);
+        let expected = if yaml.ends_with(['\n', '\r']) {
+            "..."
+        } else {
+            "\n..."
+        };
+        assert_eq!(
+            diags[0].suggestions[0].replacement.as_deref(),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn document_end_marker_with_trailing_spaces_is_present() {
+    let config = LintConfig::new().with_require_document_end(true);
+    for yaml in ["ключ: 1\n...  \n", "ключ: 1\r\n...\r\n", "ключ: 1\r...\r"] {
+        let diags = lint_with(yaml, config.clone(), DiagnosticCode::DOCUMENT_END);
+        assert!(diags.is_empty(), "{yaml:?}");
+    }
+}
+
+#[test]
+fn new_lines_span_starts_at_line_with_wrong_ending() {
+    let yaml = "a: 1\r\nключ: 2\r\nb: 3\n";
+    let diags = lint_code(yaml, DiagnosticCode::NEW_LINES);
+    let got: Vec<_> = diags
+        .iter()
+        .map(|d| (d.span.start.line, d.span.start.column, d.span.start.offset))
+        .collect();
+    assert_eq!(got, [(1, 1, 0), (2, 1, 6)]);
+
+    let yaml = "ключ: 1\nb: 2\r\n";
+    let diags = lint_code(yaml, DiagnosticCode::NEW_LINES);
+    assert_eq!(diags.len(), 1);
+    assert_eq!(
+        (diags[0].span.start.line, diags[0].span.start.offset),
+        (2, "ключ: 1\n".len())
+    );
+}
+
+#[test]
+fn empty_values_block_sequence_nulls_are_not_reported() {
+    assert!(lint_code("-\n-\n", DiagnosticCode::EMPTY_VALUES).is_empty());
+}
+
+#[test]
+fn empty_values_non_ascii_crlf_with_markers_required() {
+    let config = LintConfig::new()
+        .with_require_document_start(true)
+        .with_require_document_end(true);
+    let yaml = "ключ:\r\nдругой: 1\r\n";
+    let diags = lint_with(yaml, config, DiagnosticCode::EMPTY_VALUES);
+    assert_eq!(diags.len(), 1);
+    assert_eq!(
+        (diags[0].span.start.line, diags[0].span.start.column),
+        (1, 5)
+    );
+}
+
+#[test]
+fn spans_consistent_with_markers_required() {
+    let config = LintConfig::new()
+        .with_require_document_start(true)
+        .with_require_document_end(true);
+    let inputs = [
+        "ключ: 1\n",
+        "ключ: 1",
+        "a: 1\r\nб: 2\r\n",
+        "a: 1\rб: 2\r",
+        "é: 1\r\n...\r\n",
+    ];
+    for yaml in inputs {
+        let diags = Linter::with_all_rules_and_config(config.clone())
+            .lint(yaml)
+            .unwrap();
+        let ctx = SourceContext::new(yaml);
+        for d in diags {
+            for loc in [d.span.start, d.span.end] {
+                assert_eq!(loc, ctx.offset_to_location(loc.offset), "{yaml:?}: {d:?}");
+            }
+        }
+    }
 }

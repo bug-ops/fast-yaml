@@ -1,6 +1,7 @@
 //! Rule to check for document start marker (---).
 
 use crate::context::source_lines;
+use crate::source::offset::ByteOffset;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     SourceContext, Span,
@@ -79,16 +80,17 @@ fn check_required(
         Vec::new()
     } else {
         let severity = config.get_effective_severity(code, Severity::Warning);
+        let start_span = source_context.span_at(ByteOffset::ZERO, 0);
         vec![
             DiagnosticBuilder::new(
                 code,
                 severity,
                 "missing document start marker '---'",
-                Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0)),
+                start_span,
             )
             .with_suggestion(
                 "Add '---' at the beginning",
-                Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0)),
+                start_span,
                 Some("---\n".to_string()),
             )
             .build_with_context(source_context),

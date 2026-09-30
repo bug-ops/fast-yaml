@@ -472,9 +472,36 @@ enum Mode {
     Comment,
     Single,
     Double,
+    VerbatimTag,
 }
 
-/// Collects sorted byte ranges of comments and quoted scalars in `source`.
+/// Returns the masking mode opened by `ch`, given the previous and next chars.
+fn opening_mode(
+    ch: char,
+    prev: Option<char>,
+    next: Option<char>,
+    guess_quotes: bool,
+) -> Option<Mode> {
+    let at_boundary = prev.is_none_or(char::is_whitespace);
+    match ch {
+        '#' if at_boundary => Some(Mode::Comment),
+        '%' if prev.is_none_or(|p| matches!(p, '\n' | '\r')) => Some(Mode::Comment),
+        '!' if (at_boundary || prev.is_some_and(|p| "[{,".contains(p))) && next == Some('<') => {
+            Some(Mode::VerbatimTag)
+        }
+        '\'' | '"' if guess_quotes && (at_boundary || prev.is_some_and(|p| "[{,:".contains(p))) => {
+            Some(if ch == '"' {
+                Mode::Double
+            } else {
+                Mode::Single
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Collects sorted byte ranges of comments, directives, verbatim tags and quoted scalars
+/// in `source`.
 ///
 /// Quoted scalars come from the parser. A `#` starts a comment only at the start of
 /// a line or after whitespace. Past a parse error, quotes are detected heuristically
@@ -526,34 +553,31 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange>
                     continue;
                 }
 
-                let at_boundary = prev.is_none_or(char::is_whitespace);
                 let guess_quotes = scalars.unparsed_from.is_some_and(|from| offset >= from);
-                match ch {
-                    '#' if at_boundary => {
-                        mode = Mode::Comment;
-                        start = offset;
-                    }
-                    '\'' | '"'
-                        if guess_quotes
-                            && (at_boundary || prev.is_some_and(|p| "[{,:".contains(p))) =>
-                    {
-                        mode = if ch == '"' {
-                            Mode::Double
-                        } else {
-                            Mode::Single
-                        };
-                        start = offset;
-                    }
-                    _ => {}
+                let next = chars.peek().map(|&(_, next)| next);
+                if let Some(opened) = opening_mode(ch, prev, next, guess_quotes) {
+                    mode = opened;
+                    start = offset;
                 }
                 prev = Some(ch);
             }
-            Mode::Comment | Mode::Single | Mode::Double if ch == '\n' => {
+            Mode::Comment | Mode::Single | Mode::Double | Mode::VerbatimTag if ch == '\n' => {
                 ranges.push(ByteRange::new(start, offset));
                 mode = Mode::Code;
                 prev = Some(ch);
             }
             Mode::Comment => {}
+            Mode::VerbatimTag => {
+                if ch == '>' {
+                    ranges.push(ByteRange::new(start, offset.add_bytes(1)));
+                    mode = Mode::Code;
+                    prev = Some(ch);
+                } else if ch.is_whitespace() {
+                    ranges.push(ByteRange::new(start, offset));
+                    mode = Mode::Code;
+                    prev = Some(ch);
+                }
+            }
             Mode::Single => {
                 if ch == '\'' && chars.next_if(|&(_, next)| next == '\'').is_none() {
                     ranges.push(ByteRange::new(start, offset.add_bytes(1)));

@@ -1,6 +1,7 @@
 //! Rule to detect duplicate anchor definitions in YAML documents.
 
 use crate::context::source_lines;
+use crate::source::offset::ByteOffset;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
@@ -92,8 +93,8 @@ fn scan_duplicate_anchors(
     source_context: &SourceContext<'_>,
     severity: Severity,
 ) -> Vec<Diagnostic> {
-    // Map from anchor name → (1-indexed line, 1-indexed column) of first def.
-    let mut seen: HashMap<String, (usize, usize)> = HashMap::new();
+    // Map from anchor name → 1-indexed line of first def.
+    let mut seen: HashMap<String, usize> = HashMap::new();
     let mut diagnostics: Vec<Diagnostic> = Vec::new();
     let mut state = ScanState::new();
 
@@ -169,7 +170,7 @@ fn scan_line_for_anchors(
     _source: &str,
     source_context: &SourceContext<'_>,
     state: &mut ScanState,
-    seen: &mut HashMap<String, (usize, usize)>,
+    seen: &mut HashMap<String, usize>,
     diagnostics: &mut Vec<Diagnostic>,
     severity: Severity,
 ) {
@@ -231,11 +232,10 @@ fn scan_line_for_anchors(
                 let name_end = find_anchor_name_end(bytes, name_start);
                 if name_end > name_start {
                     let name = line.get(name_start..name_end).unwrap_or_default();
-                    let col = i + 1; // 1-indexed column of `&`
-                    let offset = line_start_offset + i;
 
-                    if let Some(&(first_line, _first_col)) = seen.get(name) {
-                        let span = build_span(line_number, col, offset, name.len() + 1);
+                    if let Some(&first_line) = seen.get(name) {
+                        let span = source_context
+                            .span_at(ByteOffset::new(line_start_offset + i), name.len() + 1);
                         diagnostics.push(
                             DiagnosticBuilder::new(
                                 DiagnosticCode::INVALID_ANCHOR,
@@ -251,7 +251,7 @@ fn scan_line_for_anchors(
                             .build_with_context(source_context),
                         );
                     } else {
-                        seen.insert(name.to_owned(), (line_number, col));
+                        seen.insert(name.to_owned(), line_number);
                     }
 
                     i = name_end;
@@ -356,17 +356,6 @@ fn find_anchor_name_end(bytes: &[u8], start: usize) -> usize {
         end += 1;
     }
     end
-}
-
-/// Constructs a `Span` for an anchor token (`&name`) at a given position.
-///
-/// `col` is 1-indexed column of `&`; `len` is `name.len() + 1` (includes `&`).
-const fn build_span(line: usize, col: usize, offset: usize, len: usize) -> crate::Span {
-    use crate::{Location, Span};
-    Span::new(
-        Location::new(line, col, offset),
-        Location::new(line, col + len, offset + len),
-    )
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

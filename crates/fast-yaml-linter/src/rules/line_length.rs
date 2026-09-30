@@ -1,9 +1,6 @@
 //! Rule to check line length limits.
 
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Rule to check line length limits.
@@ -27,7 +24,6 @@ impl super::LintRule for LineLengthRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let Some(max_length) = config.max_line_length else {
             return Vec::new();
         };
@@ -39,23 +35,7 @@ impl super::LintRule for LineLengthRule {
             if let Some(line_content) = ctx.get_line(line_num) {
                 let line_len = line_content.chars().count();
                 if line_len > max_length {
-                    let line_start = ctx.offset_to_location(
-                        ctx.get_snippet(Span::new(
-                            Location::new(line_num, 1, 0),
-                            Location::new(line_num, 1, 0),
-                        ))
-                        .as_ptr() as usize
-                            - source.as_ptr() as usize,
-                    );
-
-                    let span = Span::new(
-                        Location::new(line_num, 1, line_start.offset),
-                        Location::new(
-                            line_num,
-                            line_len + 1,
-                            line_start.offset + line_content.len(),
-                        ),
-                    );
+                    let span = ctx.span_at(ctx.line_start(line_num), line_content.len());
 
                     let diagnostic = DiagnosticBuilder::new(
                         DiagnosticCode::LINE_LENGTH,
