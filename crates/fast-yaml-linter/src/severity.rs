@@ -1,7 +1,12 @@
 //! Diagnostic severity levels for categorizing linting issues.
 
+use std::str::FromStr;
+
+use crate::echo::{KEY_LIMIT, echo};
+
 #[cfg(feature = "json-output")]
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
+use serde::{Deserialize, Deserializer};
 
 /// Diagnostic severity levels.
 ///
@@ -18,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// assert!(error > Severity::Warning);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
+#[cfg_attr(feature = "json-output", derive(Serialize))]
 #[cfg_attr(feature = "json-output", serde(rename_all = "lowercase"))]
 #[non_exhaustive]
 pub enum Severity {
@@ -110,6 +115,73 @@ impl Severity {
     }
 }
 
+/// Error returned when a string is not a valid [`Severity`] name.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::Severity;
+///
+/// let err = "fatal".parse::<Severity>().unwrap_err();
+/// assert_eq!(
+///     err.to_string(),
+///     "unknown severity 'fatal', expected one of: error, warning, info, hint"
+/// );
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+#[error(
+    "unknown severity '{}', expected one of: error, warning, info, hint",
+    echo(.input, KEY_LIMIT)
+)]
+pub struct ParseSeverityError {
+    /// The rejected input.
+    pub input: String,
+}
+
+impl FromStr for Severity {
+    type Err = ParseSeverityError;
+
+    /// Parses a severity name, ignoring ASCII case.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::Severity;
+    ///
+    /// assert_eq!("Warning".parse::<Severity>(), Ok(Severity::Warning));
+    /// assert!("loud".parse::<Severity>().is_err());
+    /// ```
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        [Self::Error, Self::Warning, Self::Info, Self::Hint]
+            .into_iter()
+            .find(|severity| s.eq_ignore_ascii_case(severity.as_str()))
+            .ok_or_else(|| ParseSeverityError {
+                input: s.to_owned(),
+            })
+    }
+}
+
+struct SeverityVisitor;
+
+impl serde::de::Visitor<'_> for SeverityVisitor {
+    type Value = Severity;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("a severity name (error, warning, info or hint)")
+    }
+
+    fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Severity, E> {
+        value.parse().map_err(E::custom)
+    }
+}
+
+impl<'de> Deserialize<'de> for Severity {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_str(SeverityVisitor)
+    }
+}
+
 impl std::fmt::Display for Severity {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.as_str())
@@ -165,6 +237,29 @@ mod tests {
         let error = Severity::Error;
         let error_copy = error;
         assert_eq!(error, error_copy);
+    }
+
+    #[test]
+    fn test_severity_from_str_case_insensitive() {
+        assert_eq!("ERROR".parse(), Ok(Severity::Error));
+        assert_eq!("Warning".parse(), Ok(Severity::Warning));
+        assert_eq!("info".parse(), Ok(Severity::Info));
+        assert_eq!("hInT".parse(), Ok(Severity::Hint));
+    }
+
+    #[test]
+    fn test_severity_from_str_rejects_unknown() {
+        let err = "fatal".parse::<Severity>().unwrap_err();
+        assert_eq!(err.input, "fatal");
+        assert!("".parse::<Severity>().is_err());
+    }
+
+    #[test]
+    fn test_severity_deserialize_without_json_feature() {
+        let severity: Severity = serde_norway::from_str("Warning").unwrap();
+        assert_eq!(severity, Severity::Warning);
+        assert!(serde_norway::from_str::<Severity>("fatal").is_err());
+        assert!(serde_norway::from_str::<Severity>("1").is_err());
     }
 
     #[cfg(feature = "json-output")]

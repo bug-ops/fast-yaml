@@ -47,7 +47,8 @@
       "!Cargo.lock",
       "!package-lock.json",
       "!index.js",
-      "!index.d.ts"
+      "!index.d.ts",
+      "!lint-rules.d.ts"
     ]
   }
 }

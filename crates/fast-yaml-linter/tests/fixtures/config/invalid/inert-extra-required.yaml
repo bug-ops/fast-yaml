@@ -1,0 +1,4 @@
+rules:
+  quoted-strings:
+    required: false
+    extra-required: ['http']

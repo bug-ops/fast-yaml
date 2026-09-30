@@ -1,5 +1,8 @@
 //! Rule to check line ending type.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::RuleOptions;
 use crate::source::offset::ByteOffset;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
@@ -17,7 +20,7 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::NewLinesRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::NewLinesRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = NewLinesRule;
@@ -29,6 +32,30 @@ use fast_yaml_core::Value;
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct NewLinesRule;
+
+/// Line ending style required by the new-lines rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LineEndingType {
+    /// `\n` line endings.
+    #[default]
+    Unix,
+    /// `\r\n` line endings.
+    Dos,
+    /// `\r\n` on Windows and `\n` elsewhere.
+    Platform,
+}
+
+/// Options of the new-lines rule.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct NewLinesOptions {
+    /// Required line ending style.
+    #[serde(rename = "type")]
+    pub line_ending: LineEndingType,
+}
+
+impl RuleOptions for NewLinesOptions {}
 
 impl super::LintRule for NewLinesRule {
     fn code(&self) -> &str {
@@ -49,14 +76,9 @@ impl super::LintRule for NewLinesRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let rule_config = config.get_rule_config(self.code());
-        let line_ending_type = rule_config
-            .and_then(|rc| rc.options.get_string("type"))
-            .unwrap_or("unix");
-
-        let expected = match line_ending_type {
-            "dos" => LineEnding::Dos,
-            "platform" => {
+        let expected = match config.rules.new_lines.options.line_ending {
+            LineEndingType::Dos => LineEnding::Dos,
+            LineEndingType::Platform => {
                 #[cfg(target_os = "windows")]
                 {
                     LineEnding::Dos
@@ -66,7 +88,7 @@ impl super::LintRule for NewLinesRule {
                     LineEnding::Unix
                 }
             }
-            _ => LineEnding::Unix,
+            LineEndingType::Unix => LineEnding::Unix,
         };
 
         let mut diagnostics = Vec::new();
@@ -84,8 +106,7 @@ impl super::LintRule for NewLinesRule {
                 };
 
                 if actual != expected {
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                    let severity = config.rules.new_lines.severity_or(self.default_severity());
 
                     let span = context.source_context().span_at(ByteOffset::new(offset), 0);
 
@@ -132,7 +153,10 @@ enum LineEnding {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -169,10 +193,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
-        let config = LintConfig::new().with_rule_config(
-            "new-lines",
-            RuleConfig::new().with_option("type", "dos".to_string()),
-        );
+        let config = config_with_rule(RuleName::NewLines, "{type: dos}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -185,10 +206,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
-        let config = LintConfig::new().with_rule_config(
-            "new-lines",
-            RuleConfig::new().with_option("type", "dos".to_string()),
-        );
+        let config = config_with_rule(RuleName::NewLines, "{type: dos}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -216,10 +234,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
-        let config = LintConfig::new().with_rule_config(
-            "new-lines",
-            RuleConfig::new().with_option("type", "platform".to_string()),
-        );
+        let config = config_with_rule(RuleName::NewLines, "{type: platform}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

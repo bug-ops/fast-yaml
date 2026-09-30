@@ -52,7 +52,10 @@ impl super::LintRule for NewLineAtEndOfFileRule {
         if source.ends_with(['\n', '\r']) {
             Vec::new()
         } else {
-            let severity = config.get_effective_severity(self.code(), Severity::Info);
+            let severity = config
+                .rules
+                .new_line_at_end_of_file
+                .severity_or(Severity::Info);
             let eof = context.source_context().offset_to_location(source.len());
 
             vec![
@@ -72,7 +75,10 @@ impl super::LintRule for NewLineAtEndOfFileRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -145,10 +151,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
-        let config = LintConfig::new().with_rule_config(
-            "new-line-at-end-of-file",
-            RuleConfig::new().with_severity(Severity::Error),
-        );
+        let config = config_with_rule(RuleName::NewLineAtEndOfFile, "{severity: error}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

@@ -1,0 +1,6 @@
+rules:
+  document-start: {present: true}
+  quoted-strings: {required: false}
+  braces: {forbid: true}
+  brackets: {forbid: false}
+  line-length: {max: ~}

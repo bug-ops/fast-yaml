@@ -1,5 +1,8 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::RuleOptions;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
@@ -17,6 +20,15 @@ use std::collections::HashMap;
 /// Duplicate keys cause silent data loss — most parsers keep the last value, silently
 /// discarding earlier ones. This rule detects them per-mapping-scope at all depths.
 pub struct DuplicateKeysRule;
+
+/// Options of the duplicate-key rule (none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DuplicateKeysOptions {}
+
+impl RuleOptions for DuplicateKeysOptions {
+    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["forbid-duplicated-merge-keys"];
+}
 
 impl super::LintRule for DuplicateKeysRule {
     fn code(&self) -> &str {
@@ -36,10 +48,10 @@ impl super::LintRule for DuplicateKeysRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        if config.allow_duplicate_keys {
-            return Vec::new();
-        }
-        let severity = config.get_effective_severity(self.code(), self.default_severity());
+        let severity = config
+            .rules
+            .duplicate_key
+            .severity_or(self.default_severity());
         scan_duplicate_keys(context.source(), context.source_context(), severity)
     }
 }
@@ -186,11 +198,7 @@ mod tests {
             .unwrap()
             .unwrap_or(Value::Value(fast_yaml_core::ScalarOwned::Null));
         let rule = DuplicateKeysRule;
-        let config = LintConfig {
-            allow_duplicate_keys: false,
-            ..Default::default()
-        };
-        rule.check(&LintContext::new(yaml), &value, &config)
+        rule.check(&LintContext::new(yaml), &value, &LintConfig::default())
     }
 
     #[test]
@@ -237,22 +245,16 @@ mod tests {
     }
 
     #[test]
-    fn test_allow_duplicate_keys_config() {
-        let value = Parser::parse_str("key: first\nkey: second\n")
-            .unwrap()
+    fn test_disabled_rule_is_skipped_by_linter() {
+        use crate::{Linter, config::RuleName};
+        let config = LintConfig::new().with_disabled_rule(RuleName::DuplicateKey);
+        let diagnostics = Linter::with_config(config)
+            .lint("key: first\nkey: second\n")
             .unwrap();
-        let config = LintConfig {
-            allow_duplicate_keys: true,
-            ..Default::default()
-        };
         assert!(
-            DuplicateKeysRule
-                .check(
-                    &LintContext::new("key: first\nkey: second\n"),
-                    &value,
-                    &config
-                )
-                .is_empty()
+            !diagnostics
+                .iter()
+                .any(|d| d.code.as_str() == "duplicate-key")
         );
     }
 

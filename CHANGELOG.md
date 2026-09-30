@@ -9,8 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Linter**: the `empty-values` rule no longer has the unreachable `forbid_in_block_sequences` option; configs that set it now fail (#440)
 - **Core**: `MaxDepth::new` and `MaxAliasBytes::new` now return `Result<_, LimitRangeError>` (depth 1..=512, alias bytes 1..=1 GiB); `LintConfig` gains a public `parse_limits` field; Node.js `processFiles`/`formatFiles`/`formatFilesInPlace` now throw instead of returning the error as a value (#433)
+- **Linter**: rule options are typed per-rule structs validated at config load; unknown rules, option keys, wrong types, `null` and unknown top-level config keys are errors in the CLI, Python and Node.js, and `RuleConfig`/`RuleOption`/`RuleOptions` and the string-keyed `LintConfig` fields are replaced by `RulesConfig` (#324) (#426)
+- **Linter**: `Severity` implements `FromStr`/`Deserialize` and `ConfigFileSeverity` is removed; Python and Node.js `rules` now accept every rule option and Python `with_rule_config` takes `options` (#327) (#426)
+- **Linter**: `undefined-alias` is rejected as an unknown rule, `empty-values` option keys are kebab-case, `forbid: "no"` is accepted, and YAML 1.1 bool words, yamllint `level:`, `extends`/`ignore` and unimplemented yamllint options fail with explicit errors (#426)
+- **Linter**: `quoted-strings` `extra-required`/`extra-allowed` reject regex syntax and inert combinations, and `truthy.allowed-values` rejects unquoted booleans (#426)
+- **Python/Node.js**: out-of-range `max_line_length`/`maxLineLength` and indent size are errors, the Python 1000 cap on `max_line_length` is removed, `allow_duplicate_keys=True` can be overridden by `rules`, and `LintConfig.__repr__` prints `None`/`80` instead of `Some(80)` (#426)
 - **Core**: the `streaming` feature is removed; the streaming formatter is always compiled and is the only `Emitter::format*` path; `Parser::parse_all_preserving_styles` and `streaming::is_streaming_suitable` are removed (#408)
 - **Build**: MSRV raised to Rust 1.91 and workspace resolver switched to 3; `ordered-float` updated to 5.5 (#399)
 - **Core/Linter/Parallel**: `ParseError`, `EmitError`, parallel `Error`, `Severity`, `LintError`, `ConfigFileError` and `RuleOption` are `#[non_exhaustive]` (#411)
@@ -50,6 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Python `LintConfig` rules input is converted with bounded depth and node budget, so deep, cyclic or alias-bomb input raises `ValueError` instead of crashing the process (#426)
 - Write files in `fy format` via a secure atomic writer (no predictable `.tmp`, mode and symlinks preserved) (#364)
 - **Breaking:** cap `%TAG` prefix expansion (64 MiB per stream) in parse, lint, convert and `fy format`; adds `LimitKind::TagBytes`, `EmitError::TagLimitExceeded`, `MaxTagBytes` and `ParseLimits::max_tag_bytes` (#389)
 - `fy format` now rejects a cross-document alias (`--- &a [x]` then `--- *a`) as an unknown anchor, matching `fy parse` (#389)
@@ -60,6 +65,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
+- Fix `braces`/`brackets` dropping the max check for empty collections when only `min-spaces-inside-empty` is set; the empty-collection limits now inherit independently (#426)
+- Fix `document-start: {present: true}` and `quote-type` typos being silently ignored in lint configs (#324) (#426)
 - The `label-on-issue` workflow no longer re-creates the removed `status:needs-triage` label on new issues (#413) (#414)
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
 - Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)

@@ -1,5 +1,8 @@
 //! Rule to check spacing after list item hyphens.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{Limit, RuleOptions};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
@@ -17,20 +20,37 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::HyphensRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::HyphensRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = HyphensRule;
 /// let yaml = "- item1\n- item2";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let config = LintConfig::new()
-///     .with_rule_config("hyphens", RuleConfig::new().with_option("max-spaces-after", 1i64));
+/// let config = LintConfig::default();
 ///
 /// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct HyphensRule;
+
+/// Options of the hyphens rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct HyphensOptions {
+    /// Maximum spaces after a sequence hyphen.
+    pub max_spaces_after: Limit,
+}
+
+impl Default for HyphensOptions {
+    fn default() -> Self {
+        Self {
+            max_spaces_after: Limit::Max(1),
+        }
+    }
+}
+
+impl RuleOptions for HyphensOptions {}
 
 impl super::LintRule for HyphensRule {
     fn code(&self) -> &str {
@@ -54,10 +74,7 @@ impl super::LintRule for HyphensRule {
         let source_context = context.source_context();
         let tokenizer = FlowTokenizer::new(source, source_context);
 
-        let rule_config = config.get_rule_config(self.code());
-        let max_spaces_after = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-after"))
-            .unwrap_or(1);
+        let max_spaces_after = config.rules.hyphens.options.max_spaces_after;
 
         let mut diagnostics = Vec::new();
         let hyphens = tokenizer.find_all(TokenType::Hyphen);
@@ -84,7 +101,7 @@ fn check_spaces_after_hyphen(
     source: &str,
     source_context: &SourceContext<'_>,
     hyphen_offset: usize,
-    max_spaces: i64,
+    max_spaces: Limit,
     code: &str,
     config: &LintConfig,
 ) -> Option<Diagnostic> {
@@ -118,13 +135,6 @@ fn check_spaces_after_hyphen(
         }
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
     // Require at least one space after hyphen (unless it's at end of line)
     if spaces == 0 && offset < bytes.len() {
         let next_char = bytes.get(offset).copied().map(char::from);
@@ -132,7 +142,7 @@ fn check_spaces_after_hyphen(
             && ch != '\n'
             && ch != '\r'
         {
-            let severity = config.get_effective_severity(code, Severity::Warning);
+            let severity = config.rules.hyphens.severity_or(Severity::Warning);
             let loc = source_context.offset_to_location(hyphen_offset + 1);
             let span = Span::new(loc, loc);
 
@@ -143,8 +153,8 @@ fn check_spaces_after_hyphen(
         }
     }
 
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
+        let severity = config.rules.hyphens.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(hyphen_offset + 1);
         let span = Span::new(loc, loc);
 
@@ -167,7 +177,10 @@ fn check_spaces_after_hyphen(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -217,10 +230,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
-        let config = LintConfig::new().with_rule_config(
-            "hyphens",
-            RuleConfig::new().with_option("max-spaces-after", 2i64),
-        );
+        let config = config_with_rule(RuleName::Hyphens, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

@@ -1,11 +1,18 @@
 //! Rule to check truthy value representations.
 
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt;
+
+use crate::echo::{KEY_LIMIT, echo};
+
+use crate::config::RuleOptions;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 use std::collections::HashSet;
 
 /// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
-const NON_STANDARD_BOOLS: &[&str] = &[
+pub const NON_STANDARD_BOOLS: &[&str] = &[
     "yes", "no", "Yes", "No", "YES", "NO", "on", "off", "On", "Off", "ON", "OFF", "y", "n", "Y",
     "N",
 ];
@@ -26,7 +33,7 @@ const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::TruthyRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::TruthyRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = TruthyRule;
@@ -39,6 +46,132 @@ const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct TruthyRule;
+
+/// A truthy spelling accepted by the `allowed-values` option.
+///
+/// Validated against the spellings the rule knows about. Spellings must be quoted strings; an
+/// unquoted YAML boolean is rejected because `True` and `true` would otherwise be conflated.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::rules::TruthySpelling;
+///
+/// assert_eq!(TruthySpelling::new("yes").unwrap().as_str(), "yes");
+/// assert!(TruthySpelling::new("maybe").is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TruthySpelling(&'static str);
+
+/// Error returned for a spelling the truthy rule does not know.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+#[error(
+    "unknown truthy spelling '{}', expected one of: {}",
+    echo(.input, KEY_LIMIT),
+    TruthySpelling::known()
+)]
+pub struct UnknownTruthySpelling {
+    /// The rejected spelling.
+    pub input: String,
+}
+
+impl TruthySpelling {
+    const CANONICAL: [&'static str; 2] = ["true", "false"];
+
+    fn all() -> impl Iterator<Item = &'static str> {
+        Self::CANONICAL
+            .into_iter()
+            .chain(NON_CANONICAL_BOOLS.iter().copied())
+            .chain(NON_STANDARD_BOOLS.iter().copied())
+    }
+
+    fn known() -> String {
+        Self::all().collect::<Vec<_>>().join(", ")
+    }
+
+    /// Validates a spelling.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when `spelling` is not one of the known truthy spellings.
+    pub fn new(spelling: &str) -> Result<Self, UnknownTruthySpelling> {
+        Self::all()
+            .find(|known| *known == spelling)
+            .map(Self)
+            .ok_or_else(|| UnknownTruthySpelling {
+                input: spelling.to_owned(),
+            })
+    }
+
+    /// Returns the spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+struct SpellingVisitor;
+
+impl Visitor<'_> for SpellingVisitor {
+    type Value = TruthySpelling;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a truthy spelling such as 'true', 'false', 'yes' or 'off'")
+    }
+
+    fn visit_bool<E: de::Error>(self, value: bool) -> Result<Self::Value, E> {
+        let lower = value.to_string();
+        let title = if value { "True" } else { "False" };
+        let upper = lower.to_uppercase();
+        Err(E::custom(format!(
+            "unquoted boolean is ambiguous (YAML 1.1 reads it as a spelling, 1.2 as a boolean); quote the spelling you mean, e.g. '{lower}', '{title}' or '{upper}'"
+        )))
+    }
+
+    fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+        TruthySpelling::new(value).map_err(|_| {
+            E::custom(format!(
+                "unknown truthy spelling '{}', expected one of: {}",
+                echo(value, KEY_LIMIT),
+                TruthySpelling::known()
+            ))
+        })
+    }
+}
+
+impl Serialize for TruthySpelling {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for TruthySpelling {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(SpellingVisitor)
+    }
+}
+
+/// Options of the truthy rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct TruthyOptions {
+    /// Spellings that are not reported.
+    pub allowed_values: Vec<TruthySpelling>,
+    /// Also check mapping keys.
+    pub check_keys: bool,
+}
+
+impl Default for TruthyOptions {
+    fn default() -> Self {
+        Self {
+            allowed_values: TruthySpelling::CANONICAL.map(TruthySpelling).to_vec(),
+            check_keys: false,
+        }
+    }
+}
+
+impl RuleOptions for TruthyOptions {}
 
 impl super::LintRule for TruthyRule {
     fn code(&self) -> &str {
@@ -59,23 +192,14 @@ impl super::LintRule for TruthyRule {
 
     #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let rule_config = config.get_rule_config(self.code());
-
-        let allowed_values = rule_config
-            .and_then(|rc| rc.options.get_string_list("allowed-values"))
-            .map_or_else(
-                || vec!["true".to_string(), "false".to_string()],
-                std::borrow::ToOwned::to_owned,
-            );
-
-        let check_keys = rule_config
-            .and_then(|rc| rc.options.get_bool("check-keys"))
-            .unwrap_or(false);
+        let options = &config.rules.truthy.options;
+        let allowed_values: Vec<&str> = options.allowed_values.iter().map(|v| v.as_str()).collect();
+        let check_keys = options.check_keys;
 
         // Pre-build HashSets for O(1) lookup
         let non_standard_set: HashSet<&str> = NON_STANDARD_BOOLS.iter().copied().collect();
         let non_canonical_set: HashSet<&str> = NON_CANONICAL_BOOLS.iter().copied().collect();
-        let allowed_set: HashSet<&str> = allowed_values.iter().map(String::as_str).collect();
+        let allowed_set: HashSet<&str> = allowed_values.iter().copied().collect();
 
         let mut diagnostics = Vec::new();
 
@@ -117,8 +241,7 @@ impl super::LintRule for TruthyRule {
                     };
                     if let Some(msg) = key_msg {
                         let key_start = key_part.len() - key_part.trim_start().len();
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
+                        let severity = config.rules.truthy.severity_or(self.default_severity());
                         let span = context
                             .source_context()
                             .span_at(line_start.add_bytes(key_start), key_trimmed.len());
@@ -168,8 +291,7 @@ impl super::LintRule for TruthyRule {
                 if let Some(msg) = val_msg {
                     let value_start =
                         colon_pos + 1 + value_part.len() - value_part.trim_start().len();
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                    let severity = config.rules.truthy.severity_or(self.default_severity());
                     let span = context
                         .source_context()
                         .span_at(line_start.add_bytes(value_start), value_token.len());
@@ -225,8 +347,7 @@ impl super::LintRule for TruthyRule {
                 if let Some(msg) = list_msg {
                     let value_start =
                         hyphen_pos + 1 + after_hyphen.len() - after_hyphen.trim_start().len();
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                    let severity = config.rules.truthy.severity_or(self.default_severity());
                     let span = context
                         .source_context()
                         .span_at(line_start.add_bytes(value_start), value_token.len());
@@ -245,7 +366,10 @@ impl super::LintRule for TruthyRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -354,11 +478,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
-        let config = LintConfig::new().with_rule_config(
-            "truthy",
-            RuleConfig::new()
-                .with_option("allowed-values", vec!["yes".to_string(), "no".to_string()]),
-        );
+        let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes, no]}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -386,8 +506,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
-        let config = LintConfig::new()
-            .with_rule_config("truthy", RuleConfig::new().with_option("check-keys", true));
+        let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

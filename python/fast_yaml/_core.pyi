@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from collections.abc import Mapping
+from typing import Any
 
 # =============================================================================
 # Loader Classes (PyYAML compatibility)
@@ -456,14 +457,15 @@ class lint:  # noqa: N801
 
         def __repr__(self) -> str: ...
 
-    class RuleConfigDict(TypedDict, total=False):
-        """Per-rule configuration override dict."""
-
-        severity: str  # "error" | "warning" | "info" | "hint"
-        enabled: bool
-
     class LintConfig:
-        """Configuration for the linter."""
+        """Configuration for the linter.
+
+        ``rules`` maps rule codes to a severity string or an entry mapping with
+        optional ``severity``, ``enabled`` and kebab-case option keys
+        (e.g. ``{"line-length": {"max": 120}}``). Unknown rules, option keys,
+        wrong types and invalid severities raise ``ValueError``. Order of
+        application: keyword arguments, then ``rules``, then ``disabled_rules``.
+        """
 
         max_line_length: int | None
         indent_size: int
@@ -476,7 +478,7 @@ class lint:  # noqa: N801
             require_document_end: bool = False,
             allow_duplicate_keys: bool = False,
             disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
-            rules: dict[str, "lint.RuleConfigDict | str"] | None = None,
+            rules: Mapping[str, str | Mapping[str, object]] | None = None,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
         ) -> None: ...
@@ -490,6 +492,7 @@ class lint:  # noqa: N801
             code: str,
             severity: str | None = None,
             enabled: bool | None = None,
+            options: Mapping[str, object] | None = None,
         ) -> "lint.LintConfig": ...
         def __repr__(self) -> str: ...
 

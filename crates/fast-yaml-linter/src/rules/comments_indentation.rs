@@ -128,7 +128,10 @@ impl super::LintRule for CommentsIndentationRule {
             if let Some(expected) = expected_indent
                 && comment_indent != expected
             {
-                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                let severity = config
+                    .rules
+                    .comments_indentation
+                    .severity_or(self.default_severity());
 
                 diagnostics.push(
                     DiagnosticBuilder::new(

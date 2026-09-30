@@ -8,11 +8,13 @@ use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig, Linter as RustLinter,
     Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
-    Suggestion as RustSuggestion, config::RuleConfig as RustRuleConfig,
+    Suggestion as RustSuggestion,
+    config::{IndentSize, RuleName},
+    rules::{DocumentEndPresence, DocumentStartPresence},
 };
 use napi_derive::napi;
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
+use std::{num::NonZeroUsize, str::FromStr};
 
 /// Diagnostic severity levels.
 #[napi(string_enum)]
@@ -181,68 +183,16 @@ impl From<RustDiagnostic> for Diagnostic {
     }
 }
 
-/// Parses a severity string into a `RustSeverity`.
-///
-/// # Errors
-///
-/// Returns an error if the string is not a valid severity value.
-fn parse_severity_str(s: &str) -> napi::Result<RustSeverity> {
-    match s.to_lowercase().as_str() {
-        "error" => Ok(RustSeverity::Error),
-        "warning" => Ok(RustSeverity::Warning),
-        "info" => Ok(RustSeverity::Info),
-        "hint" => Ok(RustSeverity::Hint),
-        _ => Err(napi::Error::from_reason(format!(
-            "Invalid severity '{s}', expected one of: error, warning, info, hint"
-        ))),
-    }
-}
-
-/// Parses a JSON value (string shorthand or object) into a `RustRuleConfig`.
-///
-/// Accepts either a string like `"error"` or an object `{ severity?, enabled? }`.
-///
-/// # Errors
-///
-/// Returns an error if the value has an invalid type or invalid severity string.
-fn parse_rule_config_json(value: &JsonValue) -> napi::Result<RustRuleConfig> {
-    match value {
-        JsonValue::String(s) => {
-            let severity = parse_severity_str(s)?;
-            Ok(RustRuleConfig::new().with_severity(severity))
-        }
-        JsonValue::Object(obj) => {
-            let mut rc = RustRuleConfig::new();
-
-            // Parse optional `enabled` field
-            if obj.get("enabled").and_then(JsonValue::as_bool) == Some(false) {
-                rc = RustRuleConfig::disabled();
-            }
-
-            // Parse optional `severity` field (applied after enabled to preserve it)
-            if let Some(sev_str) = obj.get("severity").and_then(JsonValue::as_str) {
-                rc = rc.with_severity(parse_severity_str(sev_str)?);
-            }
-
-            Ok(rc)
-        }
-        JsonValue::Null => Ok(RustRuleConfig::new()),
-        _ => Err(napi::Error::from_reason(
-            "Rule config value must be a string (severity shorthand) or an object { severity?, enabled? }",
-        )),
-    }
-}
-
 /// Configuration for the linter.
 ///
 /// All fields are optional; defaults are applied during conversion.
 #[napi(object)]
 #[derive(Default)]
 pub struct LintConfig {
-    /// Maximum line length (None = unlimited).
-    pub max_line_length: Option<u32>,
+    /// Maximum line length; unset keeps the rule default, `0` is an error.
+    pub max_line_length: Option<f64>,
     /// Expected indentation size in spaces.
-    pub indent_size: Option<u32>,
+    pub indent_size: Option<f64>,
     /// Require document start marker (---).
     pub require_document_start: Option<bool>,
     /// Require document end marker (...).
@@ -251,19 +201,14 @@ pub struct LintConfig {
     pub allow_duplicate_keys: Option<bool>,
     /// Disabled rule codes.
     pub disabled_rules: Option<Vec<String>>,
-    /// Per-rule configuration overrides.
+    /// Per-rule configuration patch, applied after the fields above.
     ///
-    /// Each key is a rule code; the value is either a severity string shorthand
-    /// (`"error"` | `"warning"` | `"info"` | `"hint"`) or an object with optional
-    /// `severity` and `enabled` fields.
-    ///
-    /// Unknown rule codes are silently accepted (they have no effect at lint time).
-    /// `disabled_rules` takes precedence over a `rules` entry with `enabled: false`.
-    ///
-    /// Note: `options` field of `RuleConfig` is intentionally not exposed here (no
-    /// current rule uses custom options; deferred to a future release).
-    /// Note: pass as a JS object; values may be a severity string shorthand or
-    /// `{ severity?, enabled? }` object. Internally deserialized via `serde_json`.
+    /// Each key is a rule code; the value is a severity string (case-insensitive),
+    /// or an object with `enabled`, `severity` and the rule's own options
+    /// (kebab-case keys, as in the `fy lint --config` file). Unknown rules, unknown
+    /// options, wrong types and `null` (except `line-length.max`) are errors.
+    /// `disabledRules` is applied last and wins over `enabled: true`.
+    #[napi(ts_type = "LintRulesConfig")]
     pub rules: Option<JsonValue>,
     /// Maximum collection nesting depth (integer, 1..=512, default: 256).
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
@@ -272,32 +217,57 @@ pub struct LintConfig {
     pub max_alias_bytes: Option<f64>,
 }
 
-fn to_rust_lint_config(config: LintConfig) -> napi::Result<RustLintConfig> {
+fn config_error(error: impl std::fmt::Display) -> napi::Error {
+    napi::Error::from_reason(error.to_string())
+}
+
+/// Validates that a JS number is a finite integer within `min..=max`; `expected` words the error.
+fn checked_uint(field: &str, expected: &str, value: f64, min: u64, max: u64) -> napi::Result<u64> {
+    #[allow(clippy::cast_precision_loss)]
+    let in_range =
+        value.is_finite() && value.fract() == 0.0 && value >= min as f64 && value <= max as f64;
+    if !in_range {
+        return Err(config_error(format!(
+            "{field} must be {expected}, got {value}"
+        )));
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Ok(value as u64)
+}
+
+fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
     let mut rust = RustLintConfig::new()
         .with_parse_limits(parse_limits(config.max_depth, config.max_alias_bytes)?);
     if let Some(max) = config.max_line_length {
-        rust.max_line_length = Some(max as usize);
+        let max = checked_uint(
+            "maxLineLength",
+            "a positive integer no greater than 4294967295",
+            max,
+            1,
+            u64::from(u32::MAX),
+        )?;
+        rust = rust.with_max_line_length(NonZeroUsize::new(
+            usize::try_from(max).map_err(config_error)?,
+        ));
     }
     if let Some(indent) = config.indent_size {
-        rust.indent_size = indent as usize;
+        let indent = checked_uint("indentSize", "an integer between 1 and 16", indent, 1, 16)?;
+        rust = rust.with_indent_size(IndentSize::try_from(indent).map_err(config_error)?);
     }
-    if let Some(v) = config.require_document_start {
-        rust.require_document_start = v;
+    if config.require_document_start == Some(true) {
+        rust = rust.with_document_start(DocumentStartPresence::Required);
     }
-    if let Some(v) = config.require_document_end {
-        rust.require_document_end = v;
+    if config.require_document_end == Some(true) {
+        rust = rust.with_document_end(DocumentEndPresence::Required);
     }
-    if let Some(v) = config.allow_duplicate_keys {
-        rust.allow_duplicate_keys = v;
+    if config.allow_duplicate_keys == Some(true) {
+        rust = rust.with_disabled_rule(RuleName::DuplicateKey);
     }
-    if let Some(disabled) = config.disabled_rules {
-        rust.disabled_rules = HashSet::from_iter(disabled);
+    if let Some(rules) = &config.rules {
+        rust.rules.apply(rules).map_err(config_error)?;
     }
-    if let Some(JsonValue::Object(rules_map)) = config.rules {
-        for (code, value) in rules_map {
-            let rc = parse_rule_config_json(&value)?;
-            rust = rust.with_rule_config(code, rc);
-        }
+    for code in config.disabled_rules.iter().flatten() {
+        rust = rust.with_disabled_rule(RuleName::from_str(code).map_err(config_error)?);
     }
     Ok(rust)
 }
@@ -330,7 +300,7 @@ impl Linter {
     #[napi(constructor, catch_unwind)]
     pub fn new(config: Option<LintConfig>) -> napi::Result<Self> {
         let inner = match config {
-            Some(cfg) => RustLinter::with_config(to_rust_lint_config(cfg)?),
+            Some(cfg) => RustLinter::with_config(to_rust_lint_config(&cfg)?),
             None => RustLinter::with_config(RustLintConfig::default()),
         };
         Ok(Self { inner })
@@ -377,7 +347,7 @@ impl Linter {
 #[allow(clippy::needless_pass_by_value)]
 pub fn lint(source: String, config: Option<LintConfig>) -> napi::Result<Vec<Diagnostic>> {
     let linter = match config {
-        Some(cfg) => RustLinter::with_all_rules_and_config(to_rust_lint_config(cfg)?),
+        Some(cfg) => RustLinter::with_all_rules_and_config(to_rust_lint_config(&cfg)?),
         None => RustLinter::with_all_rules(),
     };
     linter

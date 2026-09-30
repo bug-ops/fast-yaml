@@ -1,7 +1,12 @@
 //! Regression tests for byte/char offset handling with non-ASCII keys and exotic line endings.
 
+use std::num::NonZeroUsize;
+
 use fast_yaml_linter::{
-    Diagnostic, DiagnosticCode, LintConfig, Linter, SourceContext, source::SourceMapper,
+    Diagnostic, DiagnosticCode, LintConfig, Linter, SourceContext,
+    config::Limit,
+    rules::{DocumentEndPresence, DocumentStartPresence},
+    source::SourceMapper,
 };
 
 fn lint_code(yaml: &str, code: &str) -> Vec<Diagnostic> {
@@ -326,10 +331,8 @@ fn mapper_find_colon_after_key_edges() {
 
 #[test]
 fn empty_lines_span_points_at_first_empty_line() {
-    let config = LintConfig::new().with_rule_config(
-        "empty-lines",
-        fast_yaml_linter::config::RuleConfig::new().with_option("max", 1i64),
-    );
+    let mut config = LintConfig::new();
+    config.rules.empty_lines.options.max = Limit::Max(1);
     for yaml in [
         "é: 1\r\n\r\n\r\n\r\nb: 2\r\n",
         "é: 1\r\r\r\rb: 2\r",
@@ -457,7 +460,7 @@ fn key_ordering_reports_key_position() {
 
 #[test]
 fn line_length_offsets_follow_lines() {
-    let config = LintConfig::new().with_max_line_length(Some(5));
+    let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(5));
     let yaml = "ок\nдлинная строка\nx\nещё одна длинная\n";
     let diags: Vec<_> = Linter::with_config(config)
         .lint(yaml)
@@ -539,7 +542,7 @@ fn key_ordering_quoted_key_span_starts_at_quote() {
 
 #[test]
 fn document_start_missing_span_is_file_start() {
-    let config = LintConfig::new().with_require_document_start(true);
+    let config = LintConfig::new().with_document_start(DocumentStartPresence::Required);
     for yaml in ["ключ: 1\n", "ключ: 1\r\n", "\u{feff}ключ: 1\r\n"] {
         let diags = lint_with(yaml, config.clone(), DiagnosticCode::DOCUMENT_START);
         assert_eq!(diags.len(), 1, "{yaml:?}");
@@ -552,10 +555,7 @@ fn document_start_missing_span_is_file_start() {
 
 #[test]
 fn document_start_forbidden_reports_char_position() {
-    let config = LintConfig::new().with_rule_config(
-        "document-start",
-        fast_yaml_linter::config::RuleConfig::new().with_option("present", "forbidden"),
-    );
+    let config = LintConfig::new().with_document_start(DocumentStartPresence::Forbidden);
     let yaml = "# é\r\n---\r\nключ: 1\r\n";
     let diags = lint_with(yaml, config, DiagnosticCode::DOCUMENT_START);
     assert_eq!(diags.len(), 1);
@@ -566,7 +566,7 @@ fn document_start_forbidden_reports_char_position() {
 
 #[test]
 fn document_end_missing_span_is_eof() {
-    let config = LintConfig::new().with_require_document_end(true);
+    let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
     let cases = [
         ("ключ: 1\n", 2, 1),
         ("ключ: 1", 1, 8),
@@ -598,7 +598,7 @@ fn document_end_missing_span_is_eof() {
 
 #[test]
 fn document_end_marker_with_trailing_spaces_is_present() {
-    let config = LintConfig::new().with_require_document_end(true);
+    let config = LintConfig::new().with_document_end(DocumentEndPresence::Required);
     for yaml in ["ключ: 1\n...  \n", "ключ: 1\r\n...\r\n", "ключ: 1\r...\r"] {
         let diags = lint_with(yaml, config.clone(), DiagnosticCode::DOCUMENT_END);
         assert!(diags.is_empty(), "{yaml:?}");
@@ -632,8 +632,8 @@ fn empty_values_block_sequence_nulls_are_not_reported() {
 #[test]
 fn empty_values_non_ascii_crlf_with_markers_required() {
     let config = LintConfig::new()
-        .with_require_document_start(true)
-        .with_require_document_end(true);
+        .with_document_start(DocumentStartPresence::Required)
+        .with_document_end(DocumentEndPresence::Required);
     let yaml = "ключ:\r\nдругой: 1\r\n";
     let diags = lint_with(yaml, config, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1);
@@ -646,8 +646,8 @@ fn empty_values_non_ascii_crlf_with_markers_required() {
 #[test]
 fn spans_consistent_with_markers_required() {
     let config = LintConfig::new()
-        .with_require_document_start(true)
-        .with_require_document_end(true);
+        .with_document_start(DocumentStartPresence::Required)
+        .with_document_end(DocumentEndPresence::Required);
     let inputs = [
         "ключ: 1\n",
         "ключ: 1",
