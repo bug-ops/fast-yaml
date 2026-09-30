@@ -108,7 +108,7 @@ impl Mark {
     /// * `name` - The source name (e.g., filename)
     /// * `line` - The line number (0-indexed)
     /// * `column` - The column number (0-indexed)
-    #[napi(constructor)]
+    #[napi(constructor, catch_unwind)]
     pub fn new(name: String, line: u32, column: u32) -> Self {
         Self { name, line, column }
     }
@@ -116,7 +116,7 @@ impl Mark {
     /// Get a string representation of the mark.
     ///
     /// Returns format: "name:line:column"
-    #[napi]
+    #[napi(catch_unwind)]
     #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         format!("{}:{}:{}", self.name, self.line, self.column)
@@ -133,9 +133,25 @@ impl Mark {
 /// const { version } = require('@fast-yaml/core');
 /// console.log(version()); // "0.1.0"
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 pub fn version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Panics on purpose so tests can verify panics surface as catchable JS errors.
+///
+/// Only compiled with the `test-panic` feature; never part of release builds.
+#[cfg(feature = "test-panic")]
+#[napi(catch_unwind)]
+pub fn test_panic() -> String {
+    panic!("test-panic: intentional panic");
+}
+
+/// Async counterpart of [`test_panic`] that panics on the libuv worker thread.
+#[cfg(feature = "test-panic")]
+#[napi(catch_unwind)]
+pub fn test_panic_async() -> napi::bindgen_prelude::AsyncTask<parallel::PanicTask> {
+    napi::bindgen_prelude::AsyncTask::new(parallel::PanicTask)
 }
 
 #[cfg(test)]

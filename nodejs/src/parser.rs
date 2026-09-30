@@ -90,7 +90,7 @@ fn throw_and_undefined(env: Env, msg: &str) -> NapiResult<Unknown<'static>> {
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
-#[napi]
+#[napi(catch_unwind)]
 pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
@@ -157,7 +157,7 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
-#[napi]
+#[napi(catch_unwind)]
 pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'static>>> {
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
@@ -230,7 +230,7 @@ pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'stat
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
-#[napi]
+#[napi(catch_unwind)]
 pub fn load(
     env: Env,
     yaml_str: String,
@@ -273,7 +273,7 @@ pub fn load(
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
-#[napi]
+#[napi(catch_unwind)]
 pub fn load_all(
     env: Env,
     yaml_str: String,

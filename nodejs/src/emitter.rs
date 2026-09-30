@@ -110,7 +110,7 @@ impl Default for DumpOptions {
 /// const yaml = safeDump({ name: 'test', value: 123 });
 /// console.log(yaml); // 'name: test\nvalue: 123\n'
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 pub fn safe_dump(
     env: Env,
     data: Unknown<'static>,
@@ -162,7 +162,7 @@ fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> NapiResult<String> {
 /// const yaml = safeDumpAll([{ a: 1 }, { b: 2 }]);
 /// console.log(yaml); // '---\na: 1\n---\nb: 2\n'
 /// ```
-#[napi]
+#[napi(catch_unwind)]
 pub fn safe_dump_all(
     env: Env,
     documents: Vec<Unknown<'static>>,
