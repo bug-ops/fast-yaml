@@ -184,6 +184,8 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     anchor_base: usize,
     /// Highest anchor id defined so far.
     max_anchor_id: usize,
+    /// Whether a document start was already seen; later documents need an explicit `---`.
+    document_seen: bool,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -210,6 +212,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             pending_start: None,
             anchor_base: 0,
             max_anchor_id: 0,
+            document_seen: false,
             backend,
         }
     }
@@ -322,7 +325,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         match event {
             Event::DocumentStart(explicit) => {
                 self.anchor_base = self.max_anchor_id;
-                if explicit || self.config.explicit_start {
+                let separator_needed = std::mem::replace(&mut self.document_seen, true);
+                if explicit || separator_needed || self.config.explicit_start {
                     self.output.push_str("---");
                     self.pending_newline = true;
                     self.last_char_newline = false;

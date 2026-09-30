@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fy format` and the streaming formatter no longer merge documents separated by `...` into one; `---` is emitted between documents (#448, #440)
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
