@@ -415,11 +415,16 @@ struct StreamUsage {
 }
 
 fn charge(counter: &AtomicUsize, bytes: usize, max: usize) -> bool {
-    counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |used| {
-            used.checked_add(bytes).filter(|total| *total <= max)
-        })
-        .is_ok()
+    let mut used = counter.load(Ordering::Relaxed);
+    loop {
+        let Some(total) = used.checked_add(bytes).filter(|total| *total <= max) else {
+            return false;
+        };
+        match counter.compare_exchange_weak(used, total, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(actual) => used = actual,
+        }
+    }
 }
 
 impl StreamBudget {
