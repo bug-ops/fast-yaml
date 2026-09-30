@@ -72,6 +72,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
 - **Core**: `fy format` keeps `%YAML`/`%TAG` directives of second and later documents and writes `...` before them (#447) (#450)
 - **Core**: `fy format --strip-comments` drops the comment on a directive line but keeps `#` inside directive tokens (#447) (#450)
+- **Linter**: the `commas` rule only checks commas inside flow collections, and an unterminated verbatim tag no longer masks a real comma (#442, #446) (#452)
+- **Linter**: the `comments` rule no longer treats `#` inside a verbatim tag as a comment (#445) (#452)
 - Fix `braces`/`brackets` dropping the max check for empty collections when only `min-spaces-inside-empty` is set; the empty-collection limits now inherit independently (#426)
 - Fix `document-start: {present: true}` and `quote-type` typos being silently ignored in lint configs (#324) (#426)
 - `fy format` output stays parseable: `%` continuation lines, dropped `...` document ends, invalid anchor names, tagged empty keys and block-ambiguous plain scalars (#429) (#430) (#431) (#441)
