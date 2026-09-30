@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -94,25 +93,17 @@ impl OutputWriter {
         Ok(())
     }
 
-    /// Write to file with atomic operation
+    /// Write to file via the shared secure atomic writer
     fn write_file(path: &Path, content: &str) -> Result<()> {
-        // Write to temporary file first
-        let temp_path = path.with_extension("tmp");
-
-        fs::write(&temp_path, content)
-            .with_context(|| format!("Failed to write temp file: {}", temp_path.display()))?;
-
-        // Atomic rename
-        fs::rename(&temp_path, path)
-            .with_context(|| format!("Failed to replace file: {}", path.display()))?;
-
-        Ok(())
+        fast_yaml_parallel::write_atomic(path, content.as_bytes())
+            .with_context(|| format!("Failed to write file: {}", path.display()))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use tempfile::NamedTempFile;
 
     #[test]

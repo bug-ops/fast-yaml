@@ -22,8 +22,8 @@ fn test_only_comments() {
 fn test_only_separators() {
     let yaml = "---\n---\n---";
     let docs = parse_parallel(yaml).unwrap();
-    // Should produce one document (the last separator with no content)
-    assert_eq!(docs.len(), 1);
+    // Each marker starts a null document
+    assert_eq!(docs.len(), 3);
 }
 
 #[test]
@@ -188,16 +188,16 @@ fn test_special_characters_in_keys() {
 fn test_consecutive_separators() {
     let yaml = "---\n---\nfoo: 1";
     let docs = parse_parallel(yaml).unwrap();
-    // First separator creates empty doc (skipped), second has content
-    assert_eq!(docs.len(), 1);
+    // Leading empty document is kept as null
+    assert_eq!(docs.len(), 2);
 }
 
 #[test]
 fn test_many_consecutive_separators() {
     let yaml = "---\n---\n---\n---\nfoo: 1";
     let docs = parse_parallel(yaml).unwrap();
-    // Multiple empty docs skipped, one with content
-    assert_eq!(docs.len(), 1);
+    // Empty documents are kept as null
+    assert_eq!(docs.len(), 4);
 }
 
 #[test]

@@ -11,8 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Linter: typed `ByteOffset`/`ByteRange` boundary for saphyr positions, shared `braces`/`brackets` implementation (#347)
 
+### Security
+
+- Write files in `fy format` via a secure atomic writer (no predictable `.tmp`, mode and symlinks preserved) (#364)
+
 ### Fixed
 
+- Make `parse_parallel` match `Parser::parse_all`: empty documents are kept as null and `Error::Parse` indices align with the real stream (#364)
 - Fix `fy format` dropping leading spaces of block scalars: emit the indentation indicator and stop extra blank lines after them (#367)
 - Fix `fy format` emitting empty values with trailing whitespace: omitted nulls are now written as `null` (#367)
 - Bump Node.js dev dependency `js-yaml` to 5.4.2 to fix GHSA-r3ph-w7gj-g6xm (#368)

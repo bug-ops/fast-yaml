@@ -68,6 +68,7 @@
 
 #![warn(missing_docs)]
 
+mod atomic;
 mod chunker;
 mod config;
 mod error;
@@ -79,6 +80,7 @@ mod io;
 mod result;
 
 // Core public API
+pub use atomic::write_atomic;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use fast_yaml_core::Value;

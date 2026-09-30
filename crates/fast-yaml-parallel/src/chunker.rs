@@ -18,87 +18,90 @@ pub(crate) struct Chunk<'a> {
 
 /// Splits YAML input into document chunks at `---` boundaries.
 ///
-/// Handles edge cases:
-/// - Implicit first document (no leading `---`)
-/// - Trailing whitespace and comments
-/// - Empty documents (creates empty chunk)
-/// - Document end markers (`...`)
-///
-/// # Algorithm
-///
-/// 1. Find all `---` markers at line start
-/// 2. Split input at these positions
-/// 3. Assign sequential indices to chunks
-/// 4. Preserve byte offsets for error reporting
+/// The chunk list mirrors the document stream of `Parser::parse_all`:
+/// - Every `---` marker starts a document, even when its body is empty (parsed as null)
+/// - Text before the first `---` is a document only if it has content beyond blank lines,
+///   comments, and directives
+/// - Input without markers is a single document unless it is completely empty
 ///
 /// # Performance
 ///
-/// - Time complexity: O(n) where n = input length
-/// - Space complexity: O(d) where d = document count
-/// - Uses zero-copy slicing (no allocations)
+/// O(n) in input length with zero-copy slicing.
 pub(crate) fn chunk_documents(input: &str) -> Vec<Chunk<'_>> {
     if input.is_empty() {
         return Vec::new();
     }
 
-    // Find all `---` document separators at line boundaries
     let separator_positions = find_document_separators(input);
 
-    // Pre-allocate based on separator count (may have implicit first doc + separator docs)
-    let estimated_chunks = separator_positions.len() + 1;
-    let mut chunks = Vec::with_capacity(estimated_chunks);
+    let Some(&first_separator) = separator_positions.first() else {
+        return vec![Chunk {
+            index: 0,
+            content: input,
+            offset: 0,
+        }];
+    };
 
-    if separator_positions.is_empty() {
-        // Single document (no separators)
-        // Skip if only whitespace
-        if !input.trim().is_empty() {
-            chunks.push(Chunk {
-                index: 0,
-                content: input,
-                offset: 0,
-            });
-        }
-        return chunks;
+    let mut chunks = Vec::with_capacity(separator_positions.len() + 1);
+
+    let prefix = &input[..first_separator];
+    let prefix_kind = classify_prefix(prefix);
+    if prefix_kind == PrefixKind::Content {
+        chunks.push(Chunk {
+            index: 0,
+            content: prefix,
+            offset: 0,
+        });
     }
 
-    // Handle implicit first document (before first `---`)
-    if separator_positions[0] > 0 {
-        let content = &input[0..separator_positions[0]];
-        if !content.trim().is_empty() {
-            chunks.push(Chunk {
-                index: 0,
-                content,
-                offset: 0,
-            });
-        }
-    }
-
-    // Process documents between separators
-    for (i, &start) in separator_positions.iter().enumerate() {
+    for (i, &separator) in separator_positions.iter().enumerate() {
         let end = separator_positions
             .get(i + 1)
             .copied()
             .unwrap_or(input.len());
 
-        let content = &input[start..end];
-
-        // Skip empty documents (e.g., `---\n---`)
-        // Check if content after the separator line is empty
-        if let Some(first_newline) = content.find('\n') {
-            let content_after_separator = &content[first_newline + 1..];
-            if content_after_separator.trim().is_empty() {
-                continue;
-            }
-        }
+        // Directives apply to the next document, so they stay attached to it.
+        let start = if i == 0 && prefix_kind == PrefixKind::Directives {
+            0
+        } else {
+            separator
+        };
 
         chunks.push(Chunk {
             index: chunks.len(),
-            content,
+            content: &input[start..end],
             offset: start,
         });
     }
 
     chunks
+}
+
+/// What precedes the first `---` marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PrefixKind {
+    /// Only blank lines and comments.
+    Blank,
+    /// Blank lines, comments, and at least one `%` directive.
+    Directives,
+    /// Node content: an implicit first document.
+    Content,
+}
+
+fn classify_prefix(prefix: &str) -> PrefixKind {
+    let mut kind = PrefixKind::Blank;
+    for line in prefix.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('%') {
+            kind = PrefixKind::Directives;
+        } else {
+            return PrefixKind::Content;
+        }
+    }
+    kind
 }
 
 /// Finds byte positions of all `---` document separators.
@@ -110,19 +113,11 @@ fn find_document_separators(input: &str) -> Vec<usize> {
     let mut positions = Vec::with_capacity(estimated_separators);
 
     for (line_start, line) in LineOffsets::new(input) {
-        // Fast path: only trim if line starts with whitespace
-        let trimmed = if line.starts_with(|c: char| c.is_whitespace()) {
-            line.trim_start()
-        } else {
-            line
-        };
-
-        // Check for document separator at line start
-        if let Some(after_dashes) = trimmed.strip_prefix("---") {
-            // Verify it's not part of a scalar (e.g., "key: ---value")
-            if after_dashes.is_empty() || after_dashes.starts_with(|c: char| c.is_whitespace()) {
-                positions.push(line_start);
-            }
+        // Only a column-0 marker separates documents; indented `---` is scalar content.
+        if let Some(after_dashes) = line.strip_prefix("---")
+            && (after_dashes.is_empty() || after_dashes.starts_with(|c: char| c.is_whitespace()))
+        {
+            positions.push(line_start);
         }
     }
 
@@ -197,8 +192,8 @@ mod tests {
     fn test_chunk_empty_documents() {
         let yaml = "---\n\n---\nvalid: true";
         let chunks = chunk_documents(yaml);
-        assert_eq!(chunks.len(), 1); // Empty doc skipped
-        assert!(chunks[0].content.contains("valid"));
+        assert_eq!(chunks.len(), 2);
+        assert!(chunks[1].content.contains("valid"));
     }
 
     #[test]
@@ -252,8 +247,8 @@ mod tests {
     fn test_chunk_multiple_separators_no_content() {
         let yaml = "---\n---\n---\n";
         let chunks = chunk_documents(yaml);
-        // All empty documents are filtered out
-        assert_eq!(chunks.len(), 0);
+        // Each marker starts a document
+        assert_eq!(chunks.len(), 3);
     }
 
     #[test]
