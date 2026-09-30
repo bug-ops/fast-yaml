@@ -194,11 +194,48 @@ describe('lint rules input hardening', () => {
     );
   });
 
-  it('rejects oversized rule values', () => {
-    const big = Array.from({ length: 100_001 }, () => 1);
-    expect(() => lint(YAML, { rules: { 'line-length': { max: big } as never } })).toThrow(
+  const messageOf = (rules: unknown): string => {
+    try {
+      lint(YAML, { rules: rules as never });
+    } catch (e) {
+      return (e as Error).message;
+    }
+    return '';
+  };
+
+  it('accepts 99990 scalars and rejects 100001 at the node limit', () => {
+    const items = (n: number) => Array.from({ length: n }, () => 1);
+    expect(messageOf({ 'line-length': { max: items(99_990) } })).not.toMatch(/more than/);
+    expect(messageOf({ 'line-length': { max: items(100_001) } })).toMatch(
       /more than 100000 values/
     );
+  });
+
+  it('rejects an object with too many keys', () => {
+    const wide: Record<string, number> = {};
+    for (let i = 0; i < 100_001; i++) wide[`k${i}`] = 1;
+    expect(messageOf({ 'line-length': wide })).toMatch(/more than 100000 values/);
+  });
+
+  it('accepts depth 16 and rejects depth 17', () => {
+    const wrap = (levels: number): unknown => {
+      let v: unknown = 1;
+      for (let i = 0; i < levels; i++) v = { a: v };
+      return v;
+    };
+    expect(messageOf(wrap(16))).not.toMatch(/nested deeper/);
+    expect(messageOf(wrap(17))).toMatch(/nested deeper than 16/);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])(
+    'rejects non-finite number %s',
+    (n) => {
+      expect(messageOf({ 'line-length': { max: n } })).toMatch(/non-finite number/);
+    }
+  );
+
+  it('rejects BigInt with a clear message', () => {
+    expect(messageOf({ 'line-length': { max: 120n } })).toMatch(/BigInt is not supported/);
   });
 
   it('rejects unsupported value types', () => {

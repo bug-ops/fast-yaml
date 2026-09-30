@@ -31,15 +31,24 @@ fn invalid_arg(reason: String) -> Error {
     Error::new(Status::InvalidArg, reason)
 }
 
+/// Returns the property-name array of `value` without copying the names into Rust.
+unsafe fn own_keys<'env>(env: sys::napi_env, value: sys::napi_value) -> Result<Array<'env>> {
+    let mut names = std::ptr::null_mut();
+    napi::check_status!(
+        unsafe { sys::napi_get_property_names(env, value, &raw mut names) },
+        "Failed to get property names of given object"
+    )?;
+    unsafe { Array::from_napi_value(env, names) }
+}
+
 struct Converter {
     env: sys::napi_env,
     nodes: usize,
 }
 
 impl Converter {
-    fn charge(&mut self, count: usize) -> Result<()> {
-        self.nodes = self.nodes.saturating_add(count);
-        if self.nodes > MAX_NODES {
+    fn reserve(&self, count: usize) -> Result<()> {
+        if self.nodes.saturating_add(count) > MAX_NODES {
             return Err(invalid_arg(format!(
                 "rule configuration has more than {MAX_NODES} values"
             )));
@@ -53,14 +62,25 @@ impl Converter {
                 "rule configuration is nested deeper than {MAX_DEPTH} levels (or contains a cycle)"
             )));
         }
-        self.charge(1)?;
+        self.reserve(1)?;
+        self.nodes += 1;
         let env = self.env;
         let kind = napi::type_of!(env, value)?;
         unsafe {
             match kind {
                 ValueType::Null => Ok(Value::Null),
                 ValueType::Boolean => Ok(Value::Bool(bool::from_napi_value(env, value)?)),
-                ValueType::Number => Ok(Value::Number(Number::from_napi_value(env, value)?)),
+                ValueType::Number => {
+                    if !f64::from_napi_value(env, value)?.is_finite() {
+                        return Err(invalid_arg(
+                            "non-finite number in rule configuration".to_owned(),
+                        ));
+                    }
+                    Ok(Value::Number(Number::from_napi_value(env, value)?))
+                }
+                ValueType::BigInt => Err(invalid_arg(
+                    "BigInt is not supported in rule configuration, use a number".to_owned(),
+                )),
                 ValueType::String => Ok(Value::String(String::from_napi_value(env, value)?)),
                 ValueType::Object => self.convert_object(value, depth),
                 other => Err(invalid_arg(format!(
@@ -79,7 +99,7 @@ impl Converter {
         )?;
         if is_array {
             let items = unsafe { Array::from_napi_value(env, value)? };
-            self.charge(items.len() as usize)?;
+            self.reserve(items.len() as usize)?;
             let mut out = Vec::with_capacity(items.len() as usize);
             for index in 0..items.len() {
                 if let Some(RawValue(item)) = items.get(index)? {
@@ -89,10 +109,13 @@ impl Converter {
             return Ok(Value::Array(out));
         }
         let object = unsafe { Object::from_napi_value(env, value)? };
-        let keys = Object::keys(&object)?;
-        self.charge(keys.len())?;
+        let keys = unsafe { own_keys(env, value)? };
+        self.reserve(keys.len() as usize)?;
         let mut map = Map::new();
-        for key in keys {
+        for index in 0..keys.len() {
+            let Some(key) = keys.get::<String>(index)? else {
+                continue;
+            };
             if let Some(RawValue(item)) = object.get(&key)? {
                 map.insert(key, unsafe { self.convert(item, depth + 1)? });
             }
