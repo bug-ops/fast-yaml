@@ -316,7 +316,7 @@ pub(crate) fn repr_to_python(
         ResolvedScalar::BigInt(big) => py
             .import("builtins")?
             .getattr("int")?
-            .call1((big.as_str(),))?
+            .call1((big.as_str(), big.radix().value()))?
             .unbind(),
         ResolvedScalar::Str(s) => s.into_pyobject(py)?.as_any().clone().unbind(),
     })

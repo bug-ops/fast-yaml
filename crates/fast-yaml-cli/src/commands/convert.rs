@@ -264,13 +264,27 @@ mod tests {
 
     #[test]
     fn non_big_int_representation_stays_json_string() {
-        for text in ["1.5", "abc", "0xFFFFFFFFFFFFFFFFFFFF"] {
+        let over_cap = format!("0x1{}", "0".repeat(3571));
+        for text in ["1.5", "abc", over_cap.as_str()] {
             let value = Value::Representation(text.to_string(), ScalarStyle::Plain, None);
             assert_eq!(
                 value_to_json(&value).unwrap(),
                 serde_json::Value::String(text.to_string())
             );
         }
+    }
+
+    #[test]
+    fn radix_big_int_representation_becomes_json_number() {
+        let value = Value::Representation(
+            "0xFFFFFFFFFFFFFFFFFFFF".to_string(),
+            ScalarStyle::Plain,
+            None,
+        );
+        assert_eq!(
+            value_to_json(&value).unwrap().to_string(),
+            "1208925819614629174706175"
+        );
     }
 
     #[test]

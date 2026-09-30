@@ -16,6 +16,21 @@ describe('Edge Cases - Parser', () => {
         a: { '-99999999999999999999': 'y' },
       });
     });
+
+    it('should use the same canonical text for big integer keys and values', () => {
+      expect(safeLoad('+0099999999999999999999: +0099999999999999999999')).toEqual({
+        '99999999999999999999': '99999999999999999999',
+      });
+      expect(safeLoad('0xFFFFFFFFFFFFFFFFFF: 0xFFFFFFFFFFFFFFFFFF')).toEqual({
+        '4722366482869645213695': '4722366482869645213695',
+      });
+    });
+
+    it('should collapse equal big integer spellings into one key', () => {
+      expect(safeLoad('+99999999999999999999: a\n99999999999999999999: b')).toEqual({
+        '99999999999999999999': 'b',
+      });
+    });
   });
 
   describe('empty and whitespace input', () => {

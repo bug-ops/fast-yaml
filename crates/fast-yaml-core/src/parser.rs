@@ -282,10 +282,10 @@ fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
 ///   applying explicit YAML core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
 ///   when present (#203).
 /// - Handle `True`, `TRUE`, `False`, `FALSE`, `Null` mixed-case variants.
-/// - Keep integers that overflow `i64` as `Value::Representation` so they stay distinguishable
-///   from strings and usable as mapping keys: parsed scalars keep their source style and tag,
-///   while an explicit `Value::Tagged` wrapper with a core `!!int` tag is replaced by an untagged
-///   plain representation. Every other scalar is resolved to a typed `Value::Value`.
+/// - Keep integers that overflow `i64` (decimal, hex or octal) as plain `Value::Representation`
+///   nodes (non-core tags kept, core tags dropped) holding their canonical decimal text, so they stay
+///   distinguishable from strings and equal spellings collapse to one mapping key. Every other
+///   scalar is resolved to a typed `Value::Value`.
 /// - Resolve YAML 1.1 merge keys (`<<: *anchor`) into parent mappings (#204). Only the plain,
 ///   untagged scalar `<<` is a merge key; inside a `!!set` it is an ordinary element.
 ///
@@ -504,10 +504,14 @@ fn canonicalize_scalar(slot: &mut Value) {
         Value::Representation(s, style, tag) => {
             let resolved = resolve_scalar(&s, style, tag.as_ref());
             match resolved {
-                // Kept unresolved so consumers can tell a big integer from a string.
-                ResolvedScalar::BigInt(_) => Value::Representation(s, style, tag),
                 // `Str` borrows all of `s`, so the owned text is reused.
                 ResolvedScalar::Str(_) => Value::Value(ScalarOwned::String(s)),
+                // A non-core tag survives so the emitter can write it back.
+                ResolvedScalar::BigInt(big) => Value::Representation(
+                    big.canonical().into_owned(),
+                    ScalarStyle::Plain,
+                    tag.filter(|t| !t.is_yaml_core_schema()),
+                ),
                 other => scalar_to_value(other),
             }
         }
@@ -523,7 +527,8 @@ fn canonicalize_scalar(slot: &mut Value) {
 
 /// Converts a resolved scalar to its owned core value; strings are copied.
 ///
-/// Integers beyond `i64` become a plain `Value::Representation` holding their decimal text.
+/// Integers beyond `i64` become a plain `Value::Representation` holding their canonical decimal
+/// text.
 pub(crate) fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
     Value::Value(match resolved {
         ResolvedScalar::Null => ScalarOwned::Null,
@@ -531,7 +536,7 @@ pub(crate) fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
         ResolvedScalar::Int(i) => ScalarOwned::Integer(i),
         ResolvedScalar::Float(f) => ScalarOwned::FloatingPoint(f.into()),
         ResolvedScalar::BigInt(big) => {
-            return Value::Representation(big.as_str().into(), ScalarStyle::Plain, None);
+            return Value::Representation(big.canonical().into_owned(), ScalarStyle::Plain, None);
         }
         ResolvedScalar::Str(s) => ScalarOwned::String(s.into()),
     })
@@ -1260,8 +1265,8 @@ m:
 
         let v = get_mapping_val("x: +99999999999999999999", "x");
         assert!(
-            matches!(v, Value::Representation(ref s, _, None) if s == "+99999999999999999999"),
-            "+overflow should stay Representation, got {v:?}"
+            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == "99999999999999999999"),
+            "+overflow should be canonical Representation, got {v:?}"
         );
     }
 
@@ -1286,10 +1291,19 @@ m:
     }
 
     #[test]
-    fn test_tagged_large_integer_stays_representation() {
+    fn test_tagged_large_integer_is_untagged_representation() {
         let v = get_mapping_val("x: !!int 9223372036854775808", "x");
         assert!(
-            matches!(v, Value::Representation(ref s, _, Some(_)) if s == "9223372036854775808"),
+            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == "9223372036854775808"),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_custom_tag_on_big_integer_is_kept_with_canonical_text() {
+        let v = get_mapping_val("x: !foo 0xFFFFFFFFFFFFFFFFFF", "x");
+        assert!(
+            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, Some(_)) if s == "4722366482869645213695"),
             "got {v:?}"
         );
     }
@@ -1361,12 +1375,58 @@ m:
     }
 
     #[test]
-    fn test_hex_overflow_preserved_as_string() {
-        let v = get_mapping_val("x: 0x8000000000000000", "x");
+    fn test_hex_and_octal_overflow_become_canonical_decimal() {
+        for (raw, expected) in [
+            ("0x8000000000000000", "9223372036854775808"),
+            ("-0x8000000000000001", "-9223372036854775809"),
+            ("0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
+            ("0o7777777777777777777777", "73786976294838206463"),
+            ("!!int 0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
+            ("!!int 0o1000000000000000000000", "9223372036854775808"),
+            ("0XDEADBEEFDEADBEEF", "16045690984833335023"),
+            ("0O1000000000000000000000", "9223372036854775808"),
+        ] {
+            let v = get_mapping_val(&format!("x: {raw}"), "x");
+            assert!(
+                matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == expected),
+                "{raw}: got {v:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_hex_min_i64_is_integer() {
+        let v = get_mapping_val("x: -0x8000000000000000", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "hex overflow should be String, got {v:?}"
+            matches!(v, Value::Value(ScalarOwned::Integer(i64::MIN))),
+            "got {v:?}"
         );
+    }
+
+    #[test]
+    fn test_hex_beyond_bit_cap_stays_string() {
+        let raw = format!("0x1{}", "0".repeat(3571));
+        let v = get_mapping_val(&format!("x: {raw}"), "x");
+        assert!(
+            matches!(v, Value::Value(ScalarOwned::String(ref s)) if *s == raw),
+            "got {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_equal_big_integer_spellings_collapse_to_one_key() {
+        let root = Parser::parse_str(
+            "+99999999999999999999: a\n99999999999999999999: b\n0x56BC75E2D630FFFFF: c",
+        )
+        .unwrap()
+        .unwrap();
+        let Value::Mapping(map) = root else {
+            panic!("expected mapping")
+        };
+        assert_eq!(map.len(), 1, "got {map:?}");
+        let (key, value) = map.iter().next().unwrap();
+        assert!(matches!(key, Value::Representation(s, _, None) if s == "99999999999999999999"));
+        assert!(matches!(value, Value::Value(ScalarOwned::String(s)) if s == "c"));
     }
 
     #[test]
@@ -1379,15 +1439,6 @@ m:
                 Value::Value(ScalarOwned::Integer(9_223_372_036_854_775_807))
             ),
             "0x7FFFFFFFFFFFFFFF should be Integer(i64::MAX), got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_octal_overflow_preserved_as_string() {
-        let v = get_mapping_val("x: 0o1000000000000000000000", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "octal overflow should be String, got {v:?}"
         );
     }
 
@@ -1410,54 +1461,6 @@ m:
         assert!(
             matches!(v, Value::Value(ScalarOwned::Integer(255))),
             "!!int 0xFF should be Integer(255), got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_tagged_int_hex_overflow_preserved_as_string() {
-        let v = get_mapping_val("x: !!int 0x8000000000000000", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "!!int hex overflow should be String, got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_negative_hex_overflow_preserved_as_string() {
-        // -0x8000000000000000 == i64::MIN, which fits; -0x8000000000000001 overflows.
-        // Both produce String because parse_core_schema_int does not handle sign + 0x prefix —
-        // consistent with the decimal path where signed hex is not a YAML 1.2 core schema form.
-        let v = get_mapping_val("x: -0x8000000000000001", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "negative hex overflow should be String, got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_tagged_int_octal_overflow_preserved_as_string() {
-        let v = get_mapping_val("x: !!int 0o1000000000000000000000", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "!!int octal overflow should be String, got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_uppercase_prefix_hex_overflow_preserved_as_string() {
-        let v = get_mapping_val("x: 0XDEADBEEFDEADBEEF", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "0X uppercase prefix overflow should be String, got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_uppercase_prefix_octal_overflow_preserved_as_string() {
-        let v = get_mapping_val("x: 0O1000000000000000000000", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(_))),
-            "0O uppercase prefix overflow should be String, got {v:?}"
         );
     }
 

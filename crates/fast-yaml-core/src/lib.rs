@@ -67,5 +67,5 @@ pub use limits::{
 };
 pub use merge::{MergeError, MergeSource, MergeTarget, merge_into};
 pub use parser::{Parser, canonicalize, reject_nul, strip_bom};
-pub use scalar::{DecimalBigInt, ResolvedScalar, resolve_scalar};
+pub use scalar::{BigInt, IntRadix, ResolvedScalar, resolve_scalar};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

@@ -734,14 +734,14 @@ fn needs_saphyr_rewrite(value: &Value) -> bool {
 
 /// Rewrites a parsed representation into a form saphyr can emit and read back unchanged.
 ///
-/// The scalar is resolved to its typed value; a big integer stays a digit-only plain
-/// representation and a string is left to saphyr to quote. A non-core tag is kept, a core-schema
+/// The scalar is resolved to its typed value; a big integer becomes a plain representation of
+/// its canonical decimal text and a string is left to saphyr to quote. A non-core tag is kept, a core-schema
 /// tag is dropped because its type is already carried by the resolved value.
 fn rewrite_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
     let custom_tag = tag.filter(|t| !t.is_yaml_core_schema()).cloned();
     match resolve_scalar(s, style, tag) {
-        ResolvedScalar::BigInt(_) => {
-            Value::Representation(s.to_owned(), ScalarStyle::Plain, custom_tag)
+        ResolvedScalar::BigInt(big) => {
+            Value::Representation(big.canonical().into_owned(), ScalarStyle::Plain, custom_tag)
         }
         ResolvedScalar::Str(_) => {
             let string = Value::Value(ScalarOwned::String(s.to_owned()));
@@ -2367,6 +2367,35 @@ mod tests {
     }
 
     #[test]
+    fn emit_radix_big_ints_as_canonical_decimal_and_quote_strings() {
+        let doc =
+            crate::Parser::parse_str("a: 0xFFFFFFFFFFFFFFFFFF\nb: 0o7777777777777777777777\n")
+                .unwrap()
+                .unwrap();
+        for out in emit_both(&doc) {
+            let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+            assert_eq!(back, doc, "{out}");
+        }
+        assert_eq!(
+            Emitter::emit_str(&doc).unwrap(),
+            "a: 4722366482869645213695\nb: 73786976294838206463\n"
+        );
+        let hand_built = repr(
+            "0xFFFFFFFFFFFFFFFFFF",
+            ScalarStyle::Plain,
+            Some(core_tag("int")),
+        );
+        assert_eq!(emit_both(&hand_built)[0], "4722366482869645213695\n");
+        let quoted = crate::Parser::parse_str("a: \"0xFFFFFFFFFFFFFFFFFF\"\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            Emitter::emit_str(&quoted).unwrap(),
+            "a: \"0xFFFFFFFFFFFFFFFFFF\"\n"
+        );
+    }
+
+    #[test]
     fn emit_hand_built_block_representation_as_string() {
         for style in [ScalarStyle::Literal, ScalarStyle::Folded] {
             let doc = Value::Representation("a\nb".to_string(), style, None);
@@ -2499,7 +2528,10 @@ mod tests {
         let block = crate::Parser::parse_str(&format!("k: !!int |-\n  {BIG}\n"))
             .unwrap()
             .unwrap();
-        assert!(matches!(prepare_for_saphyr(&block), Cow::Owned(_)));
+        assert!(matches!(prepare_for_saphyr(&block), Cow::Borrowed(_)));
+
+        let hand_built = repr(BIG, ScalarStyle::Literal, Some(core_tag("int")));
+        assert!(matches!(prepare_for_saphyr(&hand_built), Cow::Owned(_)));
     }
 
     #[test]
