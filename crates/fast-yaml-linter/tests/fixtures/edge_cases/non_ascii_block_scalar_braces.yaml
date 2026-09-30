@@ -1,0 +1,7 @@
+# ———
+run: |
+  echo
+  ok
+  tail }
+c: {a: b}
+d: [x, y]

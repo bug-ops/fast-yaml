@@ -137,6 +137,23 @@ mod edge_case_fixtures {
 
         assert!(!has_errors, "Expected no errors in multiline.yaml");
     }
+
+    #[test]
+    fn test_edge_case_non_ascii_block_scalar_braces() {
+        let yaml = include_str!("fixtures/edge_cases/non_ascii_block_scalar_braces.yaml");
+        let linter = Linter::with_all_rules();
+        let diagnostics = linter.lint(yaml).unwrap();
+
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
+
+        assert!(!has_errors, "Expected no errors in fixture");
+    }
+
+    #[test]
+    fn test_edge_case_stray_bracket_in_comment_no_panic() {
+        let linter = Linter::with_all_rules();
+        assert!(linter.lint("k: [a,\n  b]\n# x ]\nz: [ 1 ]\n").is_ok());
+    }
 }
 
 #[cfg(test)]

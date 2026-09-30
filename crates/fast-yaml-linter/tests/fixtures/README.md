@@ -44,6 +44,7 @@ These files test edge cases and special YAML features.
 | `edge_cases/empty.yaml` | Empty document (only comments) |
 | `edge_cases/unicode.yaml` | Unicode characters, emojis, RTL text |
 | `edge_cases/multiline.yaml` | Block scalars (literal, folded, various chomping) |
+| `edge_cases/non_ascii_block_scalar_braces.yaml` | Non-ASCII comment before a literal block containing `}` (issue #302) |
 
 ## Usage in Tests
 

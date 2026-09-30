@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Fix `fy lint` panic on non-ASCII text before block scalars containing flow delimiters and on unbalanced `{}`/`[]` (#307)
+
 ## [0.6.6] - 2026-08-26
 
 ### Fixed

@@ -3,7 +3,57 @@
 use crate::{
     LintConfig, Severity, SourceContext, Span,
     diagnostic::{Diagnostic, DiagnosticBuilder},
+    tokenizer::Token,
 };
+
+/// Pairs opening and closing delimiter tokens by nesting depth.
+///
+/// Both slices must be sorted by offset (as returned by `FlowTokenizer::find_all`).
+/// Unmatched openers and closers are skipped. Pairs are returned in opener order.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::{
+///     rules::flow_common::pair_delimiters,
+///     tokenizer::{FlowTokenizer, TokenType},
+///     SourceContext,
+/// };
+///
+/// let yaml = "{a: {b: c}}";
+/// let ctx = SourceContext::new(yaml);
+/// let tokenizer = FlowTokenizer::new(yaml, &ctx);
+/// let opens = tokenizer.find_all(TokenType::BraceOpen);
+/// let closes = tokenizer.find_all(TokenType::BraceClose);
+///
+/// let pairs = pair_delimiters(&opens, &closes);
+/// assert_eq!(pairs.len(), 2);
+/// assert_eq!(pairs[0].1.span.start.offset, 10);
+/// ```
+#[must_use]
+pub fn pair_delimiters<'t>(opens: &'t [Token], closes: &'t [Token]) -> Vec<(&'t Token, &'t Token)> {
+    let mut stack: Vec<usize> = Vec::new();
+    let mut matched: Vec<(usize, &'t Token)> = Vec::new();
+    let mut next_open = 0;
+
+    for close in closes {
+        while let Some(open) = opens.get(next_open)
+            && open.span.start.offset < close.span.start.offset
+        {
+            stack.push(next_open);
+            next_open += 1;
+        }
+        if let Some(open_idx) = stack.pop() {
+            matched.push((open_idx, close));
+        }
+    }
+
+    matched.sort_unstable_by_key(|&(open_idx, _)| open_idx);
+    matched
+        .into_iter()
+        .map(|(open_idx, close)| (&opens[open_idx], close))
+        .collect()
+}
 
 /// Checks if a flow collection is empty (contains only whitespace between delimiters).
 ///
@@ -24,11 +74,14 @@ use crate::{
 /// ```
 #[must_use]
 pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize) -> bool {
-    if start_offset >= end_offset || end_offset > source.len() {
+    let end = end_offset.min(source.len());
+    if start_offset >= end {
         return true;
     }
 
-    source[start_offset..end_offset].trim().is_empty()
+    source
+        .get(start_offset..end)
+        .is_none_or(|s| s.trim().is_empty())
 }
 
 /// Checks spacing after an opening delimiter (brace or bracket).
@@ -59,11 +112,12 @@ pub fn check_spaces_after_opening(
     collection_name: &str,
     opening_span: Span,
 ) -> Option<Diagnostic> {
-    if start_offset >= source.len() {
+    let end = end_offset.min(source.len());
+    if start_offset > end {
         return None;
     }
 
-    let content = &source[start_offset..end_offset.min(source.len())];
+    let content = source.get(start_offset..end)?;
     let spaces = content.chars().take_while(|c| *c == ' ').count();
 
     #[allow(
@@ -134,11 +188,12 @@ pub fn check_spaces_before_closing(
     collection_name: &str,
     closing_span: Span,
 ) -> Option<Diagnostic> {
-    if start_offset >= end_offset || end_offset > source.len() {
+    let end = end_offset.min(source.len());
+    if start_offset >= end {
         return None;
     }
 
-    let content = &source[start_offset..end_offset];
+    let content = source.get(start_offset..end)?;
     let spaces = content.chars().rev().take_while(|c| *c == ' ').count();
 
     #[allow(
@@ -274,5 +329,67 @@ mod tests {
             dummy_span,
         );
         assert!(result2.is_some());
+    }
+
+    #[test]
+    fn test_reversed_or_invalid_ranges_do_not_panic() {
+        use crate::{Location, SourceContext, Span};
+        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let source = "{ é }";
+        let ctx = SourceContext::new(source);
+        let config = LintConfig::default();
+
+        assert!(is_empty_collection(source, 5, 2));
+        for (start, end) in [(5, 2), (3, 4), (4, 3)] {
+            assert!(
+                check_spaces_after_opening(source, &ctx, start, end, 0, 0, "t", &config, "b", span)
+                    .is_none()
+            );
+            assert!(
+                check_spaces_before_closing(
+                    source, &ctx, start, end, 0, 0, "t", &config, "b", span
+                )
+                .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn test_empty_range_reports_min_spaces_after_opening() {
+        use crate::{Location, SourceContext, Span};
+        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let source = "{}";
+        let ctx = SourceContext::new(source);
+        let config = LintConfig::default();
+
+        let diag =
+            check_spaces_after_opening(source, &ctx, 1, 1, 1, -1, "t", &config, "braces", span);
+        assert!(diag.is_some());
+        assert!(
+            check_spaces_before_closing(source, &ctx, 1, 1, 1, -1, "t", &config, "braces", span)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_pair_delimiters_nested_and_unmatched() {
+        use crate::{
+            SourceContext,
+            tokenizer::{FlowTokenizer, TokenType},
+        };
+        let yaml = "{a: {b: c}}\n{d: e}";
+        let ctx = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &ctx);
+        let opens = tokenizer.find_all(TokenType::BraceOpen);
+        let closes = tokenizer.find_all(TokenType::BraceClose);
+        let offsets: Vec<_> = pair_delimiters(&opens, &closes)
+            .iter()
+            .map(|(o, c)| (o.span.start.offset, c.span.start.offset))
+            .collect();
+        assert_eq!(offsets, [(0, 10), (4, 9), (12, 17)]);
+
+        assert!(pair_delimiters(&opens, &[]).is_empty());
+        assert!(pair_delimiters(&[], &closes).is_empty());
+        assert!(pair_delimiters(&opens[2..], &closes[..1]).is_empty());
     }
 }

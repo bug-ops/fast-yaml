@@ -4,6 +4,7 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     rules::flow_common::{
         check_spaces_after_opening, check_spaces_before_closing, is_empty_collection,
+        pair_delimiters,
     },
     tokenizer::{FlowTokenizer, TokenType},
 };
@@ -86,6 +87,7 @@ impl super::LintRule for BracketsRule {
 
         let open_brackets = tokenizer.find_all(TokenType::BracketOpen);
         let close_brackets = tokenizer.find_all(TokenType::BracketClose);
+        let pairs = pair_delimiters(&open_brackets, &close_brackets);
 
         // Check forbid option
         match forbid {
@@ -107,14 +109,8 @@ impl super::LintRule for BracketsRule {
             }
             "non-empty" => {
                 // Check if sequence is non-empty
-                for (i, open) in open_brackets.iter().enumerate() {
-                    if let Some(close) = close_brackets.get(i)
-                        && !is_empty_collection(
-                            source,
-                            open.span.end.offset,
-                            close.span.start.offset,
-                        )
-                    {
+                for (open, close) in &pairs {
+                    if !is_empty_collection(source, open.span.end.offset, close.span.start.offset) {
                         let severity =
                             config.get_effective_severity(self.code(), self.default_severity());
                         diagnostics.push(
@@ -134,48 +130,46 @@ impl super::LintRule for BracketsRule {
         }
 
         // Check spacing
-        for (i, open) in open_brackets.iter().enumerate() {
-            if let Some(close) = close_brackets.get(i) {
-                let is_empty =
-                    is_empty_collection(source, open.span.end.offset, close.span.start.offset);
+        for (open, close) in &pairs {
+            let is_empty =
+                is_empty_collection(source, open.span.end.offset, close.span.start.offset);
 
-                let (min_spaces, max_spaces) = if is_empty && min_spaces_inside_empty >= 0 {
-                    (min_spaces_inside_empty, max_spaces_inside_empty)
-                } else {
-                    (min_spaces_inside, max_spaces_inside)
-                };
+            let (min_spaces, max_spaces) = if is_empty && min_spaces_inside_empty >= 0 {
+                (min_spaces_inside_empty, max_spaces_inside_empty)
+            } else {
+                (min_spaces_inside, max_spaces_inside)
+            };
 
-                // Check spaces after opening bracket
-                if let Some(diag) = check_spaces_after_opening(
-                    source,
-                    source_context,
-                    open.span.end.offset,
-                    close.span.start.offset,
-                    min_spaces,
-                    max_spaces,
-                    self.code(),
-                    config,
-                    "brackets",
-                    open.span,
-                ) {
-                    diagnostics.push(diag);
-                }
+            // Check spaces after opening bracket
+            if let Some(diag) = check_spaces_after_opening(
+                source,
+                source_context,
+                open.span.end.offset,
+                close.span.start.offset,
+                min_spaces,
+                max_spaces,
+                self.code(),
+                config,
+                "brackets",
+                open.span,
+            ) {
+                diagnostics.push(diag);
+            }
 
-                // Check spaces before closing bracket
-                if let Some(diag) = check_spaces_before_closing(
-                    source,
-                    source_context,
-                    open.span.end.offset,
-                    close.span.start.offset,
-                    min_spaces,
-                    max_spaces,
-                    self.code(),
-                    config,
-                    "brackets",
-                    close.span,
-                ) {
-                    diagnostics.push(diag);
-                }
+            // Check spaces before closing bracket
+            if let Some(diag) = check_spaces_before_closing(
+                source,
+                source_context,
+                open.span.end.offset,
+                close.span.start.offset,
+                min_spaces,
+                max_spaces,
+                self.code(),
+                config,
+                "brackets",
+                close.span,
+            ) {
+                diagnostics.push(diag);
             }
         }
 
@@ -366,5 +360,52 @@ mod tests {
             diagnostics.is_empty(),
             "no false positives in block scalar: {diagnostics:?}"
         );
+    }
+
+    // Regression test for issue #302
+    #[test]
+    fn test_brackets_non_ascii_prefix_block_scalar_no_panic() {
+        let yaml = "# ———\nrun: |\n  echo\n  ok\n  tail ]\nc: [a, b]\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let context = LintContext::new(yaml);
+        let diagnostics = BracketsRule.check(&context, &value, &LintConfig::default());
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn test_brackets_nested_pairing() {
+        let yaml = "a: [[]]\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let context = LintContext::new(yaml);
+        let config = LintConfig::new().with_rule_config(
+            "brackets",
+            RuleConfig::new().with_option("forbid", "non-empty"),
+        );
+        let diagnostics = BracketsRule.check(&context, &value, &config);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+        assert_eq!(diagnostics[0].span.start.column, 4);
+    }
+
+    #[test]
+    fn test_brackets_empty_min_spaces_reported() {
+        let yaml = "b: []\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let context = LintContext::new(yaml);
+        let config = LintConfig::new().with_rule_config(
+            "brackets",
+            RuleConfig::new().with_option("min-spaces-inside-empty", 1i64),
+        );
+        let diagnostics = BracketsRule.check(&context, &value, &config);
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
+    }
+
+    #[test]
+    fn test_brackets_stray_bracket_in_comment_no_panic() {
+        let yaml = "k: [a,\n  b]\n# x ]\nz: [ 1 ]\n";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let context = LintContext::new(yaml);
+        let diagnostics = BracketsRule.check(&context, &value, &LintConfig::default());
+        assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
+        assert!(diagnostics.iter().all(|d| d.span.start.line == 4));
     }
 }
