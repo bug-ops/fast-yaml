@@ -404,7 +404,6 @@ dependencies = [
  "ignore",
  "indoc",
  "num_cpus",
- "ordered-float",
  "predicates",
  "proptest",
  "rayon",

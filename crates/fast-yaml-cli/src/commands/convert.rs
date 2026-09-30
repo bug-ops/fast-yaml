@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::ParseLimits;
-use fast_yaml_core::{Emitter, Parser, Value};
+use fast_yaml_core::{Emitter, Parser, ResolvedScalar, Value, resolve_scalar};
 use serde_json;
 
 use crate::cli::ConvertFormat;
@@ -145,10 +145,14 @@ fn value_to_json(value: &Value) -> Result<serde_json::Value> {
         YValue::BadValue => {
             anyhow::bail!("Invalid YAML value encountered");
         }
-        YValue::Representation(s, _, _) => {
-            // Try to convert the representation string to appropriate JSON type
-            JValue::String(s.clone())
-        }
+        YValue::Representation(s, style, tag) => match resolve_scalar(s, *style, tag.as_ref()) {
+            ResolvedScalar::BigInt(big) => JValue::Number(
+                big.canonical()
+                    .parse::<serde_json::Number>()
+                    .with_context(|| format!("invalid big integer '{s}'"))?,
+            ),
+            _ => JValue::String(s.clone()),
+        },
         YValue::Tagged(_, inner) => {
             // Ignore the tag and convert the inner value
             value_to_json(inner)?
@@ -167,7 +171,6 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
         JValue::Null => YValue::Value(ScalarOwned::Null),
         JValue::Bool(b) => YValue::Value(ScalarOwned::Boolean(*b)),
         JValue::Number(n) => {
-            use ordered_float::OrderedFloat;
             use saphyr_parser::ScalarStyle;
             // With the `arbitrary_precision` serde_json feature, `as_str()` returns the
             // original JSON token (e.g. "1.0", "1.23e10", "42"). Use it to distinguish
@@ -184,10 +187,8 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
                 YValue::Representation(raw.to_string(), ScalarStyle::Plain, None)
             } else if let Some(i) = n.as_i64() {
                 YValue::Value(ScalarOwned::Integer(i))
-            } else if let Some(f) = n.as_f64() {
-                YValue::Value(ScalarOwned::FloatingPoint(OrderedFloat(f)))
             } else {
-                anyhow::bail!("Unsupported number type: {n}");
+                YValue::Representation(raw.to_string(), ScalarStyle::Plain, None)
             }
         }
         JValue::String(s) => YValue::Value(ScalarOwned::String(s.clone())),
@@ -212,6 +213,78 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::io::input::InputOrigin;
+    use saphyr_parser::ScalarStyle;
+
+    fn parse_json_number(raw: &str) -> Value {
+        json_to_value(&serde_json::from_str(raw).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn json_integers_beyond_i64_keep_exact_digits() {
+        for raw in [
+            "9223372036854775808",
+            "18446744073709551615",
+            "-9223372036854775809",
+            "123456789012345678901234567890",
+        ] {
+            assert_eq!(
+                parse_json_number(raw),
+                Value::Representation(raw.to_string(), ScalarStyle::Plain, None)
+            );
+        }
+    }
+
+    #[test]
+    fn json_integers_within_i64_stay_integers() {
+        assert_eq!(
+            parse_json_number("9223372036854775807"),
+            Value::Value(fast_yaml_core::ScalarOwned::Integer(i64::MAX))
+        );
+        assert_eq!(
+            parse_json_number("-9223372036854775808"),
+            Value::Value(fast_yaml_core::ScalarOwned::Integer(i64::MIN))
+        );
+    }
+
+    #[test]
+    fn big_int_representation_becomes_json_number() {
+        for (text, expected) in [
+            ("+99999999999999999999", "99999999999999999999"),
+            ("-99999999999999999999", "-99999999999999999999"),
+            (
+                "000000000000000000000123456789012345678901",
+                "123456789012345678901",
+            ),
+        ] {
+            let value = Value::Representation(text.to_string(), ScalarStyle::Plain, None);
+            let json = value_to_json(&value).unwrap();
+            assert_eq!(serde_json::to_string(&json).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn non_big_int_representation_stays_json_string() {
+        for text in ["1.5", "abc", "0xFFFFFFFFFFFFFFFFFFFF"] {
+            let value = Value::Representation(text.to_string(), ScalarStyle::Plain, None);
+            assert_eq!(
+                value_to_json(&value).unwrap(),
+                serde_json::Value::String(text.to_string())
+            );
+        }
+    }
+
+    #[test]
+    fn quoted_big_int_text_stays_json_string() {
+        let value = Value::Representation(
+            "9223372036854775808".to_string(),
+            ScalarStyle::DoubleQuoted,
+            None,
+        );
+        assert_eq!(
+            value_to_json(&value).unwrap(),
+            serde_json::Value::String("9223372036854775808".to_string())
+        );
+    }
 
     #[test]
     fn test_yaml_to_json() {

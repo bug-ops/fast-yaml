@@ -90,3 +90,104 @@ def test_parse_parallel_matches_safe_load_on_large_integers():
         f"---\nnested:\n  x: {BIG_NEG}\n"
     )
     assert parallel.parse_parallel(text) == list(fast_yaml.safe_load_all(text))
+
+
+class _IntSub(int):
+    def __str__(self):
+        return "custom"
+
+
+@pytest.mark.parametrize("big", [1 << 63, (1 << 64) - 1, 1 << 70, -(1 << 63) - 1, -(10**30)])
+def test_safe_dump_big_int_value(big):
+    out = fast_yaml.safe_dump({"a": big})
+    assert out.strip() == f"a: {big}"
+    assert fast_yaml.safe_load(out) == {"a": big}
+
+
+def test_safe_dump_i64_bounds_stay_integers():
+    out = fast_yaml.safe_dump([(1 << 63) - 1, -(1 << 63)])
+    assert out == f"- {(1 << 63) - 1}\n- {-(1 << 63)}\n"
+
+
+def test_safe_dump_big_int_key():
+    out = fast_yaml.safe_dump({1 << 70: 1, -(1 << 70): 2})
+    assert fast_yaml.safe_load(out) == {1 << 70: 1, -(1 << 70): 2}
+
+
+def test_safe_dump_big_int_in_user_dict():
+    from collections import UserDict
+
+    out = fast_yaml.safe_dump(UserDict({"a": 1 << 70, 1 << 65: [1 << 66]}))
+    assert fast_yaml.safe_load(out) == {"a": 1 << 70, 1 << 65: [1 << 66]}
+
+
+def test_safe_dump_int_subclass_uses_digits():
+    assert fast_yaml.safe_dump(_IntSub(1 << 70)).strip() == str(1 << 70)
+
+
+def test_safe_dump_bool_unaffected_by_big_int_path():
+    assert fast_yaml.safe_dump([True, 1 << 70]) == f"- true\n- {1 << 70}\n"
+
+
+def test_dump_all_big_int():
+    out = fast_yaml.dump_all([{"a": 1 << 70}, [-(1 << 70)]])
+    assert list(fast_yaml.safe_load_all(out)) == [{"a": 1 << 70}, [-(1 << 70)]]
+
+
+def test_dump_parallel_big_int():
+    from fast_yaml._core import parallel
+
+    out = parallel.dump_parallel([{"a": 1 << 70}, {"b": -(1 << 70)}])
+    assert list(fast_yaml.safe_load_all(out)) == [{"a": 1 << 70}, {"b": -(1 << 70)}]
+
+
+def test_round_trip_parse_parallel_then_safe_dump():
+    from fast_yaml._core import parallel
+
+    text = "a: 9223372036854775808\nb: -99999999999999999999\n"
+    assert fast_yaml.safe_dump(parallel.parse_parallel(text)[0]) == text
+
+
+def _hostile_int(**overrides):
+    return type("Hostile", (int,), overrides)(10**30)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"__format__": lambda self, spec: "1\ninjected: true"},
+        {"__format__": lambda self, spec: "bad"},
+        {"__str__": lambda self: "1\ninjected: true"},
+        {"__repr__": lambda self: "1\ninjected: true"},
+    ],
+    ids=["format-injection", "format-text", "str", "repr"],
+)
+def test_safe_dump_int_subclass_overrides_cannot_inject(overrides):
+    out = fast_yaml.safe_dump({"a": _hostile_int(**overrides)})
+    assert out == f"a: {10**30}\n"
+    assert fast_yaml.safe_load(out) == {"a": 10**30}
+
+
+def test_safe_dump_int_enum_big_value():
+    import enum
+
+    class Big(enum.IntEnum):
+        X = 1 << 70
+
+    assert fast_yaml.safe_dump([Big.X]) == f"- {1 << 70}\n"
+
+
+def test_safe_dump_int_beyond_str_digits_limit_raises_value_error():
+    import sys
+
+    limit = sys.get_int_max_str_digits()
+    if limit == 0:
+        pytest.skip("int max str digits disabled")
+    with pytest.raises(ValueError):
+        fast_yaml.safe_dump(10 ** (limit + 1))
+
+
+def test_dump_budget_counts_big_int_text():
+    big = 10**4000
+    with pytest.raises(ValueError, match="output size exceeds"):
+        fast_yaml.safe_dump([big] * 30000)

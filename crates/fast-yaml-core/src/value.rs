@@ -1,3 +1,5 @@
+use crate::scalar::{ResolvedScalar, resolve_scalar};
+
 pub use saphyr::MappingOwned as Map;
 pub use saphyr::ScalarOwned;
 /// Wrapper around saphyr's `YamlOwned` type for consistent API.
@@ -42,7 +44,12 @@ pub fn scalar_key_text(key: &Value) -> Option<String> {
             ScalarOwned::FloatingPoint(f) => f.to_string(),
             ScalarOwned::String(s) => s.clone(),
         }),
-        Value::Representation(s, _, _) => Some(s.clone()),
+        Value::Representation(s, style, tag) => {
+            Some(match resolve_scalar(s, *style, tag.as_ref()) {
+                ResolvedScalar::BigInt(big) => big.canonical().into_owned(),
+                _ => s.clone(),
+            })
+        }
         _ => None,
     }
 }
@@ -51,6 +58,35 @@ pub fn scalar_key_text(key: &Value) -> Option<String> {
 mod tests {
     use super::*;
     use saphyr::ScalarOwned;
+    use saphyr_parser::ScalarStyle;
+
+    #[test]
+    fn scalar_key_text_canonicalizes_big_int_representations() {
+        for (raw, expected) in [
+            ("+99999999999999999999", "99999999999999999999"),
+            ("-99999999999999999999", "-99999999999999999999"),
+            (
+                "000000000000000000000123456789012345678901",
+                "123456789012345678901",
+            ),
+        ] {
+            let key = Value::Representation(raw.to_string(), ScalarStyle::Plain, None);
+            assert_eq!(scalar_key_text(&key).as_deref(), Some(expected));
+        }
+    }
+
+    #[test]
+    fn scalar_key_text_keeps_quoted_big_int_text_raw() {
+        let key = Value::Representation(
+            "+99999999999999999999".to_string(),
+            ScalarStyle::DoubleQuoted,
+            None,
+        );
+        assert_eq!(
+            scalar_key_text(&key).as_deref(),
+            Some("+99999999999999999999")
+        );
+    }
 
     #[test]
     fn test_value_null() {

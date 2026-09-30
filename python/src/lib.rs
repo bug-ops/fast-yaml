@@ -27,7 +27,7 @@ use fast_yaml_core::{
 };
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString};
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
@@ -443,7 +443,9 @@ fn classify<'py>(
     budget: &mut DumpBudget,
 ) -> PyResult<Classified<'py>> {
     if let Some(scalar) = python_scalar_to_yaml(obj)? {
-        if let YamlOwned::Value(ScalarOwned::String(text)) = &scalar {
+        if let YamlOwned::Value(ScalarOwned::String(text)) | YamlOwned::Representation(text, ..) =
+            &scalar
+        {
             budget.charge(text.len()).map_err(limit_error)?;
         }
         return Ok(Classified::Scalar(scalar));
@@ -464,7 +466,30 @@ fn python_scalar_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Option<YamlOwned>> 
         // bool is checked before int: it is a subclass of int in Python
         ScalarOwned::Boolean(obj.extract()?)
     } else if obj.is_instance_of::<PyInt>() {
-        ScalarOwned::Integer(obj.extract()?)
+        return match obj.extract::<i64>() {
+            Ok(i) => Ok(Some(YamlOwned::Value(ScalarOwned::Integer(i)))),
+            Err(e) if e.is_instance_of::<PyOverflowError>(obj.py()) => {
+                let digits: String = obj
+                    .py()
+                    .get_type::<PyInt>()
+                    .call_method1("__format__", (obj, "d"))?
+                    .extract()?;
+                if !matches!(
+                    resolve_scalar(&digits, ScalarStyle::Plain, None),
+                    ResolvedScalar::BigInt(_)
+                ) {
+                    return Err(PyTypeError::new_err(
+                        "int did not format as a decimal integer",
+                    ));
+                }
+                Ok(Some(YamlOwned::Representation(
+                    digits,
+                    ScalarStyle::Plain,
+                    None,
+                )))
+            }
+            Err(e) => Err(e),
+        };
     } else if obj.is_instance_of::<PyFloat>() {
         ScalarOwned::FloatingPoint(OrderedFloat(obj.extract()?))
     } else if obj.is_instance_of::<PyString>() {
