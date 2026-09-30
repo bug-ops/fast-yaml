@@ -118,6 +118,12 @@ pub enum DiscoveryError {
         pattern: String,
     },
 
+    /// Every input was empty or filtered out by include or exclude patterns
+    #[error(
+        "no YAML files found: every input was empty or filtered out by include/exclude patterns"
+    )]
+    NoYamlFiles,
+
     /// Glob pattern is malformed
     #[error("invalid glob pattern '{pattern}': {source}")]
     GlobSyntax {

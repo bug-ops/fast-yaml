@@ -32,13 +32,6 @@ pub fn execute_lint_batch(
         .discover_source(&target.source)
         .context("Failed to discover files")?;
 
-    if files.is_empty() {
-        if !common.output.is_quiet() {
-            eprintln!("No YAML files found");
-        }
-        return Ok(ExitCode::Success);
-    }
-
     let workers = target
         .workers
         .map_or_else(rayon::current_num_threads, NonZeroUsize::get);

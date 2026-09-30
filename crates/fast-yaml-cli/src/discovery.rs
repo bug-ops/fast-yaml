@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::error::{DiscoveryError, PathError, StdinLineCause};
 
@@ -18,6 +18,8 @@ const MAX_LINE_LENGTH: usize = 4096;
 const MAX_GLOB_MATCHES: usize = 100_000;
 
 /// Configuration for file discovery.
+///
+/// Include and exclude patterns are matched case-insensitively.
 #[derive(Debug, Clone)]
 pub struct DiscoveryConfig {
     /// Glob patterns for files to include (e.g., "*.yaml", "*.yml")
@@ -224,7 +226,8 @@ impl FileDiscovery {
     ///
     /// Returns an error if a file cannot be canonicalized, a glob matches nothing, a stdin line
     /// is overlong or names a missing path, a directory or a file the include patterns reject,
-    /// or stdin cannot be read.
+    /// or stdin cannot be read, or every input is filtered out
+    /// ([`DiscoveryError::NoYamlFiles`]). An empty stdin list yields no files and no error.
     pub fn discover_source(
         &self,
         source: &BatchSource,
@@ -245,7 +248,8 @@ impl FileDiscovery {
     /// # Errors
     ///
     /// Returns an error if a file cannot be canonicalized or is rejected by the include patterns,
-    /// or a glob is malformed or matches nothing.
+    /// or a glob is malformed or matches nothing, or no file remains after filtering
+    /// ([`DiscoveryError::NoYamlFiles`]).
     pub fn discover(&self, paths: &[InputPath]) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
         // Heuristic: estimate 10 files per input path
         let estimated_capacity = paths.len().saturating_mul(10);
@@ -269,6 +273,9 @@ impl FileDiscovery {
             }
         }
 
+        if discovered.is_empty() {
+            return Err(DiscoveryError::NoYamlFiles);
+        }
         Ok(discovered)
     }
 
@@ -282,7 +289,9 @@ impl FileDiscovery {
     /// # Errors
     ///
     /// Returns an error if a line is overlong (in bytes) or names a path that does not exist, is not a
-    /// regular file, or is rejected by the include patterns, or if the reader fails.
+    /// regular file, or is rejected by the include patterns, or if the reader fails, or if every
+    /// listed path is excluded ([`DiscoveryError::NoYamlFiles`]). A list without any path yields
+    /// no files and no error.
     pub fn discover_from_reader<R: BufRead>(
         &self,
         reader: R,
@@ -290,6 +299,7 @@ impl FileDiscovery {
         let mut discovered = Vec::new();
         let mut seen = HashSet::new();
         let mut count = 0;
+        let mut listed = 0_usize;
 
         for line in reader.lines() {
             let line = line.map_err(|e| DiscoveryError::StdinError { source: e })?;
@@ -308,6 +318,7 @@ impl FileDiscovery {
                 continue;
             }
 
+            listed += 1;
             if trimmed.len() > MAX_LINE_LENGTH {
                 return Err(DiscoveryError::StdinLine {
                     line: count,
@@ -329,13 +340,21 @@ impl FileDiscovery {
             })?;
         }
 
+        if listed > 0 && discovered.is_empty() {
+            return Err(DiscoveryError::NoYamlFiles);
+        }
         Ok(discovered)
     }
 
     /// Check if a single path should be included.
     #[must_use]
     pub fn should_include(&self, path: &Path) -> bool {
-        !self.exclude_matcher.is_match(path) && self.matches_include(path)
+        !self.is_excluded(path) && self.matches_include(path)
+    }
+
+    fn is_excluded(&self, path: &Path) -> bool {
+        self.exclude_matcher
+            .is_match(path.strip_prefix(".").unwrap_or(path))
     }
 
     fn matches_include(&self, path: &Path) -> bool {
@@ -350,7 +369,7 @@ impl FileDiscovery {
         discovered: &mut Vec<DiscoveredFile>,
         seen: &mut HashSet<PathBuf>,
     ) -> Result<(), PathError> {
-        if self.exclude_matcher.is_match(path) {
+        if self.is_excluded(path) {
             return Ok(());
         }
         let explicit = matches!(
@@ -483,10 +502,13 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet, DiscoveryError> {
     let mut builder = GlobSetBuilder::new();
 
     for pattern in patterns {
-        let glob = Glob::new(pattern).map_err(|e| DiscoveryError::InvalidPattern {
-            pattern: pattern.clone(),
-            source: e,
-        })?;
+        let glob = GlobBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| DiscoveryError::InvalidPattern {
+                pattern: pattern.clone(),
+                source: e,
+            })?;
         builder.add(glob);
     }
 
@@ -904,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn test_stdin_excluded_directory_and_file_are_skipped() {
+    fn test_stdin_excluded_directory_and_file_leave_no_files() {
         let temp = TempDir::new().unwrap();
         let vendor = temp.path().join("vendor");
         fs::create_dir(&vendor).unwrap();
@@ -915,23 +937,20 @@ mod tests {
         let discovery = FileDiscovery::new(config).unwrap();
         let list = format!("{}\n{}\n", vendor.display(), text.display());
 
-        assert!(
-            discovery
-                .discover_from_reader(list.as_bytes())
-                .unwrap()
-                .is_empty()
-        );
+        let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
     }
 
     #[test]
-    fn test_explicit_excluded_non_yaml_file_is_skipped() {
+    fn test_explicit_excluded_non_yaml_file_leaves_no_files() {
         let temp = TempDir::new().unwrap();
         let text = temp.path().join("notes.txt");
         fs::write(&text, "x\n").unwrap();
         let config = default_config().with_exclude_patterns(vec!["**/*.txt".into()]);
         let discovery = FileDiscovery::new(config).unwrap();
 
-        assert!(discovery.discover(&[input(&text)]).unwrap().is_empty());
+        let err = discovery.discover(&[input(&text)]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
     }
 
     #[cfg(unix)]
@@ -1001,7 +1020,8 @@ mod tests {
         ));
 
         let glob = InputPath::Glob(temp.path().join("*.txt").display().to_string());
-        assert!(discovery.discover(&[glob]).unwrap().is_empty());
+        let err = discovery.discover(&[glob]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
     }
 
     #[test]
@@ -1122,5 +1142,132 @@ mod tests {
             path_error(&err),
             Some(PathError::PathNotFound { .. })
         ));
+    }
+
+    fn write(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, "a: 1\n").unwrap();
+        path
+    }
+
+    fn with_exclude(pattern: &str) -> FileDiscovery {
+        FileDiscovery::new(default_config().with_exclude_patterns(vec![pattern.to_string()]))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_include_is_case_insensitive() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "UP.YAML");
+        write(temp.path(), "Mixed.Yml");
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
+        assert_eq!(files.len(), 2);
+    }
+
+    #[test]
+    fn test_explicit_uppercase_extension_is_accepted() {
+        let temp = TempDir::new().unwrap();
+        let upper = write(temp.path(), "UP.YAML");
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let files = discovery.discover(&[input(upper)]).unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_user_include_is_case_insensitive() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "a.TXT");
+        let config = default_config().with_include_patterns(vec!["*.txt".to_string()]);
+        let discovery = FileDiscovery::new(config).unwrap();
+
+        assert_eq!(discovery.discover(&[input(temp.path())]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_exclude_is_case_insensitive() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "A.yaml");
+        let keep = write(temp.path(), "keep.yaml");
+        let discovery = with_exclude("**/a.yaml");
+
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, keep.canonicalize().unwrap());
+    }
+
+    #[test]
+    fn test_exclude_matches_dot_slash_path() {
+        let discovery = with_exclude("notes.txt");
+
+        assert!(discovery.is_excluded(Path::new("./notes.txt")));
+        assert!(discovery.is_excluded(Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn test_non_yaml_glob_errors() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "notes.txt");
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let pattern = temp.path().join("notes*");
+
+        let err = discovery.discover(&[input(pattern)]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+    }
+
+    #[test]
+    fn test_non_yaml_directory_errors() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "notes.txt");
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let err = discovery.discover(&[input(temp.path())]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+    }
+
+    #[test]
+    fn test_empty_directory_errors() {
+        let temp = TempDir::new().unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let err = discovery.discover(&[input(temp.path())]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+    }
+
+    #[test]
+    fn test_all_excluded_errors() {
+        let temp = TempDir::new().unwrap();
+        write(temp.path(), "a.yaml");
+        let discovery = with_exclude("*.yaml");
+
+        let err = discovery.discover(&[input(temp.path())]).unwrap_err();
+        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+    }
+
+    #[test]
+    fn test_empty_input_among_files_is_not_an_error() {
+        let temp = TempDir::new().unwrap();
+        let empty = temp.path().join("empty");
+        fs::create_dir(&empty).unwrap();
+        let file = write(temp.path(), "a.yaml");
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let files = discovery.discover(&[input(empty), input(file)]).unwrap();
+        assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_stdin_without_paths_is_empty_ok() {
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        assert!(discovery.discover_from_reader(&b""[..]).unwrap().is_empty());
+        assert!(
+            discovery
+                .discover_from_reader(&b"# only a comment\n\n"[..])
+                .unwrap()
+                .is_empty()
+        );
     }
 }
