@@ -4,10 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
 use crate::context::KeyIndex;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Linting rule for key ordering.
@@ -195,11 +192,23 @@ fn emit_ordering_diagnostics(
 
             if out_of_order {
                 let severity = config.rules.key_ordering.severity_or(Severity::Info);
-                let line_offset = context.source_context().get_line_offset(*line_num);
-                let location = Location::new(*line_num, 1, line_offset);
-                let span = Span::new(
-                    location,
-                    Location::new(*line_num, 1, line_offset + key.len()),
+                let source_context = context.source_context();
+                let line = source_context.get_line(*line_num).unwrap_or_default();
+                let key_start = line.find(key.as_str()).unwrap_or_default();
+                let (key_start, key_len) =
+                    match line.get(..key_start).and_then(|p| p.chars().next_back()) {
+                        Some(quote @ ('"' | '\''))
+                            if line
+                                .get(key_start + key.len()..)
+                                .is_some_and(|rest| rest.starts_with(quote)) =>
+                        {
+                            (key_start - 1, key.len() + 2)
+                        }
+                        _ => (key_start, key.len()),
+                    };
+                let span = source_context.span_at(
+                    source_context.line_start(*line_num).add_bytes(key_start),
+                    key_len,
                 );
 
                 diagnostics.push(

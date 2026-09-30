@@ -66,6 +66,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
+- **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
+- **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
 - Fix `braces`/`brackets` dropping the max check for empty collections when only `min-spaces-inside-empty` is set; the empty-collection limits now inherit independently (#426)
 - Fix `document-start: {present: true}` and `quote-type` typos being silently ignored in lint configs (#324) (#426)
 - `fy format` output stays parseable: `%` continuation lines, dropped `...` document ends, invalid anchor names, tagged empty keys and block-ambiguous plain scalars (#429) (#430) (#431) (#441)

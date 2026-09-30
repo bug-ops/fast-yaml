@@ -362,6 +362,13 @@ fn indent_out_of_range_is_normalized() {
 }
 
 #[test]
+fn documents_separated_by_document_end_keep_separator() {
+    check("a: 1\n...\nb: 2\n", 2, "a: 1\n---\nb: 2\n");
+    check("a\n...\nb\n", 2, "a\n---\nb\n");
+    check("!\n...\r$", 2, "!\n---\n$\n");
+}
+
+#[test]
 fn deep_nesting_keeps_column_stack_balanced() {
     let depth = 200;
     let mut input = String::new();

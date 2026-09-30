@@ -164,8 +164,8 @@ impl Formatter for TextFormatter {
                             let padding = start.saturating_sub(1);
                             let length = end.saturating_sub(start);
 
-                            write!(output, "{:padding$}", "", padding = padding).unwrap();
-                            write!(output, "{}", "^".repeat(length)).unwrap();
+                            output.push_str(&" ".repeat(padding));
+                            output.push_str(&"^".repeat(length));
                         }
 
                         writeln!(output).unwrap();
@@ -205,6 +205,21 @@ impl Formatter for TextFormatter {
 mod tests {
     use super::*;
     use crate::{DiagnosticBuilder, DiagnosticCode, Location, Span};
+
+    #[test]
+    fn test_format_highlight_column_beyond_u16() {
+        let source = "a".repeat(70_000);
+        let span = Span::new(
+            Location::new(1, 65_600, 65_599),
+            Location::new(1, 65_610, 65_609),
+        );
+        let diagnostic =
+            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "long", span)
+                .build(&source);
+
+        let output = TextFormatter::new().format(&[diagnostic], &source);
+        assert!(output.contains(&format!("{}{}", " ".repeat(65_599), "^".repeat(10))));
+    }
 
     #[test]
     fn test_formatter_new() {

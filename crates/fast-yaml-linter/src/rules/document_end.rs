@@ -4,11 +4,9 @@ use serde::{Deserialize, Serialize};
 use serde_norway::Value as YamlValue;
 
 use crate::config::{BoolOrName, RuleOptions, deserialize_bool_or_name};
-use crate::context::{lines_of, source_lines};
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::context::lines_of;
+use crate::source::offset::ByteOffset;
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Linting rule for document end marker.
@@ -125,27 +123,24 @@ impl super::LintRule for DocumentEndRule {
             Vec::new()
         } else {
             let severity = config.rules.document_end.severity_or(Severity::Warning);
-            let last_line = lines_of(source).count().max(1);
-            let last_offset = source.len();
+            let eof_span = context
+                .source_context()
+                .span_at(ByteOffset::new(source.len()), 0);
+
+            let marker = if source.is_empty() || source.ends_with(['\n', '\r']) {
+                "..."
+            } else {
+                "\n..."
+            };
 
             vec![
                 DiagnosticBuilder::new(
                     self.code(),
                     severity,
                     "missing document end marker '...'",
-                    Span::new(
-                        Location::new(last_line, 1, last_offset),
-                        Location::new(last_line, 1, last_offset),
-                    ),
+                    eof_span,
                 )
-                .with_suggestion(
-                    "Add '...' at the end",
-                    Span::new(
-                        Location::new(last_line, 1, last_offset),
-                        Location::new(last_line, 1, last_offset),
-                    ),
-                    Some("\n...".to_string()),
-                )
+                .with_suggestion("Add '...' at the end", eof_span, Some(marker.to_string()))
                 .build_with_context(context.source_context()),
             ]
         }
@@ -153,38 +148,11 @@ impl super::LintRule for DocumentEndRule {
 }
 
 fn has_document_end_marker(source: &str) -> bool {
-    find_document_end_marker(source).is_some()
-}
-
-fn find_document_end_marker(source: &str) -> Option<(usize, Span)> {
-    let lines: Vec<(usize, &str)> = source_lines(source).collect();
-
-    // Check from the end, skipping empty lines and comments
-    for (idx, (offset, line)) in lines.iter().enumerate().rev() {
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if trimmed == "..." {
-            let line_num = idx + 1;
-            let col = line.len() - trimmed.len() + 1;
-
-            return Some((
-                line_num,
-                Span::new(
-                    Location::new(line_num, col, offset + col - 1),
-                    Location::new(line_num, col + 3, offset + col + 2),
-                ),
-            ));
-        }
-
-        // Found non-marker content
-        break;
-    }
-
-    None
+    lines_of(source)
+        .map(str::trim)
+        .filter(|trimmed| !trimmed.is_empty() && !trimmed.starts_with('#'))
+        .last()
+        == Some("...")
 }
 
 #[cfg(test)]
@@ -256,12 +224,14 @@ mod tests {
     }
 
     #[test]
-    fn test_find_document_end_marker() {
-        assert!(find_document_end_marker("test: value\n...").is_some());
-        assert!(find_document_end_marker("test: value\n...\n# comment").is_some());
-        assert!(find_document_end_marker("test: value\n...\n\n").is_some());
-        assert!(find_document_end_marker("test: value").is_none());
-        assert!(find_document_end_marker("").is_none());
+    fn test_has_document_end_marker() {
+        assert!(has_document_end_marker("test: value\n..."));
+        assert!(has_document_end_marker("test: value\n...  \n# comment"));
+        assert!(has_document_end_marker("test: value\n...\n\n"));
+        assert!(has_document_end_marker("é: 1\r...\r"));
+        assert!(has_document_end_marker("é: 1\r\n  ...\n"));
+        assert!(!has_document_end_marker("test: value"));
+        assert!(!has_document_end_marker(""));
     }
 
     #[test]
@@ -276,25 +246,5 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
-    }
-
-    #[test]
-    fn test_find_marker_offsets_crlf_and_lone_cr() {
-        for yaml in [
-            "é: 1\r\n...\r\n",
-            "é: 1\r...\r",
-            "é: 1\n...",
-            "é: 1\r\n  ...\n",
-        ] {
-            let (line, span) = find_document_end_marker(yaml).unwrap();
-            assert_eq!(line, 2, "{yaml:?}");
-            let col = span.start.column;
-            assert_eq!(&yaml[span.start.offset..span.end.offset], "...", "{yaml:?}");
-            assert_eq!(
-                span.start.offset,
-                yaml.find("...").unwrap(),
-                "{yaml:?} col {col}"
-            );
-        }
     }
 }

@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
+use crate::source::offset::ByteOffset;
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
 use fast_yaml_core::Value;
@@ -168,8 +169,7 @@ fn check_value_for_empty(
                         // Create a diagnostic for the null item in sequence
                         // For simplicity, we'll mark the whole source
                         // A more precise implementation would find the exact list item location
-                        let loc = Location::new(1, 1, 0);
-                        let span = Span::new(loc, loc);
+                        let span = source_context.span_at(ByteOffset::ZERO, 0);
 
                         diagnostics.push(
                             DiagnosticBuilder::new(
