@@ -125,8 +125,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config =
-            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config = CommonConfig::new().with_output(
+            crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
+        );
         let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
@@ -138,8 +139,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config =
-            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config = CommonConfig::new().with_output(
+            crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
+        );
         let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_err());
     }
@@ -151,8 +153,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config =
-            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config = CommonConfig::new().with_output(
+            crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
+        );
         let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
@@ -164,8 +167,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config =
-            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config = CommonConfig::new().with_output(
+            crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
+        );
         let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
@@ -177,8 +181,9 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
 
-        let config =
-            CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
+        let config = CommonConfig::new().with_output(
+            crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
+        );
         let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }

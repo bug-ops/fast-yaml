@@ -106,9 +106,9 @@ fn yaml_key_to_string(yaml: &YamlOwned) -> NapiResult<String> {
 ///
 /// Returns an error if the JavaScript value contains non-serializable types or converting it
 /// would exceed `budget`.
-pub fn js_to_yaml(env: Env, js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<YamlOwned> {
+pub fn js_to_yaml(js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<YamlOwned> {
     let mut stack: Vec<OpenContainer> = Vec::new();
-    match classify(&env, js_value, 0, budget)? {
+    match classify(js_value, 0, budget)? {
         Classified::Scalar(value) => return Ok(value),
         Classified::Container(open) => stack.push(open),
     }
@@ -122,7 +122,7 @@ pub fn js_to_yaml(env: Env, js_value: Unknown, budget: &mut DumpBudget) -> NapiR
             ));
         };
         if let Some(child) = top.next_child() {
-            match classify(&env, child.value, depth, budget)? {
+            match classify(child.value, depth, budget)? {
                 Classified::Scalar(value) => top.accept(child.key, value),
                 Classified::Container(open) => {
                     top.pending_key = child.key;
@@ -209,7 +209,6 @@ fn enter_container(depth: usize) -> NapiResult<usize> {
 /// A node's fixed cost is charged by its parent, before any storage for the children is
 /// allocated; the root is free because its output is covered by its children and text.
 fn classify<'a>(
-    env: &Env,
     js_value: Unknown<'a>,
     depth: usize,
     budget: &mut DumpBudget,
@@ -222,26 +221,25 @@ fn classify<'a>(
         }
 
         ValueType::Boolean => {
-            let b: bool = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
+            let b: bool = FromNapiValue::from_unknown(js_value)?;
             Ok(Classified::Scalar(YamlOwned::Value(ScalarOwned::Boolean(
                 b,
             ))))
         }
 
         ValueType::Number => {
-            let num: f64 = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
+            let num: f64 = FromNapiValue::from_unknown(js_value)?;
             Ok(Classified::Scalar(YamlOwned::Value(number_to_scalar(num))))
         }
 
         ValueType::String => {
-            let s: String = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
+            let s: String = FromNapiValue::from_unknown(js_value)?;
             budget.charge(s.len()).map_err(limit_error)?;
             Ok(Classified::Scalar(YamlOwned::Value(ScalarOwned::String(s))))
         }
 
         ValueType::Object => {
-            let js_obj: Object =
-                unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
+            let js_obj: Object = FromNapiValue::from_unknown(js_value)?;
             enter_container(depth)?;
 
             if js_obj.is_array()? {
@@ -270,8 +268,7 @@ fn classify<'a>(
             let mut children = Vec::with_capacity(len as usize);
             for i in 0..len {
                 let key: Unknown = property_names.get_element(i)?;
-                let key_str: String =
-                    unsafe { FromNapiValue::from_napi_value(env.raw(), key.raw())? };
+                let key_str: String = FromNapiValue::from_unknown(key)?;
                 budget.charge(key_str.len()).map_err(limit_error)?;
                 let value: Unknown = js_obj.get_named_property(&key_str)?;
                 children.push(Child {

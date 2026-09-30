@@ -1,20 +1,25 @@
 //! Output configuration for verbosity and color handling.
 
+/// How much non-error output a command prints.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Verbosity {
+    /// Suppress all non-error output
+    Quiet,
+    /// Default output
+    #[default]
+    Normal,
+    /// Show detailed progress and timing
+    Verbose,
+}
+
 /// Configuration for output behavior.
 ///
-/// Controls verbosity, coloring, and timing information across all commands.
-#[allow(clippy::struct_excessive_bools)]
+/// Controls verbosity and coloring across all commands.
 #[derive(Debug, Clone, Default)]
 pub struct OutputConfig {
-    /// Suppress all non-error output
-    quiet: bool,
-    /// Show detailed progress and timing
-    #[cfg(any(test, feature = "linter"))]
-    verbose: bool,
+    verbosity: Verbosity,
     /// Use ANSI color codes in output
     use_color: bool,
-    /// Show timing information
-    show_timing: bool,
 }
 
 impl OutputConfig {
@@ -30,13 +35,18 @@ impl OutputConfig {
     /// Automatically detects color support based on terminal capabilities
     /// and environment variables.
     #[must_use]
-    pub fn from_cli(quiet: bool, verbose: bool, no_color: bool) -> Self {
+    pub fn from_cli(verbosity: Verbosity, no_color: bool) -> Self {
+        Self::from_cli_with_env(verbosity, no_color, |name| std::env::var(name).ok())
+    }
+
+    fn from_cli_with_env(
+        verbosity: Verbosity,
+        no_color: bool,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Self {
         Self {
-            quiet,
-            #[cfg(any(test, feature = "linter"))]
-            verbose,
-            use_color: !no_color && Self::detect_color_support(),
-            show_timing: verbose,
+            verbosity,
+            use_color: !no_color && Self::detect_color_support(env),
         }
     }
 
@@ -45,8 +55,8 @@ impl OutputConfig {
     /// Checks:
     /// 1. `NO_COLOR` environment variable (takes precedence)
     /// 2. Terminal capabilities (if `colors` feature enabled)
-    fn detect_color_support() -> bool {
-        if std::env::var("NO_COLOR").is_ok() {
+    fn detect_color_support(env: impl Fn(&str) -> Option<String>) -> bool {
+        if env("NO_COLOR").is_some() {
             return false;
         }
         #[cfg(feature = "colors")]
@@ -58,19 +68,11 @@ impl OutputConfig {
         false
     }
 
-    /// Sets quiet mode.
+    /// Sets the verbosity.
     #[cfg(test)]
     #[must_use]
-    pub const fn with_quiet(mut self, quiet: bool) -> Self {
-        self.quiet = quiet;
-        self
-    }
-
-    /// Sets verbose mode.
-    #[cfg(test)]
-    #[must_use]
-    pub const fn with_verbose(mut self, verbose: bool) -> Self {
-        self.verbose = verbose;
+    pub const fn with_verbosity(mut self, verbosity: Verbosity) -> Self {
+        self.verbosity = verbosity;
         self
     }
 
@@ -82,25 +84,17 @@ impl OutputConfig {
         self
     }
 
-    /// Sets timing display.
-    #[cfg(test)]
-    #[must_use]
-    pub const fn with_timing(mut self, timing: bool) -> Self {
-        self.show_timing = timing;
-        self
-    }
-
     /// Returns whether quiet mode is enabled.
     #[must_use]
     pub const fn is_quiet(&self) -> bool {
-        self.quiet
+        matches!(self.verbosity, Verbosity::Quiet)
     }
 
     /// Returns whether verbose mode is enabled.
     #[cfg(any(test, feature = "linter"))]
     #[must_use]
     pub const fn is_verbose(&self) -> bool {
-        self.verbose
+        matches!(self.verbosity, Verbosity::Verbose)
     }
 
     /// Returns whether color output is enabled.
@@ -112,14 +106,17 @@ impl OutputConfig {
     /// Returns whether timing information should be shown.
     #[must_use]
     pub const fn show_timing(&self) -> bool {
-        self.show_timing
+        matches!(self.verbosity, Verbosity::Verbose)
     }
 }
 
 #[cfg(test)]
-#[allow(unsafe_code)]
 mod tests {
     use super::*;
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
 
     #[test]
     fn test_default_config() {
@@ -133,22 +130,21 @@ mod tests {
     #[test]
     fn test_new() {
         let config = OutputConfig::new();
-        assert!(!config.is_quiet());
-        assert!(!config.is_verbose());
+        assert_eq!(config.verbosity, Verbosity::Normal);
         assert!(!config.use_color());
-        assert!(!config.show_timing());
     }
 
     #[test]
     fn test_from_cli_quiet() {
-        let config = OutputConfig::from_cli(true, false, false);
+        let config = OutputConfig::from_cli_with_env(Verbosity::Quiet, false, no_env);
         assert!(config.is_quiet());
         assert!(!config.is_verbose());
+        assert!(!config.show_timing());
     }
 
     #[test]
     fn test_from_cli_verbose() {
-        let config = OutputConfig::from_cli(false, true, false);
+        let config = OutputConfig::from_cli_with_env(Verbosity::Verbose, false, no_env);
         assert!(!config.is_quiet());
         assert!(config.is_verbose());
         assert!(config.show_timing());
@@ -156,20 +152,22 @@ mod tests {
 
     #[test]
     fn test_from_cli_no_color() {
-        let config = OutputConfig::from_cli(false, false, true);
+        let config = OutputConfig::from_cli_with_env(Verbosity::Normal, true, no_env);
         assert!(!config.use_color());
     }
 
     #[test]
-    fn test_with_quiet() {
-        let config = OutputConfig::new().with_quiet(true);
-        assert!(config.is_quiet());
-    }
-
-    #[test]
-    fn test_with_verbose() {
-        let config = OutputConfig::new().with_verbose(true);
-        assert!(config.is_verbose());
+    fn test_with_verbosity() {
+        assert!(
+            OutputConfig::new()
+                .with_verbosity(Verbosity::Quiet)
+                .is_quiet()
+        );
+        assert!(
+            OutputConfig::new()
+                .with_verbosity(Verbosity::Verbose)
+                .is_verbose()
+        );
     }
 
     #[test]
@@ -179,48 +177,15 @@ mod tests {
     }
 
     #[test]
-    fn test_with_timing() {
-        let config = OutputConfig::new().with_timing(true);
-        assert!(config.show_timing());
-    }
-
-    #[test]
-    fn test_builder_chaining() {
-        let config = OutputConfig::new()
-            .with_quiet(false)
-            .with_verbose(true)
-            .with_color(true)
-            .with_timing(true);
-
-        assert!(!config.is_quiet());
-        assert!(config.is_verbose());
-        assert!(config.use_color());
-        assert!(config.show_timing());
-    }
-
-    #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_detect_color_support_with_no_color_env() {
-        unsafe {
-            std::env::set_var("NO_COLOR", "1");
-        }
-        let supported = OutputConfig::detect_color_support();
-        unsafe {
-            std::env::remove_var("NO_COLOR");
-        }
-        assert!(!supported);
+        let env = |name: &str| (name == "NO_COLOR").then(|| "1".to_string());
+        assert!(!OutputConfig::detect_color_support(env));
     }
 
     #[test]
-    #[allow(clippy::unwrap_used)]
     fn test_from_cli_respects_no_color_env() {
-        unsafe {
-            std::env::set_var("NO_COLOR", "1");
-        }
-        let config = OutputConfig::from_cli(false, false, false);
-        unsafe {
-            std::env::remove_var("NO_COLOR");
-        }
+        let env = |name: &str| (name == "NO_COLOR").then(|| "1".to_string());
+        let config = OutputConfig::from_cli_with_env(Verbosity::Normal, false, env);
         assert!(!config.use_color());
     }
 }

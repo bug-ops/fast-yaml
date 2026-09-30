@@ -46,31 +46,14 @@ impl LoadOptions {
     }
 }
 
-/// Coerce `Unknown<'env>` to `Unknown<'static>` for returning from `#[napi]` functions.
-///
-/// # Safety
-///
-/// The returned value must not outlive the JS call frame. NAPI-RS guarantees that all
-/// `#[napi]` function return values are consumed before the Env becomes invalid, so this
-/// transmute is safe in this specific context.
-#[inline]
-fn to_static(v: Unknown<'_>) -> Unknown<'static> {
-    // SAFETY: see doc comment above
-    #[allow(clippy::missing_transmute_annotations)]
-    unsafe {
-        std::mem::transmute(v)
-    }
-}
-
-/// Return a JS `undefined` sentinel as `Unknown<'static>` after calling `env.throw_error`.
+/// Return a JS `undefined` sentinel after calling `env.throw_error`.
 ///
 /// After `env.throw_error`, NAPI-RS discards the return value and propagates the pending
 /// JS exception. The sentinel `undefined` is never observed by JavaScript callers.
 #[inline]
-fn throw_and_undefined(env: Env, msg: &str) -> napi::Result<Unknown<'static>> {
+fn throw_and_undefined<'env>(env: &'env Env, msg: &str) -> napi::Result<Unknown<'env>> {
     env.throw_error(msg, None)?;
-    let undef = ().into_unknown(&env)?;
-    Ok(to_static(undef))
+    ().into_unknown(env)
 }
 
 /// Parse a YAML string and return a JavaScript object.
@@ -108,10 +91,10 @@ fn throw_and_undefined(env: Env, msg: &str) -> napi::Result<Unknown<'static>> {
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
 pub fn safe_load(
-    env: Env,
+    env: &Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> napi::Result<Unknown<'static>> {
+) -> napi::Result<Unknown<'_>> {
     let limits = match options.unwrap_or_default().parse_limits() {
         Ok(l) => l,
         Err(e) => return throw_and_undefined(env, &e.reason),
@@ -143,10 +126,7 @@ pub fn safe_load(
             .unwrap_or(YamlOwned::Value(ScalarOwned::Null))
     };
 
-    match yaml_to_js(&env, &doc) {
-        Ok(v) => Ok(to_static(v)),
-        Err(e) => throw_and_undefined(env, &e.to_string()),
-    }
+    yaml_to_js(env, &doc).or_else(|e| throw_and_undefined(env, &e.to_string()))
 }
 
 /// Parse a YAML string containing multiple documents.
@@ -185,10 +165,10 @@ pub fn safe_load(
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
 pub fn safe_load_all(
-    env: Env,
+    env: &Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> napi::Result<Vec<Unknown<'static>>> {
+) -> napi::Result<Vec<Unknown<'_>>> {
     let limits = match options.unwrap_or_default().parse_limits() {
         Ok(l) => l,
         Err(e) => {
@@ -225,8 +205,8 @@ pub fn safe_load_all(
     // Convert all documents to JavaScript
     let mut js_docs = Vec::with_capacity(docs.len());
     for doc in docs {
-        match yaml_to_js(&env, &doc) {
-            Ok(v) => js_docs.push(to_static(v)),
+        match yaml_to_js(env, &doc) {
+            Ok(v) => js_docs.push(v),
             Err(e) => {
                 env.throw_error(&e.to_string(), None)?;
                 return Ok(Vec::new());
@@ -268,11 +248,7 @@ pub fn safe_load_all(
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
-pub fn load(
-    env: Env,
-    yaml_str: String,
-    options: Option<LoadOptions>,
-) -> napi::Result<Unknown<'static>> {
+pub fn load(env: &Env, yaml_str: String, options: Option<LoadOptions>) -> napi::Result<Unknown<'_>> {
     // Schema is ignored (safe by default); limits are honoured
     safe_load(env, yaml_str, options)
 }
@@ -309,10 +285,10 @@ pub fn load(
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
 pub fn load_all(
-    env: Env,
+    env: &Env,
     yaml_str: String,
     options: Option<LoadOptions>,
-) -> napi::Result<Vec<Unknown<'static>>> {
+) -> napi::Result<Vec<Unknown<'_>>> {
     // Schema is ignored (safe by default); limits are honoured
     safe_load_all(env, yaml_str, options)
 }

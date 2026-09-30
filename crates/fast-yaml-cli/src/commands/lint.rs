@@ -164,16 +164,15 @@ impl LintCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FormatterConfig, OutputConfig};
+    use crate::config::{FormatterConfig, OutputConfig, Verbosity};
     use crate::io::input::InputOrigin;
     use std::io::Write;
 
-    fn create_test_config(quiet: bool, verbose: bool, use_color: bool, indent: u8) -> CommonConfig {
+    fn create_test_config(verbosity: Verbosity, use_color: bool, indent: u8) -> CommonConfig {
         CommonConfig::new()
             .with_output(
                 OutputConfig::new()
-                    .with_quiet(quiet)
-                    .with_verbose(verbose)
+                    .with_verbosity(verbosity)
                     .with_color(use_color),
             )
             .with_formatter(FormatterConfig::new().with_indent(indent))
@@ -213,7 +212,7 @@ mod tests {
     fn test_build_lifts_input_size_limit() {
         let input = stdin_input("a: 1");
         let cmd = build_no_config(
-            create_test_config(true, false, false, 2),
+            create_test_config(Verbosity::Quiet, false, 2),
             None,
             LintFormat::Text,
             None,
@@ -225,7 +224,7 @@ mod tests {
     #[test]
     fn test_lint_valid_yaml() {
         let input = stdin_input("name: test\nvalue: 123");
-        let config = create_test_config(true, false, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -242,7 +241,7 @@ mod tests {
     fn test_lint_with_warnings() {
         let long = "name: this is a very very very very very very very very very very very very very very very very very very long line that exceeds the maximum";
         let input = stdin_input(long);
-        let config = create_test_config(true, false, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(80),
@@ -258,7 +257,7 @@ mod tests {
     #[test]
     fn test_lint_invalid_yaml() {
         let input = stdin_input("invalid: [unclosed");
-        let config = create_test_config(true, false, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -273,7 +272,7 @@ mod tests {
     #[test]
     fn test_lint_quiet_mode() {
         let input = stdin_input("name: test");
-        let config = create_test_config(true, false, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -289,7 +288,7 @@ mod tests {
     #[test]
     fn test_lint_json_format() {
         let input = stdin_input("name: test\nvalue: 123");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -305,7 +304,7 @@ mod tests {
     #[test]
     fn test_lint_duplicate_keys_reported_by_default() {
         let input = stdin_input("key: value1\nkey: value2\nother: data");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -321,7 +320,7 @@ mod tests {
     #[test]
     fn test_lint_duplicate_keys_allowed_when_flag_set() {
         let input = stdin_input("key: value1\nkey: value2\nother: data");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -339,7 +338,7 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  key-ordering:\n    enabled: false").unwrap();
         let input = stdin_input("b: 1\na: 2");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -361,7 +360,7 @@ mod tests {
     #[test]
     fn test_explicit_config_missing_file_returns_error() {
         let input = stdin_input("name: test");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let result = LintCommand::build(
             config,
             LintArgs {
@@ -384,7 +383,7 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
         let input = stdin_input("name: test");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -412,7 +411,7 @@ mod tests {
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
         let long_line = "name: a-sixty-character-line-that-exceeds-fifty-chars-limit!!";
         let input = stdin_input(long_line);
-        let config = create_test_config(true, false, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false, 2);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -437,7 +436,7 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
         let input = stdin_input("name: test");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -464,7 +463,7 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules: {{}}").unwrap();
         let input = stdin_input("key: 1\nkey: 2");
-        let config = create_test_config(false, false, false, 2);
+        let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
             LintArgs {

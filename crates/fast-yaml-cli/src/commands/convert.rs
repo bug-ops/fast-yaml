@@ -26,7 +26,7 @@ impl ConvertCommand {
     pub fn execute(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
         match self.target_format {
             ConvertFormat::Json => self.yaml_to_json(input, output),
-            ConvertFormat::Yaml => self.json_to_yaml(input, output),
+            ConvertFormat::Yaml => Self::json_to_yaml(input, output),
         }
     }
 
@@ -66,8 +66,7 @@ impl ConvertCommand {
     }
 
     /// Convert JSON to YAML
-    #[allow(clippy::unused_self)]
-    fn json_to_yaml(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
+    fn json_to_yaml(input: &InputSource, output: &OutputWriter) -> Result<()> {
         // Parse JSON
         let json_value: serde_json::Value =
             serde_json::from_str(fast_yaml_core::strip_bom(input.as_str()))

@@ -9,7 +9,7 @@ mod output;
 
 pub use common::CommonConfig;
 pub use formatter::FormatterConfig;
-pub use output::OutputConfig;
+pub use output::{OutputConfig, Verbosity};
 
 // Re-export Config from fast-yaml-parallel as ParallelConfig for compatibility
 pub use fast_yaml_parallel::Config as ParallelConfig;

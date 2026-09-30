@@ -13,7 +13,8 @@ use crate::config::{CommonConfig, ParallelConfig};
 use crate::discovery::FileDiscovery;
 use crate::error::ExitCode;
 use crate::invocation::BatchTarget;
-use crate::reporter::{ReportEvent, Reporter};
+use crate::reporter::{BatchStats, ReportEvent, Reporter};
+use fast_yaml_core::limits::MaxInputBytes;
 
 /// What a batch format run does with the formatted files.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +31,7 @@ pub fn execute_batch(
     target: &BatchTarget,
     write: BatchWrite,
     comments: CommentPolicy,
+    max_input: MaxInputBytes,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -51,7 +53,9 @@ pub fn execute_batch(
     let emitter_config = common.formatter.to_emitter_config();
 
     let processor = FileProcessor::with_config(
-        ParallelConfig::new().with_workers(target.workers.map(NonZeroUsize::get)),
+        ParallelConfig::new()
+            .with_workers(target.workers.map(NonZeroUsize::get))
+            .with_max_input_size(max_input.get()),
     );
 
     let result = match write {
@@ -68,14 +72,14 @@ pub fn execute_batch(
         BatchWrite::InPlace => (0, result.changed),
     };
 
-    reporter.report(ReportEvent::BatchSummary {
+    reporter.report(ReportEvent::BatchSummary(BatchStats {
         total: result.total,
         formatted,
         unchanged: result.success - result.changed,
         would_change,
         failed: result.failed,
         duration: result.duration,
-    })?;
+    }))?;
 
     // Report errors
     for (path, error) in &result.errors {

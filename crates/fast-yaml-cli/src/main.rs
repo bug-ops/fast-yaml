@@ -35,7 +35,6 @@
 #![warn(dead_code)]
 
 use anyhow::Result;
-use clap::Parser;
 use fast_yaml_cli::{discovery, error};
 use fast_yaml_parallel::CommentPolicy;
 
@@ -59,9 +58,8 @@ fn main() {
         Ok(code) => code,
         Err(err) => {
             // Use OutputConfig to determine color usage
-            let cli = Cli::parse();
-            let output_config =
-                config::OutputConfig::from_cli(cli.quiet, cli.verbose, cli.no_color);
+            let cli = Cli::parse_validated();
+            let output_config = config::OutputConfig::from_cli(cli.verbosity, cli.no_color);
             eprintln!("{}", format_error(&err, output_config.use_color()));
             ExitCode::ParseError
         }
@@ -71,7 +69,7 @@ fn main() {
 }
 
 fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_validated();
 
     let common_config = CommonConfig::from_cli(&cli);
 
@@ -81,7 +79,7 @@ fn run() -> Result<ExitCode> {
             stats,
             limits,
         }) => {
-            let input = InputSource::from_args(file)?;
+            let input = InputSource::from_args(file, cli.max_input_size)?;
             let cmd =
                 commands::parse::ParseCommand::new(common_config, stats, limits.parse_limits());
             cmd.execute(&input)?;
@@ -108,10 +106,11 @@ fn run() -> Result<ExitCode> {
             match Target::resolve(paths, stdin_files, &batch)? {
                 Target::Stdin => {
                     let mode = stdin_write_mode(intent, cli.output)?;
-                    FormatCommand::new(common, comments).run(&InputSource::from_stdin()?, &mode)?
+                    FormatCommand::new(common, comments)
+                        .run(&InputSource::from_stdin(cli.max_input_size)?, &mode)?
                 }
                 Target::File(path) => {
-                    let input = InputSource::from_file(&path)?;
+                    let input = InputSource::from_file(&path, cli.max_input_size)?;
                     let mode = WriteMode::new(intent, cli.output, Some(&path))?;
                     FormatCommand::new(common, comments).run(&input, &mode)?
                 }
@@ -123,7 +122,13 @@ fn run() -> Result<ExitCode> {
                             "use -i to format files in-place or --dry-run to preview changes"
                         ),
                     };
-                    commands::format_batch::execute_batch(&common, &target, write, comments)?
+                    commands::format_batch::execute_batch(
+                        &common,
+                        &target,
+                        write,
+                        comments,
+                        cli.max_input_size,
+                    )?
                 }
             }
         }
@@ -133,7 +138,7 @@ fn run() -> Result<ExitCode> {
             pretty,
             limits,
         }) => {
-            let input = InputSource::from_args(file)?;
+            let input = InputSource::from_args(file, cli.max_input_size)?;
             let output =
                 OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
             let cmd = commands::convert::ConvertCommand::new(to, pretty, limits.parse_limits());
@@ -169,10 +174,16 @@ fn run() -> Result<ExitCode> {
             };
 
             match target {
-                Target::Stdin => lint_input(common_config, args, &InputSource::from_stdin()?)?,
-                Target::File(path) => {
-                    lint_input(common_config, args, &InputSource::from_file(&path)?)?
-                }
+                Target::Stdin => lint_input(
+                    common_config,
+                    args,
+                    &InputSource::from_stdin(cli.max_input_size)?,
+                )?,
+                Target::File(path) => lint_input(
+                    common_config,
+                    args,
+                    &InputSource::from_file(&path, cli.max_input_size)?,
+                )?,
                 Target::Batch(target) => {
                     // Synthetic stdin input: config discovery is CWD-based, same as yamllint.
                     let stdin_fallback = InputSource {
@@ -190,6 +201,7 @@ fn run() -> Result<ExitCode> {
                         &target,
                         &cmd.lint_config,
                         format,
+                        cli.max_input_size,
                     )?
                 }
             }
@@ -197,7 +209,7 @@ fn run() -> Result<ExitCode> {
         None => {
             let mode = stdin_write_mode(EditIntent::from_flags(false, cli.in_place), cli.output)?;
             FormatCommand::new(common_config, CommentPolicy::Reject)
-                .run(&InputSource::from_stdin()?, &mode)?
+                .run(&InputSource::from_stdin(cli.max_input_size)?, &mode)?
         }
     };
 

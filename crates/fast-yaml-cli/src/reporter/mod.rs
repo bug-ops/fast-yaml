@@ -7,5 +7,5 @@
 mod events;
 mod output;
 
-pub use events::ReportEvent;
+pub use events::{BatchStats, ReportEvent};
 pub use output::Reporter;
