@@ -151,9 +151,9 @@ mod edge_case_fixtures {
 
     #[test]
     fn test_edge_case_non_ascii_offsets_are_consistent() {
-        let yaml = include_str!("fixtures/edge_cases/non_ascii_offsets.yaml");
-        assert_offsets_consistent(yaml);
-        assert_offsets_consistent(&yaml.replace('\n', "\r\n"));
+        let lf = include_str!("fixtures/edge_cases/non_ascii_offsets.yaml").replace("\r\n", "\n");
+        assert_offsets_consistent(&lf);
+        assert_offsets_consistent(&lf.replace('\n', "\r\n"));
     }
 
     fn assert_offsets_consistent(yaml: &str) {
