@@ -42,13 +42,16 @@ pub use std_backend::format_streaming;
 #[cfg(feature = "arena")]
 pub use arena_backend::format_streaming_arena;
 
-/// Maximum allowed anchor ID to prevent memory exhaustion attacks.
-/// 4096 anchors is more than sufficient for any legitimate YAML file.
+/// Maximum number of anchor definitions per document, to prevent memory exhaustion attacks.
+/// 4096 anchors is more than sufficient for any legitimate YAML document.
 const MAX_ANCHOR_ID: usize = 4096;
 
-/// Maximum nesting depth to prevent stack/memory exhaustion.
+/// Maximum number of nested non-empty collections, to prevent stack/memory exhaustion.
 /// 256 levels of nesting is far beyond any practical use case.
 const MAX_DEPTH: usize = 256;
+
+/// Longest implicit mapping key in characters (YAML 1.2 spec limit); longer keys use `? `.
+const MAX_IMPLICIT_KEY_CHARS: usize = 1024;
 
 /// Static 64-space string for fast indent generation via slicing.
 /// Avoids allocation for nesting depths up to 32 levels with 2-space indent.

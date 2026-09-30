@@ -128,7 +128,9 @@ impl FormatterBackend for StdBackend {
 ///
 /// # Errors
 ///
-/// Returns `EmitError::Emit` if the parser encounters invalid YAML.
+/// Returns `EmitError::Emit` if the parser encounters invalid YAML, and
+/// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
+/// document exceeds the formatter's nesting or per-document anchor limits.
 ///
 /// # Examples
 ///
@@ -164,7 +166,7 @@ pub fn format_streaming(input: &str, config: &EmitterConfig) -> EmitResult<Strin
 
     for result in parser {
         let (event, span) = result.map_err(|e| EmitError::Emit(e.to_string()))?;
-        formatter.format_event(event, span);
+        formatter.format_event(event, span)?;
     }
 
     Ok(formatter.finish())

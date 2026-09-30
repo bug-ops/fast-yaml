@@ -9,8 +9,9 @@ use std::fmt::Write;
 use saphyr_parser::{Event, ScalarStyle, Span, Tag};
 
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
-use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH};
+use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH, MAX_IMPLICIT_KEY_CHARS};
 use crate::emitter::{EmitterConfig, MAX_INDENT, MIN_INDENT, block_scalar_header};
+use crate::error::{EmitError, EmitResult};
 
 /// Width of the `"- "` sequence entry indicator.
 const DASH_WIDTH: usize = 2;
@@ -179,6 +180,10 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     /// Collection start not yet written; an immediately following end event
     /// turns it into an empty flow collection (`[]` / `{}`).
     pending_start: Option<PendingStart>,
+    /// Highest anchor id of earlier documents; parser ids are stream-global.
+    anchor_base: usize,
+    /// Highest anchor id defined so far.
+    max_anchor_id: usize,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -203,6 +208,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             first_key_after_dash: false,
             first_item_after_dash: false,
             pending_start: None,
+            anchor_base: 0,
+            max_anchor_id: 0,
             backend,
         }
     }
@@ -248,8 +255,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     /// Emits node properties (`&anchorN` and/or the tag), space-separated.
     ///
     /// Returns true if anything was written. No leading or trailing separator is emitted.
-    fn emit_properties(&mut self, anchor_id: usize, tag: Option<&Tag>) -> bool {
-        let has_anchor = anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID;
+    fn emit_properties(&mut self, anchor_id: usize, tag: Option<&Tag>) -> EmitResult<bool> {
+        if anchor_id.saturating_sub(self.anchor_base) > MAX_ANCHOR_ID {
+            return Err(EmitError::AnchorLimitExceeded {
+                limit: MAX_ANCHOR_ID,
+            });
+        }
+        self.max_anchor_id = self.max_anchor_id.max(anchor_id);
+        let has_anchor = anchor_id > 0;
         if has_anchor {
             self.backend.anchor_store_mut().ensure_capacity(anchor_id);
             let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
@@ -266,17 +279,22 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         if wrote {
             self.last_char_newline = false;
         }
-        wrote
+        Ok(wrote)
     }
 
     /// Like `emit_properties`, but prefixed with one space that is written only if
     /// properties exist.
-    fn emit_properties_after_space(&mut self, anchor_id: usize, tag: Option<&Tag>) {
+    fn emit_properties_after_space(
+        &mut self,
+        anchor_id: usize,
+        tag: Option<&Tag>,
+    ) -> EmitResult<()> {
         let mark = self.output.len();
         self.output.push(' ');
-        if !self.emit_properties(anchor_id, tag) {
+        if !self.emit_properties(anchor_id, tag)? {
             self.output.truncate(mark);
         }
+        Ok(())
     }
 
     /// Writes the `:` that introduces the value of an explicit (`? `) key.
@@ -291,13 +309,19 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     }
 
     /// Processes a parser event and updates formatter state.
-    pub fn format_event(&mut self, event: Event<'_>, _span: Span) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmitError::DepthLimitExceeded`] or [`EmitError::AnchorLimitExceeded`] when
+    /// the document exceeds the formatter limits.
+    pub fn format_event(&mut self, event: Event<'_>, _span: Span) -> EmitResult<()> {
         if !matches!(event, Event::SequenceEnd | Event::MappingEnd) {
-            self.flush_pending_start();
+            self.flush_pending_start()?;
         }
 
         match event {
             Event::DocumentStart(explicit) => {
+                self.anchor_base = self.max_anchor_id;
                 if explicit || self.config.explicit_start {
                     self.output.push_str("---");
                     self.pending_newline = true;
@@ -313,7 +337,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
 
             Event::Scalar(value, style, anchor_id, tag) => {
-                self.emit_scalar(&value, style, anchor_id, tag.as_deref());
+                self.emit_scalar(&value, style, anchor_id, tag.as_deref())?;
             }
 
             Event::SequenceStart(anchor_id, tag) => {
@@ -321,7 +345,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
 
             Event::SequenceEnd => {
-                self.end_collection(CollectionKind::Sequence);
+                self.end_collection(CollectionKind::Sequence)?;
             }
 
             Event::MappingStart(anchor_id, tag) => {
@@ -329,7 +353,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
 
             Event::MappingEnd => {
-                self.end_collection(CollectionKind::Mapping);
+                self.end_collection(CollectionKind::Mapping)?;
             }
 
             Event::Alias(anchor_id) => {
@@ -339,6 +363,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             // Events that require no action
             Event::StreamStart | Event::StreamEnd | Event::Nothing => {}
         }
+        Ok(())
     }
 
     fn emit_scalar(
@@ -347,15 +372,43 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         style: ScalarStyle,
         anchor_id: usize,
         tag: Option<&Tag>,
-    ) {
+    ) -> EmitResult<()> {
         let style = effective_style(value, style);
         let shape = match style {
             ScalarStyle::Literal | ScalarStyle::Folded => NodeShape::BlockScalar,
             _ => NodeShape::Inline,
         };
         let ctx = self.begin_inline_node(shape);
+        let node_start = self.output.len();
 
-        let wrote_properties = self.emit_properties(anchor_id, tag);
+        self.emit_scalar_node(value, style, anchor_id, tag)?;
+
+        let too_long_key = ctx == Context::MappingKey
+            && shape == NodeShape::Inline
+            && self.output[node_start..].chars().count() > MAX_IMPLICIT_KEY_CHARS;
+        if too_long_key {
+            self.output.truncate(node_start);
+            self.output.push_str("? ");
+            self.emit_scalar_node(value, style, anchor_id, tag)?;
+            self.output.push('\n');
+            self.last_char_newline = true;
+            // The explicit key now ends its line, like a block scalar key.
+            self.end_inline_node(ctx, NodeShape::BlockScalar);
+        } else {
+            self.end_inline_node(ctx, shape);
+        }
+        Ok(())
+    }
+
+    /// Writes a scalar's properties followed by its value.
+    fn emit_scalar_node(
+        &mut self,
+        value: &str,
+        style: ScalarStyle,
+        anchor_id: usize,
+        tag: Option<&Tag>,
+    ) -> EmitResult<()> {
+        let wrote_properties = self.emit_properties(anchor_id, tag)?;
         let tagged_empty = tag.is_some() && style == ScalarStyle::Plain && value.is_empty();
         if wrote_properties && !tagged_empty {
             self.output.push(' ');
@@ -367,8 +420,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             ScalarTyping::Implicit
         };
         self.emit_value_with_style(value, style, typing);
-
-        self.end_inline_node(ctx, shape);
+        Ok(())
     }
 
     /// Writes the pending newline and the context prefix of a scalar, alias or empty
@@ -582,19 +634,28 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     }
 
     /// Writes a deferred collection start, now known to be non-empty.
-    fn flush_pending_start(&mut self) {
+    fn flush_pending_start(&mut self) -> EmitResult<()> {
         if let Some(PendingStart {
             kind,
             anchor_id,
             tag,
         }) = self.pending_start.take()
         {
-            self.start_collection(kind, anchor_id, tag.as_ref());
+            self.start_collection(kind, anchor_id, tag.as_ref())?;
         }
+        Ok(())
     }
 
     /// Writes a collection start known to be non-empty and opens its context and column.
-    fn start_collection(&mut self, kind: CollectionKind, anchor_id: usize, tag: Option<&Tag>) {
+    fn start_collection(
+        &mut self,
+        kind: CollectionKind,
+        anchor_id: usize,
+        tag: Option<&Tag>,
+    ) -> EmitResult<()> {
+        if self.backend.context_stack().len() > MAX_DEPTH {
+            return Err(EmitError::DepthLimitExceeded { limit: MAX_DEPTH });
+        }
         self.begin_explicit_value();
         let ctx = self.current_context();
 
@@ -605,7 +666,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         match ctx {
             Context::Sequence => {
                 self.write_dash_prefix();
-                if self.emit_properties(anchor_id, tag) {
+                if self.emit_properties(anchor_id, tag)? {
                     // Properties occupy the "- " line, so children need fresh indentation.
                     self.output.push('\n');
                     self.last_char_newline = true;
@@ -619,20 +680,20 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 // Collection as mapping key: explicit `?` entry, children on following lines.
                 self.write_key_indent();
                 self.output.push('?');
-                self.emit_properties_after_space(anchor_id, tag);
+                self.emit_properties_after_space(anchor_id, tag)?;
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
             Context::MappingValue => {
                 // The pending_space after colon is dropped: "key: &anchor\n" or "key:\n".
                 self.pending_space = false;
-                self.emit_properties_after_space(anchor_id, tag);
+                self.emit_properties_after_space(anchor_id, tag)?;
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
             // Explicit* are consumed by begin_explicit_value and never current here.
             Context::Root | Context::ExplicitKey | Context::ExplicitValue => {
-                if self.emit_properties(anchor_id, tag) {
+                if self.emit_properties(anchor_id, tag)? {
                     self.output.push('\n');
                     self.last_char_newline = true;
                 }
@@ -645,26 +706,24 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             _ => {}
         }
 
-        // Push child context and column together (with depth limit)
-        if self.backend.context_stack().len() < MAX_DEPTH {
-            let column = self.child_column(ctx);
-            self.backend.context_stack_mut().push(kind.entry_context());
-            self.columns.push(column);
-        }
+        let column = self.child_column(ctx);
+        self.backend.context_stack_mut().push(kind.entry_context());
+        self.columns.push(column);
+        Ok(())
     }
 
-    fn end_collection(&mut self, kind: CollectionKind) {
+    fn end_collection(&mut self, kind: CollectionKind) -> EmitResult<()> {
         if let Some(PendingStart { anchor_id, tag, .. }) =
             self.pending_start.take_if(|pending| pending.kind == kind)
         {
             let ctx = self.begin_inline_node(NodeShape::Inline);
-            if self.emit_properties(anchor_id, tag.as_ref()) {
+            if self.emit_properties(anchor_id, tag.as_ref())? {
                 self.output.push(' ');
             }
             self.output.push_str(kind.empty_flow());
             self.last_char_newline = false;
             self.end_inline_node(ctx, NodeShape::Inline);
-            return;
+            return Ok(());
         }
 
         self.backend.context_stack_mut().pop();
@@ -672,6 +731,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         if self.current_context() == Context::ExplicitKey {
             self.set_context(Context::ExplicitValue);
         }
+        Ok(())
     }
 
     fn emit_alias(&mut self, anchor_id: usize) {
@@ -726,8 +786,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 mod tests {
     use saphyr_parser::{Event, Parser};
 
-    use crate::EmitterConfig;
-    use crate::streaming::format_streaming;
+    use crate::streaming::{MAX_ANCHOR_ID, MAX_DEPTH, format_streaming};
+    use crate::{EmitError, EmitterConfig};
 
     fn fmt(yaml: &str) -> String {
         format_streaming(yaml, &EmitterConfig::default()).unwrap()
@@ -1004,5 +1064,178 @@ mod tests {
         );
         assert_eq!(fmt("k: \"a\\x7Fb\\x85\"\n"), "k: \"a\\x7Fb\\x85\"\n");
         assert_stable("k: \"a\\uFFFEb\"\n");
+    }
+
+    fn nested_maps(depth: usize) -> String {
+        let mut yaml = String::new();
+        for level in 0..depth {
+            yaml.push_str(&"  ".repeat(level));
+            yaml.push_str("a:\n");
+        }
+        yaml.push_str(&"  ".repeat(depth));
+        yaml.push_str("v\n");
+        yaml
+    }
+
+    fn nested_mixed(depth: usize) -> String {
+        let mut yaml = String::new();
+        for level in 0..depth {
+            yaml.push_str(&"  ".repeat(level));
+            yaml.push_str(if level % 2 == 0 { "-\n" } else { "a:\n" });
+        }
+        yaml.push_str(&"  ".repeat(depth));
+        yaml.push_str("v\n");
+        yaml
+    }
+
+    fn nested_seqs(depth: usize) -> String {
+        format!("{}v\n", "- ".repeat(depth))
+    }
+
+    fn format_all_backends(yaml: &str) -> Vec<Result<String, EmitError>> {
+        let config = EmitterConfig::default();
+        let mut results = vec![format_streaming(yaml, &config)];
+        #[cfg(feature = "arena")]
+        results.push(crate::streaming::format_streaming_arena(yaml, &config));
+        results
+    }
+
+    fn assert_depth_error(yaml: &str) {
+        for result in format_all_backends(yaml) {
+            assert!(
+                matches!(result, Err(EmitError::DepthLimitExceeded { limit }) if limit == MAX_DEPTH)
+            );
+        }
+    }
+
+    fn assert_anchor_error(yaml: &str) {
+        for result in format_all_backends(yaml) {
+            assert!(
+                matches!(result, Err(EmitError::AnchorLimitExceeded { limit }) if limit == MAX_ANCHOR_ID)
+            );
+        }
+    }
+
+    #[test]
+    fn depth_256_is_formatted_and_257_is_rejected() {
+        for gen_yaml in [nested_maps, nested_seqs, nested_mixed] {
+            let ok = gen_yaml(256);
+            for result in format_all_backends(&ok) {
+                let out = result.unwrap();
+                assert_eq!(events(&out), events(&ok));
+            }
+            assert_stable(&ok);
+            assert_depth_error(&gen_yaml(257));
+        }
+    }
+
+    fn anchored_items(count: usize) -> String {
+        use std::fmt::Write as _;
+        let mut yaml = String::new();
+        for i in 1..=count {
+            writeln!(yaml, "- &a{i} v{i}").unwrap();
+        }
+        writeln!(yaml, "- *a{count}").unwrap();
+        yaml
+    }
+
+    #[test]
+    fn anchor_limit_is_enforced() {
+        assert_stable(&anchored_items(4096));
+        assert_anchor_error(&anchored_items(4097));
+    }
+
+    #[test]
+    fn anchor_limit_counts_collections() {
+        let filler = anchored_items(4095);
+        for last in ["- &b [1]\n", "- &b {k: v}\n"] {
+            let yaml = format!("{filler}{last}");
+            assert!(format_streaming(&yaml, &EmitterConfig::default()).is_ok());
+        }
+        for last in ["- &b [1]\n- &c [2]\n", "- &b {k: v}\n- &c {k: v}\n"] {
+            let yaml = format!("{filler}{last}");
+            assert_anchor_error(&yaml);
+        }
+    }
+
+    #[test]
+    fn anchor_limit_counts_keys() {
+        use std::fmt::Write as _;
+        let mut yaml = String::new();
+        for i in 1..=4096 {
+            writeln!(yaml, "&a{i} k{i}: v").unwrap();
+        }
+        assert!(format_streaming(&yaml, &EmitterConfig::default()).is_ok());
+        yaml.push_str("&b kb: v\n");
+        assert_anchor_error(&yaml);
+    }
+
+    #[test]
+    fn anchor_limit_is_per_document() {
+        let doc = |n: usize| format!("---\n{}", anchored_items(n));
+        let ok = format!("{}{}{}", doc(3000), doc(3000), doc(3000));
+        for result in format_all_backends(&ok) {
+            let out = result.unwrap();
+            assert_eq!(events(&out), events(&ok));
+        }
+        let too_many = format!("{}{}", doc(10), doc(4097));
+        assert_anchor_error(&too_many);
+    }
+
+    fn key_of(len: usize, filler: char) -> String {
+        std::iter::repeat_n(filler, len).collect()
+    }
+
+    #[test]
+    fn keys_up_to_1024_chars_stay_implicit() {
+        for filler in ['k', 'é'] {
+            let yaml = format!("{}: v\n", key_of(1024, filler));
+            assert_eq!(assert_stable(&yaml), yaml);
+        }
+        let anchored = format!("&x {}: v\n", key_of(1020, 'k'));
+        assert_eq!(assert_stable(&anchored), anchored);
+        let tagged = format!("!!str {}: v\n", key_of(1018, 'k'));
+        assert_eq!(assert_stable(&tagged), tagged);
+        let anchor_tagged = format!("&x !!str {}: v\n", key_of(1014, 'k'));
+        assert_eq!(assert_stable(&anchor_tagged), anchor_tagged);
+        let quoted = format!("\"{}\": v\n", key_of(1022, 'k'));
+        assert_eq!(assert_stable(&quoted), quoted);
+    }
+
+    #[test]
+    fn keys_over_1024_chars_use_explicit_form() {
+        let long = key_of(1025, 'k');
+        for yaml in [
+            format!("? {long}\n: v\n"),
+            format!("? '{long}'\n: v\n"),
+            format!("? \"{long}\"\n: v\n"),
+            format!("? {}\n: v\n", key_of(1025, 'é')),
+            format!("? &x {}\n: v\n", key_of(1023, 'k')),
+            format!("? \"{}\"\n: v\n", key_of(1023, 'k')),
+            format!("- ? {long}\n  : v\n  o: 1\n"),
+            format!("a:\n  b:\n    ? {long}\n    : v\n    c: 2\n"),
+            format!("{{{long}: v, w: 1}}\n"),
+            format!("? !!str {}\n: v\n", key_of(1020, 'k')),
+            format!("? !custom {}\n: v\n", key_of(1020, 'k')),
+            format!("? &x !!str {}\n: v\n", key_of(1016, 'k')),
+        ] {
+            let out = assert_stable(&yaml);
+            assert!(out.contains("? "), "no explicit key for {yaml:.40?}");
+        }
+        assert_eq!(fmt(&format!("? {long}\n: v\n")), format!("? {long}\n: v\n"));
+    }
+
+    #[test]
+    fn multiline_scalar_values_round_trip() {
+        for yaml in [
+            "a: x\n  y\n\n  z\n",
+            "a: 'x\n\n  y'\n",
+            "- x\n  y\n\n  z\n",
+            "- 'p\n\n  q'\n",
+            "x\n  y\n\n  z\n",
+            "[x\n  y\n\n  z, 'p\n\n  q']\n",
+        ] {
+            assert_stable(yaml);
+        }
     }
 }

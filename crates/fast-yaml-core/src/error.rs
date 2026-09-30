@@ -51,6 +51,20 @@ pub enum EmitError {
     /// Attempted to serialize an unsupported type.
     #[error("unsupported type for serialization: {0}")]
     UnsupportedType(String),
+
+    /// Collection nesting exceeds the formatter depth limit.
+    #[error("nesting depth exceeds the formatter limit of {limit}")]
+    DepthLimitExceeded {
+        /// Maximum number of nested collections the formatter supports.
+        limit: usize,
+    },
+
+    /// Anchor definitions in one document exceed the formatter anchor limit.
+    #[error("anchor definitions in one document exceed the formatter limit of {limit}")]
+    AnchorLimitExceeded {
+        /// Maximum number of anchor definitions per document the formatter supports.
+        limit: usize,
+    },
 }
 
 /// Result type for parsing operations.
