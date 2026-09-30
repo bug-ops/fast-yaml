@@ -3,6 +3,7 @@
 //! Exposes the YAML linter API to Node.js with comprehensive diagnostics,
 //! rich error reporting, and configurable linting rules.
 
+use crate::limits::parse_limits;
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig, Linter as RustLinter,
@@ -264,10 +265,16 @@ pub struct LintConfig {
     /// Note: pass as a JS object; values may be a severity string shorthand or
     /// `{ severity?, enabled? }` object. Internally deserialized via `serde_json`.
     pub rules: Option<JsonValue>,
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256).
+    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+    pub max_depth: Option<f64>,
+    /// Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864).
+    pub max_alias_bytes: Option<f64>,
 }
 
 fn to_rust_lint_config(config: LintConfig) -> napi::Result<RustLintConfig> {
-    let mut rust = RustLintConfig::default();
+    let mut rust = RustLintConfig::new()
+        .with_parse_limits(parse_limits(config.max_depth, config.max_alias_bytes)?);
     if let Some(max) = config.max_line_length {
         rust.max_line_length = Some(max as usize);
     }

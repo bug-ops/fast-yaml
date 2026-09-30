@@ -1,5 +1,7 @@
 //! Configuration for parallel processing behavior.
 
+use fast_yaml_core::limits::ParseLimits;
+
 /// Maximum number of threads allowed (security limit).
 const MAX_THREADS: usize = 128;
 
@@ -36,6 +38,9 @@ pub struct Config {
 
     /// Sequential threshold: use sequential for small inputs (default: 4KB)
     pub(crate) sequential_threshold: usize,
+
+    /// Parser resource limits applied to every parse
+    pub(crate) parse_limits: ParseLimits,
 }
 
 impl Config {
@@ -153,6 +158,39 @@ impl Config {
         self
     }
 
+    /// Sets the parser resource limits.
+    ///
+    /// Document-level parsing ([`parse_parallel`](crate::parse_parallel)) shares one alias
+    /// budget across all chunks of a call. File-level parsing
+    /// ([`FileProcessor::parse_files`](crate::FileProcessor::parse_files)) gives each file its own
+    /// budget, so peak memory can reach `workers x max_alias_bytes`.
+    ///
+    /// Only parsing honors these limits: the format paths
+    /// ([`FileProcessor::format_files`](crate::FileProcessor::format_files)) ignore them, because
+    /// the streaming formatter has its own fixed depth limit of 256 (see #427).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::{MaxDepth, ParseLimits};
+    /// use fast_yaml_parallel::Config;
+    ///
+    /// let limits = ParseLimits { max_depth: MaxDepth::new(8).unwrap(), ..ParseLimits::default() };
+    /// let config = Config::new().with_parse_limits(limits);
+    /// assert_eq!(config.parse_limits().max_depth.get(), 8);
+    /// ```
+    #[must_use]
+    pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
+        self.parse_limits = limits;
+        self
+    }
+
+    /// Returns the parser resource limits.
+    #[must_use]
+    pub const fn parse_limits(&self) -> ParseLimits {
+        self.parse_limits
+    }
+
     /// Returns worker count setting.
     #[must_use]
     pub const fn workers(&self) -> Option<usize> {
@@ -185,6 +223,7 @@ impl Default for Config {
             mmap_threshold: 512 * 1024,        // 512KB
             max_input_size: 100 * 1024 * 1024, // 100MB
             sequential_threshold: 4096,        // 4KB
+            parse_limits: ParseLimits::default(),
         }
     }
 }

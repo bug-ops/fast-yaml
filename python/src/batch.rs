@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::limits;
+use fast_yaml_core::ParseLimits;
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
@@ -166,6 +168,10 @@ impl From<RustBatchResult> for PyBatchResult {
 }
 
 /// Configuration for batch file processing.
+///
+/// `max_depth` and `max_alias_bytes` apply to `process_files` only; `format_files` ignores
+/// them (formatter depth is fixed at 256). Non-integer values raise `TypeError`,
+/// out-of-range values `ValueError`.
 #[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyBatchConfig {
@@ -188,8 +194,11 @@ impl PyBatchConfig {
         sequential_threshold=4096,
         indent=2,
         width=80,
-        sort_keys=false
+        sort_keys=false,
+        max_depth=None,
+        max_alias_bytes=None
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         workers: Option<usize>,
         mmap_threshold: usize,
@@ -198,7 +207,10 @@ impl PyBatchConfig {
         indent: usize,
         width: usize,
         sort_keys: bool,
+        max_depth: Option<&Bound<'_, PyAny>>,
+        max_alias_bytes: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
         if let Some(w) = workers
             && w > MAX_WORKERS
         {
@@ -214,7 +226,8 @@ impl PyBatchConfig {
             .with_workers(workers)
             .with_mmap_threshold(mmap_threshold)
             .with_max_input_size(max_input_size)
-            .with_sequential_threshold(sequential_threshold);
+            .with_sequential_threshold(sequential_threshold)
+            .with_parse_limits(parse_limits);
 
         Ok(Self {
             inner: config,
@@ -234,6 +247,43 @@ impl PyBatchConfig {
         }
         Ok(Self {
             inner: self.inner.clone().with_workers(workers),
+            ..self.clone()
+        })
+    }
+
+    /// Sets the maximum collection nesting depth for `process_files`; `None` resets to 256.
+    ///
+    /// Ignored by `format_files` (formatter depth is fixed at 256). Range: 1..=512.
+    /// Depth 512 needs about 1 MiB of thread stack and can abort on stacks of 512 KiB or less.
+    ///
+    /// Raises:
+    ///     `ValueError`: If depth is outside 1..=512
+    ///     `TypeError`: If depth is not an int (`bool` included)
+    fn with_max_depth(&self, depth: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_depth: limits::max_depth(depth)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+            ..self.clone()
+        })
+    }
+
+    /// Sets the alias-expansion budget in bytes for `process_files`; `None` resets to 64 MiB.
+    ///
+    /// Ignored by `format_files`. Range: 1..=1 GiB.
+    ///
+    /// Raises:
+    ///     `ValueError`: If bytes is outside 1..=1 GiB
+    ///     `TypeError`: If bytes is not an int (`bool` included)
+    fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_alias_bytes: limits::max_alias_bytes(bytes)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
             ..self.clone()
         })
     }

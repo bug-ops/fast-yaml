@@ -2,6 +2,7 @@
 
 use crate::context::lines_of;
 use crate::{Diagnostic, LintContext, Severity, config::RuleConfig, rules::RuleRegistry};
+use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_core::{Parser, ScalarOwned, Value};
 use std::collections::{HashMap, HashSet};
 
@@ -35,6 +36,8 @@ pub struct LintConfig {
     pub disabled_rules: HashSet<String>,
     /// Per-rule configurations.
     pub rule_configs: HashMap<String, RuleConfig>,
+    /// Resource limits applied when parsing the source.
+    pub parse_limits: ParseLimits,
 }
 
 impl Default for LintConfig {
@@ -47,6 +50,7 @@ impl Default for LintConfig {
             allow_duplicate_keys: false,
             disabled_rules: HashSet::new(),
             rule_configs: HashMap::new(),
+            parse_limits: ParseLimits::default(),
         }
     }
 }
@@ -96,6 +100,24 @@ impl LintConfig {
     #[must_use]
     pub const fn with_indent_size(mut self, size: usize) -> Self {
         self.indent_size = size;
+        self
+    }
+
+    /// Sets the parser resource limits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::{MaxDepth, ParseLimits};
+    /// use fast_yaml_linter::{LintConfig, Linter};
+    ///
+    /// let limits = ParseLimits { max_depth: MaxDepth::new(2).unwrap(), ..ParseLimits::default() };
+    /// let linter = Linter::with_config(LintConfig::new().with_parse_limits(limits));
+    /// assert!(linter.lint("[[[1]]]").is_err());
+    /// ```
+    #[must_use]
+    pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
+        self.parse_limits = limits;
         self
     }
 
@@ -406,7 +428,7 @@ impl Linter {
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
         let (source, bom_len) = split_bom(source);
-        let docs = Parser::parse_all(source)?;
+        let docs = Parser::parse_all_with_limits(source, &self.config.parse_limits)?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
         let mut context = LintContext::new(source);
         let mut diagnostics = Vec::new();
@@ -565,6 +587,7 @@ fn shift_offsets(diagnostics: &mut [Diagnostic], bom_len: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fmt::Write as _;
 
     #[test]
     fn test_lint_rejects_deeply_nested_input() {
@@ -573,6 +596,68 @@ mod tests {
         assert!(matches!(
             err,
             LintError::ParseError(fast_yaml_core::ParseError::LimitExceeded { .. })
+        ));
+    }
+
+    fn run_on_2mib_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(2 * 1024 * 1024)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn lint_at_max_depth(input: &str) {
+        let limits = ParseLimits {
+            max_depth: fast_yaml_core::limits::MaxDepth::MAX,
+            ..ParseLimits::default()
+        };
+        let linter = Linter::with_config(LintConfig::new().with_parse_limits(limits));
+        assert!(linter.lint(input).is_ok());
+    }
+
+    #[test]
+    fn test_lint_nested_maps_at_max_depth_on_2mib_stack() {
+        run_on_2mib_stack(|| {
+            let depth = fast_yaml_core::limits::MaxDepth::MAX.get();
+            let mut input = String::new();
+            for i in 0..depth {
+                writeln!(input, "{}k:", " ".repeat(i)).unwrap();
+            }
+            input.push_str(&" ".repeat(depth));
+            input.push('v');
+            lint_at_max_depth(&input);
+        });
+    }
+
+    #[test]
+    fn test_lint_tagged_seq_at_max_depth_on_2mib_stack() {
+        run_on_2mib_stack(|| {
+            let depth = fast_yaml_core::limits::MaxDepth::MAX.get();
+            let mut input = String::new();
+            for i in 0..depth {
+                writeln!(input, "{}- !t", "  ".repeat(i)).unwrap();
+            }
+            input.push_str(&"  ".repeat(depth));
+            input.push('x');
+            lint_at_max_depth(&input);
+        });
+    }
+
+    #[test]
+    fn test_lint_honors_parse_limits() {
+        let limits = ParseLimits {
+            max_depth: fast_yaml_core::limits::MaxDepth::new(2).unwrap(),
+            ..ParseLimits::default()
+        };
+        let linter = Linter::with_config(LintConfig::new().with_parse_limits(limits));
+        assert!(linter.lint("[[1]]").is_ok());
+        assert!(matches!(
+            linter.lint("[[[1]]]"),
+            Err(LintError::ParseError(
+                fast_yaml_core::ParseError::LimitExceeded { .. }
+            ))
         ));
     }
 

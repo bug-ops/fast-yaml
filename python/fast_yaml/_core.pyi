@@ -125,31 +125,49 @@ class Mark:
     def __repr__(self) -> str: ...
 
 # Core parsing functions
-def safe_load(yaml_str: str) -> Any:
+def safe_load(
+    yaml_str: str,
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
+) -> Any:
     """Parse a YAML string and return a Python object.
 
     Args:
         yaml_str: A YAML document as a string
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 
     Returns:
         The parsed YAML document as Python objects
 
     Raises:
-        ValueError: If the YAML is invalid or input exceeds 100MB limit
+        ValueError: If the YAML is invalid, input exceeds 100MB limit, or a limit is out of range
     """
     ...
 
-def safe_load_all(yaml_str: str) -> list[Any]:
+def safe_load_all(
+    yaml_str: str,
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
+) -> list[Any]:
     """Parse a YAML string containing multiple documents.
 
     Args:
         yaml_str: A YAML string potentially containing multiple documents
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 
     Returns:
         A list of parsed YAML documents
 
     Raises:
-        ValueError: If the YAML is invalid or input exceeds 100MB limit
+        ValueError: If the YAML is invalid, input exceeds 100MB limit, or a limit is out of range
     """
     ...
 
@@ -260,12 +278,19 @@ def version() -> str:
 def load(
     yaml_str: str,
     loader: type | None = None,
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
 ) -> Any:
     """Parse a YAML string with an optional Loader (PyYAML compatible).
 
     Args:
         yaml_str: A YAML document as a string
         loader: Optional loader class (SafeLoader, FullLoader, or Loader)
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 
     Returns:
         The parsed YAML document as Python objects
@@ -278,12 +303,19 @@ def load(
 def load_all(
     yaml_str: str,
     loader: type | None = None,
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
 ) -> list[Any]:
     """Parse multiple YAML documents with an optional Loader (PyYAML compatible).
 
     Args:
         yaml_str: A YAML string potentially containing multiple documents
         loader: Optional loader class (SafeLoader, FullLoader, or Loader)
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 
     Returns:
         A list of parsed YAML documents
@@ -445,7 +477,11 @@ class lint:  # noqa: N801
             allow_duplicate_keys: bool = False,
             disabled_rules: set[str] | list[str] | tuple[str, ...] | None = None,
             rules: dict[str, "lint.RuleConfigDict | str"] | None = None,
+            max_depth: int | None = None,
+            max_alias_bytes: int | None = None,
         ) -> None: ...
+        def with_max_depth(self, depth: int | None) -> "lint.LintConfig": ...
+        def with_max_alias_bytes(self, bytes: int | None) -> "lint.LintConfig": ...
         def with_max_line_length(self, max: int | None) -> "lint.LintConfig": ...
         def with_indent_size(self, size: int) -> "lint.LintConfig": ...
         def with_disabled_rule(self, code: str) -> "lint.LintConfig": ...
@@ -508,7 +544,11 @@ class parallel:  # noqa: N801
             max_input_size: int = 100 * 1024 * 1024,
             max_documents: int = 100_000,
             auto_tune: bool = True,
+            max_depth: int | None = None,
+            max_alias_bytes: int | None = None,
         ) -> None: ...
+        def with_max_depth(self, depth: int | None) -> "parallel.ParallelConfig": ...
+        def with_max_alias_bytes(self, bytes: int | None) -> "parallel.ParallelConfig": ...
         def with_thread_count(self, count: int | None) -> "parallel.ParallelConfig": ...
         def with_max_input_size(self, size: int) -> "parallel.ParallelConfig": ...
         def with_max_documents(self, count: int) -> "parallel.ParallelConfig": ...
@@ -628,7 +668,12 @@ class batch:  # noqa: N801
         def __repr__(self) -> str: ...
 
     class BatchConfig:
-        """Configuration for batch file processing."""
+        """Configuration for batch file processing.
+
+        ``max_depth`` and ``max_alias_bytes`` apply to ``process_files`` only;
+        ``format_files`` ignores them (formatter depth is fixed at 256).
+        Non-integer values raise ``TypeError``, out-of-range values ``ValueError``.
+        """
 
         def __init__(
             self,
@@ -639,7 +684,11 @@ class batch:  # noqa: N801
             indent: int = 2,
             width: int = 80,
             sort_keys: bool = False,
+            max_depth: int | None = None,
+            max_alias_bytes: int | None = None,
         ) -> None: ...
+        def with_max_depth(self, depth: int | None) -> "batch.BatchConfig": ...
+        def with_max_alias_bytes(self, bytes: int | None) -> "batch.BatchConfig": ...
         def with_workers(self, workers: int | None) -> "batch.BatchConfig": ...
         def with_indent(self, indent: int) -> "batch.BatchConfig": ...
         def with_width(self, width: int) -> "batch.BatchConfig": ...

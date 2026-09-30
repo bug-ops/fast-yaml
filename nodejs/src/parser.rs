@@ -5,6 +5,7 @@
 
 use crate::Schema;
 use crate::conversion::yaml_to_js;
+use crate::limits::parse_limits;
 use fast_yaml_core::Parser;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
@@ -29,6 +30,20 @@ pub struct LoadOptions {
     /// Allow duplicate keys in mappings (default: true).
     /// Note: fast-yaml always allows duplicates; this is for API compatibility.
     pub allow_duplicate_keys: Option<bool>,
+
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256).
+    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+    pub max_depth: Option<f64>,
+
+    /// Maximum estimated bytes produced by alias expansion per call (integer,
+    /// 1..=1073741824, default: 67108864). Host objects cost several times the estimate.
+    pub max_alias_bytes: Option<f64>,
+}
+
+impl LoadOptions {
+    fn parse_limits(&self) -> NapiResult<fast_yaml_core::limits::ParseLimits> {
+        parse_limits(self.max_depth, self.max_alias_bytes)
+    }
 }
 
 /// Coerce `Unknown<'env>` to `Unknown<'static>` for returning from `#[napi]` functions.
@@ -65,6 +80,7 @@ fn throw_and_undefined(env: Env, msg: &str) -> NapiResult<Unknown<'static>> {
 /// # Arguments
 ///
 /// * `yaml_str` - A YAML document as a string
+/// * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
 ///
 /// # Returns
 ///
@@ -91,7 +107,15 @@ fn throw_and_undefined(env: Env, msg: &str) -> NapiResult<Unknown<'static>> {
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
-pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
+pub fn safe_load(
+    env: Env,
+    yaml_str: String,
+    options: Option<LoadOptions>,
+) -> NapiResult<Unknown<'static>> {
+    let limits = match options.unwrap_or_default().parse_limits() {
+        Ok(l) => l,
+        Err(e) => return throw_and_undefined(env, &e.reason),
+    };
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
         return throw_and_undefined(
@@ -105,7 +129,7 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
     }
 
     // Parse YAML string
-    let docs = match Parser::parse_all(&yaml_str) {
+    let docs = match Parser::parse_all_with_limits(&yaml_str, &limits) {
         Ok(d) => d,
         Err(e) => return throw_and_undefined(env, &format!("YAML parse error: {e}")),
     };
@@ -132,6 +156,7 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
 /// # Arguments
 ///
 /// * `yaml_str` - A YAML string potentially containing multiple documents
+/// * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
 ///
 /// # Returns
 ///
@@ -142,6 +167,7 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
 /// Throws an error if:
 /// - The YAML is invalid
 /// - Input exceeds size limit (100MB)
+/// - `maxDepth` or `maxAliasBytes` is not an integer within its range
 ///
 /// # Security
 ///
@@ -158,7 +184,18 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
 // NAPI-RS requires String by value for proper FFI handling
 #[allow(clippy::needless_pass_by_value)]
 #[napi(catch_unwind)]
-pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'static>>> {
+pub fn safe_load_all(
+    env: Env,
+    yaml_str: String,
+    options: Option<LoadOptions>,
+) -> NapiResult<Vec<Unknown<'static>>> {
+    let limits = match options.unwrap_or_default().parse_limits() {
+        Ok(l) => l,
+        Err(e) => {
+            env.throw_error(&e.reason, None)?;
+            return Ok(Vec::new());
+        }
+    };
     // Validate input size to prevent DoS attacks
     if yaml_str.len() > MAX_INPUT_SIZE {
         env.throw_error(
@@ -177,7 +214,7 @@ pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'stat
     }
 
     // Parse YAML string
-    let docs = match Parser::parse_all(&yaml_str) {
+    let docs = match Parser::parse_all_with_limits(&yaml_str, &limits) {
         Ok(d) => d,
         Err(e) => {
             env.throw_error(&format!("YAML parse error: {e}"), None)?;
@@ -236,11 +273,8 @@ pub fn load(
     yaml_str: String,
     options: Option<LoadOptions>,
 ) -> NapiResult<Unknown<'static>> {
-    // Options are accepted for API compatibility but schema is ignored (safe by default)
-    let _opts = options.unwrap_or_default();
-
-    // Delegate to safe_load
-    safe_load(env, yaml_str)
+    // Schema is ignored (safe by default); limits are honoured
+    safe_load(env, yaml_str, options)
 }
 
 /// Parse a YAML string containing multiple documents with options (js-yaml compatible).
@@ -279,11 +313,8 @@ pub fn load_all(
     yaml_str: String,
     options: Option<LoadOptions>,
 ) -> NapiResult<Vec<Unknown<'static>>> {
-    // Options are accepted for API compatibility but schema is ignored (safe by default)
-    let _opts = options.unwrap_or_default();
-
-    // Delegate to safe_load_all
-    safe_load_all(env, yaml_str)
+    // Schema is ignored (safe by default); limits are honoured
+    safe_load_all(env, yaml_str, options)
 }
 
 #[cfg(test)]
@@ -322,6 +353,8 @@ mod tests {
         assert!(opts.schema.is_none());
         assert!(opts.filename.is_none());
         assert!(opts.allow_duplicate_keys.is_none());
+        assert!(opts.max_depth.is_none());
+        assert!(opts.max_alias_bytes.is_none());
     }
 
     #[test]
@@ -330,6 +363,7 @@ mod tests {
             schema: Some(Schema::SafeSchema),
             filename: Some("test.yaml".to_string()),
             allow_duplicate_keys: Some(true),
+            ..Default::default()
         };
         assert_eq!(opts.schema, Some(Schema::SafeSchema));
         assert_eq!(opts.filename, Some("test.yaml".to_string()));

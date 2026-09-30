@@ -111,7 +111,7 @@ impl FileProcessor {
     /// Parse all files and return `BatchResult`.
     pub fn parse_files(&self, paths: &[PathBuf]) -> BatchResult {
         self.process(paths, |path, content| {
-            fast_yaml_core::Parser::parse_str(content)
+            fast_yaml_core::Parser::parse_str_with_limits(content, &self.config.parse_limits())
                 .map_err(|source| Error::Parse { index: 0, source })?
                 .ok_or_else(|| Error::EmptyDocument {
                     path: path.to_path_buf(),
@@ -411,6 +411,20 @@ mod tests {
         let path = dir.path().join(name);
         fs::write(&path, content).unwrap();
         path
+    }
+
+    #[test]
+    fn test_parse_files_honors_parse_limits() {
+        use fast_yaml_core::limits::{MaxDepth, ParseLimits};
+        let dir = TempDir::new().unwrap();
+        let path = create_test_file(&dir, "nested.yaml", "[[[1]]]\n");
+        let limits = ParseLimits {
+            max_depth: MaxDepth::new(2).unwrap(),
+            ..ParseLimits::default()
+        };
+        let strict = FileProcessor::with_config(Config::new().with_parse_limits(limits));
+        assert!(!strict.parse_files(std::slice::from_ref(&path)).is_success());
+        assert!(FileProcessor::new().parse_files(&[path]).is_success());
     }
 
     #[test]

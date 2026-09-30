@@ -1,4 +1,5 @@
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use fast_yaml_core::limits::{LimitRangeError, MaxAliasBytes, MaxDepth, ParseLimits};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -93,6 +94,60 @@ impl BatchArgs {
     }
 }
 
+/// Parser resource limits shared by every subcommand that parses YAML.
+#[derive(Args, Debug, Clone, Copy)]
+pub struct ParseLimitArgs {
+    /// Maximum nesting depth of sequences and mappings (min: 1, max: 512)
+    #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
+    pub max_depth: MaxDepth,
+
+    /// Maximum bytes materialized by alias expansion per input (min: 1, max: 1GiB).
+    /// Accepts KiB, MiB and GiB suffixes
+    #[arg(long, value_name = "BYTES", value_parser = parse_max_alias_bytes, default_value_t = MaxAliasBytes::DEFAULT)]
+    pub max_alias_bytes: MaxAliasBytes,
+}
+
+impl ParseLimitArgs {
+    /// Builds the parser limits from the flags; other limits keep their defaults.
+    #[must_use]
+    pub fn parse_limits(&self) -> ParseLimits {
+        ParseLimits {
+            max_depth: self.max_depth,
+            max_alias_bytes: self.max_alias_bytes,
+            ..ParseLimits::default()
+        }
+    }
+}
+
+fn range_error(err: LimitRangeError) -> String {
+    err.to_string()
+}
+
+fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
+    let depth: usize = raw
+        .parse()
+        .map_err(|e| format!("invalid integer '{raw}': {e}"))?;
+    MaxDepth::new(depth).map_err(range_error)
+}
+
+/// Binary size suffixes accepted by `--max-alias-bytes`, longest first.
+const SIZE_SUFFIXES: [(&str, usize); 3] = [("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)];
+
+fn parse_max_alias_bytes(raw: &str) -> Result<MaxAliasBytes, String> {
+    let (digits, unit) = SIZE_SUFFIXES
+        .iter()
+        .find_map(|&(suffix, unit)| raw.strip_suffix(suffix).map(|digits| (digits, unit)))
+        .unwrap_or((raw, 1));
+    let count: usize = digits
+        .trim()
+        .parse()
+        .map_err(|e| format!("invalid size '{raw}': {e}"))?;
+    let bytes = count
+        .checked_mul(unit)
+        .ok_or_else(|| format!("size '{raw}' is too large"))?;
+    MaxAliasBytes::new(bytes).map_err(range_error)
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Parse and validate YAML
@@ -103,6 +158,9 @@ pub enum Command {
         /// Show parse statistics
         #[arg(long)]
         stats: bool,
+
+        #[command(flatten)]
+        limits: ParseLimitArgs,
     },
 
     /// Format YAML with consistent style
@@ -141,6 +199,10 @@ pub enum Command {
     },
 
     /// Convert between YAML and JSON
+    #[command(
+        after_help = "--max-depth and --max-alias-bytes apply to YAML input only; \
+                            JSON input is not affected"
+    )]
     Convert {
         /// Target format
         #[arg(value_enum)]
@@ -152,6 +214,9 @@ pub enum Command {
         /// Pretty-print JSON output
         #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         pretty: bool,
+
+        #[command(flatten)]
+        limits: ParseLimitArgs,
     },
 
     #[cfg(feature = "linter")]
@@ -188,6 +253,9 @@ pub enum Command {
 
         #[command(flatten)]
         batch: BatchArgs,
+
+        #[command(flatten)]
+        limits: ParseLimitArgs,
     },
 }
 
@@ -219,5 +287,79 @@ mod tests {
     fn verify_cli() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn limit_help_matches_type_constants() {
+        use clap::CommandFactory;
+        assert_eq!(MaxAliasBytes::MAX.get(), 1 << 30);
+        let mut cli = Cli::command();
+        for name in ["parse", "convert", "lint"] {
+            let help = cli
+                .find_subcommand_mut(name)
+                .unwrap()
+                .render_long_help()
+                .to_string()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(
+                help.contains(&format!("max: {}", MaxDepth::MAX.get())),
+                "{name}: {help}"
+            );
+            assert!(help.contains("max: 1GiB"), "{name}: {help}");
+            assert!(
+                help.contains(&format!("[default: {}]", MaxDepth::DEFAULT)),
+                "{name}: {help}"
+            );
+            assert!(
+                help.contains(&format!("[default: {}]", MaxAliasBytes::DEFAULT)),
+                "{name}: {help}"
+            );
+        }
+    }
+
+    #[test]
+    fn convert_help_states_yaml_only() {
+        use clap::CommandFactory;
+        let help = Cli::command()
+            .find_subcommand_mut("convert")
+            .unwrap()
+            .render_long_help()
+            .to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(help.contains("apply to YAML input only"));
+    }
+
+    #[test]
+    fn alias_bytes_accepts_suffixes() {
+        assert_eq!(parse_max_alias_bytes("1024").unwrap().get(), 1024);
+        assert_eq!(parse_max_alias_bytes("64KiB").unwrap().get(), 64 << 10);
+        assert_eq!(parse_max_alias_bytes("128MiB").unwrap().get(), 128 << 20);
+        assert_eq!(parse_max_alias_bytes("1GiB").unwrap(), MaxAliasBytes::MAX);
+    }
+
+    #[test]
+    fn alias_bytes_rejects_out_of_range_and_garbage() {
+        assert!(
+            parse_max_alias_bytes("0")
+                .unwrap_err()
+                .contains("between 1 and")
+        );
+        assert!(parse_max_alias_bytes("2GiB").is_err());
+        assert!(parse_max_alias_bytes("99999999999999999999GiB").is_err());
+        assert!(parse_max_alias_bytes("-1").is_err());
+        assert!(parse_max_alias_bytes("MiB").is_err());
+        assert!(parse_max_alias_bytes("1.5MiB").is_err());
+    }
+
+    #[test]
+    fn depth_rejects_out_of_range() {
+        assert_eq!(parse_max_depth("512").unwrap(), MaxDepth::MAX);
+        assert!(parse_max_depth("0").is_err());
+        assert!(parse_max_depth("513").is_err());
+        assert!(parse_max_depth("x").is_err());
     }
 }

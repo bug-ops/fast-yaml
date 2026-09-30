@@ -171,6 +171,8 @@ interface BatchConfig {
   indent?: number;            // Indentation (default: 2)
   width?: number;             // Line width (default: 80)
   sortKeys?: boolean;         // Sort keys (default: false)
+  maxDepth?: number;          // Max nesting depth, 1..512 (default: 256); processFiles only
+  maxAliasBytes?: number;     // Alias-expansion budget per file, 1..1073741824 (default: 64MiB); processFiles only
 }
 ```
 
@@ -191,6 +193,22 @@ interface BatchError {
   message: string;
 }
 ```
+
+## Parse Limits
+
+`safeLoad`, `safeLoadAll`, `load`, `loadAll`, `parseParallel`, `lint` / `Linter`, and `processFiles` accept two limits (as options, `ParallelConfig`, `LintConfig`, or `BatchConfig`):
+
+```javascript
+import { safeLoad } from 'fastyaml-rs';
+
+safeLoad(deepYaml, { maxDepth: 400 });            // default 256, range 1..512
+safeLoad(aliasHeavyYaml, { maxAliasBytes: 2 ** 28 }); // default 64MiB, range 1..1GiB
+```
+
+- Values must be integers within the range; `0`, negatives, fractions, `NaN`, and out-of-range values throw `maxDepth must be between 1 and 512, got N`.
+- `maxAliasBytes` is an estimate of alias-expansion cost per call (per file in batch runs); JavaScript objects cost several times the estimate, so keep it modest on memory-constrained hosts.
+- The calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (for example a worker with `stackSizeMb: 0.5`) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+- `formatFiles` / `formatFilesInPlace` validate the options but do not apply them (fixed formatter depth limit).
 
 ## YAML 1.2.2 Differences
 

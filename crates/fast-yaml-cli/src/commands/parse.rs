@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use fast_yaml_core::Parser;
+use fast_yaml_core::limits::ParseLimits;
 
 use crate::config::CommonConfig;
 use crate::io::InputSource;
@@ -11,11 +12,16 @@ use crate::reporter::{ReportEvent, Reporter};
 pub struct ParseCommand {
     show_stats: bool,
     config: CommonConfig,
+    limits: ParseLimits,
 }
 
 impl ParseCommand {
-    pub const fn new(config: CommonConfig, show_stats: bool) -> Self {
-        Self { show_stats, config }
+    pub const fn new(config: CommonConfig, show_stats: bool, limits: ParseLimits) -> Self {
+        Self {
+            show_stats,
+            config,
+            limits,
+        }
     }
 
     /// Execute parse command
@@ -23,7 +29,8 @@ impl ParseCommand {
         let mut reporter = Reporter::new(self.config.output.clone());
         reporter.start_timing();
 
-        let maybe_value = Parser::parse_str(input.as_str()).context("Failed to parse YAML")?;
+        let maybe_value = Parser::parse_str_with_limits(input.as_str(), &self.limits)
+            .context("Failed to parse YAML")?;
 
         reporter
             .report(ReportEvent::Success {
@@ -120,7 +127,7 @@ mod tests {
 
         let config =
             CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
-        let cmd = ParseCommand::new(config, false);
+        let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -133,7 +140,7 @@ mod tests {
 
         let config =
             CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
-        let cmd = ParseCommand::new(config, false);
+        let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_err());
     }
 
@@ -146,7 +153,7 @@ mod tests {
 
         let config =
             CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
-        let cmd = ParseCommand::new(config, false);
+        let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -159,7 +166,7 @@ mod tests {
 
         let config =
             CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
-        let cmd = ParseCommand::new(config, false);
+        let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -172,7 +179,7 @@ mod tests {
 
         let config =
             CommonConfig::new().with_output(crate::config::OutputConfig::new().with_quiet(true));
-        let cmd = ParseCommand::new(config, false);
+        let cmd = ParseCommand::new(config, false, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 

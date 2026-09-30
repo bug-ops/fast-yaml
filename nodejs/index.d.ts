@@ -91,6 +91,17 @@ export interface BatchConfig {
   width?: number
   /** Sort dictionary keys alphabetically (default: false) */
   sortKeys?: boolean
+  /**
+   * Maximum collection nesting depth (integer, 1..=512, default: 256);
+   * applies to `processFiles`, not to `formatFiles` (fixed formatter depth limit).
+   * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+   */
+  maxDepth?: number
+  /**
+   * Maximum estimated alias-expansion bytes per file (integer, 1..=1073741824,
+   * default: 67108864); applies to `processFiles` only; peak memory can reach workers x this budget
+   */
+  maxAliasBytes?: number
 }
 
 /** Error entry for batch result. */
@@ -227,7 +238,7 @@ export interface FileResult {
  * });
  * ```
  */
-export declare function formatFiles(paths: Array<string>, config?: BatchConfig | undefined | null): NapiResult<Array<FormatResult>>
+export declare function formatFiles(paths: Array<string>, config?: BatchConfig | undefined | null): Array<FormatResult>
 
 /**
  * Format files in place (write changes back).
@@ -252,7 +263,7 @@ export declare function formatFiles(paths: Array<string>, config?: BatchConfig |
  * console.log(`Changed ${result.changed} files`);
  * ```
  */
-export declare function formatFilesInPlace(paths: Array<string>, config?: BatchConfig | undefined | null): NapiResult<BatchResult>
+export declare function formatFilesInPlace(paths: Array<string>, config?: BatchConfig | undefined | null): BatchResult
 
 /** Formatted file result. */
 export interface FormatResult {
@@ -321,6 +332,13 @@ export interface LintConfig {
    * Note: `options` is intentionally not exposed (no current rule uses custom options).
    */
   rules?: Record<string, RuleConfig | 'error' | 'warning' | 'info' | 'hint'>
+  /**
+   * Maximum collection nesting depth (integer, 1..=512, default: 256).
+   * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+   */
+  maxDepth?: number
+  /** Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864). */
+  maxAliasBytes?: number
 }
 
 /**
@@ -404,6 +422,16 @@ export interface LoadOptions {
    * Note: fast-yaml always allows duplicates; this is for API compatibility.
    */
   allowDuplicateKeys?: boolean
+  /**
+   * Maximum collection nesting depth (integer, 1..=512, default: 256).
+   * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+   */
+  maxDepth?: number
+  /**
+   * Maximum estimated bytes produced by alias expansion per call (integer,
+   * 1..=1073741824, default: 67108864). Host objects cost several times the estimate.
+   */
+  maxAliasBytes?: number
 }
 
 /** A position in the source file. */
@@ -444,6 +472,16 @@ export interface ParallelConfig {
   maxInputSize?: number
   /** Maximum number of documents allowed (default: 100k, max: 10M). */
   maxDocuments?: number
+  /**
+   * Maximum collection nesting depth (integer, 1..=512, default: 256).
+   * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+   */
+  maxDepth?: number
+  /**
+   * Maximum estimated alias-expansion bytes, shared across chunks of one call (integer,
+   * 1..=1073741824, default: 67108864).
+   */
+  maxAliasBytes?: number
 }
 
 /**
@@ -540,7 +578,7 @@ export declare function parseParallelAsync(yamlStr: string, config?: ParallelCon
  * console.log(`Processed ${result.total} files, ${result.failed} failed`);
  * ```
  */
-export declare function processFiles(paths: Array<string>, config?: BatchConfig | undefined | null): NapiResult<BatchResult>
+export declare function processFiles(paths: Array<string>, config?: BatchConfig | undefined | null): BatchResult
 
 /**
  * Serialize a JavaScript object to a YAML string.
@@ -620,6 +658,7 @@ export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOpt
  * # Arguments
  *
  * * `yaml_str` - A YAML document as a string
+ * * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
  *
  * # Returns
  *
@@ -645,7 +684,7 @@ value: 123');
  * console.log(data); // { name: 'test', value: 123 }
  * ```
  */
-export declare function safeLoad(yamlStr: string): NapiResult<unknown>
+export declare function safeLoad(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<unknown>
 
 /**
  * Parse a YAML string containing multiple documents.
@@ -655,6 +694,7 @@ export declare function safeLoad(yamlStr: string): NapiResult<unknown>
  * # Arguments
  *
  * * `yaml_str` - A YAML string potentially containing multiple documents
+ * * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
  *
  * # Returns
  *
@@ -665,6 +705,7 @@ export declare function safeLoad(yamlStr: string): NapiResult<unknown>
  * Throws an error if:
  * - The YAML is invalid
  * - Input exceeds size limit (100MB)
+ * - `maxDepth` or `maxAliasBytes` is not an integer within its range
  *
  * # Security
  *
@@ -682,7 +723,7 @@ bar: 2');
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function safeLoadAll(yamlStr: string): NapiResult<Array<unknown>>
+export declare function safeLoadAll(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<Array<unknown>>
 
 /**
  * YAML schema types for parsing behavior (js-yaml compatible).

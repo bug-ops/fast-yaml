@@ -29,6 +29,26 @@ yaml_str = fast_yaml.safe_dump({"name": "test", "value": 123})
 print(yaml_str)  # name: test\nvalue: 123\n
 ```
 
+## Parse Limits
+
+Nesting depth and alias expansion are capped by default. Raise or lower the caps with keyword arguments on
+`safe_load`, `safe_load_all`, `load`, `load_all`, and the `ParallelConfig`, `LintConfig`, and `BatchConfig`
+constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()`; `None` resets to the default):
+
+```python
+fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
+```
+
+| Option | Default | Range |
+|--------|---------|-------|
+| `max_depth` | 256 | 1..=512 |
+| `max_alias_bytes` | 64 MiB | 1..=1 GiB |
+
+Out-of-range values raise `ValueError`; non-integers (including `bool`) raise `TypeError`.
+Depth 512 needs about 1 MiB of thread stack and can abort the process on stacks of 512 KiB or less; the default of 256 is safe.
+The dumper keeps a fixed depth of 256, so data parsed deeper may fail to dump.
+The alias budget is per stream, so parallel and batch runs can use up to workers x budget.
+
 ## Features
 
 - **YAML 1.2.2 compliant** — Full Core Schema support
@@ -85,6 +105,10 @@ print(f"Changed {result.changed} files")
 | `indent` | 2 | Indentation width |
 | `width` | 80 | Line width |
 | `sort_keys` | False | Sort dictionary keys |
+| `max_depth` | 256 | Maximum nesting depth, 1..=512 (`process_files` only) |
+| `max_alias_bytes` | 64 MiB | Alias-expansion budget per file, 1..=1 GiB (`process_files` only) |
+
+`format_files` ignores `max_depth` and `max_alias_bytes`; formatter depth is fixed at 256.
 
 ### BatchResult
 

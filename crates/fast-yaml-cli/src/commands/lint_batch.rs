@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use crate::cli::LintFormat;
 use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
-use crate::error::ExitCode;
+use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
 
 /// Execute batch linting on multiple files.
@@ -70,7 +70,9 @@ pub fn execute_lint_batch(
                 let diagnostics = match linter.lint(&content) {
                     Ok(d) => d,
                     Err(e) => {
-                        eprintln!("error: '{}': {e}", path.display());
+                        let hint =
+                            RaiseHint::of(&e).map_or_else(String::new, |h| format!(" ({h})"));
+                        eprintln!("error: '{}': {e}{hint}", path.display());
                         return (path.clone(), content, vec![], true);
                     }
                 };
