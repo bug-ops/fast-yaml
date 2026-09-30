@@ -4,38 +4,13 @@
 //! fractions, negatives, zero, and values above the core cap are rejected with the
 //! same message shape as the core `LimitRangeError`.
 
-use std::fmt::Display;
-
 use fast_yaml_core::limits::{LimitRangeError, MaxAliasBytes, MaxDepth, ParseLimits};
 use napi::Result as NapiResult;
 
-/// Builds the error thrown for an out-of-range limit option.
-pub(crate) fn range_error(option: &str, max: usize, got: impl Display) -> napi::Error {
-    napi::Error::from_reason(format!("{option} must be between 1 and {max}, got {got}"))
-}
+use crate::options::{checked_uint, range_error};
 
 fn core_error(option: &str, e: LimitRangeError) -> napi::Error {
-    range_error(option, e.max, e.value)
-}
-
-/// Renders a JS number compactly: `Infinity`, `NaN`, and exponent form for huge magnitudes.
-fn display_f64(value: f64) -> String {
-    if value.is_infinite() {
-        return if value > 0.0 { "Infinity" } else { "-Infinity" }.to_owned();
-    }
-    if value.abs() >= 1e21 {
-        return format!("{value:e}");
-    }
-    value.to_string()
-}
-
-#[allow(clippy::cast_precision_loss)]
-fn to_usize(option: &str, value: f64, max: usize) -> NapiResult<usize> {
-    if !value.is_finite() || value.fract() != 0.0 || value < 1.0 || value > max as f64 {
-        return Err(range_error(option, max, display_f64(value)));
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Ok(value as usize)
+    range_error(option, 1, e.max as u64, e.value)
 }
 
 fn max_depth(value: Option<f64>) -> NapiResult<MaxDepth> {
@@ -43,8 +18,8 @@ fn max_depth(value: Option<f64>) -> NapiResult<MaxDepth> {
     value.map_or_else(
         || Ok(MaxDepth::default()),
         |v| {
-            MaxDepth::new(to_usize(OPTION, v, MaxDepth::MAX.get())?)
-                .map_err(|e| core_error(OPTION, e))
+            let n = checked_uint(OPTION, v, 1, MaxDepth::MAX.get() as u64)?;
+            MaxDepth::new(n).map_err(|e| core_error(OPTION, e))
         },
     )
 }
@@ -54,8 +29,8 @@ fn max_alias_bytes(value: Option<f64>) -> NapiResult<MaxAliasBytes> {
     value.map_or_else(
         || Ok(MaxAliasBytes::default()),
         |v| {
-            MaxAliasBytes::new(to_usize(OPTION, v, MaxAliasBytes::MAX.get())?)
-                .map_err(|e| core_error(OPTION, e))
+            let n = checked_uint(OPTION, v, 1, MaxAliasBytes::MAX.get() as u64)?;
+            MaxAliasBytes::new(n).map_err(|e| core_error(OPTION, e))
         },
     )
 }

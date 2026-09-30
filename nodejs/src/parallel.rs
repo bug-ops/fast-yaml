@@ -4,6 +4,7 @@
 
 use crate::conversion::yaml_to_js;
 use crate::limits::parse_limits;
+use crate::options::{U32_MAX, checked_opt_uint};
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
     Env, Result as NapiResult, Task,
@@ -13,13 +14,13 @@ use napi_derive::napi;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Maximum thread count allowed.
-const MAX_THREADS: u32 = 128;
+const MAX_THREADS: u64 = 128;
 
 /// Maximum input size in bytes (default 100MB, can be configured up to 1GB).
-const ABSOLUTE_MAX_INPUT_SIZE: u32 = 1024 * 1024 * 1024;
+const ABSOLUTE_MAX_INPUT_SIZE: u64 = 1024 * 1024 * 1024;
 
 /// Maximum document count (default 100k, can be configured up to 10M).
-const ABSOLUTE_MAX_DOCUMENTS: u32 = 10_000_000;
+const ABSOLUTE_MAX_DOCUMENTS: u64 = 10_000_000;
 
 /// Configuration for parallel YAML processing.
 ///
@@ -40,19 +41,19 @@ const ABSOLUTE_MAX_DOCUMENTS: u32 = 10_000_000;
 #[derive(Debug, Clone, Default)]
 pub struct ParallelConfig {
     /// Thread pool size (null = CPU count, 0 = sequential).
-    pub thread_count: Option<u32>,
+    pub thread_count: Option<f64>,
 
     /// Minimum bytes per chunk (default: 4096).
-    pub min_chunk_size: Option<u32>,
+    pub min_chunk_size: Option<f64>,
 
     /// Maximum bytes per chunk (default: 10MB).
-    pub max_chunk_size: Option<u32>,
+    pub max_chunk_size: Option<f64>,
 
     /// Maximum total input size in bytes (default: 100MB, max: 1GB).
-    pub max_input_size: Option<u32>,
+    pub max_input_size: Option<f64>,
 
     /// Maximum number of documents allowed (default: 100k, max: 10M).
-    pub max_documents: Option<u32>,
+    pub max_documents: Option<f64>,
 
     /// Maximum collection nesting depth (integer, 1..=512, default: 256).
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
@@ -66,61 +67,42 @@ pub struct ParallelConfig {
 impl ParallelConfig {
     /// Convert to Rust parallel config with validation.
     fn to_rust_config(&self) -> NapiResult<RustParallelConfig> {
-        // Validate thread_count
-        if let Some(count) = self.thread_count
-            && count > MAX_THREADS
-        {
-            return Err(napi::Error::from_reason(format!(
-                "threadCount {count} exceeds maximum allowed {MAX_THREADS}"
-            )));
-        }
+        let thread_count = checked_opt_uint("threadCount", self.thread_count, 0, MAX_THREADS)?;
+        let max_input_size = checked_opt_uint(
+            "maxInputSize",
+            self.max_input_size,
+            1,
+            ABSOLUTE_MAX_INPUT_SIZE,
+        )?;
+        checked_opt_uint(
+            "maxDocuments",
+            self.max_documents,
+            1,
+            ABSOLUTE_MAX_DOCUMENTS,
+        )?;
+        let min_chunk_size = checked_opt_uint("minChunkSize", self.min_chunk_size, 1, U32_MAX)?;
+        let max_chunk_size = checked_opt_uint("maxChunkSize", self.max_chunk_size, 0, U32_MAX)?;
 
-        // Validate input size
-        if let Some(size) = self.max_input_size
-            && (size == 0 || size > ABSOLUTE_MAX_INPUT_SIZE)
-        {
-            return Err(napi::Error::from_reason(format!(
-                "maxInputSize must be between 1 and {ABSOLUTE_MAX_INPUT_SIZE} (1GB)"
-            )));
-        }
-
-        // Validate document count
-        if let Some(count) = self.max_documents
-            && (count == 0 || count > ABSOLUTE_MAX_DOCUMENTS)
-        {
-            return Err(napi::Error::from_reason(format!(
-                "maxDocuments must be between 1 and {ABSOLUTE_MAX_DOCUMENTS} (10M)"
-            )));
-        }
-
-        // Validate chunk sizes
-        let min_chunk = self.min_chunk_size.unwrap_or(4096);
-        let max_chunk = self.max_chunk_size.unwrap_or(10 * 1024 * 1024);
-
-        if min_chunk == 0 {
-            return Err(napi::Error::from_reason(
-                "minChunkSize must be greater than 0",
-            ));
-        }
+        let min_chunk = min_chunk_size.unwrap_or(4096);
+        let max_chunk = max_chunk_size.unwrap_or(10 * 1024 * 1024);
         if max_chunk < min_chunk {
-            return Err(napi::Error::from_reason(
+            return Err(napi::Error::new(
+                napi::Status::InvalidArg,
                 "maxChunkSize must be >= minChunkSize",
             ));
         }
 
-        // Build config with new simplified API
         let mut config = RustParallelConfig::new();
 
-        if let Some(count) = self.thread_count {
-            config = config.with_workers(Some(count as usize));
+        if let Some(count) = thread_count {
+            config = config.with_workers(Some(count));
         }
-        if let Some(size) = self.max_input_size {
-            config = config.with_max_input_size(size as usize);
+        if let Some(size) = max_input_size {
+            config = config.with_max_input_size(size);
         }
-        // Note: min_chunk_size and max_chunk_size are no longer supported in the new API
-        // The new API uses sequential_threshold instead
-        if let Some(size) = self.min_chunk_size {
-            config = config.with_sequential_threshold(size as usize);
+        // The parallel API has no chunk-size bounds; minChunkSize maps to the sequential threshold.
+        if let Some(size) = min_chunk_size {
+            config = config.with_sequential_threshold(size);
         }
 
         Ok(config.with_parse_limits(parse_limits(self.max_depth, self.max_alias_bytes)?))
@@ -187,7 +169,7 @@ pub fn parse_parallel(
     let rust_config = match config.unwrap_or_default().to_rust_config() {
         Ok(c) => c,
         Err(e) => {
-            env.throw_error(&e.reason, None)?;
+            env.throw_error(&e.reason, Some(e.status.as_ref()))?;
             return Ok(Vec::new());
         }
     };
@@ -327,26 +309,26 @@ mod tests {
     fn test_parallel_config_validation() {
         // Valid config
         let config = ParallelConfig {
-            thread_count: Some(4),
-            min_chunk_size: Some(2048),
-            max_chunk_size: Some(5 * 1024 * 1024),
-            max_input_size: Some(50 * 1024 * 1024),
-            max_documents: Some(50_000),
+            thread_count: Some(4.0),
+            min_chunk_size: Some(2048.0),
+            max_chunk_size: Some(5_242_880.0),
+            max_input_size: Some(52_428_800.0),
+            max_documents: Some(50_000.0),
             ..Default::default()
         };
         assert!(config.to_rust_config().is_ok());
 
         // Invalid thread count
         let config = ParallelConfig {
-            thread_count: Some(1000),
+            thread_count: Some(1000.0),
             ..Default::default()
         };
         assert!(config.to_rust_config().is_err());
 
         // Invalid chunk sizes
         let config = ParallelConfig {
-            min_chunk_size: Some(10000),
-            max_chunk_size: Some(1000),
+            min_chunk_size: Some(10000.0),
+            max_chunk_size: Some(1000.0),
             ..Default::default()
         };
         assert!(config.to_rust_config().is_err());

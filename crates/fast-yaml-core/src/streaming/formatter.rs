@@ -4,6 +4,7 @@
 //! different memory allocation strategies via the `FormatterBackend` trait.
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use saphyr_parser::{Event, ScalarStyle, Span, Tag};
@@ -59,6 +60,16 @@ enum BlockStyle {
     Folded,
 }
 
+/// Result of a completed formatting run, with the bookkeeping needed to validate anchor names.
+pub(super) struct Formatted {
+    /// The formatted document stream.
+    pub(super) output: String,
+    /// Highest anchor id the parser produced.
+    pub(super) max_anchor_id: usize,
+    /// Whether every emitted alias names the anchor the parser resolved it to.
+    pub(super) aliases_resolve: bool,
+}
+
 /// A collection start held back until the next event shows whether it is empty.
 struct PendingStart {
     kind: CollectionKind,
@@ -71,15 +82,33 @@ fn needs_escape(c: char) -> bool {
     (c.is_control() && c != '\t') || matches!(c, '\u{FFFE}' | '\u{FFFF}')
 }
 
+/// Whether a plain scalar with this value would not be read back as itself in block context:
+/// it starts with an indicator, or reads as a `---` / `...` marker or a `-`/`?`/`:` entry.
+///
+/// Flow-context plain scalars may legally start with characters such as `|` or `%`.
+fn is_unsafe_plain(value: &str) -> bool {
+    let followed_by_blank = |rest: &str| rest.is_empty() || rest.starts_with([' ', '\t']);
+    value.starts_with([
+        '|', '>', '%', '@', '`', '\'', '"', '&', '*', '!', '#', ',', '[', ']', '{', '}',
+    ]) || ["---", "..."]
+        .iter()
+        .any(|marker| value.strip_prefix(marker).is_some_and(followed_by_blank))
+        || value
+            .strip_prefix(['-', '?', ':'])
+            .is_some_and(followed_by_blank)
+}
+
 /// Returns the style a scalar must be written in to round-trip its value.
 ///
 /// Plain and single-quoted scalars cannot represent control characters other than tab
 /// (a raw line break is folded on re-parse), so they are promoted to double-quoted.
+/// A plain scalar that block context would misread (see [`is_unsafe_plain`]) is single-quoted.
 fn effective_style(value: &str, style: ScalarStyle) -> ScalarStyle {
     match style {
         ScalarStyle::Plain | ScalarStyle::SingleQuoted if value.chars().any(needs_escape) => {
             ScalarStyle::DoubleQuoted
         }
+        ScalarStyle::Plain if is_unsafe_plain(value) => ScalarStyle::SingleQuoted,
         other => other,
     }
 }
@@ -184,8 +213,12 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     anchor_base: usize,
     /// Highest anchor id defined so far.
     max_anchor_id: usize,
-    /// Whether a document start was already seen; later documents need an explicit `---`.
-    document_seen: bool,
+    /// Number of documents started so far; every one after the first needs an explicit `---`.
+    docs_started: usize,
+    /// Anchor id most recently emitted under each name, to check that aliases resolve.
+    name_owner: HashMap<String, usize>,
+    /// Cleared when an alias would bind to a different anchor than the parser resolved.
+    aliases_resolve: bool,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -212,7 +245,9 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             pending_start: None,
             anchor_base: 0,
             max_anchor_id: 0,
-            document_seen: false,
+            docs_started: 0,
+            name_owner: HashMap::new(),
+            aliases_resolve: true,
             backend,
         }
     }
@@ -269,6 +304,11 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         if has_anchor {
             self.backend.anchor_store_mut().ensure_capacity(anchor_id);
             let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
+            if let Some(owner) = self.name_owner.get_mut(name) {
+                *owner = anchor_id;
+            } else {
+                self.name_owner.insert(name.to_owned(), anchor_id);
+            }
             self.output.push('&');
             self.output.push_str(name);
         }
@@ -325,12 +365,12 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         match event {
             Event::DocumentStart(explicit) => {
                 self.anchor_base = self.max_anchor_id;
-                let separator_needed = std::mem::replace(&mut self.document_seen, true);
-                if explicit || separator_needed || self.config.explicit_start {
+                if explicit || self.config.explicit_start || self.docs_started > 0 {
                     self.output.push_str("---");
                     self.pending_newline = true;
                     self.last_char_newline = false;
                 }
+                self.docs_started += 1;
             }
 
             Event::DocumentEnd => {
@@ -399,6 +439,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             // The explicit key now ends its line, like a block scalar key.
             self.end_inline_node(ctx, NodeShape::BlockScalar);
         } else {
+            // A tag directly before `:` would absorb it (`!:` is a tag).
+            if ctx == Context::MappingKey
+                && tag.is_some()
+                && style == ScalarStyle::Plain
+                && value.is_empty()
+            {
+                self.output.push(' ');
+            }
             self.end_inline_node(ctx, shape);
         }
         Ok(())
@@ -743,11 +791,15 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
         // Emit the alias reference
         self.output.push('*');
-        if let Some(name) = self.backend.anchor_store().get(anchor_id) {
-            self.output.push_str(name);
-        } else {
-            // Fallback: generate name directly into output
-            let _ = write!(self.output, "anchor{anchor_id}");
+        let name = self.backend.anchor_store().get(anchor_id);
+        if name.is_none_or(|name| self.name_owner.get(name) != Some(&anchor_id)) {
+            self.aliases_resolve = false;
+        }
+        match name {
+            Some(name) => self.output.push_str(name),
+            None => {
+                let _ = write!(self.output, "anchor{anchor_id}");
+            }
         }
         self.last_char_newline = false;
 
@@ -776,13 +828,17 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         }
     }
 
-    /// Completes formatting and returns the output string.
-    pub fn finish(mut self) -> String {
+    /// Completes formatting and returns the output with anchor bookkeeping.
+    pub(super) fn finish(mut self) -> Formatted {
         // Ensure output ends with newline
         if !self.output.is_empty() && !self.last_char_newline {
             self.output.push('\n');
         }
-        self.output
+        Formatted {
+            output: self.output,
+            max_anchor_id: self.max_anchor_id,
+            aliases_resolve: self.aliases_resolve,
+        }
     }
 }
 

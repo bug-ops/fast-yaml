@@ -4,6 +4,7 @@
 //! JavaScript objects to YAML strings.
 
 use crate::conversion::js_to_yaml;
+use crate::options::{U32_MAX, checked_opt_uint};
 use fast_yaml_core::{DumpBudget, MaxOutputBytes};
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
@@ -17,7 +18,7 @@ fn throw_or_default<T: Default>(env: Env, result: NapiResult<T>) -> NapiResult<T
     match result {
         Ok(value) => Ok(value),
         Err(e) => {
-            env.throw_error(&e.reason, None)?;
+            env.throw_error(&e.reason, Some(e.status.as_ref()))?;
             Ok(T::default())
         }
     }
@@ -31,12 +32,14 @@ fn check_output_size(output: String) -> NapiResult<String> {
     Ok(output)
 }
 
-fn emitter_config(opts: &DumpOptions) -> fast_yaml_core::EmitterConfig {
-    fast_yaml_core::EmitterConfig::new()
-        .with_indent(opts.indent.unwrap_or(2) as usize)
-        .with_width(opts.width.unwrap_or(80) as usize)
+fn emitter_config(opts: &DumpOptions) -> NapiResult<fast_yaml_core::EmitterConfig> {
+    let indent = checked_opt_uint("indent", opts.indent, 0, U32_MAX)?.unwrap_or(2);
+    let width = checked_opt_uint("width", opts.width, 0, U32_MAX)?.unwrap_or(80);
+    Ok(fast_yaml_core::EmitterConfig::new()
+        .with_indent(indent)
+        .with_width(width)
         .with_default_flow_style(opts.default_flow_style)
-        .with_explicit_start(opts.explicit_start.unwrap_or(false))
+        .with_explicit_start(opts.explicit_start.unwrap_or(false)))
 }
 
 fn emit_error(e: impl std::fmt::Display) -> napi::Error {
@@ -55,12 +58,12 @@ pub struct DumpOptions {
     pub allow_unicode: Option<bool>,
 
     /// Indentation width in spaces (default: 2).
-    /// Valid range: 1-9 (values outside this range will be clamped).
-    pub indent: Option<u32>,
+    /// Must be an integer; values outside 1-9 are clamped.
+    pub indent: Option<f64>,
 
     /// Maximum line width for wrapping (default: 80).
-    /// Valid range: 20-1000 (values outside this range will be clamped).
-    pub width: Option<u32>,
+    /// Must be an integer; values outside 20-1000 are clamped.
+    pub width: Option<f64>,
 
     /// Default flow style for collections (default: null).
     /// - null: Use block style (multi-line)
@@ -77,8 +80,8 @@ impl Default for DumpOptions {
         Self {
             sort_keys: Some(false),
             allow_unicode: Some(true),
-            indent: Some(2),
-            width: Some(80),
+            indent: Some(2.0),
+            width: Some(80.0),
             default_flow_style: None,
             explicit_start: Some(false),
         }
@@ -126,7 +129,7 @@ fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> NapiResult<String> {
     if opts.sort_keys.unwrap_or(false) {
         yaml = sort_yaml_keys(&yaml);
     }
-    let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &emitter_config(opts))
+    let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &emitter_config(opts)?)
         .map_err(emit_error)?;
     check_output_size(output)
 }
@@ -182,7 +185,7 @@ fn dump_many(env: Env, documents: Vec<Unknown>, opts: &DumpOptions) -> NapiResul
         }
         yamls.push(yaml);
     }
-    let output = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &emitter_config(opts))
+    let output = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &emitter_config(opts)?)
         .map_err(emit_error)?;
     check_output_size(output)
 }
@@ -238,8 +241,8 @@ mod tests {
         let opts = DumpOptions::default();
         assert_eq!(opts.sort_keys, Some(false));
         assert_eq!(opts.allow_unicode, Some(true));
-        assert_eq!(opts.indent, Some(2));
-        assert_eq!(opts.width, Some(80));
+        assert_eq!(opts.indent, Some(2.0));
+        assert_eq!(opts.width, Some(80.0));
         assert_eq!(opts.default_flow_style, None);
         assert_eq!(opts.explicit_start, Some(false));
     }

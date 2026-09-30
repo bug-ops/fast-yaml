@@ -13,8 +13,9 @@ use fast_yaml_linter::{
     rules::{DocumentEndPresence, DocumentStartPresence},
 };
 use napi_derive::napi;
-use serde_json::Value as JsonValue;
 use std::{num::NonZeroUsize, str::FromStr};
+
+use crate::rule_input::RuleInput;
 
 /// Diagnostic severity levels.
 #[napi(string_enum)]
@@ -186,7 +187,7 @@ impl From<RustDiagnostic> for Diagnostic {
 /// Configuration for the linter.
 ///
 /// All fields are optional; defaults are applied during conversion.
-#[napi(object)]
+#[napi(object, object_to_js = false)]
 #[derive(Default)]
 pub struct LintConfig {
     /// Maximum line length; unset keeps the rule default, `0` is an error.
@@ -207,9 +208,10 @@ pub struct LintConfig {
     /// or an object with `enabled`, `severity` and the rule's own options
     /// (kebab-case keys, as in the `fy lint --config` file). Unknown rules, unknown
     /// options, wrong types and `null` (except `line-length.max`) are errors.
-    /// `disabledRules` is applied last and wins over `enabled: true`.
+    /// `disabledRules` is applied last and wins over `enabled: true`. The value is read
+    /// under depth and size limits, so deeply nested or cyclic input is an `InvalidArg` error.
     #[napi(ts_type = "LintRulesConfig")]
-    pub rules: Option<JsonValue>,
+    pub rules: Option<RuleInput>,
     /// Maximum collection nesting depth (integer, 1..=512, default: 256).
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
     pub max_depth: Option<f64>,
@@ -264,7 +266,7 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
         rust = rust.with_disabled_rule(RuleName::DuplicateKey);
     }
     if let Some(rules) = &config.rules {
-        rust.rules.apply(rules).map_err(config_error)?;
+        rust.rules.apply(&rules.0).map_err(config_error)?;
     }
     for code in config.disabled_rules.iter().flatten() {
         rust = rust.with_disabled_rule(RuleName::from_str(code).map_err(config_error)?);
