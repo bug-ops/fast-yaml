@@ -58,7 +58,10 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
     if let Some(permissions) = existing {
         temp.as_file().set_permissions(permissions)?;
     }
-    temp.persist(&target).map_err(|e| e.error)?;
+    // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
+    let temp_path = temp.into_temp_path();
+    fs::rename(&temp_path, &target)?;
+    let _ = temp_path.keep();
     Ok(())
 }
 
