@@ -78,7 +78,7 @@ fn explicit_start_config_emits_one_marker_per_document() {
 
 #[test]
 fn anchor_with_colon_and_control_chars_re_parses() {
-    check("! &:&\0");
+    check("! &:&");
     check("&a:b x");
     check("&\x01 x");
     check("a: &\x01 x\nb: *\x01");
@@ -103,7 +103,7 @@ fn tagged_empty_key_keeps_colon_separate() {
 
 #[test]
 fn plain_scalar_resembling_document_marker_is_quoted() {
-    assert_eq!(check("\t---\t-\0/"), "'---\t-'\n");
+    assert_eq!(check("\t---\t-"), "'---\t-'\n");
     check("  ... x");
     check("a: ---\n");
 }

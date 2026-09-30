@@ -1,9 +1,9 @@
-use crate::error::ParseResult;
+use crate::error::{ParseError, ParseResult};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::Value;
 use saphyr::{ScalarOwned, YamlLoader};
-use saphyr_parser::{Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag};
+use saphyr_parser::{Marker, Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag};
 
 /// Parser for YAML documents.
 ///
@@ -180,7 +180,7 @@ fn load_documents_with_budget(
         Bom::Keep => input,
     };
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
-    let mut parser = SaphyrParser::new_from_str(text);
+    let mut parser = SaphyrParser::new_from_str(reject_nul(text)?);
     let mut loader = YamlLoader::<Value>::default();
     loader.early_parse(false);
     let mut guard = LimitGuard::with_budget(budget.clone());
@@ -193,6 +193,46 @@ fn load_documents_with_budget(
         loader.into_documents(),
         input,
     ))
+}
+
+/// Rejects input containing a NUL (U+0000) character, returning it unchanged otherwise.
+///
+/// The scanner treats NUL as end of stream and would silently drop everything after it,
+/// while YAML 1.2 excludes it from the printable character set (§5.1).
+///
+/// # Errors
+///
+/// Returns `ParseError::Scanner` positioned at the first NUL.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::reject_nul;
+///
+/// assert_eq!(reject_nul("a: 1")?, "a: 1");
+/// assert!(reject_nul("a: 1\0\nb: 2").is_err());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn reject_nul(input: &str) -> ParseResult<&str> {
+    let Some(offset) = memchr::memchr(0, input.as_bytes()) else {
+        return Ok(input);
+    };
+    let (mut chars, mut line, mut col) = (0, 1, 0);
+    let mut prev = None;
+    for c in input[..offset].chars() {
+        chars += 1;
+        match c {
+            '\n' => (line, col) = (line + usize::from(prev != Some('\r')), 0),
+            '\r' => (line, col) = (line + 1, 0),
+            _ => col += 1,
+        }
+        prev = Some(c);
+    }
+    let marker = Marker::new(chars, line, col);
+    Err(ParseError::Scanner(saphyr::ScanError::new(
+        marker,
+        "NUL (U+0000) is not allowed in YAML".to_owned(),
+    )))
 }
 
 /// Strips one leading UTF-8 byte order mark (U+FEFF) from `input`.

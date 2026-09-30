@@ -80,7 +80,7 @@ fn scan_comments(
 ) -> ParseResult<()> {
     let chars: Vec<char> = strip_bom(input).chars().collect();
     let line_starts = line_starts(&chars);
-    let mut parser = SaphyrParser::new_from_str(strip_bom(input));
+    let mut parser = SaphyrParser::new_from_str(crate::parser::reject_nul(strip_bom(input))?);
     let mut cursor = 0usize;
 
     while let Some(event) = parser.next_event() {

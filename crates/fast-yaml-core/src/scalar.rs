@@ -241,14 +241,16 @@ fn float_str_to_int(s: &str) -> Option<i64> {
 /// Parse a YAML core schema float, handling special values (.inf, .nan, etc.).
 fn parse_core_schema_float(s: &str) -> Option<f64> {
     match s {
-        ".inf" | ".Inf" | ".INF" => Some(f64::INFINITY),
+        ".inf" | "+.inf" | ".Inf" | "+.Inf" | ".INF" | "+.INF" => Some(f64::INFINITY),
         "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
         ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
         // Reject bare words like "infinity" or "nan" that Rust's f64::parse() accepts.
         other => {
             let s = other.strip_prefix(['+', '-']).unwrap_or(other);
-            let has_digit_start = s.starts_with(|c: char| c.is_ascii_digit());
-            let looks_like_float = has_digit_start
+            let has_mantissa = s.starts_with(|c: char| c.is_ascii_digit())
+                || s.strip_prefix('.')
+                    .is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit()));
+            let looks_like_float = has_mantissa
                 && s.chars().all(|c| {
                     c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
                 });
@@ -305,6 +307,24 @@ mod tests {
         assert_eq!(plain("-.inf"), Float(f64::NEG_INFINITY));
         assert!(matches!(plain(".nan"), Float(f) if f.is_nan()));
         assert_eq!(plain("yes"), Str("yes"));
+    }
+
+    #[test]
+    fn leading_dot_floats_and_signed_infinity() {
+        assert_eq!(plain(".5"), Float(0.5));
+        assert_eq!(plain("-.5"), Float(-0.5));
+        assert_eq!(plain("+.5e1"), Float(5.0));
+        for s in ["+.inf", "+.Inf", "+.INF"] {
+            assert_eq!(plain(s), Float(f64::INFINITY), "{s:?}");
+        }
+        assert_eq!(
+            tagged("+.inf", ScalarStyle::Plain, "float"),
+            Float(f64::INFINITY)
+        );
+        assert_eq!(tagged(".5", ScalarStyle::Plain, "int"), Int(0));
+        for s in ["+.nan", ".", "-.", ".e5", "..5", ".5.5", "+.infx"] {
+            assert_eq!(plain(s), Str(s), "{s:?}");
+        }
     }
 
     #[test]

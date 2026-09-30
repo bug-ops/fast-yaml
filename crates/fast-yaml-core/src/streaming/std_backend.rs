@@ -155,7 +155,7 @@ fn format_with_names(
     config: &EmitterConfig,
     anchor_names: Vec<String>,
 ) -> EmitResult<Formatted> {
-    let parser = Parser::new_from_str(input);
+    let parser = Parser::new_from_str(crate::parser::reject_nul(input)?);
 
     // Output is typically 10-20% larger than input due to formatting
     let output_capacity = input.len() + (input.len() / 5);

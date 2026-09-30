@@ -1,6 +1,11 @@
+use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use crate::error::{EmitError, EmitResult, from_saphyr};
+use crate::scalar::{ResolvedScalar, resolve_scalar};
+use crate::streaming::{
+    effective_style, is_unsafe_plain, write_double_quoted, write_single_quoted,
+};
 use crate::value::Value;
 use memchr::memmem;
 use saphyr::{ScalarOwned, YamlEmitter};
@@ -167,7 +172,8 @@ impl Emitter {
             emitter.multiline_strings(config.multiline_strings);
 
             // Convert YamlOwned to Yaml for emission
-            let yaml_borrowed: saphyr::Yaml = value.into();
+            let value = quote_non_string_lookalikes(value);
+            let yaml_borrowed: saphyr::Yaml = (&*value).into();
             emitter.dump(&yaml_borrowed).map_err(from_saphyr)?;
         }
 
@@ -463,8 +469,18 @@ impl Emitter {
     /// Emit a scalar key as an inline string (no trailing newline).
     fn emit_scalar_inline(value: &Value) -> EmitResult<String> {
         match value {
-            Value::Representation(s, ScalarStyle::SingleQuoted, _) => Ok(format!("'{s}'")),
-            Value::Representation(s, ScalarStyle::DoubleQuoted, _) => Ok(format!("\"{s}\"")),
+            Value::Representation(
+                s,
+                style @ (ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted),
+                _,
+            ) => {
+                let mut out = String::with_capacity(s.len() + 2);
+                match effective_style(s, *style) {
+                    ScalarStyle::SingleQuoted => write_single_quoted(&mut out, s),
+                    _ => write_double_quoted(&mut out, s),
+                }
+                Ok(out)
+            }
             Value::Representation(s, _, _) => Ok(s.clone()),
             Value::Value(scalar) => match scalar {
                 ScalarOwned::Null => Ok("null".to_string()),
@@ -489,8 +505,10 @@ impl Emitter {
                     }
                 }
                 ScalarOwned::String(s) => {
-                    if s.contains(':') || s.contains('#') || s.is_empty() {
-                        Ok(format!("\"{s}\""))
+                    if flow_key_needs_quotes(s) {
+                        let mut out = String::with_capacity(s.len() + 2);
+                        write_double_quoted(&mut out, s);
+                        Ok(out)
                     } else {
                         Ok(s.clone())
                     }
@@ -508,7 +526,8 @@ impl Emitter {
         {
             let mut emitter = YamlEmitter::new(&mut out);
             emitter.compact(true);
-            let yaml: saphyr::Yaml = value.into();
+            let value = quote_non_string_lookalikes(value);
+            let yaml: saphyr::Yaml = (&*value).into();
             emitter.dump(&yaml).map_err(from_saphyr)?;
         }
         // saphyr emits "---\nvalue\n" — strip markers
@@ -650,6 +669,71 @@ impl Emitter {
     /// ```
     pub fn format(input: &str) -> EmitResult<String> {
         Self::format_with_config(input, &EmitterConfig::default())
+    }
+}
+
+/// Whether a string key must be quoted to be read back as the same string in flow context.
+fn flow_key_needs_quotes(s: &str) -> bool {
+    s.is_empty()
+        || s.starts_with(char::is_whitespace)
+        || s.ends_with(char::is_whitespace)
+        || s.contains([':', '#', ',', '[', ']', '{', '}', '"', '\''])
+        || s.chars().any(char::is_control)
+        || is_unsafe_plain(s)
+        || reads_as_non_string(s)
+}
+
+/// Whether the plain scalar `s` would be resolved to something other than a string.
+fn reads_as_non_string(s: &str) -> bool {
+    !matches!(
+        resolve_scalar(s, ScalarStyle::Plain, None),
+        ResolvedScalar::Str(_)
+    )
+}
+
+/// Whether any string in `value` needs forcing into quotes because it reads back as a non-string.
+///
+/// saphyr's own quoting check has a separate, narrower float grammar, so strings such as
+/// `+.inf` would be written plain and change type on re-read.
+fn has_non_string_lookalike(value: &Value) -> bool {
+    match value {
+        Value::Value(ScalarOwned::String(s)) => reads_as_non_string(s),
+        Value::Sequence(seq) => seq.iter().any(has_non_string_lookalike),
+        Value::Mapping(map) => map
+            .iter()
+            .any(|(k, v)| has_non_string_lookalike(k) || has_non_string_lookalike(v)),
+        _ => false,
+    }
+}
+
+fn double_quote_non_string_lookalikes(value: &Value) -> Value {
+    match value {
+        Value::Value(ScalarOwned::String(s)) if reads_as_non_string(s) => {
+            Value::Representation(s.clone(), ScalarStyle::DoubleQuoted, None)
+        }
+        Value::Sequence(seq) => {
+            Value::Sequence(seq.iter().map(double_quote_non_string_lookalikes).collect())
+        }
+        Value::Mapping(map) => Value::Mapping(
+            map.iter()
+                .map(|(k, v)| {
+                    (
+                        double_quote_non_string_lookalikes(k),
+                        double_quote_non_string_lookalikes(v),
+                    )
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Returns `value` with every string that reads back as a non-string forced into double quotes.
+fn quote_non_string_lookalikes(value: &Value) -> Cow<'_, Value> {
+    if has_non_string_lookalike(value) {
+        Cow::Owned(double_quote_non_string_lookalikes(value))
+    } else {
+        Cow::Borrowed(value)
     }
 }
 
@@ -2039,5 +2123,87 @@ mod tests {
     #[test]
     fn test_format_empty_input_is_empty() {
         assert_eq!(format_at("", 2), "");
+    }
+
+    fn flow_with_key(key: Value) -> String {
+        use saphyr::MappingOwned;
+
+        let mut map = MappingOwned::new();
+        map.insert(key, Value::Value(ScalarOwned::Integer(1)));
+        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        Emitter::emit_str_with_config(&Value::Mapping(map), &config).unwrap()
+    }
+
+    fn string_key(s: &str) -> Value {
+        Value::Value(ScalarOwned::String(s.to_owned()))
+    }
+
+    #[test]
+    fn flow_string_keys_are_escaped_and_round_trip() {
+        for key in [
+            "x: \"y\"",
+            "a\nb",
+            "it's",
+            "c\\d",
+            "",
+            "1",
+            "true",
+            "null",
+            ".5",
+            "+.inf",
+            "- a",
+            "[a",
+            "a, b",
+            "&a",
+            "*a",
+            "!t",
+            "a\tb",
+            " a",
+            "a#b",
+            "-.5",
+            "a\u{2028}b",
+            "a\u{85}b",
+            "a\x7fb",
+        ] {
+            let out = flow_with_key(string_key(key));
+            let Some(Value::Mapping(map)) = crate::Parser::parse_str(&out).unwrap() else {
+                panic!("mapping expected for {key:?}: {out}");
+            };
+            let (k, _) = map.iter().next().unwrap();
+            assert_eq!(k, &string_key(key), "{key:?}: {out}");
+        }
+    }
+
+    #[test]
+    fn flow_quoted_representation_keys_are_escaped() {
+        let double =
+            Value::Representation("say \"hi\"\n".to_owned(), ScalarStyle::DoubleQuoted, None);
+        assert_eq!(flow_with_key(double), "{\"say \\\"hi\\\"\\n\": 1}\n");
+        let plain = Value::Representation("1".to_owned(), ScalarStyle::Plain, None);
+        assert_eq!(flow_with_key(plain), "{1: 1}\n");
+        let single = Value::Representation("it's".to_owned(), ScalarStyle::SingleQuoted, None);
+        assert_eq!(flow_with_key(single), "{'it''s': 1}\n");
+    }
+
+    #[test]
+    fn non_string_lookalike_strings_round_trip_in_every_position() {
+        use saphyr::MappingOwned;
+
+        for text in [
+            "+.inf", "+.Inf", "+.INF", ".5", "-.5", "+.5e3", ".inf", "1", "true", "null",
+        ] {
+            let mut inner = MappingOwned::new();
+            inner.insert(string_key(text), string_key(text));
+            let value = Value::Mapping(inner);
+            let seq = Value::Sequence(vec![string_key(text), value.clone()]);
+            for flow in [false, true] {
+                let config = EmitterConfig::new().with_default_flow_style(flow.then_some(true));
+                for doc in [&value, &seq, &string_key(text)] {
+                    let out = Emitter::emit_str_with_config(doc, &config).unwrap();
+                    let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+                    assert_eq!(&back, doc, "{text:?} flow={flow}: {out}");
+                }
+            }
+        }
     }
 }
