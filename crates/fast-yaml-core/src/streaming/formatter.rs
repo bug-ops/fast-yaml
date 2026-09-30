@@ -12,6 +12,24 @@ use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH};
 use crate::emitter::{EmitterConfig, block_scalar_header};
 
+/// Whether `c` is a YAML non-printable that only a double-quoted escape can represent (tab excluded).
+fn needs_escape(c: char) -> bool {
+    (c.is_control() && c != '\t') || matches!(c, '\u{FFFE}' | '\u{FFFF}')
+}
+
+/// Returns the style a scalar must be written in to round-trip its value.
+///
+/// Plain and single-quoted scalars cannot represent control characters other than tab
+/// (a raw line break is folded on re-parse), so they are promoted to double-quoted.
+fn effective_style(value: &str, style: ScalarStyle) -> ScalarStyle {
+    match style {
+        ScalarStyle::Plain | ScalarStyle::SingleQuoted if value.chars().any(needs_escape) => {
+            ScalarStyle::DoubleQuoted
+        }
+        other => other,
+    }
+}
+
 /// Writes a tag in its shortest re-parseable form.
 ///
 /// Core-schema tags become `!!x`, primary-handle tags `!x`, the non-specific tag `!`;
@@ -246,6 +264,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         anchor_id: usize,
         tag: Option<&Cow<'_, Tag>>,
     ) {
+        let style = effective_style(value, style);
         self.begin_explicit_value();
         let ctx = self.current_context();
         let is_block = matches!(style, ScalarStyle::Literal | ScalarStyle::Folded);
@@ -372,6 +391,12 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                         '\r' => self.output.push_str("\\r"),
                         '\t' => self.output.push_str("\\t"),
                         '\0' => self.output.push_str("\\0"),
+                        c if c.is_control() => {
+                            let _ = write!(self.output, "\\x{:02X}", u32::from(c));
+                        }
+                        '\u{FFFE}' | '\u{FFFF}' => {
+                            let _ = write!(self.output, "\\u{:04X}", u32::from(c));
+                        }
                         _ => self.output.push(c),
                     }
                 }
@@ -501,7 +526,12 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.last_char_newline = false;
             }
             Context::MappingKey => {
-                self.write_indent();
+                if self.first_key_after_dash {
+                    self.first_key_after_dash = false;
+                } else {
+                    self.write_indent();
+                }
+                self.node_col = self.current_column();
             }
             // Explicit* are consumed by begin_explicit_value and never current here.
             Context::Root | Context::ExplicitKey | Context::ExplicitValue => {}
@@ -527,7 +557,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         // Handle context transitions
         match ctx {
             Context::MappingKey => {
-                self.output.push(':');
+                self.output.push_str(" :");
                 self.set_context(Context::MappingValue);
                 self.pending_space = true;
                 // last_char_newline remains false
@@ -789,5 +819,95 @@ mod tests {
         let once = format_streaming(yaml, &config).unwrap();
         assert_eq!(format_streaming(&once, &config).unwrap(), once);
         assert_eq!(events(&once), events(yaml));
+    }
+
+    #[test]
+    fn alias_keys_get_space_before_colon() {
+        for yaml in [
+            "&k a: 1\n? *k\n: 2\n",
+            "&k a: *k\n*k : *k\n",
+            "&k a: 1\n*k :\n  x: 1\n",
+            "&k a: 1\n*k : [1, 2]\n",
+            "x:\n  y:\n    &k a: 1\n    *k : 2\n",
+            "x: {&k a: 1, *k : 2}\n",
+            "- &k a\n- *k : 1\n",
+            "- &k a: 1\n  *k : 2\n",
+        ] {
+            assert_stable(yaml);
+        }
+        assert_eq!(fmt("&k a: 1\n? *k\n: 2\n"), "&k a: 1\n*k : 2\n");
+        assert_eq!(fmt("- &k a\n- *k : 1\n"), "- &k a\n- *k : 1\n");
+    }
+
+    #[test]
+    fn alias_keys_indent_4() {
+        let config = EmitterConfig::new().with_indent(4);
+        let yaml = "x:\n  &k a: 1\n  *k : 2\n";
+        let once = format_streaming(yaml, &config).unwrap();
+        assert_eq!(format_streaming(&once, &config).unwrap(), once);
+        assert_eq!(events(&once), events(yaml));
+    }
+
+    #[test]
+    fn multiline_quoted_and_plain_scalars_stay_valid() {
+        for yaml in [
+            "? 'a\n\n  b'\n: 1\n",
+            "k: 'a\n\n  b'\n",
+            "- 'a\n\n  b'\n",
+            "k: a\n\n  b\n",
+            "? a\n\n  b\n: 1\n",
+            "? \"a\\n\\nb\"\n: 1\n",
+            "? &k 'a\n\n  b'\n: 1\n",
+            "? !!str 'a\n\n  b'\n: 1\n",
+            "x:\n  y:\n    - ? 'a\n\n        b'\n      : 1\n",
+            "'a\n\n  b'\n",
+            "\"a\\u0001b\"\n",
+            "k: \"a\\rb\"\n",
+        ] {
+            assert_stable(yaml);
+        }
+        assert_eq!(fmt("? 'a\n\n  b'\n: 1\n"), "\"a\\nb\": 1\n");
+        assert_eq!(fmt("- 'a\n\n  b'\n"), "- \"a\\nb\"\n");
+        assert_eq!(fmt("k: 'x\ty'\n"), "k: 'x\ty'\n");
+        assert_eq!(fmt("k: \"a\\u0001b\"\n"), "k: \"a\\x01b\"\n");
+    }
+
+    #[test]
+    fn multiline_scalar_indent_4() {
+        let config = EmitterConfig::new().with_indent(4);
+        let yaml = "x:\n  k: 'a\n\n    b'\n";
+        let once = format_streaming(yaml, &config).unwrap();
+        assert_eq!(format_streaming(&once, &config).unwrap(), once);
+        assert_eq!(events(&once), events(yaml));
+    }
+
+    #[test]
+    fn block_scalar_under_alias_key_stays_valid() {
+        for yaml in [
+            "&k a: 1\nb:\n  c:\n    *k : |\n      text\n",
+            "- &k a\n- *k : |\n    text\n",
+            "&k a: 1\nb:\n  c:\n    *k : >+\n      text\n\n",
+        ] {
+            assert_stable(yaml);
+        }
+    }
+
+    #[test]
+    fn nested_alias_key_with_multiline_value_indent_4() {
+        let config = EmitterConfig::new().with_indent(4);
+        let yaml = "&k a: 1\nx:\n  y:\n    *k : \"p\\nq\"\n    z: 2\n";
+        let once = format_streaming(yaml, &config).unwrap();
+        assert_eq!(format_streaming(&once, &config).unwrap(), once);
+        assert_eq!(events(&once), events(yaml));
+    }
+
+    #[test]
+    fn non_characters_and_c1_controls_are_escaped() {
+        assert_eq!(
+            fmt("k: \"a\\uFFFEb\\uFFFF\"\n"),
+            "k: \"a\\uFFFEb\\uFFFF\"\n"
+        );
+        assert_eq!(fmt("k: \"a\\x7Fb\\x85\"\n"), "k: \"a\\x7Fb\\x85\"\n");
+        assert_stable("k: \"a\\uFFFEb\"\n");
     }
 }
