@@ -2,10 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
-use crate::source::offset::ByteOffset;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
+use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
+use saphyr_parser::{Event, Parser as SaphyrParser};
 
 /// Linting rule for float values.
 ///
@@ -34,14 +35,6 @@ use fast_yaml_core::Value;
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct FloatValuesRule;
-
-fn value_start(line: &str, part_offset: usize, token: &str) -> usize {
-    part_offset
-        + line
-            .get(part_offset..)
-            .and_then(|rest| rest.find(token))
-            .unwrap_or(0)
-}
 
 /// Options of the float-values rule.
 #[allow(clippy::struct_excessive_bools)]
@@ -88,178 +81,84 @@ impl super::LintRule for FloatValuesRule {
         Severity::Warning
     }
 
-    #[allow(clippy::too_many_lines)]
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.float_values.options;
-        let require_numeral_before_decimal = options.require_numeral_before_decimal;
-        let forbid_scientific_notation = options.forbid_scientific_notation;
-        let forbid_nan = options.forbid_nan;
-        let forbid_inf = options.forbid_inf;
+        let severity = config
+            .rules
+            .float_values
+            .severity_or(self.default_severity());
+        let source_context = context.source_context();
 
         let mut diagnostics = Vec::new();
+        let mut roles = RoleTracker::default();
+        let mut parser = SaphyrParser::new_from_str(context.source());
 
-        // Use cached lines and metadata from context
-        let lines = context.lines();
-        let line_metadata = context.line_metadata();
-
-        for (line_idx, (line, metadata)) in lines.iter().zip(line_metadata).enumerate() {
-            let line_num = line_idx + 1;
-            let line_offset = context.source_context().get_line_offset(line_num);
-
-            // Skip comment lines using cached metadata
-            if metadata.is_comment {
-                continue;
-            }
-
-            // Find value parts (after : or -)
-            let parts: Vec<(&str, usize)> = line
-                .split_once(':')
-                .or_else(|| line.split_once('-'))
-                .map(|(before, after)| vec![(after, before.len() + 1)])
-                .unwrap_or_default();
-
-            for (part, part_offset) in parts {
-                let trimmed = part.trim();
-
-                // Skip if empty, quoted, or starts with flow collection markers
-                if trimmed.is_empty()
-                    || trimmed.starts_with('"')
-                    || trimmed.starts_with('\'')
-                    || trimmed.starts_with('[')
-                    || trimmed.starts_with('{')
-                {
-                    continue;
-                }
-
-                // Extract the value token (before any comment or space)
-                let value_token = trimmed
-                    .split_whitespace()
-                    .next()
-                    .and_then(|s| s.split('#').next())
-                    .unwrap_or(trimmed);
-
-                // Pre-compute lowercase once for all checks
-                let value_lower = value_token.to_lowercase();
-
-                // Check for missing numeral before decimal point
-                let bare = value_token.trim_start_matches(['-', '+']);
-                if require_numeral_before_decimal && bare.starts_with('.') {
-                    // Check if it's a valid float starting with '.' (e.g. .5, -.5, +.5)
-                    if bare.chars().nth(1).is_some_and(|c| c.is_ascii_digit()) {
-                        let value_start = value_start(line, part_offset, value_token);
-                        let offset = line_offset + value_start;
-                        let severity = config
-                            .rules
-                            .float_values
-                            .severity_or(self.default_severity());
-
-                        let span = context
-                            .source_context()
-                            .span_at(ByteOffset::new(offset), value_token.len());
-
-                        let suggestion = match value_token.split_at_checked(1) {
-                            Some((sign @ ("-" | "+"), rest)) => format!("{sign}0{rest}"),
-                            _ => format!("0{value_token}"),
-                        };
+        while let Some(Ok((event, span))) = parser.next_event() {
+            match event {
+                Event::Scalar(text, style, _, tag) => {
+                    if roles.node() == NodeRole::MappingKey || tag.is_some() {
+                        continue;
+                    }
+                    let ResolvedScalar::Float(float) = resolve_scalar(&text, style, None) else {
+                        continue;
+                    };
+                    let span = source_context.span_of_bytes(source_context.byte_range_of(span));
+                    for msg in messages(&text, float, options) {
                         diagnostics.push(
-                            DiagnosticBuilder::new(
-                                self.code(),
-                                severity,
-                                format!(
-                                    "float value '{value_token}' should have a numeral before the decimal point (e.g., '{suggestion}')"
-                                ),
-                                span,
-                            )
-                            .build_with_context(context.source_context()),
+                            DiagnosticBuilder::new(self.code(), severity, msg, span)
+                                .build_with_context(source_context),
                         );
                     }
                 }
-
-                // Check for scientific notation
-                if forbid_scientific_notation
-                    && ((value_lower.contains('e') && value_token.parse::<f64>().is_ok())
-                        || value_lower.ends_with("e+")
-                        || value_lower.ends_with("e-"))
-                {
-                    let value_start = value_start(line, part_offset, value_token);
-                    let offset = line_offset + value_start;
-                    let severity = config
-                        .rules
-                        .float_values
-                        .severity_or(self.default_severity());
-
-                    let span = context
-                        .source_context()
-                        .span_at(ByteOffset::new(offset), value_token.len());
-
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            format!("scientific notation '{value_token}' is forbidden"),
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
-                    );
+                Event::MappingStart(..) => {
+                    roles.start_mapping(context.source(), source_context.byte_range_of(span));
                 }
-
-                // Check for NaN
-                if forbid_nan && matches!(value_lower.as_str(), ".nan" | "nan") {
-                    let value_start = value_start(line, part_offset, value_token);
-                    let offset = line_offset + value_start;
-                    let severity = config
-                        .rules
-                        .float_values
-                        .severity_or(self.default_severity());
-
-                    let span = context
-                        .source_context()
-                        .span_at(ByteOffset::new(offset), value_token.len());
-
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "NaN (not a number) is forbidden",
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
-                    );
+                Event::SequenceStart(..) => {
+                    roles.start_sequence(context.source(), source_context.byte_range_of(span));
                 }
-
-                // Check for Infinity
-                if forbid_inf
-                    && matches!(
-                        value_lower.as_str(),
-                        ".inf" | "-.inf" | "+.inf" | "inf" | "-inf" | "+inf"
-                    )
-                {
-                    let value_start = value_start(line, part_offset, value_token);
-                    let offset = line_offset + value_start;
-                    let severity = config
-                        .rules
-                        .float_values
-                        .severity_or(self.default_severity());
-
-                    let span = context
-                        .source_context()
-                        .span_at(ByteOffset::new(offset), value_token.len());
-
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            self.code(),
-                            severity,
-                            "Infinity is forbidden",
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
-                    );
+                Event::MappingEnd | Event::SequenceEnd => roles.leave(),
+                Event::Alias(..) => {
+                    roles.node();
                 }
+                _ => {}
             }
         }
 
         diagnostics
     }
+}
+
+/// Builds the diagnostic messages that `options` raise for the float scalar `text`.
+fn messages(text: &str, float: f64, options: &FloatValuesOptions) -> Vec<String> {
+    let bare = text.trim_start_matches(['-', '+']);
+    if float.is_nan() {
+        return options
+            .forbid_nan
+            .then(|| "NaN (not a number) is forbidden".to_owned())
+            .into_iter()
+            .collect();
+    }
+    if float.is_infinite() && bare.starts_with('.') {
+        return options
+            .forbid_inf
+            .then(|| "Infinity is forbidden".to_owned())
+            .into_iter()
+            .collect();
+    }
+    let mut found = Vec::new();
+    if options.require_numeral_before_decimal && bare.starts_with('.') {
+        let suggestion = match text.split_at_checked(1) {
+            Some((sign @ ("-" | "+"), rest)) => format!("{sign}0{rest}"),
+            _ => format!("0{text}"),
+        };
+        found.push(format!(
+            "float value '{text}' should have a numeral before the decimal point (e.g., '{suggestion}')"
+        ));
+    }
+    if options.forbid_scientific_notation && bare.contains(['e', 'E']) {
+        found.push(format!("scientific notation '{text}' is forbidden"));
+    }
+    found
 }
 
 #[cfg(test)]
@@ -347,7 +246,7 @@ mod tests {
 
     #[test]
     fn test_float_values_nan() {
-        let yaml = "value: .nan\nanother: NaN";
+        let yaml = "value: .nan\nanother: .NaN";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
@@ -483,5 +382,55 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert!(diagnostics.is_empty());
+    }
+
+    fn lint_messages(yaml: &str, options: &str) -> Vec<String> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let config = config_with_rule(RuleName::FloatValues, options);
+        FloatValuesRule
+            .check(&LintContext::new(yaml), &value, &config)
+            .into_iter()
+            .map(|d| d.message)
+            .collect()
+    }
+
+    #[test]
+    fn strings_that_are_not_core_floats_are_ignored() {
+        let options = "{forbid-nan: true, forbid-inf: true, forbid-scientific-notation: true}";
+        assert!(lint_messages("a: .5e\nb: 1e+\nc: NaN\nd: inf\ne: 1e\nf: .e5", options).is_empty());
+    }
+
+    #[test]
+    fn flow_items_and_root_floats_are_checked() {
+        assert_eq!(lint_messages("[.5, 1.5]", "{}").len(), 1);
+        assert_eq!(lint_messages(".5", "{}").len(), 1);
+        assert_eq!(lint_messages("{a: .5}", "{}").len(), 1);
+    }
+
+    #[test]
+    fn keys_are_not_checked() {
+        assert!(lint_messages(".5: x", "{}").is_empty());
+    }
+
+    #[test]
+    fn every_applicable_diagnostic_is_reported() {
+        let opts = "{forbid-scientific-notation: true}";
+        assert_eq!(lint_messages("a: .5e3", opts).len(), 2);
+        assert_eq!(lint_messages("a: -.5E-3", opts).len(), 2);
+    }
+
+    #[test]
+    fn tagged_scalars_are_skipped() {
+        let opts = "{forbid-nan: true, forbid-scientific-notation: true}";
+        let yaml = "a: !!float .5\nb: !custom .5\nc: !!float .nan\nd: !!float 1e3";
+        assert!(lint_messages(yaml, opts).is_empty());
+    }
+
+    #[test]
+    fn negative_strings_and_alias_between_keys() {
+        let opts = "{forbid-nan: true, forbid-scientific-notation: true}";
+        assert!(lint_messages("- -.5e\n- -NaN\n- -1e+\n- '.5'\n", opts).is_empty());
+        assert_eq!(lint_messages("x: &v 1.5\ny: *v\nz: .5\n", "{}").len(), 1);
+        assert_eq!(lint_messages("[.5]", "{}").len(), 1);
     }
 }

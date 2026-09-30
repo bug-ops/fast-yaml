@@ -12,6 +12,8 @@ use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
 use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 use super::LintRule;
+use super::node_roles::{NodeRole, RoleTracker};
+use super::truthy::NON_STANDARD_BOOLS;
 
 /// Linting rule for quoted strings.
 ///
@@ -174,14 +176,6 @@ impl RuleOptions for QuotedStringsOptions {
     }
 }
 
-/// Tracks whether the next scalar in a mapping scope is a key or a value.
-enum ScopeKind {
-    /// Inside a mapping; `expecting_key` alternates after each key/value.
-    Mapping { expecting_key: bool },
-    /// Inside a sequence; no key/value distinction.
-    Sequence,
-}
-
 impl super::LintRule for QuotedStringsRule {
     fn code(&self) -> &str {
         DiagnosticCode::QUOTED_STRINGS
@@ -206,39 +200,24 @@ impl super::LintRule for QuotedStringsRule {
         let (extra_required, extra_allowed) = (&options.extra_required, &options.extra_allowed);
 
         let mut diagnostics = Vec::new();
-        let mut scopes: Vec<ScopeKind> = Vec::new();
+        let mut roles = RoleTracker::default();
 
         let mut parser = SaphyrParser::new_from_str(source);
 
-        while let Some(Ok(ev)) = parser.next_event() {
-            let (event, span) = ev;
-
+        while let Some(Ok((event, span))) = parser.next_event() {
             match event {
                 Event::MappingStart(..) => {
-                    scopes.push(ScopeKind::Mapping {
-                        expecting_key: true,
-                    });
+                    roles.start_mapping(source, context.source_context().byte_range_of(span));
                 }
                 Event::SequenceStart(..) => {
-                    scopes.push(ScopeKind::Sequence);
+                    roles.start_sequence(source, context.source_context().byte_range_of(span));
                 }
-                Event::MappingEnd | Event::SequenceEnd => {
-                    scopes.pop();
-                    Self::advance_parent_to_key(&mut scopes);
+                Event::MappingEnd | Event::SequenceEnd => roles.leave(),
+                Event::Alias(..) => {
+                    roles.node();
                 }
                 Event::Scalar(ref value, style, ..) => {
-                    let is_key = matches!(
-                        scopes.last(),
-                        Some(ScopeKind::Mapping {
-                            expecting_key: true
-                        })
-                    );
-
-                    // Advance scope: after a key comes a value, after a value comes next key.
-                    if let Some(ScopeKind::Mapping { expecting_key }) = scopes.last_mut() {
-                        *expecting_key = !*expecting_key;
-                    }
-
+                    let is_key = roles.node() == NodeRole::MappingKey;
                     self.check_scalar(
                         source,
                         context.source_context(),
@@ -264,13 +243,6 @@ impl super::LintRule for QuotedStringsRule {
 }
 
 impl QuotedStringsRule {
-    /// Advances the innermost mapping scope to expect a key after a nested structure ends.
-    const fn advance_parent_to_key(scopes: &mut [ScopeKind]) {
-        if let Some(ScopeKind::Mapping { expecting_key }) = scopes.last_mut() {
-            *expecting_key = true;
-        }
-    }
-
     /// Checks a single scalar event and appends diagnostics as needed.
     #[allow(clippy::too_many_arguments)]
     fn check_scalar(
@@ -371,7 +343,7 @@ impl QuotedStringsRule {
             ScalarStyle::Plain
                 if required == QuoteRequirement::Always
                     && !is_key
-                    && !Self::is_scalar_literal(value)
+                    && !is_scalar_literal(value)
                     && !extra_allowed.iter().any(|p| value.contains(p.as_str())) =>
             {
                 let severity = config
@@ -448,18 +420,8 @@ impl QuotedStringsRule {
             return true;
         }
 
-        // Strings that could be interpreted as special values need quotes
-        let special_values = [
-            "true", "false", "True", "False", "TRUE", "FALSE", "yes", "no", "Yes", "No", "YES",
-            "NO", "on", "off", "On", "Off", "ON", "OFF", "null", "Null", "NULL", "~",
-        ];
-
-        if special_values.contains(&s) {
-            return true;
-        }
-
-        // Numbers need quotes to be treated as strings
-        if resolves_to_number(s) {
+        // yamllint does not treat y/n as booleans, so their quotes are never required
+        if (s.len() > 1 && NON_STANDARD_BOOLS.contains(&s)) || is_scalar_literal(s) {
             return true;
         }
 
@@ -508,29 +470,13 @@ impl QuotedStringsRule {
 
         false
     }
-
-    /// Checks if a token is a scalar literal (number, boolean, null).
-    fn is_scalar_literal(s: &str) -> bool {
-        // Boolean values
-        if matches!(s, "true" | "false") {
-            return true;
-        }
-
-        // Null values
-        if matches!(s, "null" | "~") {
-            return true;
-        }
-
-        // Numeric values
-        resolves_to_number(s)
-    }
 }
 
-/// Whether a plain `s` loads as an integer or float under the core schema.
-fn resolves_to_number(s: &str) -> bool {
-    matches!(
+/// Whether a plain `s` loads as anything but a string under the core schema.
+fn is_scalar_literal(s: &str) -> bool {
+    !matches!(
         resolve_scalar(s, ScalarStyle::Plain, None),
-        ResolvedScalar::Int(_) | ResolvedScalar::BigInt(_) | ResolvedScalar::Float(_)
+        ResolvedScalar::Str(_)
     )
 }
 
@@ -929,5 +875,48 @@ mod tests {
     #[test]
     fn quotes_that_preserve_a_float_type_are_needed() {
         assert!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n").is_empty());
+    }
+
+    fn messages(yaml: &str, options: &str) -> Vec<String> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let config = config_with_rule(RuleName::QuotedStrings, options);
+        QuotedStringsRule
+            .check(&LintContext::new(yaml), &value, &config)
+            .into_iter()
+            .map(|d| d.message)
+            .collect()
+    }
+
+    #[test]
+    fn collection_key_keeps_value_role() {
+        assert_eq!(messages("? {a: 1}\n: b\n", "{required: always}").len(), 1);
+    }
+
+    #[test]
+    fn alias_value_keeps_next_key_role() {
+        assert_eq!(
+            messages("x: &v 1\ny: *v\nz: w\n", "{required: always}").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn non_float_strings_need_no_quotes() {
+        assert_eq!(messages("a: '.5e'\nb: '.5'", "{}").len(), 1);
+    }
+
+    #[test]
+    fn quoted_y_and_n_are_not_needed() {
+        assert_eq!(
+            messages("a: \"y\"\nb: 'n'\nc: \"Y\"\nd: \"N\"\n", "{}").len(),
+            4
+        );
+        assert!(messages("a: 'yes'\nb: 'No'\n", "{}").is_empty());
+    }
+
+    #[test]
+    fn required_always_checks_root_scalar() {
+        assert_eq!(messages("word\n", "{required: always}").len(), 1);
+        assert!(messages("12\n", "{required: always}").is_empty());
     }
 }

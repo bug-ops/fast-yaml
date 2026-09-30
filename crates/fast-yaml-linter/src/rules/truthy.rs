@@ -6,7 +6,7 @@ use std::fmt;
 
 use crate::echo::{KEY_LIMIT, echo};
 
-use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
+use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
@@ -206,10 +206,12 @@ impl super::LintRule for TruthyRule {
                 Event::Scalar(text, style, _, tag) => {
                     let slot = match roles.node() {
                         NodeRole::MappingKey if options.check_keys => Slot::Key,
-                        NodeRole::MappingValue | NodeRole::SequenceItem => Slot::Value,
-                        _ => continue,
+                        NodeRole::MappingValue | NodeRole::SequenceItem | NodeRole::Root => {
+                            Slot::Value
+                        }
+                        NodeRole::MappingKey => continue,
                     };
-                    if roles.in_flow() || style != ScalarStyle::Plain || tag.is_some() {
+                    if style != ScalarStyle::Plain || tag.is_some() {
                         continue;
                     }
                     if let Some(msg) = message(slot, &text, &allowed) {
@@ -221,18 +223,10 @@ impl super::LintRule for TruthyRule {
                     }
                 }
                 Event::MappingStart(..) => {
-                    roles.node();
-                    roles.enter_mapping(CollectionStyle::of_start(
-                        context.source(),
-                        source_context.byte_range_of(span),
-                    ));
+                    roles.start_mapping(context.source(), source_context.byte_range_of(span));
                 }
                 Event::SequenceStart(..) => {
-                    roles.node();
-                    roles.enter_sequence(CollectionStyle::of_start(
-                        context.source(),
-                        source_context.byte_range_of(span),
-                    ));
+                    roles.start_sequence(context.source(), source_context.byte_range_of(span));
                 }
                 Event::MappingEnd | Event::SequenceEnd => roles.leave(),
                 Event::Alias(..) => {
@@ -504,9 +498,12 @@ mod tests {
     }
 
     #[test]
-    fn test_truthy_flow_pair_in_flow_sequence_is_skipped() {
+    fn test_truthy_flow_pair_in_flow_sequence_is_checked() {
         let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
-        assert!(truthy_spans("k: [a: yes]\nm: [ {x: 1}, y: no ]\n", &config).is_empty());
+        assert_eq!(
+            truthy_spans("k: [a: yes]\nm: [ {x: 1}, y: no ]\n", &config),
+            [(1, 8, 11), (2, 14, 15), (2, 17, 19)]
+        );
     }
 
     #[test]
@@ -518,7 +515,30 @@ mod tests {
     }
 
     #[test]
-    fn test_truthy_flow_collections_are_skipped() {
-        assert!(truthy_spans("a: [yes, no]\nb: {c: yes}\n", &LintConfig::default()).is_empty());
+    fn test_truthy_flow_collections_are_checked() {
+        assert_eq!(
+            truthy_spans("a: [yes, no]\nb: {c: yes}\n", &LintConfig::default()),
+            [(1, 5, 8), (1, 10, 12), (2, 8, 11)]
+        );
+    }
+
+    #[test]
+    fn test_truthy_root_scalar_and_flow_root() {
+        assert_eq!(truthy_spans("yes\n", &LintConfig::default()), [(1, 1, 4)]);
+        assert_eq!(truthy_spans("[yes]\n", &LintConfig::default()), [(1, 2, 5)]);
+    }
+
+    #[test]
+    fn test_truthy_multi_document_root() {
+        assert_eq!(
+            truthy_spans("--- yes\n--- no\n", &LintConfig::default()),
+            [(1, 5, 8), (2, 5, 7)]
+        );
+    }
+
+    #[test]
+    fn test_truthy_quoted_or_tagged_root_is_skipped() {
+        assert!(truthy_spans("\"yes\"\n", &LintConfig::default()).is_empty());
+        assert!(truthy_spans("!!str yes\n", &LintConfig::default()).is_empty());
     }
 }
