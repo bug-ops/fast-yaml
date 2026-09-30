@@ -43,6 +43,8 @@ pub mod emitter;
 pub mod error;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
 pub mod limits;
+/// YAML 1.1 merge key (`<<`) resolution shared by the core loader and bindings.
+pub mod merge;
 /// YAML parser for deserializing strings to documents.
 pub mod parser;
 /// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.
@@ -63,6 +65,7 @@ pub use limits::{
     DumpBudget, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDumpNodes,
     MaxOutputBytes, MaxTagBytes, ParseLimits, StreamBudget,
 };
+pub use merge::{MergeSource, MergeTarget, merge_into};
 pub use parser::{Parser, canonicalize, reject_nul, strip_bom};
 pub use scalar::{DecimalBigInt, ResolvedScalar, resolve_scalar};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

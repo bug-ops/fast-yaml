@@ -241,6 +241,25 @@ mod tests {
     }
 
     #[test]
+    fn test_yaml_to_json_resolves_merge_keys() {
+        let input = InputSource {
+            content: "b: &b {x: 1, y: 2}\nm:\n  k: 0\n  <<: *b\n  y: 9\n".to_string(),
+            origin: InputOrigin::Stdin,
+        };
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_path = temp_dir.path().join("output.json");
+        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+
+        let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
+        cmd.execute(&input, &output).unwrap();
+
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&temp_path).unwrap()).unwrap();
+        assert_eq!(json["m"], serde_json::json!({"x": 1, "y": 9, "k": 0}));
+    }
+
+    #[test]
     fn test_json_to_yaml() {
         let input = InputSource {
             content: r#"{"name": "test", "value": 123}"#.to_string(),

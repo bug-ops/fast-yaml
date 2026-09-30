@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use fast_yaml_core::merge::{MergeSource, MergeTarget, merge_into};
 use fast_yaml_core::{LimitGuard, ParseError, ParseLimits};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -141,9 +142,9 @@ impl<'input> EventLoader<'input> {
 /// What an open container collects as its children arrive.
 enum Children {
     Sequence(Vec<Py<PyAny>>),
-    /// Merge (`<<`) values and explicit pairs, plus a key awaiting its value.
+    /// The last merge (`<<`) value and explicit pairs, plus a key awaiting its value.
     Mapping {
-        merges: Vec<Py<PyAny>>,
+        merge: Option<Py<PyAny>>,
         explicit: Vec<(Py<PyAny>, Py<PyAny>)>,
         key: Option<Py<PyAny>>,
     },
@@ -172,7 +173,7 @@ impl OpenNode {
         Self {
             anchor_id,
             children: Children::Mapping {
-                merges: Vec::new(),
+                merge: None,
                 explicit: Vec::new(),
                 key: None,
             },
@@ -194,7 +195,7 @@ impl OpenNode {
         match &mut self.children {
             Children::Sequence(items) => items.push(value),
             Children::Mapping {
-                merges,
+                merge,
                 explicit,
                 key,
             } => match key.take() {
@@ -214,7 +215,7 @@ impl OpenNode {
                         .cast::<PyString>()
                         .is_ok_and(|s| s.to_str().is_ok_and(|s| s == "<<"));
                     if is_merge {
-                        merges.push(value);
+                        *merge = Some(value);
                     } else {
                         explicit.push((k, value));
                     }
@@ -234,46 +235,69 @@ impl OpenNode {
             Children::Sequence(items) => Ok(PyList::new(py, &items)?.into_any().unbind()),
             Children::Set { keys, .. } => Ok(PySet::new(py, &keys)?.into_any().unbind()),
             Children::Mapping {
-                merges, explicit, ..
-            } => build_mapping(py, &merges, explicit),
+                merge, explicit, ..
+            } => build_mapping(py, merge, explicit),
         }
     }
 }
 
-/// Build a `PyDict` from explicit pairs and YAML 1.1 merge keys (`<<`).
+/// `PyDict` sink for [`merge_into`].
+struct PyMergeTarget<'py>(Bound<'py, PyDict>);
+
+impl<'py> MergeTarget for PyMergeTarget<'py> {
+    type Node = Bound<'py, PyAny>;
+    type Error = PyErr;
+    type Entries = Vec<(Bound<'py, PyAny>, Bound<'py, PyAny>)>;
+    type Items = Vec<Bound<'py, PyAny>>;
+
+    fn classify(
+        &self,
+        node: Bound<'py, PyAny>,
+    ) -> PyResult<MergeSource<Self::Entries, Self::Items>> {
+        if let Ok(dict) = node.cast::<PyDict>() {
+            return Ok(MergeSource::Mapping(dict.iter().collect()));
+        }
+        if let Ok(list) = node.cast::<PyList>() {
+            return Ok(MergeSource::Sequence(list.iter().collect()));
+        }
+        if let Ok(set) = node.cast::<PySet>() {
+            let py = node.py();
+            return Ok(MergeSource::Mapping(
+                set.iter().map(|k| (k, py.None().into_bound(py))).collect(),
+            ));
+        }
+        Ok(MergeSource::Ignored)
+    }
+
+    fn set_if_absent(&mut self, key: Bound<'py, PyAny>, value: Bound<'py, PyAny>) -> PyResult<()> {
+        if self.0.contains(&key)? {
+            return Ok(());
+        }
+        self.0.set_item(key, value)
+    }
+
+    fn set(&mut self, key: Bound<'py, PyAny>, value: Bound<'py, PyAny>) -> PyResult<()> {
+        self.0.set_item(key, value)
+    }
+}
+
+/// Build a `PyDict` from explicit pairs and the YAML 1.1 merge key (`<<`).
 ///
-/// Merged keys are applied first (lower priority); explicit keys always win.
+/// Key order and precedence follow [`fast_yaml_core::merge`].
 fn build_mapping(
     py: Python<'_>,
-    merges: &[Py<PyAny>],
+    merge: Option<Py<PyAny>>,
     explicit: Vec<(Py<PyAny>, Py<PyAny>)>,
 ) -> PyResult<Py<PyAny>> {
-    let dict = PyDict::new(py);
-    for merge_val in merges {
-        let bound = merge_val.bind(py);
-        if let Ok(merge_dict) = bound.cast::<PyDict>() {
-            merge_missing(&dict, merge_dict)?;
-        } else if let Ok(seq) = bound.cast::<PyList>() {
-            for item in seq.iter() {
-                if let Ok(merge_dict) = item.cast::<PyDict>() {
-                    merge_missing(&dict, merge_dict)?;
-                }
-            }
-        }
-    }
-    for (key, value) in explicit {
-        dict.set_item(key, value)?;
-    }
-    Ok(dict.into_any().unbind())
-}
-
-fn merge_missing(dict: &Bound<'_, PyDict>, source: &Bound<'_, PyDict>) -> PyResult<()> {
-    for (mk, mv) in source.iter() {
-        if !dict.contains(mk.clone())? {
-            dict.set_item(mk, mv)?;
-        }
-    }
-    Ok(())
+    let mut target = PyMergeTarget(PyDict::new(py));
+    merge_into(
+        &mut target,
+        merge.map(|m| m.into_bound(py)),
+        explicit
+            .into_iter()
+            .map(|(k, v)| (k.into_bound(py), v.into_bound(py))),
+    )?;
+    Ok(target.0.into_any().unbind())
 }
 
 fn scan_err(e: &ScanError) -> PyErr {

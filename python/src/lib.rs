@@ -554,6 +554,11 @@ fn container_children<'py>(
 /// Raises:
 ///     `ValueError`: If the YAML is invalid or input exceeds size limit (100MB)
 ///
+/// Merge keys:
+///     `<<` entries come first, explicit keys override them in place, and for `<<: [*a, *b]`
+///     the earlier item wins. A repeated `<<` in one mapping keeps only its last value
+///     (`PyYAML` merges all of them).
+///
 /// Security:
 ///     Maximum input size is limited to 100MB to prevent denial-of-service attacks.
 ///
@@ -598,6 +603,9 @@ fn safe_load(
 ///
 /// Raises:
 ///     `ValueError`: If the YAML is invalid, input exceeds size limit (100MB), or a limit is out of range
+///
+/// Merge keys:
+///     Resolved per document with the same rules as `safe_load`.
 ///
 /// Security:
 ///     Maximum input size is limited to 100MB to prevent denial-of-service attacks.
@@ -990,6 +998,9 @@ fn safe_dump_all(
 ///
 /// Raises:
 ///     ValueError: If the YAML is invalid or input exceeds size limit (100MB)
+///
+/// Merge keys:
+///     Resolved with the same rules as `safe_load`.
 ///
 /// Example:
 ///     >>> import fast_yaml
