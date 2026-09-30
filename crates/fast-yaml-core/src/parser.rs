@@ -2,7 +2,7 @@ use crate::error::{ParseError, ParseResult};
 use crate::limits::{DocumentCursor, LimitGuard, ParseLimits, StreamBudget};
 use crate::loader::ValueLoader;
 use crate::merge::{
-    MergeError, MergeSource, MergeTarget, is_core_set_tag, is_set_marker, merge_into,
+    MergeError, MergeSource, MergeTarget, core_set_tag, is_core_set_tag, is_set_marker, merge_into,
     set_marker_tag,
 };
 use crate::merge_check::MergeKeyValidator;
@@ -526,20 +526,21 @@ fn canonicalize_set_source(raw: Value) -> Result<Value, MergeError> {
 }
 
 fn canonicalize_tagged(slot: &mut Value) -> Result<(), MergeError> {
-    let Value::Tagged(tag, inner) = std::mem::replace(slot, Value::Value(ScalarOwned::Null)) else {
+    let Value::Tagged(tag, mut inner) = std::mem::replace(slot, Value::Value(ScalarOwned::Null))
+    else {
         return Ok(());
     };
     if let Some(coerced) = coerce_tagged_scalar(&tag, &inner) {
         *slot = coerced;
         return Ok(());
     }
+    if (is_set_marker(&tag) || is_core_set_tag(&tag)) && matches!(*inner, Value::Mapping(_)) {
+        canonicalize_in_place(&mut inner, SetElements::Yes)?;
+        *slot = Value::Tagged(core_set_tag(), inner);
+        return Ok(());
+    }
     *slot = *inner;
-    let set = if is_set_marker(&tag) {
-        SetElements::Yes
-    } else {
-        SetElements::No
-    };
-    canonicalize_in_place(slot, set)
+    canonicalize_in_place(slot, SetElements::No)
 }
 
 /// Canonicalize a non-collection, non-tagged node.
@@ -959,10 +960,14 @@ merged:
         let Value::Mapping(root) = doc else {
             panic!("expected mapping")
         };
-        let Value::Mapping(m) = root[&Value::Value(ScalarOwned::String(key.into()))].clone() else {
-            panic!("expected mapping")
-        };
-        m
+        match root[&Value::Value(ScalarOwned::String(key.into()))].clone() {
+            Value::Mapping(m) => m,
+            Value::Tagged(_, inner) => match *inner {
+                Value::Mapping(m) => m,
+                other => panic!("expected mapping, got {other:?}"),
+            },
+            other => panic!("expected mapping, got {other:?}"),
+        }
     }
 
     fn entry_texts(m: &Map) -> Vec<String> {

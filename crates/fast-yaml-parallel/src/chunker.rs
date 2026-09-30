@@ -2,7 +2,7 @@
 
 #![allow(clippy::redundant_pub_crate)]
 
-use std::num::NonZeroUsize;
+use fast_yaml_core::limits::MaxDocuments;
 
 use crate::error::{Error, Result};
 
@@ -70,14 +70,17 @@ enum State {
 ///
 /// # Errors
 ///
-/// Returns [`Error::DocumentLimitExceeded`] as soon as the chunk count would pass `max`, so an
+/// Returns [`Error::TooManyDocuments`] as soon as the chunk count would pass `max`, so an
 /// input of millions of empty documents is never fully materialized.
-pub(crate) fn chunk_documents(input: &str, max: Option<NonZeroUsize>) -> Result<Vec<Chunk<'_>>> {
+pub(crate) fn chunk_documents(input: &str, max: Option<MaxDocuments>) -> Result<Vec<Chunk<'_>>> {
     if input.is_empty() {
         return Ok(Vec::new());
     }
     let admit = |count: usize| match max {
-        Some(max) if count >= max.get() => Err(Error::DocumentLimitExceeded { max, index: count }),
+        Some(limit) if count >= limit.get() => Err(Error::TooManyDocuments {
+            count: count + 1,
+            limit,
+        }),
         _ => Ok(()),
     };
 
@@ -372,5 +375,22 @@ mod tests {
     fn test_chunk_percent_line_inside_document_is_content() {
         assert_eq!(contents("a\n%YAML 1.2\n---\nb").len(), 2);
         assert_eq!(contents("a\n%YAML 1.2\n---\nb")[0], "a\n%YAML 1.2\n");
+    }
+
+    #[test]
+    fn test_chunk_documents_stops_at_the_limit() {
+        let input = "---\n".repeat(10_000);
+        let limit = |n| Some(MaxDocuments::new(n).unwrap());
+        let err = chunk_documents(&input, limit(3)).unwrap_err();
+        assert!(
+            matches!(err, Error::TooManyDocuments { count: 4, .. }),
+            "{err:?}"
+        );
+        assert_eq!(
+            chunk_documents(&input, limit(10_000)).unwrap().len(),
+            10_000
+        );
+        assert_eq!(chunk_documents("a\n---\nb\n", limit(2)).unwrap().len(), 2);
+        assert!(chunk_documents("a\n---\nb\n", limit(1)).is_err());
     }
 }

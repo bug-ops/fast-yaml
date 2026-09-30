@@ -72,6 +72,7 @@ fn run() -> Result<ExitCode> {
     let cli = Cli::parse_validated();
 
     let common_config = CommonConfig::from_cli(&cli);
+    let max_input = cli.max_input();
 
     let exit_code = match cli.command {
         Some(Command::Parse {
@@ -79,7 +80,7 @@ fn run() -> Result<ExitCode> {
             stats,
             limits,
         }) => {
-            let input = InputSource::from_args(file, cli.max_input_size)?;
+            let input = InputSource::from_args(file, max_input)?;
             let cmd =
                 commands::parse::ParseCommand::new(common_config, stats, limits.parse_limits());
             cmd.execute(&input)?;
@@ -107,10 +108,10 @@ fn run() -> Result<ExitCode> {
                 Target::Stdin => {
                     let mode = stdin_write_mode(intent, cli.output)?;
                     FormatCommand::new(common, comments)
-                        .run(&InputSource::from_stdin(cli.max_input_size)?, &mode)?
+                        .run(&InputSource::from_stdin(max_input)?, &mode)?
                 }
                 Target::File(path) => {
-                    let input = InputSource::from_file(&path, cli.max_input_size)?;
+                    let input = InputSource::from_file(&path, max_input)?;
                     let mode = WriteMode::new(intent, cli.output, Some(&path))?;
                     FormatCommand::new(common, comments).run(&input, &mode)?
                 }
@@ -123,11 +124,7 @@ fn run() -> Result<ExitCode> {
                         ),
                     };
                     commands::format_batch::execute_batch(
-                        &common,
-                        &target,
-                        write,
-                        comments,
-                        cli.max_input_size,
+                        &common, &target, write, comments, max_input,
                     )?
                 }
             }
@@ -138,7 +135,7 @@ fn run() -> Result<ExitCode> {
             pretty,
             limits,
         }) => {
-            let input = InputSource::from_args(file, cli.max_input_size)?;
+            let input = InputSource::from_args(file, max_input)?;
             let output =
                 OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
             let cmd = commands::convert::ConvertCommand::new(to, pretty, limits.parse_limits());
@@ -170,38 +167,30 @@ fn run() -> Result<ExitCode> {
                 indent_size,
                 format,
                 allow_duplicate_keys,
+                max_input_bytes: cli.max_input_bytes,
                 parse_limits: limits.parse_limits(),
             };
 
             match target {
-                Target::Stdin => lint_input(
-                    common_config,
-                    args,
-                    &InputSource::from_stdin(cli.max_input_size)?,
-                )?,
-                Target::File(path) => lint_input(
-                    common_config,
-                    args,
-                    &InputSource::from_file(&path, cli.max_input_size)?,
-                )?,
+                Target::Stdin => {
+                    let cmd = commands::lint::LintCommand::build(common_config, args, None)?;
+                    let input = InputSource::from_stdin(cmd.lint_config.max_input_bytes)?;
+                    cmd.execute(&input)?
+                }
+                Target::File(path) => {
+                    let cmd = commands::lint::LintCommand::build(common_config, args, Some(&path))?;
+                    let input = InputSource::from_file(&path, cmd.lint_config.max_input_bytes)?;
+                    cmd.execute(&input)?
+                }
                 Target::Batch(target) => {
-                    // Synthetic stdin input: config discovery is CWD-based, same as yamllint.
-                    let stdin_fallback = InputSource {
-                        content: String::new(),
-                        origin: io::input::InputOrigin::Stdin,
-                    };
                     let format = args.format;
-                    let cmd = commands::lint::LintCommand::build(
-                        common_config.clone(),
-                        args,
-                        &stdin_fallback,
-                    )?;
+                    let cmd =
+                        commands::lint::LintCommand::build(common_config.clone(), args, None)?;
                     commands::lint_batch::execute_lint_batch(
                         &common_config,
                         &target,
                         &cmd.lint_config,
                         format,
-                        cli.max_input_size,
                     )?
                 }
             }
@@ -209,7 +198,7 @@ fn run() -> Result<ExitCode> {
         None => {
             let mode = stdin_write_mode(EditIntent::from_flags(false, cli.in_place), cli.output)?;
             FormatCommand::new(common_config, CommentPolicy::Reject)
-                .run(&InputSource::from_stdin(cli.max_input_size)?, &mode)?
+                .run(&InputSource::from_stdin(max_input)?, &mode)?
         }
     };
 
@@ -222,13 +211,4 @@ fn stdin_write_mode(intent: EditIntent, output: Option<std::path::PathBuf>) -> R
         anyhow::bail!("--in-place (-i) requires a file argument");
     }
     WriteMode::new(intent, output, None)
-}
-
-#[cfg(feature = "linter")]
-fn lint_input(
-    common: CommonConfig,
-    args: commands::lint::LintArgs,
-    input: &InputSource,
-) -> Result<ExitCode> {
-    commands::lint::LintCommand::build(common, args, input)?.execute(input)
 }

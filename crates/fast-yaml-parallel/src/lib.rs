@@ -84,6 +84,7 @@ pub use atomic::write_atomic;
 pub use config::Config;
 pub use error::{Error, Result};
 pub use fast_yaml_core::Value;
+pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 
 // File-level parallelism
 pub use files::{CommentPolicy, FileProcessor, FormatOutput};
@@ -100,6 +101,10 @@ pub use result::{BatchResult, FileOutcome, FileResult};
 ///
 /// Returns `Error::Parse` if any document fails to parse.
 /// The error includes the document index for debugging.
+///
+/// Returns `Error::InputTooLarge` if the input exceeds [`Config::max_input_bytes`] (default
+/// 100 MiB) and `Error::TooManyDocuments` if it holds more than [`Config::max_documents`]
+/// (default 100 000) documents; the latter is checked before any document is parsed.
 ///
 /// # Known differences
 ///

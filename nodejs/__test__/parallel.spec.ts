@@ -48,6 +48,32 @@ describe('parseParallel', () => {
   });
 });
 
+describe('parseParallel limits', () => {
+  const docs = (n: number) => '---\na: 1\n'.repeat(n);
+
+  it('enforces maxDocuments', () => {
+    const tooMany = /at least \d+ documents, more than the maximum of 2/;
+    expect(() => parseParallel(docs(3), { maxDocuments: 2 })).toThrow(tooMany);
+    expect(parseParallel(docs(2), { maxDocuments: 2 })).toHaveLength(2);
+  });
+
+  it('enforces the default document limit without a config', () => {
+    expect(() => parseParallel(docs(100_001))).toThrow(/maximum of 100000/);
+  });
+
+  it('enforces maxInputBytes', () => {
+    expect(() => parseParallel(docs(3), { maxInputBytes: 8 })).toThrow(/exceeds|too large|limit/i);
+  });
+
+  it('keeps !!set output as a plain object', () => {
+    expect(parseParallel('--- !!set {a, b}\n')).toEqual([{ a: null, b: null }]);
+  });
+
+  it('enforces maxDocuments in async mode', async () => {
+    await expect(parseParallelAsync(docs(3), { maxDocuments: 2 })).rejects.toThrow(/maximum of 2/);
+  });
+});
+
 describe('parseParallelAsync', () => {
   it('parses multi-document YAML', async () => {
     const yaml = '---\nfoo: 1\n---\nbar: 2';

@@ -3,7 +3,7 @@
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
 use crate::conversion::yaml_to_js;
-use crate::limits::parse_limits;
+use crate::limits::{max_documents, max_input_bytes, parse_limits, reject_legacy_max_input_size};
 use crate::options::{U32_MAX, checked_opt_uint};
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
@@ -11,20 +11,10 @@ use napi::{
     bindgen_prelude::{AsyncTask, Unknown, panic_to_error},
 };
 use napi_derive::napi;
-use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 /// Maximum thread count allowed.
 const MAX_THREADS: u64 = 128;
-
-/// Maximum input size in bytes (default 100MB, can be configured up to 1GB).
-const ABSOLUTE_MAX_INPUT_SIZE: u64 = 1024 * 1024 * 1024;
-
-/// Maximum document count (default 100k, can be configured up to 10M).
-const ABSOLUTE_MAX_DOCUMENTS: u64 = 10_000_000;
-
-/// Document count allowed when `maxDocuments` is unset.
-const DEFAULT_MAX_DOCUMENTS: usize = 100_000;
 
 /// Configuration for parallel YAML processing.
 ///
@@ -37,7 +27,7 @@ const DEFAULT_MAX_DOCUMENTS: usize = 100_000;
 ///
 /// const config = {
 ///   threadCount: 8,
-///   maxInputSize: 200 * 1024 * 1024
+///   maxInputBytes: 200 * 1024 * 1024
 /// };
 /// const docs = parseParallel(yamlString, config);
 /// ```
@@ -50,10 +40,13 @@ pub struct ParallelConfig {
     /// Minimum bytes per chunk (default: 4096).
     pub min_chunk_size: Option<f64>,
 
-    /// Maximum total input size in bytes (default: 100MB, max: 1GB).
+    /// Maximum total input size in bytes (integer, 1..=1073741824, default: 104857600).
+    pub max_input_bytes: Option<f64>,
+
+    /// Removed: renamed to `maxInputBytes`; passing it throws.
     pub max_input_size: Option<f64>,
 
-    /// Maximum number of documents allowed (default: 100k, max: 10M).
+    /// Maximum number of documents allowed (integer, 1..=10000000, default: 100000).
     pub max_documents: Option<f64>,
 
     /// Maximum collection nesting depth (integer, 1..=512, default: 256).
@@ -68,7 +61,7 @@ pub struct ParallelConfig {
 /// Maps a parallel-parse failure to a JS error; the document cap is an argument error.
 fn parse_error(error: &fast_yaml_parallel::Error) -> napi::Error {
     match error {
-        fast_yaml_parallel::Error::DocumentLimitExceeded { .. } => {
+        fast_yaml_parallel::Error::TooManyDocuments { .. } => {
             napi::Error::new(napi::Status::InvalidArg, error.to_string())
         }
         other => napi::Error::from_reason(other.to_string()),
@@ -79,32 +72,17 @@ impl ParallelConfig {
     /// Convert to Rust parallel config with validation.
     fn to_rust_config(&self) -> napi::Result<RustParallelConfig> {
         let thread_count = checked_opt_uint("threadCount", self.thread_count, 0, MAX_THREADS)?;
-        let max_input_size = checked_opt_uint(
-            "maxInputSize",
-            self.max_input_size,
-            1,
-            ABSOLUTE_MAX_INPUT_SIZE,
-        )?;
-        let max_documents = checked_opt_uint(
-            "maxDocuments",
-            self.max_documents,
-            1,
-            ABSOLUTE_MAX_DOCUMENTS,
-        )?;
         let min_chunk_size = checked_opt_uint("minChunkSize", self.min_chunk_size, 1, U32_MAX)?;
 
-        let max_documents = NonZeroUsize::new(max_documents.unwrap_or(DEFAULT_MAX_DOCUMENTS))
-            .ok_or_else(|| {
-                napi::Error::new(napi::Status::InvalidArg, "maxDocuments must be at least 1")
-            })?;
-        let mut config = RustParallelConfig::new().with_max_documents(max_documents);
+        let mut config = RustParallelConfig::new();
 
         if let Some(count) = thread_count {
             config = config.with_workers(Some(count));
         }
-        if let Some(size) = max_input_size {
-            config = config.with_max_input_size(size);
-        }
+        reject_legacy_max_input_size(self.max_input_size)?;
+        config = config
+            .with_max_input_bytes(max_input_bytes(self.max_input_bytes)?)
+            .with_max_documents(max_documents(self.max_documents)?);
         // The parallel API has no chunk-size bounds; minChunkSize maps to the sequential threshold.
         if let Some(size) = min_chunk_size {
             config = config.with_sequential_threshold(size);
@@ -314,7 +292,7 @@ mod tests {
         let config = ParallelConfig {
             thread_count: Some(4.0),
             min_chunk_size: Some(2048.0),
-            max_input_size: Some(52_428_800.0),
+            max_input_bytes: Some(52_428_800.0),
             max_documents: Some(50_000.0),
             ..Default::default()
         };

@@ -1,5 +1,6 @@
 //! Edge case tests for unusual inputs and boundary conditions.
 
+use fast_yaml_core::limits::MaxDocuments;
 use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 
 #[test]
@@ -260,8 +261,8 @@ fn test_config_edge_cases() {
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 1);
 
-    // Very large max chunk size
-    let config = Config::new().with_max_input_size(usize::MAX);
+    // A single document fits the smallest document limit
+    let config = Config::new().with_max_documents(MaxDocuments::MIN);
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 1);
 }

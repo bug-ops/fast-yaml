@@ -42,7 +42,7 @@ subject to the limit. PyYAML reads leading-zero literals differently (`0012` is 
 Nesting depth and alias expansion are capped by default. Raise or lower the caps with keyword arguments on
 `safe_load`, `safe_load_all`, `load`, `load_all`, and the `ParallelConfig`, `LintConfig`, and `BatchConfig`
 constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()`; `None` resets to the default).
-`LintConfig` also accepts `max_input_bytes` / `with_max_input_bytes()`:
+`ParallelConfig`, `LintConfig`, and `BatchConfig` also accept `max_input_bytes` / `with_max_input_bytes()`, and `ParallelConfig` accepts `max_documents` / `with_max_documents()`:
 
 ```python
 fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
@@ -52,13 +52,21 @@ fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
 |--------|---------|-------|
 | `max_depth` | 256 | 1..=512 |
 | `max_alias_bytes` | 64 MiB | 1..=1 GiB |
-| `max_input_bytes` (`LintConfig` only) | 100 MiB | 1..=1 GiB |
+| `max_input_bytes` (`ParallelConfig`, `LintConfig`, `BatchConfig`) | 100 MiB | 1..=1 GiB |
+| `max_documents` (`ParallelConfig`) | 100 000 | 1..=10 000 000 |
 
 Out-of-range values raise `ValueError`; non-integers (including `bool`) raise `TypeError`.
 Depth 512 needs about 1 MiB of thread stack (up to 983 KiB measured in release builds) and can abort the process on stacks of 512 KiB or less; the default of 256 is safe.
 The dumper keeps a fixed depth of 256, so data parsed deeper may fail to dump.
 The alias budget is per stream, so parallel and batch runs can use up to workers x budget.
-`max_input_bytes` bounds linting work on oversized input; the source is already in memory when checked, so it is not a memory bound.
+`max_input_bytes` bounds work on oversized input; an in-memory source is already allocated when checked, so it is not a memory bound there.
+`safe_load` and `safe_load_all` reject sources over 100 MiB.
+`parse_parallel` and `dump_parallel` enforce `max_documents` (100 000 by default) even when no config is passed; exceeding it raises `ValueError`.
+
+## Sets
+
+`!!set` mappings load as Python `set` in `safe_load` and `parse_parallel`, and `dump` writes `set` and `frozenset` as `!!set`.
+A `!!set` cannot be a mapping key (raises `ValueError`, like any sequence or mapping key).
 
 ## Numeric Keys
 
@@ -149,7 +157,7 @@ print(f"Changed {result.changed} files")
 |--------|---------|-------------|
 | `workers` | Auto | Number of worker threads |
 | `mmap_threshold` | 512 KB | Mmap threshold for large files |
-| `max_input_size` | 100 MB | Maximum file size |
+| `max_input_bytes` | 100 MiB | Maximum file size, 1..=1 GiB |
 | `indent` | 2 | Indentation width |
 | `width` | 80 | Line width |
 | `sort_keys` | False | Sort dictionary keys |

@@ -855,6 +855,7 @@ fn values_semantically_equal(a: &Value, b: &Value) -> bool {
             a.iter()
                 .all(|(k, v)| b.get(k).is_some_and(|v2| values_semantically_equal(v, v2)))
         }
+        (Value::Tagged(ta, a), Value::Tagged(tb, b)) => ta == tb && values_semantically_equal(a, b),
         _ => false,
     }
 }

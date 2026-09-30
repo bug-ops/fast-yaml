@@ -9,12 +9,11 @@ use fast_yaml_core::limits::StreamBudget;
 use fast_yaml_core::{Parser, ScalarOwned, Value};
 use rayon::prelude::*;
 
-/// Validate input size against configured limit.
-const fn validate_input_size(input: &str, config: &Config) -> Result<()> {
-    let size = input.len();
-    let max = config.max_input_size();
-    if size > max {
-        return Err(Error::InputTooLarge { size, max });
+/// Rejects a document count above the configured maximum.
+const fn check_document_count(count: usize, config: &Config) -> Result<()> {
+    let limit = config.max_documents();
+    if count > limit.get() {
+        return Err(Error::TooManyDocuments { count, limit });
     }
     Ok(())
 }
@@ -27,38 +26,44 @@ const fn validate_input_size(input: &str, config: &Config) -> Result<()> {
 ///
 /// Returns error if:
 /// - Input size exceeds configured maximum
+/// - The chunk count, or later the parsed document count, exceeds the configured maximum
 /// - Any document fails to parse
 pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value>> {
-    // Step 1: Validate input size
-    validate_input_size(input, config)?;
+    config.max_input_bytes().check(input.len())?;
 
-    // Step 2: Chunk documents
-    let chunks = chunk_documents(fast_yaml_core::strip_bom(input), config.max_documents())?;
+    let chunks = chunk_documents(
+        fast_yaml_core::strip_bom(input),
+        Some(config.max_documents()),
+    )?;
 
     // A BOM-only stream is one null document, like `Parser::parse_all`.
     if chunks.is_empty() && !input.is_empty() {
         return Ok(vec![Value::Value(ScalarOwned::Null)]);
     }
 
+    let docs = parse_chunks(&chunks, config)?;
+    check_document_count(docs.len(), config)?;
+    Ok(docs)
+}
+
+fn parse_chunks(chunks: &[Chunk<'_>], config: &Config) -> Result<Vec<Value>> {
     let budget = StreamBudget::new(config.parse_limits());
 
-    // Step 3: Check if parallelism is worthwhile
-    if should_use_sequential(&chunks, config) {
-        return parse_sequential(&chunks, &budget);
+    // Parallelism is not worthwhile for small inputs
+    if should_use_sequential(chunks, config) {
+        return parse_sequential(chunks, &budget);
     }
 
-    // Step 4: Use global thread pool (fast path) or custom pool if explicitly configured
+    // Use global thread pool (fast path) or custom pool if explicitly configured
     if let Some(workers) = config.workers()
         && workers > 0
         && workers != rayon::current_num_threads()
     {
-        // Only create custom pool if explicitly requested AND different from current
         let pool = configure_thread_pool(config)?;
-        return pool.install(|| parse_chunks_parallel(&chunks, &budget));
+        return pool.install(|| parse_chunks_parallel(chunks, &budget));
     }
 
-    // Step 5: Parse chunks in parallel using global pool (no creation overhead)
-    parse_chunks_parallel(&chunks, &budget)
+    parse_chunks_parallel(chunks, &budget)
 }
 
 /// Determines if sequential processing is more efficient.
@@ -136,8 +141,8 @@ fn parse_chunks_parallel(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::chunker::SourceOrigin;
-    use fast_yaml_core::limits::ParseLimits;
+    use crate::chunker::{SourceOrigin, chunk_documents};
+    use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes, ParseLimits};
 
     fn budget() -> StreamBudget {
         StreamBudget::new(ParseLimits::default())
@@ -514,32 +519,70 @@ mod tests {
         assert!(should_use_sequential(&chunks, &config));
     }
 
-    #[test]
-    fn test_validate_input_size_ok() {
-        let config = Config::new().with_max_input_size(100);
-        let result = validate_input_size("small", &config);
-        assert!(result.is_ok());
+    fn max_input(bytes: usize) -> Config {
+        Config::new().with_max_input_bytes(MaxInputBytes::new(bytes).unwrap())
     }
 
-    #[test]
-    fn test_validate_input_size_exceeded() {
-        let config = Config::new().with_max_input_size(5);
-        let result = validate_input_size("large input", &config);
-        assert!(result.is_err());
-
-        if let Err(Error::InputTooLarge { size, max }) = result {
-            assert_eq!(size, 11);
-            assert_eq!(max, 5);
-        } else {
-            panic!("Expected InputTooLarge");
-        }
+    fn max_documents(count: usize) -> Config {
+        Config::new().with_max_documents(MaxDocuments::new(count).unwrap())
     }
 
     #[test]
     fn test_process_parallel_input_size_limit() {
-        let config = Config::new().with_max_input_size(5);
-        let result = process_parallel("---\nlarge content", &config);
-        assert!(result.is_err());
+        assert!(process_parallel("small", &max_input(100)).is_ok());
+        let result = process_parallel("large input", &max_input(5));
+        assert!(
+            matches!(&result, Err(Error::InputTooLarge(e)) if e.size == 11 && e.limit.get() == 5),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn test_document_limit_rejects_before_and_after_parsing() {
+        let three = "---\na\n---\nb\n---\nc\n";
+        for config in [max_documents(2), max_documents(2).with_workers(Some(0))] {
+            let result = process_parallel(three, &config);
+            assert!(
+                matches!(&result, Err(Error::TooManyDocuments { count: 3, limit }) if limit.get() == 2),
+                "{result:?}"
+            );
+        }
+        assert_eq!(process_parallel(three, &max_documents(3)).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_document_limit_does_not_parse_rejected_input() {
+        let result = process_parallel("---\na\n---\n[\n---\nc\n", &max_documents(2));
+        assert!(matches!(result, Err(Error::TooManyDocuments { .. })));
+    }
+
+    #[test]
+    fn test_document_limit_applies_by_default() {
+        let input = "---\n".repeat(MaxDocuments::DEFAULT.get() + 1);
+        let result = process_parallel(&input, &Config::default());
+        assert!(
+            matches!(result, Err(Error::TooManyDocuments { .. })),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn test_comment_only_tail_does_not_inflate_the_count() {
+        let input = "a\n...\n# trailing comment\n";
+        let docs = Parser::parse_all(input).unwrap();
+        assert!(process_parallel(input, &max_documents(docs.len())).is_ok());
+    }
+
+    #[test]
+    fn test_too_many_documents_display() {
+        let err = Error::TooManyDocuments {
+            count: 3,
+            limit: MaxDocuments::new(2).unwrap(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "input has at least 3 documents, more than the maximum of 2"
+        );
     }
 
     #[test]

@@ -36,7 +36,7 @@ class TestParallelConfig:
     def test_custom_limits(self):
         """Test custom input limits."""
         config = parallel.ParallelConfig(
-            max_input_size=50 * 1024 * 1024,
+            max_input_bytes=50 * 1024 * 1024,
             max_documents=50_000,
         )
         assert config is not None
@@ -46,9 +46,9 @@ class TestParallelConfig:
         config = parallel.ParallelConfig().with_thread_count(8)
         assert config is not None
 
-    def test_with_max_input_size(self):
-        """Test with_max_input_size builder method."""
-        config = parallel.ParallelConfig().with_max_input_size(50 * 1024 * 1024)
+    def test_with_max_input_bytes(self):
+        """Test with_max_input_bytes builder method."""
+        config = parallel.ParallelConfig().with_max_input_bytes(50 * 1024 * 1024)
         assert config is not None
 
     def test_with_max_documents(self):
@@ -76,7 +76,7 @@ class TestParallelConfig:
         config = (
             parallel.ParallelConfig()
             .with_thread_count(4)
-            .with_max_input_size(10 * 1024 * 1024)
+            .with_max_input_bytes(10 * 1024 * 1024)
             .with_max_documents(100)
         )
         assert config is not None

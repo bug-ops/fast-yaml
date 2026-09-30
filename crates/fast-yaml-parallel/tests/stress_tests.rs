@@ -1,5 +1,6 @@
 //! Stress tests for parallel processing with large inputs and high concurrency.
 
+use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 
@@ -215,7 +216,7 @@ fn test_input_size_validation_within_limit() {
 fn test_input_size_validation_custom_limit() {
     // Set very small limit and test it's enforced
     let yaml = "x".repeat(2000); // 2KB
-    let config = Config::new().with_max_input_size(1000); // 1KB limit
+    let config = Config::new().with_max_input_bytes(MaxInputBytes::new(1000).unwrap()); // 1KB limit
 
     let result = parse_parallel_with_config(&yaml, &config);
     assert!(result.is_err());
@@ -248,15 +249,25 @@ fn test_document_count_validation_custom_limit() {
         let _ = writeln!(yaml, "---\nid: {i}");
     }
 
-    // max_documents removed - test with max_input_size instead
-    let config = Config::new().with_max_input_size(1000);
+    let config = Config::new().with_max_documents(MaxDocuments::new(100).unwrap());
     let result = parse_parallel_with_config(&yaml, &config);
-    assert!(result.is_err());
 
-    if let Err(e) = result {
-        let error_msg = format!("{e}");
-        assert!(error_msg.contains("input size") || error_msg.contains("exceeds maximum"));
-    }
+    let error_msg = result.unwrap_err().to_string();
+    assert_eq!(
+        error_msg,
+        "input has at least 101 documents, more than the maximum of 100"
+    );
+}
+
+#[test]
+fn test_document_count_limit_applies_without_config() {
+    let yaml = "---\n".repeat(MaxDocuments::DEFAULT.get() + 1);
+
+    let error_msg = parse_parallel(&yaml).unwrap_err().to_string();
+    assert!(
+        error_msg.contains("more than the maximum of 100000"),
+        "{error_msg}"
+    );
 }
 
 #[test]

@@ -170,6 +170,8 @@ pub enum RaiseHint {
     MaxDepth,
     /// `--max-alias-bytes`
     MaxAliasBytes,
+    /// `--max-input-bytes`
+    MaxInputBytes,
 }
 
 impl std::fmt::Display for RaiseHint {
@@ -177,6 +179,7 @@ impl std::fmt::Display for RaiseHint {
         f.write_str(match self {
             Self::MaxDepth => "raise with --max-depth",
             Self::MaxAliasBytes => "raise with --max-alias-bytes",
+            Self::MaxInputBytes => "raise with --max-input-bytes or the max-input-bytes config key",
         })
     }
 }
@@ -185,30 +188,53 @@ impl RaiseHint {
     /// Finds a raisable limit failure anywhere in the error's source chain.
     ///
     /// Tag, output and dump-node limits have no CLI flag and yield `None`, as do config file
-    /// failures, which always use the default limits.
+    /// failures, which always use the default limits, and limits already at their maximum.
     #[must_use]
     pub fn of(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
-        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth};
-        use fast_yaml_core::{LimitKind, ParseError};
         #[cfg(feature = "linter")]
         if std::iter::successors(Some(err), |e| e.source())
             .any(<dyn std::error::Error>::is::<fast_yaml_linter::ConfigFileError>)
         {
             return None;
         }
-        std::iter::successors(Some(err), |e| e.source()).find_map(|e| {
-            match e.downcast_ref::<ParseError>()? {
-                ParseError::LimitExceeded {
-                    kind: LimitKind::Depth(limit),
-                    ..
-                } if limit.get() < MaxDepth::MAX.get() => Some(Self::MaxDepth),
-                ParseError::LimitExceeded {
-                    kind: LimitKind::AliasBytes(limit),
-                    ..
-                } if limit.get() < MaxAliasBytes::MAX.get() => Some(Self::MaxAliasBytes),
+        std::iter::successors(Some(err), |e| e.source()).find_map(Self::of_link)
+    }
+
+    fn of_link(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
+        use fast_yaml_core::limits::{InputTooLarge, MaxAliasBytes, MaxDepth, MaxInputBytes};
+        use fast_yaml_core::{LimitKind, ParseError};
+        let input_limit = |e: &InputTooLarge| {
+            (e.limit.get() < MaxInputBytes::MAX.get()).then_some(Self::MaxInputBytes)
+        };
+        let parse_error = |e: &ParseError| match e {
+            ParseError::LimitExceeded {
+                kind: LimitKind::Depth(limit),
+                ..
+            } if limit.get() < MaxDepth::MAX.get() => Some(Self::MaxDepth),
+            ParseError::LimitExceeded {
+                kind: LimitKind::AliasBytes(limit),
+                ..
+            } if limit.get() < MaxAliasBytes::MAX.get() => Some(Self::MaxAliasBytes),
+            _ => None,
+        };
+        if let Some(e) = err.downcast_ref::<ParseError>() {
+            return parse_error(e);
+        }
+        if let Some(e) = err.downcast_ref::<InputTooLarge>() {
+            return input_limit(e);
+        }
+        #[cfg(feature = "linter")]
+        if let Some(e) = err.downcast_ref::<fast_yaml_linter::LintError>() {
+            return match e {
+                fast_yaml_linter::LintError::ParseError(e) => parse_error(e),
+                fast_yaml_linter::LintError::InputTooLarge(e) => input_limit(e),
                 _ => None,
-            }
-        })
+            };
+        }
+        if let Some(fast_yaml_parallel::Error::InputTooLarge(e)) = err.downcast_ref() {
+            return input_limit(e);
+        }
+        None
     }
 }
 
@@ -310,6 +336,52 @@ mod tests {
         assert_eq!(
             RaiseHint::of(&limit(LimitKind::TagBytes(MaxTagBytes::DEFAULT))),
             None
+        );
+    }
+
+    #[test]
+    fn test_raise_hint_for_input_limit_through_wrappers() {
+        use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes};
+        let too_large = |limit| InputTooLarge { size: 99, limit };
+        let small = MaxInputBytes::new(8).unwrap();
+        let expected = Some(RaiseHint::MaxInputBytes);
+        assert_eq!(RaiseHint::of(&too_large(small)), expected);
+        assert_eq!(
+            RaiseHint::of(&fast_yaml_parallel::Error::InputTooLarge(too_large(small))),
+            expected
+        );
+        assert_eq!(RaiseHint::of(&too_large(MaxInputBytes::MAX)), None);
+        assert_eq!(
+            RaiseHint::of(&fast_yaml_parallel::Error::InputTooLarge(too_large(
+                MaxInputBytes::MAX
+            ))),
+            None
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "linter")]
+    fn test_raise_hint_unwraps_lint_error() {
+        use fast_yaml_core::limits::{InputTooLarge, MaxDepth, MaxInputBytes};
+        use fast_yaml_core::{LimitKind, ParseError};
+        use fast_yaml_linter::LintError;
+        let size = InputTooLarge {
+            size: 99,
+            limit: MaxInputBytes::new(8).unwrap(),
+        };
+        assert_eq!(
+            RaiseHint::of(&LintError::InputTooLarge(size)),
+            Some(RaiseHint::MaxInputBytes)
+        );
+        let depth = ParseError::LimitExceeded {
+            kind: LimitKind::Depth(MaxDepth::DEFAULT),
+            line: 1,
+            column: 1,
+            document: 0,
+        };
+        assert_eq!(
+            RaiseHint::of(&LintError::ParseError(depth)),
+            Some(RaiseHint::MaxDepth)
         );
     }
 

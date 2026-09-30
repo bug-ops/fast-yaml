@@ -208,24 +208,7 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> Result<FormatOutput> {
-        let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-
-        let file_size = metadata.len();
-        let max_size = self.config.max_input_size();
-
-        if file_size > max_size as u64 {
-            #[allow(clippy::cast_possible_truncation)]
-            let size = file_size as usize;
-            return Err(Error::InputTooLarge {
-                size,
-                max: max_size,
-            });
-        }
-
-        let file_content = self.reader.read(path)?;
+        let file_content = self.reader.read(path, self.config.max_input_bytes())?;
         let content = file_content.as_str()?;
 
         let formatted = Emitter::format_with_config(content, emitter_config).map_err(|source| {
@@ -341,24 +324,7 @@ impl FileProcessor {
     where
         F: Fn(&Path, &str) -> Result<R>,
     {
-        let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-
-        let file_size = metadata.len();
-        let max_size = self.config.max_input_size();
-
-        if file_size > max_size as u64 {
-            #[allow(clippy::cast_possible_truncation)]
-            let size = file_size as usize;
-            return Err(Error::InputTooLarge {
-                size,
-                max: max_size,
-            });
-        }
-
-        let file_content = self.reader.read(path)?;
+        let file_content = self.reader.read(path, self.config.max_input_bytes())?;
         let content = file_content.as_str()?;
 
         f(path, content)?;
@@ -407,6 +373,7 @@ impl Default for FileProcessor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fast_yaml_core::limits::MaxInputBytes;
     use std::fs;
     use tempfile::TempDir;
 
@@ -867,16 +834,18 @@ mod tests {
     }
 
     #[test]
-    fn test_format_files_enforces_max_input_size() {
+    fn test_format_files_enforces_max_input_bytes() {
         let dir = TempDir::new().unwrap();
         let path = create_test_file(&dir, "big.yaml", "key: a-long-enough-value\n");
 
-        let processor = FileProcessor::with_config(Config::default().with_max_input_size(4));
+        let processor = FileProcessor::with_config(
+            Config::default().with_max_input_bytes(MaxInputBytes::new(4).unwrap()),
+        );
         let results = processor.format_files(&[path], &EmitterConfig::new(), CommentPolicy::Strip);
 
         assert!(matches!(
-            results[0].1,
-            Err(Error::InputTooLarge { max: 4, .. })
+            &results[0].1,
+            Err(Error::InputTooLarge(e)) if e.limit.get() == 4
         ));
     }
 
@@ -893,7 +862,7 @@ mod tests {
     }
 
     #[test]
-    fn test_max_input_size_enforcement() {
+    fn test_max_input_bytes_enforcement() {
         let dir = TempDir::new().unwrap();
 
         // Create file larger than custom limit (1KB)
@@ -901,7 +870,7 @@ mod tests {
         let path = create_test_file(&dir, "large.yaml", &large_content);
 
         // Configure processor with 1KB limit
-        let config = Config::new().with_max_input_size(1000);
+        let config = Config::new().with_max_input_bytes(MaxInputBytes::new(1000).unwrap());
         let processor = FileProcessor::with_config(config);
 
         let result = processor.parse_files(&[path]);
@@ -921,7 +890,7 @@ mod tests {
         let path = create_test_file(&dir, "small.yaml", content);
 
         // Configure processor with 1KB limit
-        let config = Config::new().with_max_input_size(1000);
+        let config = Config::new().with_max_input_bytes(MaxInputBytes::new(1000).unwrap());
         let processor = FileProcessor::with_config(config);
 
         let result = processor.parse_files(&[path]);

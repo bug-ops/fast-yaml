@@ -3,12 +3,24 @@
 //! Provides conversion functions between Rust YAML types and Python objects.
 //! Used by both the main module (lib.rs) and parallel processing (parallel.rs).
 
-use fast_yaml_core::{ScalarOwned, Value};
+use fast_yaml_core::{ScalarOwned, Value, is_core_set_tag};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 
-use crate::numeric_keys::NumericKeys;
+use crate::numeric_keys::{NumericKeys, build_set};
+
+pub const COMPLEX_KEY_MESSAGE: &str =
+    "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys";
+
+/// Whether `value` is a sequence or mapping, looking through tags, so a set counts as a mapping.
+fn is_collection(value: &Value) -> bool {
+    match value {
+        Value::Sequence(_) | Value::Mapping(_) => true,
+        Value::Tagged(_, inner) => is_collection(inner),
+        _ => false,
+    }
+}
 
 /// Convert `fast_yaml_core::Value` (`saphyr::YamlOwned`) to Python object.
 ///
@@ -65,10 +77,8 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
             let pairs: Vec<(Py<PyAny>, Py<PyAny>)> = map
                 .iter()
                 .map(|(k, v)| {
-                    if matches!(k, Value::Sequence(_) | Value::Mapping(_)) {
-                        return Err(PyValueError::new_err(
-                            "YAML complex keys (sequences or mappings as keys) are not supported as Python dict keys",
-                        ));
+                    if is_collection(k) {
+                        return Err(PyValueError::new_err(COMPLEX_KEY_MESSAGE));
                     }
                     let py_key = value_to_python(py, k)?;
                     let py_value = value_to_python(py, v)?;
@@ -89,8 +99,26 @@ pub fn value_to_python(py: Python<'_>, value: &Value) -> PyResult<Py<PyAny>> {
 
         Value::BadValue => Err(PyValueError::new_err("Invalid YAML value encountered")),
 
-        // Tagged values - extract the inner value
-        Value::Tagged(_, inner) => value_to_python(py, inner),
+        Value::Tagged(tag, inner) => match &**inner {
+            Value::Mapping(map) if is_core_set_tag(tag) => {
+                let members = map
+                    .keys()
+                    .map(|key| {
+                        if is_collection(key) {
+                            return Err(PyValueError::new_err(COMPLEX_KEY_MESSAGE));
+                        }
+                        value_to_python(py, key).map(|key| key.into_bound(py))
+                    })
+                    .collect::<PyResult<Vec<_>>>()?;
+                match build_set(py, &members)? {
+                    Ok(set) => Ok(set.into_any().unbind()),
+                    Err((_, clash)) => {
+                        Err(PyValueError::new_err(format!("YAML parse error: {clash}")))
+                    }
+                }
+            }
+            _ => value_to_python(py, inner),
+        },
 
         Value::Representation(repr, style, tag) => {
             crate::repr_to_python(py, repr, *style, tag.as_ref())

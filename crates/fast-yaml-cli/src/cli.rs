@@ -48,10 +48,11 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     verbose: bool,
 
-    /// Maximum size of each input file or of stdin (min: 1, max: 1GiB).
-    /// Accepts KiB, MiB and GiB suffixes. Applies to single inputs and to batch runs
-    #[arg(long, global = true, value_name = "BYTES", value_parser = parse_max_input_size, default_value_t = MaxInputBytes::DEFAULT)]
-    pub max_input_size: MaxInputBytes,
+    /// Maximum size of each input file or of stdin (min: 1, max: 1GiB, default: 100MiB).
+    /// Accepts KiB, MiB and GiB suffixes. Applies to single inputs and to batch runs;
+    /// for `lint` it overrides the `max-input-bytes` config key
+    #[arg(long, global = true, alias = "max-input-size", value_name = "BYTES", value_parser = parse_max_input_bytes)]
+    pub max_input_bytes: Option<MaxInputBytes>,
 
     /// Verbosity resolved from `--quiet`/`--verbose` by [`Cli::validate`]; `Normal` before that.
     #[arg(skip)]
@@ -59,6 +60,12 @@ pub struct Cli {
 }
 
 impl Cli {
+    /// Input size limit of commands that have no config file key: the flag or the default.
+    #[must_use]
+    pub fn max_input(&self) -> MaxInputBytes {
+        self.max_input_bytes.unwrap_or_default()
+    }
+
     /// Parses the process arguments, exiting with code 2 on any usage error.
     #[must_use]
     pub fn parse_validated() -> Self {
@@ -198,7 +205,7 @@ fn parse_max_alias_bytes(raw: &str) -> Result<MaxAliasBytes, String> {
     MaxAliasBytes::new(parse_byte_size(raw)?).map_err(range_error)
 }
 
-fn parse_max_input_size(raw: &str) -> Result<MaxInputBytes, String> {
+fn parse_max_input_bytes(raw: &str) -> Result<MaxInputBytes, String> {
     MaxInputBytes::new(parse_byte_size(raw)?).map_err(range_error)
 }
 
@@ -420,11 +427,11 @@ mod tests {
 
     #[test]
     fn input_size_parses_and_bounds() {
-        assert_eq!(parse_max_input_size("1").unwrap().get(), 1);
-        assert_eq!(parse_max_input_size("2MiB").unwrap().get(), 2 << 20);
-        assert_eq!(parse_max_input_size("1GiB").unwrap(), MaxInputBytes::MAX);
-        assert!(parse_max_input_size("0").is_err());
-        assert!(parse_max_input_size("2GiB").is_err());
+        assert_eq!(parse_max_input_bytes("1").unwrap().get(), 1);
+        assert_eq!(parse_max_input_bytes("2MiB").unwrap().get(), 2 << 20);
+        assert_eq!(parse_max_input_bytes("1GiB").unwrap(), MaxInputBytes::MAX);
+        assert!(parse_max_input_bytes("0").is_err());
+        assert!(parse_max_input_bytes("2GiB").is_err());
     }
 
     #[test]

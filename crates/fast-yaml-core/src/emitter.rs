@@ -347,6 +347,8 @@ impl Emitter {
             output.drain(..skip);
         }
 
+        output = strip_tag_trailing_space(output);
+
         // Fix special float values for YAML 1.2 Core Schema compliance
         // saphyr outputs "inf"/"-inf"/"NaN", but YAML 1.2 requires ".inf"/"-.inf"/".nan"
         output = Self::fix_special_floats(&output);
@@ -575,6 +577,8 @@ impl Emitter {
                 out.push(']');
                 Ok(out)
             }
+            // saphyr breaks the line after the tag of a non-empty collection, which flow cannot hold
+            Value::Tagged(tag, inner) => Ok(format!("{tag} {}", Self::emit_flow(inner)?)),
             // Scalars: use the inline scalar renderer (no trailing newline)
             _ => Self::emit_value_inline(value),
         }
@@ -727,7 +731,7 @@ fn needs_saphyr_rewrite(value: &Value) -> bool {
                     ResolvedScalar::BigInt(big) if big.radix() != IntRadix::Decimal
                 )
         }
-        Value::Tagged(_, inner) => needs_saphyr_rewrite(inner),
+        Value::Tagged(tag, inner) => tag.is_yaml_core_schema() || needs_saphyr_rewrite(inner),
         Value::Sequence(seq) => seq.iter().any(needs_saphyr_rewrite),
         Value::Mapping(map) => map
             .iter()
@@ -758,6 +762,58 @@ fn rewrite_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Val
     }
 }
 
+/// Removes the space saphyr leaves after the tag of a block collection (`k: !!set \n`).
+///
+/// Block scalar bodies are copied untouched, since trailing spaces there are content.
+fn strip_tag_trailing_space(output: String) -> String {
+    if !output.contains(" \n") {
+        return output;
+    }
+    let mut result = String::with_capacity(output.len());
+    let mut block_base: Option<usize> = None;
+    for line in output.split_inclusive('\n') {
+        let body = line.strip_suffix('\n').unwrap_or(line);
+        let trimmed = body.trim_end();
+        let indent = body.len() - body.trim_start().len();
+        if let Some(base) = block_base {
+            if trimmed.is_empty() || indent > base {
+                result.push_str(line);
+                continue;
+            }
+            block_base = None;
+        }
+        let last_token = trimmed.rsplit(' ').next().unwrap_or_default();
+        if last_token.starts_with(['|', '>'])
+            && last_token[1..]
+                .chars()
+                .all(|c| c == '-' || c == '+' || c.is_ascii_digit())
+        {
+            block_base = Some(indent);
+        }
+        if body.ends_with(' ') && last_token.starts_with('!') && !body.ends_with("  ") {
+            result.push_str(trimmed);
+            if line.ends_with('\n') {
+                result.push('\n');
+            }
+        } else {
+            result.push_str(line);
+        }
+    }
+    result
+}
+
+/// Spells a core-schema tag as the `!!suffix` shorthand, the form saphyr writes verbatim.
+fn shorthand_tag(tag: &Tag) -> Tag {
+    if tag.is_yaml_core_schema() {
+        Tag {
+            handle: "!".into(),
+            suffix: format!("!{}", tag.suffix),
+        }
+    } else {
+        tag.clone()
+    }
+}
+
 fn rewrite_for_saphyr(value: &Value) -> Value {
     match value {
         Value::Value(ScalarOwned::String(s)) if reads_as_non_string(s) => {
@@ -767,7 +823,7 @@ fn rewrite_for_saphyr(value: &Value) -> Value {
             rewrite_representation(s, *style, tag.as_ref())
         }
         Value::Tagged(tag, inner) => {
-            Value::Tagged(tag.clone(), Box::new(rewrite_for_saphyr(inner)))
+            Value::Tagged(shorthand_tag(tag), Box::new(rewrite_for_saphyr(inner)))
         }
         Value::Sequence(seq) => Value::Sequence(seq.iter().map(rewrite_for_saphyr).collect()),
         Value::Mapping(map) => Value::Mapping(
@@ -2600,5 +2656,49 @@ mod tests {
         for out in emit_both(&doc) {
             assert!(out.starts_with("!foo "), "{out}");
         }
+    }
+
+    #[test]
+    fn emit_set_round_trips_in_block_and_flow() {
+        for yaml in [
+            "!!set {a, b}",
+            "m: !!set {a}",
+            "!!set {1, a}",
+            "outer:\n  inner: !!set {x, y}\nlist: [!!set {k}]",
+            "list: [!!set {}]",
+            "m: !!omap [a: 1, b: 2]",
+            "k: !!str 123",
+        ] {
+            let doc = crate::Parser::parse_str(yaml).unwrap().unwrap();
+            for out in emit_both(&doc) {
+                assert_eq!(out.contains("!!set"), yaml.contains("!!set"), "{out}");
+                let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+                assert_eq!(back, doc, "{yaml} -> {out}");
+            }
+        }
+    }
+
+    #[test]
+    fn emit_block_tagged_collection_has_no_trailing_space() {
+        let doc = crate::Parser::parse_str("k: !!set {a, b}\nl:\n  - !!set {c}\ns: \"x !t \\n\"")
+            .unwrap()
+            .unwrap();
+        let out = Emitter::emit_str(&doc).unwrap();
+        assert!(out.lines().all(|l| !l.ends_with(' ')), "{out:?}");
+        assert_eq!(crate::Parser::parse_str(&out).unwrap().unwrap(), doc);
+    }
+
+    #[test]
+    fn emit_literal_block_keeps_trailing_space_after_bang_word() {
+        let doc = crate::Parser::parse_str("k: \"a !b \\nc\\n\"")
+            .unwrap()
+            .unwrap();
+        let config = EmitterConfig::new().with_multiline_strings(true);
+        let out = Emitter::emit_str_with_config(&doc, &config).unwrap();
+        assert_eq!(
+            crate::Parser::parse_str(&out).unwrap().unwrap(),
+            doc,
+            "{out:?}"
+        );
     }
 }

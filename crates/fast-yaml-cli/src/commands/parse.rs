@@ -109,6 +109,7 @@ fn count_keys_and_depth(value: &fast_yaml_core::Value, current_depth: usize) -> 
 
             (total_keys, max_depth)
         }
+        Value::Tagged(_, inner) => count_keys_and_depth(inner, current_depth),
         _ => (0, current_depth),
     }
 }

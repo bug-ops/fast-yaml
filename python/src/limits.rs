@@ -2,7 +2,8 @@
 
 use std::fmt::Display;
 
-use fast_yaml_core::{MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits};
+use fast_yaml_core::ParseLimits;
+use fast_yaml_core::limits::{AliasBytes, Bounded, Bounds, Depth};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -28,31 +29,13 @@ fn extract_usize(option: &str, max: usize, arg: &Bound<'_, PyAny>) -> PyResult<u
     }
 }
 
-/// Validates a `max_depth` value, returning [`MaxDepth::DEFAULT`] when unset.
-pub fn max_depth(arg: Option<&Bound<'_, PyAny>>) -> PyResult<MaxDepth> {
+/// Validates a limit option of kind `K`, returning its default when unset.
+pub fn bounded<K: Bounds>(option: &str, arg: Option<&Bound<'_, PyAny>>) -> PyResult<Bounded<K>> {
     let Some(arg) = arg else {
-        return Ok(MaxDepth::DEFAULT);
+        return Ok(Bounded::DEFAULT);
     };
-    let raw = extract_usize("max_depth", MaxDepth::MAX.get(), arg)?;
-    MaxDepth::new(raw).map_err(|e| range_error("max_depth", e.max, e.value))
-}
-
-/// Validates a `max_alias_bytes` value, returning [`MaxAliasBytes::DEFAULT`] when unset.
-pub fn max_alias_bytes(arg: Option<&Bound<'_, PyAny>>) -> PyResult<MaxAliasBytes> {
-    let Some(arg) = arg else {
-        return Ok(MaxAliasBytes::DEFAULT);
-    };
-    let raw = extract_usize("max_alias_bytes", MaxAliasBytes::MAX.get(), arg)?;
-    MaxAliasBytes::new(raw).map_err(|e| range_error("max_alias_bytes", e.max, e.value))
-}
-
-/// Validates a `max_input_bytes` value, returning [`MaxInputBytes::DEFAULT`] when unset.
-pub fn max_input_bytes(arg: Option<&Bound<'_, PyAny>>) -> PyResult<MaxInputBytes> {
-    let Some(arg) = arg else {
-        return Ok(MaxInputBytes::DEFAULT);
-    };
-    let raw = extract_usize("max_input_bytes", MaxInputBytes::MAX.get(), arg)?;
-    MaxInputBytes::new(raw).map_err(|e| range_error("max_input_bytes", e.max, e.value))
+    let raw = extract_usize(option, K::MAX, arg)?;
+    Bounded::new(raw).map_err(|e| range_error(option, e.max, e.value))
 }
 
 /// Builds [`ParseLimits`] from the optional Python keyword arguments.
@@ -61,8 +44,8 @@ pub fn parse_limits(
     max_alias_bytes_arg: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<ParseLimits> {
     Ok(ParseLimits {
-        max_depth: max_depth(max_depth_arg)?,
-        max_alias_bytes: max_alias_bytes(max_alias_bytes_arg)?,
+        max_depth: bounded::<Depth>("max_depth", max_depth_arg)?,
+        max_alias_bytes: bounded::<AliasBytes>("max_alias_bytes", max_alias_bytes_arg)?,
         ..ParseLimits::default()
     })
 }
