@@ -83,6 +83,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI**: `fy convert` keeps integers beyond `i64` exact in both directions; YAML to JSON now emits them as JSON numbers instead of strings and canonicalizes big-integer JSON map keys (#466, #476)
 - **Python**: `safe_dump`, `dump_all` and `dump_parallel` accept integers beyond `i64` as values and keys instead of raising `OverflowError` (beyond the int-to-str digit limit they raise `ValueError`) (#463, #476)
 - **Core**: `Emitter::emit_str` no longer panics on literal/folded big-integer scalars and no longer emits core tags as `tag:yaml.org,2002:!int` (#483) (#485)
+- **Core**: the flow emitter quotes raw Plain/Literal/Folded Representation keys so multi-line and `<<` keys re-parse (#460) (#484)
+- **Core**: `fy format` writes alias keys over the implicit-key limit in the explicit `? ` form (#384) (#484)
 - **Linter**: `document-start` no longer reports a missing `---` after `%YAML`/`%TAG` directives, `comments-indentation` and flow/scalar scans are linear (also on non-ASCII lines), and the text formatter bounds long context lines (#443) (#444) (#439) (#453)
 - **Linter**: `float-values` and `quoted-strings` decide numbers, booleans and nulls with the core scalar resolver, so strings like `.5e` are no longer reported as floats, `inf`/`nan` without a dot are no longer treated as floats, and plain `True`/`NULL`/`Null` and empty values are no longer reported under `quoted-strings` `required: always` (#461) (#482)
 - **Linter**: rules use the shared role tracker; `truthy` covers flow items and root scalars, `empty-values` covers explicit and alias keys (#474) (#482)
