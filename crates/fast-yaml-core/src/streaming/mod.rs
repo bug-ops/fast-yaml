@@ -29,6 +29,9 @@
 //! # }
 //! ```
 
+use crate::error::{EmitError, ParseError};
+use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
+
 mod formatter;
 mod std_backend;
 mod traits;
@@ -41,6 +44,27 @@ pub use std_backend::format_streaming;
 
 #[cfg(feature = "arena")]
 pub use arena_backend::format_streaming_arena;
+
+/// Guard enforcing only the tag-prefix budget; the formatter has its own depth cap and never
+/// expands aliases.
+fn tag_budget_guard() -> LimitGuard {
+    LimitGuard::new(ParseLimits {
+        max_depth: MaxDepth::new(usize::MAX),
+        max_alias_bytes: MaxAliasBytes::new(usize::MAX),
+        ..ParseLimits::default()
+    })
+}
+
+/// Maps a guard failure to the formatter's typed error.
+fn tag_budget_error(err: ParseError) -> EmitError {
+    match err {
+        ParseError::LimitExceeded {
+            kind: LimitKind::TagBytes(limit),
+            ..
+        } => EmitError::TagLimitExceeded { limit },
+        other => EmitError::Emit(other.to_string()),
+    }
+}
 
 /// Maximum number of anchor definitions per document, to prevent memory exhaustion attacks.
 /// 4096 anchors is more than sufficient for any legitimate YAML document.
@@ -1136,5 +1160,13 @@ items:
             standard, arena,
             "Complex mixed structure: arena and standard must match"
         );
+    }
+
+    #[test]
+    fn arena_rejects_tag_prefix_amplification() {
+        let mut doc = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
+        doc.extend((0..1_000).map(|i| format!("k{i}: !e!x v\n")));
+        let err = format_streaming_arena(&doc, &EmitterConfig::default()).unwrap_err();
+        assert!(err.to_string().contains("tag prefix expansion"), "{err}");
     }
 }

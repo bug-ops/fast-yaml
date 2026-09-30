@@ -786,6 +786,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 mod tests {
     use saphyr_parser::{Event, Parser};
 
+    use crate::limits::MaxTagBytes;
     use crate::streaming::{MAX_ANCHOR_ID, MAX_DEPTH, format_streaming};
     use crate::{EmitError, EmitterConfig};
 
@@ -1237,5 +1238,35 @@ mod tests {
         ] {
             assert_stable(yaml);
         }
+    }
+
+    fn amplifying_input() -> String {
+        let mut doc = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
+        doc.extend((0..1_000).map(|i| format!("k{i}: !e!x v\n")));
+        doc
+    }
+
+    #[test]
+    fn tag_prefix_amplification_is_rejected() {
+        for result in format_all_backends(&amplifying_input()) {
+            assert!(matches!(
+                result,
+                Err(EmitError::TagLimitExceeded { limit }) if limit == MaxTagBytes::DEFAULT
+            ));
+        }
+    }
+
+    #[test]
+    fn cross_document_alias_is_rejected() {
+        for result in format_all_backends("--- &a [x]\n--- *a\n") {
+            let err = result.unwrap_err();
+            assert!(err.to_string().contains("unknown anchor"), "{err}");
+        }
+    }
+
+    #[test]
+    fn ordinary_tag_directive_still_formats() {
+        let out = fmt("%TAG !e! tag:e.com,2000:\n---\nk: !e!x v\n");
+        assert!(out.contains("tag:e.com,2000:x"), "{out}");
     }
 }

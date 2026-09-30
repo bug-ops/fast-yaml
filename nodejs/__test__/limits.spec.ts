@@ -25,6 +25,11 @@ const TAGBOMB = `a0: &a0 !<tag:${'x'.repeat(10_000)}> ""\n${Array.from(
   (_, i) => `a${i + 1}: &a${i + 1} [${Array(9).fill(`*a${i}`).join(',')}]`
 ).join('\n')}`;
 
+const TAGPREFIX = `%TAG !e! tag:e.com,${'a'.repeat(100_000)}\n---\n${Array.from(
+  { length: 1_000 },
+  (_, i) => `k${i}: !e!x v`
+).join('\n')}`;
+
 const nested = (depth: number): unknown[] => {
   let data: unknown[] = [];
   for (let i = 1; i < depth; i++) {
@@ -39,6 +44,7 @@ describe('Resource limits - load', () => {
     ['alias bomb', BOMB],
     ['long-scalar alias bomb', STRBOMB],
     ['long-tag alias bomb', TAGBOMB],
+    ['tag prefix amplification', TAGPREFIX],
   ])('safeLoad rejects %s', (_name, input) => {
     expect(() => safeLoad(input)).toThrow(/limit exceeded/);
   });
@@ -48,6 +54,7 @@ describe('Resource limits - load', () => {
     ['alias bomb', BOMB],
     ['long-scalar alias bomb', STRBOMB],
     ['long-tag alias bomb', TAGBOMB],
+    ['tag prefix amplification', TAGPREFIX],
   ])('safeLoadAll rejects %s', (_name, input) => {
     expect(() => safeLoadAll(input)).toThrow(/limit exceeded/);
   });

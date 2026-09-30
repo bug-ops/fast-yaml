@@ -48,6 +48,16 @@ fn tagbomb_yaml() -> String {
     yaml
 }
 
+fn tag_prefix_yaml() -> String {
+    let mut yaml = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
+    for i in 0..1_000 {
+        writeln!(yaml, "k{i}: !e!x v").unwrap();
+    }
+    yaml
+}
+
+const LEGIT_TAG_YAML: &str = "%TAG !e! tag:example.com,2000:\n---\nk: !e!x v\nl: !!str 1\n";
+
 fn write_fixture(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf {
     let path = dir.path().join(name);
     fs::write(&path, content).unwrap();
@@ -76,6 +86,7 @@ fn parse_rejects_deep_and_bomb_inputs() {
         ("bomb.yaml", bomb_yaml()),
         ("strbomb.yaml", strbomb_yaml()),
         ("tagbomb.yaml", tagbomb_yaml()),
+        ("tagprefix.yaml", tag_prefix_yaml()),
     ] {
         let path = write_fixture(&dir, name, &content);
         assert_limit_failure(&["parse"], &path);
@@ -90,6 +101,7 @@ fn lint_rejects_deep_and_bomb_inputs() {
         ("bomb.yaml", bomb_yaml()),
         ("strbomb.yaml", strbomb_yaml()),
         ("tagbomb.yaml", tagbomb_yaml()),
+        ("tagprefix.yaml", tag_prefix_yaml()),
     ] {
         let path = write_fixture(&dir, name, &content);
         assert_limit_failure(&["lint"], &path);
@@ -104,6 +116,7 @@ fn convert_json_rejects_deep_and_bomb_inputs() {
         ("bomb.yaml", bomb_yaml()),
         ("strbomb.yaml", strbomb_yaml()),
         ("tagbomb.yaml", tagbomb_yaml()),
+        ("tagprefix.yaml", tag_prefix_yaml()),
     ] {
         let path = write_fixture(&dir, name, &content);
         assert_limit_failure(&["convert", "json"], &path);
@@ -120,4 +133,34 @@ fn format_streams_the_bomb_without_expanding_aliases() {
         .arg(&path)
         .assert()
         .success();
+}
+
+#[test]
+fn format_rejects_tag_prefix_amplification() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "tagprefix.yaml", &tag_prefix_yaml());
+    let output = Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert!(output.status.code().is_some_and(|c| c != 0));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("tag prefix expansion"), "stderr: {stderr}");
+}
+
+#[test]
+fn legitimate_tag_directive_passes_every_subcommand() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "legit.yaml", LEGIT_TAG_YAML);
+    for args in [&["parse"][..], &["lint"], &["format"], &["convert", "json"]] {
+        Command::cargo_bin("fy")
+            .unwrap()
+            .args(args)
+            .arg(&path)
+            .assert()
+            .success();
+    }
 }

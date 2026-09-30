@@ -576,6 +576,20 @@ mod tests {
     }
 
     #[test]
+    fn test_lint_rejects_tag_prefix_amplification() {
+        let mut input = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
+        input.extend((0..1_000).map(|i| format!("k{i}: !e!x v\n")));
+        let err = Linter::with_all_rules().lint(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            LintError::ParseError(fast_yaml_core::ParseError::LimitExceeded {
+                kind: fast_yaml_core::LimitKind::TagBytes(_),
+                ..
+            })
+        ));
+    }
+
+    #[test]
     fn test_config_default() {
         let config = LintConfig::default();
         assert_eq!(config.max_line_length, Some(80));

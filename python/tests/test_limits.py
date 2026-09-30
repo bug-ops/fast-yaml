@@ -28,6 +28,11 @@ TAGBOMB = (
 )
 
 
+TAGPREFIX = (
+    "%TAG !e! tag:e.com," + "a" * 100_000 + "\n---\n" + "".join(f"k{i}: !e!x v\n" for i in range(1_000))
+)
+
+
 def _nested(depth):
     data = current = []
     for _ in range(depth - 1):
@@ -81,7 +86,9 @@ def _self_dict():
 
 
 @pytest.mark.parametrize(
-    "text", [DEEP, BOMB, STRBOMB, TAGBOMB], ids=["deep", "bomb", "strbomb", "tagbomb"]
+    "text",
+    [DEEP, BOMB, STRBOMB, TAGBOMB, TAGPREFIX],
+    ids=["deep", "bomb", "strbomb", "tagbomb", "tagprefix"],
 )
 def test_safe_load_rejects_hostile_input(text):
     with pytest.raises(ValueError, match="limit exceeded"):
@@ -89,7 +96,9 @@ def test_safe_load_rejects_hostile_input(text):
 
 
 @pytest.mark.parametrize(
-    "text", [DEEP, BOMB, STRBOMB, TAGBOMB], ids=["deep", "bomb", "strbomb", "tagbomb"]
+    "text",
+    [DEEP, BOMB, STRBOMB, TAGBOMB, TAGPREFIX],
+    ids=["deep", "bomb", "strbomb", "tagbomb", "tagprefix"],
 )
 def test_safe_load_all_rejects_hostile_input(text):
     with pytest.raises(ValueError, match="limit exceeded"):
