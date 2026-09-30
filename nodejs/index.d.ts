@@ -288,14 +288,6 @@ export declare function lint(source: string, config?: LintConfig | undefined | n
  *
  * All fields are optional; defaults are applied during conversion.
  */
-/** Per-rule configuration override. */
-export interface RuleConfig {
-  /** Override severity for this rule. */
-  severity?: 'error' | 'warning' | 'info' | 'hint'
-  /** Whether this rule is enabled (default: true). */
-  enabled?: boolean
-}
-
 export interface LintConfig {
   /** Maximum line length (None = unlimited). */
   maxLineLength?: number
@@ -312,15 +304,19 @@ export interface LintConfig {
   /**
    * Per-rule configuration overrides.
    *
-   * Each key is a rule code. Values may be a severity string shorthand
-   * (`'error' | 'warning' | 'info' | 'hint'`) or a `RuleConfig` object.
+   * Each key is a rule code; the value is either a severity string shorthand
+   * (`"error"` | `"warning"` | `"info"` | `"hint"`) or an object with optional
+   * `severity` and `enabled` fields.
    *
-   * Unknown rule codes are silently accepted. `disabledRules` takes precedence
-   * over `rules` entries.
+   * Unknown rule codes are silently accepted (they have no effect at lint time).
+   * `disabled_rules` takes precedence over a `rules` entry with `enabled: false`.
    *
-   * Note: `options` is intentionally not exposed (no current rule uses custom options).
+   * Note: `options` field of `RuleConfig` is intentionally not exposed here (no
+   * current rule uses custom options; deferred to a future release).
+   * Note: pass as a JS object; values may be a severity string shorthand or
+   * `{ severity?, enabled? }` object. Internally deserialized via `serde_json`.
    */
-  rules?: Record<string, RuleConfig | 'error' | 'warning' | 'info' | 'hint'>
+  rules?: JsonValue
 }
 
 /**
