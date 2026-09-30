@@ -9,15 +9,65 @@ use std::borrow::Cow;
 
 use saphyr_parser::{ScalarStyle, Tag};
 
-/// A decimal integer literal that overflows `i64`.
+/// Numeral system of an integer literal.
 ///
-/// Guarantees an optional sign followed by ASCII decimal digits only; it can only be
-/// produced by [`resolve_scalar`]. Hex and octal overflows are never represented here.
+/// The enum is exhaustive: a new radix must be handled by every consumer at compile time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DecimalBigInt<'a>(&'a str);
+pub enum IntRadix {
+    /// Plain decimal digits.
+    Decimal,
+    /// `0x` / `0X` prefix.
+    Hex,
+    /// `0o` / `0O` prefix.
+    Octal,
+}
 
-impl<'a> DecimalBigInt<'a> {
-    /// Returns the literal text, suitable for arbitrary-precision integer parsers.
+impl IntRadix {
+    /// Returns the numeric base (10, 16 or 8), as accepted by `int(text, base)` and
+    /// `u64::from_str_radix`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::IntRadix;
+    ///
+    /// assert_eq!(IntRadix::Hex.value(), 16);
+    /// ```
+    #[must_use]
+    pub const fn value(self) -> u32 {
+        match self {
+            Self::Decimal => 10,
+            Self::Hex => 16,
+            Self::Octal => 8,
+        }
+    }
+}
+
+/// Largest significant bit length of a hex or octal literal accepted as an integer.
+///
+/// `2^14284 - 1` is the largest value whose decimal form has at most 4300 digits, `CPython`'s default
+/// `int(str)` limit, so canonical decimal text of an accepted literal always loads in Python. This
+/// also bounds the quadratic radix-to-decimal conversion; decimal literals need none and are not
+/// capped. Longer literals stay strings.
+const MAX_RADIX_BIG_BITS: usize = 14_284;
+
+/// An integer literal that overflows `i64`, in decimal, hex or octal notation.
+///
+/// Guarantees an optional sign, then (for non-decimal radixes) the matching `0x`/`0o` prefix, then
+/// a non-empty run of digits valid for the radix; it can only be produced by [`resolve_scalar`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BigInt<'a> {
+    text: &'a str,
+    negative: bool,
+    radix: IntRadix,
+    digits: &'a str,
+}
+
+impl<'a> BigInt<'a> {
+    /// Returns the literal text as written, including sign and radix prefix.
+    ///
+    /// Pair it with [`radix`](Self::radix) for arbitrary-precision parsers such as Python's
+    /// `int(text, base)`.
     ///
     /// # Examples
     ///
@@ -26,20 +76,42 @@ impl<'a> DecimalBigInt<'a> {
     /// use saphyr_parser::ScalarStyle;
     ///
     /// let ResolvedScalar::BigInt(big) =
-    ///     resolve_scalar("99999999999999999999", ScalarStyle::Plain, None)
+    ///     resolve_scalar("0xFFFFFFFFFFFFFFFFFF", ScalarStyle::Plain, None)
     /// else {
     ///     unreachable!()
     /// };
-    /// assert_eq!(big.as_str(), "99999999999999999999");
+    /// assert_eq!(big.as_str(), "0xFFFFFFFFFFFFFFFFFF");
     /// ```
     #[must_use]
     pub const fn as_str(self) -> &'a str {
-        self.0
+        self.text
     }
 
-    /// Returns the literal in JSON integer grammar: no leading `+`, no leading zeros.
+    /// Returns the numeral system of the literal.
     ///
-    /// Borrows the input when it is already canonical.
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{IntRadix, ResolvedScalar, resolve_scalar};
+    /// use saphyr_parser::ScalarStyle;
+    ///
+    /// let ResolvedScalar::BigInt(big) =
+    ///     resolve_scalar("0o7777777777777777777777", ScalarStyle::Plain, None)
+    /// else {
+    ///     unreachable!()
+    /// };
+    /// assert_eq!(big.radix(), IntRadix::Octal);
+    /// ```
+    #[must_use]
+    pub const fn radix(self) -> IntRadix {
+        self.radix
+    }
+
+    /// Returns the value as decimal text in JSON integer grammar: no leading `+`, no leading
+    /// zeros, no radix prefix.
+    ///
+    /// Borrows the input when it is already canonical. Hex and octal literals are converted on
+    /// every call, at cost quadratic in their length (bounded by the literal size cap).
     ///
     /// # Examples
     ///
@@ -47,29 +119,100 @@ impl<'a> DecimalBigInt<'a> {
     /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
     /// use saphyr_parser::ScalarStyle;
     ///
-    /// let ResolvedScalar::BigInt(big) =
-    ///     resolve_scalar("+0099999999999999999999", ScalarStyle::Plain, None)
-    /// else {
-    ///     unreachable!()
-    /// };
-    /// assert_eq!(big.canonical(), "99999999999999999999");
+    /// for (raw, decimal) in [
+    ///     ("+0099999999999999999999", "99999999999999999999"),
+    ///     ("0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
+    ///     ("-0o7777777777777777777777", "-73786976294838206463"),
+    /// ] {
+    ///     let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
+    ///         unreachable!()
+    ///     };
+    ///     assert_eq!(big.canonical(), decimal);
+    /// }
     /// ```
     #[must_use]
     pub fn canonical(self) -> Cow<'a, str> {
-        let (negative, digits) = match self.0.as_bytes() {
-            [b'-', ..] => (true, &self.0[1..]),
-            [b'+', ..] => (false, &self.0[1..]),
-            _ => (false, self.0),
-        };
-        let trimmed = digits.trim_start_matches('0');
-        if !negative && trimmed.len() == self.0.len() {
-            Cow::Borrowed(self.0)
-        } else if negative {
-            Cow::Owned(format!("-{trimmed}"))
-        } else {
-            Cow::Borrowed(trimmed)
+        match self.radix {
+            IntRadix::Decimal => {
+                let trimmed = self.digits.trim_start_matches('0');
+                if self.text.len() == trimmed.len() + usize::from(self.negative) {
+                    Cow::Borrowed(self.text)
+                } else if self.negative {
+                    Cow::Owned(format!("-{trimmed}"))
+                } else {
+                    Cow::Borrowed(trimmed)
+                }
+            }
+            IntRadix::Hex => Cow::Owned(self.signed(radix_digits_to_decimal(self.digits, 4))),
+            IntRadix::Octal => Cow::Owned(self.signed(radix_digits_to_decimal(self.digits, 3))),
         }
     }
+
+    fn signed(self, decimal: String) -> String {
+        if self.negative {
+            format!("-{decimal}")
+        } else {
+            decimal
+        }
+    }
+}
+
+/// Value of one digit of a validated literal.
+fn radix_digit(byte: u8, base: u32) -> u64 {
+    char::from(byte).to_digit(base).map_or_else(
+        || unreachable!("BigInt digits are validated by parse_int"),
+        u64::from,
+    )
+}
+
+/// Whether the literal's significant bit length exceeds [`MAX_RADIX_BIG_BITS`].
+fn exceeds_bit_cap(digits: &str, bits_per_digit: u32) -> bool {
+    let significant = digits.trim_start_matches('0');
+    let Some(top) = significant
+        .bytes()
+        .next()
+        .map(|b| radix_digit(b, 1 << bits_per_digit))
+    else {
+        return false;
+    };
+    let top_bits = u64::BITS - top.leading_zeros();
+    (significant.len() - 1) * bits_per_digit as usize + top_bits as usize > MAX_RADIX_BIG_BITS
+}
+
+/// Converts a run of valid digits of base `2^bits_per_digit` to decimal text using base-1e9 limbs.
+///
+/// Digits are consumed in groups of at most 28 bits so each limb pass multiplies by up to `2^28`
+/// (`limb * 2^28 + carry` stays below `2^64`). Leading zeros are free: the limb vector stays empty
+/// until the first non-zero group.
+#[allow(clippy::cast_possible_truncation)] // limbs are reduced below 1e9 before the cast
+fn radix_digits_to_decimal(digits: &str, bits_per_digit: u32) -> String {
+    use std::fmt::Write;
+
+    const BASE: u64 = 1_000_000_000;
+    let base = 1u32 << bits_per_digit;
+    let mut limbs: Vec<u32> = Vec::new();
+    for group in digits.as_bytes().chunks((28 / bits_per_digit) as usize) {
+        let (multiplier, mut carry) = group.iter().fold((1u64, 0u64), |(mul, value), &b| {
+            (
+                mul * u64::from(base),
+                value * u64::from(base) + radix_digit(b, base),
+            )
+        });
+        for limb in &mut limbs {
+            let acc = u64::from(*limb) * multiplier + carry;
+            *limb = (acc % BASE) as u32;
+            carry = acc / BASE;
+        }
+        if carry > 0 {
+            limbs.push(carry as u32);
+        }
+    }
+    let mut limbs = limbs.into_iter().rev();
+    let mut out = limbs.next().map_or_else(String::new, |top| top.to_string());
+    for limb in limbs {
+        let _ = write!(out, "{limb:09}");
+    }
+    out
 }
 
 /// The type a scalar resolves to under the YAML 1.2 core schema.
@@ -85,8 +228,8 @@ pub enum ResolvedScalar<'a> {
     Bool(bool),
     /// Integer that fits in `i64`.
     Int(i64),
-    /// Decimal integer that overflows `i64`.
-    BigInt(DecimalBigInt<'a>),
+    /// Integer outside `i64`, in decimal, hex or octal notation.
+    BigInt(BigInt<'a>),
     /// Floating-point number, including `.inf` and `.nan`.
     Float(f64),
     /// String; borrows the whole scalar text.
@@ -144,8 +287,9 @@ impl TagClass {
 ///    truncation toward zero.
 /// 2. The non-specific tag `!` forces a string (§6.8.1).
 /// 3. Otherwise non-plain scalars are strings, and plain scalars resolve implicitly: empty
-///    and null forms, booleans, integers (decimal, `0x`, `0o`), decimal integers overflowing
-///    `i64`, then floats; anything else is a string.
+///    and null forms, booleans, integers (decimal, `0x`, `0o`, [`ResolvedScalar::BigInt`] when
+///    beyond `i64`), then floats; anything else is a string. Hex and octal literals with more
+///    than 14284 significant bits (canonical decimal beyond 4300 digits) stay strings.
 ///
 /// # Examples
 ///
@@ -201,10 +345,7 @@ pub fn resolve_scalar<'a>(s: &'a str, style: ScalarStyle, tag: Option<&Tag>) -> 
 fn coerce_core(tag: CoreTag, s: &str) -> Option<ResolvedScalar<'_>> {
     match tag {
         CoreTag::Str => Some(ResolvedScalar::Str(s)),
-        CoreTag::Int => parse_core_schema_int(s)
-            .map(ResolvedScalar::Int)
-            .or_else(|| decimal_bigint(s))
-            .or_else(|| float_str_to_int(s).map(ResolvedScalar::Int)),
+        CoreTag::Int => parse_int(s).or_else(|| float_str_to_int(s).map(ResolvedScalar::Int)),
         CoreTag::Float => parse_core_schema_float(s).map(ResolvedScalar::Float),
         CoreTag::Bool => match s {
             "true" | "True" | "TRUE" => Some(ResolvedScalar::Bool(true)),
@@ -223,45 +364,54 @@ fn resolve_implicit(s: &str) -> ResolvedScalar<'_> {
         "" | "~" | "null" | "NULL" | "Null" => ResolvedScalar::Null,
         "true" | "True" | "TRUE" => ResolvedScalar::Bool(true),
         "false" | "False" | "FALSE" => ResolvedScalar::Bool(false),
-        _ => parse_core_schema_int(s)
-            .map(ResolvedScalar::Int)
-            .or_else(|| decimal_bigint(s))
+        _ => parse_int(s)
             .or_else(|| parse_core_schema_float(s).map(ResolvedScalar::Float))
             .unwrap_or(ResolvedScalar::Str(s)),
     }
 }
 
-fn decimal_bigint(s: &str) -> Option<ResolvedScalar<'_>> {
-    let digits = s.strip_prefix(['+', '-']).unwrap_or(s);
-    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
-        .then_some(ResolvedScalar::BigInt(DecimalBigInt(s)))
-}
-
-/// Parse a YAML core schema integer: decimal, hex (`0x`), or octal (`0o`).
+/// Parse a YAML core schema integer: decimal, hex (`0x`), or octal (`0o`), with an optional sign.
 ///
-/// Returns `None` for values that overflow `i64` or don't match integer syntax.
-fn parse_core_schema_int(s: &str) -> Option<i64> {
-    let (neg, digits) = s.strip_prefix('-').map_or_else(
-        || (false, s.strip_prefix('+').unwrap_or(s)),
-        |rest| (true, rest),
-    );
-    let radix_digits = |prefix: [&str; 2], radix: u32| {
-        let rest = digits
-            .strip_prefix(prefix[0])
-            .or_else(|| digits.strip_prefix(prefix[1]))?;
-        // `from_str_radix` would accept a second sign.
-        let raw = rest
-            .bytes()
-            .all(|b| char::from(b).is_digit(radix))
-            .then(|| i64::from_str_radix(rest, radix).ok())
-            .flatten();
-        Some(raw.and_then(|raw| if neg { raw.checked_neg() } else { Some(raw) }))
+/// Returns `Int` when the value fits `i64`, `BigInt` when it does not, and `None` for non-integer
+/// syntax or a hex/octal literal beyond [`MAX_RADIX_BIG_BITS`].
+fn parse_int(s: &str) -> Option<ResolvedScalar<'_>> {
+    let (negative, unsigned) = match s.as_bytes() {
+        [b'-', ..] => (true, &s[1..]),
+        [b'+', ..] => (false, &s[1..]),
+        _ => (false, s),
     };
-    if let Some(parsed) = radix_digits(["0x", "0X"], 16).or_else(|| radix_digits(["0o", "0O"], 8)) {
-        return parsed;
+    let (radix, digits) = match unsigned.as_bytes() {
+        [b'0', b'x' | b'X', ..] => (IntRadix::Hex, &unsigned[2..]),
+        [b'0', b'o' | b'O', ..] => (IntRadix::Octal, &unsigned[2..]),
+        _ => (IntRadix::Decimal, unsigned),
+    };
+    let base = radix.value();
+    if digits.is_empty() || !digits.bytes().all(|b| char::from(b).is_digit(base)) {
+        return None;
     }
-    // Parsing the signed text keeps `i64::MIN` representable.
-    s.parse::<i64>().ok()
+    let fitted = u64::from_str_radix(digits, base)
+        .ok()
+        .and_then(|magnitude| {
+            if negative {
+                0i64.checked_sub_unsigned(magnitude)
+            } else {
+                i64::try_from(magnitude).ok()
+            }
+        });
+    if let Some(int) = fitted {
+        return Some(ResolvedScalar::Int(int));
+    }
+    let too_long = match radix {
+        IntRadix::Decimal => false,
+        IntRadix::Hex => exceeds_bit_cap(digits, 4),
+        IntRadix::Octal => exceeds_bit_cap(digits, 3),
+    };
+    (!too_long).then_some(ResolvedScalar::BigInt(BigInt {
+        text: s,
+        negative,
+        radix,
+        digits,
+    }))
 }
 
 /// Attempt to coerce a float string to `i64` via truncation toward zero (`PyYAML` convention).
@@ -302,6 +452,13 @@ mod tests {
     use super::*;
     use ResolvedScalar::{Bool, Float, Int, Null, Str};
 
+    fn big_of(raw: &str) -> BigInt<'_> {
+        let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
+            panic!("{raw} should be BigInt");
+        };
+        big
+    }
+
     #[test]
     fn big_int_canonical_form() {
         for (raw, expected) in [
@@ -313,12 +470,129 @@ mod tests {
                 "0000000000000000000009223372036854775808",
                 "9223372036854775808",
             ),
+            ("0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
+            ("+0XFF0000000000000000", "4703919738795935662080"),
+            ("-0xFFFFFFFFFFFFFFFFFF", "-4722366482869645213695"),
+            (
+                "0x0000000000000000000000010000000000000000",
+                "18446744073709551616",
+            ),
+            ("0x8000000000000000", "9223372036854775808"),
+            ("-0x8000000000000001", "-9223372036854775809"),
+            ("0o7777777777777777777777", "73786976294838206463"),
+            ("0o1000000000000000000000", "9223372036854775808"),
+            ("-0O1000000000000000000001", "-9223372036854775809"),
         ] {
-            let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
-                panic!("{raw} should be BigInt");
-            };
-            assert_eq!(big.canonical(), expected);
+            assert_eq!(big_of(raw).canonical(), expected, "{raw}");
         }
+    }
+
+    #[test]
+    fn big_int_radix() {
+        for (raw, radix) in [
+            ("99999999999999999999", IntRadix::Decimal),
+            ("-0xFFFFFFFFFFFFFFFFFF", IntRadix::Hex),
+            ("+0XFFFFFFFFFFFFFFFFFF", IntRadix::Hex),
+            ("0o7777777777777777777777", IntRadix::Octal),
+            ("0O7777777777777777777777", IntRadix::Octal),
+        ] {
+            assert_eq!(big_of(raw).radix(), radix, "{raw}");
+            assert_eq!(big_of(raw).as_str(), raw);
+        }
+    }
+
+    #[test]
+    fn canonical_decimal_is_a_fixed_point() {
+        for raw in [
+            "99999999999999999999",
+            "-99999999999999999999",
+            "0xFFFFFFFFFFFFFFFFFF",
+            "-0o7777777777777777777777",
+        ] {
+            let canonical = big_of(raw).canonical().into_owned();
+            let again = big_of(&canonical);
+            assert_eq!(again.radix(), IntRadix::Decimal);
+            assert!(matches!(again.canonical(), Cow::Borrowed(c) if c == canonical));
+        }
+    }
+
+    #[test]
+    fn radix_bit_length_cap() {
+        // Bit lengths: hex 4 * 3571 = 14284, octal 3 * 4761 + 1 = 14284.
+        let fits = [
+            format!("0x{}", "F".repeat(3571)),
+            format!("0x000{}", "F".repeat(3571)),
+            format!("0x1{}", "0".repeat(3570)),
+            format!("0o1{}", "7".repeat(4761)),
+            format!("0o{}", "7".repeat(4761)),
+            format!("-0o1{}", "7".repeat(4761)),
+        ];
+        let too_long = [
+            format!("0x1{}", "0".repeat(3571)),
+            format!("0x1{}", "F".repeat(3571)),
+            format!("0o2{}", "0".repeat(4761)),
+            format!("0o{}", "7".repeat(4762)),
+            format!("-0x1{}", "0".repeat(3571)),
+        ];
+        for raw in &fits {
+            assert!(
+                matches!(plain(raw), ResolvedScalar::BigInt(_)),
+                "plain {}",
+                &raw[..8]
+            );
+            assert!(
+                matches!(
+                    tagged(raw, ScalarStyle::Plain, "int"),
+                    ResolvedScalar::BigInt(_)
+                ),
+                "!!int {}",
+                &raw[..8]
+            );
+            assert!(big_of(raw).canonical().trim_start_matches('-').len() <= 4300);
+        }
+        for raw in &too_long {
+            assert_eq!(plain(raw), Str(raw), "plain {}", &raw[..8]);
+            assert_eq!(
+                tagged(raw, ScalarStyle::Plain, "int"),
+                Str(raw),
+                "!!int {}",
+                &raw[..8]
+            );
+        }
+    }
+
+    #[test]
+    fn largest_radix_int_has_exactly_4300_decimal_digits() {
+        // 2^14284 - 1 has 4300 digits and ends in 5; 2^14285 - 1 (one more bit) has 4301.
+        let canonical = big_of(&format!("0x{}", "F".repeat(3571)))
+            .canonical()
+            .into_owned();
+        assert_eq!(canonical.len(), 4300);
+        assert!(canonical.ends_with('5'));
+    }
+
+    #[test]
+    fn radix_conversion_handles_partial_digit_groups() {
+        for (raw, expected) in [
+            ("0x1FFFFFFFFFFFFFFFFF", "590295810358705651711"),
+            (
+                "0x1FFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+                "166153499473114484112975882535043071",
+            ),
+            ("0o1777777777777777777777", "18446744073709551615"),
+            (
+                "0o177777777777777777777777777777",
+                "309485009821345068724781055",
+            ),
+        ] {
+            assert_eq!(big_of(raw).canonical(), expected, "{raw}");
+        }
+    }
+
+    #[test]
+    fn long_decimal_is_not_capped() {
+        let raw = "9".repeat(10_000);
+        assert_eq!(big_of(&raw).canonical(), raw);
     }
 
     fn core(suffix: &str) -> Tag {
@@ -329,7 +603,18 @@ mod tests {
     }
 
     fn big(s: &str) -> ResolvedScalar<'_> {
-        ResolvedScalar::BigInt(DecimalBigInt(s))
+        let unsigned = s.strip_prefix(['+', '-']).unwrap_or(s);
+        let (radix, digits) = match unsigned.get(..2) {
+            Some("0x" | "0X") => (IntRadix::Hex, &unsigned[2..]),
+            Some("0o" | "0O") => (IntRadix::Octal, &unsigned[2..]),
+            _ => (IntRadix::Decimal, unsigned),
+        };
+        ResolvedScalar::BigInt(BigInt {
+            text: s,
+            negative: s.starts_with('-'),
+            radix,
+            digits,
+        })
     }
 
     fn plain(s: &str) -> ResolvedScalar<'_> {
@@ -387,11 +672,40 @@ mod tests {
         assert_eq!(plain("99999999999999999999"), big("99999999999999999999"));
         assert_eq!(plain("-99999999999999999999"), big("-99999999999999999999"));
         assert_eq!(plain("+99999999999999999999"), big("+99999999999999999999"));
-        assert_eq!(plain("0xFFFFFFFFFFFFFFFFFF"), Str("0xFFFFFFFFFFFFFFFFFF"));
+        assert_eq!(plain("0xFFFFFFFFFFFFFFFFFF"), big("0xFFFFFFFFFFFFFFFFFF"));
+        assert_eq!(plain("+0xFFFFFFFFFFFFFFFFFF"), big("+0xFFFFFFFFFFFFFFFFFF"));
         assert_eq!(
             plain("0o7777777777777777777777"),
-            Str("0o7777777777777777777777")
+            big("0o7777777777777777777777")
         );
+    }
+
+    #[test]
+    fn invalid_radix_digits_stay_strings() {
+        for s in [
+            "0o9",
+            "0o78",
+            "0o7777777777777777777778",
+            "0xG",
+            "0xFF_FF",
+            "0x1_0",
+            "0xFFFFFFFFFFFFFFFFFFG",
+        ] {
+            assert_eq!(plain(s), Str(s), "plain {s}");
+            assert_eq!(tagged(s, ScalarStyle::Plain, "int"), Str(s), "!!int {s}");
+        }
+        assert_eq!(
+            tagged("0xFFFFFFFFFFFFFFFFFF", ScalarStyle::Plain, "float"),
+            Str("0xFFFFFFFFFFFFFFFFFF")
+        );
+    }
+
+    #[test]
+    fn radix_leading_zeros_are_insignificant() {
+        assert_eq!(plain("0x0000000000000000000000FF"), Int(255));
+        assert_eq!(plain("0o000000000000000000000017"), Int(15));
+        assert_eq!(plain("0x0"), Int(0));
+        assert_eq!(plain("-0x0"), Int(0));
     }
 
     #[test]
@@ -432,7 +746,7 @@ mod tests {
         );
         assert_eq!(
             tagged("0xFFFFFFFFFFFFFFFFFF", p, "int"),
-            Str("0xFFFFFFFFFFFFFFFFFF")
+            big("0xFFFFFFFFFFFFFFFFFF")
         );
     }
 
@@ -495,6 +809,13 @@ mod tests {
             ("-9223372036854775808", Int(i64::MIN)),
             ("-9223372036854775809", big("-9223372036854775809")),
             ("9223372036854776000", big("9223372036854776000")),
+            ("0x7FFFFFFFFFFFFFFF", Int(i64::MAX)),
+            ("0x8000000000000000", big("0x8000000000000000")),
+            ("-0x8000000000000000", Int(i64::MIN)),
+            ("-0x8000000000000001", big("-0x8000000000000001")),
+            ("0o777777777777777777777", Int(i64::MAX)),
+            ("0o1000000000000000000000", big("0o1000000000000000000000")),
+            ("-0o1000000000000000000000", Int(i64::MIN)),
         ];
         for (s, expected) in cases {
             for style in STYLES {

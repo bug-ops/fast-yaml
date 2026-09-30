@@ -191,3 +191,69 @@ def test_dump_budget_counts_big_int_text():
     big = 10**4000
     with pytest.raises(ValueError, match="output size exceeds"):
         fast_yaml.safe_dump([big] * 30000)
+
+
+RADIX_LITERALS = [
+    ("0xFFFFFFFFFFFFFFFFFF", 0xFFFFFFFFFFFFFFFFFF),
+    ("+0XFF0000000000000000", 0xFF0000000000000000),
+    ("-0xFFFFFFFFFFFFFFFFFF", -0xFFFFFFFFFFFFFFFFFF),
+    ("0o7777777777777777777777", 0o7777777777777777777777),
+    ("-0O1000000000000000000001", -0o1000000000000000000001),
+    ("0x8000000000000000", 2**63),
+    ("-0x8000000000000000", -(2**63)),
+]
+
+
+@pytest.mark.parametrize(("literal", "expected"), RADIX_LITERALS)
+def test_hex_and_octal_overflow_are_int_in_both_loaders(literal, expected):
+    from fast_yaml._core import parallel
+
+    text = f"v: {literal}\nl: [{literal}]\n"
+    loaded = fast_yaml.safe_load(text)
+    assert loaded == {"v": expected, "l": [expected]}
+    assert isinstance(loaded["v"], int)
+    assert parallel.parse_parallel(text)[0] == loaded
+
+
+def test_equal_big_integer_keys_collapse_in_both_loaders():
+    from fast_yaml._core import parallel
+
+    text = "+99999999999999999999: a\n99999999999999999999: b\n0x56BC75E2D630FFFFF: c\n"
+    expected = {99999999999999999999: "c"}
+    assert fast_yaml.safe_load(text) == expected
+    assert parallel.parse_parallel(text)[0] == expected
+
+
+# Largest accepted literals: 14284 significant bits, whose decimal form has 4300 digits.
+MAX_LEN_LITERALS = [
+    "0x" + "F" * 3571,
+    "-0x" + "F" * 3571,
+    "0o1" + "7" * 4761,
+    "0o" + "0" * 50 + "1" + "7" * 4761,
+]
+OVER_CAP_LITERALS = ["0x1" + "0" * 3571, "0x" + "F" * 3572, "0o2" + "0" * 4761, "0o" + "7" * 4762]
+
+
+@pytest.mark.parametrize("literal", MAX_LEN_LITERALS)
+def test_max_length_radix_int_loads_in_both_loaders(literal):
+    from fast_yaml._core import parallel
+
+    text = f"v: {literal}\nl: [{literal}]\n"
+    loaded = fast_yaml.safe_load(text)
+    base = 16 if "x" in literal else 8
+    assert loaded["v"] == int(literal, base)
+    assert isinstance(loaded["v"], int)
+    assert parallel.parse_parallel(text)[0] == loaded
+
+
+@pytest.mark.parametrize("literal", OVER_CAP_LITERALS)
+def test_radix_beyond_bit_cap_stays_str_in_both_loaders(literal):
+    from fast_yaml._core import parallel
+
+    text = f"v: {literal}\n"
+    assert fast_yaml.safe_load(text) == {"v": literal}
+    assert parallel.parse_parallel(text)[0] == {"v": literal}
+
+
+def test_quoted_hex_overflow_stays_str():
+    assert fast_yaml.safe_load('v: "0xFFFFFFFFFFFFFFFFFF"') == {"v": "0xFFFFFFFFFFFFFFFFFF"}

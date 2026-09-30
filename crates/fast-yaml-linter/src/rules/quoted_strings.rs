@@ -877,6 +877,22 @@ mod tests {
         assert!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n").is_empty());
     }
 
+    #[test]
+    fn quotes_that_preserve_a_radix_big_int_type_are_needed() {
+        assert!(run("a: \"0xFFFFFFFFFFFFFFFFFF\"\nb: '0o7777777777777777777777'\n").is_empty());
+    }
+
+    #[test]
+    fn plain_radix_big_int_needs_no_quotes_under_always() {
+        assert!(
+            messages(
+                "a: 0xFFFFFFFFFFFFFFFFFF\nb: 0o7777777777777777777777\n",
+                "{required: always}"
+            )
+            .is_empty()
+        );
+    }
+
     fn messages(yaml: &str, options: &str) -> Vec<String> {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
         let config = config_with_rule(RuleName::QuotedStrings, options);

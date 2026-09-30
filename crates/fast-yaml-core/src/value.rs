@@ -1,5 +1,3 @@
-use crate::scalar::{ResolvedScalar, resolve_scalar};
-
 pub use saphyr::MappingOwned as Map;
 pub use saphyr::ScalarOwned;
 /// Wrapper around saphyr's `YamlOwned` type for consistent API.
@@ -19,16 +17,16 @@ pub type Array = Vec<Value>;
 
 /// Returns the text of a scalar used as a mapping key in string-keyed formats (JSON, JS objects).
 ///
-/// Null, booleans, integers and floats use their canonical text; a `Representation` (for example
-/// an integer beyond `i64`) uses its source text. Returns `None` for collections, aliases and
-/// other non-scalar nodes.
+/// Null, booleans, integers and floats use their canonical text; a `Representation` uses its
+/// stored text, which [`crate::canonicalize`] makes canonical decimal for integers beyond `i64`.
+/// Returns `None` for collections, aliases and other non-scalar nodes.
 ///
 /// # Examples
 ///
 /// ```
 /// use fast_yaml_core::{Parser, Value, value::scalar_key_text};
 ///
-/// let Some(Value::Mapping(map)) = Parser::parse_str("9223372036854775808: x").unwrap() else {
+/// let Some(Value::Mapping(map)) = Parser::parse_str("+0x8000000000000000: x").unwrap() else {
 ///     unreachable!()
 /// };
 /// let key = map.keys().next().unwrap();
@@ -44,12 +42,7 @@ pub fn scalar_key_text(key: &Value) -> Option<String> {
             ScalarOwned::FloatingPoint(f) => f.to_string(),
             ScalarOwned::String(s) => s.clone(),
         }),
-        Value::Representation(s, style, tag) => {
-            Some(match resolve_scalar(s, *style, tag.as_ref()) {
-                ResolvedScalar::BigInt(big) => big.canonical().into_owned(),
-                _ => s.clone(),
-            })
-        }
+        Value::Representation(s, ..) => Some(s.clone()),
         _ => None,
     }
 }
@@ -61,7 +54,7 @@ mod tests {
     use saphyr_parser::ScalarStyle;
 
     #[test]
-    fn scalar_key_text_canonicalizes_big_int_representations() {
+    fn scalar_key_text_of_parsed_big_int_is_canonical() {
         for (raw, expected) in [
             ("+99999999999999999999", "99999999999999999999"),
             ("-99999999999999999999", "-99999999999999999999"),
@@ -69,9 +62,14 @@ mod tests {
                 "000000000000000000000123456789012345678901",
                 "123456789012345678901",
             ),
+            ("0xFFFFFFFFFFFFFFFFFF", "4722366482869645213695"),
         ] {
-            let key = Value::Representation(raw.to_string(), ScalarStyle::Plain, None);
-            assert_eq!(scalar_key_text(&key).as_deref(), Some(expected));
+            let Some(Value::Mapping(map)) = crate::Parser::parse_str(&format!("{raw}: x")).unwrap()
+            else {
+                unreachable!()
+            };
+            let key = map.keys().next().unwrap();
+            assert_eq!(scalar_key_text(key).as_deref(), Some(expected), "{raw}");
         }
     }
 

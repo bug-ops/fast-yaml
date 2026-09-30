@@ -373,6 +373,60 @@ fn test_convert_yaml_to_json_scalar_resolution_edges() {
 }
 
 #[test]
+fn test_convert_yaml_to_json_radix_big_integers() {
+    let input = concat!(
+        "hex: 0xFFFFFFFFFFFFFFFFFF\n",
+        "neg: -0xFFFFFFFFFFFFFFFFFF\n",
+        "oct: 0o7777777777777777777777\n",
+        "min: -0x8000000000000000\n",
+        "tagged: !!int 0x8000000000000000\n",
+        "plus: +0099999999999999999999\n",
+        "0xFFFFFFFFFFFFFFFFFF: key\n",
+    );
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin(input)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"hex\": 4722366482869645213695"))
+        .stdout(predicate::str::contains("\"neg\": -4722366482869645213695"))
+        .stdout(predicate::str::contains("\"oct\": 73786976294838206463"))
+        .stdout(predicate::str::contains("\"min\": -9223372036854775808"))
+        .stdout(predicate::str::contains("\"tagged\": 9223372036854775808"))
+        .stdout(predicate::str::contains("\"plus\": 99999999999999999999"))
+        .stdout(predicate::str::contains(
+            "\"4722366482869645213695\": \"key\"",
+        ));
+}
+
+#[test]
+fn test_convert_yaml_to_json_negative_octal_i64_min() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("w: -0o1000000000000000000000\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"w\": -9223372036854775808"));
+}
+
+#[test]
+fn test_convert_yaml_to_json_hex_beyond_bit_cap_is_string() {
+    let literal = format!("0x1{}", "0".repeat(3571));
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin(format!("v: {literal}\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!("\"v\": \"{literal}\"")));
+}
+
+#[test]
 fn test_convert_yaml_to_json_tagged_multi_document() {
     Command::cargo_bin("fy")
         .unwrap()
