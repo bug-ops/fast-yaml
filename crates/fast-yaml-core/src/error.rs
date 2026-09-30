@@ -41,6 +41,54 @@ pub enum ParseError {
     },
 }
 
+impl ParseError {
+    /// Shifts source positions by the text that precedes the parsed fragment.
+    ///
+    /// Lets an error from a fragment be reported in the coordinates of the whole input:
+    /// `lines` line breaks and `chars` characters come before the fragment, which must start
+    /// at the beginning of a line so columns stay valid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{ParseError, Parser};
+    ///
+    /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 20);
+    /// let ParseError::Scanner(scan) = err else { panic!("scanner error expected") };
+    /// assert!(scan.marker().line() > 4);
+    /// assert!(scan.marker().index() >= 20);
+    /// ```
+    // Marker fields are char-based; shifted by char counts, no source text to convert from.
+    #[allow(clippy::disallowed_methods)]
+    #[must_use]
+    pub fn relocated(self, lines: usize, chars: usize) -> Self {
+        match self {
+            Self::Scanner(e) => {
+                let m = e.marker();
+                Self::Scanner(saphyr::ScanError::new(
+                    saphyr_parser::Marker::new(m.index() + chars, m.line() + lines, m.col()),
+                    e.info().to_owned(),
+                ))
+            }
+            Self::Syntax {
+                line,
+                column,
+                message,
+            } => Self::Syntax {
+                line: line + lines,
+                column,
+                message,
+            },
+            Self::LimitExceeded { kind, line, column } => Self::LimitExceeded {
+                kind,
+                line: line + lines,
+                column,
+            },
+            invalid @ Self::InvalidFloat { .. } => invalid,
+        }
+    }
+}
+
 /// Errors that can occur during YAML emission.
 #[derive(Error, Debug)]
 pub enum EmitError {

@@ -1,5 +1,5 @@
 use crate::error::ParseResult;
-use crate::limits::{LimitGuard, ParseLimits};
+use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::Value;
 use saphyr::{ScalarOwned, YamlLoader};
@@ -97,7 +97,32 @@ impl Parser {
     /// assert!(Parser::parse_all_with_limits("- &a x\n- *a\n- *a", &limits).is_err());
     /// ```
     pub fn parse_all_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
-        Ok(load_documents(input, limits)?
+        Self::parse_all_with_budget(input, &StreamBudget::new(*limits))
+    }
+
+    /// Parse all YAML documents, drawing alias bytes from a caller-owned [`StreamBudget`].
+    ///
+    /// Use one budget across several inputs (for example chunks of one stream) so that the
+    /// alias limit applies to their total rather than to each separately.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds the budget's limits.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Parser;
+    /// use fast_yaml_core::limits::{ParseLimits, StreamBudget};
+    ///
+    /// let budget = StreamBudget::new(ParseLimits::default());
+    /// let docs = Parser::parse_all_with_budget("a: 1\n---\nb: 2", &budget)?;
+    /// assert_eq!(docs.len(), 2);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn parse_all_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
+        Ok(load_documents_with_budget(input, budget)?
             .into_iter()
             .map(canonicalize)
             .collect())
@@ -107,10 +132,14 @@ impl Parser {
 /// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
 /// recurses or clones aliases, then returns the un-canonicalized documents.
 fn load_documents(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
+    load_documents_with_budget(input, &StreamBudget::new(*limits))
+}
+
+fn load_documents_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
     let mut parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
     let mut loader = YamlLoader::<Value>::default();
     loader.early_parse(false);
-    let mut guard = LimitGuard::new(*limits);
+    let mut guard = LimitGuard::with_budget(budget.clone());
     while let Some(event) = parser.next_event() {
         let (event, span) = event?;
         guard.observe(&event, span)?;

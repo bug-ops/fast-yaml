@@ -37,12 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Write files in `fy format` via a secure atomic writer (no predictable `.tmp`, mode and symlinks preserved) (#364)
 - **Breaking:** cap `%TAG` prefix expansion (64 MiB per stream) in parse, lint, convert and `fy format`; adds `LimitKind::TagBytes`, `EmitError::TagLimitExceeded`, `MaxTagBytes` and `ParseLimits::max_tag_bytes` (#389)
 - `fy format` now rejects a cross-document alias (`--- &a [x]` then `--- *a`) as an unknown anchor, matching `fy parse` (#389)
+- `parse_parallel` shares one alias-expansion and `%TAG` budget across all chunks (new public `StreamBudget` and `Parser::parse_all_with_budget`), closing an alias-bomb bypass (#387) (#PR)
 
 ### Fixed
 
 - Fix `fy format`/`fy lint` silently skipping nonexistent paths in multi-path invocations; they now fail with exit code 1 (#398, #401)
 - Explicit tags are no longer corrupted or dropped by `Emitter::format_with_config` in Python/Node.js `format_files` and `fast-yaml-parallel` (#408)
 - Fix Node.js bindings aborting the process on a Rust panic; panics in sync and async exports now throw a catchable JS `Error` (#404)
+- Make `parse_parallel` chunking match `Parser::parse_all`: `...` end markers, multiple `%YAML` blocks, lone-CR line endings, no `---`+NBSP/NEL markers, and whole-input `Error::Parse` marks via new public `ParseError::relocated` (#365) (#PR)
 - Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#385)
 - Fix quadratic lint time on large files in `key-ordering` key lookup and flow-token block-scalar checks (#385)
 - Fix `fy format --dry-run` always reporting "would change": output is compared with the input in single-file, batch and stdin modes (#397)
