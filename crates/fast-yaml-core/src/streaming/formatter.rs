@@ -10,7 +10,60 @@ use saphyr_parser::{Event, ScalarStyle, Span, Tag};
 
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use super::{Context, INDENT_SPACES, MAX_ANCHOR_ID, MAX_DEPTH};
-use crate::emitter::{EmitterConfig, block_scalar_header};
+use crate::emitter::{EmitterConfig, MAX_INDENT, MIN_INDENT, block_scalar_header};
+
+/// Width of the `"- "` sequence entry indicator.
+const DASH_WIDTH: usize = 2;
+
+/// Absolute output column at which the entries of a block collection start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Column(usize);
+
+/// Kind of a block collection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectionKind {
+    Sequence,
+    Mapping,
+}
+
+impl CollectionKind {
+    /// Context of the entries of a collection of this kind.
+    const fn entry_context(self) -> Context {
+        match self {
+            Self::Sequence => Context::Sequence,
+            Self::Mapping => Context::MappingKey,
+        }
+    }
+
+    /// Flow-style text of an empty collection of this kind.
+    const fn empty_flow(self) -> &'static str {
+        match self {
+            Self::Sequence => "[]",
+            Self::Mapping => "{}",
+        }
+    }
+}
+
+/// Whether a node ends its own line (block scalar) or shares it with its context suffix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeShape {
+    Inline,
+    BlockScalar,
+}
+
+/// Block scalar style requested by the source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BlockStyle {
+    Literal,
+    Folded,
+}
+
+/// A collection start held back until the next event shows whether it is empty.
+struct PendingStart {
+    kind: CollectionKind,
+    anchor_id: usize,
+    tag: Option<Tag>,
+}
 
 /// Whether `c` is a YAML non-printable that only a double-quoted escape can represent (tab excluded).
 fn needs_escape(c: char) -> bool {
@@ -103,8 +156,12 @@ enum ScalarTyping {
 #[allow(clippy::struct_excessive_bools)]
 pub struct StreamingFormatter<'a, B: FormatterBackend> {
     config: &'a EmitterConfig,
+    /// `config.indent` normalized to the supported range; `indent` is a public field,
+    /// so `EmitterConfig::with_indent` may have been bypassed.
+    indent: usize,
     output: String,
-    indent_level: usize,
+    /// Entry columns of the open block collections, innermost last.
+    columns: Vec<Column>,
     /// Tracks whether we need to emit a newline before the next value
     pending_newline: bool,
     /// Tracks whether the last character written was a newline.
@@ -119,9 +176,9 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     /// The first item of a sequence opened inline after an outer "- " must not
     /// call `write_indent` — the outer dash already positioned the cursor.
     first_item_after_dash: bool,
-    /// Column of the innermost key or dash owning the scalar being written;
-    /// block scalar bodies are indented `config.indent` past it.
-    node_col: usize,
+    /// Collection start not yet written; an immediately following end event
+    /// turns it into an empty flow collection (`[]` / `{}`).
+    pending_start: Option<PendingStart>,
     /// Backend providing context stack and anchor storage
     backend: B,
 }
@@ -137,14 +194,15 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     pub fn new(config: &'a EmitterConfig, output_capacity: usize, backend: B) -> Self {
         Self {
             config,
+            indent: config.indent.clamp(MIN_INDENT, MAX_INDENT),
             output: String::with_capacity(output_capacity),
-            indent_level: 0,
+            columns: Vec::new(),
             pending_newline: false,
             last_char_newline: true, // Empty buffer conceptually "ends with" newline
             pending_space: false,
             first_key_after_dash: false,
             first_item_after_dash: false,
-            node_col: 0,
+            pending_start: None,
             backend,
         }
     }
@@ -162,6 +220,24 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             .unwrap_or(&Context::Root)
     }
 
+    /// Returns the entry column of the innermost open collection (0 at root).
+    fn column(&self) -> Column {
+        self.columns.last().copied().unwrap_or(Column(0))
+    }
+
+    /// Returns the entry column of a collection opened in context `ctx`.
+    fn child_column(&self, ctx: Context) -> Column {
+        let parent = self.column();
+        match ctx {
+            Context::Root => parent,
+            Context::Sequence => Column(parent.0 + DASH_WIDTH),
+            Context::MappingKey
+            | Context::MappingValue
+            | Context::ExplicitKey
+            | Context::ExplicitValue => Column(parent.0 + self.indent),
+        }
+    }
+
     /// Replaces the context on top of the stack.
     fn set_context(&mut self, ctx: Context) {
         if let Some(last) = self.backend.context_stack_mut().last_mut() {
@@ -172,7 +248,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     /// Emits node properties (`&anchorN` and/or the tag), space-separated.
     ///
     /// Returns true if anything was written. No leading or trailing separator is emitted.
-    fn emit_properties(&mut self, anchor_id: usize, tag: Option<&Cow<'_, Tag>>) -> bool {
+    fn emit_properties(&mut self, anchor_id: usize, tag: Option<&Tag>) -> bool {
         let has_anchor = anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID;
         if has_anchor {
             self.backend.anchor_store_mut().ensure_capacity(anchor_id);
@@ -195,7 +271,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
     /// Like `emit_properties`, but prefixed with one space that is written only if
     /// properties exist.
-    fn emit_properties_after_space(&mut self, anchor_id: usize, tag: Option<&Cow<'_, Tag>>) {
+    fn emit_properties_after_space(&mut self, anchor_id: usize, tag: Option<&Tag>) {
         let mark = self.output.len();
         self.output.push(' ');
         if !self.emit_properties(anchor_id, tag) {
@@ -216,6 +292,10 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
     /// Processes a parser event and updates formatter state.
     pub fn format_event(&mut self, event: Event<'_>, _span: Span) {
+        if !matches!(event, Event::SequenceEnd | Event::MappingEnd) {
+            self.flush_pending_start();
+        }
+
         match event {
             Event::DocumentStart(explicit) => {
                 if explicit || self.config.explicit_start {
@@ -233,19 +313,23 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
 
             Event::Scalar(value, style, anchor_id, tag) => {
-                self.emit_scalar(&value, style, anchor_id, tag.as_ref());
+                self.emit_scalar(&value, style, anchor_id, tag.as_deref());
             }
 
             Event::SequenceStart(anchor_id, tag) => {
-                self.start_collection(anchor_id, tag.as_ref(), Context::Sequence);
+                self.defer_collection(CollectionKind::Sequence, anchor_id, tag);
             }
 
-            Event::SequenceEnd | Event::MappingEnd => {
-                self.end_collection();
+            Event::SequenceEnd => {
+                self.end_collection(CollectionKind::Sequence);
             }
 
             Event::MappingStart(anchor_id, tag) => {
-                self.start_collection(anchor_id, tag.as_ref(), Context::MappingKey);
+                self.defer_collection(CollectionKind::Mapping, anchor_id, tag);
+            }
+
+            Event::MappingEnd => {
+                self.end_collection(CollectionKind::Mapping);
             }
 
             Event::Alias(anchor_id) => {
@@ -262,57 +346,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         value: &str,
         style: ScalarStyle,
         anchor_id: usize,
-        tag: Option<&Cow<'_, Tag>>,
+        tag: Option<&Tag>,
     ) {
         let style = effective_style(value, style);
-        self.begin_explicit_value();
-        let ctx = self.current_context();
-        let is_block = matches!(style, ScalarStyle::Literal | ScalarStyle::Folded);
-        let block_key = is_block && ctx == Context::MappingKey;
-
-        // Handle pending newline from document start or collection start
-        if self.pending_newline {
-            self.output.push('\n');
-            self.pending_newline = false;
-            self.last_char_newline = true;
-        }
-
-        // Write indentation and prefix based on context
-        match ctx {
-            Context::Sequence => {
-                if self.first_item_after_dash {
-                    self.first_item_after_dash = false;
-                } else {
-                    self.write_indent();
-                }
-                self.node_col = self.current_column();
-                self.output.push_str("- ");
-                self.last_char_newline = false;
-            }
-            Context::MappingKey => {
-                if self.first_key_after_dash {
-                    self.first_key_after_dash = false;
-                } else {
-                    self.write_indent();
-                }
-                self.node_col = self.current_column();
-                if block_key {
-                    self.output.push_str("? ");
-                    self.last_char_newline = false;
-                }
-            }
-            // Root level scalar needs no prefix; mapping value emits pending space.
-            // Explicit* are consumed by begin_explicit_value and never current here.
-            Context::Root => self.node_col = 0,
-            Context::ExplicitKey | Context::ExplicitValue => {}
-            Context::MappingValue => {
-                if self.pending_space {
-                    self.output.push(' ');
-                    self.pending_space = false;
-                    self.last_char_newline = false;
-                }
-            }
-        }
+        let shape = match style {
+            ScalarStyle::Literal | ScalarStyle::Folded => NodeShape::BlockScalar,
+            _ => NodeShape::Inline,
+        };
+        let ctx = self.begin_inline_node(shape);
 
         let wrote_properties = self.emit_properties(anchor_id, tag);
         let tagged_empty = tag.is_some() && style == ScalarStyle::Plain && value.is_empty();
@@ -327,9 +368,47 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         };
         self.emit_value_with_style(value, style, typing);
 
-        // Handle context transitions
+        self.end_inline_node(ctx, shape);
+    }
+
+    /// Writes the pending newline and the context prefix of a scalar, alias or empty
+    /// flow collection; returns the context the node was written in.
+    ///
+    /// A block scalar in key position is written as an explicit `? ` key.
+    fn begin_inline_node(&mut self, shape: NodeShape) -> Context {
+        self.begin_explicit_value();
+        let ctx = self.current_context();
+
+        // Handle pending newline from document start or collection start
+        self.flush_pending_newline();
+
         match ctx {
-            Context::MappingKey if block_key => {
+            Context::Sequence => self.write_dash_prefix(),
+            Context::MappingKey => {
+                self.write_key_indent();
+                if shape == NodeShape::BlockScalar {
+                    self.output.push_str("? ");
+                    self.last_char_newline = false;
+                }
+            }
+            // Root level needs no prefix; mapping value emits pending space.
+            // Explicit* are consumed by begin_explicit_value and never current here.
+            Context::Root | Context::ExplicitKey | Context::ExplicitValue => {}
+            Context::MappingValue => {
+                if self.pending_space {
+                    self.output.push(' ');
+                    self.pending_space = false;
+                    self.last_char_newline = false;
+                }
+            }
+        }
+        ctx
+    }
+
+    /// Writes the context suffix of a node started by `begin_inline_node`.
+    fn end_inline_node(&mut self, ctx: Context, shape: NodeShape) {
+        match ctx {
+            Context::MappingKey if shape == NodeShape::BlockScalar => {
                 self.set_context(Context::ExplicitValue);
             }
             Context::MappingKey => {
@@ -343,7 +422,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
             Context::MappingValue | Context::Sequence | Context::Root => {
                 // Block scalars already end with a newline.
-                if !is_block {
+                if shape == NodeShape::Inline {
                     self.output.push('\n');
                     self.last_char_newline = true;
                 }
@@ -352,6 +431,35 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 }
             }
             Context::ExplicitKey | Context::ExplicitValue => {}
+        }
+    }
+
+    /// Writes the newline deferred after `---`, so the next node starts on its own line.
+    fn flush_pending_newline(&mut self) {
+        if self.pending_newline {
+            self.output.push('\n');
+            self.pending_newline = false;
+            self.last_char_newline = true;
+        }
+    }
+
+    /// Writes the `"- "` prefix of a sequence entry.
+    fn write_dash_prefix(&mut self) {
+        if self.first_item_after_dash {
+            self.first_item_after_dash = false;
+        } else {
+            self.write_indent();
+        }
+        self.output.push_str("- ");
+        self.last_char_newline = false;
+    }
+
+    /// Writes the indentation of a mapping key, unless an outer dash already placed the cursor.
+    fn write_key_indent(&mut self) {
+        if self.first_key_after_dash {
+            self.first_key_after_dash = false;
+        } else {
+            self.write_indent();
         }
     }
 
@@ -403,52 +511,105 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.output.push('"');
                 self.last_char_newline = false;
             }
-            ScalarStyle::Literal => {
-                self.output
-                    .push_str(&block_scalar_header('|', value, self.config.indent));
-                self.output.push('\n');
-                self.write_block_scalar_lines(value);
-                // write_block_scalar_lines always ends with newline
-                self.last_char_newline = true;
-            }
-            ScalarStyle::Folded => {
-                self.output
-                    .push_str(&block_scalar_header('>', value, self.config.indent));
-                self.output.push('\n');
-                self.write_block_scalar_lines(value);
-                // write_block_scalar_lines always ends with newline
-                self.last_char_newline = true;
+            ScalarStyle::Literal | ScalarStyle::Folded => {
+                let block = if style == ScalarStyle::Folded {
+                    BlockStyle::Folded
+                } else {
+                    BlockStyle::Literal
+                };
+                self.emit_block_scalar(value, block);
             }
         }
     }
 
-    /// Opens a sequence (`child == Sequence`) or mapping (`child == MappingKey`).
-    fn start_collection(&mut self, anchor_id: usize, tag: Option<&Cow<'_, Tag>>, child: Context) {
+    /// Writes a literal or folded block scalar, always ending with a newline.
+    ///
+    /// Folded values that contain more-indented lines fall back to literal style,
+    /// since those lines are exempt from folding.
+    fn emit_block_scalar(&mut self, value: &str, requested: BlockStyle) {
+        let body = value.trim_end_matches('\n');
+        let trailing = value.len() - body.len();
+        let folded = requested == BlockStyle::Folded
+            && !body.is_empty()
+            && !body.split('\n').any(|line| line.starts_with([' ', '\t']));
+        let content_col = self.column().0 + self.indent;
+
+        let indicator = if folded { '>' } else { '|' };
+        self.output
+            .push_str(&block_scalar_header(indicator, value, self.indent));
+        self.output.push('\n');
+
+        if body.is_empty() {
+            for _ in 0..trailing {
+                self.output.push('\n');
+            }
+        } else {
+            // Blank lines get no indentation: it would create trailing whitespace.
+            let mut seen_text = false;
+            for line in body.split('\n') {
+                if line.is_empty() {
+                    self.output.push('\n');
+                    continue;
+                }
+                // A folded line break between text lines is a blank line in the source.
+                if folded && seen_text {
+                    self.output.push('\n');
+                }
+                seen_text = true;
+                self.push_spaces(content_col);
+                self.output.push_str(line);
+                self.output.push('\n');
+            }
+            for _ in 1..trailing {
+                self.output.push('\n');
+            }
+        }
+        self.last_char_newline = true;
+    }
+
+    /// Holds a collection start back until the next event shows whether it is empty.
+    fn defer_collection(
+        &mut self,
+        kind: CollectionKind,
+        anchor_id: usize,
+        tag: Option<Cow<'_, Tag>>,
+    ) {
+        self.pending_start = Some(PendingStart {
+            kind,
+            anchor_id,
+            tag: tag.map(Cow::into_owned),
+        });
+    }
+
+    /// Writes a deferred collection start, now known to be non-empty.
+    fn flush_pending_start(&mut self) {
+        if let Some(PendingStart {
+            kind,
+            anchor_id,
+            tag,
+        }) = self.pending_start.take()
+        {
+            self.start_collection(kind, anchor_id, tag.as_ref());
+        }
+    }
+
+    /// Writes a collection start known to be non-empty and opens its context and column.
+    fn start_collection(&mut self, kind: CollectionKind, anchor_id: usize, tag: Option<&Tag>) {
         self.begin_explicit_value();
         let ctx = self.current_context();
 
         // Handle pending newline
-        if self.pending_newline {
-            self.output.push('\n');
-            self.pending_newline = false;
-            self.last_char_newline = true;
-        }
+        self.flush_pending_newline();
 
         // Write prefix and properties inline per context to avoid them landing on the wrong line.
         match ctx {
             Context::Sequence => {
-                if self.first_item_after_dash {
-                    self.first_item_after_dash = false;
-                } else {
-                    self.write_indent();
-                }
-                self.output.push_str("- ");
-                self.last_char_newline = false;
+                self.write_dash_prefix();
                 if self.emit_properties(anchor_id, tag) {
                     // Properties occupy the "- " line, so children need fresh indentation.
                     self.output.push('\n');
                     self.last_char_newline = true;
-                } else if child == Context::Sequence {
+                } else if kind == CollectionKind::Sequence {
                     self.first_item_after_dash = true;
                 } else {
                     self.first_key_after_dash = true;
@@ -456,11 +617,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
             Context::MappingKey => {
                 // Collection as mapping key: explicit `?` entry, children on following lines.
-                if self.first_key_after_dash {
-                    self.first_key_after_dash = false;
-                } else {
-                    self.write_indent();
-                }
+                self.write_key_indent();
                 self.output.push('?');
                 self.emit_properties_after_space(anchor_id, tag);
                 self.output.push('\n');
@@ -488,61 +645,37 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             _ => {}
         }
 
-        // Push child context and increase indent (with depth limit)
+        // Push child context and column together (with depth limit)
         if self.backend.context_stack().len() < MAX_DEPTH {
-            self.backend.context_stack_mut().push(child);
-            self.indent_level += 1;
+            let column = self.child_column(ctx);
+            self.backend.context_stack_mut().push(kind.entry_context());
+            self.columns.push(column);
         }
     }
 
-    fn end_collection(&mut self) {
+    fn end_collection(&mut self, kind: CollectionKind) {
+        if let Some(PendingStart { anchor_id, tag, .. }) =
+            self.pending_start.take_if(|pending| pending.kind == kind)
+        {
+            let ctx = self.begin_inline_node(NodeShape::Inline);
+            if self.emit_properties(anchor_id, tag.as_ref()) {
+                self.output.push(' ');
+            }
+            self.output.push_str(kind.empty_flow());
+            self.last_char_newline = false;
+            self.end_inline_node(ctx, NodeShape::Inline);
+            return;
+        }
+
         self.backend.context_stack_mut().pop();
-        self.indent_level = self.indent_level.saturating_sub(1);
+        self.columns.pop();
         if self.current_context() == Context::ExplicitKey {
             self.set_context(Context::ExplicitValue);
         }
     }
 
     fn emit_alias(&mut self, anchor_id: usize) {
-        self.begin_explicit_value();
-        let ctx = self.current_context();
-
-        // Handle pending newline
-        if self.pending_newline {
-            self.output.push('\n');
-            self.pending_newline = false;
-            self.last_char_newline = true;
-        }
-
-        // Write prefix based on context
-        match ctx {
-            Context::Sequence => {
-                if self.first_item_after_dash {
-                    self.first_item_after_dash = false;
-                } else {
-                    self.write_indent();
-                }
-                self.output.push_str("- ");
-                self.last_char_newline = false;
-            }
-            Context::MappingKey => {
-                if self.first_key_after_dash {
-                    self.first_key_after_dash = false;
-                } else {
-                    self.write_indent();
-                }
-                self.node_col = self.current_column();
-            }
-            // Explicit* are consumed by begin_explicit_value and never current here.
-            Context::Root | Context::ExplicitKey | Context::ExplicitValue => {}
-            Context::MappingValue => {
-                if self.pending_space {
-                    self.output.push(' ');
-                    self.pending_space = false;
-                    self.last_char_newline = false;
-                }
-            }
-        }
+        let ctx = self.begin_inline_node(NodeShape::Inline);
 
         // Emit the alias reference
         self.output.push('*');
@@ -554,65 +687,27 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         }
         self.last_char_newline = false;
 
-        // Handle context transitions
-        match ctx {
-            Context::MappingKey => {
-                self.output.push_str(" :");
-                self.set_context(Context::MappingValue);
-                self.pending_space = true;
-                // last_char_newline remains false
-            }
-            Context::MappingValue => {
-                self.output.push('\n');
-                self.last_char_newline = true;
-                self.set_context(Context::MappingKey);
-            }
-            Context::Sequence | Context::Root => {
-                self.output.push('\n');
-                self.last_char_newline = true;
-            }
-            Context::ExplicitKey | Context::ExplicitValue => {}
+        // Anchor names may contain ':', so `*a:` would read as alias "a:".
+        if ctx == Context::MappingKey {
+            self.output.push(' ');
         }
+
+        self.end_inline_node(ctx, NodeShape::Inline);
     }
 
-    /// Column of the cursor within the current output line.
-    fn current_column(&self) -> usize {
-        self.output.len() - self.output.rfind('\n').map_or(0, |pos| pos + 1)
-    }
-
-    /// Write indentation for block scalar content (literal/folded styles).
-    ///
-    /// Empty lines are emitted as bare `\n` (no trailing spaces) to match
-    /// the non-streaming path in `emitter.rs`.
-    fn write_block_scalar_lines(&mut self, value: &str) {
-        let indent_chars = self.node_col + self.config.indent;
-
-        // `lines()` yields interior blank lines and drops only the final terminator,
-        // which is exactly what keep (+) chomping needs.
-        for line in value.lines() {
-            // Blank lines inside block scalars must not receive indentation — that
-            // would create trailing whitespace, which is a lint violation.
-            if !line.is_empty() {
-                if indent_chars <= INDENT_SPACES.len() {
-                    self.output.push_str(&INDENT_SPACES[..indent_chars]);
-                } else {
-                    self.output.push_str(&" ".repeat(indent_chars));
-                }
-                self.output.push_str(line);
-            }
-            self.output.push('\n');
+    /// Appends `count` spaces, slicing a static buffer when it is long enough.
+    fn push_spaces(&mut self, count: usize) {
+        if count <= INDENT_SPACES.len() {
+            self.output.push_str(&INDENT_SPACES[..count]);
+        } else {
+            self.output.push_str(&" ".repeat(count));
         }
     }
 
     fn write_indent(&mut self) {
-        if self.indent_level > 1 {
-            let indent_chars = (self.indent_level - 1).saturating_mul(self.config.indent);
-
-            if indent_chars <= INDENT_SPACES.len() {
-                self.output.push_str(&INDENT_SPACES[..indent_chars]);
-            } else {
-                self.output.push_str(&" ".repeat(indent_chars));
-            }
+        let column = self.column();
+        if column.0 > 0 {
+            self.push_spaces(column.0);
             self.last_char_newline = false;
         }
     }

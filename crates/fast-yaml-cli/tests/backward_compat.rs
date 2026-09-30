@@ -192,3 +192,27 @@ fn test_single_file_with_output_flag() {
     // Output file should contain formatted content
     assert_eq!(fs::read_to_string(&output_file).unwrap(), expected);
 }
+
+#[test]
+fn test_format_indent_4_keeps_nested_block_collections() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("test.yaml");
+    fs::write(&file, "- a: 1\n  b: 2\n- - x\n  - y\n").unwrap();
+
+    fy().args(["format", "--indent", "4", file.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("- a: 1\n  b: 2\n- - x\n  - y\n");
+}
+
+#[test]
+fn test_format_keeps_empty_flow_collections() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("test.yaml");
+    fs::write(&file, "a: []\nb: {}\nc:\n  - {}\n  - &x [1]\n").unwrap();
+
+    fy().args(["format", file.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout("a: []\nb: {}\nc:\n  - {}\n  - &x\n    - 1\n");
+}
