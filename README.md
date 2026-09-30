@@ -404,6 +404,7 @@ Input validation prevents denial-of-service attacks.
 | Max input size | 100 MB | Yes (up to 1GB) |
 | Max documents | 100,000 | Yes (up to 10M) |
 | Max threads | 128 | Yes |
+| Max input size (CLI, per file or stdin) | 100 MiB | Yes (1 byte to 1 GiB, `--max-input-size`) |
 | Max nesting depth | 256 | Yes (1 to 512, `--max-depth`) |
 | Max alias expansion | 64 MiB | Yes (1 byte to 1 GiB, `--max-alias-bytes`) |
 

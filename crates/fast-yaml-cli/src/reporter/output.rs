@@ -1,6 +1,6 @@
 //! Reporter implementation for unified CLI output.
 
-use super::events::ReportEvent;
+use super::events::{BatchStats, ReportEvent};
 use crate::config::OutputConfig;
 use std::io::{self, Write};
 use std::path::Path;
@@ -58,7 +58,6 @@ impl Reporter {
     /// # Errors
     ///
     /// Returns an error if writing to stderr fails.
-    #[allow(clippy::needless_pass_by_value)]
     pub fn report(&self, event: ReportEvent<'_>) -> io::Result<()> {
         match event {
             ReportEvent::Error { path, message } => {
@@ -77,23 +76,9 @@ impl Reporter {
                     self.write_timing(operation, duration)?;
                 }
             }
-            ReportEvent::BatchSummary {
-                total,
-                formatted,
-                unchanged,
-                would_change,
-                failed,
-                duration,
-            } => {
-                if !self.config.is_quiet() || failed > 0 {
-                    self.write_batch_summary(
-                        total,
-                        formatted,
-                        unchanged,
-                        would_change,
-                        failed,
-                        duration,
-                    )?;
+            ReportEvent::BatchSummary(stats) => {
+                if !self.config.is_quiet() || stats.failed > 0 {
+                    self.write_batch_summary(stats)?;
                 }
             }
         }
@@ -168,17 +153,16 @@ impl Reporter {
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::uninlined_format_args)]
-    fn write_batch_summary(
-        &self,
-        total: usize,
-        formatted: usize,
-        unchanged: usize,
-        would_change: usize,
-        failed: usize,
-        duration: Duration,
-    ) -> io::Result<()> {
+    fn write_batch_summary(&self, stats: BatchStats) -> io::Result<()> {
+        let BatchStats {
+            total,
+            formatted,
+            unchanged,
+            would_change,
+            failed,
+            duration,
+        } = stats;
         let mut lock = self.stderr.lock();
 
         #[cfg(feature = "colors")]
@@ -237,6 +221,7 @@ impl Reporter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Verbosity;
     use std::path::PathBuf;
 
     #[test]
@@ -262,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_report_error_always_shown() {
-        let config = OutputConfig::new().with_quiet(true);
+        let config = OutputConfig::new().with_verbosity(Verbosity::Quiet);
         let reporter = Reporter::new(config);
         let path = PathBuf::from("test.yaml");
 
@@ -282,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_report_timing_verbose_mode() {
-        let config = OutputConfig::new().with_verbose(true);
+        let config = OutputConfig::new().with_verbosity(Verbosity::Verbose);
         let reporter = Reporter::new(config);
 
         let result = reporter.report(ReportEvent::Timing {

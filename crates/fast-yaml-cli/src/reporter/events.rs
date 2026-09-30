@@ -3,8 +3,25 @@
 use std::path::Path;
 use std::time::Duration;
 
+/// Outcome counts of a batch run.
+#[derive(Debug, Clone, Copy)]
+pub struct BatchStats {
+    /// Total files processed
+    pub total: usize,
+    /// Files that were formatted
+    pub formatted: usize,
+    /// Files that were unchanged
+    pub unchanged: usize,
+    /// Files that would change (dry-run mode)
+    pub would_change: usize,
+    /// Files that failed
+    pub failed: usize,
+    /// Total duration
+    pub duration: Duration,
+}
+
 /// Events that can be reported during command execution.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ReportEvent<'a> {
     /// Error occurred
     Error {
@@ -26,20 +43,7 @@ pub enum ReportEvent<'a> {
         duration: Duration,
     },
     /// Batch summary
-    BatchSummary {
-        /// Total files processed
-        total: usize,
-        /// Files that were formatted
-        formatted: usize,
-        /// Files that were unchanged
-        unchanged: usize,
-        /// Files that would change (dry-run mode)
-        would_change: usize,
-        /// Files that failed
-        failed: usize,
-        /// Total duration
-        duration: Duration,
-    },
+    BatchSummary(BatchStats),
 }
 
 #[cfg(test)]
@@ -75,15 +79,15 @@ mod tests {
         ));
 
         assert!(matches!(
-            ReportEvent::BatchSummary {
+            ReportEvent::BatchSummary(BatchStats {
                 total: 10,
                 formatted: 5,
                 unchanged: 3,
                 would_change: 1,
                 failed: 1,
                 duration: Duration::from_secs(5),
-            },
-            ReportEvent::BatchSummary { .. }
+            }),
+            ReportEvent::BatchSummary(_)
         ));
     }
 }

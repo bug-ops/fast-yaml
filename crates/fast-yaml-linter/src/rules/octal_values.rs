@@ -107,22 +107,13 @@ impl super::LintRule for OctalValuesRule {
         for (line_idx, line) in lines_of(source).enumerate() {
             let line_num = line_idx + 1;
             let line_offset = context.source_context().get_line_offset(line_num);
-            self.check_line(
-                context,
-                config,
-                &mut diagnostics,
-                line,
-                line_offset,
-                forbid_implicit,
-                forbid_explicit,
-            );
+            self.check_line(context, config, &mut diagnostics, line, line_offset);
         }
         diagnostics
     }
 }
 
 impl OctalValuesRule {
-    #[allow(clippy::too_many_arguments)]
     fn check_line(
         &self,
         context: &LintContext,
@@ -130,9 +121,11 @@ impl OctalValuesRule {
         diagnostics: &mut Vec<Diagnostic>,
         line: &str,
         line_offset: usize,
-        forbid_implicit: bool,
-        forbid_explicit: bool,
     ) {
+        let options = &config.rules.octal_values.options;
+        let forbid_implicit = options.forbid_implicit_octal;
+        let forbid_explicit = options.forbid_explicit_octal;
+
         // Strip inline comment before scanning for octal tokens.
         let line_without_comment = strip_inline_comment(line);
 

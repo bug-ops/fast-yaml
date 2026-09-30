@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use fast_yaml_core::decode_input_owned;
+use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
 use rayon::prelude::*;
 
@@ -13,6 +14,7 @@ use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
+use crate::io::input::read_file_capped;
 
 /// Execute batch linting on multiple files.
 ///
@@ -24,6 +26,7 @@ pub fn execute_lint_batch(
     target: &BatchTarget,
     lint_config: &LintConfig,
     format: LintFormat,
+    max_input: MaxInputBytes,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -52,8 +55,7 @@ pub fn execute_lint_batch(
         file_paths
             .par_iter()
             .map(|path| {
-                let content = match std::fs::read(path)
-                    .map_err(anyhow::Error::from)
+                let content = match read_file_capped(path, max_input)
                     .and_then(|bytes| Ok(decode_input_owned(bytes)?))
                 {
                     Ok(c) => c,

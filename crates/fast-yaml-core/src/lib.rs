@@ -35,6 +35,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![forbid(unsafe_code)]
+
 /// Comment detection for inputs the formatter would strip comments from.
 pub mod comments;
 /// YAML emitter for serializing documents to strings.

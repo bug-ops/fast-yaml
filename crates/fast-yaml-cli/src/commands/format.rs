@@ -8,7 +8,7 @@ use fast_yaml_parallel::{CommentPolicy, Error as ParallelError};
 use crate::config::CommonConfig;
 use crate::error::ExitCode;
 use crate::io::{InputSource, OutputWriter};
-use crate::reporter::{ReportEvent, Reporter};
+use crate::reporter::{BatchStats, ReportEvent, Reporter};
 
 /// Hint appended to [`ParallelError::CommentsWouldBeStripped`] messages.
 const STRIP_COMMENTS_HINT: &str = "use --strip-comments to allow this";
@@ -118,14 +118,16 @@ impl FormatCommand {
             }
             WriteMode::DryRun => {
                 let changed = status == FormatStatus::Changed;
-                Reporter::new(self.config.output.clone()).report(ReportEvent::BatchSummary {
-                    total: 1,
-                    formatted: 0,
-                    unchanged: usize::from(!changed),
-                    would_change: usize::from(changed),
-                    failed: 0,
-                    duration: Duration::ZERO,
-                })?;
+                Reporter::new(self.config.output.clone()).report(ReportEvent::BatchSummary(
+                    BatchStats {
+                        total: 1,
+                        formatted: 0,
+                        unchanged: usize::from(!changed),
+                        would_change: usize::from(changed),
+                        failed: 0,
+                        duration: Duration::ZERO,
+                    },
+                ))?;
 
                 Ok(if changed {
                     ExitCode::WouldChange

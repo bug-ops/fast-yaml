@@ -31,7 +31,7 @@ impl CommonConfig {
     #[must_use]
     pub fn from_cli(cli: &Cli) -> Self {
         Self {
-            output: OutputConfig::from_cli(cli.quiet, cli.verbose, cli.no_color),
+            output: OutputConfig::from_cli(cli.verbosity, cli.no_color),
             formatter: FormatterConfig::default(),
         }
     }
@@ -55,6 +55,7 @@ impl CommonConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Verbosity;
 
     #[test]
     fn test_default_config() {
@@ -73,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_with_output() {
-        let output = OutputConfig::new().with_quiet(true);
+        let output = OutputConfig::new().with_verbosity(Verbosity::Quiet);
         let config = CommonConfig::new().with_output(output);
         assert!(config.output.is_quiet());
     }
@@ -87,7 +88,7 @@ mod tests {
 
     #[test]
     fn test_builder_chaining() {
-        let output = OutputConfig::new().with_verbose(true);
+        let output = OutputConfig::new().with_verbosity(Verbosity::Verbose);
         let formatter = FormatterConfig::new().with_indent(4);
 
         let config = CommonConfig::new()

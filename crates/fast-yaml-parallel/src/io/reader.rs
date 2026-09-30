@@ -172,14 +172,11 @@ impl SmartReader {
             source,
         })?;
 
-        // SAFETY: We're opening the file read-only and mapping it.
-        // The file could be modified by another process during reading,
-        // but this is acceptable for a parser tool:
-        // - If modified, worst case is a parse error (which is handled)
-        // - User expectation is that files aren't modified during parsing
-        // - Same race condition exists with read_to_string
-        // - The mmap is read-only, so we won't write to mapped memory
-        // - Mmap type ensures memory is unmapped when dropped
+        // SAFETY: read-only mapping, unmapped on drop. Memory safety still depends on no process
+        // truncating or rewriting the file while it is mapped: truncation raises SIGBUS, and a
+        // rewrite after `as_str` validated UTF-8 invalidates the `&str` the parser reads.
+        // Unlike `read_string`, which snapshots the bytes, this is a real race. Callers accept it
+        // for files of at least `mmap_threshold` bytes and can raise the threshold to avoid it.
         let mmap = unsafe {
             Mmap::map(&file).map_err(|source| Error::Io {
                 path: path.to_path_buf(),

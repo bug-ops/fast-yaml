@@ -1,10 +1,13 @@
-use clap::{Args, Parser, Subcommand, ValueEnum};
-use fast_yaml_core::limits::{LimitRangeError, MaxAliasBytes, MaxDepth, ParseLimits};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use fast_yaml_core::limits::{
+    LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits,
+};
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::IndentSize;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
+use crate::config::Verbosity;
 use crate::discovery::DiscoveryConfig;
 
 /// Fast YAML processor with validation and linting
@@ -39,11 +42,53 @@ pub struct Cli {
 
     /// Quiet mode (errors only)
     #[arg(short, long, global = true)]
-    pub quiet: bool,
+    quiet: bool,
 
     /// Verbose output
     #[arg(short, long, global = true)]
-    pub verbose: bool,
+    verbose: bool,
+
+    /// Maximum size of each input file or of stdin (min: 1, max: 1GiB).
+    /// Accepts KiB, MiB and GiB suffixes. Applies to single inputs and to batch runs
+    #[arg(long, global = true, value_name = "BYTES", value_parser = parse_max_input_size, default_value_t = MaxInputBytes::DEFAULT)]
+    pub max_input_size: MaxInputBytes,
+
+    /// Verbosity resolved from `--quiet`/`--verbose` by [`Cli::validate`]; `Normal` before that.
+    #[arg(skip)]
+    pub verbosity: Verbosity,
+}
+
+impl Cli {
+    /// Parses the process arguments, exiting with code 2 on any usage error.
+    #[must_use]
+    pub fn parse_validated() -> Self {
+        Self::try_parse()
+            .and_then(Self::validate)
+            .unwrap_or_else(|err| err.exit())
+    }
+
+    /// Resolves [`verbosity`](Self::verbosity), rejecting `--quiet` together with `--verbose`.
+    ///
+    /// clap cannot enforce this for global flags given on both sides of the subcommand
+    /// (`fy -q parse -v`), so it is checked on the merged result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an argument-conflict error when both flags are set.
+    pub fn validate(mut self) -> Result<Self, clap::Error> {
+        self.verbosity = match (self.quiet, self.verbose) {
+            (true, true) => {
+                return Err(Self::command().error(
+                    clap::error::ErrorKind::ArgumentConflict,
+                    "the argument '--quiet' cannot be used with '--verbose'",
+                ));
+            }
+            (true, false) => Verbosity::Quiet,
+            (false, true) => Verbosity::Verbose,
+            (false, false) => Verbosity::Normal,
+        };
+        Ok(self)
+    }
 }
 
 /// Discovery and parallelism flags shared by every batch-capable subcommand.
@@ -132,10 +177,10 @@ fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
     MaxDepth::new(depth).map_err(range_error)
 }
 
-/// Binary size suffixes accepted by `--max-alias-bytes`, longest first.
+/// Binary size suffixes accepted by the byte-size flags, longest first.
 const SIZE_SUFFIXES: [(&str, usize); 3] = [("GiB", 1 << 30), ("MiB", 1 << 20), ("KiB", 1 << 10)];
 
-fn parse_max_alias_bytes(raw: &str) -> Result<MaxAliasBytes, String> {
+fn parse_byte_size(raw: &str) -> Result<usize, String> {
     let (digits, unit) = SIZE_SUFFIXES
         .iter()
         .find_map(|&(suffix, unit)| raw.strip_suffix(suffix).map(|digits| (digits, unit)))
@@ -144,10 +189,17 @@ fn parse_max_alias_bytes(raw: &str) -> Result<MaxAliasBytes, String> {
         .trim()
         .parse()
         .map_err(|e| format!("invalid size '{raw}': {e}"))?;
-    let bytes = count
+    count
         .checked_mul(unit)
-        .ok_or_else(|| format!("size '{raw}' is too large"))?;
-    MaxAliasBytes::new(bytes).map_err(range_error)
+        .ok_or_else(|| format!("size '{raw}' is too large"))
+}
+
+fn parse_max_alias_bytes(raw: &str) -> Result<MaxAliasBytes, String> {
+    MaxAliasBytes::new(parse_byte_size(raw)?).map_err(range_error)
+}
+
+fn parse_max_input_size(raw: &str) -> Result<MaxInputBytes, String> {
+    MaxInputBytes::new(parse_byte_size(raw)?).map_err(range_error)
 }
 
 #[derive(Subcommand, Debug)]
@@ -364,6 +416,37 @@ mod tests {
         assert!(parse_max_alias_bytes("-1").is_err());
         assert!(parse_max_alias_bytes("MiB").is_err());
         assert!(parse_max_alias_bytes("1.5MiB").is_err());
+    }
+
+    #[test]
+    fn input_size_parses_and_bounds() {
+        assert_eq!(parse_max_input_size("1").unwrap().get(), 1);
+        assert_eq!(parse_max_input_size("2MiB").unwrap().get(), 2 << 20);
+        assert_eq!(parse_max_input_size("1GiB").unwrap(), MaxInputBytes::MAX);
+        assert!(parse_max_input_size("0").is_err());
+        assert!(parse_max_input_size("2GiB").is_err());
+    }
+
+    #[test]
+    fn verbosity_follows_flags() {
+        for (args, expected) in [
+            (&["fy", "parse"][..], Verbosity::Normal),
+            (&["fy", "-v", "parse"], Verbosity::Verbose),
+            (&["fy", "parse", "-q"], Verbosity::Quiet),
+        ] {
+            let cli = Cli::try_parse_from(args).and_then(Cli::validate).unwrap();
+            assert_eq!(cli.verbosity, expected, "{args:?}");
+        }
+    }
+
+    #[test]
+    fn byte_size_overflow_is_rejected() {
+        assert!(
+            parse_byte_size("17179869184GiB")
+                .unwrap_err()
+                .contains("too large")
+        );
+        assert!(parse_byte_size("18446744073709551615KiB").is_err());
     }
 
     #[test]

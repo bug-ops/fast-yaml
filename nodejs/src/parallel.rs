@@ -114,16 +114,13 @@ impl ParallelConfig {
     }
 }
 
-/// Coerce `Unknown<'env>` to `Unknown<'static>` for returning from `#[napi]` functions.
+/// Widens a value to `Unknown<'static>` for `Task::JsValue`, which cannot carry an env lifetime.
 ///
-/// # Safety
-///
-/// The returned value must not outlive the JS call frame. NAPI-RS guarantees that all
-/// `#[napi]` function return values are consumed before the Env becomes invalid, so this
-/// transmute is safe in this specific context.
+/// Only call from `Task::resolve`: napi-rs converts the returned value to a raw `napi_value`
+/// before that call's handle scope closes, so the handle never outlives the env.
 #[inline]
 fn to_static(v: Unknown<'_>) -> Unknown<'static> {
-    // SAFETY: see doc comment above
+    // SAFETY: lifetime-only change; see the function docs for why the handle stays valid.
     #[allow(clippy::missing_transmute_annotations)]
     unsafe {
         std::mem::transmute(v)
@@ -166,10 +163,10 @@ fn to_static(v: Unknown<'_>) -> Unknown<'static> {
 #[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
 pub fn parse_parallel(
-    env: Env,
+    env: &Env,
     yaml_str: String,
     config: Option<ParallelConfig>,
-) -> napi::Result<Vec<Unknown<'static>>> {
+) -> napi::Result<Vec<Unknown<'_>>> {
     // Convert config
     let rust_config = match config.unwrap_or_default().to_rust_config() {
         Ok(c) => c,
@@ -193,8 +190,8 @@ pub fn parse_parallel(
     // Convert to JavaScript
     let mut js_docs = Vec::with_capacity(values.len());
     for value in &values {
-        match yaml_to_js(&env, value) {
-            Ok(v) => js_docs.push(to_static(v)),
+        match yaml_to_js(env, value) {
+            Ok(v) => js_docs.push(v),
             Err(e) => {
                 env.throw_error(&e.to_string(), None)?;
                 return Ok(Vec::new());
