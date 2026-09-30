@@ -25,6 +25,7 @@
 use crate::error::{EmitError, EmitResult, ParseError};
 use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
 
+mod directives;
 mod formatter;
 mod std_backend;
 mod traits;
@@ -92,21 +93,6 @@ pub(crate) enum Context {
     ExplicitKey,
     /// Inside a mapping, the explicit key is complete and `:` is due
     ExplicitValue,
-}
-
-/// Fix special float value for YAML 1.2 compliance.
-///
-/// Converts saphyr's output format to YAML 1.2 compliant format:
-/// - `inf` -> `.inf`
-/// - `-inf` -> `-.inf`
-/// - `NaN` -> `.nan`
-fn fix_special_float_value(value: &str) -> &str {
-    match value {
-        "inf" => ".inf",
-        "-inf" => "-.inf",
-        "NaN" => ".nan",
-        other => other,
-    }
 }
 
 /// Whether the byte at `i` can start a token: line/input start, whitespace or a flow opener.
@@ -307,13 +293,10 @@ double: "quoted""#;
     }
 
     #[test]
-    fn test_format_streaming_special_floats() {
-        let yaml = "pos_inf: inf\nneg_inf: -inf\nnan: NaN";
+    fn test_format_streaming_special_floats_verbatim() {
         let config = EmitterConfig::default();
-        let result = format_streaming(yaml, &config).unwrap();
-        assert!(result.contains(".inf"));
-        assert!(result.contains("-.inf"));
-        assert!(result.contains(".nan"));
+        let yaml = "a: inf\nb: NaN\nc: -inf\nd: .inf\ne: .nan\nf: !!float inf\ng: !!float .inf\n";
+        assert_eq!(format_streaming(yaml, &config).unwrap(), yaml);
     }
 
     #[test]
@@ -366,15 +349,6 @@ double: "quoted""#;
             result.contains("3.14"),
             "3.14 must be preserved, got: {result}"
         );
-    }
-
-    #[test]
-    fn test_fix_special_float_value() {
-        assert_eq!(fix_special_float_value("inf"), ".inf");
-        assert_eq!(fix_special_float_value("-inf"), "-.inf");
-        assert_eq!(fix_special_float_value("NaN"), ".nan");
-        assert_eq!(fix_special_float_value("123"), "123");
-        assert_eq!(fix_special_float_value("normal"), "normal");
     }
 
     // ── Issue #76: Block scalar chomp indicator ─────────────────────────────

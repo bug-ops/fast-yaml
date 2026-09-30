@@ -426,43 +426,13 @@ impl Emitter {
             || prefix.ends_with('\n')
     }
 
-    /// Extract `%YAML` and `%TAG` directive lines from the document preamble.
-    ///
-    /// The preamble is the run of blank, comment and directive lines before the first
-    /// content line; a `%` line after that is scalar content, not a directive.
-    /// Returns the directive block (with a trailing newline) or an empty string.
-    fn extract_directives(input: &str) -> String {
-        let mut directives = String::new();
-        for line in input.lines() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-            if !line.starts_with('%') {
-                break;
-            }
-            if Self::is_directive(line) {
-                directives.push_str(line.trim_end());
-                directives.push('\n');
-            }
-        }
-        directives
-    }
-
-    /// Whether `line` is a `%YAML` or `%TAG` directive (`%` in column 0, exact name).
-    fn is_directive(line: &str) -> bool {
-        line.strip_prefix("%YAML")
-            .or_else(|| line.strip_prefix("%TAG"))
-            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
-    }
-
     /// Format a YAML string with configuration.
     ///
     /// Uses the streaming formatter, which preserves scalar styles, explicit tags,
     /// anchors and aliases.
     ///
     /// Block scalar styles (`|` literal and `>` folded) are preserved in the output.
-    /// `%YAML` and `%TAG` directives are extracted and prepended to the formatted output.
+    /// `%YAML` and `%TAG` directives are preserved before the document that declared them.
     ///
     /// # Errors
     ///
@@ -483,33 +453,11 @@ impl Emitter {
     /// ```
     pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
         let input = crate::parser::strip_bom(input);
-        // Extract %YAML / %TAG directives before formatting; the streaming
-        // formatter silently drops them.
-        let directives = Self::extract_directives(input);
-
         #[cfg(feature = "arena")]
         let formatted = crate::streaming::format_streaming_arena(input, config)?;
         #[cfg(not(feature = "arena"))]
         let formatted = crate::streaming::format_streaming(input, config)?;
-        Ok(Self::prepend_directives(&directives, formatted))
-    }
-
-    /// Prepend directive lines to formatted output.
-    ///
-    /// If `directives` is non-empty, inserts them before the first `---` line
-    /// or at the beginning of the output.
-    fn prepend_directives(directives: &str, formatted: String) -> String {
-        if directives.is_empty() {
-            return formatted;
-        }
-        // Per YAML 1.2 spec §6.8.1, a directive end marker (`---`) MUST follow
-        // any directives. If the formatter already emitted `---`, just prepend the
-        // directives; otherwise inject the required marker between them.
-        if formatted.starts_with("---") {
-            format!("{directives}{formatted}")
-        } else {
-            format!("{directives}---\n{formatted}")
-        }
+        Ok(formatted)
     }
 
     /// Emit a scalar key as an inline string (no trailing newline).
@@ -1626,14 +1574,62 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_directives_without_explicit_doc_start() {
-        // extract_directives must capture %YAML lines even when no `---` follows in input.
-        let input = "%YAML 1.2\nkey: value\n";
-        let directives = Emitter::extract_directives(input);
-        assert_eq!(
-            directives, "%YAML 1.2\n",
-            "extract_directives must return directive line even without ---, got: {directives:?}"
-        );
+    fn test_emit_str_string_inf_nan_stay_strings() {
+        for text in ["inf", "-inf", "NaN"] {
+            let value = Value::Value(ScalarOwned::String(text.to_string()));
+            let emitted = Emitter::emit_str(&value).unwrap();
+            let reparsed = crate::Parser::parse_str(&emitted).unwrap();
+            assert_eq!(reparsed, Some(value), "{text:?} emitted as {emitted:?}");
+        }
+    }
+
+    #[test]
+    fn test_format_keeps_directives_of_later_documents() {
+        let config = EmitterConfig::default();
+        let input = "a\n...\n%YAML 1.2\n---\nb\n";
+        let once = Emitter::format_with_config(input, &config).unwrap();
+        assert_eq!(once, input);
+        assert_eq!(Emitter::format_with_config(&once, &config).unwrap(), once);
+    }
+
+    #[test]
+    fn test_format_directives_in_every_document() {
+        let config = EmitterConfig::default();
+        let input = "%YAML 1.2\n---\na: 1\n...\n%TAG !e! tag:example.com,2000:\n---\nb: !e!x 2\n...\n%YAML 1.2\n---\nc: 3\n";
+        let once = Emitter::format_with_config(input, &config).unwrap();
+        assert_eq!(once.matches("%YAML 1.2\n---\n").count(), 2);
+        assert!(once.contains("...\n%TAG !e! tag:example.com,2000:\n---\n"));
+        assert_eq!(Emitter::format_with_config(&once, &config).unwrap(), once);
+    }
+
+    #[test]
+    fn test_format_no_document_end_marker_without_directives() {
+        let config = EmitterConfig::default();
+        let input = "a\n---\nb\n";
+        assert_eq!(Emitter::format_with_config(input, &config).unwrap(), input);
+    }
+
+    #[test]
+    fn test_format_directive_after_non_ascii_and_crlf() {
+        let config = EmitterConfig::default();
+        let input = "k: \"\u{e9}\"\r\n...\r\n%YAML 1.2\r\n---\r\nb\r\n";
+        let out = Emitter::format_with_config(input, &config).unwrap();
+        assert!(out.contains("...\n%YAML 1.2\n---\n"), "{out:?}");
+    }
+
+    #[test]
+    fn test_format_percent_scalar_content_is_not_a_directive() {
+        let config = EmitterConfig::default();
+        let input = "--- |\n%YAML 1.2\n---\nb\n";
+        let out = Emitter::format_with_config(input, &config).unwrap();
+        assert!(!out.contains("...\n%YAML"), "{out:?}");
+    }
+
+    #[test]
+    fn test_format_plain_inf_nan_verbatim() {
+        let config = EmitterConfig::default();
+        let input = "a: inf\nb: NaN\nc: -inf\ne: .inf\nf: .nan\ng: !!float inf\n";
+        assert_eq!(Emitter::format_with_config(input, &config).unwrap(), input);
     }
 
     #[test]

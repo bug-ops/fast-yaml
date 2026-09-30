@@ -168,7 +168,7 @@ fn format_with_names(
 
     let mut backend = StdBackend::new(context_capacity, anchor_capacity.max(1));
     *backend.anchor_store_mut() = anchor_names;
-    let mut formatter = StreamingFormatter::new(config, output_capacity, backend);
+    let mut formatter = StreamingFormatter::new(config, output_capacity, backend, input);
 
     let mut guard = super::tag_budget_guard();
     for result in parser {
