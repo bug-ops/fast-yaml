@@ -9,8 +9,8 @@ use thiserror::Error;
 #[derive(Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
-    /// Failed to parse a document at specific index.
-    #[error("failed to parse document at index {index}: {source}")]
+    /// Failed to parse a document; displayed with a one-based document number.
+    #[error("failed to parse document {}: {source}", .index + 1)]
     Parse {
         /// Zero-based index of the document that failed.
         index: usize,
@@ -123,7 +123,7 @@ mod tests {
             },
         };
         let text = err.to_string();
-        assert!(text.contains("index 0"), "{text}");
+        assert!(text.contains("document 1"), "{text}");
         assert!(text.contains("nesting depth exceeds 256"), "{text}");
     }
 }

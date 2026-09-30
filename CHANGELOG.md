@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core**: `ParseError::Merge` becomes a struct variant `Merge { error, line, column, document }`, `From<MergeError> for ParseError` is removed, and `ParseError::relocated` takes a document count (#504) (#PR)
 - **Core/Python/Node.js**: only a plain untagged `<<` is a merge key; quoted and tagged forms are ordinary keys (#478) (#494)
 - **Core/Python/Node.js**: a `<<` value other than a mapping or a sequence of mappings, or a `!!set`, is now an error (#481) (#494)
 - **Core**: `!!set` elements are never merge keys, and `canonicalize` returns `Result<Value, MergeError>` (#481) (#494)
@@ -96,6 +97,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core/CLI/Parallel**: `fy format` and the batch formatters reject an invalid `<<` value instead of passing it through (#505) (#PR)
+- **Core/CLI/Node.js**: merge errors report line, column and document of the rejected `<<` key (#504) (#PR)
+- **Parallel**: `parse_files` reports the failing merge document index in `Error::Parse` instead of 0, and its message numbers documents from 1 (#503) (#PR)
 - **Core/Node.js/Python**: `-0x8000000000000000` loads as `i64::MIN`, and equal big-integer spellings (`+99..9`, `99..9`, hex) give one mapping key and the same Node.js key and value text (#477) (#464) (#480) (#495)
 - **Core/CLI**: `Parser::parse_str`, `fy parse` and `parse_files` validate merge keys in every document, not only the first (#501) (#502)
 - **CLI**: `fy convert` keeps integers beyond `i64` exact in both directions; YAML to JSON now emits them as JSON numbers instead of strings and canonicalizes big-integer JSON map keys (#466, #476)

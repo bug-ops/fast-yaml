@@ -146,6 +146,43 @@ fn parse_error_index_matches_stream_position() {
 }
 
 #[test]
+fn merge_error_location_uses_stream_document_index() {
+    let input = "---\na: 1\n---\nb: 2\n---\nm:\n  <<: 1\n";
+    let expected = Parser::parse_all(input).unwrap_err();
+    assert_eq!(expected.document_index(), Some(2));
+    let config = Config::new()
+        .with_workers(Some(2))
+        .with_sequential_threshold(0);
+    for result in [
+        parse_parallel(input),
+        parse_parallel_with_config(input, &config),
+    ] {
+        let Err(Error::Parse { index, source }) = result else {
+            panic!("expected Error::Parse");
+        };
+        assert_eq!(index, 2);
+        assert_eq!(source.to_string(), expected.to_string());
+    }
+}
+
+#[test]
+fn merge_error_location_with_crlf_and_multibyte_text_before_it() {
+    let input = "a: \"héllo\"\r\n---\r\nк: 1\r\nm:\r\n  <<: 1\r\n";
+    let expected = Parser::parse_all(input).unwrap_err().to_string();
+    assert!(
+        expected.contains("line 5, column 3 (document 2)"),
+        "{expected}"
+    );
+    let config = Config::new()
+        .with_workers(Some(2))
+        .with_sequential_threshold(0);
+    let Err(Error::Parse { source, .. }) = parse_parallel_with_config(input, &config) else {
+        panic!("expected Error::Parse");
+    };
+    assert_eq!(source.to_string(), expected);
+}
+
+#[test]
 fn parse_error_index_with_empty_documents_on_parallel_path() {
     let mut input = String::from("---\n---\n");
     for i in 0..8 {

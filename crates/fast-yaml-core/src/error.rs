@@ -59,13 +59,13 @@ pub enum ParseError {
     /// ```
     /// use fast_yaml_core::{MergeError, ParseError, Parser};
     ///
-    /// let err = Parser::parse_str("a: 1\nm:\n  <<: 1\n").unwrap_err();
+    /// let err = Parser::parse_all("a: 1\n---\nm:\n  <<: 1\n").unwrap_err();
     /// assert!(matches!(
     ///     err,
-    ///     ParseError::Merge { error: MergeError::NotMapping, line: 3, column: 3 }
+    ///     ParseError::Merge { error: MergeError::NotMapping, line: 4, column: 3, document: 1 }
     /// ));
     /// ```
-    #[error("{error} at line {line}, column {column}")]
+    #[error("{error} at line {line}, column {column} (document {})", .document + 1)]
     Merge {
         /// Why the merge value is rejected.
         error: MergeError,
@@ -73,6 +73,8 @@ pub enum ParseError {
         line: usize,
         /// Column number of the offending `<<` key (1-indexed, in characters).
         column: usize,
+        /// Zero-based index of the document in the stream.
+        document: usize,
     },
 }
 
@@ -80,26 +82,26 @@ impl ParseError {
     /// Shifts source positions by the text that precedes the parsed fragment.
     ///
     /// Lets an error from a fragment be reported in the coordinates of the whole input:
-    /// `lines` line breaks and `chars` characters come before the fragment, which must start
-    /// at the beginning of a line so columns stay valid.
+    /// `lines` line breaks, `chars` characters and `documents` documents come before the fragment,
+    /// which must start at the beginning of a line so columns stay valid.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_core::{ParseError, Parser};
     ///
-    /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 20);
+    /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 20, 0);
     /// let ParseError::Scanner(scan) = err else { panic!("scanner error expected") };
     /// assert!(scan.marker().line() > 4);
     /// assert!(scan.marker().index() >= 20);
     ///
-    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().relocated(4, 20);
-    /// assert!(matches!(err, ParseError::Merge { line: 6, column: 3, .. }));
+    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().relocated(4, 20, 2);
+    /// assert!(matches!(err, ParseError::Merge { line: 6, column: 3, document: 2, .. }));
     /// ```
     // Marker fields are char-based; shifted by char counts, no source text to convert from.
     #[allow(clippy::disallowed_methods)]
     #[must_use]
-    pub fn relocated(self, lines: usize, chars: usize) -> Self {
+    pub fn relocated(self, lines: usize, chars: usize, documents: usize) -> Self {
         match self {
             Self::Scanner(e) => {
                 let m = e.marker();
@@ -117,11 +119,35 @@ impl ParseError {
                 error,
                 line,
                 column,
+                document,
             } => Self::Merge {
                 error,
                 line: line + lines,
                 column,
+                document: document + documents,
             },
+        }
+    }
+
+    /// Zero-based index of the document the error belongs to, when the error records one.
+    ///
+    /// Only merge errors are located within a multi-document stream; every other variant
+    /// returns `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Parser;
+    ///
+    /// let err = Parser::parse_all("a: 1\n---\nm: {<<: 1}\n").unwrap_err();
+    /// assert_eq!(err.document_index(), Some(1));
+    /// assert_eq!(Parser::parse_all("a: [").unwrap_err().document_index(), None);
+    /// ```
+    #[must_use]
+    pub const fn document_index(&self) -> Option<usize> {
+        match self {
+            Self::Merge { document, .. } => Some(*document),
+            Self::Scanner(_) | Self::LimitExceeded { .. } => None,
         }
     }
 }
