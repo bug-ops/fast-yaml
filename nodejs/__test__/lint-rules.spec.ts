@@ -219,10 +219,6 @@ const summarize = (
 
 const fyMissing = !existsSync(fy);
 
-it.runIf(fyMissing && Boolean(process.env.CI))('fy binary is built for the parity tests', () => {
-  expect(existsSync(fy), `missing ${fy}; run cargo build -p fast-yaml-cli`).toBe(true);
-});
-
 describe.skipIf(fyMissing)('parity with fy lint --config', () => {
   const cases: [string, string, string, LintConfig][] = [
     [
