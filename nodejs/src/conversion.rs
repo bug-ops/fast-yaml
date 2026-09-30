@@ -3,6 +3,7 @@
 //! This module provides bidirectional conversion utilities for translating
 //! between saphyr's `YamlOwned` type and NAPI-RS JavaScript values.
 
+use fast_yaml_core::MaxDepth;
 use napi::{Result as NapiResult, bindgen_prelude::*};
 use ordered_float::OrderedFloat;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
@@ -110,7 +111,23 @@ fn yaml_key_to_string(yaml: &YamlOwned) -> NapiResult<String> {
 /// # Errors
 ///
 /// Returns an error if the JavaScript value contains non-serializable types.
-pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
+pub fn js_to_yaml(env: Env, js_value: Unknown) -> NapiResult<YamlOwned> {
+    js_to_yaml_at(&env, js_value, 0)
+}
+
+/// Enter one more container level, failing past [`MaxDepth::DEFAULT`].
+///
+/// The bound also catches self-referential containers, which would recurse forever.
+fn enter_container(depth: usize) -> NapiResult<usize> {
+    MaxDepth::DEFAULT.descend(depth).map_err(|kind| {
+        napi::Error::from_reason(format!(
+            "cannot serialize to YAML: {kind} (circular reference?)"
+        ))
+    })
+}
+
+/// Recursive worker for [`js_to_yaml`]; `depth` counts enclosing containers.
+fn js_to_yaml_at(env: &Env, js_value: Unknown, depth: usize) -> NapiResult<YamlOwned> {
     let js_type = js_value.get_type()?;
 
     match js_type {
@@ -151,6 +168,7 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
                 unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
 
             // Check if it's an array
+            let depth = enter_container(depth)?;
             if js_obj.is_array()? {
                 let len: u32 = js_obj.get_array_length()?;
 
@@ -161,7 +179,7 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
 
                 for i in 0..len {
                     let elem: Unknown = js_obj.get_element(i)?;
-                    arr.push(js_to_yaml(env, elem)?);
+                    arr.push(js_to_yaml_at(env, elem, depth)?);
                 }
 
                 return Ok(YamlOwned::Sequence(arr));
@@ -185,7 +203,7 @@ pub fn js_to_yaml(env: &Env, js_value: Unknown) -> NapiResult<YamlOwned> {
 
                 map.insert(
                     YamlOwned::Value(ScalarOwned::String(key_str)),
-                    js_to_yaml(env, value)?,
+                    js_to_yaml_at(env, value, depth)?,
                 );
             }
 

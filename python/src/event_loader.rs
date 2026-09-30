@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use fast_yaml_core::{LimitGuard, ParseError, ParseLimits};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PySet, PyString};
@@ -26,6 +27,7 @@ pub fn load_all(py: Python<'_>, input: &str) -> PyResult<Vec<Py<PyAny>>> {
     let mut loader = EventLoader {
         parser: Parser::new_from_str(fast_yaml_core::strip_bom(input)),
         anchors: HashMap::new(),
+        guard: LimitGuard::new(ParseLimits::default()),
     };
     let docs = loader.load_stream(py)?;
     // Replicate fast-yaml-core: inject implicit null for non-empty, zero-doc streams
@@ -40,6 +42,8 @@ struct EventLoader<'input> {
     parser: Parser<'input, StrInput<'input>>,
     /// Anchor id → Python object, used to resolve YAML aliases.
     anchors: HashMap<usize, Py<PyAny>>,
+    /// Enforces depth and alias limits before any recursion or aliasing happens.
+    guard: LimitGuard,
 }
 
 impl<'input> EventLoader<'input> {
@@ -48,10 +52,11 @@ impl<'input> EventLoader<'input> {
         loop {
             match self.parser.next_event() {
                 Some(Ok((Event::Nothing, _))) => {}
-                Some(Ok((ev, _))) => return Ok(ev),
-                Some(Err(ref e)) => {
-                    return Err(scan_err(e));
+                Some(Ok((ev, span))) => {
+                    self.guard.observe(&ev, span).map_err(|e| limit_err(&e))?;
+                    return Ok(ev);
                 }
+                Some(Err(ref e)) => return Err(scan_err(e)),
                 None => return Ok(Event::StreamEnd),
             }
         }
@@ -232,5 +237,9 @@ impl<'input> EventLoader<'input> {
 }
 
 fn scan_err(e: &ScanError) -> PyErr {
+    PyValueError::new_err(format!("YAML parse error: {e}"))
+}
+
+fn limit_err(e: &ParseError) -> PyErr {
     PyValueError::new_err(format!("YAML parse error: {e}"))
 }

@@ -1,3 +1,4 @@
+use crate::limits::LimitKind;
 use thiserror::Error;
 
 /// Errors that can occur during YAML parsing.
@@ -27,6 +28,17 @@ pub enum ParseError {
     /// YAML scanner error from saphyr.
     #[error("YAML scanner error: {0}")]
     Scanner(#[from] saphyr::ScanError),
+
+    /// Input exceeds a configured resource limit (nesting depth or alias expansion).
+    #[error("YAML resource limit exceeded at line {line}, column {column}: {kind}")]
+    LimitExceeded {
+        /// Which limit was exceeded.
+        kind: LimitKind,
+        /// Line number of the offending event (1-indexed).
+        line: usize,
+        /// Column number of the offending event (1-indexed, in characters).
+        column: usize,
+    },
 }
 
 /// Errors that can occur during YAML emission.
@@ -60,6 +72,20 @@ mod tests {
         };
         assert!(err.to_string().contains("line 10"));
         assert!(err.to_string().contains("column 5"));
+    }
+
+    #[test]
+    fn test_limit_exceeded_display() {
+        let err = ParseError::LimitExceeded {
+            kind: LimitKind::Depth(crate::limits::MaxDepth::new(8)),
+            line: 3,
+            column: 7,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("limit exceeded"));
+        assert!(msg.contains("line 3"));
+        assert!(msg.contains("column 7"));
+        assert!(msg.contains('8'));
     }
 
     #[test]

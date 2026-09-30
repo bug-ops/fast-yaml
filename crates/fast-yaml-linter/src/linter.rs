@@ -566,6 +566,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_lint_rejects_deeply_nested_input() {
+        let input = format!("{}x", "- ".repeat(20_000));
+        let err = Linter::with_all_rules().lint(&input).unwrap_err();
+        assert!(matches!(
+            err,
+            LintError::ParseError(fast_yaml_core::ParseError::LimitExceeded { .. })
+        ));
+    }
+
+    #[test]
     fn test_config_default() {
         let config = LintConfig::default();
         assert_eq!(config.max_line_length, Some(80));

@@ -39,6 +39,8 @@
 pub mod emitter;
 /// Error types for parsing and emitting operations.
 pub mod error;
+/// Resource limits (nesting depth, alias expansion) enforced while parsing.
+pub mod limits;
 /// YAML parser for deserializing strings to documents.
 pub mod parser;
 /// Value types representing YAML data structures.
@@ -53,5 +55,6 @@ pub mod streaming;
 
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
+pub use limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
 pub use parser::{Parser, canonicalize, strip_bom};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};
