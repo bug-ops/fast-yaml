@@ -474,15 +474,24 @@ impl Emitter {
                 s,
                 style @ (ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted),
                 _,
-            ) => {
-                let mut out = String::with_capacity(s.len() + 2);
-                match effective_style(s, *style) {
-                    ScalarStyle::SingleQuoted => write_single_quoted(&mut out, s),
-                    _ => write_double_quoted(&mut out, s),
+            ) => Ok(match effective_style(s, *style) {
+                ScalarStyle::SingleQuoted => {
+                    let mut out = String::with_capacity(s.len() + 2);
+                    write_single_quoted(&mut out, s);
+                    out
                 }
-                Ok(out)
-            }
-            Value::Representation(s, _, _) => Ok(s.clone()),
+                _ => double_quoted(s),
+            }),
+            Value::Representation(s, ScalarStyle::Plain, _) => Ok(if flow_key_is_plain_safe(s) {
+                s.clone()
+            } else {
+                double_quoted(s)
+            }),
+            Value::Representation(s, _, _) => Ok(if flow_key_needs_quotes(s) {
+                double_quoted(s)
+            } else {
+                s.clone()
+            }),
             Value::Value(scalar) => match scalar {
                 ScalarOwned::Null => Ok("null".to_string()),
                 ScalarOwned::Boolean(b) => Ok(if *b { "true" } else { "false" }.to_string()),
@@ -505,15 +514,11 @@ impl Emitter {
                         Ok(format!("{s}.0"))
                     }
                 }
-                ScalarOwned::String(s) => {
-                    if flow_key_needs_quotes(s) {
-                        let mut out = String::with_capacity(s.len() + 2);
-                        write_double_quoted(&mut out, s);
-                        Ok(out)
-                    } else {
-                        Ok(s.clone())
-                    }
-                }
+                ScalarOwned::String(s) => Ok(if flow_key_needs_quotes(s) {
+                    double_quoted(s)
+                } else {
+                    s.clone()
+                }),
             },
             _ => Err(EmitError::UnsupportedType(
                 "complex key not supported".to_string(),
@@ -674,14 +679,27 @@ impl Emitter {
 
 /// Whether a string key must be quoted to be read back as the same string in flow context.
 fn flow_key_needs_quotes(s: &str) -> bool {
-    s == "<<"
+    !flow_key_is_plain_safe(s) || reads_as_non_string(s)
+}
+
+/// Returns `s` as a double-quoted scalar.
+fn double_quoted(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    write_double_quoted(&mut out, s);
+    out
+}
+
+/// Whether `s` is structurally safe as a plain flow key, ignoring how it resolves.
+///
+/// `<<` is rejected because a plain `<<` key is read back as a merge key.
+fn flow_key_is_plain_safe(s: &str) -> bool {
+    !(s == "<<"
         || s.is_empty()
         || s.starts_with(char::is_whitespace)
         || s.ends_with(char::is_whitespace)
         || s.contains([':', '#', ',', '[', ']', '{', '}', '"', '\''])
         || s.chars().any(char::is_control)
-        || is_unsafe_plain(s)
-        || reads_as_non_string(s)
+        || is_unsafe_plain(s))
 }
 
 /// Whether the plain scalar `s` would be resolved to something other than a string.
@@ -2210,6 +2228,7 @@ mod tests {
             "a\u{2028}b",
             "a\u{85}b",
             "a\x7fb",
+            "<<",
         ] {
             let out = flow_with_key(string_key(key));
             let Some(Value::Mapping(map)) = crate::Parser::parse_str(&out).unwrap() else {
@@ -2229,6 +2248,46 @@ mod tests {
         assert_eq!(flow_with_key(plain), "{1: 1}\n");
         let single = Value::Representation("it's".to_owned(), ScalarStyle::SingleQuoted, None);
         assert_eq!(flow_with_key(single), "{'it''s': 1}\n");
+    }
+
+    #[test]
+    fn flow_merge_lookalike_key_is_quoted() {
+        assert_eq!(flow_with_key(string_key("<<")), "{\"<<\": 1}\n");
+        let plain = Value::Representation("<<".to_owned(), ScalarStyle::Plain, None);
+        assert_eq!(flow_with_key(plain), "{\"<<\": 1}\n");
+    }
+
+    #[test]
+    fn flow_block_and_plain_representation_keys_round_trip() {
+        for (text, style) in [
+            ("a\nb", ScalarStyle::Plain),
+            ("a\nb\n", ScalarStyle::Literal),
+            ("a\nb\n", ScalarStyle::Folded),
+            ("x: y", ScalarStyle::Plain),
+            ("a, b", ScalarStyle::Literal),
+        ] {
+            let key = Value::Representation(text.to_owned(), style, None);
+            let out = flow_with_key(key);
+            let Some(Value::Mapping(map)) = crate::Parser::parse_str(&out).unwrap() else {
+                panic!("mapping expected for {text:?}: {out}");
+            };
+            assert_eq!(map.len(), 1, "{text:?} {style:?}: {out}");
+            let (k, _) = map.iter().next().unwrap();
+            assert_eq!(k, &string_key(text), "{text:?} {style:?}: {out}");
+        }
+        for style in [ScalarStyle::Literal, ScalarStyle::Folded] {
+            let big = Value::Representation("123456789012345678901234567890".into(), style, None);
+            assert_eq!(
+                flow_with_key(big),
+                "{\"123456789012345678901234567890\": 1}\n"
+            );
+        }
+        let big = Value::Representation(
+            "123456789012345678901234567890".into(),
+            ScalarStyle::Plain,
+            None,
+        );
+        assert_eq!(flow_with_key(big), "{123456789012345678901234567890: 1}\n");
     }
 
     #[test]

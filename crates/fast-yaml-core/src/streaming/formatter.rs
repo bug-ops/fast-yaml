@@ -480,17 +480,10 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
         self.emit_scalar_node(value, style, anchor_id, tag)?;
 
-        let too_long_key = ctx == Context::MappingKey
-            && shape == NodeShape::Inline
-            && self.output[node_start..].chars().count() > MAX_IMPLICIT_KEY_CHARS;
-        if too_long_key {
-            self.output.truncate(node_start);
-            self.output.push_str("? ");
+        if self.is_too_long_key(ctx, shape, node_start) {
+            self.begin_explicit_key(node_start);
             self.emit_scalar_node(value, style, anchor_id, tag)?;
-            self.output.push('\n');
-            self.last_char_newline = true;
-            // The explicit key now ends its line, like a block scalar key.
-            self.end_inline_node(ctx, NodeShape::BlockScalar);
+            self.end_explicit_key(ctx);
         } else {
             // A tag directly before `:` would absorb it (`!:` is a tag).
             if ctx == Context::MappingKey
@@ -503,6 +496,26 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             self.end_inline_node(ctx, shape);
         }
         Ok(())
+    }
+
+    /// Whether the inline node written since `node_start` exceeds the implicit key limit.
+    fn is_too_long_key(&self, ctx: Context, shape: NodeShape, node_start: usize) -> bool {
+        ctx == Context::MappingKey
+            && shape == NodeShape::Inline
+            && self.output[node_start..].chars().count() > MAX_IMPLICIT_KEY_CHARS
+    }
+
+    /// Rewinds to `node_start` and writes the explicit key indicator.
+    fn begin_explicit_key(&mut self, node_start: usize) {
+        self.output.truncate(node_start);
+        self.output.push_str("? ");
+    }
+
+    /// Ends the explicit key's line, like a block scalar key.
+    fn end_explicit_key(&mut self, ctx: Context) {
+        self.output.push('\n');
+        self.last_char_newline = true;
+        self.end_inline_node(ctx, NodeShape::BlockScalar);
     }
 
     /// Writes a scalar's properties followed by its value.
@@ -812,8 +825,27 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
     fn emit_alias(&mut self, anchor_id: usize) {
         let ctx = self.begin_inline_node(NodeShape::Inline);
+        let node_start = self.output.len();
 
-        // Emit the alias reference
+        self.emit_alias_node(anchor_id);
+        // The space counts toward the 1024 limit: the scanner rejects `:` past column 1024.
+        // Anchor names may contain ':', so `*a:` would read as alias "a:".
+        if ctx == Context::MappingKey {
+            self.output.push(' ');
+        }
+
+        if self.is_too_long_key(ctx, NodeShape::Inline, node_start) {
+            self.begin_explicit_key(node_start);
+            self.emit_alias_node(anchor_id);
+            self.end_explicit_key(ctx);
+            return;
+        }
+
+        self.end_inline_node(ctx, NodeShape::Inline);
+    }
+
+    /// Writes the alias reference `*name`.
+    fn emit_alias_node(&mut self, anchor_id: usize) {
         self.output.push('*');
         let name = self.backend.anchor_store().get(anchor_id);
         if name.is_none_or(|name| self.name_owner.get(name) != Some(&anchor_id)) {
@@ -826,13 +858,6 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
         }
         self.last_char_newline = false;
-
-        // Anchor names may contain ':', so `*a:` would read as alias "a:".
-        if ctx == Context::MappingKey {
-            self.output.push(' ');
-        }
-
-        self.end_inline_node(ctx, NodeShape::Inline);
     }
 
     /// Appends `count` spaces, slicing a static buffer when it is long enough.
@@ -1309,6 +1334,21 @@ mod tests {
             assert!(out.contains("? "), "no explicit key for {yaml:.40?}");
         }
         assert_eq!(fmt(&format!("? {long}\n: v\n")), format!("? {long}\n: v\n"));
+    }
+
+    #[test]
+    fn alias_keys_follow_implicit_key_limit() {
+        for len in [1022, 1023, 1024, 1100] {
+            let name = key_of(len, 'a');
+            let key = if len >= 1023 {
+                format!("? *{name}\n: v\n")
+            } else {
+                format!("*{name} : v\n")
+            };
+            let yaml = format!("a: &{name} x\n{key}o: 1\n");
+            let out = assert_stable(&yaml);
+            assert_eq!(out.contains("? *"), len >= 1023, "len {len}");
+        }
     }
 
     #[test]
