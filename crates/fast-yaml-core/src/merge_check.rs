@@ -1,8 +1,8 @@
-//! Event-based `<<` merge value validation for the streaming formatter.
+//! Event-based `<<` merge value validation shared by the loader and the streaming formatter.
 //!
-//! The formatter never builds a [`Value`](crate::Value), so the merge checks that
-//! [`canonicalize`](crate::canonicalize) runs on the loaded tree are repeated here on the
-//! event stream, with the same verdicts and without expanding aliases.
+//! Validating on the event stream, before the loader collapses equal keys, makes every entry
+//! point report the same error: the first invalid merge value in document order, positioned at
+//! its `<<` key.
 
 use std::collections::HashMap;
 
@@ -57,7 +57,7 @@ struct Open {
 
 /// Rejects `<<` values that cannot be merged, from the parser event stream.
 #[derive(Default)]
-pub(super) struct MergeKeyValidator {
+pub struct MergeKeyValidator {
     tracker: MergeKeyTracker,
     open: Vec<Open>,
     anchors: HashMap<usize, NodeKind>,
@@ -69,8 +69,8 @@ impl MergeKeyValidator {
     ///
     /// # Errors
     ///
-    /// Returns [`ParseError::Merge`] at the start of the first invalid merge value.
-    pub(super) fn observe(&mut self, event: &Event<'_>, span: Span) -> Result<(), ParseError> {
+    /// Returns [`ParseError::Merge`] at the `<<` key of the first invalid merge value.
+    pub fn observe(&mut self, event: &Event<'_>, span: Span) -> Result<(), ParseError> {
         let role = self.tracker.observe(event);
         let Some(role) = role else {
             return self.observe_structure(event);

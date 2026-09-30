@@ -1183,4 +1183,12 @@ mod tests {
         let diagnostics = Linter::with_all_rules().lint("\u{FEFF}a: 1\n").unwrap();
         assert!(diagnostics.is_empty(), "unexpected: {diagnostics:?}");
     }
+
+    #[test]
+    fn lint_reports_merge_error_hidden_by_duplicate_key() {
+        let err = Linter::with_all_rules()
+            .lint("x: {<<: 1}\nx: 2\n")
+            .unwrap_err();
+        assert!(err.to_string().contains("line 1, column 5"), "{err}");
+    }
 }

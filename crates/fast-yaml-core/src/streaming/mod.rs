@@ -27,7 +27,6 @@ use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits}
 
 mod directives;
 mod formatter;
-mod merge_check;
 mod std_backend;
 mod traits;
 
