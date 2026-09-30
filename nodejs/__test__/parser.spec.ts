@@ -165,6 +165,81 @@ person:
         ['k', 0],
       ]);
     });
+
+    it.each(["'<<'", '"<<"', '!!str <<'])('should treat %s as an ordinary key', (key) => {
+      const result = safeLoad(`b: &b {x: 1}\nm:\n  ${key}: *b\n  k: 0\n`) as {
+        m: Record<string, unknown>;
+      };
+      expect(result.m).toEqual({ '<<': { x: 1 }, k: 0 });
+    });
+
+    it('should not merge a JSON "<<" key', () => {
+      const result = safeLoad('{"m": {"<<": {"admin": true}, "k": 0}}') as {
+        m: Record<string, unknown>;
+      };
+      expect(result.m).toEqual({ '<<': { admin: true }, k: 0 });
+    });
+
+    it.each(['1', 'null', '[1]', '[[{x: 1}]]', 'text', '[{x: 1}, 5]'])(
+      'should reject the non-mapping merge value %s',
+      (merge) => {
+        expect(() => safeLoad(`m:\n  <<: ${merge}\n  k: 0\n`)).toThrow(/merge key/);
+      }
+    );
+
+    it.each(['*s', '[*s]'])('should reject a !!set merge source %s', (merge) => {
+      expect(() => safeLoad(`s: &s !!set {x, y}\nm:\n  <<: ${merge}\n`)).toThrow(/merge key/);
+    });
+
+    it('should keep << as an ordinary element of a !!set, also through an alias', () => {
+      const result = safeLoad('a: &a !!set {k, <<}\nb: *a\n') as Record<string, unknown>;
+      expect(result.a).toEqual({ k: null, '<<': null });
+      expect(result.b).toEqual({ k: null, '<<': null });
+    });
+
+    it('should accept explicitly tagged mapping and sequence merge values', () => {
+      const result = safeLoad('m:\n  <<: !!seq [!!map {x: 1}, {y: 2}]\n  k: 0\n') as {
+        m: Record<string, number>;
+      };
+      expect(result.m).toEqual({ x: 1, y: 2, k: 0 });
+    });
+
+    it.each([
+      'm:\n  <<: {<<: 1}\n',
+      'a: &a {<<: 1}\nm:\n  <<: *a\n',
+      'm:\n  <<: [{x: 1}, {<<: [2]}]\n',
+    ])('should reject a nested invalid merge value in %j', (doc) => {
+      expect(() => safeLoad(doc)).toThrow(/merge key/);
+    });
+
+    it.each([
+      'm:\n  <<: 1\n  <<: {a: 1}\n',
+      's: &s !!set {x}\nm:\n  <<: *s\n  <<: {a: 1}\n',
+      'm: {<<: [2], <<: {a: 1}}\n',
+    ])('should reject an invalid earlier duplicate << value in %j', (doc) => {
+      expect(() => safeLoad(doc)).toThrow(/merge key/);
+    });
+
+    it('should keep only the last of duplicate plain << keys', () => {
+      const result = safeLoad('a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n') as {
+        m: Record<string, number>;
+      };
+      expect(result.m).toEqual({ y: 2 });
+    });
+
+    it('should merge through an alias to a plain << key scalar', () => {
+      const result = safeLoad('k: &k <<\nb: &b {x: 1}\nm:\n  *k : *b\n  z: 0\n') as {
+        m: Record<string, number>;
+      };
+      expect(result.m).toEqual({ x: 1, z: 0 });
+    });
+
+    it('should round-trip a string << key through safeDump in block and flow style', () => {
+      const data = { m: { '<<': { admin: true }, k: 0 }, n: { '<<': 1 } };
+      for (const defaultFlowStyle of [true, false]) {
+        expect(safeLoad(safeDump(data, { defaultFlowStyle }))).toEqual(data);
+      }
+    });
   });
 });
 

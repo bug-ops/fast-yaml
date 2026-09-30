@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core/Python/Node.js**: only a plain untagged `<<` is a merge key; quoted and tagged forms are ordinary keys (#478) (#494)
+- **Core/Python/Node.js**: a `<<` value other than a mapping or a sequence of mappings, or a `!!set`, is now an error (#481) (#494)
+- **Core**: `!!set` elements are never merge keys, and `canonicalize` returns `Result<Value, MergeError>` (#481) (#494)
+- **Core**: `ParseError::Merge` is added, `MergeTarget` requires `reject`, and `MergeSource::Ignored` becomes `Set`/`Other` (#481) (#494)
+- **CLI**: `fy parse`, `lint` and `convert` exit 1 on an invalid `<<` value instead of ignoring it (#481) (#494)
+- **Core**: the flow emitter quotes a string `<<` key so dumped data reloads unchanged (#478) (#494)
 - **Node.js**: minimum supported Node.js raised from 20 to 22 (Node 20 is EOL); CI covers 22 and 24 (#472)
 - **Linter**: diagnostic context lines are windowed to 120 chars around the highlight, and `ContextLine` gains `column_offset`/`truncated_end` (Python, Node.js and JSON output too), fixing quadratic memory on long lines (#454) (#468)
 - **Core**: `canonicalize` keeps integers overflowing `i64` as `Value::Representation` instead of `ScalarOwned::String`, so consumers can tell them from strings, and adds `value::scalar_key_text`; CLI and Node.js output is unchanged (#392) (#462)

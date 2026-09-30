@@ -674,7 +674,8 @@ impl Emitter {
 
 /// Whether a string key must be quoted to be read back as the same string in flow context.
 fn flow_key_needs_quotes(s: &str) -> bool {
-    s.is_empty()
+    s == "<<"
+        || s.is_empty()
         || s.starts_with(char::is_whitespace)
         || s.ends_with(char::is_whitespace)
         || s.contains([':', '#', ',', '[', ']', '{', '}', '"', '\''])
@@ -1815,6 +1816,23 @@ mod tests {
         );
         assert!(result.contains("a: 1"), "mapping key a must be present");
         assert!(result.contains("b: 2"), "mapping key b must be present");
+    }
+
+    #[test]
+    fn test_string_merge_key_round_trips_in_every_style() {
+        let doc =
+            crate::Parser::parse_str(r#"{"m": {"<<": {"admin": true}, "k": 0}, "n": {"<<": 1}}"#)
+                .unwrap()
+                .unwrap();
+        for flow in [Some(true), Some(false), None] {
+            let config = EmitterConfig::new().with_default_flow_style(flow);
+            let yaml = Emitter::emit_str_with_config(&doc, &config).unwrap();
+            assert_eq!(
+                crate::Parser::parse_str(&yaml).unwrap().unwrap(),
+                doc,
+                "{flow:?}: {yaml}"
+            );
+        }
     }
 
     #[test]

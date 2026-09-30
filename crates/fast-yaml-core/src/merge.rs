@@ -9,11 +9,65 @@
 //! - merged keys come first, regardless of where `<<` sits in the source mapping;
 //! - an explicit key always wins and replaces the merged value in the merged key's position;
 //! - for `<<: [*a, *b]` the earlier item wins and keys appear in forward order (a, then b);
-//! - the merge is shallow and non-mapping merge values are ignored.
+//! - the merge is shallow;
+//! - only the plain, untagged scalar `<<` is a merge key; quoted or tagged forms are ordinary keys;
+//! - a merge value must be a mapping or a sequence of mappings, anything else is a [`MergeError`].
 
-use std::convert::Infallible;
+use saphyr_parser::Tag;
+use thiserror::Error;
 
 use crate::value::{Map, Value};
+
+/// Handle of the stand-in tag that keeps `!!set` visible after loading.
+///
+/// It contains NUL, which input validation rejects, so no document can spell it.
+const SET_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0";
+
+/// Handle of the per-key tag that keeps repeated plain `<<` keys distinct after loading.
+const MERGE_KEY_MARKER_HANDLE: &str = "tag:fast-yaml.internal:\0merge";
+
+pub(crate) fn merge_key_tag(ordinal: usize) -> Tag {
+    Tag {
+        handle: MERGE_KEY_MARKER_HANDLE.into(),
+        suffix: ordinal.to_string(),
+    }
+}
+
+pub(crate) fn is_merge_key_marker(tag: &Tag) -> bool {
+    tag.handle == MERGE_KEY_MARKER_HANDLE
+}
+
+pub(crate) fn set_marker_tag() -> Tag {
+    Tag {
+        handle: SET_MARKER_HANDLE.into(),
+        suffix: "set".into(),
+    }
+}
+
+pub(crate) fn is_set_marker(tag: &Tag) -> bool {
+    tag.handle == SET_MARKER_HANDLE && tag.suffix == "set"
+}
+
+/// Why a `<<` value cannot be merged.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{MergeError, ParseError, Parser};
+///
+/// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
+/// assert!(matches!(err, ParseError::Merge(MergeError::NotMapping)));
+/// ```
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MergeError {
+    /// The value is not a mapping, or a sequence item is not a mapping.
+    #[error("merge key `<<` requires a mapping or a sequence of mappings")]
+    NotMapping,
+    /// The value is a `!!set`, which is not a mapping for merging purposes.
+    #[error("merge key `<<` cannot merge a `!!set`")]
+    SetSource,
+}
 
 /// Representation-independent view of a `<<` value.
 #[derive(Debug)]
@@ -22,8 +76,10 @@ pub enum MergeSource<E, S> {
     Mapping(E),
     /// A sequence whose mapping items are absorbed in order.
     Sequence(S),
-    /// Anything else; contributes nothing.
-    Ignored,
+    /// A `!!set`; rejected with [`MergeError::SetSource`].
+    Set,
+    /// Anything else; rejected with [`MergeError::NotMapping`].
+    Other,
 }
 
 /// Mapping sink that [`merge_into`] fills.
@@ -50,7 +106,7 @@ pub enum MergeSource<E, S> {
 pub trait MergeTarget {
     /// Key and value type of the target and of its merge sources.
     type Node;
-    /// Failure of a target operation; [`Infallible`] when none can fail.
+    /// Failure of a target operation, including a rejected merge value.
     type Error;
     /// Entries of a mapping merge source.
     type Entries: IntoIterator<Item = (Self::Node, Self::Node)>;
@@ -66,6 +122,9 @@ pub trait MergeTarget {
         &self,
         node: Self::Node,
     ) -> Result<MergeSource<Self::Entries, Self::Items>, Self::Error>;
+
+    /// Wraps a rejected merge value in the target's error type.
+    fn reject(error: MergeError) -> Self::Error;
 
     /// Stores `value` under `key` only when `key` is absent; an existing entry is left untouched.
     ///
@@ -84,19 +143,24 @@ pub trait MergeTarget {
 
 impl MergeTarget for Map {
     type Node = Value;
-    type Error = Infallible;
+    type Error = MergeError;
     type Entries = Self;
     type Items = Vec<Value>;
 
-    fn classify(&self, node: Value) -> Result<MergeSource<Self, Vec<Value>>, Infallible> {
+    fn classify(&self, node: Value) -> Result<MergeSource<Self, Vec<Value>>, MergeError> {
         Ok(match node {
             Value::Mapping(map) => MergeSource::Mapping(map),
             Value::Sequence(items) => MergeSource::Sequence(items),
-            _ => MergeSource::Ignored,
+            Value::Tagged(tag, _) if is_set_marker(&tag) => MergeSource::Set,
+            _ => MergeSource::Other,
         })
     }
 
-    fn set_if_absent(&mut self, key: Value, value: Value) -> Result<(), Infallible> {
+    fn reject(error: MergeError) -> MergeError {
+        error
+    }
+
+    fn set_if_absent(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
         // `entry().or_insert()` moves an occupied key to the back
         if !self.contains_key(&key) {
             self.insert(key, value);
@@ -104,7 +168,7 @@ impl MergeTarget for Map {
         Ok(())
     }
 
-    fn set(&mut self, key: Value, value: Value) -> Result<(), Infallible> {
+    fn set(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
         // `insert` would move an existing key to the back
         self.replace(key, value);
         Ok(())
@@ -129,7 +193,8 @@ fn absorb<T: MergeTarget>(
 ///
 /// # Errors
 ///
-/// Propagates the first error returned by the target.
+/// Propagates the first error returned by the target, and rejects a `merge` that is not a
+/// mapping or a sequence of mappings.
 ///
 /// # Examples
 ///
@@ -155,12 +220,17 @@ pub fn merge_into<T: MergeTarget>(
             MergeSource::Mapping(entries) => absorb(target, entries)?,
             MergeSource::Sequence(items) => {
                 for item in items {
-                    if let MergeSource::Mapping(entries) = target.classify(item)? {
-                        absorb(target, entries)?;
+                    match target.classify(item)? {
+                        MergeSource::Mapping(entries) => absorb(target, entries)?,
+                        MergeSource::Set => return Err(T::reject(MergeError::SetSource)),
+                        MergeSource::Sequence(_) | MergeSource::Other => {
+                            return Err(T::reject(MergeError::NotMapping));
+                        }
                     }
                 }
             }
-            MergeSource::Ignored => {}
+            MergeSource::Set => return Err(T::reject(MergeError::SetSource)),
+            MergeSource::Other => return Err(T::reject(MergeError::NotMapping)),
         }
     }
     for (key, value) in explicit {
