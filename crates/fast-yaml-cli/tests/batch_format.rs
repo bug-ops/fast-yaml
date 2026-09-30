@@ -518,14 +518,74 @@ fn test_in_place_missing_path_writes_nothing() {
 }
 
 #[test]
-fn test_zero_match_glob_is_not_an_error() {
+fn test_zero_match_glob_fails() {
     let temp = TempDir::new().unwrap();
     let pattern = temp.path().join("*.nomatch");
 
     fy().args(["format", "--dry-run", pattern.to_str().unwrap()])
         .assert()
-        .success()
-        .stderr(predicate::str::contains("No YAML files found"));
+        .failure()
+        .stderr(predicate::str::contains("glob pattern matched no files"));
+}
+
+#[test]
+fn test_zero_match_glob_with_clean_file_fails() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+    let pattern = temp.path().join("nomatch*.yaml");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        pattern.to_str().unwrap(),
+        clean.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("glob pattern matched no files"));
+}
+
+#[test]
+fn test_bracket_shaped_missing_path_fails() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+    let missing = temp.path().join("missing[1].yaml");
+
+    fy().args([
+        "format",
+        "--dry-run",
+        missing.to_str().unwrap(),
+        clean.to_str().unwrap(),
+    ])
+    .assert()
+    .failure()
+    .stderr(predicate::str::contains("glob pattern matched no files"));
+}
+
+#[test]
+fn test_stdin_files_missing_line_fails() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&clean, "key: value\n").unwrap();
+    let missing = temp.path().join("missing.yaml");
+
+    fy().args(["format", "--dry-run", "--stdin-files"])
+        .write_stdin(format!("{}\n{}\n", missing.display(), clean.display()))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("path does not exist"));
+}
+
+#[test]
+fn test_batch_flags_without_input_fail() {
+    fy().args(["format", "--dry-run", "-j", "2"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "batch options (--jobs, --include, --exclude) need input",
+        ));
 }
 
 #[test]
@@ -906,4 +966,24 @@ fn test_in_place_with_dry_run_leaves_file_untouched() {
         .code(5);
 
     assert_eq!(fs::read_to_string(&file).unwrap(), "key:   value\n");
+}
+
+#[test]
+fn test_malformed_glob_fails() {
+    fy().args(["format", "--dry-run", "a["])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("invalid glob pattern 'a['"));
+}
+
+#[test]
+fn test_include_exclude_without_paths_fail() {
+    for flag in ["--include", "--exclude"] {
+        fy().args(["format", "--dry-run", flag, "*.yaml"])
+            .assert()
+            .code(1)
+            .stderr(predicate::str::contains(
+                "batch options (--jobs, --include, --exclude) need input",
+            ));
+    }
 }

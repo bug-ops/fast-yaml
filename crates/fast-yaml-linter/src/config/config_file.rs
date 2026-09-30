@@ -3,6 +3,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::{ParseError, Parser};
 use serde_norway::Value;
 
 use crate::config::{IndentSize, RuleConfigError, RuleName, RulesConfig};
@@ -51,13 +52,24 @@ pub enum ConfigFileError {
         source: std::io::Error,
     },
 
-    /// YAML parse error in config file.
+    /// The config text parsed under the core parser but failed in `serde_norway`, for example
+    /// on duplicate keys, several documents or a malformed scalar.
     #[error("failed to parse config file '{}'", .path.display())]
     Parse {
         /// Path that failed.
         path: PathBuf,
         /// Underlying parse error.
         source: serde_norway::Error,
+    },
+
+    /// The core parser rejected the config file: a syntax error, or nesting depth or alias
+    /// expansion beyond the default parser limits.
+    #[error("failed to parse config file '{}'", .path.display())]
+    Rejected {
+        /// Path that failed.
+        path: PathBuf,
+        /// Why the parser rejected the file.
+        source: ParseError,
     },
 
     /// The `rules:` section is invalid.
@@ -108,13 +120,21 @@ impl ConfigFile {
     ///
     /// # Errors
     ///
-    /// Returns `ConfigFileError` on I/O or parse failure, or when `rules:` contains an
+    /// Returns `ConfigFileError` on I/O failure, when the core parser rejects the file (syntax error or
+    /// the default [`fast_yaml_core::limits::ParseLimits`] exceeded), or when `rules:` contains an
     /// unknown rule, an unknown or mistyped option, or an invalid severity.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
         let content = std::fs::read_to_string(path).map_err(|source| ConfigFileError::Io {
             path: path.to_owned(),
             source,
         })?;
+        // serde_norway has no depth or alias limits, so the core parser vets the text first.
+        if let Err(source) = Parser::parse_all(&content) {
+            return Err(ConfigFileError::Rejected {
+                path: path.to_owned(),
+                source,
+            });
+        }
         let parse_error = |source| ConfigFileError::Parse {
             path: path.to_owned(),
             source,
@@ -258,10 +278,10 @@ mod tests {
     }
 
     #[test]
-    fn test_load_invalid_yaml_returns_parse_error() {
+    fn test_load_invalid_yaml_returns_rejected_error() {
         assert!(matches!(
             load_str("rules: [broken yaml: {"),
-            Err(ConfigFileError::Parse { .. })
+            Err(ConfigFileError::Rejected { .. })
         ));
     }
 
@@ -451,5 +471,27 @@ mod tests {
     fn test_discover_returns_none_when_not_found() {
         let found = ConfigFile::discover(Path::new("/"));
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn load_alias_bomb_config_rejected() {
+        use std::fmt::Write as _;
+        let mut yaml = format!("a0: &a0 \"{}\"\n", "x".repeat(1024));
+        for i in 1..=8 {
+            let refs = vec![format!("*a{}", i - 1); 9].join(",");
+            writeln!(yaml, "a{i}: &a{i} [{refs}]").unwrap();
+        }
+        assert!(matches!(
+            load_str(&yaml),
+            Err(ConfigFileError::Rejected { .. })
+        ));
+    }
+
+    #[test]
+    fn load_multi_document_config_errors() {
+        assert!(matches!(
+            load_str("---\nrules: {}\n---\nrules: {}\n"),
+            Err(ConfigFileError::Parse { .. })
+        ));
     }
 }

@@ -62,6 +62,29 @@ pub enum DiscoveryError {
         path: PathBuf,
     },
 
+    /// Glob pattern matched nothing
+    #[error("glob pattern matched no files: '{pattern}'")]
+    GlobNoMatch {
+        /// The pattern that matched nothing
+        pattern: String,
+    },
+
+    /// Glob pattern is malformed
+    #[error("invalid glob pattern '{pattern}': {source}")]
+    GlobSyntax {
+        /// The malformed pattern
+        pattern: String,
+        /// The underlying error
+        #[source]
+        source: glob::PatternError,
+    },
+
+    /// Batch flags were given without any input source
+    #[error(
+        "batch options (--jobs, --include, --exclude) need input: pass at least one path (or use --stdin-files with format)"
+    )]
+    NoInput,
+
     /// Error reading from stdin
     #[error("failed to read file list from stdin: {source}")]
     StdinError {
@@ -106,11 +129,18 @@ impl std::fmt::Display for RaiseHint {
 impl RaiseHint {
     /// Finds a raisable limit failure anywhere in the error's source chain.
     ///
-    /// Tag, output and dump-node limits have no CLI flag and yield `None`.
+    /// Tag, output and dump-node limits have no CLI flag and yield `None`, as do config file
+    /// failures, which always use the default limits.
     #[must_use]
     pub fn of(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
         use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth};
         use fast_yaml_core::{LimitKind, ParseError};
+        #[cfg(feature = "linter")]
+        if std::iter::successors(Some(err), |e| e.source())
+            .any(<dyn std::error::Error>::is::<fast_yaml_linter::ConfigFileError>)
+        {
+            return None;
+        }
         std::iter::successors(Some(err), |e| e.source()).find_map(|e| {
             match e.downcast_ref::<ParseError>()? {
                 ParseError::LimitExceeded {
@@ -180,6 +210,22 @@ mod tests {
         assert_eq!(ExitCode::IoError.as_i32(), 3);
         assert_eq!(ExitCode::InvalidArgs.as_i32(), 4);
         assert_eq!(ExitCode::WouldChange.as_i32(), 5);
+    }
+
+    #[test]
+    #[cfg(feature = "linter")]
+    fn test_no_raise_hint_for_config_file_failures() {
+        use fast_yaml_core::limits::MaxDepth;
+        use fast_yaml_core::{LimitKind, ParseError};
+        let error = fast_yaml_linter::ConfigFileError::Rejected {
+            path: "c.yaml".into(),
+            source: ParseError::LimitExceeded {
+                kind: LimitKind::Depth(MaxDepth::DEFAULT),
+                line: 1,
+                column: 1,
+            },
+        };
+        assert_eq!(RaiseHint::of(&error), None);
     }
 
     #[test]

@@ -236,3 +236,17 @@ fn disabled_rules_suppress_diagnostics() {
         .stdout(predicate::str::contains("document-start").not())
         .stdout(predicate::str::contains("trailing-whitespace").not());
 }
+
+#[test]
+fn deeply_nested_config_fails_fast() {
+    let dir = TempDir::new().unwrap();
+    let config = dir.path().join("deep.yaml");
+    let nested = format!("rules: {}1{}\n", "[".repeat(100_000), "]".repeat(100_000));
+    std::fs::write(&config, nested).unwrap();
+
+    lint(&config)
+        .write_stdin("a: 1\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("recursion limit exceeded"));
+}
