@@ -35,6 +35,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+/// Comment detection for inputs the formatter would strip comments from.
+pub mod comments;
 /// YAML emitter for serializing documents to strings.
 pub mod emitter;
 /// Error types for parsing and emitting operations.
@@ -53,6 +55,7 @@ pub mod value;
 #[cfg(feature = "streaming")]
 pub mod streaming;
 
+pub use comments::has_comments;
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, MaxTagBytes, ParseLimits};

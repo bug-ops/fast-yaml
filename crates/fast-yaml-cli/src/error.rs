@@ -16,6 +16,8 @@ pub enum ExitCode {
     IoError = 3,
     /// Invalid command-line arguments
     InvalidArgs = 4,
+    /// `format --dry-run` found files that formatting would change
+    WouldChange = 5,
 }
 
 /// Errors that can occur during file discovery.
@@ -129,6 +131,7 @@ mod tests {
         assert_eq!(ExitCode::LintErrors.as_i32(), 2);
         assert_eq!(ExitCode::IoError.as_i32(), 3);
         assert_eq!(ExitCode::InvalidArgs.as_i32(), 4);
+        assert_eq!(ExitCode::WouldChange.as_i32(), 5);
     }
 
     #[test]

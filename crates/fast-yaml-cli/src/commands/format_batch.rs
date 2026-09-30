@@ -4,9 +4,11 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
 use fast_yaml_core::emitter::EmitterConfig;
-use fast_yaml_parallel::{BatchResult as ParallelBatchResult, FileProcessor};
+use fast_yaml_parallel::{
+    BatchResult as ParallelBatchResult, CommentPolicy, FileProcessor, FormatOutput,
+};
 
-use crate::commands::format::{COMMENTS_STRIPPED_MSG, yaml_has_comments};
+use crate::commands::format::error_message;
 use crate::config::CommonConfig;
 use crate::discovery::{DiscoveryConfig, FileDiscovery};
 use crate::error::ExitCode;
@@ -94,47 +96,29 @@ pub fn execute_batch(
     // Create reporter
     let reporter = Reporter::new(config.common.output.clone());
 
-    // Extract paths from discovered files
-    let all_paths = files.iter().map(|f| f.path.clone());
+    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 
-    // Files with comments are rejected up front so they are never rewritten
-    let (guarded, file_paths): (Vec<PathBuf>, Vec<PathBuf>) = all_paths.partition(|path| {
-        !config.strip_comments
-            && std::fs::read_to_string(path).is_ok_and(|content| yaml_has_comments(&content))
-    });
-
-    // Create emitter config
     let emitter_config = EmitterConfig::new()
         .with_indent(config.common.formatter.indent() as usize)
         .with_width(config.common.formatter.width());
 
-    // Create processor with config from CLI settings
+    let comments = if config.strip_comments {
+        CommentPolicy::Strip
+    } else {
+        CommentPolicy::Reject
+    };
+
     let processor = FileProcessor::with_config(config.common.parallel.clone());
 
-    // Process files based on mode
-    let mut result = if config.dry_run {
-        // Dry run: format but don't write, report what would change
-        let formatted = processor.format_files(&file_paths, &emitter_config);
+    let result = if config.dry_run {
+        let formatted = processor.format_files(&file_paths, &emitter_config, comments);
         convert_format_results_to_batch_result(formatted)
     } else if config.in_place {
-        // In-place: format and write
-        processor.format_in_place(&file_paths, &emitter_config)
+        processor.format_in_place(&file_paths, &emitter_config, comments)
     } else {
         bail!("use -i to format files in-place or --dry-run to preview changes");
     };
 
-    result.total += guarded.len();
-    result.failed += guarded.len();
-    result.errors.extend(guarded.into_iter().map(|path| {
-        (
-            path,
-            fast_yaml_parallel::Error::Format {
-                message: COMMENTS_STRIPPED_MSG.to_string(),
-            },
-        )
-    }));
-
-    // Report results using BatchSummary event
     // In dry-run mode, 'changed' means "would change"; in in-place mode it means "formatted".
     let would_change = if config.dry_run { result.changed } else { 0 };
     let formatted = if config.dry_run { 0 } else { result.changed };
@@ -152,21 +136,23 @@ pub fn execute_batch(
     for (path, error) in &result.errors {
         reporter.report(ReportEvent::Error {
             path: Some(path),
-            message: &error.to_string(),
+            message: &error_message(error),
         })?;
     }
 
     // Return appropriate exit code
-    if result.failed > 0 {
-        Ok(ExitCode::ParseError)
+    Ok(if result.failed > 0 {
+        ExitCode::ParseError
+    } else if would_change > 0 {
+        ExitCode::WouldChange
     } else {
-        Ok(ExitCode::Success)
-    }
+        ExitCode::Success
+    })
 }
 
 /// Convert `format_files` results to `BatchResult` for dry-run reporting
 fn convert_format_results_to_batch_result(
-    results: Vec<(PathBuf, Result<String, fast_yaml_parallel::Error>)>,
+    results: Vec<(PathBuf, Result<FormatOutput, fast_yaml_parallel::Error>)>,
 ) -> ParallelBatchResult {
     use fast_yaml_parallel::{FileOutcome, FileResult};
     use std::time::{Duration, Instant};
@@ -176,13 +162,12 @@ fn convert_format_results_to_batch_result(
 
     for (path, result) in results {
         let outcome = match result {
-            Ok(_formatted) => {
-                // In dry-run mode, we report as "would change"
-                // Use Changed to indicate file would be modified
-                FileOutcome::Changed {
-                    duration: Duration::ZERO,
-                }
-            }
+            Ok(output) if output.changed => FileOutcome::Changed {
+                duration: Duration::ZERO,
+            },
+            Ok(_) => FileOutcome::Unchanged {
+                duration: Duration::ZERO,
+            },
             Err(error) => FileOutcome::Error {
                 error,
                 duration: Duration::ZERO,

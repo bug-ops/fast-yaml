@@ -13,6 +13,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `fast-yaml-parallel` `format_files`/`format_in_place` take a `CommentPolicy`, `format_files` returns `FormatOutput { formatted, changed }`, and `Error::CommentsWouldBeStripped` is added; Python and Node.js bindings keep stripping comments (#397)
+- **Breaking:** Python and Node.js `format_files_in_place` now report untouched files as `Unchanged` instead of `Success` (#397)
+- **Breaking:** `fy format --dry-run` exits with code 5 when any file would change (1 still means a failure) (#397)
 - **Breaking:** `fast-yaml-core` adds `ParseError::LimitExceeded`, `ParseLimits` and `parse_*_with_limits`; Python `safe_load`/`safe_load_all` now reject over-limit input and cross-document aliases (#369)
 - Linter: typed `ByteOffset`/`ByteRange` boundary for saphyr positions, shared `braces`/`brackets` implementation (#347)
 
@@ -26,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Fix `fy lint` panic in `key-ordering` on a lone quote in a mapping key (#385)
 - Fix quadratic lint time on large files in `key-ordering` key lookup and flow-token block-scalar checks (#385)
+- Fix `fy format --dry-run` always reporting "would change": output is compared with the input in single-file, batch and stdin modes (#397)
+- `fy format -i` on a single already-formatted file no longer rewrites it, matching batch mode (#397)
+- Fix `fy format --dry-run` on stdin printing nothing: it now reports the same summary and exit code as file mode (#397)
+- `fy format` runs the comment guard in the parallel processor on the same content it rewrites, removing the extra serial read (#397)
+- Fix `fy format` comment detection missing a comment after a multi-line quoted scalar and silently dropping it; detection now uses parser event spans via `fast_yaml_core::has_comments` (#397)
 - Make `parse_parallel` match `Parser::parse_all`: empty documents are kept as null and `Error::Parse` indices align with the real stream (#364)
 - `fy format` returns an error instead of silently dropping anchors or nesting levels beyond 4096 anchors per document or 256 levels (#371) (#383)
 - `fy format` emits scalar mapping keys longer than 1024 characters in explicit `? ` form so the output re-parses (#378) (#383)

@@ -87,7 +87,9 @@ pub enum Command {
         #[arg(long)]
         no_recursive: bool,
 
-        /// Never write any file; only print a summary of what would change
+        /// Never write any file; only print a summary of what would change.
+        /// Works for stdin too. Exits with code 5 if any file would change,
+        /// 1 if any file failed (takes precedence), 0 otherwise
         #[arg(short = 'n', long, conflicts_with = "output")]
         dry_run: bool,
 

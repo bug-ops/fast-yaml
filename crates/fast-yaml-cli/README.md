@@ -175,7 +175,7 @@ fy lint --format json config.yaml
 | `--include` | - | Include pattern (glob) | all files |
 | `--exclude` | - | Exclude pattern (glob) | none |
 | `--no-recursive` | - | Disable recursive directory traversal | recursive |
-| `--dry-run` | `-n` | Preview changes without modifying | - |
+| `--dry-run` | `-n` | Preview changes without modifying; exits 5 if any file would change | - |
 
 > [!NOTE]
 > Batch mode activates automatically when processing multiple paths, directories, glob patterns, or when using `--stdin-files`, `--include`, `--exclude`, or `--jobs`.
@@ -206,6 +206,7 @@ cargo build --release --no-default-features
 | 2 | Lint errors found |
 | 3 | I/O error |
 | 4 | Invalid arguments |
+| 5 | `fy format --dry-run`: at least one file would change (1 takes precedence if any file failed) |
 
 ## Examples
 

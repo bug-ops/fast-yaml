@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
-    BatchResult as RustBatchResult, Config as RustConfig, FileOutcome as RustFileOutcome,
-    FileProcessor, FileResult as RustFileResult,
+    BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
+    FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -362,7 +362,7 @@ fn format_files(
 
     let results = py.detach(|| {
         let processor = FileProcessor::with_config(rust_config);
-        processor.format_files(&path_bufs, &emitter_config)
+        processor.format_files(&path_bufs, &emitter_config, CommentPolicy::Strip)
     });
 
     Ok(results
@@ -370,7 +370,7 @@ fn format_files(
         .map(|(path, result)| {
             let path_str = path.to_string_lossy().to_string();
             match result {
-                Ok(content) => (path_str, Some(content), None),
+                Ok(output) => (path_str, Some(output.formatted), None),
                 Err(e) => (path_str, None, Some(e.to_string())),
             }
         })
@@ -414,7 +414,7 @@ fn format_files_in_place(
 
     let result = py.detach(|| {
         let processor = FileProcessor::with_config(rust_config);
-        processor.format_in_place(&path_bufs, &emitter_config)
+        processor.format_in_place(&path_bufs, &emitter_config, CommentPolicy::Strip)
     });
 
     Ok(result.into())

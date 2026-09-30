@@ -4,8 +4,8 @@ use std::path::PathBuf;
 
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
-    BatchResult as RustBatchResult, Config as RustConfig, FileOutcome as RustFileOutcome,
-    FileProcessor, FileResult as RustFileResult,
+    BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
+    FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
 };
 use napi::Result as NapiResult;
 use napi_derive::napi;
@@ -260,16 +260,16 @@ pub fn format_files(
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     let processor = FileProcessor::with_config(rust_config);
-    let results = processor.format_files(&path_bufs, &emitter_config);
+    let results = processor.format_files(&path_bufs, &emitter_config, CommentPolicy::Strip);
 
     Ok(results
         .into_iter()
         .map(|(path, result)| {
             let path_str = path.to_string_lossy().to_string();
             match result {
-                Ok(content) => FormatResult {
+                Ok(output) => FormatResult {
                     path: path_str,
-                    content: Some(content),
+                    content: Some(output.formatted),
                     error: None,
                 },
                 Err(e) => FormatResult {
@@ -317,7 +317,7 @@ pub fn format_files_in_place(
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     let processor = FileProcessor::with_config(rust_config);
-    let result = processor.format_in_place(&path_bufs, &emitter_config);
+    let result = processor.format_in_place(&path_bufs, &emitter_config, CommentPolicy::Strip);
 
     Ok(result.into())
 }
