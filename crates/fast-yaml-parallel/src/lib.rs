@@ -106,7 +106,8 @@ pub use result::{BatchResult, FileOutcome, FileResult};
 /// Chunking follows YAML 1.2.2, where a column-0 `---` always ends the document; `saphyr`
 /// (behind `Parser::parse_all`) instead reads it as content of a top-level literal or
 /// folded block scalar. For `--- |\nx\n---\nb: 1\n` this function returns two documents
-/// and `parse_all` one. A column-0 `...` ends the scalar in both.
+/// and `parse_all` one; with an explicit indent indicator (`--- |2\n---\nb: 1\n`) `parse_all`
+/// fails instead. A column-0 `...` ends the scalar in both.
 ///
 /// An empty block scalar before `---` (`a: |\n---\nx\n`) is `""` from `parse_all`, which is
 /// the spec result, and `"\n"` from this function: the chunk ends right after the header,

@@ -84,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core**: core-schema floats accept a leading dot (`.5`, `-.5`) and `+.inf`/`+.Inf`/`+.INF` (#393) (#458)
 - **Linter**: `quoted-strings` decides which quoted scalars need quotes with the core scalar resolver, so `"+.inf"` and `".5"` are no longer reported as unnecessarily quoted (#393) (#458)
 - **Core**: the flow-style emitter escapes and quotes mapping keys (quotes, backslashes, newlines, indicators, values that would re-read as non-strings) (#379) (#458)
+- **Parallel**: pinned in tests the saphyr divergences for empty block scalars at EOF and column-0 `---` in block scalars (#456, #469)
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
