@@ -22,14 +22,17 @@
 #![warn(missing_docs)]
 
 use napi_derive::napi;
+use options::checked_u32;
 
 mod batch;
 mod conversion;
 mod emitter;
 mod limits;
 mod lint;
+mod options;
 mod parallel;
 mod parser;
+mod rule_input;
 
 // Re-export public API
 pub use batch::{
@@ -109,9 +112,17 @@ impl Mark {
     /// * `name` - The source name (e.g., filename)
     /// * `line` - The line number (0-indexed)
     /// * `column` - The column number (0-indexed)
+    ///
+    /// # Errors
+    ///
+    /// Returns an `InvalidArg` error if `line` or `column` is not an integer in `0..=4294967295`.
     #[napi(constructor, catch_unwind)]
-    pub fn new(name: String, line: u32, column: u32) -> Self {
-        Self { name, line, column }
+    pub fn new(name: String, line: f64, column: f64) -> napi::Result<Self> {
+        Ok(Self {
+            name,
+            line: checked_u32("line", line)?,
+            column: checked_u32("column", column)?,
+        })
     }
 
     /// Get a string representation of the mark.
@@ -181,7 +192,7 @@ mod tests {
 
     #[test]
     fn test_mark_new() {
-        let mark = Mark::new("<input>".to_string(), 5, 10);
+        let mark = Mark::new("<input>".to_string(), 5.0, 10.0).unwrap();
         assert_eq!(mark.name, "<input>");
         assert_eq!(mark.line, 5);
         assert_eq!(mark.column, 10);
@@ -189,13 +200,13 @@ mod tests {
 
     #[test]
     fn test_mark_to_string() {
-        let mark = Mark::new("test.yaml".to_string(), 42, 15);
+        let mark = Mark::new("test.yaml".to_string(), 42.0, 15.0).unwrap();
         assert_eq!(mark.to_string(), "test.yaml:42:15");
     }
 
     #[test]
     fn test_mark_zero_indexed() {
-        let mark = Mark::new("test.yaml".to_string(), 0, 0);
+        let mark = Mark::new("test.yaml".to_string(), 0.0, 0.0).unwrap();
         assert_eq!(mark.line, 0);
         assert_eq!(mark.column, 0);
         assert_eq!(mark.to_string(), "test.yaml:0:0");

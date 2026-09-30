@@ -8,8 +8,9 @@ use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
     FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
 };
-use napi::Result as NapiResult;
 use napi_derive::napi;
+
+use crate::options::{U32_MAX, checked_opt_uint};
 
 /// Outcome of processing a single file.
 #[napi(string_enum)]
@@ -114,25 +115,25 @@ impl From<RustBatchResult> for BatchResult {
     }
 }
 
-const MAX_WORKERS: u32 = 128;
-const MAX_INPUT_SIZE: u32 = 1024 * 1024 * 1024; // 1GB
+const MAX_WORKERS: u64 = 128;
+const MAX_INPUT_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
 
 /// Configuration for batch file processing.
 #[napi(object)]
 #[derive(Debug, Clone, Default)]
 pub struct BatchConfig {
     /// Worker count (null = auto, 0 = sequential)
-    pub workers: Option<u32>,
+    pub workers: Option<f64>,
     /// Mmap threshold for large file reading (default: 512KB)
-    pub mmap_threshold: Option<u32>,
+    pub mmap_threshold: Option<f64>,
     /// Maximum input size in bytes (default: 100MB)
-    pub max_input_size: Option<u32>,
+    pub max_input_size: Option<f64>,
     /// Sequential threshold (default: 4KB)
-    pub sequential_threshold: Option<u32>,
+    pub sequential_threshold: Option<f64>,
     /// Indentation width in spaces (default: 2)
-    pub indent: Option<u32>,
+    pub indent: Option<f64>,
     /// Maximum line width (default: 80)
-    pub width: Option<u32>,
+    pub width: Option<f64>,
     /// Sort dictionary keys alphabetically (default: false)
     pub sort_keys: Option<bool>,
     /// Maximum collection nesting depth (integer, 1..=512, default: 256);
@@ -145,43 +146,31 @@ pub struct BatchConfig {
 }
 
 impl BatchConfig {
-    fn validate(&self) -> NapiResult<()> {
-        if let Some(w) = self.workers
-            && w > MAX_WORKERS
-        {
-            return Err(napi::Error::from_reason(format!(
-                "workers {w} exceeds maximum {MAX_WORKERS}"
-            )));
-        }
-        if let Some(size) = self.max_input_size
-            && size > MAX_INPUT_SIZE
-        {
-            return Err(napi::Error::from_reason("maxInputSize exceeds 1GB limit"));
-        }
-        Ok(())
-    }
-
-    fn to_rust_config(&self) -> NapiResult<RustConfig> {
+    fn to_rust_config(&self) -> napi::Result<RustConfig> {
         let mut config = RustConfig::new();
-        if let Some(w) = self.workers {
-            config = config.with_workers(Some(w as usize));
+        if let Some(w) = checked_opt_uint("workers", self.workers, 0, MAX_WORKERS)? {
+            config = config.with_workers(Some(w));
         }
-        if let Some(t) = self.mmap_threshold {
-            config = config.with_mmap_threshold(t as usize);
+        if let Some(t) = checked_opt_uint("mmapThreshold", self.mmap_threshold, 0, U32_MAX)? {
+            config = config.with_mmap_threshold(t);
         }
-        if let Some(s) = self.max_input_size {
-            config = config.with_max_input_size(s as usize);
+        if let Some(s) = checked_opt_uint("maxInputSize", self.max_input_size, 0, MAX_INPUT_SIZE)? {
+            config = config.with_max_input_size(s);
         }
-        if let Some(t) = self.sequential_threshold {
-            config = config.with_sequential_threshold(t as usize);
+        if let Some(t) =
+            checked_opt_uint("sequentialThreshold", self.sequential_threshold, 0, U32_MAX)?
+        {
+            config = config.with_sequential_threshold(t);
         }
         Ok(config.with_parse_limits(parse_limits(self.max_depth, self.max_alias_bytes)?))
     }
 
-    fn to_emitter_config(&self) -> EmitterConfig {
-        let indent = self.indent.unwrap_or(2).clamp(1, 9) as usize;
-        let width = self.width.unwrap_or(80).clamp(20, 1000) as usize;
-        EmitterConfig::new().with_indent(indent).with_width(width)
+    fn to_emitter_config(&self) -> napi::Result<EmitterConfig> {
+        let indent = checked_opt_uint("indent", self.indent, 0, U32_MAX)?.unwrap_or(2);
+        let width = checked_opt_uint("width", self.width, 0, U32_MAX)?.unwrap_or(80);
+        Ok(EmitterConfig::new()
+            .with_indent(indent.clamp(1, 9))
+            .with_width(width.clamp(20, 1000)))
     }
 }
 
@@ -221,8 +210,6 @@ pub struct FormatResult {
 #[allow(clippy::needless_pass_by_value)]
 pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> napi::Result<BatchResult> {
     let config = config.unwrap_or_default();
-    config.validate()?;
-
     let rust_config = config.to_rust_config()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
@@ -261,10 +248,8 @@ pub fn format_files(
     config: Option<BatchConfig>,
 ) -> napi::Result<Vec<FormatResult>> {
     let config = config.unwrap_or_default();
-    config.validate()?;
-
     let rust_config = config.to_rust_config()?;
-    let emitter_config = config.to_emitter_config();
+    let emitter_config = config.to_emitter_config()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     let processor = FileProcessor::with_config(rust_config);
@@ -318,10 +303,8 @@ pub fn format_files_in_place(
     config: Option<BatchConfig>,
 ) -> napi::Result<BatchResult> {
     let config = config.unwrap_or_default();
-    config.validate()?;
-
     let rust_config = config.to_rust_config()?;
-    let emitter_config = config.to_emitter_config();
+    let emitter_config = config.to_emitter_config()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     let processor = FileProcessor::with_config(rust_config);
