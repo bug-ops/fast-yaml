@@ -311,3 +311,250 @@ fn test_batch_respects_gitignore() {
     // Ignored file should NOT be formatted (respects .gitignore)
     assert_eq!(fs::read_to_string(&ignored).unwrap(), "key2:  value2\n");
 }
+
+const COMMENTED: &str = "# important\nkey:   value  # note\n";
+
+#[test]
+fn test_batch_with_comments_errors_and_leaves_file_unchanged() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("x.yaml");
+    fs::write(&file, COMMENTED).unwrap();
+
+    fy().args(["format", "-i", temp.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--strip-comments"));
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), COMMENTED);
+}
+
+#[test]
+fn test_batch_with_comments_strip_flag_strips() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("x.yaml");
+    fs::write(&file, COMMENTED).unwrap();
+
+    fy().args([
+        "format",
+        "-i",
+        "--strip-comments",
+        temp.path().to_str().unwrap(),
+    ])
+    .assert()
+    .success();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "key: value\n");
+}
+
+#[test]
+fn test_batch_mixed_only_formats_files_without_comments() {
+    let temp = TempDir::new().unwrap();
+    let commented = temp.path().join("a.yaml");
+    let clean = temp.path().join("b.yaml");
+    fs::write(&commented, COMMENTED).unwrap();
+    fs::write(&clean, "key:   value\n").unwrap();
+
+    fy().args(["format", "-i", temp.path().to_str().unwrap()])
+        .assert()
+        .failure();
+
+    assert_eq!(fs::read_to_string(&commented).unwrap(), COMMENTED);
+    assert_eq!(fs::read_to_string(&clean).unwrap(), "key: value\n");
+}
+
+#[test]
+fn test_single_file_dry_run_does_not_write() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("e.yaml");
+    fs::write(&file, "key:    value\n").unwrap();
+
+    fy().args(["format", "-i", "--dry-run", file.to_str().unwrap()])
+        .assert()
+        .success();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), "key:    value\n");
+}
+
+#[test]
+fn test_dry_run_with_output_is_rejected() {
+    let temp = TempDir::new().unwrap();
+    let out = temp.path().join("out.yaml");
+
+    fy().args(["format", "--dry-run", "-o", out.to_str().unwrap()])
+        .write_stdin("key:    value\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--dry-run"));
+
+    assert!(!out.exists());
+}
+
+#[test]
+fn test_stdin_with_comments_errors() {
+    fy().arg("format")
+        .write_stdin(COMMENTED)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--strip-comments"));
+
+    fy().args(["format", "--dry-run"])
+        .write_stdin(COMMENTED)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--strip-comments"));
+}
+
+#[test]
+fn test_multiple_paths_with_comments_guard() {
+    let temp = TempDir::new().unwrap();
+    let commented = temp.path().join("a.yaml");
+    let clean = temp.path().join("b.yaml");
+    fs::write(&commented, COMMENTED).unwrap();
+    fs::write(&clean, "key:   value\n").unwrap();
+
+    fy().args([
+        "format",
+        "-i",
+        commented.to_str().unwrap(),
+        clean.to_str().unwrap(),
+    ])
+    .assert()
+    .failure();
+
+    assert_eq!(fs::read_to_string(&commented).unwrap(), COMMENTED);
+    assert_eq!(fs::read_to_string(&clean).unwrap(), "key: value\n");
+}
+
+#[test]
+fn test_glob_with_comments_guard() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("x.yaml");
+    fs::write(&file, COMMENTED).unwrap();
+    let pattern = temp.path().join("*.yaml");
+
+    fy().args(["format", "-i", pattern.to_str().unwrap()])
+        .assert()
+        .failure();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), COMMENTED);
+}
+
+#[test]
+fn test_single_file_dry_run_with_comments() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("x.yaml");
+    fs::write(&file, COMMENTED).unwrap();
+    let path = file.to_str().unwrap();
+
+    fy().args(["format", "-i", "--dry-run", path])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--strip-comments"));
+    assert_eq!(fs::read_to_string(&file).unwrap(), COMMENTED);
+
+    fy().args(["format", "-i", "--dry-run", "--strip-comments", path])
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), COMMENTED);
+}
+
+#[test]
+fn test_single_file_dry_run_missing_file_fails() {
+    let temp = TempDir::new().unwrap();
+    let missing = temp.path().join("nonexist.yaml");
+
+    fy().args(["format", "--dry-run", missing.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Failed to read file"));
+}
+
+#[test]
+fn test_bom_with_comment_is_guarded() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("bom.yaml");
+    let content = "\u{FEFF}# header\nkey:   v\n";
+    fs::write(&file, content).unwrap();
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .failure();
+    assert_eq!(fs::read_to_string(&file).unwrap(), content);
+
+    fy().args(["format", "-i", temp.path().to_str().unwrap()])
+        .assert()
+        .failure();
+    assert_eq!(fs::read_to_string(&file).unwrap(), content);
+}
+
+#[test]
+fn test_bom_without_comment_still_formats() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("bom.yaml");
+    fs::write(&file, "\u{FEFF}key:   v\n").unwrap();
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "key: v\n");
+}
+
+#[test]
+fn test_compact_flow_with_hash_in_string_formats() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("j.yaml");
+    fs::write(&file, "{\"a\":\"x # y\"}\n").unwrap();
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_crlf_and_tab_comments_are_guarded() {
+    let temp = TempDir::new().unwrap();
+    for (name, content) in [
+        ("crlf.yaml", "key: v\r\n# c\r\n"),
+        ("tab.yaml", "key: v\t# c\n"),
+    ] {
+        let file = temp.path().join(name);
+        fs::write(&file, content).unwrap();
+        fy().args(["format", "-i", file.to_str().unwrap()])
+            .assert()
+            .failure();
+        assert_eq!(fs::read_to_string(&file).unwrap(), content);
+    }
+}
+
+#[test]
+fn test_guard_exit_code_is_consistent_across_modes() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("x.yaml");
+    fs::write(&file, COMMENTED).unwrap();
+    let path = file.to_str().unwrap();
+
+    let single = fy().args(["format", "-i", path]).assert().failure();
+    let batch = fy()
+        .args(["format", "-i", temp.path().to_str().unwrap()])
+        .assert()
+        .failure();
+    let stdin = fy().arg("format").write_stdin(COMMENTED).assert().failure();
+
+    let code = |a: &assert_cmd::assert::Assert| a.get_output().status.code();
+    assert_eq!(code(&single), code(&batch));
+    assert_eq!(code(&single), code(&stdin));
+}
+
+#[test]
+fn test_apostrophe_comment_is_guarded() {
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("a.yaml");
+    let content = "msg: don't # note\nb: 1\n";
+    fs::write(&file, content).unwrap();
+
+    fy().args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .failure();
+
+    assert_eq!(fs::read_to_string(&file).unwrap(), content);
+}

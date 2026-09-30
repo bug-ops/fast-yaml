@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Strip a leading UTF-8 BOM before parsing, linting, formatting, and conversion across core, linter, parallel, CLI, and Python; `fy format` now drops the BOM (#331)
 - Make the linter flow tokenizer ignore delimiters inside comments and quoted scalars, fixing false `braces`/`brackets` diagnostics (#345)
 - Fix 24 failing doctests in `fast-yaml-core` and `fast-yaml-linter` and run doctests in CI (#345)
+- Make `fy format` batch mode refuse files containing comments unless `--strip-comments` is given, instead of silently stripping them in place (#348)
+- Make `fy format --dry-run` never write in single-file and stdin modes (#348)
 
 ## [0.6.6] - 2026-08-26
 

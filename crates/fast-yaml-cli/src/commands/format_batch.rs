@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{BatchResult as ParallelBatchResult, FileProcessor};
 
+use crate::commands::format::{COMMENTS_STRIPPED_MSG, yaml_has_comments};
 use crate::config::CommonConfig;
 use crate::discovery::{DiscoveryConfig, FileDiscovery};
 use crate::error::ExitCode;
@@ -21,6 +22,8 @@ pub struct BatchConfig {
     /// Batch-specific settings
     pub dry_run: bool,
     pub in_place: bool,
+    /// Allow formatting files that contain comments (comments are dropped)
+    pub strip_comments: bool,
 }
 
 impl BatchConfig {
@@ -30,6 +33,7 @@ impl BatchConfig {
             discovery: DiscoveryConfig::new(),
             dry_run: false,
             in_place: false,
+            strip_comments: false,
         }
     }
 
@@ -42,6 +46,12 @@ impl BatchConfig {
     #[must_use]
     pub const fn with_dry_run(mut self, dry_run: bool) -> Self {
         self.dry_run = dry_run;
+        self
+    }
+
+    #[must_use]
+    pub const fn with_strip_comments(mut self, strip_comments: bool) -> Self {
+        self.strip_comments = strip_comments;
         self
     }
 
@@ -85,7 +95,13 @@ pub fn execute_batch(
     let reporter = Reporter::new(config.common.output.clone());
 
     // Extract paths from discovered files
-    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
+    let all_paths = files.iter().map(|f| f.path.clone());
+
+    // Files with comments are rejected up front so they are never rewritten
+    let (guarded, file_paths): (Vec<PathBuf>, Vec<PathBuf>) = all_paths.partition(|path| {
+        !config.strip_comments
+            && std::fs::read_to_string(path).is_ok_and(|content| yaml_has_comments(&content))
+    });
 
     // Create emitter config
     let emitter_config = EmitterConfig::new()
@@ -96,7 +112,7 @@ pub fn execute_batch(
     let processor = FileProcessor::with_config(config.common.parallel.clone());
 
     // Process files based on mode
-    let result = if config.dry_run {
+    let mut result = if config.dry_run {
         // Dry run: format but don't write, report what would change
         let formatted = processor.format_files(&file_paths, &emitter_config);
         convert_format_results_to_batch_result(formatted)
@@ -106,6 +122,17 @@ pub fn execute_batch(
     } else {
         bail!("use -i to format files in-place or --dry-run to preview changes");
     };
+
+    result.total += guarded.len();
+    result.failed += guarded.len();
+    result.errors.extend(guarded.into_iter().map(|path| {
+        (
+            path,
+            fast_yaml_parallel::Error::Format {
+                message: COMMENTS_STRIPPED_MSG.to_string(),
+            },
+        )
+    }));
 
     // Report results using BatchSummary event
     // In dry-run mode, 'changed' means "would change"; in in-place mode it means "formatted".
