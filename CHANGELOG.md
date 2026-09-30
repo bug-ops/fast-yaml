@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core**: `MaxDepth::new` and `MaxAliasBytes::new` now return `Result<_, LimitRangeError>` (depth 1..=512, alias bytes 1..=1 GiB); `LintConfig` gains a public `parse_limits` field; Node.js `processFiles`/`formatFiles`/`formatFilesInPlace` now throw instead of returning the error as a value (#433)
 - **Core**: the `streaming` feature is removed; the streaming formatter is always compiled and is the only `Emitter::format*` path; `Parser::parse_all_preserving_styles` and `streaming::is_streaming_suitable` are removed (#408)
 - **Build**: MSRV raised to Rust 1.91 and workspace resolver switched to 3; `ordered-float` updated to 5.5 (#399)
 - **Core/Linter/Parallel**: `ParseError`, `EmitError`, parallel `Error`, `Severity`, `LintError`, `ConfigFileError` and `RuleOption` are `#[non_exhaustive]` (#411)
@@ -22,10 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
+- `--max-depth` and `--max-alias-bytes` on `fy parse`/`convert`/`lint`, plus `max_depth`/`max_alias_bytes` (`maxDepth`/`maxAliasBytes`) options in `fast-yaml-parallel`, the linter, and the Python and Node.js loaders, `ParallelConfig`, `LintConfig` and `BatchConfig` (#433)
 
 ### Changed
 
 - **CI**: all GitHub Actions pinned to commit SHAs, Dependabot auto-merge checks the PR author instead of `github.actor`, and actionlint/zizmor plus a nightly fuzz workflow are added (#432)
+- `fast-yaml-parallel` parse errors now include the underlying cause instead of only the document index (#433)
 - Python/Node.js `format_files` and `fast-yaml-parallel` now use the streaming formatter, so output matches `fy format` (`null` instead of `~`, anchors, duplicate keys and `---` kept, no `YAML scanner error:` prefix on parse errors) (#408)
 - Workspace hygiene: restore the `dead_code` lint and delete dead items, remove ignored binding `[profile.release]` sections (#411)
 - **Breaking:** `fast-yaml-parallel` `format_files`/`format_in_place` take a `CommentPolicy`, `format_files` returns `FormatOutput { formatted, changed }`, and `Error::CommentsWouldBeStripped` is added; Python and Node.js bindings keep stripping comments (#397)
