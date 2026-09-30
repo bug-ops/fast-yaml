@@ -48,7 +48,7 @@ def test_parse_parallel_large_integers_are_int():
 def test_parse_parallel_quoted_large_integer_stays_str():
     from fast_yaml._core import parallel
 
-    doc = parallel.parse_parallel(f'a: "{BIG_POS}"\nb: \'{BIG_NEG}\'\n')[0]
+    doc = parallel.parse_parallel(f"a: \"{BIG_POS}\"\nb: '{BIG_NEG}'\n")[0]
     assert doc == {"a": str(BIG_POS), "b": str(BIG_NEG)}
 
 
@@ -74,9 +74,7 @@ def test_parse_parallel_matches_safe_load_at_i64_boundaries(literal):
 def test_parse_parallel_large_integer_anchor_and_tags():
     from fast_yaml._core import parallel
 
-    text = (
-        f"a: &x {BIG_POS}\nb: *x\nc: !!str {BIG_POS}\nd: !!int {BIG_POS}\ne: !!float {BIG_POS}\n"
-    )
+    text = f"a: &x {BIG_POS}\nb: *x\nc: !!str {BIG_POS}\nd: !!int {BIG_POS}\ne: !!float {BIG_POS}\n"
     result = parallel.parse_parallel(text)[0]
     assert result == fast_yaml.safe_load(text)
     assert result["b"] == BIG_POS

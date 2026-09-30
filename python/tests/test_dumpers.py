@@ -465,8 +465,8 @@ class TestMappingDump:
     def test_non_string_keys(self):
         from collections import UserDict
 
-        out = fast_yaml.safe_dump(UserDict({1: "a", 2.5: "b", True: "c", None: "d"}))
-        assert fast_yaml.safe_load(out) == {1: "c", 2.5: "b", None: "d"}
+        out = fast_yaml.safe_dump(UserDict({1: "a", 2.5: "b", False: "c", None: "d"}))
+        assert fast_yaml.safe_load(out) == {1: "a", 2.5: "b", False: "c", None: "d"}
 
     def test_items_raising_propagates(self):
         class Boom(self._custom_mapping()):
