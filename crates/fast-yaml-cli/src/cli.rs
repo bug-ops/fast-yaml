@@ -168,7 +168,8 @@ pub enum Command {
     /// Format YAML with consistent style
     Format {
         /// Input paths (files, directories, or glob patterns).
-        /// A missing path or a glob matching nothing is an error.
+        /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
+        /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
         /// If empty and no --stdin-files, reads from stdin
         #[arg(value_name = "PATHS")]
         paths: Vec<PathBuf>,
@@ -181,7 +182,9 @@ pub enum Command {
         #[arg(long, default_value = "80")]
         width: usize,
 
-        /// Read file paths from stdin (one per line; a missing path is an error)
+        /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
+        /// file or a line over 4096 bytes is an error, so filter git output:
+        /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy format --stdin-files`
         #[arg(long, conflicts_with = "paths")]
         stdin_files: bool,
 
@@ -229,7 +232,8 @@ pub enum Command {
     /// `# fy: disable-line [rules]` and `# fy: disable-file` (`# yamllint ...` is also accepted).
     Lint {
         /// Input paths (files, directories, or glob patterns).
-        /// A missing path or a glob matching nothing is an error.
+        /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
+        /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
         /// If empty, reads from stdin.
         #[arg(value_name = "PATHS")]
         paths: Vec<PathBuf>,

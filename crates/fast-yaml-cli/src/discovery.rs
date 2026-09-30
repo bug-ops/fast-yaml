@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use globset::{Glob, GlobSet, GlobSetBuilder};
 
-use crate::error::DiscoveryError;
+use crate::error::{DiscoveryError, PathError, StdinLineCause};
 
 /// Maximum number of paths that can be read from stdin.
 const MAX_STDIN_PATHS: usize = 100_000;
@@ -113,7 +113,7 @@ pub enum InputPath {
     File(PathBuf),
     /// Existing directory
     Dir(PathBuf),
-    /// Non-existent path containing glob metacharacters
+    /// Non-existent path containing `*` or `?`
     Glob(String),
 }
 
@@ -122,7 +122,7 @@ impl InputPath {
     ///
     /// # Errors
     ///
-    /// Returns [`DiscoveryError::PathNotFound`] or [`DiscoveryError::BrokenSymlink`] when the path
+    /// Returns [`PathError::PathNotFound`] or [`PathError::BrokenSymlink`] when the path
     /// does not exist and is not a glob pattern, and permission or I/O errors otherwise.
     pub fn resolve(path: PathBuf) -> Result<Self, DiscoveryError> {
         match path.metadata() {
@@ -133,7 +133,7 @@ impl InputPath {
                 if is_glob_candidate(e.kind(), &lossy) {
                     Ok(Self::Glob(lossy.into_owned()))
                 } else {
-                    Err(classify_io_error(path, e))
+                    Err(classify_io_error(path, e).into())
                 }
             }
         }
@@ -141,19 +141,19 @@ impl InputPath {
 }
 
 /// Maps a filesystem error on `path` to the matching [`DiscoveryError`].
-fn classify_io_error(path: impl Into<PathBuf>, source: std::io::Error) -> DiscoveryError {
+fn classify_io_error(path: impl Into<PathBuf>, source: std::io::Error) -> PathError {
     let path = path.into();
     match source.kind() {
         std::io::ErrorKind::NotFound if path.symlink_metadata().is_ok() => {
-            DiscoveryError::BrokenSymlink { path }
+            PathError::BrokenSymlink { path }
         }
-        std::io::ErrorKind::NotFound => DiscoveryError::PathNotFound { path },
-        std::io::ErrorKind::PermissionDenied => DiscoveryError::PermissionDenied { path },
-        _ => DiscoveryError::IoError { path, source },
+        std::io::ErrorKind::NotFound => PathError::PathNotFound { path },
+        std::io::ErrorKind::PermissionDenied => PathError::PermissionDenied { path },
+        _ => PathError::IoError { path, source },
     }
 }
 
-/// A missing path with glob characters is a pattern; Windows reports `*` and `?` as invalid names.
+/// A missing path with `*` or `?` is a pattern; Windows reports `*` and `?` as invalid names.
 fn is_glob_candidate(kind: std::io::ErrorKind, s: &str) -> bool {
     matches!(
         kind,
@@ -161,9 +161,9 @@ fn is_glob_candidate(kind: std::io::ErrorKind, s: &str) -> bool {
     ) && contains_glob_chars(s)
 }
 
-/// Checks if a string contains glob special characters.
+/// `[` alone does not make a pattern: `m[1].yaml` is a literal file name, not a character class.
 fn contains_glob_chars(s: &str) -> bool {
-    s.contains(['*', '?', '['])
+    s.contains(['*', '?'])
 }
 
 /// Where a batch run takes its files from.
@@ -223,7 +223,8 @@ impl FileDiscovery {
     /// # Errors
     ///
     /// Returns an error if a file cannot be canonicalized, a glob matches nothing, a stdin line
-    /// names a missing path, or stdin cannot be read.
+    /// is overlong or names a missing path, a directory or a file the include patterns reject,
+    /// or stdin cannot be read.
     pub fn discover_source(
         &self,
         source: &BatchSource,
@@ -237,14 +238,14 @@ impl FileDiscovery {
     /// Discover files from the given paths.
     ///
     /// Paths can be:
-    /// - Regular files (included directly if matching patterns)
+    /// - Regular files (an explicit file the include patterns reject is an error)
     /// - Directories (walked recursively)
     /// - Glob patterns (expanded; matching nothing is an error)
     ///
     /// # Errors
     ///
-    /// Returns an error if a file cannot be canonicalized or a glob is malformed or matches
-    /// nothing.
+    /// Returns an error if a file cannot be canonicalized or is rejected by the include patterns,
+    /// or a glob is malformed or matches nothing.
     pub fn discover(&self, paths: &[InputPath]) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
         // Heuristic: estimate 10 files per input path
         let estimated_capacity = paths.len().saturating_mul(10);
@@ -280,7 +281,8 @@ impl FileDiscovery {
     ///
     /// # Errors
     ///
-    /// Returns an error if a line names a path that does not exist, or the reader fails.
+    /// Returns an error if a line is overlong (in bytes) or names a path that does not exist, is not a
+    /// regular file, or is rejected by the include patterns, or if the reader fails.
     pub fn discover_from_reader<R: BufRead>(
         &self,
         reader: R,
@@ -301,28 +303,30 @@ impl FileDiscovery {
 
             let trimmed = line.trim();
 
-            if trimmed.len() > MAX_LINE_LENGTH {
-                eprintln!("Warning: skipping line {count} (exceeds {MAX_LINE_LENGTH} chars)");
-                continue;
-            }
-
             // Skip empty lines and comments
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
 
-            let path = PathBuf::from(trimmed);
-            let meta = path
-                .metadata()
-                .map_err(|e| classify_io_error(path.clone(), e))?;
-            if meta.is_file() {
-                self.discover_file(
-                    &path,
-                    DiscoveryOrigin::StdinList,
-                    &mut discovered,
-                    &mut seen,
-                )?;
+            if trimmed.len() > MAX_LINE_LENGTH {
+                return Err(DiscoveryError::StdinLine {
+                    line: count,
+                    cause: StdinLineCause::TooLong {
+                        max: MAX_LINE_LENGTH,
+                    },
+                });
             }
+
+            self.discover_file(
+                Path::new(trimmed),
+                DiscoveryOrigin::StdinList,
+                &mut discovered,
+                &mut seen,
+            )
+            .map_err(|e| DiscoveryError::StdinLine {
+                line: count,
+                cause: e.into(),
+            })?;
         }
 
         Ok(discovered)
@@ -331,12 +335,10 @@ impl FileDiscovery {
     /// Check if a single path should be included.
     #[must_use]
     pub fn should_include(&self, path: &Path) -> bool {
-        // Check exclude patterns first (match against full path)
-        if self.exclude_matcher.is_match(path) {
-            return false;
-        }
+        !self.exclude_matcher.is_match(path) && self.matches_include(path)
+    }
 
-        // Check include patterns (match against file name for extension patterns)
+    fn matches_include(&self, path: &Path) -> bool {
         path.file_name()
             .is_some_and(|file_name| self.include_matcher.is_match(file_name))
     }
@@ -347,9 +349,32 @@ impl FileDiscovery {
         origin: DiscoveryOrigin,
         discovered: &mut Vec<DiscoveredFile>,
         seen: &mut HashSet<PathBuf>,
-    ) -> Result<(), DiscoveryError> {
-        if !self.should_include(path) {
+    ) -> Result<(), PathError> {
+        if self.exclude_matcher.is_match(path) {
             return Ok(());
+        }
+        let explicit = matches!(
+            origin,
+            DiscoveryOrigin::DirectPath | DiscoveryOrigin::StdinList
+        );
+        if explicit
+            && !path
+                .metadata()
+                .map_err(|e| classify_io_error(path, e))?
+                .is_file()
+        {
+            return Err(PathError::NotAFile {
+                path: path.to_path_buf(),
+            });
+        }
+        if !self.matches_include(path) {
+            return if explicit {
+                Err(PathError::NotIncluded {
+                    path: path.to_path_buf(),
+                })
+            } else {
+                Ok(())
+            };
         }
 
         // Canonicalize for deduplication
@@ -479,6 +504,27 @@ mod tests {
 
     fn default_config() -> DiscoveryConfig {
         DiscoveryConfig::new()
+    }
+
+    fn path_error(err: &DiscoveryError) -> Option<&PathError> {
+        match err {
+            DiscoveryError::Path(p)
+            | DiscoveryError::StdinLine {
+                cause: StdinLineCause::Path(p),
+                ..
+            } => Some(p),
+            _ => None,
+        }
+    }
+
+    fn is_too_long(err: &DiscoveryError) -> bool {
+        matches!(
+            err,
+            DiscoveryError::StdinLine {
+                line: 1,
+                cause: StdinLineCause::TooLong { .. }
+            }
+        )
     }
 
     fn input(path: impl Into<PathBuf>) -> InputPath {
@@ -800,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn test_discover_from_reader_long_line_skipped() {
+    fn test_discover_from_reader_long_line_errors() {
         let temp = TempDir::new().unwrap();
         let file = temp.path().join("test.yaml");
         fs::write(&file, "key: value").unwrap();
@@ -811,10 +857,170 @@ mod tests {
 
         let config = default_config();
         let discovery = FileDiscovery::new(config).unwrap();
-        let files = discovery.discover_from_reader(reader).unwrap();
+        let err = discovery.discover_from_reader(reader).unwrap_err();
 
-        // Long line should be skipped, only valid file should be found
+        assert!(is_too_long(&err));
+    }
+
+    #[test]
+    fn test_stdin_line_length_boundary_is_bytes() {
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let at_limit = "x".repeat(MAX_LINE_LENGTH);
+        let err = discovery
+            .discover_from_reader(format!("{at_limit}\n").as_bytes())
+            .unwrap_err();
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::IoError { .. } | PathError::PathNotFound { .. })
+        ));
+
+        let over = "x".repeat(MAX_LINE_LENGTH + 1);
+        let err = discovery
+            .discover_from_reader(format!("{over}\n").as_bytes())
+            .unwrap_err();
+        assert!(is_too_long(&err));
+
+        let multibyte = "é".repeat(MAX_LINE_LENGTH / 2 + 1);
+        let err = discovery
+            .discover_from_reader(format!("{multibyte}\n").as_bytes())
+            .unwrap_err();
+        assert!(is_too_long(&err));
+    }
+
+    #[test]
+    fn test_stdin_long_comment_and_blank_lines_are_skipped() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("a.yaml");
+        fs::write(&file, "a: 1\n").unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let list = format!(
+            "#{}\r\n\r\n   \r\n{}\r\n",
+            "c".repeat(MAX_LINE_LENGTH * 2),
+            file.display()
+        );
+
+        let files = discovery.discover_from_reader(list.as_bytes()).unwrap();
         assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_stdin_excluded_directory_and_file_are_skipped() {
+        let temp = TempDir::new().unwrap();
+        let vendor = temp.path().join("vendor");
+        fs::create_dir(&vendor).unwrap();
+        let text = temp.path().join("notes.txt");
+        fs::write(&text, "x\n").unwrap();
+        let config =
+            default_config().with_exclude_patterns(vec!["**/vendor".into(), "**/*.txt".into()]);
+        let discovery = FileDiscovery::new(config).unwrap();
+        let list = format!("{}\n{}\n", vendor.display(), text.display());
+
+        assert!(
+            discovery
+                .discover_from_reader(list.as_bytes())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_explicit_excluded_non_yaml_file_is_skipped() {
+        let temp = TempDir::new().unwrap();
+        let text = temp.path().join("notes.txt");
+        fs::write(&text, "x\n").unwrap();
+        let config = default_config().with_exclude_patterns(vec!["**/*.txt".into()]);
+        let discovery = FileDiscovery::new(config).unwrap();
+
+        assert!(discovery.discover(&[input(&text)]).unwrap().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_symlink_with_non_yaml_name_is_rejected() {
+        let temp = TempDir::new().unwrap();
+        let target = temp.path().join("real.yaml");
+        fs::write(&target, "a: 1\n").unwrap();
+        let link = temp.path().join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let err = discovery.discover(&[input(&link)]).unwrap_err();
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::NotIncluded { .. })
+        ));
+    }
+
+    #[test]
+    fn test_bracket_and_star_pattern_is_a_glob() {
+        let temp = TempDir::new().unwrap();
+        let pattern = temp.path().join("m[1]*.yaml").display().to_string();
+        assert_eq!(
+            InputPath::resolve(PathBuf::from(&pattern)).unwrap(),
+            InputPath::Glob(pattern)
+        );
+    }
+
+    #[test]
+    fn test_stdin_directory_line_errors() {
+        let temp = TempDir::new().unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let list = format!("{}\n", temp.path().display());
+
+        let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
+        assert!(matches!(path_error(&err), Some(PathError::NotAFile { .. })));
+    }
+
+    #[test]
+    fn test_stdin_non_yaml_line_errors() {
+        let temp = TempDir::new().unwrap();
+        let text = temp.path().join("notes.txt");
+        fs::write(&text, "a: 1\n").unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let list = format!("{}\n", text.display());
+
+        let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
+        assert!(matches!(err, DiscoveryError::StdinLine { line: 1, .. }));
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::NotIncluded { .. })
+        ));
+    }
+
+    #[test]
+    fn test_explicit_non_yaml_file_errors_but_glob_filters() {
+        let temp = TempDir::new().unwrap();
+        let text = temp.path().join("notes.txt");
+        fs::write(&text, "a: 1\n").unwrap();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let err = discovery.discover(&[input(&text)]).unwrap_err();
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::NotIncluded { .. })
+        ));
+
+        let glob = InputPath::Glob(temp.path().join("*.txt").display().to_string());
+        assert!(discovery.discover(&[glob]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_bracket_only_missing_path_is_not_a_glob() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join("m1.yaml"), "a: 1\n").unwrap();
+
+        let err = InputPath::resolve(temp.path().join("m[1].yaml")).unwrap_err();
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::PathNotFound { .. })
+        ));
+
+        let existing = temp.path().join("m[2].yaml");
+        fs::write(&existing, "a: 1\n").unwrap();
+        assert_eq!(
+            InputPath::resolve(existing.clone()).unwrap(),
+            InputPath::File(existing)
+        );
     }
 
     #[test]
@@ -854,7 +1060,10 @@ mod tests {
     fn test_resolve_missing_path_errors() {
         let temp = TempDir::new().unwrap();
         let err = InputPath::resolve(temp.path().join("nonexist.yaml")).unwrap_err();
-        assert!(matches!(err, DiscoveryError::PathNotFound { .. }));
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::PathNotFound { .. })
+        ));
         assert!(err.to_string().contains("path does not exist"));
     }
 
@@ -865,7 +1074,10 @@ mod tests {
         let link = temp.path().join("link.yaml");
         std::os::unix::fs::symlink(temp.path().join("gone.yaml"), &link).unwrap();
         let err = InputPath::resolve(link).unwrap_err();
-        assert!(matches!(err, DiscoveryError::BrokenSymlink { .. }));
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::BrokenSymlink { .. })
+        ));
     }
 
     #[test]
@@ -906,6 +1118,9 @@ mod tests {
         );
 
         let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
-        assert!(matches!(err, DiscoveryError::PathNotFound { .. }));
+        assert!(matches!(
+            path_error(&err),
+            Some(PathError::PathNotFound { .. })
+        ));
     }
 }
