@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use crate::error::{EmitError, EmitResult, from_saphyr};
+use crate::parser::scalar_to_value;
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::streaming::{
     effective_style, is_unsafe_plain, write_double_quoted, write_single_quoted,
@@ -9,7 +10,7 @@ use crate::streaming::{
 use crate::value::Value;
 use memchr::memmem;
 use saphyr::{ScalarOwned, YamlEmitter};
-use saphyr_parser::ScalarStyle;
+use saphyr_parser::{ScalarStyle, Tag};
 
 /// Smallest supported indentation width.
 pub(crate) const MIN_INDENT: usize = 1;
@@ -152,6 +153,7 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_str_with_config(value: &Value, config: &EmitterConfig) -> EmitResult<String> {
+        let value = &*prepare_for_saphyr(value);
         // When flow style is requested, use the custom path that renders {k: v} / [a, b].
         if config.default_flow_style == Some(true) {
             let raw = Self::emit_flow(value)?;
@@ -172,8 +174,7 @@ impl Emitter {
             emitter.multiline_strings(config.multiline_strings);
 
             // Convert YamlOwned to Yaml for emission
-            let value = quote_non_string_lookalikes(value);
-            let yaml_borrowed: saphyr::Yaml = (&*value).into();
+            let yaml_borrowed: saphyr::Yaml = value.into();
             emitter.dump(&yaml_borrowed).map_err(from_saphyr)?;
         }
 
@@ -526,8 +527,7 @@ impl Emitter {
         {
             let mut emitter = YamlEmitter::new(&mut out);
             emitter.compact(true);
-            let value = quote_non_string_lookalikes(value);
-            let yaml: saphyr::Yaml = (&*value).into();
+            let yaml: saphyr::Yaml = value.into();
             emitter.dump(&yaml).map_err(from_saphyr)?;
         }
         // saphyr emits "---\nvalue\n" — strip markers
@@ -691,47 +691,75 @@ fn reads_as_non_string(s: &str) -> bool {
     )
 }
 
-/// Whether any string in `value` needs forcing into quotes because it reads back as a non-string.
+/// Whether `value` holds a node saphyr would mis-emit or panic on.
 ///
 /// saphyr's own quoting check has a separate, narrower float grammar, so strings such as
-/// `+.inf` would be written plain and change type on re-read.
-fn has_non_string_lookalike(value: &Value) -> bool {
+/// `+.inf` would be written plain and change type on re-read. Its emitter also hits
+/// `todo!()` on literal/folded representations and writes core-schema tags as
+/// `tag:yaml.org,2002:!int`.
+fn needs_saphyr_rewrite(value: &Value) -> bool {
     match value {
         Value::Value(ScalarOwned::String(s)) => reads_as_non_string(s),
-        Value::Sequence(seq) => seq.iter().any(has_non_string_lookalike),
+        Value::Representation(_, style, tag) => {
+            matches!(style, ScalarStyle::Literal | ScalarStyle::Folded)
+                || tag.as_ref().is_some_and(Tag::is_yaml_core_schema)
+        }
+        Value::Tagged(_, inner) => needs_saphyr_rewrite(inner),
+        Value::Sequence(seq) => seq.iter().any(needs_saphyr_rewrite),
         Value::Mapping(map) => map
             .iter()
-            .any(|(k, v)| has_non_string_lookalike(k) || has_non_string_lookalike(v)),
+            .any(|(k, v)| needs_saphyr_rewrite(k) || needs_saphyr_rewrite(v)),
         _ => false,
     }
 }
 
-fn double_quote_non_string_lookalikes(value: &Value) -> Value {
+/// Rewrites a parsed representation into a form saphyr can emit and read back unchanged.
+///
+/// The scalar is resolved to its typed value; a big integer stays a digit-only plain
+/// representation and a string is left to saphyr to quote. A non-core tag is kept, a core-schema
+/// tag is dropped because its type is already carried by the resolved value.
+fn rewrite_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
+    let custom_tag = tag.filter(|t| !t.is_yaml_core_schema()).cloned();
+    match resolve_scalar(s, style, tag) {
+        ResolvedScalar::BigInt(_) => {
+            Value::Representation(s.to_owned(), ScalarStyle::Plain, custom_tag)
+        }
+        ResolvedScalar::Str(_) => {
+            let string = Value::Value(ScalarOwned::String(s.to_owned()));
+            match custom_tag {
+                Some(t) => Value::Tagged(t, Box::new(string)),
+                None => string,
+            }
+        }
+        other => scalar_to_value(other),
+    }
+}
+
+fn rewrite_for_saphyr(value: &Value) -> Value {
     match value {
         Value::Value(ScalarOwned::String(s)) if reads_as_non_string(s) => {
             Value::Representation(s.clone(), ScalarStyle::DoubleQuoted, None)
         }
-        Value::Sequence(seq) => {
-            Value::Sequence(seq.iter().map(double_quote_non_string_lookalikes).collect())
+        Value::Representation(s, style, tag) if needs_saphyr_rewrite(value) => {
+            rewrite_representation(s, *style, tag.as_ref())
         }
+        Value::Tagged(tag, inner) => {
+            Value::Tagged(tag.clone(), Box::new(rewrite_for_saphyr(inner)))
+        }
+        Value::Sequence(seq) => Value::Sequence(seq.iter().map(rewrite_for_saphyr).collect()),
         Value::Mapping(map) => Value::Mapping(
             map.iter()
-                .map(|(k, v)| {
-                    (
-                        double_quote_non_string_lookalikes(k),
-                        double_quote_non_string_lookalikes(v),
-                    )
-                })
+                .map(|(k, v)| (rewrite_for_saphyr(k), rewrite_for_saphyr(v)))
                 .collect(),
         ),
         other => other.clone(),
     }
 }
 
-/// Returns `value` with every string that reads back as a non-string forced into double quotes.
-fn quote_non_string_lookalikes(value: &Value) -> Cow<'_, Value> {
-    if has_non_string_lookalike(value) {
-        Cow::Owned(double_quote_non_string_lookalikes(value))
+/// Returns `value` rewritten so that saphyr's emitter neither panics nor changes its meaning.
+fn prepare_for_saphyr(value: &Value) -> Cow<'_, Value> {
+    if needs_saphyr_rewrite(value) {
+        Cow::Owned(rewrite_for_saphyr(value))
     } else {
         Cow::Borrowed(value)
     }
@@ -770,7 +798,7 @@ pub(crate) fn block_scalar_header(indicator: char, value: &str, indent_width: us
 mod tests {
     use super::*;
     use ordered_float::OrderedFloat;
-    use saphyr::ScalarOwned;
+    use saphyr::{MappingOwned, ScalarOwned};
 
     #[test]
     fn test_emit_str_string() {
@@ -2204,6 +2232,230 @@ mod tests {
                     assert_eq!(&back, doc, "{text:?} flow={flow}: {out}");
                 }
             }
+        }
+    }
+
+    const BIG: &str = "123456789012345678901234567890";
+
+    fn roundtrip_all_styles(doc: &Value) {
+        for flow in [None, Some(true)] {
+            let config = EmitterConfig::new().with_default_flow_style(flow);
+            let out = Emitter::emit_str_with_config(doc, &config).unwrap();
+            let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+            let again = Emitter::emit_str_with_config(&back, &config).unwrap();
+            assert_eq!(out, again, "flow={flow:?}: {out}");
+            assert!(out.contains(BIG) && !out.contains("tag:yaml.org"), "{out}");
+        }
+    }
+
+    #[test]
+    fn emit_parsed_block_scalar_big_int_does_not_panic() {
+        for input in [
+            format!("? !!int >-\n  {BIG}\n: v\n"),
+            format!("? !!int |-\n  {BIG}\n: v\n"),
+            format!("k: !!int |-\n  {BIG}\n"),
+            format!("- !!int >-\n  {BIG}\n"),
+            format!("--- !!int |-\n  -{BIG}\n"),
+            format!("k: &a !!int >-\n  {BIG}\nj: *a\n"),
+        ] {
+            let doc = crate::Parser::parse_str(&input).unwrap().unwrap();
+            roundtrip_all_styles(&doc);
+            let out = Emitter::emit_str(&doc).unwrap();
+            assert!(out.contains(BIG), "{input:?} -> {out:?}");
+        }
+    }
+
+    #[test]
+    fn emit_core_tagged_quoted_big_int_has_no_expanded_tag() {
+        for input in [
+            format!("k: !!int \"{BIG}\"\n"),
+            format!("k: !!int '{BIG}'\n"),
+        ] {
+            let doc = crate::Parser::parse_str(&input).unwrap().unwrap();
+            roundtrip_all_styles(&doc);
+            assert_eq!(Emitter::emit_str(&doc).unwrap(), format!("k: {BIG}\n"));
+        }
+    }
+
+    #[test]
+    fn emit_custom_tagged_big_int_keeps_tag() {
+        let input = format!("k: !foo {BIG}\n");
+        let doc = crate::Parser::parse_str(&input).unwrap().unwrap();
+        assert_eq!(Emitter::emit_str(&doc).unwrap(), input);
+        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        assert_eq!(
+            Emitter::emit_str_with_config(&doc, &flow).unwrap(),
+            format!("{{k: !foo {BIG}}}\n")
+        );
+    }
+
+    #[test]
+    fn emit_hand_built_block_representation_as_string() {
+        for style in [ScalarStyle::Literal, ScalarStyle::Folded] {
+            let doc = Value::Representation("a\nb".to_string(), style, None);
+            for flow in [None, Some(true)] {
+                let config = EmitterConfig::new().with_default_flow_style(flow);
+                let out = Emitter::emit_str_with_config(&doc, &config).unwrap();
+                let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+                assert_eq!(back, Value::Value(ScalarOwned::String("a\nb".to_string())));
+            }
+        }
+    }
+
+    #[test]
+    fn emit_all_with_block_scalar_big_ints() {
+        let docs = [
+            crate::Parser::parse_str(&format!("!!int |-\n  {BIG}\n"))
+                .unwrap()
+                .unwrap(),
+            crate::Parser::parse_str(&format!("k: !!int >-\n  {BIG}\n"))
+                .unwrap()
+                .unwrap(),
+        ];
+        let out = Emitter::emit_all(&docs).unwrap();
+        assert_eq!(out.matches(BIG).count(), 2, "{out}");
+    }
+
+    fn tag(handle: &str, suffix: &str) -> Tag {
+        Tag {
+            handle: handle.to_string(),
+            suffix: suffix.to_string(),
+        }
+    }
+
+    fn core_tag(suffix: &str) -> Tag {
+        tag("tag:yaml.org,2002:", suffix)
+    }
+
+    fn repr(text: &str, style: ScalarStyle, tag: Option<Tag>) -> Value {
+        Value::Representation(text.to_string(), style, tag)
+    }
+
+    fn string(text: &str) -> Value {
+        Value::Value(ScalarOwned::String(text.to_string()))
+    }
+
+    fn emit_both(doc: &Value) -> [String; 2] {
+        [None, Some(true)].map(|flow| {
+            let config = EmitterConfig::new().with_default_flow_style(flow);
+            Emitter::emit_str_with_config(doc, &config).unwrap()
+        })
+    }
+
+    #[test]
+    fn emit_tagged_wrapper_around_block_representation_does_not_panic() {
+        let custom = tag("!", "foo");
+        let wrapped_big = Value::Tagged(
+            custom.clone(),
+            Box::new(repr(BIG, ScalarStyle::Literal, Some(core_tag("int")))),
+        );
+        for out in emit_both(&wrapped_big) {
+            assert_eq!(out.trim_end(), format!("!foo {BIG}"));
+        }
+
+        let mut map = MappingOwned::new();
+        map.insert(string("k"), repr("a\nb", ScalarStyle::Folded, None));
+        let wrapped_map = Value::Tagged(custom, Box::new(Value::Mapping(map)));
+        for out in emit_both(&wrapped_map) {
+            assert!(out.contains("!foo"), "{out}");
+        }
+    }
+
+    #[test]
+    fn emit_core_tagged_hand_built_scalars_keep_their_type() {
+        let cases = [
+            (
+                repr("123", ScalarStyle::DoubleQuoted, Some(core_tag("int"))),
+                ScalarOwned::Integer(123),
+            ),
+            (
+                repr("1.5", ScalarStyle::Plain, Some(core_tag("float"))),
+                ScalarOwned::FloatingPoint(1.5.into()),
+            ),
+            (
+                repr("true", ScalarStyle::SingleQuoted, Some(core_tag("bool"))),
+                ScalarOwned::Boolean(true),
+            ),
+            (
+                repr("~", ScalarStyle::Plain, Some(core_tag("null"))),
+                ScalarOwned::Null,
+            ),
+        ];
+        for (doc, expected) in cases {
+            let mut map = MappingOwned::new();
+            map.insert(string("k"), doc);
+            let doc = Value::Mapping(map);
+            for out in emit_both(&doc) {
+                let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+                let Value::Mapping(back) = back else {
+                    panic!("{out}")
+                };
+                assert_eq!(
+                    back.get(&string("k")),
+                    Some(&Value::Value(expected.clone())),
+                    "{out}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn emit_clip_chomped_core_tagged_representation_is_string() {
+        let doc = repr(
+            &format!("{BIG}\n"),
+            ScalarStyle::Literal,
+            Some(core_tag("int")),
+        );
+        for out in emit_both(&doc) {
+            let back = crate::Parser::parse_str(&out).unwrap().unwrap();
+            assert_eq!(back, string(&format!("{BIG}\n")), "{out}");
+        }
+    }
+
+    #[test]
+    fn prepare_for_saphyr_borrows_when_nothing_to_rewrite() {
+        let plain = crate::Parser::parse_str("a: 1\nb: !foo x\nc: \"q\"\nd: [1, 2]\n")
+            .unwrap()
+            .unwrap();
+        assert!(matches!(prepare_for_saphyr(&plain), Cow::Borrowed(_)));
+
+        let block = crate::Parser::parse_str(&format!("k: !!int |-\n  {BIG}\n"))
+            .unwrap()
+            .unwrap();
+        assert!(matches!(prepare_for_saphyr(&block), Cow::Owned(_)));
+    }
+
+    #[test]
+    fn emit_nested_block_scalar_key_and_negative_big_int() {
+        for input in [
+            format!("a:\n  b:\n    ? !!int >-\n      {BIG}\n    : v\n"),
+            format!("--- !!int |-\n  -{BIG}\n"),
+        ] {
+            let doc = crate::Parser::parse_str(&input).unwrap().unwrap();
+            roundtrip_all_styles(&doc);
+        }
+    }
+
+    #[test]
+    fn emit_all_flow_with_block_scalar_big_ints() {
+        let docs = [
+            crate::Parser::parse_str(&format!("!!int |-\n  {BIG}\n"))
+                .unwrap()
+                .unwrap(),
+            crate::Parser::parse_str(&format!("k: !!int >-\n  {BIG}\n"))
+                .unwrap()
+                .unwrap(),
+        ];
+        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let out = Emitter::emit_all_with_config(&docs, &config).unwrap();
+        assert_eq!(out.matches(BIG).count(), 2, "{out}");
+    }
+
+    #[test]
+    fn emit_custom_tag_on_block_scalar_is_preserved_when_hand_built() {
+        let doc = repr("a\nb", ScalarStyle::Literal, Some(tag("!", "foo")));
+        for out in emit_both(&doc) {
+            assert!(out.starts_with("!foo "), "{out}");
         }
     }
 }
