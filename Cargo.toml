@@ -8,6 +8,7 @@ members = [
     "python",
     "nodejs",
 ]
+exclude = ["fuzz"]
 # FFI bindings require specialized build tools (maturin for Python, napi for Node.js)
 # Build with: `uv run maturin develop` (Python) or `npm run build` (Node.js)
 default-members = [

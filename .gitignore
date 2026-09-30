@@ -51,3 +51,9 @@ yarn-error.log*
 nodejs/*.node
 nodejs/dist/
 nodejs/coverage/
+
+# Fuzzing
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/
+fuzz/coverage/

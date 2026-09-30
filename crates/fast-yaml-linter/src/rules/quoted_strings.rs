@@ -286,25 +286,24 @@ impl QuotedStringsRule {
     /// These escape sequences decode to Unicode/ASCII characters whose decoded form is
     /// indistinguishable from plain text, so `has_yaml_escape` (which operates on the decoded
     /// value) cannot detect them. We must inspect the raw source instead.
-    const fn has_source_unicode_hex_escape(source: &str, start: usize) -> bool {
-        let bytes = source.as_bytes();
-        if start >= bytes.len() || bytes[start] != b'"' {
+    fn has_source_unicode_hex_escape(source: &str, start: usize) -> bool {
+        let Some(rest) = source
+            .as_bytes()
+            .get(start..)
+            .and_then(|bytes| bytes.strip_prefix(b"\""))
+        else {
             return false;
-        }
-        let mut i = start + 1;
-        while i < bytes.len() {
-            match bytes[i] {
+        };
+        let mut bytes = rest.iter();
+        while let Some(&b) = bytes.next() {
+            match b {
                 b'"' => return false,
-                b'\\' => {
-                    if i + 1 >= bytes.len() {
-                        return false;
-                    }
-                    if matches!(bytes[i + 1], b'u' | b'U' | b'x') {
-                        return true;
-                    }
-                    i += 2;
-                }
-                _ => i += 1,
+                b'\\' => match bytes.next() {
+                    Some(b'u' | b'U' | b'x') => return true,
+                    Some(_) => {}
+                    None => return false,
+                },
+                _ => {}
             }
         }
         false

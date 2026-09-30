@@ -233,7 +233,9 @@ impl<'a> FlowTokenizer<'a> {
         let idx = self
             .block_scalar_ranges
             .partition_point(|range| range.start() <= offset);
-        idx > 0 && self.block_scalar_ranges[idx - 1].contains(offset)
+        idx.checked_sub(1)
+            .and_then(|prev| self.block_scalar_ranges.get(prev))
+            .is_some_and(|range| range.contains(offset))
     }
 
     /// Builds a one-character token at 0-indexed `char_col` on `line`.
@@ -272,9 +274,9 @@ impl<'a> FlowTokenizer<'a> {
         let mut at_value_start = false;
         let mut in_plain_scalar = false;
 
-        while i < col {
-            let ch = chars[i];
-
+        while i < col
+            && let Some(&ch) = chars.get(i)
+        {
             if escape_next {
                 escape_next = false;
                 i += 1;
@@ -352,7 +354,7 @@ impl<'a> FlowTokenizer<'a> {
                     '\'' => in_single = true,
                     '{' | '[' => flow_depth += 1,
                     '}' | ']' => flow_depth = flow_depth.saturating_sub(1),
-                    ':' if i + 1 < chars.len() && (chars[i + 1] == ' ' || chars[i + 1] == '\t') => {
+                    ':' if matches!(chars.get(i + 1), Some(' ' | '\t')) => {
                         at_value_start = true;
                         i += 2; // consume `: `
                         continue;
@@ -374,7 +376,9 @@ impl<'a> FlowTokenizer<'a> {
         let idx = self
             .masked_ranges
             .partition_point(|range| range.start() <= offset);
-        idx > 0 && self.masked_ranges[idx - 1].contains(offset)
+        idx.checked_sub(1)
+            .and_then(|prev| self.masked_ranges.get(prev))
+            .is_some_and(|range| range.contains(offset))
     }
 
     /// Checks if a hyphen at a position is a list item marker.
@@ -386,7 +390,8 @@ impl<'a> FlowTokenizer<'a> {
         }
 
         // Check if all characters before the hyphen are whitespace
-        line[..byte_col].chars().all(char::is_whitespace)
+        line.get(..byte_col)
+            .is_some_and(|before| before.chars().all(char::is_whitespace))
     }
 
     /// Maps token type to its character representation.

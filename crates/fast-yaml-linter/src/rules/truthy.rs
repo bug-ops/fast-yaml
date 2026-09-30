@@ -93,9 +93,8 @@ impl super::LintRule for TruthyRule {
             }
 
             // Find key-value pairs (after ':')
-            if let Some(colon_pos) = line.find(':') {
-                let key_part = &line[..colon_pos];
-                let value_part = &line[colon_pos + 1..];
+            if let Some((key_part, value_part)) = line.split_once(':') {
+                let colon_pos = key_part.len();
 
                 // Check key if configured
                 if check_keys {
@@ -182,8 +181,8 @@ impl super::LintRule for TruthyRule {
             }
 
             // Check list items (after '- ')
-            if let Some(hyphen_pos) = line.find('-') {
-                let after_hyphen = &line[hyphen_pos + 1..];
+            if let Some((before_hyphen, after_hyphen)) = line.split_once('-') {
+                let hyphen_pos = before_hyphen.len();
                 let value_trimmed = after_hyphen.trim();
 
                 // Skip if this is a mapping key (contains ':')

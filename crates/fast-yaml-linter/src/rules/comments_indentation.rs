@@ -86,7 +86,10 @@ impl super::LintRule for CommentsIndentationRule {
             }
 
             let comment_line_idx = comment_line - 1;
-            let comment_indent = line_info[comment_line_idx].indent;
+            let Some(comment_indent) = line_info.get(comment_line_idx).map(|info| info.indent)
+            else {
+                continue;
+            };
 
             // Find next non-empty, non-comment line using pre-computed metadata
             let mut expected_indent = None;

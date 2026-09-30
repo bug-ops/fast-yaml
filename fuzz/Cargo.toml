@@ -1,0 +1,38 @@
+[package]
+name = "fast-yaml-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.91.0"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+fast-yaml-core = { path = "../crates/fast-yaml-core" }
+fast-yaml-linter = { path = "../crates/fast-yaml-linter" }
+
+[[bin]]
+name = "parse"
+path = "fuzz_targets/parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "format"
+path = "fuzz_targets/format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lint"
+path = "fuzz_targets/lint.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
