@@ -155,6 +155,21 @@ fn test_lint_invalid_yaml() {
         .code(1);
 }
 
+// Regression test for issue #302: non-ASCII text before a block scalar containing `}` panicked
+#[test]
+#[cfg(feature = "linter")]
+fn test_lint_non_ascii_before_block_scalar_no_panic() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("lint")
+        .write_stdin(include_str!(
+            "../../fast-yaml-linter/tests/fixtures/edge_cases/non_ascii_block_scalar_braces.yaml"
+        ))
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("panicked").not());
+}
+
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_json_format() {

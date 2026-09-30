@@ -422,17 +422,30 @@ impl<'a> FlowTokenizer<'a> {
 
 /// Collects byte ranges of all block scalar values (`|` literal, `>` folded) in `source`.
 ///
-/// Returns a list of `(start_byte, end_byte)` pairs. The start byte points to the `|`/`>`
-/// indicator character; the end byte is one past the last byte of scalar content.
+/// Returns a list of `(start_byte, end_byte)` pairs covering the scalar content
+/// (end is one past its last byte).
+/// Saphyr reports char indices, which are converted to byte offsets here.
 /// On parse error, returns whatever ranges were collected before the error.
 fn collect_block_scalar_ranges(source: &str) -> Vec<(usize, usize)> {
     let input = BufferedInput::new(source.chars());
     let mut parser = SaphyrParser::new(input);
     let mut ranges = Vec::new();
 
+    let char_to_byte: Vec<usize> = source
+        .char_indices()
+        .map(|(byte, _)| byte)
+        .chain(std::iter::once(source.len()))
+        .collect();
+    let to_byte = |char_index: usize| {
+        char_to_byte
+            .get(char_index)
+            .copied()
+            .unwrap_or(source.len())
+    };
+
     while let Some(Ok((event, span))) = parser.next_event() {
         if let Event::Scalar(_, ScalarStyle::Literal | ScalarStyle::Folded, ..) = event {
-            ranges.push((span.start.index(), span.end.index()));
+            ranges.push((to_byte(span.start.index()), to_byte(span.end.index())));
         }
     }
 
@@ -727,5 +740,31 @@ mod tests {
         // The word "bracket" is inside the range
         let bracket_pos = yaml.find('[').unwrap();
         assert!(bracket_pos >= start && bracket_pos < end);
+    }
+
+    #[test]
+    fn test_block_scalar_ranges_are_byte_offsets_with_non_ascii_prefix() {
+        let yaml = "# ———\nrun: |\n  echo\n  tail }\nc: {a: b}\n";
+        let ranges = collect_block_scalar_ranges(yaml);
+        assert_eq!(ranges.len(), 1);
+        let (start, end) = ranges[0];
+        assert!(yaml[start..].starts_with("echo"));
+        assert!(end <= yaml.len());
+        let stray = yaml.find("tail }").unwrap() + 5;
+        assert!(stray >= start && stray < end);
+    }
+
+    #[test]
+    fn test_non_ascii_prefix_block_scalar_no_brace_tokens() {
+        let yaml = "# ———\nrun: |\n  echo\n  ok\n  tail }\n  [ x { y\n";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        for token_type in [
+            TokenType::BraceOpen,
+            TokenType::BraceClose,
+            TokenType::BracketOpen,
+        ] {
+            assert!(tokenizer.find_all(token_type).is_empty(), "{token_type:?}");
+        }
     }
 }
