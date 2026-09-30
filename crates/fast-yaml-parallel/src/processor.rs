@@ -5,7 +5,7 @@
 use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
-use fast_yaml_core::{Parser, Value};
+use fast_yaml_core::{Parser, ScalarOwned, Value};
 use rayon::prelude::*;
 
 /// Validate input size against configured limit.
@@ -33,6 +33,11 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
 
     // Step 2: Chunk documents
     let chunks = chunk_documents(fast_yaml_core::strip_bom(input));
+
+    // A BOM-only stream is one null document, like `Parser::parse_all`.
+    if chunks.is_empty() && !input.is_empty() {
+        return Ok(vec![Value::Value(ScalarOwned::Null)]);
+    }
 
     // Step 3: Check if parallelism is worthwhile
     if should_use_sequential(&chunks, config) {
@@ -78,17 +83,16 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
 
 /// Parse chunks sequentially (fallback for small inputs).
 fn parse_sequential(chunks: &[Chunk<'_>]) -> Result<Vec<Value>> {
-    chunks
-        .iter()
-        .map(|chunk| {
-            Parser::parse_str(chunk.content)
-                .map_err(|source| Error::Parse {
-                    index: chunk.index,
-                    source,
-                })?
-                .ok_or_else(|| Error::Chunking(format!("empty document at index {}", chunk.index)))
-        })
-        .collect()
+    chunks.iter().map(parse_chunk).collect()
+}
+
+/// Parse one chunk; a document without content is `null`, as in `Parser::parse_all`.
+fn parse_chunk(chunk: &Chunk<'_>) -> Result<Value> {
+    let doc = Parser::parse_str(chunk.content).map_err(|source| Error::Parse {
+        index: chunk.index,
+        source,
+    })?;
+    Ok(doc.unwrap_or(Value::Value(ScalarOwned::Null)))
 }
 
 /// Configure Rayon thread pool based on config.
@@ -105,18 +109,7 @@ fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
 ///
 /// Uses indexed parallel iterator to preserve document order.
 fn parse_chunks_parallel(chunks: &[Chunk<'_>]) -> Result<Vec<Value>> {
-    chunks
-        .par_iter()
-        .map(|chunk| {
-            // Parse each chunk independently
-            Parser::parse_str(chunk.content)
-                .map_err(|source| Error::Parse {
-                    index: chunk.index,
-                    source,
-                })?
-                .ok_or_else(|| Error::Chunking(format!("empty document at index {}", chunk.index)))
-        })
-        .collect()
+    chunks.par_iter().map(parse_chunk).collect()
 }
 
 #[cfg(test)]
@@ -353,8 +346,8 @@ mod tests {
         let config = Config::default();
 
         let result = process_parallel(yaml, &config);
-        // Whitespace-only may return empty vec or be treated as no documents
-        assert!(result.is_ok() && result.unwrap().is_empty());
+        // Non-empty whitespace-only input is one null document, like `Parser::parse_all`
+        assert_eq!(result.unwrap(), vec![Value::Value(ScalarOwned::Null)]);
     }
 
     #[test]

@@ -1,6 +1,5 @@
 //! Parallel file processor for batch YAML operations.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -335,35 +334,12 @@ impl FileProcessor {
         Ok(())
     }
 
-    /// Writes content to file atomically using secure temp file + rename.
-    ///
-    /// Uses `tempfile::NamedTempFile` to prevent TOCTOU vulnerabilities:
-    /// - Creates temp file with `O_EXCL` flag (fails if exists)
-    /// - Uses unpredictable name to prevent symlink attacks
-    /// - Atomically renames to final path
+    /// Writes content to file via the shared secure writer [`crate::write_atomic`].
     fn write_file_atomic(path: &Path, content: &str) -> Result<()> {
-        let dir = path.parent().ok_or_else(|| Error::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::new(std::io::ErrorKind::NotFound, "no parent directory"),
-        })?;
-
-        let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(|source| Error::Write {
+        crate::write_atomic(path, content.as_bytes()).map_err(|source| Error::Write {
             path: path.to_path_buf(),
             source,
-        })?;
-
-        temp.write_all(content.as_bytes())
-            .map_err(|source| Error::Write {
-                path: path.to_path_buf(),
-                source,
-            })?;
-
-        temp.persist(path).map_err(|e| Error::Write {
-            path: path.to_path_buf(),
-            source: e.error,
-        })?;
-
-        Ok(())
+        })
     }
 
     /// Returns true if sequential processing should be used.
