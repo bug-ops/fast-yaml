@@ -117,6 +117,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_process_parallel_rejects_alias_bomb() {
+        use std::fmt::Write as _;
+        let mut yaml = String::from("a0: &a0 [x,x,x,x,x,x,x,x,x]\n");
+        for i in 1..=8 {
+            let refs = vec![format!("*a{}", i - 1); 9].join(",");
+            writeln!(yaml, "a{i}: &a{i} [{refs}]").unwrap();
+        }
+        let result = process_parallel(&yaml, &Config::default());
+        assert!(matches!(result, Err(Error::Parse { .. })));
+    }
+
+    #[test]
     fn test_process_parallel_multi_document() {
         let yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3";
         let config = Config::default();

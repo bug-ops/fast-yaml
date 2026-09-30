@@ -1,11 +1,15 @@
 use crate::error::ParseResult;
+use crate::limits::{LimitGuard, ParseLimits};
 use crate::value::Value;
 use saphyr::{ScalarOwned, YamlLoader};
-use saphyr_parser::{BufferedInput, Parser as SaphyrParser, ScalarStyle, Tag};
+use saphyr_parser::{
+    BufferedInput, Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag,
+};
 
 /// Parser for YAML documents.
 ///
-/// Wraps saphyr's YAML loading to provide a consistent API.
+/// Wraps saphyr's YAML loading to provide a consistent API. Every entry point enforces
+/// [`ParseLimits`] (nesting depth and alias expansion) before building the tree.
 #[derive(Debug)]
 pub struct Parser;
 
@@ -16,7 +20,8 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid.
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds the default [`ParseLimits`].
     ///
     /// # Examples
     ///
@@ -27,11 +32,28 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_str(input: &str) -> ParseResult<Option<Value>> {
-        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
-        let mut loader = YamlLoader::<Value>::default();
-        loader.early_parse(false);
-        saphyr_parser.load(&mut loader, true)?;
-        let docs = inject_implicit_null_if_empty(loader.into_documents(), input);
+        Self::parse_str_with_limits(input, &ParseLimits::default())
+    }
+
+    /// Parse a single YAML document, enforcing explicit [`ParseLimits`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds `limits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{ParseError, Parser};
+    /// use fast_yaml_core::limits::{MaxDepth, ParseLimits};
+    ///
+    /// let limits = ParseLimits { max_depth: MaxDepth::new(1), ..ParseLimits::default() };
+    /// let err = Parser::parse_str_with_limits("[[1]]", &limits).unwrap_err();
+    /// assert!(matches!(err, ParseError::LimitExceeded { .. }));
+    /// ```
+    pub fn parse_str_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Option<Value>> {
+        let docs = load_documents(input, limits)?;
         Ok(docs.into_iter().next().map(canonicalize))
     }
 
@@ -41,7 +63,8 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid.
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds the default [`ParseLimits`].
     ///
     /// # Examples
     ///
@@ -53,12 +76,30 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all(input: &str) -> ParseResult<Vec<Value>> {
-        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
-        let mut loader = YamlLoader::<Value>::default();
-        loader.early_parse(false);
-        saphyr_parser.load(&mut loader, true)?;
-        let docs = inject_implicit_null_if_empty(loader.into_documents(), input);
-        Ok(docs.into_iter().map(canonicalize).collect())
+        Self::parse_all_with_limits(input, &ParseLimits::default())
+    }
+
+    /// Parse all YAML documents, enforcing explicit [`ParseLimits`].
+    ///
+    /// # Errors
+    ///
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds `limits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Parser;
+    /// use fast_yaml_core::limits::{MaxAliasBytes, ParseLimits};
+    ///
+    /// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(1), ..ParseLimits::default() };
+    /// assert!(Parser::parse_all_with_limits("- &a x\n- *a\n- *a", &limits).is_err());
+    /// ```
+    pub fn parse_all_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
+        Ok(load_documents(input, limits)?
+            .into_iter()
+            .map(canonicalize)
+            .collect())
     }
 
     /// Parse all YAML documents preserving scalar styles (literal `|`, folded `>`).
@@ -71,19 +112,31 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid.
+    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// `ParseError::LimitExceeded` if the input exceeds the default [`ParseLimits`].
     ///
     /// [`parse_all`]: Parser::parse_all
     pub fn parse_all_preserving_styles(input: &str) -> ParseResult<Vec<Value>> {
-        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
-        let mut loader = YamlLoader::<Value>::default();
-        loader.early_parse(false);
-        saphyr_parser.load(&mut loader, true)?;
-        Ok(inject_implicit_null_if_empty(
-            loader.into_documents(),
-            input,
-        ))
+        load_documents(input, &ParseLimits::default())
     }
+}
+
+/// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
+/// recurses or clones aliases, then returns the un-canonicalized documents.
+fn load_documents(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
+    let mut parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
+    let mut loader = YamlLoader::<Value>::default();
+    loader.early_parse(false);
+    let mut guard = LimitGuard::new(*limits);
+    while let Some(event) = parser.next_event() {
+        let (event, span) = event?;
+        guard.observe(&event, span)?;
+        loader.on_event(event, span);
+    }
+    Ok(inject_implicit_null_if_empty(
+        loader.into_documents(),
+        input,
+    ))
 }
 
 /// Strips one leading UTF-8 byte order mark (U+FEFF) from `input`.
@@ -134,7 +187,44 @@ fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
 ///   when present (#203).
 /// - Handle `True`, `TRUE`, `False`, `FALSE`, `Null` mixed-case variants.
 /// - Resolve YAML 1.1 merge keys (`<<: *anchor`) into parent mappings (#204).
+///
+/// Recursion depth equals the nesting depth of `value`, which [`ParseLimits`] bounds for
+/// parsed input; the collection arms are kept free of scalar temporaries to keep frames small.
 pub fn canonicalize(value: Value) -> Value {
+    match value {
+        Value::Sequence(seq) => canonicalize_sequence(seq),
+        Value::Mapping(map) => canonicalize_mapping(map),
+        Value::Tagged(tag, inner) => canonicalize_tagged(&tag, inner),
+        other => canonicalize_scalar(other),
+    }
+}
+
+fn canonicalize_sequence(mut seq: Vec<Value>) -> Value {
+    for item in &mut seq {
+        *item = canonicalize(std::mem::replace(item, Value::Value(ScalarOwned::Null)));
+    }
+    Value::Sequence(seq)
+}
+
+fn canonicalize_mapping(map: crate::value::Map) -> Value {
+    let mut canonicalized = crate::value::Map::with_capacity(map.len());
+    for (k, v) in map {
+        canonicalized.insert(canonicalize(k), canonicalize(v));
+    }
+    resolve_merge_keys(canonicalized)
+}
+
+// A match, not `map_or_else`: closure frames would cost stack on every tagged level.
+#[allow(clippy::option_if_let_else)]
+fn canonicalize_tagged(tag: &Tag, inner: Box<Value>) -> Value {
+    match coerce_tagged_scalar(tag, &inner) {
+        Some(coerced) => coerced,
+        None => canonicalize(*inner),
+    }
+}
+
+/// Canonicalize a non-collection, non-tagged node.
+fn canonicalize_scalar(value: Value) -> Value {
     match value {
         Value::Representation(ref s, style, ref tag) => {
             coerce_representation(s, style, tag.as_ref())
@@ -145,15 +235,6 @@ pub fn canonicalize(value: Value) -> Value {
             "Null" | "NULL" => Value::Value(ScalarOwned::Null),
             _ => value,
         },
-        Value::Tagged(ref tag, ref inner) => coerce_tagged(tag, inner),
-        Value::Sequence(seq) => Value::Sequence(seq.into_iter().map(canonicalize).collect()),
-        Value::Mapping(map) => {
-            let canonicalized: crate::value::Map = map
-                .into_iter()
-                .map(|(k, v)| (canonicalize(k), canonicalize(v)))
-                .collect();
-            resolve_merge_keys(canonicalized)
-        }
         other => other,
     }
 }
@@ -286,26 +367,25 @@ fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Valu
     Value::Value(scalar)
 }
 
-/// Coerce a tagged value to the appropriate scalar type based on the YAML core schema tag suffix.
-fn coerce_tagged(tag: &Tag, inner: &Value) -> Value {
-    if tag.is_yaml_core_schema()
-        && let Value::Value(ScalarOwned::String(ref s)) = *inner
-    {
-        let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
-            "int" => parse_core_schema_int(s)
-                .or_else(|| float_str_to_int(s))
-                .map(ScalarOwned::Integer),
-            "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
-            "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
-            "null" => matches!(s.as_str(), "~" | "null" | "").then_some(ScalarOwned::Null),
-            "str" => Some(ScalarOwned::String(s.clone())),
-            _ => None,
-        };
-        if let Some(scalar) = coerced {
-            return Value::Value(scalar);
-        }
+/// Coerce a core-schema-tagged string scalar by tag suffix; `None` when not applicable.
+fn coerce_tagged_scalar(tag: &Tag, inner: &Value) -> Option<Value> {
+    if !tag.is_yaml_core_schema() {
+        return None;
     }
-    canonicalize(inner.clone())
+    let Value::Value(ScalarOwned::String(s)) = inner else {
+        return None;
+    };
+    let coerced = match tag.suffix.as_str() {
+        "int" => parse_core_schema_int(s)
+            .or_else(|| float_str_to_int(s))
+            .map(ScalarOwned::Integer),
+        "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
+        "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
+        "null" => matches!(s.as_str(), "~" | "null" | "").then_some(ScalarOwned::Null),
+        "str" => Some(ScalarOwned::String(s.clone())),
+        _ => None,
+    };
+    coerced.map(Value::Value)
 }
 
 /// Resolve YAML 1.1 merge keys (`<<`) in a canonicalized mapping.
@@ -1034,5 +1114,305 @@ merged:
     fn test_bom_only_parse_str_is_null() {
         let v = Parser::parse_str("\u{FEFF}").unwrap();
         assert!(matches!(v, Some(Value::Value(ScalarOwned::Null))));
+    }
+
+    mod limits {
+        use super::*;
+        use crate::error::ParseError;
+        use crate::limits::{LimitKind, MaxAliasBytes, MaxDepth, NODE_BYTES};
+        use std::fmt::Write as _;
+
+        const BOMB: &str = "a0: &a0 [x,x,x,x,x,x,x,x,x]\n\
+            a1: &a1 [*a0,*a0,*a0,*a0,*a0,*a0,*a0,*a0,*a0]\n\
+            a2: &a2 [*a1,*a1,*a1,*a1,*a1,*a1,*a1,*a1,*a1]\n\
+            a3: &a3 [*a2,*a2,*a2,*a2,*a2,*a2,*a2,*a2,*a2]\n\
+            a4: &a4 [*a3,*a3,*a3,*a3,*a3,*a3,*a3,*a3,*a3]\n\
+            a5: &a5 [*a4,*a4,*a4,*a4,*a4,*a4,*a4,*a4,*a4]\n\
+            a6: &a6 [*a5,*a5,*a5,*a5,*a5,*a5,*a5,*a5,*a5]\n\
+            a7: &a7 [*a6,*a6,*a6,*a6,*a6,*a6,*a6,*a6,*a6]\n\
+            a8: &a8 [*a7,*a7,*a7,*a7,*a7,*a7,*a7,*a7,*a7]\n";
+
+        fn depth_limits(depth: usize) -> ParseLimits {
+            ParseLimits {
+                max_depth: MaxDepth::new(depth),
+                ..ParseLimits::default()
+            }
+        }
+
+        fn alias_limits(bytes: usize) -> ParseLimits {
+            ParseLimits {
+                max_alias_bytes: MaxAliasBytes::new(bytes),
+                ..ParseLimits::default()
+            }
+        }
+
+        #[test]
+        fn deep_block_sequence_is_rejected_on_line_one() {
+            let input = format!("{}x", "- ".repeat(20_000));
+            match Parser::parse_str(&input) {
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(_),
+                    line,
+                    ..
+                }) => assert_eq!(line, 1),
+                other => panic!("expected depth limit, got {other:?}"),
+            }
+        }
+
+        #[test]
+        fn deep_indented_mapping_is_rejected() {
+            let mut input = String::new();
+            for i in 0..1000 {
+                writeln!(input, "{}k:", " ".repeat(i)).unwrap();
+            }
+            assert!(matches!(
+                Parser::parse_str(&input),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn depth_boundary_is_inclusive() {
+            let limits = depth_limits(3);
+            assert!(Parser::parse_str_with_limits("[[[1]]]", &limits).is_ok());
+            assert!(matches!(
+                Parser::parse_str_with_limits("[[[[1]]]]", &limits),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(_),
+                    ..
+                })
+            ));
+        }
+
+        fn parse_and_drop_on_512k_stack(input: String) {
+            std::thread::Builder::new()
+                .stack_size(512 * 1024)
+                .spawn(move || {
+                    for value in Parser::parse_all(&input).unwrap() {
+                        drop(value);
+                    }
+                    drop(Parser::parse_all_preserving_styles(&input).unwrap());
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+        }
+
+        #[test]
+        fn default_depth_parses_and_drops_on_small_stack() {
+            parse_and_drop_on_512k_stack(format!("{}x", "- ".repeat(MaxDepth::DEFAULT.get())));
+        }
+
+        #[test]
+        fn tagged_depth_parses_and_drops_on_small_stack() {
+            let depth = 250;
+            parse_and_drop_on_512k_stack(format!("{}1{}", "!t [".repeat(depth), "]".repeat(depth)));
+        }
+
+        fn str_bomb(scalar_len: usize, levels: usize) -> String {
+            let mut yaml = format!("a0: &a0 \"{}\"\n", "x".repeat(scalar_len));
+            for i in 1..=levels {
+                writeln!(
+                    yaml,
+                    "a{i}: &a{i} [{}]",
+                    vec![format!("*a{}", i - 1); 9].join(",")
+                )
+                .unwrap();
+            }
+            yaml
+        }
+
+        #[test]
+        fn long_scalar_bombs_are_rejected() {
+            for input in [str_bomb(10_240, 5), str_bomb(1_024, 6)] {
+                assert!(matches!(
+                    Parser::parse_all(&input),
+                    Err(ParseError::LimitExceeded {
+                        kind: LimitKind::AliasBytes(_),
+                        ..
+                    })
+                ));
+            }
+        }
+
+        #[test]
+        fn long_tag_bombs_are_rejected() {
+            let mut input = format!("a0: &a0 !<tag:{}> \"\"\n", "x".repeat(10_000));
+            for i in 1..=5 {
+                writeln!(
+                    input,
+                    "a{i}: &a{i} [{}]",
+                    vec![format!("*a{}", i - 1); 9].join(",")
+                )
+                .unwrap();
+            }
+            assert!(matches!(
+                Parser::parse_all(&input),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::AliasBytes(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn shared_scalar_aliases_within_budget_load() {
+            let input = "a: &x [1, 2, 3]\nb: *x\nc: &s \"text\"\nd: *s\n";
+            assert_eq!(Parser::parse_all(input).unwrap().len(), 1);
+        }
+
+        #[test]
+        fn tagged_alias_amplification_is_rejected() {
+            let mut input = format!("a0: &a0 !t [{}]\n", "\"x\",".repeat(100));
+            for i in 1..=8 {
+                writeln!(
+                    input,
+                    "a{i}: &a{i} !t [{}]",
+                    vec![format!("*a{}", i - 1); 9].join(",")
+                )
+                .unwrap();
+            }
+            assert!(matches!(
+                Parser::parse_all(&input),
+                Err(ParseError::LimitExceeded { .. })
+            ));
+        }
+
+        #[test]
+        fn anchor_id_reuse_across_documents_is_allowed() {
+            let docs = Parser::parse_all("- &a [x]\n---\n- &a [y]\n- *a\n").unwrap();
+            assert_eq!(docs.len(), 2);
+        }
+
+        #[test]
+        fn alias_budget_is_cumulative_per_stream() {
+            let doc = |name: &str| format!("- &{name} [x]\n- *{name}\n- *{name}\n- *{name}\n");
+            let limits = alias_limits(400);
+            assert!(Parser::parse_all_with_limits(&doc("a"), &limits).is_ok());
+            let stream = format!("{}---\n{}", doc("a"), doc("b"));
+            assert!(matches!(
+                Parser::parse_all_with_limits(&stream, &limits),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::AliasBytes(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn aliased_empty_collections_cost_one_node() {
+            let limits = alias_limits(3 * NODE_BYTES);
+            assert!(Parser::parse_all_with_limits("- &a []\n- *a\n- *a\n- *a\n", &limits).is_ok());
+            assert!(
+                Parser::parse_all_with_limits("- &a {}\n- *a\n- *a\n- *a\n- *a\n", &limits)
+                    .is_err()
+            );
+        }
+
+        #[test]
+        fn alias_depth_boundary_is_inclusive() {
+            let limits = depth_limits(3);
+            assert!(Parser::parse_all_with_limits("- &a [[1]]\n- *a\n", &limits).is_ok());
+            assert!(matches!(
+                Parser::parse_all_with_limits("- &a [[1]]\n- [*a]\n", &limits),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn alias_as_mapping_key_is_accounted() {
+            let input = "- &k [x]\n- *k : v\n";
+            assert!(Parser::parse_all_with_limits(input, &depth_limits(2)).is_err());
+            assert!(Parser::parse_all_with_limits(input, &alias_limits(100)).is_err());
+            assert!(Parser::parse_all(input).is_ok());
+        }
+
+        #[test]
+        fn bom_prefixed_deep_input_is_rejected() {
+            let input = format!("\u{FEFF}{}x", "- ".repeat(300));
+            assert!(matches!(
+                Parser::parse_all(&input),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn bomb_is_rejected_by_every_entry_point() {
+            let is_alias_limit = |r: ParseResult<()>| {
+                matches!(
+                    r,
+                    Err(ParseError::LimitExceeded {
+                        kind: LimitKind::AliasBytes(_),
+                        ..
+                    })
+                )
+            };
+            assert!(is_alias_limit(Parser::parse_str(BOMB).map(drop)));
+            assert!(is_alias_limit(Parser::parse_all(BOMB).map(drop)));
+            assert!(is_alias_limit(
+                Parser::parse_all_preserving_styles(BOMB).map(drop)
+            ));
+        }
+
+        #[test]
+        fn anchor_chain_depth_amplification_is_rejected() {
+            let nest = |inner: &str| format!("{}{inner}{}", "[".repeat(200), "]".repeat(200));
+            let mut input = format!("a0: &a0 {}\n", nest("1"));
+            for i in 1..4 {
+                writeln!(input, "a{i}: &a{i} {}", nest(&format!("*a{}", i - 1))).unwrap();
+            }
+            assert!(matches!(
+                Parser::parse_str(&input),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn alias_budget_boundary_is_inclusive() {
+            let limits = alias_limits(400);
+            let three = "- &a [x]\n- *a\n- *a\n- *a\n";
+            let four = "- &a [x]\n- *a\n- *a\n- *a\n- *a\n";
+            assert!(Parser::parse_all_with_limits(three, &limits).is_ok());
+            assert!(matches!(
+                Parser::parse_all_with_limits(four, &limits),
+                Err(ParseError::LimitExceeded {
+                    kind: LimitKind::AliasBytes(_),
+                    ..
+                })
+            ));
+        }
+
+        #[test]
+        fn cross_document_alias_is_unknown_anchor() {
+            let err = Parser::parse_all("--- &a [x]\n--- *a\n").unwrap_err();
+            assert!(matches!(err, ParseError::Scanner(_)), "{err:?}");
+            assert!(err.to_string().contains("unknown anchor"));
+        }
+
+        #[test]
+        fn self_referential_alias_does_not_panic() {
+            assert!(Parser::parse_all("&a [*a]").is_ok());
+        }
+
+        #[test]
+        fn display_reports_position() {
+            let err = Parser::parse_str_with_limits("[\n [[1]]]", &depth_limits(2)).unwrap_err();
+            let msg = err.to_string();
+            assert!(msg.contains("limit exceeded"), "{msg}");
+            assert!(msg.contains("line 2"), "{msg}");
+            assert!(msg.contains("column 3"), "{msg}");
+        }
     }
 }

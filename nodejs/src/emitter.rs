@@ -13,6 +13,21 @@ use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 /// This limit prevents memory exhaustion attacks.
 const MAX_OUTPUT_SIZE: usize = 100 * 1024 * 1024;
 
+/// Converts `data` to YAML, throwing a JS exception on failure.
+///
+/// An `Err` returned from a `#[napi]` function reaches JS as a returned value instead of a
+/// thrown exception, so the exception is raised explicitly and `None` tells the caller to
+/// return a placeholder that JS never observes.
+fn convert_or_throw(env: Env, data: Unknown) -> NapiResult<Option<YamlOwned>> {
+    match js_to_yaml(env, data) {
+        Ok(yaml) => Ok(Some(yaml)),
+        Err(e) => {
+            env.throw_error(&e.reason, None)?;
+            Ok(None)
+        }
+    }
+}
+
 /// Options for YAML serialization.
 #[napi(object)]
 #[derive(Debug, Clone)]
@@ -89,7 +104,9 @@ pub fn safe_dump(
     let opts = options.unwrap_or_default();
 
     // Convert JavaScript to YAML
-    let mut yaml = js_to_yaml(&env, data)?;
+    let Some(mut yaml) = convert_or_throw(env, data)? else {
+        return Ok(String::new());
+    };
 
     // Sort keys if requested
     if opts.sort_keys.unwrap_or(false) {
@@ -155,7 +172,9 @@ pub fn safe_dump_all(
     // For multi-document YAML files, this prevents Vec capacity doubling.
     let mut yamls = Vec::with_capacity(documents.len());
     for doc in documents {
-        let mut yaml = js_to_yaml(&env, doc)?;
+        let Some(mut yaml) = convert_or_throw(env, doc)? else {
+            return Ok(String::new());
+        };
 
         // Sort keys if requested
         if opts.sort_keys.unwrap_or(false) {
