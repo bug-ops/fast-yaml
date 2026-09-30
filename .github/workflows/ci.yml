@@ -308,6 +308,49 @@ jobs:
         run: cargo test --doc --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 
 
+  # Core crate alone: workspace-wide runs unify the `arena` feature on, hiding no-arena cfg regressions
+  test-core-no-arena:
+    name: Test Core (no arena)
+    needs: [changes, format, lint]
+    if: |
+      always() &&
+      needs.format.result == 'success' &&
+      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
+      (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Install nextest
+        uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: nextest
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "core-no-arena"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Clippy (default features)
+        run: cargo clippy -p fast-yaml-core --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo nextest run -p fast-yaml-core
+
+      - name: Run doctests
+        # nextest does not run doctests
+        run: cargo test --doc -p fast-yaml-core
+
   # Code coverage (Linux only)
   coverage:
     name: Code Coverage
@@ -792,7 +835,7 @@ jobs:
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [format, lint, security, test-rust, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
+    needs: [format, lint, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -802,6 +845,7 @@ jobs:
           echo "Lint: ${{ needs.lint.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "Test Rust: ${{ needs.test-rust.result }}"
+          echo "Test Core (no arena): ${{ needs.test-core-no-arena.result }}"
           echo "Coverage: ${{ needs.coverage.result }}"
           echo "MSRV: ${{ needs.msrv.result }}"
           echo "Test Python: ${{ needs.test-python.result }}"
@@ -822,7 +866,8 @@ jobs:
 
           # These jobs can be skipped if path filter excludes them
           for result in "${{ needs.lint.result }}" "${{ needs.security.result }}" \
-                        "${{ needs.test-rust.result }}" "${{ needs.coverage.result }}" \
+                        "${{ needs.test-rust.result }}" "${{ needs.test-core-no-arena.result }}" \
+                        "${{ needs.coverage.result }}" \
                         "${{ needs.msrv.result }}" "${{ needs.test-python.result }}" \
                         "${{ needs.python-quality.result }}" "${{ needs.python-coverage.result }}" \
                         "${{ needs.test-nodejs.result }}" "${{ needs.nodejs-quality.result }}" \

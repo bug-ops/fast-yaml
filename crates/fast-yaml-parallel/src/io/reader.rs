@@ -1,8 +1,9 @@
 //! Smart file reading with automatic strategy selection based on file size.
 
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use fast_yaml_core::{decode_input, decode_input_owned};
 use memmap2::Mmap;
 
 use crate::error::{Error, Result};
@@ -16,31 +17,39 @@ pub enum FileContent {
     /// Content loaded into memory as a String
     String(String),
     /// Content accessed via memory-mapped file
-    Mmap(Mmap),
+    Mmap {
+        /// The mapped file bytes.
+        map: Mmap,
+        /// Path the file was mapped from, used in decode errors.
+        path: PathBuf,
+    },
 }
 
 impl FileContent {
     /// Returns the content as a string slice.
     ///
     /// For String variant, returns the string directly.
-    /// For Mmap variant, validates UTF-8 encoding first.
+    /// For Mmap variant, decodes the bytes first.
     pub fn as_str(&self) -> Result<&str> {
         match self {
             Self::String(s) => Ok(s),
-            Self::Mmap(mmap) => std::str::from_utf8(mmap).map_err(|source| Error::Utf8 { source }),
+            Self::Mmap { map, path } => decode_input(map).map_err(|source| Error::Decode {
+                path: path.clone(),
+                source,
+            }),
         }
     }
 
     /// Returns true if content is memory-mapped
     pub const fn is_mmap(&self) -> bool {
-        matches!(self, Self::Mmap(_))
+        matches!(self, Self::Mmap { .. })
     }
 
     /// Returns the size of the content in bytes
     pub fn len(&self) -> usize {
         match self {
             Self::String(s) => s.len(),
-            Self::Mmap(mmap) => mmap.len(),
+            Self::Mmap { map, .. } => map.len(),
         }
     }
 
@@ -52,7 +61,7 @@ impl FileContent {
 
 /// Smart file reader that chooses optimal reading strategy based on file size.
 ///
-/// For files smaller than the threshold, uses `std::fs::read_to_string` for simplicity.
+/// For files smaller than the threshold, reads the bytes into memory and decodes them.
 /// For larger files, uses memory-mapped files to avoid loading entire content into heap.
 #[derive(Debug)]
 pub struct SmartReader {
@@ -99,10 +108,10 @@ impl SmartReader {
     /// Reads file content using the optimal strategy based on file size.
     ///
     /// Returns `FileContent` and automatically chooses between:
-    /// - `read_to_string` for files < threshold
+    /// - an in-memory read for files < threshold
     /// - `mmap` for files >= threshold
     ///
-    /// Falls back to `read_to_string` if mmap fails.
+    /// Falls back to an in-memory read if mmap fails.
     ///
     /// # Errors
     ///
@@ -110,6 +119,10 @@ impl SmartReader {
     /// - Path does not exist
     /// - Path is a directory
     /// - Insufficient permissions
+    ///
+    /// Returns `Error::Decode` if a file below the threshold starts with a UTF-16 or
+    /// UTF-32 byte order mark or is not valid UTF-8. Memory-mapped files report the
+    /// same error from [`FileContent::as_str`].
     pub fn read(&self, path: &Path) -> Result<FileContent> {
         let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
             path: path.to_path_buf(),
@@ -130,7 +143,7 @@ impl SmartReader {
 
         if size >= self.mmap_threshold {
             Self::read_mmap(path).or_else(|_| {
-                // Fallback to read_to_string if mmap fails
+                // Fallback to reading into memory if mmap fails
                 Self::read_string(path)
             })
         } else {
@@ -140,7 +153,11 @@ impl SmartReader {
 
     /// Reads file into memory as a String
     fn read_string(path: &Path) -> Result<FileContent> {
-        let content = std::fs::read_to_string(path).map_err(|source| Error::Io {
+        let bytes = std::fs::read(path).map_err(|source| Error::Io {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        let content = decode_input_owned(bytes).map_err(|source| Error::Decode {
             path: path.to_path_buf(),
             source,
         })?;
@@ -170,7 +187,10 @@ impl SmartReader {
             })?
         };
 
-        Ok(FileContent::Mmap(mmap))
+        Ok(FileContent::Mmap {
+            map: mmap,
+            path: path.to_path_buf(),
+        })
     }
 }
 
@@ -276,6 +296,70 @@ mod tests {
         // Should be mmap and valid UTF-8
         assert!(file_content.is_mmap());
         assert!(file_content.as_str().is_ok());
+    }
+
+    const BOMS: [(&[u8], &str); 4] = [
+        (&[0xFF, 0xFE, b'a', 0x00], "UTF-16LE"),
+        (&[0xFE, 0xFF, 0x00, b'a'], "UTF-16BE"),
+        (&[0xFF, 0xFE, 0x00, 0x00, b'a', 0, 0, 0], "UTF-32LE"),
+        (&[0x00, 0x00, 0xFE, 0xFF, 0, 0, 0, b'a'], "UTF-32BE"),
+    ];
+
+    #[test]
+    fn test_small_file_with_unsupported_bom_fails() {
+        for (bom, name) in BOMS {
+            let mut file = NamedTempFile::new().unwrap();
+            file.write_all(bom).unwrap();
+
+            let err = SmartReader::new().read(file.path()).unwrap_err();
+            assert!(matches!(err, Error::Decode { .. }), "{err:?}");
+            let text = err.to_string();
+            assert!(text.contains("unsupported encoding"), "{text}");
+            assert!(text.contains(name), "{text}");
+            let Error::Decode { path, .. } = err else {
+                unreachable!()
+            };
+            assert_eq!(path, file.path());
+        }
+    }
+
+    #[test]
+    fn test_mmap_file_with_unsupported_bom_fails() {
+        for (bom, name) in BOMS {
+            let mut file = NamedTempFile::new().unwrap();
+            file.write_all(bom).unwrap();
+            file.write_all(&vec![b'x'; 600 * 1024]).unwrap();
+
+            let content = SmartReader::new().read(file.path()).unwrap();
+            assert!(content.is_mmap());
+            let err = content.as_str().unwrap_err();
+            assert!(matches!(err, Error::Decode { .. }), "{err:?}");
+            let text = err.to_string();
+            assert!(text.contains("unsupported encoding"), "{text}");
+            assert!(text.contains(name), "{text}");
+            let Error::Decode { path, .. } = err else {
+                unreachable!()
+            };
+            assert_eq!(path, file.path());
+        }
+    }
+
+    #[test]
+    fn test_invalid_utf8_is_not_reported_as_encoding() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"a: \xC3\x28\n").unwrap();
+
+        let err = SmartReader::new().read(file.path()).unwrap_err();
+        assert!(err.to_string().contains("not valid UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn test_utf8_bom_is_accepted() {
+        let mut file = NamedTempFile::new().unwrap();
+        file.write_all(b"\xEF\xBB\xBFa: 1\n").unwrap();
+
+        let content = SmartReader::new().read(file.path()).unwrap();
+        assert!(content.as_str().is_ok());
     }
 
     #[test]

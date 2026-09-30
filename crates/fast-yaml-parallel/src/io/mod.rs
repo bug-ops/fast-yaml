@@ -7,7 +7,7 @@
 //!
 //! - **Small files** (< 512KB by default): Loaded into memory as `String`
 //! - **Large files** (>= 512KB): Memory-mapped for zero-copy access
-//! - **Fallback**: Falls back to `read_to_string` if mmap fails
+//! - **Fallback**: Falls back to an in-memory read if mmap fails
 //!
 //! # Key Types
 //!
