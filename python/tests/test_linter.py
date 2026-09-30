@@ -359,6 +359,30 @@ class TestContextLine:
         line = lint.ContextLine(line_number=1, content="key: value", highlights=[(0, 3)])
         assert line.highlights == [(0, 3)]
 
+    def test_context_line_window_fields(self):
+        """Test ContextLine window fields default and explicit values."""
+        line = lint.ContextLine(line_number=1, content="x", highlights=[])
+        assert line.column_offset == 0
+        assert line.truncated_end is False
+        line = lint.ContextLine(
+            line_number=1, content="x", highlights=[(11, 12)], column_offset=10, truncated_end=True
+        )
+        assert line.column_offset == 10
+        assert line.truncated_end is True
+
+    def test_lint_long_line_context_is_windowed(self):
+        """Test diagnostics on a long line carry a bounded context window."""
+        source = "k: [" + "1 ," * 2000 + "]\n"
+        diagnostics = lint.lint(source)
+        assert diagnostics
+        for d in diagnostics:
+            for line in d.context.lines:
+                assert len(line.content) <= 120
+
+        windowed = [line for d in diagnostics for line in d.context.lines]
+        assert any(line.column_offset > 0 and line.truncated_end for line in windowed)
+        assert any(line.column_offset == 0 and line.truncated_end for line in windowed)
+
     def test_context_line_repr(self):
         """Test ContextLine repr."""
         line = lint.ContextLine(line_number=1, content="key: value", highlights=[])

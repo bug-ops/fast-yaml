@@ -106,6 +106,23 @@ describe('Diagnostic shape', () => {
   });
 });
 
+describe('context windowing', () => {
+  it('bounds context line content on long lines', () => {
+    const result = lint('k: [' + '1 ,'.repeat(2000) + ']\n');
+    expect(result.length).toBeGreaterThan(0);
+    for (const d of result) {
+      for (const line of d.context?.lines ?? []) {
+        expect([...line.content].length).toBeLessThanOrEqual(120);
+        expect(typeof line.columnOffset).toBe('number');
+        expect(typeof line.truncatedEnd).toBe('boolean');
+      }
+    }
+    const lines = result.flatMap((d) => d.context?.lines ?? []);
+    expect(lines.some((l) => l.columnOffset > 0 && l.truncatedEnd === true)).toBe(true);
+    expect(lines.some((l) => l.columnOffset === 0 && l.truncatedEnd === true)).toBe(true);
+  });
+});
+
 describe('Severity enum string values', () => {
   it('duplicate key severity is "Error"', () => {
     const result = lint(DUPLICATE_KEYS_YAML);

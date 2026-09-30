@@ -300,9 +300,9 @@ info[key-ordering]: key 'age' should be ordered before 'name' (line 2)
     },
     "context": {
       "lines": [
-        { "line_number": 1, "content": "---", "highlights": [] },
-        { "line_number": 2, "content": "name: Alice", "highlights": [] },
-        { "line_number": 3, "content": "age: 30", "highlights": [[1, 1]] }
+        { "line_number": 1, "content": "---", "column_offset": 0, "truncated_end": false, "highlights": [] },
+        { "line_number": 2, "content": "name: Alice", "column_offset": 0, "truncated_end": false, "highlights": [] },
+        { "line_number": 3, "content": "age: 30", "column_offset": 0, "truncated_end": false, "highlights": [[1, 1]] }
       ]
     }
   }

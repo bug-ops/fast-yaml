@@ -51,11 +51,6 @@ impl CharStarts {
         Self(line.char_indices().map(|(byte, _)| byte).collect())
     }
 
-    /// Number of chars in the line.
-    pub const fn char_count(&self) -> usize {
-        self.0.len()
-    }
-
     /// Byte offset of the 0-indexed char `col`, or `line_len` when past the end.
     pub fn byte_of(&self, col: usize, line_len: usize) -> usize {
         self.0.get(col).copied().unwrap_or(line_len)
@@ -64,6 +59,76 @@ impl CharStarts {
     /// Number of chars starting strictly before byte `byte`.
     pub fn chars_before(&self, byte: usize) -> usize {
         self.0.partition_point(|&start| start < byte)
+    }
+}
+
+/// Maximum number of chars of a source line kept in a [`ContextLine`].
+///
+/// Bounds the size of every diagnostic context regardless of source line length.
+pub const MAX_CONTEXT_COLUMNS: usize = 120;
+
+/// Char window of a source line, bounding the size of a diagnostic context.
+struct ContextWindow<'a> {
+    text: &'a str,
+    column_offset: usize,
+    truncated_end: bool,
+    chars: usize,
+}
+
+impl<'a> ContextWindow<'a> {
+    /// Windows `line`, centred on `anchor` (`(byte offset in line, 0-based char column)`)
+    /// or starting at the line start when there is none.
+    fn of(line: &'a str, anchor: Option<(Option<usize>, usize)>) -> Self {
+        let half = MAX_CONTEXT_COLUMNS / 2;
+        let (start_byte, column_offset) = match anchor {
+            Some((Some(byte), column)) if line.is_char_boundary(byte) => {
+                let (mut start_byte, mut walked) = (byte, 0);
+                for (idx, _) in line
+                    .get(..byte)
+                    .unwrap_or_default()
+                    .char_indices()
+                    .rev()
+                    .take(half)
+                {
+                    start_byte = idx;
+                    walked += 1;
+                }
+                (start_byte, column.saturating_sub(walked))
+            }
+            Some((_, column)) => {
+                let offset = column.saturating_sub(half);
+                let byte = line
+                    .char_indices()
+                    .nth(offset)
+                    .map_or(line.len(), |(byte, _)| byte);
+                (byte, offset)
+            }
+            None => (0, 0),
+        };
+
+        let rest = line.get(start_byte..).unwrap_or_default();
+        let (text, truncated_end) = match rest.char_indices().nth(MAX_CONTEXT_COLUMNS) {
+            Some((end, _)) => (rest.get(..end).unwrap_or_default(), true),
+            None => (rest, false),
+        };
+
+        Self {
+            text,
+            column_offset,
+            truncated_end,
+            chars: text.chars().count(),
+        }
+    }
+
+    /// Clips the absolute 1-based column range `[start, end)` to this window.
+    fn clip(&self, start: usize, end: usize) -> Option<(usize, usize)> {
+        let lo = self.column_offset.saturating_add(1);
+        let hi = self
+            .column_offset
+            .saturating_add(self.chars)
+            .saturating_add(1);
+        let (start, end) = (start.max(lo), end.min(hi));
+        (start <= end).then_some((start, end))
     }
 }
 
@@ -218,6 +283,14 @@ impl<'a> SourceContext<'a> {
 
         for line_num in first_line..=last_line {
             if let Some(content) = self.get_line(line_num) {
+                let anchor = (line_num == start_line).then(|| {
+                    let line_start = self.get_line_offset(line_num);
+                    (
+                        span.start.offset.checked_sub(line_start),
+                        span.start.column.saturating_sub(1),
+                    )
+                });
+                let window = ContextWindow::of(content, anchor);
                 let mut highlights = Vec::new();
 
                 if line_num >= start_line && line_num <= end_line {
@@ -230,17 +303,19 @@ impl<'a> SourceContext<'a> {
                     let end_col = if line_num == end_line {
                         span.end.column
                     } else {
-                        content.len() + 1
+                        usize::MAX
                     };
 
-                    if start_col <= end_col {
-                        highlights.push((start_col, end_col));
+                    if let Some(highlight) = window.clip(start_col, end_col) {
+                        highlights.push(highlight);
                     }
                 }
 
                 lines.push(ContextLine {
                     line_number: line_num,
-                    content: content.to_string(),
+                    content: window.text.to_string(),
+                    column_offset: window.column_offset,
+                    truncated_end: window.truncated_end,
                     highlights,
                 });
             }
@@ -645,6 +720,156 @@ mod tests {
         assert_eq!(diagnostic_ctx.lines[2].line_number, 3);
 
         assert_eq!(diagnostic_ctx.lines[1].highlights, vec![(1, 6)]);
+    }
+
+    #[test]
+    fn test_extract_context_short_line_unchanged() {
+        let ctx = SourceContext::new("key: value");
+        let span = Span::new(Location::new(1, 6, 5), Location::new(1, 11, 10));
+        let line = &ctx.extract_context(span, 0).lines[0];
+
+        assert_eq!(line.content, "key: value");
+        assert_eq!(line.column_offset, 0);
+        assert!(!line.truncated_end);
+        assert_eq!(line.highlights, vec![(6, 11)]);
+    }
+
+    #[test]
+    fn test_extract_context_long_line_is_windowed() {
+        let source = "a".repeat(1000);
+        let ctx = SourceContext::new(&source);
+        let span = Span::new(Location::new(1, 501, 500), Location::new(1, 511, 510));
+        let line = &ctx.extract_context(span, 0).lines[0];
+
+        assert_eq!(line.content.chars().count(), MAX_CONTEXT_COLUMNS);
+        assert_eq!(line.column_offset, 500 - MAX_CONTEXT_COLUMNS / 2);
+        assert!(line.truncated_end);
+        assert_eq!(line.highlights, vec![(501, 511)]);
+    }
+
+    #[test]
+    fn test_extract_context_whole_line_highlight_is_clipped() {
+        let source = format!("{}\nend", "a".repeat(1000));
+        let ctx = SourceContext::new(&source);
+        let span = Span::new(Location::new(1, 1, 0), Location::new(2, 4, 1004));
+        let line = &ctx.extract_context(span, 0).lines[0];
+
+        assert_eq!(line.column_offset, 0);
+        assert_eq!(line.highlights, vec![(1, MAX_CONTEXT_COLUMNS + 1)]);
+    }
+
+    fn ascii_span(start_col: usize, end_col: usize) -> Span {
+        Span::new(
+            Location::new(1, start_col, start_col - 1),
+            Location::new(1, end_col, end_col - 1),
+        )
+    }
+
+    fn first_line(source: &str, span: Span) -> ContextLine {
+        SourceContext::new(source)
+            .extract_context(span, 0)
+            .lines
+            .remove(0)
+    }
+
+    #[test]
+    fn test_extract_context_window_boundary_120_vs_121() {
+        let exact = first_line(&"a".repeat(120), ascii_span(60, 70));
+        assert_eq!(exact.content.chars().count(), 120);
+        assert_eq!(exact.column_offset, 0);
+        assert!(!exact.truncated_end);
+
+        let over = first_line(&"a".repeat(121), ascii_span(60, 70));
+        assert_eq!(over.content.chars().count(), 120);
+        assert!(over.truncated_end);
+    }
+
+    #[test]
+    fn test_extract_context_highlight_at_end_of_long_line() {
+        let line = first_line(&"a".repeat(1000), ascii_span(995, 1001));
+        assert_eq!(line.column_offset, 994 - MAX_CONTEXT_COLUMNS / 2);
+        assert!(!line.truncated_end);
+        assert_eq!(line.highlights, vec![(995, 1001)]);
+    }
+
+    #[test]
+    fn test_extract_context_highlight_at_start_of_long_line() {
+        let line = first_line(&"a".repeat(1000), ascii_span(1, 5));
+        assert_eq!(line.column_offset, 0);
+        assert!(line.truncated_end);
+        assert_eq!(line.highlights, vec![(1, 5)]);
+    }
+
+    #[test]
+    fn test_extract_context_highlight_wider_than_window_is_clipped() {
+        let line = first_line(&"a".repeat(1000), ascii_span(200, 900));
+        assert_eq!(line.column_offset, 199 - MAX_CONTEXT_COLUMNS / 2);
+        assert_eq!(
+            line.highlights,
+            vec![(200, line.column_offset + MAX_CONTEXT_COLUMNS + 1)]
+        );
+    }
+
+    #[test]
+    fn test_extract_context_multi_line_windows_only_start_line_around_anchor() {
+        let source = format!(
+            "{}\n{}\n{}",
+            "a".repeat(500),
+            "b".repeat(500),
+            "c".repeat(500)
+        );
+        let span = Span::new(
+            Location::new(1, 300, 299),
+            Location::new(3, 400, 1002 + 399),
+        );
+        let lines = SourceContext::new(&source).extract_context(span, 0).lines;
+
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].column_offset, 299 - MAX_CONTEXT_COLUMNS / 2);
+        assert_eq!(lines[1].column_offset, 0);
+        assert_eq!(lines[2].column_offset, 0);
+        assert_eq!(lines[1].highlights, vec![(1, MAX_CONTEXT_COLUMNS + 1)]);
+        assert_eq!(lines[2].highlights, vec![(1, MAX_CONTEXT_COLUMNS + 1)]);
+        assert!(
+            lines
+                .iter()
+                .all(|l| l.content.chars().count() <= MAX_CONTEXT_COLUMNS)
+        );
+    }
+
+    #[test]
+    fn test_extract_context_combining_chars_and_tabs_count_as_chars() {
+        let source = format!("\t{}", "e\u{301}".repeat(200));
+        let line = first_line(&source, ascii_span(1, 2));
+        assert_eq!(line.content.chars().count(), MAX_CONTEXT_COLUMNS);
+        assert!(line.content.starts_with('\t'));
+        assert_eq!(line.highlights, vec![(1, 2)]);
+    }
+
+    #[test]
+    fn test_extract_context_empty_line_and_zero_width_highlight() {
+        let empty = first_line("", ascii_span(1, 1));
+        assert_eq!(empty.content, "");
+        assert_eq!(empty.highlights, vec![(1, 1)]);
+
+        let zero = first_line(&"a".repeat(1000), ascii_span(500, 500));
+        assert_eq!(zero.highlights, vec![(500, 500)]);
+    }
+
+    #[test]
+    fn test_extract_context_multibyte_does_not_panic() {
+        let source = format!("{}\u{1F600}{}", "я".repeat(300), "ж".repeat(300));
+        let ctx = SourceContext::new(&source);
+        let byte = source.find('\u{1F600}').unwrap();
+        let span = Span::new(Location::new(1, 301, byte), Location::new(1, 302, byte + 4));
+        let line = &ctx.extract_context(span, 0).lines[0];
+
+        assert!(line.content.contains('\u{1F600}'));
+        assert_eq!(line.content.chars().count(), MAX_CONTEXT_COLUMNS);
+        assert_eq!(line.highlights, vec![(301, 302)]);
+
+        let inconsistent = Span::new(Location::new(1, 301, byte + 1), Location::new(1, 302, byte));
+        let _ = ctx.extract_context(inconsistent, 0);
     }
 
     #[test]

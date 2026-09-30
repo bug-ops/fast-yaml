@@ -180,6 +180,8 @@ impl From<String> for DiagnosticCode {
 ///         ContextLine {
 ///             line_number: 10,
 ///             content: "name: value".to_string(),
+///             column_offset: 0,
+///             truncated_end: false,
 ///             highlights: vec![(6, 11)],
 ///         },
 ///     ],
@@ -195,15 +197,36 @@ pub struct DiagnosticContext {
 /// A single line of source context.
 ///
 /// Represents one line of source code with optional highlighting
-/// to indicate the specific portion that has an issue.
+/// to indicate the specific portion that has an issue. Long lines are cut to a
+/// window of at most 120 chars around the highlight so diagnostic size stays bounded.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::ContextLine;
+///
+/// let line = ContextLine {
+///     line_number: 1,
+///     content: "b: c".to_string(),
+///     column_offset: 10,
+///     truncated_end: true,
+///     highlights: vec![(11, 12)],
+/// };
+/// assert_eq!(line.column_offset + 1, line.highlights[0].0);
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
 pub struct ContextLine {
     /// Line number (1-indexed).
     pub line_number: usize,
-    /// Source text content.
+    /// Windowed source text; the full line when it is short.
     pub content: String,
-    /// Highlight ranges (column start, column end) within this line.
+    /// Number of chars of the line dropped before `content`.
+    pub column_offset: usize,
+    /// Whether chars of the line were dropped after `content`.
+    pub truncated_end: bool,
+    /// Highlight ranges (1-based start column, exclusive end column) in absolute line
+    /// columns, clipped to the window.
     pub highlights: Vec<(usize, usize)>,
 }
 
@@ -518,6 +541,8 @@ mod tests {
         let line = ContextLine {
             line_number: 10,
             content: "name: value".to_string(),
+            column_offset: 0,
+            truncated_end: false,
             highlights: vec![(6, 11)],
         };
 
