@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn test_limit_exceeded_display() {
         let err = ParseError::LimitExceeded {
-            kind: LimitKind::Depth(crate::limits::MaxDepth::new(8)),
+            kind: LimitKind::Depth(crate::limits::MaxDepth::new(8).unwrap()),
             line: 3,
             column: 7,
         };

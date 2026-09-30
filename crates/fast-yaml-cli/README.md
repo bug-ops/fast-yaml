@@ -144,6 +144,21 @@ fy lint --max-line-length 100 --indent-size 2 app.yaml
 fy lint --format json config.yaml
 ```
 
+### Parser resource limits
+
+`fy parse`, `fy convert` and `fy lint` accept `--max-depth` (1 to 512, default 256) and
+`--max-alias-bytes` (1 to 1GiB, default 64MiB; suffixes `KiB`, `MiB`, `GiB`). Out-of-range values
+are rejected. The alias budget is per file, so batch runs can use up to workers x `--max-alias-bytes` of
+memory. For `fy convert`, the flags apply to YAML input only.
+
+```bash
+# Allow a large alias expansion
+fy parse --max-alias-bytes 512MiB big.yaml
+
+# Reject deeper nesting than 64 levels
+fy lint --max-depth 64 config.yaml
+```
+
 ## Commands
 
 | Command | Description |

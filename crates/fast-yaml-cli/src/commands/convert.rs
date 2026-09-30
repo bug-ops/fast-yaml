@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_core::{Emitter, Parser, Value};
 use serde_json;
 
@@ -9,13 +10,15 @@ use crate::io::{InputSource, OutputWriter};
 pub struct ConvertCommand {
     target_format: ConvertFormat,
     pretty: bool,
+    limits: ParseLimits,
 }
 
 impl ConvertCommand {
-    pub const fn new(target_format: ConvertFormat, pretty: bool) -> Self {
+    pub const fn new(target_format: ConvertFormat, pretty: bool, limits: ParseLimits) -> Self {
         Self {
             target_format,
             pretty,
+            limits,
         }
     }
 
@@ -30,7 +33,8 @@ impl ConvertCommand {
     /// Convert YAML to JSON
     fn yaml_to_json(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
         // Parse all YAML documents to support multi-document streams
-        let docs = Parser::parse_all(input.as_str()).context("Failed to parse YAML")?;
+        let docs = Parser::parse_all_with_limits(input.as_str(), &self.limits)
+            .context("Failed to parse YAML")?;
 
         if docs.is_empty() {
             return Err(anyhow::anyhow!("Empty YAML document"));
@@ -230,7 +234,7 @@ mod tests {
         let temp_path = temp_dir.path().join("output.json");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Json, true);
+        let cmd = ConvertCommand::new(ConvertFormat::Json, true, ParseLimits::default());
         let result = cmd.execute(&input, &output);
         if let Err(e) = &result {
             eprintln!("Execute error: {e}");
@@ -257,7 +261,7 @@ mod tests {
         let temp_path = temp_dir.path().join("output.yaml");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Yaml, true);
+        let cmd = ConvertCommand::new(ConvertFormat::Yaml, true, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
 
         let yaml_str = std::fs::read_to_string(&temp_path).unwrap();
@@ -297,7 +301,7 @@ mod tests {
 
         let output = OutputWriter::stdout();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Json, true);
+        let cmd = ConvertCommand::new(ConvertFormat::Json, true, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_err());
     }
 
@@ -310,7 +314,7 @@ mod tests {
 
         let output = OutputWriter::stdout();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Yaml, true);
+        let cmd = ConvertCommand::new(ConvertFormat::Yaml, true, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_err());
     }
 
@@ -325,7 +329,7 @@ mod tests {
         let temp_path = temp_dir.path().join("output.json");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
 
-        let cmd = ConvertCommand::new(ConvertFormat::Json, false);
+        let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
 
         let json_str = std::fs::read_to_string(&temp_path).unwrap();
@@ -349,7 +353,7 @@ mod tests {
                 origin: InputOrigin::Stdin,
             };
             let output = OutputWriter::stdout();
-            let cmd = ConvertCommand::new(ConvertFormat::Json, false);
+            let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
             let err = cmd.execute(&input, &output).unwrap_err();
             let msg = err.to_string();
             assert!(
@@ -368,7 +372,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.yaml");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
-        let cmd = ConvertCommand::new(ConvertFormat::Yaml, false);
+        let cmd = ConvertCommand::new(ConvertFormat::Yaml, false, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
 
         let yaml_str = std::fs::read_to_string(&temp_path).unwrap();
@@ -393,7 +397,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.json");
         let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
-        let cmd = ConvertCommand::new(ConvertFormat::Json, false);
+        let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
         let json_str = std::fs::read_to_string(&temp_path).unwrap();
         let json: serde_json::Value = serde_json::from_str(json_str.trim()).unwrap();

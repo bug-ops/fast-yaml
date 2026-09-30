@@ -2,8 +2,25 @@
  * Resource-limit and cyclic-structure tests (#336, #337)
  */
 
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { safeDump, safeDumpAll, safeLoad, safeLoadAll } from '../index';
+import {
+  formatFiles,
+  formatFilesInPlace,
+  Linter,
+  lint,
+  load,
+  loadAll,
+  parseParallel,
+  parseParallelAsync,
+  processFiles,
+  safeDump,
+  safeDumpAll,
+  safeLoad,
+  safeLoadAll,
+} from '../index';
 
 const DEEP = `${'- '.repeat(20_000)}x`;
 
@@ -171,4 +188,165 @@ describe('Resource limits - dump', () => {
     expect(safeDump('a'.repeat(limit - 1))).toHaveLength(limit);
     expect(() => safeDump('a'.repeat(limit))).toThrow(/output size exceeds/);
   }, 60_000);
+});
+
+const seq = (depth: number): string => `${'- '.repeat(depth)}x`;
+
+const aliasBomb = (levels: number, width: number): string =>
+  Array.from({ length: levels }, (_, i) =>
+    i === 0
+      ? `a0: &a0 [${Array(width).fill('x').join(',')}]`
+      : `a${i}: &a${i} [${Array(width)
+          .fill(`*a${i - 1}`)
+          .join(',')}]`
+  ).join('\n');
+
+const RAISED_BOMB = aliasBomb(7, 8);
+const MAX_ALIAS_BYTES = 1_073_741_824;
+
+describe('Configurable parse limits', () => {
+  it('keeps default limits when options are absent', () => {
+    expect(() => safeLoad(seq(300))).toThrow(/nesting depth exceeds 256/);
+    expect(() => safeLoad(RAISED_BOMB)).toThrow(/alias expansion exceeds 67108864/);
+  });
+
+  it('raises maxDepth where the default fails', () => {
+    expect(() => safeLoad(seq(300), { maxDepth: 400 })).not.toThrow();
+    expect(() => safeLoadAll(seq(300), { maxDepth: 400 })).not.toThrow();
+    expect(() => load(seq(300), { maxDepth: 400 })).not.toThrow();
+    expect(() => loadAll(seq(300), { maxDepth: 400 })).not.toThrow();
+  });
+
+  it('lowers maxDepth', () => {
+    expect(() => safeLoad(seq(5), { maxDepth: 3 })).toThrow(/nesting depth exceeds 3/);
+    expect(() => safeLoadAll(seq(5), { maxDepth: 3 })).toThrow(/nesting depth exceeds 3/);
+  });
+
+  it('accepts the maximum depth', () => {
+    expect(() => safeLoad(seq(500), { maxDepth: 512 })).not.toThrow();
+  });
+
+  it('raises and lowers maxAliasBytes', () => {
+    expect(() => safeLoad(RAISED_BOMB, { maxAliasBytes: MAX_ALIAS_BYTES })).not.toThrow();
+    expect(() => safeLoad(aliasBomb(2, 3), { maxAliasBytes: 100 })).toThrow(
+      /alias expansion exceeds 100/
+    );
+  });
+
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['1.5', 1.5],
+    ['NaN', Number.NaN],
+    ['too large', 513],
+  ])('rejects maxDepth %s', (_name, value) => {
+    const message = /maxDepth must be between 1 and 512, got /;
+    expect(() => safeLoad('a: 1', { maxDepth: value })).toThrow(message);
+    expect(() => safeLoadAll('a: 1', { maxDepth: value })).toThrow(message);
+    expect(() => load('a: 1', { maxDepth: value })).toThrow(message);
+    expect(() => parseParallel('a: 1', { maxDepth: value })).toThrow(message);
+    expect(() => lint('a: 1', { maxDepth: value })).toThrow(message);
+    expect(() => new Linter({ maxDepth: value })).toThrow(message);
+    expect(() => processFiles([], { maxDepth: value })).toThrow(message);
+  });
+
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['2.5', 2.5],
+    ['NaN', Number.NaN],
+    ['too large', MAX_ALIAS_BYTES + 1],
+  ])('rejects maxAliasBytes %s', (_name, value) => {
+    const message = /maxAliasBytes must be between 1 and 1073741824, got /;
+    expect(() => safeLoad('a: 1', { maxAliasBytes: value })).toThrow(message);
+    expect(() => safeLoadAll('a: 1', { maxAliasBytes: value })).toThrow(message);
+    expect(() => parseParallel('a: 1', { maxAliasBytes: value })).toThrow(message);
+    expect(() => lint('a: 1', { maxAliasBytes: value })).toThrow(message);
+    expect(() => processFiles([], { maxAliasBytes: value })).toThrow(message);
+  });
+
+  it('applies limits to parseParallel and parseParallelAsync', async () => {
+    const deep = seq(300);
+    expect(() => parseParallel(deep)).toThrow(/nesting depth exceeds 256/);
+    expect(() => parseParallel(deep, { maxDepth: 400 })).not.toThrow();
+    await expect(parseParallelAsync(deep)).rejects.toThrow(/nesting depth exceeds 256/);
+    await expect(parseParallelAsync(deep, { maxDepth: 400 })).resolves.toBeDefined();
+    await expect(parseParallelAsync('a: 1', { maxDepth: 0 })).rejects.toThrow(/maxDepth/);
+  });
+
+  it('applies limits to the linter', () => {
+    const deep = seq(300);
+    expect(() => lint(deep)).toThrow(/Linting failed/);
+    expect(() => lint(deep, { maxDepth: 400 })).not.toThrow();
+    expect(() => new Linter({ maxDepth: 400 }).lint(deep)).not.toThrow();
+  });
+
+  it('applies limits to batch processing', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'limits-batch-'));
+    try {
+      const file = path.join(dir, 'deep.yaml');
+      fs.writeFileSync(file, `${seq(300)}\n`);
+      const failed = processFiles([file]);
+      expect(failed.failed).toBe(1);
+      expect(failed.errors[0].message).toMatch(/nesting depth exceeds 256/);
+      expect(processFiles([file], { maxDepth: 400 }).failed).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('accepts the lower bound 1 for both limits', () => {
+    expect(safeLoad('a: 1', { maxDepth: 1, maxAliasBytes: 1 })).toEqual({ a: 1 });
+    expect(() => parseParallel('a: 1', { maxDepth: 1, maxAliasBytes: 1 })).not.toThrow();
+    expect(() => lint('a: 1', { maxDepth: 1, maxAliasBytes: 1 })).not.toThrow();
+  });
+
+  it('renders extreme values compactly', () => {
+    expect(() => safeLoad('a: 1', { maxDepth: 1e300 })).toThrow(
+      'maxDepth must be between 1 and 512, got 1e300'
+    );
+    expect(() => safeLoad('a: 1', { maxDepth: Number.POSITIVE_INFINITY })).toThrow(
+      'maxDepth must be between 1 and 512, got Infinity'
+    );
+    expect(() => safeLoad('a: 1', { maxDepth: Number.NaN })).toThrow(
+      'maxDepth must be between 1 and 512, got NaN'
+    );
+  });
+
+  it('throws the bare reason from parseParallel without a code prefix', () => {
+    expect(() => parseParallel('a: 1', { maxDepth: 0 })).toThrow(
+      /^maxDepth must be between 1 and 512, got 0$/
+    );
+  });
+});
+
+describe('Batch config validation', () => {
+  it.each([
+    ['processFiles', processFiles],
+    ['formatFiles', formatFiles],
+    ['formatFilesInPlace', formatFilesInPlace],
+  ])('%s throws for workers above the maximum', (_name, fn) => {
+    expect(() => fn([], { workers: 129 })).toThrow(/workers 129 exceeds maximum 128/);
+  });
+
+  it.each([
+    ['formatFiles', formatFiles],
+    ['formatFilesInPlace', formatFilesInPlace],
+  ])('%s validates the limits', (_name, fn) => {
+    expect(() => fn([], { maxDepth: 0 })).toThrow(/maxDepth must be between 1 and 512, got 0/);
+    expect(() => fn([], { maxAliasBytes: -1 })).toThrow(/maxAliasBytes must be between 1/);
+  });
+
+  it('formatFiles ignores valid limits', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'limits-format-'));
+    try {
+      const file = path.join(dir, 'nested.yaml');
+      fs.writeFileSync(file, `${seq(50)}\n`);
+      const [result] = formatFiles([file], { maxDepth: 1, maxAliasBytes: 1 });
+      expect(result.error).toBeFalsy();
+      expect(result.content).toBeTruthy();
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

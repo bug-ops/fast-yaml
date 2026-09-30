@@ -47,7 +47,7 @@ impl Parser {
     /// use fast_yaml_core::{ParseError, Parser};
     /// use fast_yaml_core::limits::{MaxDepth, ParseLimits};
     ///
-    /// let limits = ParseLimits { max_depth: MaxDepth::new(1), ..ParseLimits::default() };
+    /// let limits = ParseLimits { max_depth: MaxDepth::new(1).unwrap(), ..ParseLimits::default() };
     /// let err = Parser::parse_str_with_limits("[[1]]", &limits).unwrap_err();
     /// assert!(matches!(err, ParseError::LimitExceeded { .. }));
     /// ```
@@ -91,7 +91,7 @@ impl Parser {
     /// use fast_yaml_core::Parser;
     /// use fast_yaml_core::limits::{MaxAliasBytes, ParseLimits};
     ///
-    /// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(1), ..ParseLimits::default() };
+    /// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(1).unwrap(), ..ParseLimits::default() };
     /// assert!(Parser::parse_all_with_limits("- &a x\n- *a\n- *a", &limits).is_err());
     /// ```
     pub fn parse_all_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
@@ -1016,14 +1016,14 @@ merged:
 
         fn depth_limits(depth: usize) -> ParseLimits {
             ParseLimits {
-                max_depth: MaxDepth::new(depth),
+                max_depth: MaxDepth::new(depth).unwrap(),
                 ..ParseLimits::default()
             }
         }
 
         fn alias_limits(bytes: usize) -> ParseLimits {
             ParseLimits {
-                max_alias_bytes: MaxAliasBytes::new(bytes),
+                max_alias_bytes: MaxAliasBytes::new(bytes).unwrap(),
                 ..ParseLimits::default()
             }
         }
@@ -1091,6 +1091,55 @@ merged:
         fn tagged_depth_parses_and_drops_on_small_stack() {
             let depth = 250;
             parse_and_drop_on_512k_stack(format!("{}1{}", "!t [".repeat(depth), "]".repeat(depth)));
+        }
+
+        fn parse_and_drop_at_max_depth(input: String, stack_size: usize) {
+            std::thread::Builder::new()
+                .stack_size(stack_size)
+                .spawn(move || {
+                    let limits = ParseLimits {
+                        max_depth: MaxDepth::MAX,
+                        ..ParseLimits::default()
+                    };
+                    for value in Parser::parse_all_with_limits(&input, &limits).unwrap() {
+                        drop(value);
+                    }
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+        }
+
+        #[test]
+        fn max_depth_block_sequence_parses_and_drops_on_2mib_stack() {
+            parse_and_drop_at_max_depth(
+                format!("{}x", "- ".repeat(MaxDepth::MAX.get())),
+                2 * 1024 * 1024,
+            );
+        }
+
+        #[test]
+        fn max_depth_tagged_sequence_parses_and_drops_on_1mib_stack() {
+            let depth = MaxDepth::MAX.get();
+            let mut input = String::new();
+            for i in 0..depth {
+                writeln!(input, "{}- !t", "  ".repeat(i)).unwrap();
+            }
+            input.push_str(&"  ".repeat(depth));
+            input.push('x');
+            parse_and_drop_at_max_depth(input, 1024 * 1024);
+        }
+
+        #[test]
+        fn max_depth_nested_mappings_parse_and_drop_on_2mib_stack() {
+            let depth = MaxDepth::MAX.get();
+            let mut input = String::new();
+            for i in 0..depth {
+                writeln!(input, "{}k:", " ".repeat(i)).unwrap();
+            }
+            input.push_str(&" ".repeat(depth));
+            input.push('x');
+            parse_and_drop_at_max_depth(input, 2 * 1024 * 1024);
         }
 
         fn str_bomb(scalar_len: usize, levels: usize) -> String {

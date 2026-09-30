@@ -3,6 +3,7 @@
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
 use crate::conversion::yaml_to_js;
+use crate::limits::parse_limits;
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
     Env, Result as NapiResult, Task,
@@ -52,6 +53,14 @@ pub struct ParallelConfig {
 
     /// Maximum number of documents allowed (default: 100k, max: 10M).
     pub max_documents: Option<u32>,
+
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256).
+    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+    pub max_depth: Option<f64>,
+
+    /// Maximum estimated alias-expansion bytes, shared across chunks of one call (integer,
+    /// 1..=1073741824, default: 67108864).
+    pub max_alias_bytes: Option<f64>,
 }
 
 impl ParallelConfig {
@@ -114,7 +123,7 @@ impl ParallelConfig {
             config = config.with_sequential_threshold(size as usize);
         }
 
-        Ok(config)
+        Ok(config.with_parse_limits(parse_limits(self.max_depth, self.max_alias_bytes)?))
     }
 }
 
@@ -178,7 +187,7 @@ pub fn parse_parallel(
     let rust_config = match config.unwrap_or_default().to_rust_config() {
         Ok(c) => c,
         Err(e) => {
-            env.throw_error(&e.to_string(), None)?;
+            env.throw_error(&e.reason, None)?;
             return Ok(Vec::new());
         }
     };
@@ -323,6 +332,7 @@ mod tests {
             max_chunk_size: Some(5 * 1024 * 1024),
             max_input_size: Some(50 * 1024 * 1024),
             max_documents: Some(50_000),
+            ..Default::default()
         };
         assert!(config.to_rust_config().is_ok());
 
@@ -337,6 +347,13 @@ mod tests {
         let config = ParallelConfig {
             min_chunk_size: Some(10000),
             max_chunk_size: Some(1000),
+            ..Default::default()
+        };
+        assert!(config.to_rust_config().is_err());
+
+        // Invalid parse limits
+        let config = ParallelConfig {
+            max_depth: Some(-1.0),
             ..Default::default()
         };
         assert!(config.to_rust_config().is_err());

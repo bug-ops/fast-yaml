@@ -26,6 +26,7 @@ use napi_derive::napi;
 mod batch;
 mod conversion;
 mod emitter;
+mod limits;
 mod lint;
 mod parallel;
 mod parser;

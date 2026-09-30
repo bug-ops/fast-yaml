@@ -85,10 +85,53 @@ impl ExitCode {
     }
 }
 
+/// The CLI flag that raises the limit a parse error ran into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RaiseHint {
+    /// `--max-depth`
+    MaxDepth,
+    /// `--max-alias-bytes`
+    MaxAliasBytes,
+}
+
+impl std::fmt::Display for RaiseHint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::MaxDepth => "raise with --max-depth",
+            Self::MaxAliasBytes => "raise with --max-alias-bytes",
+        })
+    }
+}
+
+impl RaiseHint {
+    /// Finds a raisable limit failure anywhere in the error's source chain.
+    ///
+    /// Tag, output and dump-node limits have no CLI flag and yield `None`.
+    #[must_use]
+    pub fn of(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
+        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth};
+        use fast_yaml_core::{LimitKind, ParseError};
+        std::iter::successors(Some(err), |e| e.source()).find_map(|e| {
+            match e.downcast_ref::<ParseError>()? {
+                ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(limit),
+                    ..
+                } if limit.get() < MaxDepth::MAX.get() => Some(Self::MaxDepth),
+                ParseError::LimitExceeded {
+                    kind: LimitKind::AliasBytes(limit),
+                    ..
+                } if limit.get() < MaxAliasBytes::MAX.get() => Some(Self::MaxAliasBytes),
+                _ => None,
+            }
+        })
+    }
+}
+
 /// Format error with colored output (if enabled)
 pub fn format_error(err: &anyhow::Error, use_color: bool) -> String {
     use std::fmt::Write;
     let mut output = String::new();
+    let hint = RaiseHint::of(err.as_ref());
 
     #[cfg(feature = "colors")]
     if use_color {
@@ -105,6 +148,9 @@ pub fn format_error(err: &anyhow::Error, use_color: bool) -> String {
                 cause.to_string().dimmed()
             );
         }
+        if let Some(hint) = hint {
+            let _ = writeln!(output, "  {} {hint}", "hint:".yellow());
+        }
         return output;
     }
 
@@ -113,6 +159,10 @@ pub fn format_error(err: &anyhow::Error, use_color: bool) -> String {
 
     for (i, cause) in err.chain().skip(1).enumerate() {
         let _ = writeln!(output, "  caused by[{i}] {cause}");
+    }
+
+    if let Some(hint) = hint {
+        let _ = writeln!(output, "  hint: {hint}");
     }
 
     output
@@ -130,6 +180,34 @@ mod tests {
         assert_eq!(ExitCode::IoError.as_i32(), 3);
         assert_eq!(ExitCode::InvalidArgs.as_i32(), 4);
         assert_eq!(ExitCode::WouldChange.as_i32(), 5);
+    }
+
+    #[test]
+    fn test_raise_hint_for_depth_and_alias_only() {
+        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth, MaxTagBytes};
+        use fast_yaml_core::{LimitKind, ParseError};
+        let limit = |kind| ParseError::LimitExceeded {
+            kind,
+            line: 1,
+            column: 1,
+        };
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::Depth(MaxDepth::DEFAULT))),
+            Some(RaiseHint::MaxDepth)
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::AliasBytes(MaxAliasBytes::DEFAULT))),
+            Some(RaiseHint::MaxAliasBytes)
+        );
+        assert_eq!(RaiseHint::of(&limit(LimitKind::Depth(MaxDepth::MAX))), None);
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::AliasBytes(MaxAliasBytes::MAX))),
+            None
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::TagBytes(MaxTagBytes::DEFAULT))),
+            None
+        );
     }
 
     #[test]

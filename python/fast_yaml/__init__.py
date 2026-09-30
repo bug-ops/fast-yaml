@@ -91,7 +91,12 @@ __all__ = [
 ]
 
 
-def safe_load(stream: str | bytes | IO[str] | IO[bytes]) -> Any:
+def safe_load(
+    stream: str | bytes | IO[str] | IO[bytes],
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
+) -> Any:
     """
     Parse a YAML document and return a Python object.
 
@@ -99,12 +104,17 @@ def safe_load(stream: str | bytes | IO[str] | IO[bytes]) -> Any:
 
     Args:
         stream: A YAML document as a string, bytes, or file-like object.
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
 
     Returns:
         The parsed YAML document as Python objects (dict, list, str, int, float, bool, None).
 
     Raises:
-        ValueError: If the YAML is invalid.
+        ValueError: If the YAML is invalid or a limit is out of range.
+        TypeError: If a limit is not an int (``bool`` included).
 
     Example:
         >>> import fast_yaml
@@ -123,10 +133,15 @@ def safe_load(stream: str | bytes | IO[str] | IO[bytes]) -> Any:
     else:
         content = stream
 
-    return _safe_load(content)
+    return _safe_load(content, max_depth=max_depth, max_alias_bytes=max_alias_bytes)
 
 
-def safe_load_all(stream: str | bytes | IO[str] | IO[bytes]) -> Iterator[Any]:
+def safe_load_all(
+    stream: str | bytes | IO[str] | IO[bytes],
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
+) -> Iterator[Any]:
     """
     Parse all YAML documents in a stream and return an iterator.
 
@@ -134,9 +149,17 @@ def safe_load_all(stream: str | bytes | IO[str] | IO[bytes]) -> Iterator[Any]:
 
     Args:
         stream: A YAML string potentially containing multiple documents.
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
 
     Yields:
         Parsed YAML documents.
+
+    Raises:
+        ValueError: If the YAML is invalid or a limit is out of range.
+        TypeError: If a limit is not an int (``bool`` included).
 
     Example:
         >>> import fast_yaml
@@ -153,7 +176,7 @@ def safe_load_all(stream: str | bytes | IO[str] | IO[bytes]) -> Iterator[Any]:
         content = stream
 
     # _safe_load_all returns a list, convert to iterator
-    return iter(_safe_load_all(content))
+    return iter(_safe_load_all(content, max_depth=max_depth, max_alias_bytes=max_alias_bytes))
 
 
 def safe_dump(
@@ -327,6 +350,9 @@ def safe_dump_to(
 def load(
     stream: str | bytes | IO[str] | IO[bytes],
     Loader: type | None = None,  # noqa: N803 - PyYAML API compatibility
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
 ) -> Any:
     """
     Parse a YAML document with an optional Loader.
@@ -338,12 +364,17 @@ def load(
     Args:
         stream: A YAML document as a string, bytes, or file-like object.
         Loader: Optional loader class (SafeLoader, FullLoader, Loader).
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
 
     Returns:
         The parsed YAML document as Python objects.
 
     Raises:
-        ValueError: If the YAML is invalid.
+        ValueError: If the YAML is invalid or a limit is out of range.
+        TypeError: If a limit is not an int (``bool`` included).
 
     Example:
         >>> import fast_yaml
@@ -370,12 +401,15 @@ def load(
     else:
         # It's already an instance
         loader_instance = Loader
-    return _load(content, loader_instance)
+    return _load(content, loader_instance, max_depth=max_depth, max_alias_bytes=max_alias_bytes)
 
 
 def load_all(
     stream: str | bytes | IO[str] | IO[bytes],
     Loader: type | None = None,  # noqa: N803 - PyYAML API compatibility
+    *,
+    max_depth: int | None = None,
+    max_alias_bytes: int | None = None,
 ) -> Iterator[Any]:
     """
     Parse all YAML documents in a stream with an optional Loader.
@@ -387,6 +421,10 @@ def load_all(
     Args:
         stream: A YAML string potentially containing multiple documents.
         Loader: Optional loader class (SafeLoader, FullLoader, Loader).
+        max_depth: Maximum collection nesting depth, 1..=512 (default: 256). Depth 512 needs
+            about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
+            The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
+        max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
 
     Yields:
         Parsed YAML documents.
@@ -414,7 +452,9 @@ def load_all(
     else:
         # It's already an instance
         loader_instance = Loader
-    return iter(_load_all(content, loader_instance))
+    return iter(
+        _load_all(content, loader_instance, max_depth=max_depth, max_alias_bytes=max_alias_bytes)
+    )
 
 
 # PyYAML-compatible dump function with optional Dumper

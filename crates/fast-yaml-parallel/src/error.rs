@@ -10,7 +10,7 @@ use thiserror::Error;
 #[non_exhaustive]
 pub enum Error {
     /// Failed to parse a document at specific index.
-    #[error("failed to parse document at index {index}")]
+    #[error("failed to parse document at index {index}: {source}")]
     Parse {
         /// Zero-based index of the document that failed.
         index: usize,
@@ -103,5 +103,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 impl From<std::str::Utf8Error> for Error {
     fn from(source: std::str::Utf8Error) -> Self {
         Self::Utf8 { source }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fast_yaml_core::LimitKind;
+    use fast_yaml_core::limits::MaxDepth;
+
+    #[test]
+    fn test_parse_error_display_includes_cause() {
+        let err = Error::Parse {
+            index: 0,
+            source: CoreParseError::LimitExceeded {
+                kind: LimitKind::Depth(MaxDepth::DEFAULT),
+                line: 1,
+                column: 1,
+            },
+        };
+        let text = err.to_string();
+        assert!(text.contains("index 0"), "{text}");
+        assert!(text.contains("nesting depth exceeds 256"), "{text}");
     }
 }

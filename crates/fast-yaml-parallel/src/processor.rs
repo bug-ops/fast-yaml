@@ -5,7 +5,7 @@
 use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
-use fast_yaml_core::limits::{ParseLimits, StreamBudget};
+use fast_yaml_core::limits::StreamBudget;
 use fast_yaml_core::{Parser, ScalarOwned, Value};
 use rayon::prelude::*;
 
@@ -40,7 +40,7 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
         return Ok(vec![Value::Value(ScalarOwned::Null)]);
     }
 
-    let budget = StreamBudget::new(ParseLimits::default());
+    let budget = StreamBudget::new(config.parse_limits());
 
     // Step 3: Check if parallelism is worthwhile
     if should_use_sequential(&chunks, config) {
@@ -134,6 +134,7 @@ fn parse_chunks_parallel(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<
 mod tests {
     use super::*;
     use crate::chunker::SourceOrigin;
+    use fast_yaml_core::limits::ParseLimits;
 
     fn budget() -> StreamBudget {
         StreamBudget::new(ParseLimits::default())
@@ -199,6 +200,68 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_process_parallel_honors_parse_limits() {
+        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth};
+        let nested = "[[[1]]]\n---\nb: 2\n";
+        let depth = Config::new().with_parse_limits(ParseLimits {
+            max_depth: MaxDepth::new(2).unwrap(),
+            ..ParseLimits::default()
+        });
+        assert!(process_parallel(nested, &depth).is_err());
+        assert!(process_parallel(nested, &Config::new()).is_ok());
+
+        let aliased = "a: &x [1, 2, 3]\nb: *x\n---\nc: 1\n";
+        let alias = Config::new().with_parse_limits(ParseLimits {
+            max_alias_bytes: MaxAliasBytes::new(64).unwrap(),
+            ..ParseLimits::default()
+        });
+        assert!(process_parallel(aliased, &alias).is_err());
+        assert!(process_parallel(aliased, &Config::new()).is_ok());
+    }
+
+    #[test]
+    fn test_parse_limits_propagate_through_parallel_chunks() {
+        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth};
+        let parallel = || Config::new().with_sequential_threshold(0);
+
+        let nested = "a: 1\n---\n[[[1]]]\n---\nb: 2\n";
+        assert!(chunk_documents(nested).len() >= 3);
+        let depth = parallel().with_parse_limits(ParseLimits {
+            max_depth: MaxDepth::new(2).unwrap(),
+            ..ParseLimits::default()
+        });
+        assert!(matches!(
+            process_parallel(nested, &depth),
+            Err(Error::Parse {
+                source: fast_yaml_core::ParseError::LimitExceeded {
+                    kind: fast_yaml_core::LimitKind::Depth(_),
+                    ..
+                },
+                ..
+            })
+        ));
+        assert!(process_parallel(nested, &parallel()).is_ok());
+
+        let aliased = "a: &x [1, 2, 3]\nb: *x\n---\nc: &y [1, 2, 3]\nd: *y\n";
+        assert!(chunk_documents(aliased).len() >= 2);
+        let alias = parallel().with_parse_limits(ParseLimits {
+            max_alias_bytes: MaxAliasBytes::new(300).unwrap(),
+            ..ParseLimits::default()
+        });
+        assert!(matches!(
+            process_parallel(aliased, &alias),
+            Err(Error::Parse {
+                source: fast_yaml_core::ParseError::LimitExceeded {
+                    kind: fast_yaml_core::LimitKind::AliasBytes(_),
+                    ..
+                },
+                ..
+            })
+        ));
+        assert!(process_parallel(aliased, &parallel()).is_ok());
     }
 
     #[test]

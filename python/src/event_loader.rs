@@ -22,12 +22,12 @@ use crate::repr_to_python;
 ///
 /// # Errors
 ///
-/// Returns `PyValueError` on invalid YAML syntax.
-pub fn load_all(py: Python<'_>, input: &str) -> PyResult<Vec<Py<PyAny>>> {
+/// Returns `PyValueError` on invalid YAML syntax or when `limits` are exceeded.
+pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Vec<Py<PyAny>>> {
     let mut loader = EventLoader {
         parser: Parser::new_from_str(fast_yaml_core::strip_bom(input)),
         anchors: HashMap::new(),
-        guard: LimitGuard::new(ParseLimits::default()),
+        guard: LimitGuard::new(limits),
     };
     let docs = loader.load_stream(py)?;
     // Replicate fast-yaml-core: inject implicit null for non-empty, zero-doc streams

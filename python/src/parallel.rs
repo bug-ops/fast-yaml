@@ -8,6 +8,7 @@
 //! - `TypeError`: Used for type conversion errors (handled in conversion module)
 
 use crate::conversion::value_to_python;
+use crate::limits;
 use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
 use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig};
 use fast_yaml_parallel::{
@@ -56,8 +57,11 @@ impl PyParallelConfig {
         max_chunk_size=10*1024*1024,
         max_input_size=100*1024*1024,
         max_documents=100_000,
-        auto_tune=true
+        auto_tune=true,
+        max_depth=None,
+        max_alias_bytes=None
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         thread_count: Option<usize>,
         min_chunk_size: usize,
@@ -65,7 +69,10 @@ impl PyParallelConfig {
         max_input_size: usize,
         max_documents: usize,
         auto_tune: bool,
+        max_depth: Option<&Bound<'_, PyAny>>,
+        max_alias_bytes: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
         // Validate thread_count (if specified, must be <= 128)
         if let Some(count) = thread_count
             && count > MAX_THREADS
@@ -104,7 +111,8 @@ impl PyParallelConfig {
         let config = RustParallelConfig::new()
             .with_workers(thread_count)
             .with_sequential_threshold(min_chunk_size)
-            .with_max_input_size(max_input_size);
+            .with_max_input_size(max_input_size)
+            .with_parse_limits(parse_limits);
 
         // Note: max_chunk_size is validated but not stored in new Config API
         let _ = max_chunk_size;
@@ -228,6 +236,43 @@ impl PyParallelConfig {
             auto_tune: enabled,
             max_documents: self.max_documents,
         }
+    }
+
+    /// Sets the maximum collection nesting depth; `None` resets to the default.
+    ///
+    /// Default: 256 (max: 512). Depth 512 needs about 1 MiB of thread stack and can
+    /// abort on stacks of 512 KiB or less; 256 is safe.
+    ///
+    /// Raises:
+    ///     `ValueError`: If depth is outside 1..=512
+    ///     `TypeError`: If depth is not an int (`bool` included)
+    fn with_max_depth(&self, depth: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = fast_yaml_core::ParseLimits {
+            max_depth: limits::max_depth(depth)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+            ..self.clone()
+        })
+    }
+
+    /// Sets the alias-expansion budget in bytes, applied per stream; `None` resets to the default.
+    ///
+    /// Default: 64 MiB (max: 1 GiB)
+    ///
+    /// Raises:
+    ///     `ValueError`: If bytes is outside 1..=1 GiB
+    ///     `TypeError`: If bytes is not an int (`bool` included)
+    fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = fast_yaml_core::ParseLimits {
+            max_alias_bytes: limits::max_alias_bytes(bytes)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+            ..self.clone()
+        })
     }
 
     #[allow(clippy::unused_self)] // PyO3 requires &self for __repr__

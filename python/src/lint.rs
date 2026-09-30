@@ -3,6 +3,8 @@
 //! Exposes the YAML linter API to Python with comprehensive diagnostics,
 //! rich error reporting, and configurable linting rules.
 
+use crate::limits;
+use fast_yaml_core::ParseLimits;
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticCode as RustDiagnosticCode, DiagnosticContext as RustDiagnosticContext,
@@ -477,7 +479,10 @@ impl PyLintConfig {
         allow_duplicate_keys=false,
         disabled_rules=None,
         rules=None,
+        max_depth=None,
+        max_alias_bytes=None,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         max_line_length: Option<usize>,
         indent_size: usize,
@@ -486,7 +491,10 @@ impl PyLintConfig {
         allow_duplicate_keys: bool,
         disabled_rules: Option<Bound<'_, PyAny>>,
         rules: Option<Bound<'_, PyAny>>,
+        max_depth: Option<&Bound<'_, PyAny>>,
+        max_alias_bytes: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
         // Validate indent_size (must be between 1 and 16)
         if indent_size == 0 || indent_size > 16 {
             return Err(PyValueError::new_err(
@@ -519,6 +527,7 @@ impl PyLintConfig {
             allow_duplicate_keys,
             disabled_rules: disabled_rules_set,
             rule_configs: std::collections::HashMap::new(),
+            parse_limits,
         };
 
         if let Some(rules_obj) = rules {
@@ -566,6 +575,30 @@ impl PyLintConfig {
         }
         Ok(Self {
             inner: self.inner.clone().with_indent_size(size),
+        })
+    }
+
+    /// Sets the maximum collection nesting depth (1..=512, default 256); `None` resets to the default.
+    ///
+    /// Depth 512 needs about 1 MiB of thread stack and can abort on stacks of 512 KiB or less.
+    fn with_max_depth(&self, depth: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_depth: limits::max_depth(depth)?,
+            ..self.inner.parse_limits
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+        })
+    }
+
+    /// Sets the alias-expansion budget in bytes (1..=1 GiB, default 64 MiB); `None` resets to the default.
+    fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_alias_bytes: limits::max_alias_bytes(bytes)?,
+            ..self.inner.parse_limits
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
         })
     }
 

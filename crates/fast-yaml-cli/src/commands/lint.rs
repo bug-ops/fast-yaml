@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_linter::{
     ConfigFile, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
 };
@@ -23,6 +24,7 @@ pub struct LintArgs {
     pub format: LintFormat,
     /// Allow duplicate keys override (from `--allow-duplicate-keys`).
     pub allow_duplicate_keys: Option<bool>,
+    pub parse_limits: ParseLimits,
 }
 
 /// Lint command implementation
@@ -52,7 +54,8 @@ impl LintCommand {
             args.max_line_length,
             args.indent_size,
             args.allow_duplicate_keys,
-        );
+        )
+        .with_parse_limits(args.parse_limits);
         Ok(Self {
             config,
             lint_config,
@@ -201,6 +204,7 @@ mod tests {
                 indent_size: None,
                 format,
                 allow_duplicate_keys,
+                parse_limits: ParseLimits::default(),
             },
             input,
         )
@@ -292,6 +296,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                parse_limits: ParseLimits::default(),
             },
             &input,
         )
@@ -313,6 +318,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                parse_limits: ParseLimits::default(),
             },
             &input,
         );
@@ -336,6 +342,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                parse_limits: ParseLimits::default(),
             },
             &input,
         )
@@ -360,6 +367,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Json,
                 allow_duplicate_keys: None,
+                parse_limits: ParseLimits::default(),
             },
             &input,
         )
@@ -384,6 +392,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                parse_limits: ParseLimits::default(),
             },
             &input,
         )
@@ -407,6 +416,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                parse_limits: ParseLimits::default(),
             },
             &input,
         )

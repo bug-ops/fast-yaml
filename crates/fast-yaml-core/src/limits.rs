@@ -12,7 +12,32 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
+/// A limit was constructed with a value outside its permitted range.
+///
+/// The `Display` form is `must be between 1 and {max}, got {value}`; callers prefix it with
+/// the name of the option they are validating.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxDepth;
+///
+/// let err = MaxDepth::new(0).unwrap_err();
+/// assert_eq!(err.to_string(), "must be between 1 and 512, got 0");
+/// ```
+#[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
+#[error("must be between 1 and {max}, got {value}")]
+pub struct LimitRangeError {
+    /// The rejected value.
+    pub value: usize,
+    /// The largest accepted value.
+    pub max: usize,
+}
+
 /// Maximum nesting depth of sequences and mappings.
+///
+/// Valid values lie between `1` and [`MAX`](Self::MAX) inclusive. Zero is rejected so it cannot be mistaken for
+/// "unlimited".
 ///
 /// # Examples
 ///
@@ -20,7 +45,9 @@ use thiserror::Error;
 /// use fast_yaml_core::limits::MaxDepth;
 ///
 /// assert_eq!(MaxDepth::default(), MaxDepth::DEFAULT);
-/// assert_eq!(MaxDepth::new(8).get(), 8);
+/// assert_eq!(MaxDepth::new(8).unwrap().get(), 8);
+/// assert!(MaxDepth::new(0).is_err());
+/// assert!(MaxDepth::new(MaxDepth::MAX.get() + 1).is_err());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaxDepth(usize);
@@ -30,10 +57,43 @@ impl MaxDepth {
     /// consumers well inside small thread stacks.
     pub const DEFAULT: Self = Self(256);
 
+    /// Largest accepted depth: twice the default.
+    ///
+    /// The calling thread needs about 1 MiB of stack at this depth (worst case: nested tagged
+    /// block sequences, roughly 830 KiB measured in release). On 512 KiB or smaller stacks
+    /// (small thread stacks, `ulimit -s 512`) the process can abort, and a stack overflow cannot
+    /// be caught; the default depth of 256 is safe there. The emitter and formatter keep their
+    /// own fixed depth of 256 (TODO #427), so data parsed deeper than that may fail to dump.
+    pub const MAX: Self = Self(512);
+
+    /// Smallest accepted depth: a single level of nesting.
+    pub const MIN: Self = Self(1);
+
+    pub(crate) const UNBOUNDED: Self = Self(usize::MAX);
+
     /// Creates a depth limit of `depth` nested collections.
-    #[must_use]
-    pub const fn new(depth: usize) -> Self {
-        Self(depth)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitRangeError`] when `depth` is outside `1` to [`MAX`](Self::MAX) inclusive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::{LimitRangeError, MaxDepth};
+    ///
+    /// assert_eq!(MaxDepth::new(512), Ok(MaxDepth::MAX));
+    /// assert_eq!(MaxDepth::new(513), Err(LimitRangeError { value: 513, max: 512 }));
+    /// ```
+    pub const fn new(depth: usize) -> Result<Self, LimitRangeError> {
+        if depth < Self::MIN.0 || depth > Self::MAX.0 {
+            Err(LimitRangeError {
+                value: depth,
+                max: Self::MAX.0,
+            })
+        } else {
+            Ok(Self(depth))
+        }
     }
 
     /// Returns the limit as a plain number.
@@ -53,7 +113,7 @@ impl MaxDepth {
     /// ```
     /// use fast_yaml_core::limits::MaxDepth;
     ///
-    /// let max = MaxDepth::new(2);
+    /// let max = MaxDepth::new(2).unwrap();
     /// assert_eq!(max.descend(1), Ok(2));
     /// assert!(max.descend(2).is_err());
     /// ```
@@ -82,7 +142,7 @@ impl fmt::Display for MaxDepth {
 ///
 /// Each expanded node costs [`NODE_BYTES`] plus the length of its scalar and tag text, so both wide
 /// and long-scalar amplification are bounded. The budget is shared by all documents of a
-/// stream, not reset per document.
+/// stream, not reset per document. Valid values lie between `1` and [`MAX`](Self::MAX) inclusive.
 ///
 /// # Examples
 ///
@@ -90,7 +150,9 @@ impl fmt::Display for MaxDepth {
 /// use fast_yaml_core::limits::MaxAliasBytes;
 ///
 /// assert_eq!(MaxAliasBytes::default(), MaxAliasBytes::DEFAULT);
-/// assert_eq!(MaxAliasBytes::new(10).get(), 10);
+/// assert_eq!(MaxAliasBytes::new(10).unwrap().get(), 10);
+/// assert!(MaxAliasBytes::new(0).is_err());
+/// assert!(MaxAliasBytes::new(MaxAliasBytes::MAX.get() + 1).is_err());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MaxAliasBytes(usize);
@@ -99,10 +161,40 @@ impl MaxAliasBytes {
     /// Default budget: 64 MiB of expanded data per stream.
     pub const DEFAULT: Self = Self(64 * 1024 * 1024);
 
+    /// Largest accepted budget: 1 GiB, about 16 Mi expanded nodes at [`NODE_BYTES`] each.
+    ///
+    /// This bounds estimated memory of the expanded tree, independent of any input-size cap;
+    /// host objects built from it can cost several times the estimate.
+    pub const MAX: Self = Self(1 << 30);
+
+    /// Smallest accepted budget: one byte.
+    pub const MIN: Self = Self(1);
+
+    pub(crate) const UNBOUNDED: Self = Self(usize::MAX);
+
     /// Creates a budget of `bytes` expanded bytes.
-    #[must_use]
-    pub const fn new(bytes: usize) -> Self {
-        Self(bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitRangeError`] when `bytes` is outside `1` to [`MAX`](Self::MAX) inclusive.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::MaxAliasBytes;
+    ///
+    /// assert_eq!(MaxAliasBytes::new(1 << 30), Ok(MaxAliasBytes::MAX));
+    /// assert_eq!(MaxAliasBytes::new(0).unwrap_err().max, 1 << 30);
+    /// ```
+    pub const fn new(bytes: usize) -> Result<Self, LimitRangeError> {
+        if bytes < Self::MIN.0 || bytes > Self::MAX.0 {
+            Err(LimitRangeError {
+                value: bytes,
+                max: Self::MAX.0,
+            })
+        } else {
+            Ok(Self(bytes))
+        }
     }
 
     /// Returns the budget as a plain number.
@@ -352,7 +444,7 @@ impl DumpBudget {
 /// use fast_yaml_core::Parser;
 /// use fast_yaml_core::limits::{MaxDepth, ParseLimits};
 ///
-/// let limits = ParseLimits { max_depth: MaxDepth::new(2), ..ParseLimits::default() };
+/// let limits = ParseLimits { max_depth: MaxDepth::new(2).unwrap(), ..ParseLimits::default() };
 /// assert!(Parser::parse_str_with_limits("[[1]]", &limits).is_ok());
 /// assert!(Parser::parse_str_with_limits("[[[1]]]", &limits).is_err());
 /// ```
@@ -382,7 +474,7 @@ pub struct ParseLimits {
 /// use fast_yaml_core::Parser;
 /// use fast_yaml_core::limits::{MaxAliasBytes, ParseLimits, StreamBudget};
 ///
-/// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(100), ..ParseLimits::default() };
+/// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(100).unwrap(), ..ParseLimits::default() };
 /// let budget = StreamBudget::new(limits);
 /// let clone = budget.clone();
 /// let doc = "- &a x\n- *a\n";
@@ -396,7 +488,7 @@ pub struct ParseLimits {
 /// use fast_yaml_core::Parser;
 /// use fast_yaml_core::limits::{MaxAliasBytes, ParseLimits, StreamBudget};
 ///
-/// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(100), ..ParseLimits::default() };
+/// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(100).unwrap(), ..ParseLimits::default() };
 /// let budget = StreamBudget::new(limits);
 /// let doc = "- &a x\n- *a\n";
 /// assert!(Parser::parse_all_with_budget(doc, &budget).is_ok());
@@ -673,6 +765,46 @@ mod tests {
     }
 
     #[test]
+    fn max_depth_new_enforces_range() {
+        assert_eq!(MaxDepth::new(1), Ok(MaxDepth::MIN));
+        assert_eq!(MaxDepth::new(MaxDepth::MAX.get()), Ok(MaxDepth::MAX));
+        for value in [0, MaxDepth::MAX.get() + 1] {
+            assert_eq!(
+                MaxDepth::new(value),
+                Err(LimitRangeError {
+                    value,
+                    max: MaxDepth::MAX.get()
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn max_alias_bytes_new_enforces_range() {
+        assert_eq!(MaxAliasBytes::MAX.get(), 1 << 30);
+        assert_eq!(MaxAliasBytes::new(1), Ok(MaxAliasBytes::MIN));
+        assert_eq!(
+            MaxAliasBytes::new(MaxAliasBytes::MAX.get()),
+            Ok(MaxAliasBytes::MAX)
+        );
+        for value in [0, MaxAliasBytes::MAX.get() + 1] {
+            assert!(MaxAliasBytes::new(value).is_err());
+        }
+    }
+
+    #[test]
+    fn defaults_lie_within_range() {
+        assert_eq!(
+            MaxDepth::new(MaxDepth::DEFAULT.get()),
+            Ok(MaxDepth::DEFAULT)
+        );
+        assert_eq!(
+            MaxAliasBytes::new(MaxAliasBytes::DEFAULT.get()),
+            Ok(MaxAliasBytes::DEFAULT)
+        );
+    }
+
+    #[test]
     fn dump_budget_byte_boundary_is_exact() {
         let max = MaxOutputBytes::new(2 * MIN_NODE_OUTPUT_BYTES + 3);
         let mut budget = DumpBudget::new(max, MaxDumpNodes::DEFAULT);
@@ -708,7 +840,7 @@ mod tests {
     #[test]
     fn charge_alias_never_wraps() {
         let budget = StreamBudget::new(ParseLimits {
-            max_alias_bytes: MaxAliasBytes::new(usize::MAX),
+            max_alias_bytes: MaxAliasBytes::UNBOUNDED,
             ..ParseLimits::default()
         });
         assert!(budget.charge_alias(usize::MAX).is_ok());
@@ -731,8 +863,8 @@ mod tests {
     #[test]
     fn doubling_alias_chain_errors_instead_of_wrapping() {
         let limits = ParseLimits {
-            max_alias_bytes: MaxAliasBytes::new(usize::MAX),
-            max_depth: MaxDepth::new(1_000),
+            max_alias_bytes: MaxAliasBytes::UNBOUNDED,
+            max_depth: MaxDepth::MAX,
             ..ParseLimits::default()
         };
         let mut guard = LimitGuard::new(limits);

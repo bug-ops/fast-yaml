@@ -42,8 +42,8 @@ pub use arena_backend::format_streaming_arena;
 /// expands aliases.
 fn tag_budget_guard() -> LimitGuard {
     LimitGuard::new(ParseLimits {
-        max_depth: MaxDepth::new(usize::MAX),
-        max_alias_bytes: MaxAliasBytes::new(usize::MAX),
+        max_depth: MaxDepth::UNBOUNDED,
+        max_alias_bytes: MaxAliasBytes::UNBOUNDED,
         ..ParseLimits::default()
     })
 }
@@ -65,6 +65,7 @@ const MAX_ANCHOR_ID: usize = 4096;
 
 /// Maximum number of nested non-empty collections, to prevent stack/memory exhaustion.
 /// 256 levels of nesting is far beyond any practical use case.
+// TODO(#427): unify with limits::MaxDepth
 const MAX_DEPTH: usize = 256;
 
 /// Longest implicit mapping key in characters (YAML 1.2 spec limit); longer keys use `? `.

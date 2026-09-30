@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use crate::limits::parse_limits;
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
@@ -134,6 +135,13 @@ pub struct BatchConfig {
     pub width: Option<u32>,
     /// Sort dictionary keys alphabetically (default: false)
     pub sort_keys: Option<bool>,
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256);
+    /// applies to `processFiles`, not to `formatFiles` (fixed formatter depth limit).
+    /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 830 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+    pub max_depth: Option<f64>,
+    /// Maximum estimated alias-expansion bytes per file (integer, 1..=1073741824,
+    /// default: 67108864); applies to `processFiles` only; peak memory can reach workers x this budget
+    pub max_alias_bytes: Option<f64>,
 }
 
 impl BatchConfig {
@@ -153,7 +161,7 @@ impl BatchConfig {
         Ok(())
     }
 
-    fn to_rust_config(&self) -> RustConfig {
+    fn to_rust_config(&self) -> NapiResult<RustConfig> {
         let mut config = RustConfig::new();
         if let Some(w) = self.workers {
             config = config.with_workers(Some(w as usize));
@@ -167,7 +175,7 @@ impl BatchConfig {
         if let Some(t) = self.sequential_threshold {
             config = config.with_sequential_threshold(t as usize);
         }
-        config
+        Ok(config.with_parse_limits(parse_limits(self.max_depth, self.max_alias_bytes)?))
     }
 
     fn to_emitter_config(&self) -> EmitterConfig {
@@ -211,11 +219,11 @@ pub struct FormatResult {
 /// ```
 #[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
-pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiResult<BatchResult> {
+pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> napi::Result<BatchResult> {
     let config = config.unwrap_or_default();
     config.validate()?;
 
-    let rust_config = config.to_rust_config();
+    let rust_config = config.to_rust_config()?;
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
     let processor = FileProcessor::with_config(rust_config);
@@ -251,11 +259,11 @@ pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> NapiRes
 pub fn format_files(
     paths: Vec<String>,
     config: Option<BatchConfig>,
-) -> NapiResult<Vec<FormatResult>> {
+) -> napi::Result<Vec<FormatResult>> {
     let config = config.unwrap_or_default();
     config.validate()?;
 
-    let rust_config = config.to_rust_config();
+    let rust_config = config.to_rust_config()?;
     let emitter_config = config.to_emitter_config();
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 
@@ -308,11 +316,11 @@ pub fn format_files(
 pub fn format_files_in_place(
     paths: Vec<String>,
     config: Option<BatchConfig>,
-) -> NapiResult<BatchResult> {
+) -> napi::Result<BatchResult> {
     let config = config.unwrap_or_default();
     config.validate()?;
 
-    let rust_config = config.to_rust_config();
+    let rust_config = config.to_rust_config()?;
     let emitter_config = config.to_emitter_config();
     let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
 

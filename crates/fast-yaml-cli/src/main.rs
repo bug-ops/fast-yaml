@@ -76,9 +76,14 @@ fn run() -> Result<ExitCode> {
     let common_config = CommonConfig::from_cli(&cli);
 
     let exit_code = match cli.command {
-        Some(Command::Parse { file, stats }) => {
+        Some(Command::Parse {
+            file,
+            stats,
+            limits,
+        }) => {
             let input = InputSource::from_args(file)?;
-            let cmd = commands::parse::ParseCommand::new(common_config, stats);
+            let cmd =
+                commands::parse::ParseCommand::new(common_config, stats, limits.parse_limits());
             cmd.execute(&input)?;
             ExitCode::Success
         }
@@ -122,11 +127,16 @@ fn run() -> Result<ExitCode> {
                 }
             }
         }
-        Some(Command::Convert { to, file, pretty }) => {
+        Some(Command::Convert {
+            to,
+            file,
+            pretty,
+            limits,
+        }) => {
             let input = InputSource::from_args(file)?;
             let output =
                 OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
-            let cmd = commands::convert::ConvertCommand::new(to, pretty);
+            let cmd = commands::convert::ConvertCommand::new(to, pretty, limits.parse_limits());
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
@@ -140,6 +150,7 @@ fn run() -> Result<ExitCode> {
             format,
             allow_duplicate_keys,
             batch,
+            limits,
         }) => {
             if cli.in_place {
                 anyhow::bail!(
@@ -154,6 +165,7 @@ fn run() -> Result<ExitCode> {
                 indent_size,
                 format,
                 allow_duplicate_keys,
+                parse_limits: limits.parse_limits(),
             };
 
             match target {
