@@ -500,20 +500,42 @@ impl Emitter {
                 ..*config
             };
             let mut output = String::new();
-            for (i, doc) in docs.iter().enumerate() {
+            for (i, doc) in docs.into_iter().map(Self::nullify_omitted).enumerate() {
                 if i > 0 || config.explicit_start {
                     if !output.is_empty() && !output.ends_with('\n') {
                         output.push('\n');
                     }
                     output.push_str("---\n");
                 }
-                let emitted = Self::emit_str_preserving_styles(doc, &inner_config, 0)?;
+                let emitted = Self::emit_str_preserving_styles(&doc, &inner_config, 0)?;
                 output.push_str(&emitted);
             }
             if !output.is_empty() && !output.ends_with('\n') {
                 output.push('\n');
             }
             Ok(Self::prepend_directives(&directives, output))
+        }
+    }
+
+    /// Replace omitted (empty plain) scalars with explicit nulls so they never emit as bare empty text.
+    #[cfg(not(feature = "streaming"))]
+    fn nullify_omitted(value: Value) -> Value {
+        match value {
+            Value::Representation(s, ScalarStyle::Plain, None) if s.is_empty() => {
+                Value::Value(ScalarOwned::Null)
+            }
+            Value::Sequence(seq) => {
+                Value::Sequence(seq.into_iter().map(Self::nullify_omitted).collect())
+            }
+            Value::Mapping(map) => Value::Mapping(
+                map.into_iter()
+                    .map(|(k, v)| (Self::nullify_omitted(k), Self::nullify_omitted(v)))
+                    .collect(),
+            ),
+            Value::Tagged(tag, inner) => {
+                Value::Tagged(tag, Box::new(Self::nullify_omitted(*inner)))
+            }
+            other => other,
         }
     }
 
@@ -553,8 +575,12 @@ impl Emitter {
             return Self::emit_str_with_config(value, config);
         }
         let raw = Self::emit_value(value, config, indent_level)?;
-        // Apply the same post-processing (special floats, explicit_start) as the standard path
-        Ok(Self::apply_formatting(raw, config))
+        // `emit_value` already indents by `config.indent`; skip the 2-space -> N rescale
+        let rescaled = EmitterConfig {
+            indent: 2,
+            ..*config
+        };
+        Ok(Self::apply_formatting(raw, &rescaled))
     }
 
     /// Check whether the value tree contains any Literal or Folded block scalars.
@@ -714,19 +740,10 @@ impl Emitter {
         indent_width: usize,
         indent_level: usize,
     ) -> String {
-        let child_indent = " ".repeat(indent_level * indent_width);
+        let child_indent = " ".repeat(indent_level.max(1) * indent_width);
 
-        // Chomping: keep (+) if trailing blank lines, strip (-) if no trailing newline,
-        // clip (default) otherwise.
-        let chomping = if content.ends_with("\n\n") {
-            "+"
-        } else if !content.ends_with('\n') {
-            "-"
-        } else {
-            ""
-        };
-
-        let mut out = format!("{indicator}{chomping}\n");
+        let mut out = block_scalar_header(indicator, content, indent_width);
+        out.push('\n');
         for line in content.lines() {
             if line.is_empty() {
                 out.push('\n');
@@ -867,6 +884,35 @@ impl Emitter {
     pub fn format(input: &str) -> EmitResult<String> {
         Self::format_with_config(input, &EmitterConfig::default())
     }
+}
+
+/// Build a block scalar header: indicator, optional indentation digit, chomp suffix.
+///
+/// The digit is emitted when the first non-empty line starts with a space, since
+/// the parser would otherwise auto-detect the indentation from that leading space
+/// and drop it from the value. `indent_width` is the content indent relative to
+/// the parent node and must be in `1..=9` (guaranteed by `EmitterConfig`).
+/// Chomping is `+` (keep) for trailing blank lines or a lone newline, `-` (strip)
+/// without a trailing newline, and clip (nothing) otherwise.
+pub(crate) fn block_scalar_header(indicator: char, value: &str, indent_width: usize) -> String {
+    let mut header = String::from(indicator);
+    let leading_space = value
+        .lines()
+        .find(|line| !line.is_empty())
+        .is_some_and(|line| line.starts_with(' '));
+    if leading_space {
+        header.extend(
+            u32::try_from(indent_width)
+                .ok()
+                .and_then(|d| char::from_digit(d, 10)),
+        );
+    }
+    if value.ends_with("\n\n") || value == "\n" {
+        header.push('+');
+    } else if !value.ends_with('\n') {
+        header.push('-');
+    }
+    header
 }
 
 #[cfg(test)]
@@ -1931,5 +1977,200 @@ mod tests {
         .unwrap();
         assert!(!out.contains('\u{FEFF}'));
         assert!(out.contains("a: 1") && out.contains("b: 2"));
+    }
+
+    fn format_at(input: &str, indent: usize) -> String {
+        let config = EmitterConfig::new().with_indent(indent);
+        Emitter::format_with_config(input, &config).unwrap()
+    }
+
+    /// Asserts value preservation, idempotency and no trailing whitespace; returns the output.
+    fn assert_round_trip(input: &str, indent: usize) -> String {
+        let out = format_at(input, indent);
+        assert_eq!(
+            crate::Parser::parse_all(input).unwrap(),
+            crate::Parser::parse_all(&out).unwrap(),
+            "value changed (indent {indent}): {out:?}"
+        );
+        assert_eq!(
+            out,
+            format_at(&out, indent),
+            "not idempotent (indent {indent})"
+        );
+        assert!(
+            !out.lines().any(|l| l.ends_with(' ')),
+            "trailing whitespace (indent {indent}): {out:?}"
+        );
+        out
+    }
+
+    #[test]
+    fn test_block_scalar_header() {
+        assert_eq!(block_scalar_header('|', "a\n", 2), "|");
+        assert_eq!(block_scalar_header('|', "a", 2), "|-");
+        assert_eq!(block_scalar_header('>', "a\n\n", 2), ">+");
+        assert_eq!(block_scalar_header('|', " a\n", 4), "|4");
+        assert_eq!(block_scalar_header('|', " a\n\n", 3), "|3+");
+        assert_eq!(block_scalar_header('|', " a", 1), "|1-");
+        assert_eq!(block_scalar_header('>', "\n  a\n", 2), ">2");
+        assert_eq!(block_scalar_header('|', "\n\n", 2), "|+");
+        assert_eq!(block_scalar_header('|', "\n", 2), "|+");
+        assert_eq!(block_scalar_header('|', "\ta\n", 2), "|");
+    }
+
+    #[test]
+    fn test_block_scalar_leading_space_preserved() {
+        let cases = [
+            "a: |1\n  x\n",
+            "a: |2\n   x\n",
+            "a: |2+\n   x\n\n",
+            "a: |1-\n  x\n  y",
+            "a: >2\n   x\n",
+            "a: |2\n\n    lead\n",
+            "a:\n  b: |2\n     x\n  c: 1\n",
+            "- |1\n  x\n- >1\n  y\n",
+            "k:\n  - |2\n     x\n",
+        ];
+        for indent in [2, 3, 4, 8] {
+            for case in cases {
+                assert_round_trip(case, indent);
+            }
+        }
+        // Siblings of a compact `- -` first child only line up at indent 2 (pre-existing)
+        assert_round_trip("- - |1\n    x\n  - 1\n", 2);
+    }
+
+    #[test]
+    fn test_block_scalar_compact_parents_use_real_column() {
+        let cases = [
+            "- a: |2\n     x\n",
+            "- - |1\n    x\n",
+            "- - - |1\n      x\n",
+            "- - a: |1\n      x\n",
+            "a:\n  - - |1\n      x\n",
+            "- a:\n    b: |1\n      x\n",
+        ];
+        for indent in [2, 3, 4, 8] {
+            for case in cases {
+                assert_round_trip(case, indent);
+            }
+        }
+    }
+
+    #[test]
+    fn test_block_scalar_compact_mapping_sibling_indent_2() {
+        assert_round_trip("- a: |2\n     x\n  b: 1\n", 2);
+    }
+
+    #[test]
+    fn test_block_scalar_root_leading_space() {
+        for case in [
+            "|2\n   root\n",
+            ">2\n   root\n",
+            "--- |1\n  root\n",
+            "|+\n  x\n\n",
+        ] {
+            for indent in [2, 3, 4, 8] {
+                assert_round_trip(case, indent);
+            }
+        }
+    }
+
+    #[test]
+    fn test_block_scalar_lone_newline_keep() {
+        for case in ["a: |+\n\nb: 1\n", "a: |+\n\n\nb: 1\n", "- |+\n\n- 1\n"] {
+            for indent in [2, 4] {
+                assert_round_trip(case, indent);
+            }
+        }
+    }
+
+    #[test]
+    fn test_block_scalar_keep_and_folded_chomp_wide_indent() {
+        let cases = [
+            "a: >+\n  x\n\n",
+            "a: >2+\n   x\n\n\n",
+            "a: |+\n  x\n\n\n\nb: 1\n",
+            "a: |2+\n   x\n\n\nb: 1\n",
+        ];
+        for indent in [3, 4, 8] {
+            for case in cases {
+                assert_round_trip(case, indent);
+            }
+        }
+    }
+
+    #[test]
+    fn test_block_scalar_whitespace_only_first_line_preserved() {
+        let input = "a: |2\n   \n   x\n";
+        for indent in [2, 4] {
+            let out = format_at(input, indent);
+            assert_eq!(
+                crate::Parser::parse_all(input).unwrap(),
+                crate::Parser::parse_all(&out).unwrap(),
+                "{out:?}"
+            );
+            assert_eq!(out, format_at(&out, indent));
+        }
+    }
+
+    #[test]
+    fn test_block_scalar_keep_chomp_stable() {
+        for input in [
+            "a: |+\n  x\n\n\nb: 1\n",
+            "a: |+\n  x\n\n",
+            "- |+\n  x\n\n- y\n",
+        ] {
+            assert_round_trip(input, 2);
+        }
+    }
+
+    #[test]
+    fn test_no_extra_blank_line_after_block_scalar() {
+        let out = format_at("a: |\n  x\nb: 1\n", 2);
+        assert_eq!(out, "a: |\n  x\nb: 1\n");
+    }
+
+    #[test]
+    fn test_null_forms_round_trip() {
+        let cases = [
+            "a:\nb: 1\n",
+            "- \n- x\n",
+            "a: &an\nb: *an\n",
+            "- &an\n- *an\n",
+            "!!set {x, y}\n",
+            "{a, b: }\n",
+            "? a\n: v\n? \n: w\n",
+            "a: ~\nb: null\nc: \"\"\nd: ''\n",
+        ];
+        for case in cases {
+            let out = assert_round_trip(case, 2);
+            assert!(!out.contains(": \n") && !out.contains(":\n"), "got {out:?}");
+        }
+    }
+
+    #[test]
+    fn test_null_value_and_empty_string_distinct() {
+        let out = format_at("a:\nb: \"\"\nc: ~\n", 2);
+        assert!(out.contains("b: \"\""), "got {out:?}");
+        assert!(out.contains("c: ~"), "got {out:?}");
+        assert!(
+            out.starts_with("a: null\n") || out.starts_with("a: ~\n"),
+            "got {out:?}"
+        );
+    }
+
+    #[cfg(feature = "streaming")]
+    #[test]
+    fn test_streaming_omitted_null_emitted_as_null() {
+        assert_eq!(format_at("a:\nb: 1\n", 2), "a: null\nb: 1\n");
+        assert_eq!(format_at("- \n- x\n", 2), "- null\n- x\n");
+        assert_eq!(format_at("a: &an\n", 2), "a: &an null\n");
+    }
+
+    #[test]
+    fn test_empty_document_is_stable() {
+        let out = format_at("---\n", 2);
+        assert_eq!(out, format_at(&out, 2));
     }
 }
