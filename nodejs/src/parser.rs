@@ -5,10 +5,10 @@
 
 use crate::Schema;
 use crate::conversion::yaml_to_js;
-use fast_yaml_core::canonicalize;
+use fast_yaml_core::Parser;
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
-use saphyr::{LoadableYamlNode, ScalarOwned, YamlOwned};
+use saphyr::{ScalarOwned, YamlOwned};
 
 /// Maximum input size in bytes for `safe_load`/`safe_load_all` (100MB).
 ///
@@ -105,7 +105,7 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
     }
 
     // Parse YAML string
-    let docs = match YamlOwned::load_from_str(&yaml_str) {
+    let docs = match Parser::parse_all(&yaml_str) {
         Ok(d) => d,
         Err(e) => return throw_and_undefined(env, &format!("YAML parse error: {e}")),
     };
@@ -119,7 +119,7 @@ pub fn safe_load(env: Env, yaml_str: String) -> NapiResult<Unknown<'static>> {
             .unwrap_or(YamlOwned::Value(ScalarOwned::Null))
     };
 
-    match yaml_to_js(&env, &canonicalize(doc)) {
+    match yaml_to_js(&env, &doc) {
         Ok(v) => Ok(to_static(v)),
         Err(e) => throw_and_undefined(env, &e.to_string()),
     }
@@ -172,8 +172,12 @@ pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'stat
         return Ok(Vec::new());
     }
 
+    if yaml_str.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
     // Parse YAML string
-    let docs = match YamlOwned::load_from_str(&yaml_str) {
+    let docs = match Parser::parse_all(&yaml_str) {
         Ok(d) => d,
         Err(e) => {
             env.throw_error(&format!("YAML parse error: {e}"), None)?;
@@ -184,7 +188,7 @@ pub fn safe_load_all(env: Env, yaml_str: String) -> NapiResult<Vec<Unknown<'stat
     // Convert all documents to JavaScript
     let mut js_docs = Vec::with_capacity(docs.len());
     for doc in docs {
-        match yaml_to_js(&env, &canonicalize(doc)) {
+        match yaml_to_js(&env, &doc) {
             Ok(v) => js_docs.push(to_static(v)),
             Err(e) => {
                 env.throw_error(&e.to_string(), None)?;
@@ -294,21 +298,21 @@ mod tests {
     #[test]
     fn test_parse_simple() {
         let yaml = "name: test\nvalue: 123";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
+        let docs: Vec<YamlOwned> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 1);
     }
 
     #[test]
     fn test_parse_multi_document() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
+        let docs: Vec<YamlOwned> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 2);
     }
 
     #[test]
     fn test_parse_invalid() {
         let yaml = "invalid: [\n";
-        let result = YamlOwned::load_from_str(yaml);
+        let result = Parser::parse_all(yaml);
         assert!(result.is_err());
     }
 
