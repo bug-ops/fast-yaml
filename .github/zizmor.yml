@@ -1,0 +1,10 @@
+rules:
+  dangerous-triggers:
+    ignore:
+      - dependabot-automerge.yml
+  superfluous-actions:
+    disable: true
+  cache-poisoning:
+    ignore:
+      # build jobs keep the cache; the id-token publish-crates job has none
+      - release.yml
