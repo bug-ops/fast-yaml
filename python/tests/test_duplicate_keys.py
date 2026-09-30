@@ -12,10 +12,18 @@ import fast_yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 MAPPINGS = [
-    pytest.param("a: 1\nb: 2\na: 3\nc: 4\na: 5\n", {"a": 5, "b": 2, "c": 4}, id="literal-3-occurrences"),
+    pytest.param(
+        "a: 1\nb: 2\na: 3\nc: 4\na: 5\n",
+        {"a": 5, "b": 2, "c": 4},
+        id="literal-3-occurrences",
+    ),
     pytest.param("o:\n  x: 1\n  y: 2\n  x: 3\n", {"o": {"x": 3, "y": 2}}, id="nested-block"),
     pytest.param("{a: 1, b: 2, a: 3}\n", {"a": 3, "b": 2}, id="flow"),
-    pytest.param("o: {x: 1, y: 2, x: 3}\nz: 0\n", {"o": {"x": 3, "y": 2}, "z": 0}, id="nested-flow"),
+    pytest.param(
+        "o: {x: 1, y: 2, x: 3}\nz: 0\n",
+        {"o": {"x": 3, "y": 2}, "z": 0},
+        id="nested-flow",
+    ),
     pytest.param("&k a: 1\nb: 2\n*k : 3\n", {"a": 3, "b": 2}, id="anchored-alias-key"),
     pytest.param("!!str a: 1\nb: 2\n!!str a: 3\n", {"a": 3, "b": 2}, id="tagged"),
     pytest.param("a: 1\nb: 2\na: [x]\n", {"a": ["x"], "b": 2}, id="value-kind-changes"),
