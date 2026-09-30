@@ -67,6 +67,159 @@ pub struct FlowTokenizer<'a> {
     masked_ranges: Vec<ByteRange>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Quote {
+    None,
+    Double,
+    Single,
+}
+
+/// Left-to-right scanner answering "is column N inside a block-context plain scalar?".
+///
+/// State is carried across queries, so successive queries with increasing columns on one
+/// line cost O(line length) in total.
+struct PlainScalarScanner {
+    chars: Vec<char>,
+    i: usize,
+    quote: Quote,
+    escape_next: bool,
+    flow_depth: usize,
+    at_value_start: bool,
+    in_plain_scalar: bool,
+}
+
+impl PlainScalarScanner {
+    fn new(line: &str) -> Self {
+        Self {
+            chars: line.chars().collect(),
+            i: 0,
+            quote: Quote::None,
+            escape_next: false,
+            flow_depth: 0,
+            at_value_start: false,
+            in_plain_scalar: false,
+        }
+    }
+
+    /// Checks if a position is inside a block-context plain scalar.
+    ///
+    /// A plain scalar starts when the first non-whitespace character after a value
+    /// separator (`: ` or `, `) is not a flow indicator (`{`, `[`, `"`, `'`).
+    /// In block context (outside any flow collection), such a plain scalar
+    /// continues to the end of the line, so any `{` or `[` inside it must not
+    /// be treated as a YAML flow collection delimiter.
+    ///
+    /// This prevents false positives on template expressions like `${{ var }}`
+    /// that appear as plain scalar values.
+    fn contains(&mut self, col: usize) -> bool {
+        if col >= self.chars.len() {
+            return false;
+        }
+
+        while self.i < col
+            && let Some(&ch) = self.chars.get(self.i)
+        {
+            if self.escape_next {
+                self.escape_next = false;
+                self.i += 1;
+                continue;
+            }
+
+            if self.quote == Quote::Double {
+                if ch == '\\' {
+                    self.escape_next = true;
+                } else if ch == '"' {
+                    self.quote = Quote::None;
+                }
+                self.i += 1;
+                continue;
+            }
+
+            if self.quote == Quote::Single {
+                if ch == '\'' {
+                    self.quote = Quote::None;
+                }
+                self.i += 1;
+                continue;
+            }
+
+            if self.in_plain_scalar {
+                // Block-context plain scalar ends at flow terminators only when nested
+                if self.flow_depth > 0 {
+                    match ch {
+                        ',' => {
+                            self.in_plain_scalar = false;
+                            self.at_value_start = true;
+                        }
+                        '}' | ']' => {
+                            self.in_plain_scalar = false;
+                            self.flow_depth = self.flow_depth.saturating_sub(1);
+                        }
+                        _ => {}
+                    }
+                }
+                // In block context (self.flow_depth == 0) plain scalar runs to EOL — nothing ends it
+                self.i += 1;
+                continue;
+            }
+
+            if self.at_value_start {
+                match ch {
+                    ' ' | '\t' => {}
+                    '"' => {
+                        self.quote = Quote::Double;
+                        self.at_value_start = false;
+                    }
+                    '\'' => {
+                        self.quote = Quote::Single;
+                        self.at_value_start = false;
+                    }
+                    '{' | '[' => {
+                        self.flow_depth += 1;
+                        self.at_value_start = false;
+                    }
+                    '#' => {
+                        self.i = self.chars.len();
+                        break;
+                    }
+                    _ => {
+                        self.at_value_start = false;
+                        if self.flow_depth == 0 {
+                            // Block-context plain scalar — everything until EOL is scalar
+                            self.in_plain_scalar = true;
+                        }
+                        // Flow-context plain scalars cannot contain `{`/`[`, so we do not
+                        // set self.in_plain_scalar; any `{` encountered later will be treated
+                        // as a nested flow collection (or invalid YAML).
+                    }
+                }
+            } else {
+                match ch {
+                    '"' => self.quote = Quote::Double,
+                    '\'' => self.quote = Quote::Single,
+                    '{' | '[' => self.flow_depth += 1,
+                    '}' | ']' => self.flow_depth = self.flow_depth.saturating_sub(1),
+                    ':' if matches!(self.chars.get(self.i + 1), Some(' ' | '\t')) => {
+                        self.at_value_start = true;
+                        self.i += 2; // consume `: `
+                        continue;
+                    }
+                    ',' if self.flow_depth > 0 => self.at_value_start = true,
+                    '#' => {
+                        self.i = self.chars.len();
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            self.i += 1;
+        }
+
+        self.in_plain_scalar
+    }
+}
+
 impl<'a> FlowTokenizer<'a> {
     /// Creates a new flow tokenizer.
     ///
@@ -117,6 +270,7 @@ impl<'a> FlowTokenizer<'a> {
         for line_num in 1..=self.context.line_count() {
             if let Some(line) = self.context.get_line(line_num) {
                 let line_start = self.context.line_start(line_num);
+                let mut scanner: Option<PlainScalarScanner> = None;
 
                 for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
                     let offset = line_start.add_bytes(byte_col);
@@ -149,7 +303,9 @@ impl<'a> FlowTokenizer<'a> {
                             | TokenType::BraceClose
                             | TokenType::BracketOpen
                             | TokenType::BracketClose
-                    ) && Self::is_in_block_plain_scalar_at(line, char_col)
+                    ) && scanner
+                        .get_or_insert_with(|| PlainScalarScanner::new(line))
+                        .contains(char_col)
                     {
                         continue;
                     }
@@ -263,127 +419,6 @@ impl<'a> FlowTokenizer<'a> {
         let start = Location::new(line, char_col + 1, offset.get());
         let end = Location::new(line, char_col + 2, offset.get() + 1);
         Token::new(token_type, Span::new(start, end))
-    }
-
-    /// Checks if a position is inside a block-context plain scalar.
-    ///
-    /// A plain scalar starts when the first non-whitespace character after a value
-    /// separator (`: ` or `, `) is not a flow indicator (`{`, `[`, `"`, `'`).
-    /// In block context (outside any flow collection), such a plain scalar
-    /// continues to the end of the line, so any `{` or `[` inside it must not
-    /// be treated as a YAML flow collection delimiter.
-    ///
-    /// This prevents false positives on template expressions like `${{ var }}`
-    /// that appear as plain scalar values.
-    fn is_in_block_plain_scalar_at(line: &str, col: usize) -> bool {
-        let chars: Vec<char> = line.chars().collect();
-        if col >= chars.len() {
-            return false;
-        }
-
-        let mut i = 0usize;
-        let mut in_double = false;
-        let mut in_single = false;
-        let mut escape_next = false;
-        let mut flow_depth: usize = 0;
-        let mut at_value_start = false;
-        let mut in_plain_scalar = false;
-
-        while i < col
-            && let Some(&ch) = chars.get(i)
-        {
-            if escape_next {
-                escape_next = false;
-                i += 1;
-                continue;
-            }
-
-            if in_double {
-                if ch == '\\' {
-                    escape_next = true;
-                } else if ch == '"' {
-                    in_double = false;
-                }
-                i += 1;
-                continue;
-            }
-
-            if in_single {
-                if ch == '\'' {
-                    in_single = false;
-                }
-                i += 1;
-                continue;
-            }
-
-            if in_plain_scalar {
-                // Block-context plain scalar ends at flow terminators only when nested
-                if flow_depth > 0 {
-                    match ch {
-                        ',' => {
-                            in_plain_scalar = false;
-                            at_value_start = true;
-                        }
-                        '}' | ']' => {
-                            in_plain_scalar = false;
-                            flow_depth = flow_depth.saturating_sub(1);
-                        }
-                        _ => {}
-                    }
-                }
-                // In block context (flow_depth == 0) plain scalar runs to EOL — nothing ends it
-                i += 1;
-                continue;
-            }
-
-            if at_value_start {
-                match ch {
-                    ' ' | '\t' => {}
-                    '"' => {
-                        in_double = true;
-                        at_value_start = false;
-                    }
-                    '\'' => {
-                        in_single = true;
-                        at_value_start = false;
-                    }
-                    '{' | '[' => {
-                        flow_depth += 1;
-                        at_value_start = false;
-                    }
-                    '#' => break,
-                    _ => {
-                        at_value_start = false;
-                        if flow_depth == 0 {
-                            // Block-context plain scalar — everything until EOL is scalar
-                            in_plain_scalar = true;
-                        }
-                        // Flow-context plain scalars cannot contain `{`/`[`, so we do not
-                        // set in_plain_scalar; any `{` encountered later will be treated
-                        // as a nested flow collection (or invalid YAML).
-                    }
-                }
-            } else {
-                match ch {
-                    '"' => in_double = true,
-                    '\'' => in_single = true,
-                    '{' | '[' => flow_depth += 1,
-                    '}' | ']' => flow_depth = flow_depth.saturating_sub(1),
-                    ':' if matches!(chars.get(i + 1), Some(' ' | '\t')) => {
-                        at_value_start = true;
-                        i += 2; // consume `: `
-                        continue;
-                    }
-                    ',' if flow_depth > 0 => at_value_start = true,
-                    '#' => break,
-                    _ => {}
-                }
-            }
-
-            i += 1;
-        }
-
-        in_plain_scalar
     }
 
     /// Checks if a byte offset falls inside a comment or quoted scalar.
@@ -763,6 +798,106 @@ mod tests {
         FlowTokenizer::new(yaml, &context)
             .find_all(token_type)
             .len()
+    }
+
+    #[test]
+    fn test_plain_scalar_scanner_carries_state_across_queries() {
+        let yaml = "k: ${{ a }} {b} [c]";
+        assert_eq!(count(yaml, TokenType::BraceOpen), 0);
+        assert_eq!(count(yaml, TokenType::BracketOpen), 0);
+        assert_eq!(count("k: [{a: 1}, {b: 2}]", TokenType::BraceOpen), 2);
+        assert_eq!(count("k: \"q\" # {x}\nm: {y: 1}", TokenType::BraceOpen), 1);
+    }
+
+    #[test]
+    fn test_many_braces_on_one_line_are_all_found() {
+        let yaml = format!("k: [{}{{b: 2}}]", "{a: 1}, ".repeat(20_000));
+        assert_eq!(count(&yaml, TokenType::BraceOpen), 20_001);
+        assert_eq!(count(&yaml, TokenType::BraceClose), 20_001);
+    }
+
+    fn scan(line: &str, cols: &[usize]) -> Vec<bool> {
+        let mut scanner = PlainScalarScanner::new(line);
+        cols.iter().map(|&col| scanner.contains(col)).collect()
+    }
+
+    fn char_cols(line: &str, ch: char) -> Vec<usize> {
+        line.chars()
+            .enumerate()
+            .filter_map(|(i, c)| (c == ch).then_some(i))
+            .collect()
+    }
+
+    #[test]
+    fn test_scanner_plain_scalar_value_covers_braces() {
+        let line = "k: a {x} b";
+        assert_eq!(scan(line, &[5, 7]), vec![true, true]);
+    }
+
+    #[test]
+    fn test_scanner_flow_value_is_not_plain() {
+        let line = "k: {x: 1}";
+        assert_eq!(scan(line, &[3]), vec![false]);
+    }
+
+    #[test]
+    fn test_scanner_nested_flow_sequence_with_inner_brace() {
+        let line = "k: [a, b {c}, d]";
+        let cols = char_cols(line, '{');
+        assert_eq!(scan(line, &cols), vec![false]);
+    }
+
+    #[test]
+    fn test_scanner_quoted_braces_do_not_start_plain() {
+        let line = r#"k: "a { \" } b" {c}"#;
+        let cols = char_cols(line, '{');
+        assert_eq!(cols.len(), 2);
+        assert_eq!(scan(line, &cols[1..]), vec![false]);
+    }
+
+    #[test]
+    fn test_scanner_trailing_comment_stops_scan() {
+        let line = r#"k: "v" # {x} [y]"#;
+        let mut cols = char_cols(line, '{');
+        cols.extend(char_cols(line, '['));
+        cols.sort_unstable();
+        assert_eq!(scan(line, &cols), vec![false, false]);
+    }
+
+    #[test]
+    fn test_scanner_nested_mapping_value_in_plain_scalar() {
+        let line = "k: a: b {x}";
+        let cols = char_cols(line, '{');
+        assert_eq!(scan(line, &cols), vec![true]);
+    }
+
+    #[test]
+    fn test_scanner_multibyte_before_brace_uses_char_columns() {
+        let line = "ключ: значение {x}";
+        let cols = char_cols(line, '{');
+        assert_eq!(cols, vec![15]);
+        assert_eq!(scan(line, &cols), vec![true]);
+    }
+
+    #[test]
+    fn test_scanner_query_at_or_past_line_end_is_false() {
+        let line = "k: a {x}";
+        let len = line.chars().count();
+        assert_eq!(scan(line, &[len, len + 5]), vec![false, false]);
+        assert_eq!(scan("", &[0]), vec![false]);
+    }
+
+    #[test]
+    fn test_scanner_state_matches_fresh_scan_for_every_column() {
+        let line = r#"a: [x, "y, {z}", {k: v}, w {q}] # {c}"#;
+        let len = line.chars().count();
+        let cols: Vec<usize> = (0..len).collect();
+        let carried = scan(line, &cols);
+        let fresh: Vec<bool> = cols
+            .iter()
+            .map(|&col| PlainScalarScanner::new(line).contains(col))
+            .collect();
+        assert_eq!(carried, fresh);
     }
 
     #[test]

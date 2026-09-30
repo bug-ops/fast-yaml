@@ -74,6 +74,29 @@ impl super::LintRule for CommentsIndentationRule {
             })
             .collect();
 
+        let content_indent =
+            |info: &LineInfo| (!info.is_empty && !info.is_comment).then_some(info.indent);
+
+        // next_content[i] / prev_content[i]: indent of the nearest content line strictly after / before i
+        let mut next_content: Vec<Option<usize>> = line_info
+            .iter()
+            .rev()
+            .scan(None, |next, info| {
+                let current = *next;
+                *next = content_indent(info).or(*next);
+                Some(current)
+            })
+            .collect();
+        next_content.reverse();
+        let prev_content: Vec<Option<usize>> = line_info
+            .iter()
+            .scan(None, |prev, info| {
+                let current = *prev;
+                *prev = content_indent(info).or(*prev);
+                Some(current)
+            })
+            .collect();
+
         for comment in comments {
             // Skip inline comments (they follow content indentation)
             if comment.is_inline {
@@ -91,38 +114,19 @@ impl super::LintRule for CommentsIndentationRule {
                 continue;
             };
 
-            // Find next non-empty, non-comment line using pre-computed metadata
-            let mut expected_indent = None;
-            for info in line_info.iter().skip(comment_line_idx + 1) {
-                // Skip empty lines and comment lines
-                if info.is_empty || info.is_comment {
-                    continue;
-                }
-
-                // Found content line
-                expected_indent = Some(info.indent);
-                break;
-            }
-
-            // If no content found after, check previous content line.
-            // Column-0 comments always belong to the top level, so skip the
-            // backward-scan entirely — using indentation from a preceding nested
-            // block would produce a false-positive diagnostic.
-            if expected_indent.is_none() {
-                if comment_indent == 0 {
-                    continue;
-                }
-                for info in line_info.iter().take(comment_line_idx).rev() {
-                    // Skip empty lines and comment lines
-                    if info.is_empty || info.is_comment {
-                        continue;
+            // Column-0 comments belong to the top level: never borrow indentation
+            // from a preceding nested block.
+            let expected_indent = next_content
+                .get(comment_line_idx)
+                .copied()
+                .flatten()
+                .or_else(|| {
+                    if comment_indent == 0 {
+                        None
+                    } else {
+                        prev_content.get(comment_line_idx).copied().flatten()
                     }
-
-                    // Found content line
-                    expected_indent = Some(info.indent);
-                    break;
-                }
-            }
+                });
 
             // Check if indentation matches
             if let Some(expected) = expected_indent
@@ -161,6 +165,68 @@ mod tests {
     use super::*;
     use crate::rules::LintRule;
     use fast_yaml_core::Parser;
+
+    fn check_source(yaml: &str, parsed: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str(parsed).unwrap().unwrap();
+        CommentsIndentationRule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+    }
+
+    fn diag_count(yaml: &str) -> usize {
+        check_source(yaml, yaml).len()
+    }
+
+    #[test]
+    fn test_comment_run_uses_next_content_indent() {
+        assert_eq!(diag_count("a:\n  # c1\n  # c2\n  b: 1\n"), 0);
+        assert_eq!(diag_count("a:\n# c1\n  # c2\n  b: 1\n"), 1);
+    }
+
+    #[test]
+    fn test_trailing_comments_fall_back_to_previous_content() {
+        assert_eq!(diag_count("a:\n  b: 1\n  # t1\n  # t2\n"), 0);
+        assert_eq!(diag_count("a:\n  b: 1\n    # t1\n"), 1);
+        assert_eq!(diag_count("a:\n  b: 1\n# top\n# top2\n"), 0);
+    }
+
+    #[test]
+    fn test_large_comment_run_has_no_diagnostics() {
+        let yaml = format!("{}a: 1\n", "# comment\n".repeat(100_000));
+        assert_eq!(diag_count(&yaml), 0);
+    }
+
+    #[test]
+    fn test_column_zero_trailing_comment_after_nested_block_is_ignored() {
+        assert_eq!(diag_count("a:\n  b:\n    c: 1\n# end\n"), 0);
+    }
+
+    #[test]
+    fn test_blank_line_separated_comment_runs() {
+        assert_eq!(diag_count("a:\n  # one\n\n  # two\n\n  b: 1\n"), 0);
+        assert_eq!(diag_count("a:\n  # one\n\n# two\n\n  b: 1\n"), 1);
+    }
+
+    #[test]
+    fn test_comment_only_file() {
+        let yaml = "# a\n  # b\n# c\n";
+        assert_eq!(check_source(yaml, "a: 1").len(), 0);
+    }
+
+    #[test]
+    fn test_first_line_comment_uses_next_content() {
+        assert_eq!(diag_count("# top\na: 1\n"), 0);
+        assert_eq!(diag_count("  # top\na: 1\n"), 1);
+    }
+
+    #[test]
+    fn test_crlf_comment_runs() {
+        assert_eq!(diag_count("a:\r\n  # c1\r\n  # c2\r\n  b: 1\r\n"), 0);
+        assert_eq!(diag_count("a:\r\n  # c1\r\n# c2\r\n  b: 1\r\n"), 1);
+    }
+
+    #[test]
+    fn test_tab_indented_comment_is_compared_by_leading_spaces() {
+        assert_eq!(diag_count("a:\n  b: 1\n\t# tab\n  c: 2\n"), 1);
+    }
 
     #[test]
     fn test_comments_indentation_valid() {

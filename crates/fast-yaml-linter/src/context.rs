@@ -31,6 +31,40 @@ pub struct SourceContext<'a> {
     source: &'a str,
     line_starts: Vec<usize>,
     line_ends: Vec<usize>,
+    line_index: Vec<LineIndex>,
+}
+
+/// Per-line char/byte column mapping strategy.
+enum LineIndex {
+    /// All bytes are ASCII: char columns equal byte columns.
+    Ascii,
+    /// Contains multi-byte chars: table built lazily on first query.
+    Wide(OnceLock<CharStarts>),
+}
+
+/// Byte offset of every char in a line, giving O(1) char column to byte and O(log n) back.
+pub struct CharStarts(Box<[usize]>);
+
+impl CharStarts {
+    /// Builds the char-start table for one line.
+    pub fn new(line: &str) -> Self {
+        Self(line.char_indices().map(|(byte, _)| byte).collect())
+    }
+
+    /// Number of chars in the line.
+    pub const fn char_count(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Byte offset of the 0-indexed char `col`, or `line_len` when past the end.
+    pub fn byte_of(&self, col: usize, line_len: usize) -> usize {
+        self.0.get(col).copied().unwrap_or(line_len)
+    }
+
+    /// Number of chars starting strictly before byte `byte`.
+    pub fn chars_before(&self, byte: usize) -> usize {
+        self.0.partition_point(|&start| start < byte)
+    }
 }
 
 /// Yields `(start, end)` byte bounds of every line, excluding terminators.
@@ -92,13 +126,38 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn new(source: &'a str) -> Self {
-        let (line_starts, line_ends) = line_bounds(source).unzip();
+        let (line_starts, line_ends): (Vec<usize>, Vec<usize>) = line_bounds(source).unzip();
+        let line_index = line_starts
+            .iter()
+            .zip(&line_ends)
+            .map(|(&start, &end)| {
+                if source
+                    .as_bytes()
+                    .get(start..end)
+                    .is_some_and(<[u8]>::is_ascii)
+                {
+                    LineIndex::Ascii
+                } else {
+                    LineIndex::Wide(OnceLock::new())
+                }
+            })
+            .collect();
 
         Self {
             source,
             line_starts,
             line_ends,
+            line_index,
         }
+    }
+
+    /// Char-start table of the 0-indexed line, built on first use; `None` for ASCII lines
+    /// (and unknown lines), where char columns equal byte columns.
+    pub(crate) fn char_starts(&self, line_idx: usize) -> Option<&CharStarts> {
+        let LineIndex::Wide(cell) = self.line_index.get(line_idx)? else {
+            return None;
+        };
+        Some(cell.get_or_init(|| CharStarts::new(self.get_line(line_idx + 1).unwrap_or_default())))
     }
 
     /// Gets a specific line by number (1-indexed), without its line terminator.
@@ -252,11 +311,14 @@ impl<'a> SourceContext<'a> {
         let line = line_idx + 1;
         let line_start = self.line_starts.get(line_idx).copied().unwrap_or_default();
 
-        let column = self
-            .source
-            .get(line_start..offset)
-            .map_or(0, |prefix| prefix.chars().count())
-            + 1;
+        let prefix_len = offset.saturating_sub(line_start);
+        let line_len = self
+            .line_ends
+            .get(line_idx)
+            .map_or(0, |end| end - line_start);
+        let column = self.char_starts(line_idx).map_or(prefix_len, |table| {
+            table.chars_before(prefix_len) + prefix_len.saturating_sub(line_len)
+        }) + 1;
 
         Location::new(line, column, offset)
     }
@@ -320,10 +382,14 @@ impl<'a> SourceContext<'a> {
         let Some(line) = self.get_line(marker.line()) else {
             return ByteOffset::new(self.source.len());
         };
-        let byte_col = line
-            .char_indices()
-            .nth(marker.col())
-            .map_or(line.len(), |(byte, _)| byte);
+        let byte_col = marker
+            .line()
+            .checked_sub(1)
+            .and_then(|idx| self.char_starts(idx))
+            .map_or_else(
+                || marker.col().min(line.len()),
+                |table| table.byte_of(marker.col(), line.len()),
+            );
         self.line_start(marker.line()).add_bytes(byte_col)
     }
 
@@ -365,6 +431,75 @@ impl<'a> SourceContext<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx_offset(ctx: &SourceContext<'_>, line: usize, col: usize) -> usize {
+        ctx.byte_offset_of(Marker::new(0, line, col)).get() - ctx.get_line_offset(line)
+    }
+
+    #[test]
+    fn test_ascii_fast_path_matches_char_path() {
+        let source = "ab: [1, 2]\nж: [1, 2]\r\nq: z";
+        let ctx = SourceContext::new(source);
+        for (line, col, byte) in [(1, 6, 6), (2, 4, 5), (3, 3, 3)] {
+            assert_eq!(ctx_offset(&ctx, line, col), byte);
+        }
+        let offset = ctx.get_line_offset(2) + "ж: ".len();
+        assert_eq!(ctx.offset_to_location(offset).column, 4);
+        let offset = ctx.get_line_offset(1) + 6;
+        assert_eq!(ctx.offset_to_location(offset).column, 7);
+    }
+
+    #[test]
+    fn test_char_starts_only_for_non_ascii_lines() {
+        let ctx = SourceContext::new("plain\r\nжж\r\nplain");
+        assert!(ctx.char_starts(0).is_none());
+        assert!(ctx.char_starts(1).is_some());
+        assert!(ctx.char_starts(2).is_none());
+        assert!(ctx.char_starts(99).is_none());
+    }
+
+    #[test]
+    fn test_non_ascii_line_does_not_affect_ascii_lines() {
+        let ctx = SourceContext::new("ж: 1\nabc: def\n");
+        assert_eq!(ctx_offset(&ctx, 2, 5), 5);
+        assert_eq!(ctx.offset_to_location(ctx.get_line_offset(2) + 5).column, 6);
+    }
+
+    #[test]
+    fn test_marker_col_past_line_end_clamps_for_both_line_kinds() {
+        let ctx = SourceContext::new("abc\nжжж\n");
+        assert_eq!(ctx_offset(&ctx, 1, 50), 3);
+        assert_eq!(ctx_offset(&ctx, 2, 50), "жжж".len());
+        assert_eq!(ctx_offset(&ctx, 2, 3), "жжж".len());
+    }
+
+    #[test]
+    fn test_marker_out_of_range_line_maps_to_source_end() {
+        let ctx = SourceContext::new("ж\nb");
+        let marker = Marker::new(0, 50, 0);
+        assert_eq!(ctx.byte_offset_of(marker).get(), "ж\nb".len());
+    }
+
+    #[test]
+    fn test_crlf_wide_line_columns() {
+        let source = "яя: 1\r\nz: 2\r\n";
+        let ctx = SourceContext::new(source);
+        assert_eq!(ctx_offset(&ctx, 1, 2), "я".len() * 2);
+        let terminator = ctx.get_line_offset(1) + "яя: 1".len();
+        assert_eq!(ctx.offset_to_location(terminator).column, 6);
+        assert_eq!(ctx.offset_to_location(terminator + 1).column, 7);
+        assert_eq!(ctx.offset_to_location(ctx.get_line_offset(2)).line, 2);
+    }
+
+    #[test]
+    fn test_wide_line_round_trip_for_every_char() {
+        let line = "aж😀b́c";
+        let ctx = SourceContext::new(line);
+        for (col, (byte, _)) in line.char_indices().enumerate() {
+            assert_eq!(ctx_offset(&ctx, 1, col), byte);
+            assert_eq!(ctx.offset_to_location(byte).column, col + 1);
+        }
+    }
 
     #[test]
     fn test_new_empty() {

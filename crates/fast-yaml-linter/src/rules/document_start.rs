@@ -162,7 +162,11 @@ fn check_forbidden(
     config: &LintConfig,
     code: &str,
 ) -> Vec<Diagnostic> {
-    if let Some((_line_num, span)) = find_document_start_marker(source) {
+    if let Some(DocumentStartMarker {
+        span,
+        after_directive: false,
+    }) = find_document_start_marker(source)
+    {
         let severity = config.rules.document_start.severity_or(Severity::Warning);
         vec![
             DiagnosticBuilder::new(
@@ -183,27 +187,37 @@ fn has_document_start_marker(source: &str) -> bool {
     find_document_start_marker(source).is_some()
 }
 
-fn find_document_start_marker(source: &str) -> Option<(usize, Span)> {
+/// Location of a `---` marker; `after_directive` marks markers the spec makes mandatory.
+struct DocumentStartMarker {
+    span: Span,
+    after_directive: bool,
+}
+
+fn find_document_start_marker(source: &str) -> Option<DocumentStartMarker> {
+    let mut after_directive = false;
     for (line_num, (offset, line)) in source_lines(source).enumerate() {
         let trimmed = line.trim_start();
 
-        // Skip empty lines and comments
         if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if line.starts_with('%') {
+            after_directive = true;
             continue;
         }
 
         if trimmed.starts_with("---") {
             let col = line.len() - trimmed.len() + 1;
-            return Some((
-                line_num + 1,
-                Span::new(
+            return Some(DocumentStartMarker {
+                span: Span::new(
                     Location::new(line_num + 1, col, offset + col - 1),
                     Location::new(line_num + 1, col + 3, offset + col + 2),
                 ),
-            ));
+                after_directive,
+            });
         }
 
-        // Found content before marker
         break;
     }
 
@@ -296,6 +310,70 @@ mod tests {
         let context_without = LintContext::new(yaml_without);
         let diag_without = rule.check(&context_without, &value_without, &config);
         assert!(diag_without.is_empty());
+    }
+
+    const REQUIRED: &str = "{present: required}";
+    const FORBIDDEN: &str = "{present: forbidden}";
+
+    fn count(yaml: &str, cfg: &str) -> usize {
+        let value = Parser::parse_str("a: 1").unwrap().unwrap();
+        let config = config_with_rule(RuleName::DocumentStart, cfg);
+        DocumentStartRule
+            .check(&LintContext::new(yaml), &value, &config)
+            .len()
+    }
+
+    #[test]
+    fn test_directive_before_marker() {
+        assert_eq!(count("%YAML 1.2\n---\na: 1\n", REQUIRED), 0);
+        assert_eq!(count("%TAG ! tag:x,2000:\n---\na: 1\n", REQUIRED), 0);
+        assert_eq!(count("# c\n%YAML 1.2\n---\na: 1\n", REQUIRED), 0);
+        assert_eq!(count("%YAML 1.2\na: 1\n", REQUIRED), 1);
+        assert_eq!(count("%YAML 1.2\n---\na: 1\n", FORBIDDEN), 0);
+        assert_eq!(count("---\na: 1\n", FORBIDDEN), 1);
+    }
+
+    #[test]
+    fn test_directives_yaml_and_tag_together() {
+        let yaml = "%YAML 1.2\n%TAG !e! tag:example.com,2000:\n---\na: 1\n";
+        assert_eq!(count(yaml, REQUIRED), 0);
+        assert_eq!(count(yaml, FORBIDDEN), 0);
+    }
+
+    #[test]
+    fn test_directives_with_crlf() {
+        let yaml = "%YAML 1.2\r\n%TAG !e! tag:x,2000:\r\n---\r\na: 1\r\n";
+        assert_eq!(count(yaml, REQUIRED), 0);
+        assert_eq!(count(yaml, FORBIDDEN), 0);
+        assert_eq!(count("---\r\na: 1\r\n", FORBIDDEN), 1);
+    }
+
+    #[test]
+    fn test_indented_percent_line_is_not_a_directive() {
+        assert_eq!(count("  %YAML 1.2\n---\na: 1\n", REQUIRED), 1);
+        assert_eq!(count("  %YAML 1.2\n---\na: 1\n", FORBIDDEN), 0);
+    }
+
+    #[test]
+    fn test_comment_only_file_with_required() {
+        assert_eq!(count("# only a comment\n", REQUIRED), 1);
+        assert_eq!(count("# only a comment\n", FORBIDDEN), 0);
+    }
+
+    #[test]
+    fn test_marker_found_after_directive_reports_line_and_span() {
+        let marker = find_document_start_marker("%YAML 1.2\n---\na: 1\n").unwrap();
+        assert!(marker.after_directive);
+        assert_eq!(marker.span.start.line, 2);
+        assert_eq!(marker.span.start.column, 1);
+        let plain = find_document_start_marker("---\na: 1\n").unwrap();
+        assert!(!plain.after_directive);
+    }
+
+    #[test]
+    fn test_bom_before_marker_is_not_skipped() {
+        let with_bom = "\u{feff}---\na: 1\n";
+        assert!(find_document_start_marker(with_bom).is_none());
     }
 
     #[test]
