@@ -124,9 +124,7 @@ class TestConfigErrors:
 
     def test_document_end_present_false_forbids_marker(self):
         config = lint.LintConfig(rules={"document-end": {"present": False}})
-        diagnostics = [
-            d for d in lint.lint("a: 1\n...\n", config) if d.code == "document-end"
-        ]
+        diagnostics = [d for d in lint.lint("a: 1\n...\n", config) if d.code == "document-end"]
         assert [d.message for d in diagnostics] == ["document end marker '...' is forbidden"]
         assert "document-end" not in codes(lint.lint("a: 1\n", config))
 
@@ -151,7 +149,8 @@ class TestConfigErrors:
 
     def test_invalid_regex_names_rule_option_and_index(self):
         with pytest.raises(
-            ValueError, match=r"rule 'quoted-strings', option 'extra-required'.*pattern 1.*look-around"
+            ValueError,
+            match=r"rule 'quoted-strings', option 'extra-required'.*pattern 1.*look-around",
         ):
             lint.LintConfig(rules={"quoted-strings": {"extra-required": ["ok", "(?=x)"]}})
 
