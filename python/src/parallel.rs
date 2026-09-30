@@ -8,8 +8,8 @@
 //! - `TypeError`: Used for type conversion errors (handled in conversion module)
 
 use crate::conversion::value_to_python;
-use crate::{python_to_yaml, sort_yaml_keys};
-use fast_yaml_core::{Emitter, EmitterConfig};
+use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
+use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig};
 use fast_yaml_parallel::{
     Config as RustParallelConfig, Error as ParallelError, parse_parallel as rust_parse_parallel,
     parse_parallel_with_config,
@@ -376,10 +376,11 @@ fn dump_parallel(
     // Collect documents from Python iterator (requires GIL)
     let iter = documents.try_iter()?;
     let mut yaml_values = Vec::new();
+    let mut budget = DumpBudget::default();
 
     for item in iter {
         let item = item?;
-        let yaml = python_to_yaml(&item)?;
+        let yaml = python_to_yaml(&item, &mut budget)?;
         yaml_values.push(yaml);
     }
 
@@ -459,6 +460,7 @@ fn dump_parallel(
 
     // Combine outputs with document separators
     let total_size: usize = emitted.iter().map(String::len).sum::<usize>() + emitted.len() * 5;
+    check_output_len(emitted.iter().map(String::len).sum())?;
     let mut output = String::with_capacity(total_size);
 
     for (i, doc) in emitted.iter().enumerate() {
@@ -471,7 +473,7 @@ fn dump_parallel(
         }
     }
 
-    Ok(output)
+    check_output_size(output)
 }
 
 /// Estimate YAML output size for streaming threshold decision.

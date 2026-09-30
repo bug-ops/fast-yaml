@@ -168,6 +168,180 @@ impl fmt::Display for MaxTagBytes {
     }
 }
 
+/// Maximum size, in bytes, of an emitted YAML document set.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::{LimitKind, MaxOutputBytes};
+///
+/// let max = MaxOutputBytes::new(4);
+/// assert!(max.check(4).is_ok());
+/// assert_eq!(max.check(5), Err(LimitKind::OutputBytes(max)));
+/// assert_eq!(MaxOutputBytes::default(), MaxOutputBytes::DEFAULT);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaxOutputBytes(usize);
+
+impl MaxOutputBytes {
+    /// Default limit: 100 MiB of emitted text.
+    pub const DEFAULT: Self = Self(100 * 1024 * 1024);
+
+    /// Creates a limit of `bytes` emitted bytes.
+    #[must_use]
+    pub const fn new(bytes: usize) -> Self {
+        Self(bytes)
+    }
+
+    /// Returns the limit as a plain number.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+
+    /// Checks an emitted length against the limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitKind::OutputBytes`] when `len` exceeds the limit.
+    pub const fn check(self, len: usize) -> Result<(), LimitKind> {
+        if len > self.0 {
+            Err(LimitKind::OutputBytes(self))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Default for MaxOutputBytes {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl fmt::Display for MaxOutputBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Maximum number of YAML nodes materialized while converting host values for dumping.
+///
+/// The byte estimate of [`DumpBudget`] alone admits about 50M nodes, which costs gigabytes; this
+/// count bounds the work and memory of a shared-reference expansion much earlier. A single
+/// document of up to this many nodes still dumps.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxDumpNodes;
+///
+/// assert_eq!(MaxDumpNodes::default(), MaxDumpNodes::DEFAULT);
+/// assert_eq!(MaxDumpNodes::new(10).get(), 10);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MaxDumpNodes(usize);
+
+impl MaxDumpNodes {
+    /// Default limit: 16 Mi nodes per dump call.
+    pub const DEFAULT: Self = Self(16 * 1024 * 1024);
+
+    /// Creates a limit of `nodes` nodes.
+    #[must_use]
+    pub const fn new(nodes: usize) -> Self {
+        Self(nodes)
+    }
+
+    /// Returns the limit as a plain number.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+impl Default for MaxDumpNodes {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl fmt::Display for MaxDumpNodes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Minimum bytes any emitted node occupies: at least one character plus a separator.
+pub const MIN_NODE_OUTPUT_BYTES: usize = 2;
+
+/// Running spend of one dump call against [`MaxOutputBytes`] and [`MaxDumpNodes`].
+///
+/// Converting host values re-walks shared references once per reference, so a small object graph
+/// can expand exponentially before anything is emitted. Charging every child node and every
+/// scalar's text as it is converted, and every announced child count before allocating for it,
+/// stops that expansion early. The byte estimate ([`MIN_NODE_OUTPUT_BYTES`] per node plus text)
+/// never exceeds the real output, so it rejects nothing the output-size check would accept; the
+/// node count is the tighter bound on work and memory.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::{DumpBudget, LimitKind, MaxDumpNodes, MaxOutputBytes};
+///
+/// let max = MaxOutputBytes::new(10);
+/// let mut budget = DumpBudget::new(max, MaxDumpNodes::new(4));
+/// assert!(budget.charge_nodes(3).is_ok());
+/// assert!(budget.charge(4).is_ok());
+/// assert_eq!(budget.charge(1), Err(LimitKind::OutputBytes(max)));
+///
+/// let mut budget = DumpBudget::new(max, MaxDumpNodes::new(2));
+/// assert_eq!(budget.charge_nodes(3), Err(LimitKind::DumpNodes(MaxDumpNodes::new(2))));
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DumpBudget {
+    bytes: usize,
+    nodes: usize,
+    max_bytes: MaxOutputBytes,
+    max_nodes: MaxDumpNodes,
+}
+
+impl DumpBudget {
+    /// Creates an unspent budget bounded by `max_bytes` and `max_nodes`.
+    #[must_use]
+    pub const fn new(max_bytes: MaxOutputBytes, max_nodes: MaxDumpNodes) -> Self {
+        Self {
+            bytes: 0,
+            nodes: 0,
+            max_bytes,
+            max_nodes,
+        }
+    }
+
+    /// Spends `bytes` of scalar text.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitKind::OutputBytes`] when the total spend would exceed the limit.
+    pub const fn charge(&mut self, bytes: usize) -> Result<(), LimitKind> {
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.max_bytes.check(self.bytes)
+    }
+
+    /// Spends `count` nodes, before any storage for them is allocated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LimitKind::DumpNodes`] when the node total would exceed the count limit, or
+    /// [`LimitKind::OutputBytes`] when their minimum output would exceed the byte limit.
+    pub const fn charge_nodes(&mut self, count: usize) -> Result<(), LimitKind> {
+        self.nodes = self.nodes.saturating_add(count);
+        if self.nodes > self.max_nodes.get() {
+            return Err(LimitKind::DumpNodes(self.max_nodes));
+        }
+        self.charge(MIN_NODE_OUTPUT_BYTES.saturating_mul(count))
+    }
+}
+
 /// The set of limits enforced while parsing.
 ///
 /// # Examples
@@ -202,6 +376,12 @@ pub enum LimitKind {
     /// Tag prefix expansion would materialize more data than the budget.
     #[error("tag prefix expansion exceeds {0} bytes")]
     TagBytes(MaxTagBytes),
+    /// The YAML being dumped is, or would be, larger than the limit.
+    #[error("output size exceeds {0} bytes")]
+    OutputBytes(MaxOutputBytes),
+    /// The value being dumped expands to more nodes than the limit.
+    #[error("dump node count exceeds {0}")]
+    DumpNodes(MaxDumpNodes),
 }
 
 /// Estimated fixed cost of one expanded node, in bytes, charged on top of scalar and tag text.
@@ -405,6 +585,39 @@ mod tests {
 
     fn span() -> Span {
         Span::empty(Marker::new(0, 1, 0))
+    }
+
+    #[test]
+    fn dump_budget_byte_boundary_is_exact() {
+        let max = MaxOutputBytes::new(2 * MIN_NODE_OUTPUT_BYTES + 3);
+        let mut budget = DumpBudget::new(max, MaxDumpNodes::DEFAULT);
+        assert!(budget.charge_nodes(2).is_ok());
+        assert!(budget.charge(3).is_ok());
+        assert_eq!(budget.charge(1), Err(LimitKind::OutputBytes(max)));
+    }
+
+    #[test]
+    fn dump_budget_node_boundary_is_exact() {
+        let max_nodes = MaxDumpNodes::new(5);
+        let mut budget = DumpBudget::new(MaxOutputBytes::DEFAULT, max_nodes);
+        assert!(budget.charge_nodes(3).is_ok());
+        assert!(budget.charge_nodes(2).is_ok());
+        assert_eq!(budget.charge_nodes(1), Err(LimitKind::DumpNodes(max_nodes)));
+    }
+
+    #[test]
+    fn dump_budget_saturates_on_huge_counts() {
+        let mut budget = DumpBudget::default();
+        assert!(budget.charge_nodes(usize::MAX).is_err());
+        assert!(budget.charge_nodes(usize::MAX).is_err());
+        assert!(budget.charge(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn dump_budget_accepts_default_node_cap_exactly() {
+        let mut budget = DumpBudget::default();
+        assert!(budget.charge_nodes(MaxDumpNodes::DEFAULT.get()).is_ok());
+        assert!(budget.charge_nodes(1).is_err());
     }
 
     #[test]

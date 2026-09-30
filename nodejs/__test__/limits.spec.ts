@@ -103,4 +103,72 @@ describe('Resource limits - dump', () => {
     }
     expect(safeLoad(safeDump(data))).toEqual(data);
   });
+
+  it.each([
+    ['function', () => 1],
+    ['symbol', Symbol('s')],
+    ['bigint', 1n],
+  ])('safeDump throws for %s', (_name, value) => {
+    expect(() => safeDump(value)).toThrow(/cannot serialize/);
+    expect(() => safeDumpAll([value])).toThrow(/cannot serialize/);
+  });
+
+  it('safeDump throws on a shared-reference expansion bomb', () => {
+    let a: unknown[] = ['x'];
+    for (let i = 0; i < 30; i++) {
+      a = [a, a];
+    }
+    expect(() => safeDump(a)).toThrow(/dump node count exceeds/);
+  }, 120_000);
+
+  it('shares the output budget across safeDumpAll documents', () => {
+    const limit = 100 * 1024 * 1024;
+    const doc = 'a'.repeat(limit / 2);
+    expect(() => safeDumpAll([doc])).not.toThrow();
+    expect(() => safeDumpAll([doc, doc, doc])).toThrow(/output size exceeds/);
+  }, 60_000);
+
+  it('safeDump throws on a sparse huge array before allocating', () => {
+    expect(() => safeDump(new Array(4_000_000_000))).toThrow(/dump node count exceeds/);
+  });
+
+  it('dumps small shared references', () => {
+    const shared = [1, 2];
+    expect(safeLoad(safeDump({ a: shared, b: shared }))).toEqual({ a: [1, 2], b: [1, 2] });
+  });
+
+  it('round-trips a legitimate alias document', () => {
+    const data = safeLoad('a: &x [1, 2]\nb: *x\n');
+    expect(safeLoad(safeDump(data))).toEqual(data);
+  });
+
+  it('safeDumpAll throws when output exceeds the size limit', () => {
+    const text = '\u0001'.repeat(30_000_000);
+    expect(() => safeDumpAll([text])).toThrow(/output size exceeds/);
+    expect(() => safeDump(text)).toThrow(/output size exceeds/);
+  }, 60_000);
+
+  it('dumps a 1.1M-element list', () => {
+    const list = Array.from({ length: 1_100_000 }, (_, i) => i);
+    expect(safeLoad(safeDump(list))).toEqual(list);
+  }, 60_000);
+
+  it('dumps a 600k-key object', () => {
+    const obj: Record<string, number> = {};
+    for (let i = 0; i < 600_000; i++) {
+      obj[`k${i}`] = i;
+    }
+    expect(Object.keys(safeLoad(safeDump(obj)) as object)).toHaveLength(600_000);
+  }, 60_000);
+
+  it('safeDumpAll dumps 120k small documents', () => {
+    const docs = Array.from({ length: 120_000 }, (_, i) => ({ a: i, b: 'x', c: true, d: null }));
+    expect(safeDumpAll(docs).length).toBeGreaterThan(1_000_000);
+  }, 60_000);
+
+  it('accepts output exactly at the limit and rejects one byte over', () => {
+    const limit = 100 * 1024 * 1024;
+    expect(safeDump('a'.repeat(limit - 1))).toHaveLength(limit);
+    expect(() => safeDump('a'.repeat(limit))).toThrow(/output size exceeds/);
+  }, 60_000);
 });

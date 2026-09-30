@@ -1,10 +1,12 @@
 """Resource-limit and cyclic-structure tests (#336, #337)."""
 
+import io
 import threading
 
 import pytest
 
 import fast_yaml
+from fast_yaml import _core
 
 DEEP = "- " * 20_000 + "x"
 BOMB = "a0: &a0 [x,x,x,x,x,x,x,x,x]\n" + "".join(
@@ -163,3 +165,86 @@ def test_conversion_does_not_depend_on_host_stack():
         assert fast_yaml.safe_load(deep_map) is not None
 
     _with_stack(work, 512 * 1024)
+
+
+LIMIT = 100 * 1024 * 1024
+
+
+def _dag(levels):
+    data = ["x"]
+    for _ in range(levels):
+        data = [data, data]
+    return data
+
+
+def test_dump_rejects_shared_reference_bomb():
+    with pytest.raises(ValueError, match="dump node count exceeds"):
+        fast_yaml.safe_dump(_dag(30))
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [
+        fast_yaml.safe_dump_all,
+        _core.parallel.dump_parallel,
+    ],
+    ids=["safe_dump_all", "dump_parallel"],
+)
+def test_dump_budget_is_shared_across_documents(dump):
+    doc = "a" * (LIMIT // 2)
+    dump([doc])
+    with pytest.raises(ValueError, match="output size exceeds"):
+        dump([doc, doc, doc])
+
+
+def test_alias_document_round_trips_through_dump():
+    data = fast_yaml.safe_load("a: &x [1, 2]\nb: *x\n")
+    assert fast_yaml.safe_load(fast_yaml.safe_dump(data)) == data
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [
+        fast_yaml.safe_dump,
+        lambda text: fast_yaml.safe_dump_all([text]),
+        lambda text: fast_yaml.safe_dump_to(text, io.StringIO()),
+        lambda text: _core.parallel.dump_parallel([text]),
+    ],
+    ids=["safe_dump", "safe_dump_all", "safe_dump_to", "dump_parallel"],
+)
+def test_dump_rejects_oversized_output(dump):
+    with pytest.raises(ValueError, match="output size exceeds"):
+        dump("\x01" * 30_000_000)
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [
+        fast_yaml.safe_dump,
+        lambda obj: fast_yaml.safe_dump_all([obj]),
+        lambda obj: fast_yaml.safe_dump_to(obj, io.StringIO()),
+        lambda obj: _core.parallel.dump_parallel([obj]),
+    ],
+    ids=["safe_dump", "safe_dump_all", "safe_dump_to", "dump_parallel"],
+)
+def test_dump_output_limit_boundary(dump):
+    dump("a" * (LIMIT - 1))
+    with pytest.raises(ValueError, match="output size exceeds"):
+        dump("a" * LIMIT)
+
+
+def test_dump_large_list_and_dict():
+    items = list(range(1_100_000))
+    assert fast_yaml.safe_load(fast_yaml.safe_dump(items)) == items
+    mapping = {f"k{i}": i for i in range(600_000)}
+    assert fast_yaml.safe_load(fast_yaml.safe_dump(mapping)) == mapping
+
+
+@pytest.mark.parametrize(
+    "dump",
+    [fast_yaml.safe_dump_all, _core.parallel.dump_parallel],
+    ids=["safe_dump_all", "dump_parallel"],
+)
+def test_dump_many_small_documents(dump):
+    docs = [{"a": i, "b": "x", "c": True, "d": None} for i in range(90_000)]
+    assert len(dump(docs)) > 1_000_000

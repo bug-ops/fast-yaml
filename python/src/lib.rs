@@ -22,7 +22,9 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
-use fast_yaml_core::{MaxDepth, ResolvedScalar, resolve_scalar};
+use fast_yaml_core::{
+    DumpBudget, LimitKind, MaxDepth, MaxOutputBytes, ResolvedScalar, resolve_scalar,
+};
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
@@ -292,7 +294,7 @@ impl Mark {
     }
 }
 
-/// Maximum input size in bytes for `safe_load/safe_dump` (100MB).
+/// Maximum input size in bytes for `safe_load` (100MB).
 ///
 /// This limit prevents denial-of-service attacks via extremely large inputs.
 /// Inputs exceeding this size will be rejected with a `ValueError`.
@@ -326,7 +328,10 @@ pub(crate) fn repr_to_python(
 ///
 /// The walk is iterative (explicit heap stack), so host thread stack size does not bound
 /// nesting; [`MaxDepth::DEFAULT`] does, which also catches self-referential containers.
-pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
+pub(crate) fn python_to_yaml(
+    obj: &Bound<'_, PyAny>,
+    budget: &mut DumpBudget,
+) -> PyResult<YamlOwned> {
     let mut stack = vec![OpenContainer {
         shape: Shape::Root,
         children: vec![obj.clone()].into_iter(),
@@ -336,7 +341,7 @@ pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
     while let Some(top) = stack.last_mut() {
         if let Some(child) = top.children.next() {
             let depth = stack.len() - 1;
-            match classify(&child, depth)? {
+            match classify(&child, depth, budget)? {
                 Classified::Scalar(value) => {
                     if let Some(top) = stack.last_mut() {
                         top.done.push(value);
@@ -399,23 +404,50 @@ enum Classified<'py> {
     Container(OpenContainer<'py>),
 }
 
+/// Maps a dump limit violation to a `ValueError`; depth overruns hint at self-reference.
+fn limit_error(kind: LimitKind) -> PyErr {
+    PyValueError::new_err(match kind {
+        LimitKind::Depth(_) => format!("cannot serialize to YAML: {kind} (circular reference?)"),
+        _ => format!("cannot serialize to YAML: {kind}"),
+    })
+}
+
+/// Fails when `output` is larger than [`MaxOutputBytes::DEFAULT`].
+pub(crate) fn check_output_size(output: String) -> PyResult<String> {
+    check_output_len(output.len())?;
+    Ok(output)
+}
+
+/// Fails when `len` bytes exceed [`MaxOutputBytes::DEFAULT`].
+pub(crate) fn check_output_len(len: usize) -> PyResult<()> {
+    MaxOutputBytes::DEFAULT
+        .check(len)
+        .map_err(|kind| PyValueError::new_err(kind.to_string()))
+}
+
 /// Enter one more container level, failing past [`MaxDepth::DEFAULT`].
 ///
 /// The bound also catches self-referential containers, which would recurse forever.
 fn enter_container(depth: usize) -> PyResult<usize> {
-    MaxDepth::DEFAULT.descend(depth).map_err(|kind| {
-        PyValueError::new_err(format!(
-            "cannot serialize to YAML: {kind} (circular reference?)"
-        ))
-    })
+    MaxDepth::DEFAULT.descend(depth).map_err(limit_error)
 }
 
 /// Convert a scalar, or open a container whose children are `depth` levels deep.
-fn classify<'py>(obj: &Bound<'py, PyAny>, depth: usize) -> PyResult<Classified<'py>> {
+///
+/// A node's fixed cost is charged by its parent, before any storage for the children is
+/// allocated; the root is free because its output is covered by its children and text.
+fn classify<'py>(
+    obj: &Bound<'py, PyAny>,
+    depth: usize,
+    budget: &mut DumpBudget,
+) -> PyResult<Classified<'py>> {
     if let Some(scalar) = python_scalar_to_yaml(obj)? {
+        if let YamlOwned::Value(ScalarOwned::String(text)) = &scalar {
+            budget.charge(text.len()).map_err(limit_error)?;
+        }
         return Ok(Classified::Scalar(scalar));
     }
-    let (shape, children) = container_children(obj, depth)?;
+    let (shape, children) = container_children(obj, depth, budget)?;
     Ok(Classified::Container(OpenContainer {
         shape,
         children: children.into_iter(),
@@ -446,13 +478,19 @@ fn python_scalar_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Option<YamlOwned>> 
 fn container_children<'py>(
     obj: &Bound<'py, PyAny>,
     depth: usize,
+    budget: &mut DumpBudget,
 ) -> PyResult<(Shape, Vec<Bound<'py, PyAny>>)> {
     if let Ok(list) = obj.cast::<PyList>() {
         enter_container(depth)?;
+        budget.charge_nodes(list.len()).map_err(limit_error)?;
         return Ok((Shape::Sequence, list.iter().collect()));
     }
     if let Ok(dict) = obj.cast::<PyDict>() {
         enter_container(depth)?;
+        // Each member costs a key node and a value node.
+        budget
+            .charge_nodes(dict.len().saturating_mul(2))
+            .map_err(limit_error)?;
         let mut children = Vec::with_capacity(dict.len() * 2);
         for (k, v) in dict.iter() {
             children.push(k);
@@ -463,6 +501,7 @@ fn container_children<'py>(
     if let Ok(iter) = obj.try_iter() {
         enter_container(depth)?;
         let children = iter.collect::<PyResult<Vec<_>>>()?;
+        budget.charge_nodes(children.len()).map_err(limit_error)?;
         return Ok((Shape::Sequence, children));
     }
     if let Ok(items) = obj.call_method0("items")
@@ -476,6 +515,7 @@ fn container_children<'py>(
                 children.push(tuple.get_item(1)?);
             }
         }
+        budget.charge_nodes(children.len()).map_err(limit_error)?;
         return Ok((Shape::Mapping, children));
     }
     Err(PyTypeError::new_err(format!(
@@ -606,8 +646,7 @@ fn safe_dump(
     default_flow_style: Option<bool>,
     explicit_start: bool,
 ) -> PyResult<String> {
-    // Convert Python object to YAML
-    let yaml = python_to_yaml(data)?;
+    let yaml = python_to_yaml(data, &mut DumpBudget::default())?;
 
     // Sort keys if requested
     let yaml = if sort_keys {
@@ -628,7 +667,7 @@ fn safe_dump(
         .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
         .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
-    Ok(output)
+    check_output_size(output)
 }
 
 /// Wrapper to call Python stream.write() from Rust.
@@ -743,8 +782,7 @@ fn safe_dump_to(
     // Create writable stream wrapper
     let mut writer = PyWriteable::new(stream.clone())?;
 
-    // Convert Python to YAML value
-    let yaml = python_to_yaml(data)?;
+    let yaml = python_to_yaml(data, &mut DumpBudget::default())?;
     let yaml = if sort_keys {
         sort_yaml_keys(&yaml)
     } else {
@@ -767,12 +805,14 @@ fn safe_dump_to(
             .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
             .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
-        writer.write(&output)?;
+        writer.write(&check_output_size(output)?)?;
     } else {
         // Large document - chunked emission
         let output = py
             .detach(|| fast_yaml_core::Emitter::emit_str_with_config(&yaml, &config))
             .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
+
+        let output = check_output_size(output)?;
 
         // Write in chunks to avoid holding entire string reference
         for chunk in output.as_bytes().chunks(chunk_size) {
@@ -870,11 +910,11 @@ fn safe_dump_all(
 ) -> PyResult<String> {
     let iter = documents.try_iter()?;
 
-    // Convert all Python objects to YAML first
+    let mut budget = DumpBudget::default();
     let mut yamls = Vec::new();
     for item in iter {
         let item = item?;
-        let yaml = python_to_yaml(&item)?;
+        let yaml = python_to_yaml(&item, &mut budget)?;
         let yaml = if sort_keys {
             sort_yaml_keys(&yaml)
         } else {
@@ -892,23 +932,10 @@ fn safe_dump_all(
 
     // Release GIL during CPU-intensive serialization
     let output = py
-        .detach(|| {
-            let result = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &config)?;
-
-            // Check output size to prevent memory exhaustion
-            if result.len() > MAX_INPUT_SIZE {
-                return Err(fast_yaml_core::EmitError::Emit(format!(
-                    "output size {} exceeds maximum allowed {} (100MB)",
-                    result.len(),
-                    MAX_INPUT_SIZE
-                )));
-            }
-
-            Ok(result)
-        })
+        .detach(|| fast_yaml_core::Emitter::emit_all_with_config(&yamls, &config))
         .map_err(|e| PyValueError::new_err(format!("YAML emit error: {e}")))?;
 
-    Ok(output)
+    check_output_size(output)
 }
 
 // ============================================

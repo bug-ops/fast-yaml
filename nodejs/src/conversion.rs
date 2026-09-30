@@ -3,7 +3,7 @@
 //! This module provides bidirectional conversion utilities for translating
 //! between saphyr's `YamlOwned` type and NAPI-RS JavaScript values.
 
-use fast_yaml_core::MaxDepth;
+use fast_yaml_core::{DumpBudget, LimitKind, MaxDepth};
 use napi::{Result as NapiResult, bindgen_prelude::*};
 use ordered_float::OrderedFloat;
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
@@ -110,10 +110,11 @@ fn yaml_key_to_string(yaml: &YamlOwned) -> NapiResult<String> {
 ///
 /// # Errors
 ///
-/// Returns an error if the JavaScript value contains non-serializable types.
-pub fn js_to_yaml(env: Env, js_value: Unknown) -> NapiResult<YamlOwned> {
+/// Returns an error if the JavaScript value contains non-serializable types or converting it
+/// would exceed `budget`.
+pub fn js_to_yaml(env: Env, js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<YamlOwned> {
     let mut stack: Vec<OpenContainer> = Vec::new();
-    match classify(&env, js_value, 0)? {
+    match classify(&env, js_value, 0, budget)? {
         Classified::Scalar(value) => return Ok(value),
         Classified::Container(open) => stack.push(open),
     }
@@ -127,7 +128,7 @@ pub fn js_to_yaml(env: Env, js_value: Unknown) -> NapiResult<YamlOwned> {
             ));
         };
         if let Some(child) = top.next_child() {
-            match classify(&env, child.value, depth)? {
+            match classify(&env, child.value, depth, budget)? {
                 Classified::Scalar(value) => top.accept(child.key, value),
                 Classified::Container(open) => {
                     top.pending_key = child.key;
@@ -194,19 +195,31 @@ enum Classified<'a> {
     Container(OpenContainer<'a>),
 }
 
+/// Maps a dump limit violation to a JS error; depth overruns hint at self-reference.
+fn limit_error(kind: LimitKind) -> napi::Error {
+    napi::Error::from_reason(match kind {
+        LimitKind::Depth(_) => format!("cannot serialize to YAML: {kind} (circular reference?)"),
+        _ => format!("cannot serialize to YAML: {kind}"),
+    })
+}
+
 /// Enter one more container level, failing past [`MaxDepth::DEFAULT`].
 ///
 /// The bound also catches self-referential containers, which would recurse forever.
 fn enter_container(depth: usize) -> NapiResult<usize> {
-    MaxDepth::DEFAULT.descend(depth).map_err(|kind| {
-        napi::Error::from_reason(format!(
-            "cannot serialize to YAML: {kind} (circular reference?)"
-        ))
-    })
+    MaxDepth::DEFAULT.descend(depth).map_err(limit_error)
 }
 
 /// Convert a scalar, or open a container whose children are `depth` levels deep.
-fn classify<'a>(env: &Env, js_value: Unknown<'a>, depth: usize) -> NapiResult<Classified<'a>> {
+///
+/// A node's fixed cost is charged by its parent, before any storage for the children is
+/// allocated; the root is free because its output is covered by its children and text.
+fn classify<'a>(
+    env: &Env,
+    js_value: Unknown<'a>,
+    depth: usize,
+    budget: &mut DumpBudget,
+) -> NapiResult<Classified<'a>> {
     let js_type = js_value.get_type()?;
 
     match js_type {
@@ -228,6 +241,7 @@ fn classify<'a>(env: &Env, js_value: Unknown<'a>, depth: usize) -> NapiResult<Cl
 
         ValueType::String => {
             let s: String = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
+            budget.charge(s.len()).map_err(limit_error)?;
             Ok(Classified::Scalar(YamlOwned::Value(ScalarOwned::String(s))))
         }
 
@@ -238,6 +252,7 @@ fn classify<'a>(env: &Env, js_value: Unknown<'a>, depth: usize) -> NapiResult<Cl
 
             if js_obj.is_array()? {
                 let len: u32 = js_obj.get_array_length()?;
+                budget.charge_nodes(len as usize).map_err(limit_error)?;
                 let mut children = Vec::with_capacity(len as usize);
                 for i in 0..len {
                     children.push(Child {
@@ -254,11 +269,16 @@ fn classify<'a>(env: &Env, js_value: Unknown<'a>, depth: usize) -> NapiResult<Cl
 
             let property_names = js_obj.get_property_names()?;
             let len = property_names.get_array_length()?;
+            // Each member costs a key node and a value node.
+            budget
+                .charge_nodes((len as usize).saturating_mul(2))
+                .map_err(limit_error)?;
             let mut children = Vec::with_capacity(len as usize);
             for i in 0..len {
                 let key: Unknown = property_names.get_element(i)?;
                 let key_str: String =
                     unsafe { FromNapiValue::from_napi_value(env.raw(), key.raw())? };
+                budget.charge(key_str.len()).map_err(limit_error)?;
                 let value: Unknown = js_obj.get_named_property(&key_str)?;
                 children.push(Child {
                     key: Some(key_str),
