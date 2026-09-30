@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Breaking:** `fast-yaml-core` adds `ParseError::LimitExceeded`, `ParseLimits` and `parse_*_with_limits`; Python `safe_load`/`safe_load_all` now reject over-limit input and cross-document aliases (#336, #337)
+- **Breaking:** `fast-yaml-core` adds `ParseError::LimitExceeded`, `ParseLimits` and `parse_*_with_limits`; Python `safe_load`/`safe_load_all` now reject over-limit input and cross-document aliases (#369)
 - Linter: typed `ByteOffset`/`ByteRange` boundary for saphyr positions, shared `braces`/`brackets` implementation (#347)
 
 ### Security
@@ -41,9 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Enforce a nesting-depth limit (256) while parsing in core, CLI, linter, parallel, Python, and Node.js, stopping stack overflow on deeply nested input (#337)
-- Enforce a per-stream alias-expansion budget (64 MiB estimated, counting nodes, scalar and tag bytes) to stop alias-bomb memory exhaustion (#336)
-- Fail with `ValueError`/`Error` instead of overflowing the stack when dumping self-referential or over-deep Python/Node.js structures; Node.js `safeDump`/`safeDumpAll` conversion errors now throw (#337)
+- Enforce a nesting-depth limit (256) while parsing in core, CLI, linter, parallel, Python, and Node.js, stopping stack overflow on deeply nested input (#369)
+- Enforce a per-stream alias-expansion budget (64 MiB estimated, counting nodes, scalar and tag bytes) to stop alias-bomb memory exhaustion (#369)
+- Fail with `ValueError`/`Error` instead of overflowing the stack when dumping self-referential or over-deep Python/Node.js structures; Node.js `safeDump`/`safeDumpAll` conversion errors now throw (#369)
 
 ## [0.6.6] - 2026-08-26
 
