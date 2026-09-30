@@ -1,5 +1,6 @@
 use crate::error::ParseResult;
 use crate::limits::{LimitGuard, ParseLimits};
+use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::Value;
 use saphyr::{ScalarOwned, YamlLoader};
 use saphyr_parser::{
@@ -157,14 +158,6 @@ pub fn strip_bom(input: &str) -> &str {
     input.strip_prefix('\u{FEFF}').unwrap_or(input)
 }
 
-/// Returns `true` when `tag` is the YAML non-specific tag `!`.
-///
-/// The non-specific tag forces the failsafe schema: scalars resolve to plain strings
-/// regardless of their content (YAML 1.2 §6.8.1 / §10.3.2).
-fn is_non_specific_tag(tag: &Tag) -> bool {
-    tag.handle.is_empty() && tag.suffix == "!"
-}
-
 /// Injects one implicit null document when saphyr produces no documents for non-empty input.
 ///
 /// Per YAML 1.2 §9.2, a stream with no explicit documents but non-empty content
@@ -226,8 +219,16 @@ fn canonicalize_tagged(tag: &Tag, inner: Box<Value>) -> Value {
 /// Canonicalize a non-collection, non-tagged node.
 fn canonicalize_scalar(value: Value) -> Value {
     match value {
-        Value::Representation(ref s, style, ref tag) => {
-            coerce_representation(s, style, tag.as_ref())
+        Value::Representation(s, style, tag) => {
+            let resolved = resolve_scalar(&s, style, tag.as_ref());
+            // `Str` and `BigInt` borrow all of `s`, so the owned text is reused.
+            Value::Value(
+                if matches!(resolved, ResolvedScalar::Str(_) | ResolvedScalar::BigInt(_)) {
+                    ScalarOwned::String(s)
+                } else {
+                    scalar_to_owned(resolved)
+                },
+            )
         }
         Value::Value(ScalarOwned::String(ref s)) => match s.as_str() {
             "True" | "TRUE" => Value::Value(ScalarOwned::Boolean(true)),
@@ -239,135 +240,19 @@ fn canonicalize_scalar(value: Value) -> Value {
     }
 }
 
-/// Parse a YAML core schema integer: decimal, hex (`0x`), or octal (`0o`).
-///
-/// Returns `None` for values that overflow `i64` or don't match integer syntax.
-fn parse_core_schema_int(s: &str) -> Option<i64> {
-    let (neg, digits) = s.strip_prefix('-').map_or_else(
-        || (false, s.strip_prefix('+').unwrap_or(s)),
-        |rest| (true, rest),
-    );
-    let raw: i64 = if let Some(hex) = digits
-        .strip_prefix("0x")
-        .or_else(|| digits.strip_prefix("0X"))
-    {
-        i64::from_str_radix(hex, 16).ok()?
-    } else if let Some(oct) = digits
-        .strip_prefix("0o")
-        .or_else(|| digits.strip_prefix("0O"))
-    {
-        i64::from_str_radix(oct, 8).ok()?
-    } else {
-        digits.parse::<i64>().ok()?
-    };
-    if neg { raw.checked_neg() } else { Some(raw) }
-}
-
-/// Returns `true` if `s` is an integer literal (decimal, hex, or octal) that may exceed `i64` range.
-///
-/// Matches optional `+`/`-` sign followed by `0x`/`0X` + hex digits, `0o`/`0O` + octal digits,
-/// or plain ASCII decimal digits.
-fn is_integer_literal(s: &str) -> bool {
-    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
-    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
-        return !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit());
-    }
-    if let Some(oct) = s.strip_prefix("0o").or_else(|| s.strip_prefix("0O")) {
-        return !oct.is_empty() && oct.bytes().all(|b| matches!(b, b'0'..=b'7'));
-    }
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
-}
-
-/// Attempt to coerce a float string to `i64` via truncation toward zero (`PyYAML` convention).
-///
-/// Returns `None` for non-finite values (.nan, .inf) and values outside the `i64` range.
-/// Values very close to `i64::MAX` may saturate due to `f64` precision limits — this is a
-/// known, benign edge case at the representable boundary.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
-fn float_str_to_int(s: &str) -> Option<i64> {
-    parse_core_schema_float(s)
-        .filter(|f| f.is_finite() && *f >= i64::MIN as f64 && *f <= i64::MAX as f64)
-        .map(|f| f as i64)
-}
-
-/// Parse a YAML core schema float, handling special values (.inf, .nan, etc.).
-fn parse_core_schema_float(s: &str) -> Option<f64> {
-    match s {
-        ".inf" | ".Inf" | ".INF" => Some(f64::INFINITY),
-        "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
-        ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
-        // YAML 1.2 Core Schema float: optional sign, digits, optional fraction, optional exponent.
-        // Reject bare words like "infinity" or "nan" that Rust's f64::parse() accepts.
-        other => {
-            let s = other.strip_prefix(['+', '-']).unwrap_or(other);
-            let has_digit_start = s.starts_with(|c: char| c.is_ascii_digit());
-            let looks_like_float = has_digit_start
-                && s.chars().all(|c| {
-                    c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
-                });
-            looks_like_float
-                .then(|| other.parse::<f64>().ok())
-                .flatten()
-        }
+/// Converts a resolved scalar to its owned core value; strings are copied.
+fn scalar_to_owned(resolved: ResolvedScalar<'_>) -> ScalarOwned {
+    match resolved {
+        ResolvedScalar::Null => ScalarOwned::Null,
+        ResolvedScalar::Bool(b) => ScalarOwned::Boolean(b),
+        ResolvedScalar::Int(i) => ScalarOwned::Integer(i),
+        ResolvedScalar::Float(f) => ScalarOwned::FloatingPoint(f.into()),
+        ResolvedScalar::BigInt(big) => ScalarOwned::String(big.as_str().into()),
+        ResolvedScalar::Str(s) => ScalarOwned::String(s.into()),
     }
 }
 
-/// Coerce a `Value::Representation` scalar, applying the tag if present.
-///
-/// When `early_parse = false`, saphyr preserves the raw string, style, and tag in a
-/// `Representation` node. This function resolves that node to a typed `Value::Value`.
-fn coerce_representation(s: &str, style: ScalarStyle, tag: Option<&Tag>) -> Value {
-    // 1. Core-schema explicit tag (!!str, !!int, !!float, !!bool, !!null).
-    if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
-        let coerced: Option<ScalarOwned> = match tag.suffix.as_str() {
-            "int" => parse_core_schema_int(s)
-                .or_else(|| float_str_to_int(s))
-                .map(ScalarOwned::Integer),
-            "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
-            "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
-            "null" => matches!(s, "~" | "null" | "").then_some(ScalarOwned::Null),
-            "str" => Some(ScalarOwned::String(s.into())),
-            _ => None,
-        };
-        if let Some(scalar) = coerced {
-            return Value::Value(scalar);
-        }
-    }
-    // 2. Non-specific tag `!`: failsafe schema forces string (YAML 1.2 §6.8.1 / §10.3.2).
-    if tag.is_some_and(is_non_specific_tag) {
-        return Value::Value(ScalarOwned::String(s.into()));
-    }
-    // 3. No tag or unknown tag: non-plain scalars are always strings.
-    if style != ScalarStyle::Plain {
-        return Value::Value(ScalarOwned::String(s.into()));
-    }
-    // 4. Empty plain scalar with no tag: implicit null (YAML 1.2 §10.3.2, bare `---`).
-    if s.is_empty() {
-        return Value::Value(ScalarOwned::Null);
-    }
-    // 5. Plain scalar: apply saphyr's implicit resolution rules.
-    let scalar = match s {
-        "~" | "null" | "NULL" | "Null" => ScalarOwned::Null,
-        "true" | "True" | "TRUE" => ScalarOwned::Boolean(true),
-        "false" | "False" | "FALSE" => ScalarOwned::Boolean(false),
-        other => parse_core_schema_int(other).map_or_else(
-            || {
-                if is_integer_literal(other) {
-                    ScalarOwned::String(other.into())
-                } else {
-                    parse_core_schema_float(other).map_or_else(
-                        || ScalarOwned::String(other.into()),
-                        |f| ScalarOwned::FloatingPoint(f.into()),
-                    )
-                }
-            },
-            ScalarOwned::Integer,
-        ),
-    };
-    Value::Value(scalar)
-}
-
-/// Coerce a core-schema-tagged string scalar by tag suffix; `None` when not applicable.
+/// Coerce a core-schema-tagged string scalar; `None` when the tag is not a core-schema tag.
 fn coerce_tagged_scalar(tag: &Tag, inner: &Value) -> Option<Value> {
     if !tag.is_yaml_core_schema() {
         return None;
@@ -375,17 +260,8 @@ fn coerce_tagged_scalar(tag: &Tag, inner: &Value) -> Option<Value> {
     let Value::Value(ScalarOwned::String(s)) = inner else {
         return None;
     };
-    let coerced = match tag.suffix.as_str() {
-        "int" => parse_core_schema_int(s)
-            .or_else(|| float_str_to_int(s))
-            .map(ScalarOwned::Integer),
-        "float" => parse_core_schema_float(s).map(|f| ScalarOwned::FloatingPoint(f.into())),
-        "bool" => s.parse::<bool>().ok().map(ScalarOwned::Boolean),
-        "null" => matches!(s.as_str(), "~" | "null" | "").then_some(ScalarOwned::Null),
-        "str" => Some(ScalarOwned::String(s.clone())),
-        _ => None,
-    };
-    coerced.map(Value::Value)
+    let resolved = resolve_scalar(s, ScalarStyle::Plain, Some(tag));
+    Some(Value::Value(scalar_to_owned(resolved)))
 }
 
 /// Resolve YAML 1.1 merge keys (`<<`) in a canonicalized mapping.
