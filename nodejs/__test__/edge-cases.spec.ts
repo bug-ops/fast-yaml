@@ -6,6 +6,18 @@ import { describe, expect, it } from 'vitest';
 import { safeDump, safeDumpAll, safeLoad, safeLoadAll } from '../index';
 
 describe('Edge Cases - Parser', () => {
+  describe('integers beyond i64', () => {
+    it('should accept a big integer as a mapping key', () => {
+      expect(safeLoad('9223372036854775808: x')).toEqual({ '9223372036854775808': 'x' });
+    });
+
+    it('should accept negative big integer keys in nested mappings', () => {
+      expect(safeLoad('a:\n  -99999999999999999999: y')).toEqual({
+        a: { '-99999999999999999999': 'y' },
+      });
+    });
+  });
+
   describe('empty and whitespace input', () => {
     it('should handle completely empty string', () => {
       expect(safeLoad('')).toBe(null);

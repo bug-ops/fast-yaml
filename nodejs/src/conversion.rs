@@ -80,18 +80,8 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &YamlOwned) -> NapiResult<Unknown<
 ///
 /// YAML keys can be any type, but JavaScript object keys must be strings.
 fn yaml_key_to_string(yaml: &YamlOwned) -> NapiResult<String> {
-    match yaml {
-        YamlOwned::Value(scalar) => match scalar {
-            ScalarOwned::String(s) => Ok(s.clone()),
-            ScalarOwned::Integer(i) => Ok(i.to_string()),
-            ScalarOwned::FloatingPoint(f) => Ok(f.to_string()),
-            ScalarOwned::Boolean(b) => Ok(b.to_string()),
-            ScalarOwned::Null => Ok("null".to_string()),
-        },
-        _ => Err(napi::Error::from_reason(format!(
-            "unsupported YAML key type: {yaml:?}"
-        ))),
-    }
+    fast_yaml_core::value::scalar_key_text(yaml)
+        .ok_or_else(|| napi::Error::from_reason(format!("unsupported YAML key type: {yaml:?}")))
 }
 
 /// Convert a JavaScript value to a YAML value.

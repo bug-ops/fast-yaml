@@ -101,6 +101,20 @@ pub use result::{BatchResult, FileOutcome, FileResult};
 /// Returns `Error::Parse` if any document fails to parse.
 /// The error includes the document index for debugging.
 ///
+/// # Known differences
+///
+/// Chunking follows YAML 1.2.2, where a column-0 `---` always ends the document; `saphyr`
+/// (behind `Parser::parse_all`) instead reads it as content of a top-level literal or
+/// folded block scalar. For `--- |\nx\n---\nb: 1\n` this function returns two documents
+/// and `parse_all` one. A column-0 `...` ends the scalar in both.
+///
+/// An empty block scalar before `---` (`a: |\n---\nx\n`) is `""` from `parse_all`, which is
+/// the spec result, and `"\n"` from this function: the chunk ends right after the header,
+/// where `saphyr` yields `"\n"` (as `Parser::parse_all("a: |\n")` does).
+///
+/// An unclosed quoted scalar or flow collection cut by `---` is an error in both; the
+/// message and position may differ.
+///
 /// # Examples
 ///
 /// ```
@@ -124,6 +138,12 @@ pub fn parse_parallel(input: &str) -> Result<Vec<Value>> {
 /// # Errors
 ///
 /// Returns `Error` if parsing or configuration fails.
+///
+/// # Known differences
+///
+/// Same as [`parse_parallel`]: a column-0 `---` inside a top-level block scalar splits the
+/// document here but is scalar content for `Parser::parse_all`, and an empty block scalar
+/// before `---` is `"\n"` here (a `saphyr` EOF behavior) versus `""` there.
 ///
 /// # Examples
 ///

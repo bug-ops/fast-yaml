@@ -58,6 +58,7 @@ enum State {
 /// - After `...` a `%` directive block belongs to the next document, and any other content
 ///   starts one implicitly; trailing comments stay with the previous chunk
 /// - Input without boundaries is a single chunk unless it is completely empty
+/// - A column-0 `---` inside a top-level block scalar still splits, unlike `saphyr` (#407)
 ///
 /// # Performance
 ///

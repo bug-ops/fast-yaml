@@ -62,6 +62,8 @@ let docs = parse_parallel_with_config(yaml, &config)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
+**Known differences from `Parser::parse_all`:** the chunker follows YAML 1.2.2 and treats a column-0 `---` as a document marker even inside a top-level block scalar, whereas the underlying `saphyr` parser reads it as scalar content. In that case (for example `--- |\nx\n---\nb: 1\n`) `parse_parallel` returns two documents where `parse_all` returns one. An empty block scalar before `---` is `""` in `parse_all` but `"\n"` in `parse_parallel`, because the chunk ends at EOF where `saphyr` yields `"\n"`.
+
 ### File-Level Parallelism
 
 Process multiple YAML files in parallel:

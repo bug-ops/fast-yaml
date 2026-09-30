@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - **Linter**: diagnostic context lines are windowed to 120 chars around the highlight, and `ContextLine` gains `column_offset`/`truncated_end` (Python, Node.js and JSON output too), fixing quadratic memory on long lines (#454) (#468)
+- **Core**: `canonicalize` keeps integers overflowing `i64` as `Value::Representation` instead of `ScalarOwned::String`, so consumers can tell them from strings, and adds `value::scalar_key_text`; CLI and Node.js output is unchanged (#392) (#462)
 - **Core**: `fy format` no longer rewrites plain `inf`/`-inf`/`NaN` scalars to `.inf`/`-.inf`/`.nan`; they stay strings (#362) (#450)
 - **Core**: `MaxDepth::new` and `MaxAliasBytes::new` now return `Result<_, LimitRangeError>` (depth 1..=512, alias bytes 1..=1 GiB); `LintConfig` gains a public `parse_limits` field; Node.js `processFiles`/`formatFiles`/`formatFilesInPlace` now throw instead of returning the error as a value (#433)
 - **Linter**: rule options are typed per-rule structs validated at config load; unknown rules, option keys, wrong types, `null` and unknown top-level config keys are errors in the CLI, Python and Node.js, and `RuleConfig`/`RuleOption`/`RuleOptions` and the string-keyed `LintConfig` fields are replaced by `RulesConfig` (#324) (#426)
@@ -69,6 +70,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Linter**: `document-start` no longer reports a missing `---` after `%YAML`/`%TAG` directives, `comments-indentation` and flow/scalar scans are linear (also on non-ASCII lines), and the text formatter bounds long context lines (#443) (#444) (#439) (#453)
+- **Parallel/Core**: `parse_parallel` no longer strips a BOM at the start of later chunks or a second leading BOM; adds `Parser::parse_chunk_with_budget` (#406, #455)
+- **Parallel**: documented known divergence from `Parser::parse_all` for column-0 `---` inside top-level block scalars (saphyr behavior) and pinned it in tests (#407, #455)
+- Python `parse_parallel` returns `int` for integers beyond `i64`, matching `safe_load` (#392) (#462)
+- Python `safe_dump`/`dump_all`/`dump_parallel` serialize `collections.abc.Mapping` objects (`UserDict`, `MappingProxyType`) as mappings instead of key lists (#376) (#462)
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)

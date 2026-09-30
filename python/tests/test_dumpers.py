@@ -389,3 +389,113 @@ class TestDumpOptions:
         large_docs = [{"key": "x" * 10000000} for _ in range(20)]
         with pytest.raises(ValueError, match="output size exceeds"):
             fast_yaml.dump_all(large_docs)
+
+
+class TestMappingDump:
+    """Regression tests for dumping non-dict collections.abc.Mapping objects (#376)."""
+
+    @staticmethod
+    def _custom_mapping():
+        from collections.abc import Mapping
+
+        class Custom(Mapping):
+            def __init__(self, data):
+                self._data = data
+
+            def __getitem__(self, key):
+                return self._data[key]
+
+            def __iter__(self):
+                return iter(self._data)
+
+            def __len__(self):
+                return len(self._data)
+
+        return Custom
+
+    def test_user_dict(self):
+        from collections import UserDict
+
+        out = fast_yaml.safe_dump(UserDict(a=1, b=2))
+        assert fast_yaml.safe_load(out) == {"a": 1, "b": 2}
+
+    def test_mapping_proxy(self):
+        from types import MappingProxyType
+
+        out = fast_yaml.safe_dump(MappingProxyType({"a": 1}))
+        assert fast_yaml.safe_load(out) == {"a": 1}
+
+    def test_custom_mapping(self):
+        custom = self._custom_mapping()({"x": [1, 2], "y": "z"})
+        assert fast_yaml.safe_load(fast_yaml.safe_dump(custom)) == {"x": [1, 2], "y": "z"}
+
+    def test_nested_in_dict_and_list(self):
+        from collections import UserDict
+        from types import MappingProxyType
+
+        data = {"a": UserDict(b=MappingProxyType({"c": 1})), "l": [UserDict(d=2)]}
+        expected = {"a": {"b": {"c": 1}}, "l": [{"d": 2}]}
+        assert fast_yaml.safe_load(fast_yaml.safe_dump(data)) == expected
+
+    def test_empty_user_dict(self):
+        from collections import UserDict
+
+        assert fast_yaml.safe_dump(UserDict()).strip() == "{}"
+
+    def test_sort_keys(self):
+        from collections import UserDict
+
+        out = fast_yaml.safe_dump(UserDict(b=1, a=2), sort_keys=True)
+        assert out.index("a:") < out.index("b:")
+
+    def test_dump_all(self):
+        from collections import UserDict
+
+        out = fast_yaml.safe_dump_all([UserDict(a=1), UserDict(b=2)])
+        assert list(fast_yaml.safe_load_all(out)) == [{"a": 1}, {"b": 2}]
+
+    def test_cyclic_mapping_raises(self):
+        from collections import UserDict
+
+        cyc = UserDict()
+        cyc["self"] = cyc
+        with pytest.raises(ValueError):
+            fast_yaml.safe_dump(cyc)
+
+    def test_non_string_keys(self):
+        from collections import UserDict
+
+        out = fast_yaml.safe_dump(UserDict({1: "a", 2.5: "b", False: "c", None: "d"}))
+        assert fast_yaml.safe_load(out) == {1: "a", 2.5: "b", False: "c", None: "d"}
+
+    def test_items_raising_propagates(self):
+        class Boom(self._custom_mapping()):
+            def items(self):
+                raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            fast_yaml.safe_dump(Boom({"a": 1}))
+
+    def test_items_non_pair_raises_type_error(self):
+        class Bad(self._custom_mapping()):
+            def items(self):
+                return [("a", 1, 2)]
+
+        with pytest.raises(TypeError, match="key, value"):
+            fast_yaml.safe_dump(Bad({"a": 1}))
+
+    def test_items_fallback_non_pair_raises_type_error(self):
+        class Bad:
+            def items(self):
+                return [("a", 1, 2)]
+
+        with pytest.raises(TypeError, match="key, value"):
+            fast_yaml.safe_dump(Bad())
+
+    def test_dump_parallel(self):
+        from collections import UserDict
+
+        from fast_yaml._core import parallel
+
+        out = parallel.dump_parallel([UserDict(a=1)])
+        assert fast_yaml.safe_load(out) == {"a": 1}
