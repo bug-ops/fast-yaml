@@ -4,6 +4,7 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use fast_yaml_core::decode_input_owned;
 use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
 use rayon::prelude::*;
 
@@ -58,7 +59,10 @@ pub fn execute_lint_batch(
         file_paths
             .par_iter()
             .map(|path| {
-                let content = match std::fs::read_to_string(path) {
+                let content = match std::fs::read(path)
+                    .map_err(anyhow::Error::from)
+                    .and_then(|bytes| Ok(decode_input_owned(bytes)?))
+                {
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("error: failed to read '{}': {e}", path.display());

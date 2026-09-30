@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use fast_yaml_core::decode_input_owned;
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -29,7 +30,9 @@ impl InputSource {
 
     /// Read from file
     pub fn from_file(path: &Path) -> Result<Self> {
-        let content = fs::read_to_string(path)
+        let bytes =
+            fs::read(path).with_context(|| format!("Failed to read file: {}", path.display()))?;
+        let content = decode_input_owned(bytes)
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         Ok(Self {
@@ -40,10 +43,11 @@ impl InputSource {
 
     /// Read from stdin
     pub fn from_stdin() -> Result<Self> {
-        let mut content = String::new();
+        let mut bytes = Vec::new();
         io::stdin()
-            .read_to_string(&mut content)
+            .read_to_end(&mut bytes)
             .context("Failed to read from stdin")?;
+        let content = decode_input_owned(bytes).context("Failed to read from stdin")?;
 
         Ok(Self {
             content,
