@@ -17,6 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** Python and Node.js `format_files_in_place` now report untouched files as `Unchanged` instead of `Success` (#397)
 - **Breaking:** `fy format --dry-run` exits with code 5 when any file would change (1 still means a failure) (#397)
 - **Breaking:** `fast-yaml-core` adds `ParseError::LimitExceeded`, `ParseLimits` and `parse_*_with_limits`; Python `safe_load`/`safe_load_all` now reject over-limit input and cross-document aliases (#369)
+- **Breaking:** a core-schema tag that cannot be applied now yields a string instead of implicit resolution (`!!int true` -> `"true"`); `!!bool`/`!!null` accept `True`/`TRUE`/`Null`/`NULL` (#390)
+- **Breaking:** an empty value with `!!int`/`!!bool`/`!!float` now yields `""` instead of null, and an unsupported `!!` tag (`!!foo 7`, `!!seq 7`) now yields a string (#390)
+- Integers with a doubled sign (`+-5`, `--5`, `0x-1`) are now strings instead of numbers, and `-9223372036854775808` is an integer (#390)
+- `fast-yaml-core` adds `resolve_scalar`/`ResolvedScalar` as the single scalar resolver shared by the core loader and Python bindings (#390)
 - Linter: typed `ByteOffset`/`ByteRange` boundary for saphyr positions, shared `braces`/`brackets` implementation (#347)
 
 ### Security
@@ -42,6 +46,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump Node.js dev dependency `js-yaml` to 5.4.2 to fix GHSA-r3ph-w7gj-g6xm (#368)
 - Fix `fy format` emitting alias keys without a space before `:` and writing plain/single-quoted scalars with control characters (e.g. newlines) raw; they are now double-quoted (#377)
 - Fix `fy format --indent` other than 2 producing invalid or altered nested block collections (#380)
+- Fix Python `safe_load` ignoring explicit core tags on quoted scalars and on float text (`!!int "7"`, `!!int 3.0`) and `!!int` just above `i64::MAX` saturating instead of returning a big integer (#390)
 - Fix `fy format` losing the blank line between paragraphs of folded scalars; folded values with more-indented lines now use literal style (#380)
 - Fix `fy format` dropping empty flow collections `[]` and `{}` as values, items and keys (#380)
 - Fix `fy format` root-level block scalar indentation and alias key positioning under non-default indents (#380)

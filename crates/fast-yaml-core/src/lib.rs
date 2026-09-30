@@ -45,6 +45,8 @@ pub mod error;
 pub mod limits;
 /// YAML parser for deserializing strings to documents.
 pub mod parser;
+/// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.
+pub mod scalar;
 /// Value types representing YAML data structures.
 pub mod value;
 
@@ -60,4 +62,5 @@ pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, MaxTagBytes, ParseLimits};
 pub use parser::{Parser, canonicalize, strip_bom};
+pub use scalar::{DecimalBigInt, ResolvedScalar, resolve_scalar};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

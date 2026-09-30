@@ -439,6 +439,59 @@ folded: >
       expect(() => load('key: {invalid', { schema: Schema.SafeSchema })).toThrow();
     });
 
+    it('should resolve scalars by tag, style and content', () => {
+      const cases: Array<[string, unknown]> = [
+        ['!!int "7"', 7],
+        ['!!float "1.5"', 1.5],
+        ['!!bool "true"', true],
+        ['!!bool "True"', true],
+        ['!!null "null"', null],
+        ['!!str 7', '7'],
+        ['!!int 3.0', 3],
+        ['!!int -2.7', -2],
+        ['!!int true', 'true'],
+        ['!!null 1', '1'],
+        ['! 42', '42'],
+        ['!foo 42', 42],
+        ['Null', null],
+        ['0o17', 15],
+        ['0x1F', 31],
+        ['99999999999999999999', '99999999999999999999'],
+        ['"true"', 'true'],
+        ['9223372036854775808', '9223372036854775808'],
+        ['-9223372036854775808', -(2 ** 63)],
+        ['-9223372036854775809', '-9223372036854775809'],
+        ['!!int 9223372036854775808', '9223372036854775808'],
+        ['!!int "9223372036854775808"', '9223372036854775808'],
+        ['!!int -99999999999999999999', '-99999999999999999999'],
+        ['!!int 0xFFFFFFFFFFFFFFFFFF', '0xFFFFFFFFFFFFFFFFFF'],
+        ['+-5', '+-5'],
+        ['--5', '--5'],
+        ['0x-1', '0x-1'],
+        ['!!int', ''],
+        ['!!bool', ''],
+        ['!!float', ''],
+        ['!!null', null],
+        ['!', ''],
+        ['!!foo 7', '7'],
+        ['!!seq 7', '7'],
+        ['!!timestamp 5', '5'],
+        ['!foo "42"', '42'],
+        ['!!bool "FALSE"', false],
+        ['!!float ".inf"', Infinity],
+      ];
+      for (const [doc, expected] of cases) {
+        expect(load(`v: ${doc}`), doc).toEqual({ v: expected });
+      }
+    });
+
+    it('should resolve tagged scalars in collections, anchors and documents', () => {
+      expect(load('[!!int "1", !!bool "true"]')).toEqual([1, true]);
+      expect(load('{a: !!float "2.5"}')).toEqual({ a: 2.5 });
+      expect(load('a: &x !!int "7"\nb: *x')).toEqual({ a: 7, b: 7 });
+      expect(loadAll('--- !!int "1"\n--- !!bool "false"\n')).toEqual([1, false]);
+    });
+
     it('should validate input size with all schemas', () => {
       const large = 'x: '.repeat(35_000_000); // ~105MB, exceeds 100MB limit
       const schemas = [

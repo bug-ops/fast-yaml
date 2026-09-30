@@ -22,7 +22,7 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
-use fast_yaml_core::MaxDepth;
+use fast_yaml_core::{MaxDepth, ResolvedScalar, resolve_scalar};
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyTypeError, PyValueError};
@@ -35,50 +35,6 @@ mod batch;
 mod conversion;
 pub(crate) mod event_loader;
 
-fn is_integer_literal(s: &str) -> bool {
-    let s = s.strip_prefix(['+', '-']).unwrap_or(s);
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
-}
-
-fn parse_core_schema_int(s: &str) -> Option<i64> {
-    let (neg, digits) = s.strip_prefix('-').map_or_else(
-        || (false, s.strip_prefix('+').unwrap_or(s)),
-        |rest| (true, rest),
-    );
-    let raw: i64 = if let Some(hex) = digits
-        .strip_prefix("0x")
-        .or_else(|| digits.strip_prefix("0X"))
-    {
-        i64::from_str_radix(hex, 16).ok()?
-    } else if let Some(oct) = digits
-        .strip_prefix("0o")
-        .or_else(|| digits.strip_prefix("0O"))
-    {
-        i64::from_str_radix(oct, 8).ok()?
-    } else {
-        digits.parse::<i64>().ok()?
-    };
-    if neg { raw.checked_neg() } else { Some(raw) }
-}
-
-fn parse_core_schema_float(s: &str) -> Option<f64> {
-    match s {
-        ".inf" | ".Inf" | ".INF" => Some(f64::INFINITY),
-        "-.inf" | "-.Inf" | "-.INF" => Some(f64::NEG_INFINITY),
-        ".nan" | ".NaN" | ".NAN" => Some(f64::NAN),
-        other => {
-            let stripped = other.strip_prefix(['+', '-']).unwrap_or(other);
-            let has_digit_start = stripped.starts_with(|c: char| c.is_ascii_digit());
-            let looks_like_float = has_digit_start
-                && stripped.chars().all(|c| {
-                    c.is_ascii_digit() || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-'
-                });
-            looks_like_float
-                .then(|| other.parse::<f64>().ok())
-                .flatten()
-        }
-    }
-}
 mod lint;
 mod parallel;
 
@@ -349,63 +305,18 @@ pub(crate) fn repr_to_python(
     style: ScalarStyle,
     tag: Option<&Tag>,
 ) -> PyResult<Py<PyAny>> {
-    // Non-specific tag `!`: failsafe schema forces string (YAML 1.2 §6.8.1).
-    if tag.is_some_and(|t| t.handle.is_empty() && t.suffix == "!") {
-        return Ok(s.into_pyobject(py)?.as_any().clone().unbind());
-    }
-    // Non-plain scalars (quoted, block) are always strings
-    if style != ScalarStyle::Plain {
-        return Ok(s.into_pyobject(py)?.as_any().clone().unbind());
-    }
-    // Core schema tag overrides
-    if let Some(tag) = tag.filter(|t| t.is_yaml_core_schema()) {
-        let as_str =
-            || -> PyResult<Py<PyAny>> { Ok(s.into_pyobject(py)?.as_any().clone().unbind()) };
-        return match tag.suffix.as_str() {
-            "int" => parse_core_schema_int(s).map_or_else(
-                || {
-                    if is_integer_literal(s) {
-                        py.import("builtins")
-                            .and_then(|b| b.getattr("int"))
-                            .and_then(|t| t.call1((s,)))
-                            .map(pyo3::Bound::unbind)
-                    } else {
-                        as_str()
-                    }
-                },
-                |i| Ok(i.into_pyobject(py)?.as_any().clone().unbind()),
-            ),
-            "float" => parse_core_schema_float(s).map_or_else(as_str, |f| {
-                Ok(f.into_pyobject(py)?.as_any().clone().unbind())
-            }),
-            "bool" => s.parse::<bool>().map_or_else(
-                |_| as_str(),
-                |b| Ok(b.into_pyobject(py)?.as_any().clone().unbind()),
-            ),
-            "null" if matches!(s, "~" | "null" | "") => Ok(py.None()),
-            _ => as_str(),
-        };
-    }
-    // Plain scalar implicit resolution
-    match s {
-        // Empty plain scalar with no tag: implicit null (YAML 1.2 §10.3.2, e.g. bare `---`).
-        "" | "~" | "null" | "NULL" | "Null" => Ok(py.None()),
-        "true" | "True" | "TRUE" => Ok(true.into_pyobject(py)?.as_any().clone().unbind()),
-        "false" | "False" | "FALSE" => Ok(false.into_pyobject(py)?.as_any().clone().unbind()),
-        other => {
-            if let Some(i) = parse_core_schema_int(other) {
-                Ok(i.into_pyobject(py)?.as_any().clone().unbind())
-            } else if is_integer_literal(other) {
-                // Bigint: decimal integer exceeding i64 range
-                let builtins = py.import("builtins")?;
-                Ok(builtins.getattr("int")?.call1((other,))?.unbind())
-            } else if let Some(f) = parse_core_schema_float(other) {
-                Ok(f.into_pyobject(py)?.as_any().clone().unbind())
-            } else {
-                Ok(other.into_pyobject(py)?.as_any().clone().unbind())
-            }
-        }
-    }
+    Ok(match resolve_scalar(s, style, tag) {
+        ResolvedScalar::Null => py.None(),
+        ResolvedScalar::Bool(b) => b.into_pyobject(py)?.as_any().clone().unbind(),
+        ResolvedScalar::Int(i) => i.into_pyobject(py)?.as_any().clone().unbind(),
+        ResolvedScalar::Float(f) => f.into_pyobject(py)?.as_any().clone().unbind(),
+        ResolvedScalar::BigInt(big) => py
+            .import("builtins")?
+            .getattr("int")?
+            .call1((big.as_str(),))?
+            .unbind(),
+        ResolvedScalar::Str(s) => s.into_pyobject(py)?.as_any().clone().unbind(),
+    })
 }
 
 /// Convert a Python object to a `YamlOwned` value.

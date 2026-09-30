@@ -333,6 +333,58 @@ fn test_convert_yaml_to_json() {
 }
 
 #[test]
+fn test_convert_yaml_to_json_scalar_resolution_edges() {
+    let input = concat!(
+        "v: !!int \"7\"\n",
+        "w: !!float \"1.5\"\n",
+        "x: !!bool \"true\"\n",
+        "y: !!int true\n",
+        "a: !!int 9223372036854775807\n",
+        "b: !!int 9223372036854775808\n",
+        "c: -9223372036854775809\n",
+        "d: +-5\n",
+        "e: !!int\n",
+        "f: !!foo 7\n",
+        "g: !\n",
+        "h: [!!int \"1\", !!bool \"true\"]\n",
+        "i: &x !!float \"2.5\"\n",
+        "j: *x\n",
+    );
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin(input)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"v\": 7"))
+        .stdout(predicate::str::contains("\"w\": 1.5"))
+        .stdout(predicate::str::contains("\"x\": true"))
+        .stdout(predicate::str::contains("\"y\": \"true\""))
+        .stdout(predicate::str::contains("\"a\": 9223372036854775807"))
+        .stdout(predicate::str::contains("\"b\": \"9223372036854775808\""))
+        .stdout(predicate::str::contains("\"c\": \"-9223372036854775809\""))
+        .stdout(predicate::str::contains("\"d\": \"+-5\""))
+        .stdout(predicate::str::contains("\"e\": \"\""))
+        .stdout(predicate::str::contains("\"f\": \"7\""))
+        .stdout(predicate::str::contains("\"g\": \"\""))
+        .stdout(predicate::str::contains("\"i\": 2.5"))
+        .stdout(predicate::str::contains("\"j\": 2.5"));
+}
+
+#[test]
+fn test_convert_yaml_to_json_tagged_multi_document() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("convert")
+        .arg("json")
+        .write_stdin("--- !!int \"1\"\n--- !!bool \"false\"\n")
+        .assert()
+        .success()
+        .stdout("[\n  1,\n  false\n]\n");
+}
+
+#[test]
 fn test_convert_json_to_yaml() {
     Command::cargo_bin("fy")
         .unwrap()
