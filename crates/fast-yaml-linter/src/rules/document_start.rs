@@ -1,5 +1,8 @@
 //! Rule to check for document start marker (---).
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{BoolOrName, RuleOptions, deserialize_bool_or_name};
 use crate::context::source_lines;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
@@ -18,19 +21,79 @@ use fast_yaml_core::Value;
 ///
 /// ```
 /// use fast_yaml_core::Parser;
-/// use fast_yaml_linter::{rules::DocumentStartRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::DocumentStartRule, rules::LintRule, LintConfig};
 ///
 /// let rule = DocumentStartRule;
 /// let yaml = "---\nname: John";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let config = LintConfig::new()
-///     .with_rule_config("document-start", RuleConfig::new().with_option("present", "required"));
+/// let config = LintConfig::default();
 ///
 /// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentStartRule;
+
+/// Whether the document start marker `---` is required.
+///
+/// Accepts `true` (required), `false` (forbidden), `required`, `forbidden` and `allowed`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DocumentStartPresence {
+    /// The marker must be present.
+    Required,
+    /// The marker must be absent.
+    Forbidden,
+    /// Either form is accepted.
+    #[default]
+    Allowed,
+}
+
+impl BoolOrName for DocumentStartPresence {
+    const EXPECTING: &'static str = "a boolean, 'required', 'forbidden' or 'allowed'";
+
+    fn from_bool(value: bool) -> Result<Self, &'static str> {
+        Ok(if value {
+            Self::Required
+        } else {
+            Self::Forbidden
+        })
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "required" => Some(Self::Required),
+            "forbidden" => Some(Self::Forbidden),
+            "allowed" => Some(Self::Allowed),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for DocumentStartPresence {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Required => "required",
+            Self::Forbidden => "forbidden",
+            Self::Allowed => "allowed",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for DocumentStartPresence {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_bool_or_name(deserializer)
+    }
+}
+
+/// Options of the document-start rule.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct DocumentStartOptions {
+    /// Whether `---` is required, forbidden or allowed.
+    pub present: DocumentStartPresence,
+}
+
+impl RuleOptions for DocumentStartOptions {}
 
 impl super::LintRule for DocumentStartRule {
     fn code(&self) -> &str {
@@ -51,20 +114,15 @@ impl super::LintRule for DocumentStartRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let presence = config
-            .get_rule_config(self.code())
-            .and_then(|rc| rc.options.get_string("present"))
-            .unwrap_or(if config.require_document_start {
-                "required"
-            } else {
-                "allowed"
-            });
-
         let source_context = context.source_context();
-        match presence {
-            "required" => check_required(source, source_context, config, self.code()),
-            "forbidden" => check_forbidden(source, source_context, config, self.code()),
-            _ => Vec::new(), // "allowed" = no checks
+        match config.rules.document_start.options.present {
+            DocumentStartPresence::Required => {
+                check_required(source, source_context, config, self.code())
+            }
+            DocumentStartPresence::Forbidden => {
+                check_forbidden(source, source_context, config, self.code())
+            }
+            DocumentStartPresence::Allowed => Vec::new(),
         }
     }
 }
@@ -78,7 +136,7 @@ fn check_required(
     if has_document_start_marker(source) {
         Vec::new()
     } else {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+        let severity = config.rules.document_start.severity_or(Severity::Warning);
         vec![
             DiagnosticBuilder::new(
                 code,
@@ -103,7 +161,7 @@ fn check_forbidden(
     code: &str,
 ) -> Vec<Diagnostic> {
     if let Some((_line_num, span)) = find_document_start_marker(source) {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+        let severity = config.rules.document_start.severity_or(Severity::Warning);
         vec![
             DiagnosticBuilder::new(
                 code,
@@ -153,7 +211,10 @@ fn find_document_start_marker(source: &str) -> Option<(usize, Span)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -162,10 +223,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentStartRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-start",
-            RuleConfig::new().with_option("present", "required"),
-        );
+        let config = config_with_rule(RuleName::DocumentStart, "{present: required}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -178,10 +236,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentStartRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-start",
-            RuleConfig::new().with_option("present", "required"),
-        );
+        let config = config_with_rule(RuleName::DocumentStart, "{present: required}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -198,10 +253,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentStartRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-start",
-            RuleConfig::new().with_option("present", "forbidden"),
-        );
+        let config = config_with_rule(RuleName::DocumentStart, "{present: forbidden}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -218,10 +270,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentStartRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-start",
-            RuleConfig::new().with_option("present", "required"),
-        );
+        let config = config_with_rule(RuleName::DocumentStart, "{present: required}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -262,11 +311,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentStartRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-start",
-            RuleConfig::new()
-                .with_option("present", "required")
-                .with_severity(Severity::Error),
+        let config = config_with_rule(
+            RuleName::DocumentStart,
+            "{present: required, severity: error}",
         );
 
         let context = LintContext::new(yaml);

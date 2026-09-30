@@ -1,5 +1,8 @@
 //! Rule to check octal value representations.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::RuleOptions;
 use crate::context::lines_of;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
@@ -41,7 +44,7 @@ fn strip_inline_comment(line: &str) -> &str {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::OctalValuesRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::OctalValuesRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = OctalValuesRule;
@@ -53,6 +56,27 @@ fn strip_inline_comment(line: &str) -> &str {
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct OctalValuesRule;
+
+/// Options of the octal-values rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct OctalValuesOptions {
+    /// Flag implicit octals such as `0755`.
+    pub forbid_implicit_octal: bool,
+    /// Flag explicit octals such as `0o755`.
+    pub forbid_explicit_octal: bool,
+}
+
+impl Default for OctalValuesOptions {
+    fn default() -> Self {
+        Self {
+            forbid_implicit_octal: true,
+            forbid_explicit_octal: true,
+        }
+    }
+}
+
+impl RuleOptions for OctalValuesOptions {}
 
 impl super::LintRule for OctalValuesRule {
     fn code(&self) -> &str {
@@ -73,13 +97,9 @@ impl super::LintRule for OctalValuesRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let rule_config = config.get_rule_config(self.code());
-        let forbid_implicit = rule_config
-            .and_then(|rc| rc.options.get_bool("forbid-implicit-octal"))
-            .unwrap_or(true);
-        let forbid_explicit = rule_config
-            .and_then(|rc| rc.options.get_bool("forbid-explicit-octal"))
-            .unwrap_or(true);
+        let options = &config.rules.octal_values.options;
+        let forbid_implicit = options.forbid_implicit_octal;
+        let forbid_explicit = options.forbid_explicit_octal;
 
         if !forbid_implicit && !forbid_explicit {
             return Vec::new();
@@ -165,7 +185,10 @@ impl OctalValuesRule {
             {
                 let value_offset = line_offset + trim_offset_in_line;
                 let col = trim_offset_in_line + 1;
-                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                let severity = config
+                    .rules
+                    .octal_values
+                    .severity_or(self.default_severity());
                 let span = Span::new(
                     Location::new(line_num, col, value_offset),
                     Location::new(
@@ -197,7 +220,10 @@ impl OctalValuesRule {
             {
                 let value_offset = line_offset + trim_offset_in_line;
                 let col = trim_offset_in_line + 1;
-                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                let severity = config
+                    .rules
+                    .octal_values
+                    .severity_or(self.default_severity());
                 let span = Span::new(
                     Location::new(line_num, col, value_offset),
                     Location::new(
@@ -225,7 +251,10 @@ impl OctalValuesRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -275,10 +304,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "octal-values",
-            RuleConfig::new().with_option("forbid-implicit-octal", false),
-        );
+        let config = config_with_rule(RuleName::OctalValues, "{forbid-implicit-octal: false}");
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
@@ -291,10 +317,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
-        let config = LintConfig::new().with_rule_config(
-            "octal-values",
-            RuleConfig::new().with_option("forbid-explicit-octal", false),
-        );
+        let config = config_with_rule(RuleName::OctalValues, "{forbid-explicit-octal: false}");
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);

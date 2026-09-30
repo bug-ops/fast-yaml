@@ -1,5 +1,9 @@
 //! Rule to check for document end marker (...).
 
+use serde::{Deserialize, Serialize};
+use serde_norway::Value as YamlValue;
+
+use crate::config::{BoolOrName, RuleOptions, deserialize_bool_or_name};
 use crate::context::{lines_of, source_lines};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
@@ -18,19 +22,81 @@ use fast_yaml_core::Value;
 ///
 /// ```
 /// use fast_yaml_core::Parser;
-/// use fast_yaml_linter::{rules::DocumentEndRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::DocumentEndRule, rules::LintRule, LintConfig};
 ///
 /// let rule = DocumentEndRule;
 /// let yaml = "name: John\n...";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let config = LintConfig::new()
-///     .with_rule_config("document-end", RuleConfig::new().with_option("present", true));
+/// let config = LintConfig::default();
 ///
 /// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentEndRule;
+
+/// Whether the document end marker `...` is required.
+///
+/// Accepts `true` or `required`, and `allowed`. yamllint's `false` (forbid the marker) is not
+/// implemented and is rejected with an explicit error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DocumentEndPresence {
+    /// The marker must be present.
+    Required,
+    /// Either form is accepted.
+    #[default]
+    Allowed,
+}
+
+impl BoolOrName for DocumentEndPresence {
+    const EXPECTING: &'static str = "true, 'required' or 'allowed'";
+
+    fn from_bool(value: bool) -> Result<Self, &'static str> {
+        if value {
+            Ok(Self::Required)
+        } else {
+            Err("forbidding the document end marker is not supported")
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "required" => Some(Self::Required),
+            "allowed" => Some(Self::Allowed),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for DocumentEndPresence {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Required => "required",
+            Self::Allowed => "allowed",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for DocumentEndPresence {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_bool_or_name(deserializer)
+    }
+}
+
+/// Options of the document-end rule.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct DocumentEndOptions {
+    /// Whether `...` is required or merely allowed.
+    pub present: DocumentEndPresence,
+}
+
+impl RuleOptions for DocumentEndOptions {
+    fn unsupported_value(key: &str, value: &YamlValue) -> Option<&'static str> {
+        (key == "present" && *value == YamlValue::Bool(false))
+            .then_some("yamllint `false` forbids '...'; disable the rule instead")
+    }
+}
 
 impl super::LintRule for DocumentEndRule {
     fn code(&self) -> &str {
@@ -51,19 +117,14 @@ impl super::LintRule for DocumentEndRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let required = config
-            .get_rule_config(self.code())
-            .and_then(|rc| rc.options.get_bool("present"))
-            .unwrap_or(config.require_document_end);
-
-        if !required {
+        if config.rules.document_end.options.present == DocumentEndPresence::Allowed {
             return Vec::new();
         }
 
         if has_document_end_marker(source) {
             Vec::new()
         } else {
-            let severity = config.get_effective_severity(self.code(), Severity::Warning);
+            let severity = config.rules.document_end.severity_or(Severity::Warning);
             let last_line = lines_of(source).count().max(1);
             let last_offset = source.len();
 
@@ -129,7 +190,10 @@ fn find_document_end_marker(source: &str) -> Option<(usize, Span)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -138,10 +202,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-end",
-            RuleConfig::new().with_option("present", true),
-        );
+        let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -154,10 +215,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-end",
-            RuleConfig::new().with_option("present", true),
-        );
+        let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -190,10 +248,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-end",
-            RuleConfig::new().with_option("present", true),
-        );
+        let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -215,12 +270,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
-        let config = LintConfig::new().with_rule_config(
-            "document-end",
-            RuleConfig::new()
-                .with_option("present", true)
-                .with_severity(Severity::Error),
-        );
+        let config = config_with_rule(RuleName::DocumentEnd, "{present: true, severity: error}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

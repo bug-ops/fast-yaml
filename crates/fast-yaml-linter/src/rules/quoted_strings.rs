@@ -1,5 +1,9 @@
 //! Rule to check quoted string style.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{BoolOrName, OptionConflict, RuleOptions, deserialize_bool_or_name};
+use crate::echo::{KEY_LIMIT, echo};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
@@ -37,6 +41,139 @@ use super::LintRule;
 /// ```
 pub struct QuotedStringsRule;
 
+/// Quote style enforced by the quoted-strings rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QuoteType {
+    /// Either quote style.
+    #[default]
+    Any,
+    /// Single quotes only.
+    Single,
+    /// Double quotes only.
+    Double,
+}
+
+/// When strings have to be quoted.
+///
+/// Accepts `true` (always), `false` (not required), `always`, `not-required`,
+/// `only-when-needed` and `never`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QuoteRequirement {
+    /// Every string value must be quoted.
+    Always,
+    /// Quotes are optional; only the quote style is checked.
+    NotRequired,
+    /// Quotes are flagged when the string does not need them.
+    #[default]
+    OnlyWhenNeeded,
+    /// Quoted strings are flagged.
+    Never,
+}
+
+impl BoolOrName for QuoteRequirement {
+    const EXPECTING: &'static str =
+        "a boolean, 'always', 'not-required', 'only-when-needed' or 'never'";
+
+    fn from_bool(value: bool) -> Result<Self, &'static str> {
+        Ok(if value {
+            Self::Always
+        } else {
+            Self::NotRequired
+        })
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "always" => Some(Self::Always),
+            "not-required" => Some(Self::NotRequired),
+            "only-when-needed" => Some(Self::OnlyWhenNeeded),
+            "never" => Some(Self::Never),
+            _ => None,
+        }
+    }
+}
+
+impl Serialize for QuoteRequirement {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self {
+            Self::Always => "always",
+            Self::NotRequired => "not-required",
+            Self::OnlyWhenNeeded => "only-when-needed",
+            Self::Never => "never",
+        })
+    }
+}
+
+impl<'de> Deserialize<'de> for QuoteRequirement {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserialize_bool_or_name(deserializer)
+    }
+}
+
+/// Options of the quoted-strings rule.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct QuotedStringsOptions {
+    /// Allowed quote style.
+    pub quote_type: QuoteType,
+    /// When strings have to be quoted.
+    pub required: QuoteRequirement,
+    /// Substrings that keep quotes on a string; only valid with `required: only-when-needed`.
+    ///
+    /// Patterns are matched as plain substrings. Regular expression syntax (`^ $ * + ? ( ) [ ]
+    /// { } | \`) is rejected because yamllint's regular expressions are not supported.
+    pub extra_required: Vec<String>,
+    /// Substrings that may stay unquoted; only valid with `required: always`.
+    ///
+    /// Matched like `extra_required`.
+    pub extra_allowed: Vec<String>,
+}
+
+/// Characters that mark a pattern as a regular expression.
+const REGEX_SYNTAX: [char; 13] = [
+    '^', '$', '*', '+', '?', '(', ')', '[', ']', '{', '}', '|', '\\',
+];
+
+impl RuleOptions for QuotedStringsOptions {
+    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["allow-quoted-quotes", "check-keys"];
+
+    fn conflicts(&self) -> Vec<OptionConflict> {
+        let mut conflicts = Vec::new();
+        for (key, patterns, applies, needs) in [
+            (
+                "extra-required",
+                &self.extra_required,
+                self.required == QuoteRequirement::OnlyWhenNeeded,
+                "'only-when-needed'",
+            ),
+            (
+                "extra-allowed",
+                &self.extra_allowed,
+                self.required == QuoteRequirement::Always,
+                "'always' or true",
+            ),
+        ] {
+            if !patterns.is_empty() && !applies {
+                conflicts.push(OptionConflict {
+                    key,
+                    message: format!("has no effect unless `required` is {needs}"),
+                });
+            }
+            if let Some(pattern) = patterns.iter().find(|p| p.contains(REGEX_SYNTAX)) {
+                conflicts.push(OptionConflict {
+                    key,
+                    message: format!(
+                        "pattern '{}' uses regular expression syntax; patterns are matched as plain substrings, regular expressions are not supported",
+                        echo(pattern, KEY_LIMIT)
+                    ),
+                });
+            }
+        }
+        conflicts
+    }
+}
+
 /// Tracks whether the next scalar in a mapping scope is a key or a value.
 enum ScopeKind {
     /// Inside a mapping; `expecting_key` alternates after each key/value.
@@ -64,25 +201,9 @@ impl super::LintRule for QuotedStringsRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let rule_config = config.get_rule_config(self.code());
-
-        let quote_type = rule_config
-            .and_then(|rc| rc.options.get_string("quote-type"))
-            .unwrap_or("any");
-
-        let required = rule_config
-            .and_then(|rc| rc.options.get_string("required"))
-            .unwrap_or("only-when-needed");
-
-        let extra_required = rule_config
-            .and_then(|rc| rc.options.get_string_list("extra-required"))
-            .map(std::borrow::ToOwned::to_owned)
-            .unwrap_or_default();
-
-        let extra_allowed = rule_config
-            .and_then(|rc| rc.options.get_string_list("extra-allowed"))
-            .map(std::borrow::ToOwned::to_owned)
-            .unwrap_or_default();
+        let options = &config.rules.quoted_strings.options;
+        let (quote_type, required) = (options.quote_type, options.required);
+        let (extra_required, extra_allowed) = (&options.extra_required, &options.extra_allowed);
 
         let mut diagnostics = Vec::new();
         let mut scopes: Vec<ScopeKind> = Vec::new();
@@ -129,8 +250,8 @@ impl super::LintRule for QuotedStringsRule {
                         context.source_context().span_of(span),
                         quote_type,
                         required,
-                        &extra_required,
-                        &extra_allowed,
+                        extra_required,
+                        extra_allowed,
                     );
                 }
 
@@ -162,8 +283,8 @@ impl QuotedStringsRule {
         style: ScalarStyle,
         is_key: bool,
         scalar_span: Span,
-        quote_type: &str,
-        required: &str,
+        quote_type: QuoteType,
+        required: QuoteRequirement,
         extra_required: &[String],
         extra_allowed: &[String],
     ) {
@@ -174,9 +295,11 @@ impl QuotedStringsRule {
                 } else {
                     '"'
                 };
-                if quote_type == "single" && quote_char == '"' {
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                if quote_type == QuoteType::Single && quote_char == '"' {
+                    let severity = config
+                        .rules
+                        .quoted_strings
+                        .severity_or(self.default_severity());
                     diagnostics.push(
                         DiagnosticBuilder::new(
                             self.code(),
@@ -186,9 +309,11 @@ impl QuotedStringsRule {
                         )
                         .build_with_context(source_ctx),
                     );
-                } else if quote_type == "double" && quote_char == '\'' {
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                } else if quote_type == QuoteType::Double && quote_char == '\'' {
+                    let severity = config
+                        .rules
+                        .quoted_strings
+                        .severity_or(self.default_severity());
                     diagnostics.push(
                         DiagnosticBuilder::new(
                             self.code(),
@@ -200,7 +325,7 @@ impl QuotedStringsRule {
                     );
                 }
 
-                if required == "only-when-needed" {
+                if required == QuoteRequirement::OnlyWhenNeeded {
                     let has_escape = style == ScalarStyle::DoubleQuoted
                         && (Self::has_yaml_escape(value)
                             || Self::has_source_unicode_hex_escape(
@@ -211,8 +336,10 @@ impl QuotedStringsRule {
                         || Self::needs_quotes(value)
                         || extra_required.iter().any(|p| value.contains(p.as_str()));
                     if !needs {
-                        let severity =
-                            config.get_effective_severity(self.code(), self.default_severity());
+                        let severity = config
+                            .rules
+                            .quoted_strings
+                            .severity_or(self.default_severity());
                         diagnostics.push(
                             DiagnosticBuilder::new(
                                 self.code(),
@@ -223,9 +350,11 @@ impl QuotedStringsRule {
                             .build_with_context(source_ctx),
                         );
                     }
-                } else if required == "never" {
-                    let severity =
-                        config.get_effective_severity(self.code(), self.default_severity());
+                } else if required == QuoteRequirement::Never {
+                    let severity = config
+                        .rules
+                        .quoted_strings
+                        .severity_or(self.default_severity());
                     diagnostics.push(
                         DiagnosticBuilder::new(
                             self.code(),
@@ -240,12 +369,15 @@ impl QuotedStringsRule {
 
             // Plain scalars: only check when required == "always" and not a key.
             ScalarStyle::Plain
-                if required == "always"
+                if required == QuoteRequirement::Always
                     && !is_key
                     && !Self::is_scalar_literal(value)
                     && !extra_allowed.iter().any(|p| value.contains(p.as_str())) =>
             {
-                let severity = config.get_effective_severity(self.code(), self.default_severity());
+                let severity = config
+                    .rules
+                    .quoted_strings
+                    .severity_or(self.default_severity());
                 diagnostics.push(
                     DiagnosticBuilder::new(
                         self.code(),
@@ -397,7 +529,10 @@ impl QuotedStringsRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -420,10 +555,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = LintConfig::new().with_rule_config(
-            "quoted-strings",
-            RuleConfig::new().with_option("quote-type", "single"),
-        );
+        let config = config_with_rule(RuleName::QuotedStrings, "{quote-type: single}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -437,10 +569,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = LintConfig::new().with_rule_config(
-            "quoted-strings",
-            RuleConfig::new().with_option("quote-type", "double"),
-        );
+        let config = config_with_rule(RuleName::QuotedStrings, "{quote-type: double}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -482,10 +611,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = LintConfig::new().with_rule_config(
-            "quoted-strings",
-            RuleConfig::new().with_option("required", "always"),
-        );
+        let config = config_with_rule(RuleName::QuotedStrings, "{required: always}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -500,10 +626,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = LintConfig::new().with_rule_config(
-            "quoted-strings",
-            RuleConfig::new().with_option("required", "never"),
-        );
+        let config = config_with_rule(RuleName::QuotedStrings, "{required: never}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -517,10 +640,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
-        let config = LintConfig::new().with_rule_config(
-            "quoted-strings",
-            RuleConfig::new().with_option("extra-required", vec!["-".to_string()]),
-        );
+        let config = config_with_rule(RuleName::QuotedStrings, "{extra-required: ['-']}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

@@ -2,6 +2,9 @@
 
 use fast_yaml_core::EmitterConfig;
 
+#[cfg(feature = "linter")]
+use fast_yaml_linter::config::IndentSize;
+
 /// Configuration for YAML formatting.
 ///
 /// Controls indentation and line width for formatting operations.
@@ -44,7 +47,7 @@ impl FormatterConfig {
     }
 
     /// Returns the indentation width.
-    #[cfg(any(test, feature = "linter"))]
+    #[cfg(test)]
     #[must_use]
     pub const fn indent(&self) -> u8 {
         self.indent
@@ -63,6 +66,13 @@ impl FormatterConfig {
         EmitterConfig::new()
             .with_indent(self.indent as usize)
             .with_width(self.width)
+    }
+
+    /// Returns the indentation width as a linter indentation size.
+    #[cfg(feature = "linter")]
+    #[must_use]
+    pub const fn lint_indent_size(&self) -> IndentSize {
+        IndentSize::saturating_from_u8(self.indent)
     }
 }
 

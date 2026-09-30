@@ -28,6 +28,7 @@ pyo3 = { workspace = true, features = ["extension-module"] }
 rayon = { workspace = true }
 saphyr = { workspace = true }
 saphyr-parser = { workspace = true }
+serde_norway = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

@@ -39,6 +39,7 @@ pub(crate) mod event_loader;
 pub(crate) mod limits;
 mod lint;
 mod parallel;
+mod rule_input;
 
 // ============================================
 // Loader Classes (PyYAML Compatibility)

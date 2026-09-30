@@ -1,5 +1,8 @@
 //! Rule to detect duplicate anchor definitions in YAML documents.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::RuleOptions;
 use crate::context::source_lines;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
@@ -23,6 +26,19 @@ use std::collections::HashMap;
 /// - Document boundaries (`---` at column 0) reset the anchor map.
 pub struct InvalidAnchorsRule;
 
+/// Options of the invalid-anchor rule (none).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InvalidAnchorsOptions {}
+
+impl RuleOptions for InvalidAnchorsOptions {
+    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &[
+        "forbid-undeclared-aliases",
+        "forbid-duplicated-anchors",
+        "forbid-unused-anchors",
+    ];
+}
+
 impl super::LintRule for InvalidAnchorsRule {
     fn code(&self) -> &str {
         DiagnosticCode::INVALID_ANCHOR
@@ -41,7 +57,10 @@ impl super::LintRule for InvalidAnchorsRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let severity = config.get_effective_severity(self.code(), self.default_severity());
+        let severity = config
+            .rules
+            .invalid_anchor
+            .severity_or(self.default_severity());
         scan_duplicate_anchors(context.source(), context.source_context(), severity)
     }
 }
@@ -374,7 +393,10 @@ const fn build_span(line: usize, col: usize, offset: usize, len: usize) -> crate
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
@@ -475,10 +497,7 @@ mod tests {
         let value = Parser::parse_str(yaml)
             .unwrap()
             .unwrap_or(Value::Value(fast_yaml_core::ScalarOwned::Null));
-        let config = LintConfig::new().with_rule_config(
-            "invalid-anchor",
-            RuleConfig::new().with_severity(Severity::Error),
-        );
+        let config = config_with_rule(RuleName::InvalidAnchor, "{severity: error}");
         let diagnostics = InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);

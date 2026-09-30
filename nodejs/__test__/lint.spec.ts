@@ -210,13 +210,13 @@ describe('Per-rule severity overrides', () => {
   it('invalid severity string throws an error', () => {
     expect(() =>
       lint(DUPLICATE_KEYS_YAML, { rules: { 'duplicate-key': 'critical' as unknown as 'error' } })
-    ).toThrow(/Invalid severity/);
+    ).toThrow(/duplicate-key/);
   });
 
-  it('unknown rule name is silently accepted', () => {
+  it('unknown rule name is rejected', () => {
     expect(() =>
-      lint(VALID_YAML, { rules: { 'nonexistent-rule': { severity: 'error' } } })
-    ).not.toThrow();
+      lint(VALID_YAML, { rules: { 'nonexistent-rule': { severity: 'error' } } as never })
+    ).toThrow(/unknown rule 'nonexistent-rule'/);
   });
 
   it('empty rules map does not change behavior', () => {
