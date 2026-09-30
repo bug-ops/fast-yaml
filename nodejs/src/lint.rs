@@ -3,7 +3,7 @@
 //! Exposes the YAML linter API to Node.js with comprehensive diagnostics,
 //! rich error reporting, and configurable linting rules.
 
-use crate::limits::parse_limits;
+use crate::limits::{max_input_bytes, parse_limits};
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig, Linter as RustLinter,
@@ -223,6 +223,9 @@ pub struct LintConfig {
     pub max_depth: Option<f64>,
     /// Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864).
     pub max_alias_bytes: Option<f64>,
+    /// Largest source accepted for linting, in bytes (integer, 1..=1073741824, default: 104857600).
+    /// Bounds linting work on oversized input; the source is already in memory when checked, so this is not a memory bound.
+    pub max_input_bytes: Option<f64>,
 }
 
 fn config_error(error: impl std::fmt::Display) -> napi::Error {
@@ -245,7 +248,8 @@ fn checked_uint(field: &str, expected: &str, value: f64, min: u64, max: u64) -> 
 
 fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
     let mut rust = RustLintConfig::new()
-        .with_parse_limits(parse_limits(config.max_depth, config.max_alias_bytes)?);
+        .with_parse_limits(parse_limits(config.max_depth, config.max_alias_bytes)?)
+        .with_max_input_bytes(max_input_bytes(config.max_input_bytes)?);
     if let Some(max) = config.max_line_length {
         let max = checked_uint(
             "maxLineLength",
@@ -326,7 +330,8 @@ impl Linter {
     ///
     /// # Errors
     ///
-    /// Returns an error if the YAML cannot be parsed.
+    /// Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
+    /// (default 100 MiB).
     #[napi(catch_unwind)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn lint(&self, source: String) -> napi::Result<Vec<Diagnostic>> {
@@ -343,7 +348,8 @@ impl Linter {
 ///
 /// # Errors
 ///
-/// Returns an error if the YAML cannot be parsed.
+/// Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
+/// (default 100 MiB).
 ///
 /// # Example
 ///

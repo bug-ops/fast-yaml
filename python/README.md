@@ -29,11 +29,20 @@ yaml_str = fast_yaml.safe_dump({"name": "test", "value": 123})
 print(yaml_str)  # name: test\nvalue: 123\n
 ```
 
+## Large Integers
+
+Decimal integers beyond the i64 range load as exact Python `int`s and dump back exactly. Loading such a literal
+with more digits than `sys.get_int_max_str_digits()` (4300 by default), or dumping an `int` with more digits,
+raises CPython's `ValueError`; raise the limit with `sys.set_int_max_str_digits()`. Literals that fit i64 never
+hit this limit. Hex and octal integers are capped at 14284 bits (at most 4300 decimal digits), so they fit
+the default limit. PyYAML reads leading-zero literals differently (`0012` is octal there).
+
 ## Parse Limits
 
 Nesting depth and alias expansion are capped by default. Raise or lower the caps with keyword arguments on
 `safe_load`, `safe_load_all`, `load`, `load_all`, and the `ParallelConfig`, `LintConfig`, and `BatchConfig`
-constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()`; `None` resets to the default):
+constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()`; `None` resets to the default).
+`LintConfig` also accepts `max_input_bytes` / `with_max_input_bytes()`:
 
 ```python
 fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
@@ -43,11 +52,13 @@ fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
 |--------|---------|-------|
 | `max_depth` | 256 | 1..=512 |
 | `max_alias_bytes` | 64 MiB | 1..=1 GiB |
+| `max_input_bytes` (`LintConfig` only) | 100 MiB | 1..=1 GiB |
 
 Out-of-range values raise `ValueError`; non-integers (including `bool`) raise `TypeError`.
 Depth 512 needs about 1 MiB of thread stack and can abort the process on stacks of 512 KiB or less; the default of 256 is safe.
 The dumper keeps a fixed depth of 256, so data parsed deeper may fail to dump.
 The alias budget is per stream, so parallel and batch runs can use up to workers x budget.
+`max_input_bytes` bounds linting work on oversized input; the source is already in memory when checked, so it is not a memory bound.
 
 ## Features
 

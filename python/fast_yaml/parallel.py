@@ -46,7 +46,10 @@ def parse_parallel(
         List of parsed YAML documents
 
     Raises:
-        ValueError: If parsing fails or limits exceeded
+        ValueError: If parsing fails, limits are exceeded, or a document holds a decimal
+            integer beyond the i64 range with more digits than ``sys.get_int_max_str_digits()``
+                (CPython's ``int()`` limit;
+            ``sys.set_int_max_str_digits()`` raises it).
 
     Performance:
         - Single document: Falls back to sequential parsing

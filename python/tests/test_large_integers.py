@@ -257,3 +257,194 @@ def test_radix_beyond_bit_cap_stays_str_in_both_loaders(literal):
 
 def test_quoted_hex_overflow_stays_str():
     assert fast_yaml.safe_load('v: "0xFFFFFFFFFFFFFFFFFF"') == {"v": "0xFFFFFFFFFFFFFFFFFF"}
+
+
+DIGITS_5000 = "9" * 5000
+
+
+@pytest.fixture
+def int_digit_limit():
+    import sys
+
+    if not hasattr(sys, "set_int_max_str_digits"):
+        pytest.skip("sys.set_int_max_str_digits unavailable")
+    previous = sys.get_int_max_str_digits()
+    yield sys.set_int_max_str_digits
+    sys.set_int_max_str_digits(previous)
+
+
+LOAD_PATH_NAMES = (
+    "safe_load",
+    "safe_load_all",
+    "load",
+    "load_all",
+    "safe_load_stream",
+    "parse_parallel",
+)
+DUMP_PATH_NAMES = ("safe_dump", "safe_dump_all", "dump_all", "dump_parallel")
+
+
+def _load_path(name):
+    import io
+
+    from fast_yaml._core import parallel
+
+    return {
+        "safe_load": fast_yaml.safe_load,
+        "safe_load_all": lambda t: next(iter(fast_yaml.safe_load_all(t))),
+        "load": lambda t: fast_yaml.load(t, fast_yaml.SafeLoader),
+        "load_all": lambda t: next(iter(fast_yaml.load_all(t, fast_yaml.SafeLoader))),
+        "safe_load_stream": lambda t: fast_yaml.safe_load(io.StringIO(t)),
+        "parse_parallel": lambda t: parallel.parse_parallel(t)[0],
+    }[name]
+
+
+@pytest.fixture(params=LOAD_PATH_NAMES)
+def load_path(request):
+    return _load_path(request.param)
+
+
+BIG_5000 = 10**5000 - 1
+BIG_301 = 10**301 - 1
+
+
+def _value(result):
+    return result["x"]
+
+
+def _key(result):
+    return next(iter(result))
+
+
+def _first(result):
+    return result["x"][0]
+
+
+LIMITED_DOCS = [
+    pytest.param(f"x: {DIGITS_5000}\n", BIG_5000, _value, id="value"),
+    pytest.param(f"x: -{DIGITS_5000}\n", -BIG_5000, _value, id="negative"),
+    pytest.param(f"x: +{DIGITS_5000}\n", BIG_5000, _value, id="plus"),
+    pytest.param(f"? {DIGITS_5000}\n: v\n", BIG_5000, _key, id="key"),
+    pytest.param(f"x: !!int {DIGITS_5000}\n", BIG_5000, _value, id="tagged"),
+    pytest.param(f"x: [{DIGITS_5000}]\n", BIG_5000, _first, id="flow-seq"),
+]
+
+LEADING_ZEROS_DOC = f"x: {'0' * 4000}{'9' * 301}\n"
+
+
+@pytest.mark.parametrize(("text", "expected", "pick"), LIMITED_DOCS)
+def test_int_beyond_digit_limit_raises_in_every_load_path(
+    load_path, text, expected, pick, int_digit_limit
+):
+    int_digit_limit(4300)
+    with pytest.raises(ValueError, match="Exceeds the limit"):
+        load_path(text)
+
+
+@pytest.mark.parametrize(
+    "name", ["safe_load", "safe_load_all", "load", "load_all", "safe_load_stream"]
+)
+def test_leading_zeros_count_towards_digit_limit_in_event_loader(name, int_digit_limit):
+    int_digit_limit(4300)
+    with pytest.raises(ValueError, match="Exceeds the limit"):
+        _load_path(name)(LEADING_ZEROS_DOC)
+
+
+def test_parse_parallel_leading_zeros_are_canonicalized_before_digit_limit(int_digit_limit):
+    int_digit_limit(4300)
+    value = _load_path("parse_parallel")(LEADING_ZEROS_DOC)["x"]
+    assert value == BIG_301, "leading-zero literal is not exact"
+
+
+def test_leading_zeros_are_exact_when_limit_disabled(load_path, int_digit_limit):
+    int_digit_limit(0)
+    assert load_path(LEADING_ZEROS_DOC)["x"] == BIG_301, "leading-zero literal is not exact"
+
+
+@pytest.mark.parametrize(("text", "expected", "pick"), LIMITED_DOCS)
+def test_int_beyond_digit_limit_is_exact_when_limit_disabled(
+    load_path, text, expected, pick, int_digit_limit
+):
+    int_digit_limit(0)
+    value = pick(load_path(text))
+    assert isinstance(value, int), "value is not an int"
+    assert value == expected, "value is not exact"
+
+
+@pytest.mark.parametrize("sign", ["+", "-"])
+def test_sign_does_not_count_towards_digit_limit(load_path, sign, int_digit_limit):
+    int_digit_limit(4300)
+    value = load_path(f"x: {sign}{'9' * 4300}\n")["x"]
+    assert value == int(f"{sign}{'9' * 4300}"), "signed 4300-digit value not exact"
+
+
+def test_4300_digits_load_under_default_limit(load_path, int_digit_limit):
+    int_digit_limit(4300)
+    assert load_path(f"x: {'9' * 4300}\n")["x"] == int("9" * 4300), "4300-digit value not exact"
+
+
+def test_quoted_digits_beyond_limit_stay_str(load_path, int_digit_limit):
+    int_digit_limit(4300)
+    assert load_path(f'x: "{DIGITS_5000}"\n')["x"] == DIGITS_5000
+
+
+def test_leading_zeros_fitting_i64_are_not_limited(load_path, int_digit_limit):
+    int_digit_limit(4300)
+    assert load_path(f"x: {'0' * 4500}12345\n")["x"] == 12345
+
+
+# Longest accepted radix literals (14284 bits, 4300 decimal digits): both loaders must agree on
+# every spelling under the default digit limit.
+RADIX_DOCS = [
+    pytest.param("x: !!int 0x" + "F" * 3571 + "\n", id="hex-tagged"),
+    pytest.param("x: !!int 0o1" + "7" * 4761 + "\n", id="octal-tagged"),
+    pytest.param("? 0x" + "F" * 3571 + "\n: v\n", id="hex-key"),
+    pytest.param("? 0o1" + "7" * 4761 + "\n: v\n", id="octal-key"),
+]
+
+
+@pytest.mark.parametrize("text", RADIX_DOCS)
+def test_radix_big_int_paths_agree_under_default_limit(text, int_digit_limit):
+    from fast_yaml._core import parallel
+
+    int_digit_limit(4300)
+    sequential = fast_yaml.safe_load(text)
+    parallel_result = parallel.parse_parallel(text)[0]
+    assert sequential == parallel_result, "safe_load and parse_parallel diverge"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="parse_parallel converts canonical decimal text, so a lowered limit hits radix ints",
+)
+def test_radix_big_int_ignores_lowered_digit_limit_in_both_loaders(int_digit_limit):
+    from fast_yaml._core import parallel
+
+    int_digit_limit(1000)
+    text = "x: 0x" + "F" * 1000 + "\n"
+    expected = int("F" * 1000, 16)
+    assert fast_yaml.safe_load(text)["x"] == expected, "safe_load value is not exact"
+    assert parallel.parse_parallel(text)[0]["x"] == expected, "parse_parallel value is not exact"
+
+
+def _dump_path(name):
+    from fast_yaml._core import parallel
+
+    return {
+        "safe_dump": fast_yaml.safe_dump,
+        "safe_dump_all": lambda obj: fast_yaml.safe_dump_all([obj]),
+        "dump_all": lambda obj: fast_yaml.dump_all([obj]),
+        "dump_parallel": lambda obj: parallel.dump_parallel([obj]),
+    }[name]
+
+
+@pytest.mark.parametrize("value", [10**5000, -(10**5000)], ids=["positive", "negative"])
+@pytest.mark.parametrize("path", DUMP_PATH_NAMES)
+def test_dump_int_beyond_digit_limit(path, value, int_digit_limit):
+    dump = _dump_path(path)
+    int_digit_limit(4300)
+    with pytest.raises(ValueError, match="Exceeds the limit"):
+        dump({"k": value})
+    int_digit_limit(0)
+    out = dump({"k": value})
+    assert fast_yaml.safe_load(out)["k"] == value, "dump round trip not exact"

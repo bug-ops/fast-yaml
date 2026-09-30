@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use fast_yaml_core::{MaxAliasBytes, MaxDepth, ParseLimits};
+use fast_yaml_core::{MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -44,6 +44,15 @@ pub fn max_alias_bytes(arg: Option<&Bound<'_, PyAny>>) -> PyResult<MaxAliasBytes
     };
     let raw = extract_usize("max_alias_bytes", MaxAliasBytes::MAX.get(), arg)?;
     MaxAliasBytes::new(raw).map_err(|e| range_error("max_alias_bytes", e.max, e.value))
+}
+
+/// Validates a `max_input_bytes` value, returning [`MaxInputBytes::DEFAULT`] when unset.
+pub fn max_input_bytes(arg: Option<&Bound<'_, PyAny>>) -> PyResult<MaxInputBytes> {
+    let Some(arg) = arg else {
+        return Ok(MaxInputBytes::DEFAULT);
+    };
+    let raw = extract_usize("max_input_bytes", MaxInputBytes::MAX.get(), arg)?;
+    MaxInputBytes::new(raw).map_err(|e| range_error("max_input_bytes", e.max, e.value))
 }
 
 /// Builds [`ParseLimits`] from the optional Python keyword arguments.

@@ -62,8 +62,8 @@ pub use comments::{find_comments, has_comments};
 pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use limits::{
-    DumpBudget, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDumpNodes,
-    MaxOutputBytes, MaxTagBytes, ParseLimits, StreamBudget,
+    DumpBudget, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
+    MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits, StreamBudget,
 };
 pub use merge::{MergeError, MergeSource, MergeTarget, merge_into};
 pub use parser::{Parser, canonicalize, reject_nul, strip_bom};

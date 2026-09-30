@@ -43,15 +43,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Node.js**: `LintConfig.rules` is read under depth and node limits, so deep or cyclic values throw an `InvalidArg` error instead of crashing the process, and `BigInt` values are rejected (#423) (#434)
 - **Node.js**: `processFiles`, `formatFiles` and `formatFilesInPlace` throw errors instead of returning them (#434)
 - **Core/Python**: `<<` merge keys share one implementation, so merged keys come first in every binding and a repeated `<<` keeps the last (#465) (#391) (#475)
+- **Linter**: `LintConfig` gains a public `max_input_bytes` field (#436) (#PR)
 
 ### Added
 
+- **Linter/Python/Node.js**: `max_input_bytes`/`maxInputBytes` lint option (1 B to 1 GiB, default 100 MiB) backed by core `MaxInputBytes` and `LintError::InputTooLarge` (#436) (#PR)
 - **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
 - `--max-depth` and `--max-alias-bytes` on `fy parse`/`convert`/`lint`, plus `max_depth`/`max_alias_bytes` (`maxDepth`/`maxAliasBytes`) options in `fast-yaml-parallel`, the linter, and the Python and Node.js loaders, `ParallelConfig`, `LintConfig` and `BatchConfig` (#433)
 - **Linter**: inline suppression directives `# fy: disable|enable|disable-line|disable-file` (and `# yamllint ...`) with a `lint-directive` diagnostic for invalid ones; `fast-yaml-core` adds `find_comments`; `DiagnosticCode` is now `Ord` (#437)
 
 ### Changed
 
+- **Linter/Python/Node.js**: linting rejects sources over 100 MiB by default (previously unbounded) (#436) (#PR)
+- **CLI**: `fy lint` rejects input above 1 GiB (previously unbounded) (#436) (#PR)
+- **Python**: documented and tested that decimal integers beyond `i64` with more digits than `sys.get_int_max_str_digits()` raise CPython's `ValueError` on load and dump (#488) (#PR)
 - **Python**: wheels are now abi3 (`cp310-abi3`), one per platform instead of one per Python version (#472)
 - **CI**: Python test matrix reduced from 9 to 4 jobs and release wheel builds from 35 to 7; `docs/CI-CD-QUICKSTART.md` test matrix corrected (#472)
 - **CI**: all GitHub Actions pinned to commit SHAs, Dependabot auto-merge checks the PR author instead of `github.actor`, and actionlint/zizmor plus a nightly fuzz workflow are added (#432)

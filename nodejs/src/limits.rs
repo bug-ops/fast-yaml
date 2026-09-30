@@ -1,10 +1,12 @@
-//! Validation of JavaScript-supplied parse limits (`maxDepth`, `maxAliasBytes`).
+//! Validation of JavaScript-supplied limits (`maxDepth`, `maxAliasBytes`, `maxInputBytes`).
 //!
 //! JavaScript numbers arrive as `f64`; every value is checked here so that `NaN`,
 //! fractions, negatives, zero, and values above the core cap are rejected with the
 //! same message shape as the core `LimitRangeError`.
 
-use fast_yaml_core::limits::{LimitRangeError, MaxAliasBytes, MaxDepth, ParseLimits};
+use fast_yaml_core::limits::{
+    LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits,
+};
 use napi::Result as NapiResult;
 
 use crate::options::{checked_uint, range_error};
@@ -31,6 +33,18 @@ fn max_alias_bytes(value: Option<f64>) -> NapiResult<MaxAliasBytes> {
         |v| {
             let n = checked_uint(OPTION, v, 1, MaxAliasBytes::MAX.get() as u64)?;
             MaxAliasBytes::new(n).map_err(|e| core_error(OPTION, e))
+        },
+    )
+}
+
+/// Validates an optional `maxInputBytes` value, defaulting to [`MaxInputBytes::DEFAULT`].
+pub(crate) fn max_input_bytes(value: Option<f64>) -> NapiResult<MaxInputBytes> {
+    const OPTION: &str = "maxInputBytes";
+    value.map_or_else(
+        || Ok(MaxInputBytes::default()),
+        |v| {
+            let n = checked_uint(OPTION, v, 1, MaxInputBytes::MAX.get() as u64)?;
+            MaxInputBytes::new(n).map_err(|e| core_error(OPTION, e))
         },
     )
 }
@@ -81,6 +95,23 @@ mod tests {
         for v in [0.0, -1.0, 2.5, f64::NAN, 1_073_741_825.0] {
             assert!(parse_limits(None, Some(v)).is_err(), "{v}");
         }
+    }
+
+    #[test]
+    fn max_input_bytes_defaults_and_bounds() {
+        assert_eq!(max_input_bytes(None).unwrap(), MaxInputBytes::DEFAULT);
+        assert_eq!(max_input_bytes(Some(1.0)).unwrap(), MaxInputBytes::MIN);
+        assert_eq!(
+            max_input_bytes(Some(1_073_741_824.0)).unwrap(),
+            MaxInputBytes::MAX
+        );
+        for v in [0.0, -1.0, 2.5, f64::NAN, 1_073_741_825.0] {
+            assert!(max_input_bytes(Some(v)).is_err(), "{v}");
+        }
+        assert_eq!(
+            max_input_bytes(Some(0.0)).unwrap_err().reason,
+            "maxInputBytes must be between 1 and 1073741824, got 0"
+        );
     }
 
     #[test]

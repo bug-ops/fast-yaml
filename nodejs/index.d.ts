@@ -106,7 +106,8 @@ export declare class Linter {
    *
    * # Errors
    *
-   * Returns an error if the YAML cannot be parsed.
+   * Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
+   * (default 100 MiB).
    */
   lint(source: string): Array<Diagnostic>
 }
@@ -368,7 +369,8 @@ export interface FormatResult {
  *
  * # Errors
  *
- * Returns an error if the YAML cannot be parsed.
+ * Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
+ * (default 100 MiB).
  *
  * # Example
  *
@@ -416,6 +418,11 @@ export interface LintConfig {
   maxDepth?: number
   /** Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864). */
   maxAliasBytes?: number
+  /**
+   * Largest source accepted for linting, in bytes (integer, 1..=1073741824, default: 104857600).
+   * Bounds linting work on oversized input; the source is already in memory when checked, so this is not a memory bound.
+   */
+  maxInputBytes?: number
 }
 
 /**

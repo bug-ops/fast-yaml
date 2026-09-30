@@ -203,10 +203,13 @@ class TestKwargSemantics:
         assert "document-end" in codes(lint.lint("a: 1\n", config))
 
     def test_repr(self):
-        assert repr(lint.LintConfig()) == "LintConfig(max_line_length=80, indent_size=2)"
+        assert (
+            repr(lint.LintConfig())
+            == "LintConfig(max_line_length=80, indent_size=2, max_input_bytes=104857600)"
+        )
         assert (
             repr(lint.LintConfig(max_line_length=None, indent_size=4))
-            == "LintConfig(max_line_length=None, indent_size=4)"
+            == "LintConfig(max_line_length=None, indent_size=4, max_input_bytes=104857600)"
         )
 
 

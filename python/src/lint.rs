@@ -470,6 +470,8 @@ fn parse_rule_name(code: &str) -> PyResult<RuleName> {
 /// Controls linting behavior including rule enablement,
 /// formatting preferences, and validation strictness.
 ///
+/// Linting a source larger than `max_input_bytes` (default 100 MiB) raises `ValueError`.
+///
 /// Examples:
 ///     >>> from `fast_yaml`._core.lint import `LintConfig`
 ///     >>> config = `LintConfig(max_line_length=120`, `indent_size=4`)
@@ -493,6 +495,7 @@ impl PyLintConfig {
         rules=None,
         max_depth=None,
         max_alias_bytes=None,
+        max_input_bytes=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -505,12 +508,14 @@ impl PyLintConfig {
         rules: Option<Bound<'_, PyAny>>,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
+        max_input_bytes: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
         let mut inner = RustLintConfig::new()
             .with_max_line_length(parse_max_line_length(max_line_length)?)
             .with_indent_size(parse_indent_size(indent_size)?)
-            .with_parse_limits(parse_limits);
+            .with_parse_limits(parse_limits)
+            .with_max_input_bytes(limits::max_input_bytes(max_input_bytes)?);
 
         if require_document_start {
             inner = inner.with_document_start(DocumentStartPresence::Required);
@@ -587,6 +592,18 @@ impl PyLintConfig {
         };
         Ok(Self {
             inner: self.inner.clone().with_parse_limits(parse_limits),
+        })
+    }
+
+    /// Sets the largest source accepted for linting, in bytes (1..=1 GiB, default 100 MiB); `None` resets to the default.
+    ///
+    /// Bounds linting work on oversized input; the source is already in memory when checked, so this is not a memory bound.
+    fn with_max_input_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        Ok(Self {
+            inner: self
+                .inner
+                .clone()
+                .with_max_input_bytes(limits::max_input_bytes(bytes)?),
         })
     }
 
@@ -669,13 +686,20 @@ impl PyLintConfig {
         self.inner.rules.indentation.options.indent_size.get()
     }
 
+    /// Gets the largest source accepted for linting, in bytes.
+    #[getter]
+    const fn max_input_bytes(&self) -> usize {
+        self.inner.max_input_bytes.get()
+    }
+
     fn __repr__(&self) -> String {
         let max = self
             .max_line_length()
             .map_or_else(|| "None".to_string(), |max| max.to_string());
         format!(
-            "LintConfig(max_line_length={max}, indent_size={})",
-            self.indent_size()
+            "LintConfig(max_line_length={max}, indent_size={}, max_input_bytes={})",
+            self.indent_size(),
+            self.max_input_bytes()
         )
     }
 }
@@ -724,7 +748,8 @@ impl PyLinter {
     ///     List of diagnostics (errors, warnings, hints)
     ///
     /// Raises:
-    ///     `ValueError`: If YAML cannot be parsed at all
+    ///     `ValueError`: If YAML cannot be parsed at all, or the source exceeds `max_input_bytes`
+    ///         (default 100 MiB)
     fn lint(&self, py: Python<'_>, source: &str) -> PyResult<Vec<PyDiagnostic>> {
         // Release GIL during CPU-intensive linting
         let result = py.detach(|| self.inner.lint(source));
@@ -932,6 +957,10 @@ impl PyJsonFormatter {
 ///
 /// Returns:
 ///     List of diagnostics
+///
+/// Raises:
+///     `ValueError`: If YAML cannot be parsed at all, or the source exceeds `max_input_bytes`
+///         (default 100 MiB)
 ///
 /// Example:
 ///     >>> from `fast_yaml`._core.lint import lint
