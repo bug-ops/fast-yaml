@@ -130,7 +130,7 @@ body:
     attributes:
       label: Language Version
       description: Python/NodeJS/Rust version
-      placeholder: "Python 3.11, NodeJS 20.10, or Rust 1.88.0"
+      placeholder: "Python 3.11, NodeJS 20.10, or Rust 1.91.0"
 
   - type: dropdown
     id: os

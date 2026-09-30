@@ -242,10 +242,7 @@ impl<'a> SourceContext<'a> {
     /// Offsets past the end are clamped and offsets inside a multi-byte char are floored to
     /// the char start, so this never panics.
     pub(crate) fn location_at(&self, offset: ByteOffset) -> Location {
-        let mut offset = offset.get().min(self.source.len());
-        while !self.source.is_char_boundary(offset) {
-            offset -= 1;
-        }
+        let offset = self.source.floor_char_boundary(offset.get());
 
         let line_idx = match self.line_starts.binary_search(&offset) {
             Ok(idx) => idx,

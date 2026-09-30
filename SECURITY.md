@@ -68,7 +68,7 @@ Reproduction:
 
 Environment:
 - OS: Ubuntu 22.04
-- Rust: 1.88.0
+- Rust: 1.91.0
 - fast-yaml: 0.4.0
 - Python: 3.11
 

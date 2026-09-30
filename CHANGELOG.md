@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Build**: MSRV raised to Rust 1.91 and workspace resolver switched to 3; `ordered-float` updated to 5.5 (#399)
 - **Core**: `EmitError` gains `DepthLimitExceeded` and `AnchorLimitExceeded` variants returned by `format_streaming`, `format_streaming_arena`, and `Emitter::format*`; exhaustive matches must handle them (#371) (#383)
 
 ### Changed

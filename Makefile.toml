@@ -1,6 +1,6 @@
 # fast-yaml cargo-make task definitions
 # Version: 1.0.0
-# Rust MSRV: 1.85.0 (Edition 2024)
+# Rust MSRV: 1.91.0 (Edition 2024)
 # Python: 3.9+
 
 [config]
@@ -606,7 +606,7 @@ echo "Verifying project structure..."
 
 # Check Rust version
 echo "Checking Rust version..."
-rustc --version | grep -q "1.85" || echo "Warning: Expected Rust 1.85.0 or later"
+rustc --version | grep -q "1.91" || echo "Warning: Expected Rust 1.91.0 or later"
 
 # Check workspace structure
 echo "Checking workspace members..."

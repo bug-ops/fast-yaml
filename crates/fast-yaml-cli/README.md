@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/fast-yaml-cli)](https://crates.io/crates/fast-yaml-cli)
 [![CI](https://img.shields.io/github/actions/workflow/status/bug-ops/fast-yaml/ci.yml?branch=main)](https://github.com/bug-ops/fast-yaml/actions)
 [![License](https://img.shields.io/crates/l/fast-yaml-cli)](LICENSE)
-[![MSRV](https://img.shields.io/badge/MSRV-1.88.0-blue)](https://blog.rust-lang.org/)
+[![MSRV](https://img.shields.io/badge/MSRV-1.91.0-blue)](https://blog.rust-lang.org/)
 
 Fast YAML command-line processor with validation and linting. Built on [fast-yaml](https://github.com/bug-ops/fast-yaml) for high-performance YAML 1.2.2 processing.
 
