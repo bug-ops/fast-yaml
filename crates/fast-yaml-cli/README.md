@@ -190,13 +190,13 @@ fy lint --max-depth 64 config.yaml
 |--------|-------|-------------|---------|
 | `--jobs` | `-j` | Number of parallel workers (0 = auto) | auto-detect |
 | `--stdin-files` | - | Read file paths from stdin; a missing path, directory, non-YAML file or line over 4096 bytes is an error | - |
-| `--include` | - | Include pattern (glob) | all files |
-| `--exclude` | - | Exclude pattern (glob) | none |
+| `--include` | - | Include pattern (glob, case-insensitive) | `*.yaml`, `*.yml` |
+| `--exclude` | - | Exclude pattern (glob, case-insensitive) | none |
 | `--no-recursive` | - | Disable recursive directory traversal | recursive |
 | `--dry-run` | `-n` | Preview changes without modifying; exits 5 if any file would change | - |
 
 > [!NOTE]
-> Batch mode activates automatically when processing multiple paths, directories, glob patterns, or when using `--stdin-files`, `--include`, `--exclude`, or `--jobs`.
+> Batch mode activates automatically when processing multiple paths, directories, glob patterns, or when using `--stdin-files`, `--include`, `--exclude`, or `--jobs`. Include and exclude patterns are case-insensitive. A run where every input is filtered out, or a directory holds no YAML files, exits with code 1; an empty `--stdin-files` list exits 0.
 
 ## Features
 

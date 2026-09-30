@@ -139,7 +139,7 @@ fy lint --exclude "tests/**" . # Lint all except tests
 ```
 
 > [!TIP]
-> Batch mode activates automatically for directories, globs, or multiple files. Supports parallel processing, include/exclude patterns, and respects `.gitignore`.
+> Batch mode activates automatically for directories, globs, or multiple files. Supports parallel processing, include/exclude patterns, and respects `.gitignore`. A run that finds no YAML files exits 1.
 
 > [!WARNING]
 > `fy format --dry-run` exits with code 5 when any file would change (1 = a file failed, takes precedence).
