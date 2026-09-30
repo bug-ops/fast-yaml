@@ -1,5 +1,6 @@
 //! Comment detection and parsing utilities.
 
+use crate::context::lines_of;
 use crate::{SourceContext, Span};
 use std::sync::OnceLock;
 
@@ -98,7 +99,7 @@ impl<'a> CommentParser<'a> {
         // any line with indentation > n belongs to the scalar content.
         let mut block_scalar_indent: Option<usize> = None;
 
-        for (line_idx, line) in self.source.lines().enumerate() {
+        for (line_idx, line) in lines_of(self.source).enumerate() {
             let line_start_offset = self.context.get_line_offset(line_idx + 1);
 
             // Determine indentation of current line (number of leading spaces)

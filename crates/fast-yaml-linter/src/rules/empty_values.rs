@@ -204,67 +204,52 @@ fn has_explicit_null_value(key: &str, source_context: &SourceContext<'_>) -> boo
     false
 }
 
-fn is_in_flow_mapping(key: &str, source_context: &SourceContext<'_>) -> bool {
-    let key_colon = format!("{key}:");
-    for line_num in 1..=source_context.line_count() {
-        if let Some(line) = source_context.get_line(line_num) {
-            let mut search_from = 0;
-            while let Some(pos) = line[search_from..].find(key_colon.as_str()) {
-                let abs_pos = search_from + pos;
-                let before_ok = abs_pos == 0
-                    || !line
-                        .as_bytes()
-                        .get(abs_pos - 1)
-                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
-                if before_ok && line[..abs_pos].contains('{') {
-                    return true;
-                }
-                search_from = abs_pos + 1;
+/// Byte offsets within `line` of every `key:` occurrence that sits after a `{`.
+fn flow_key_positions<'l>(line: &'l str, key_colon: &'l str) -> impl Iterator<Item = usize> + 'l {
+    let mut search_from = 0;
+    std::iter::from_fn(move || {
+        while let Some(rel) = line.get(search_from..)?.find(key_colon) {
+            let abs_pos = search_from + rel;
+            search_from = abs_pos + line[abs_pos..].chars().next().map_or(1, char::len_utf8);
+            let before = &line[..abs_pos];
+            let before_ok = before
+                .chars()
+                .next_back()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '-'));
+            if before_ok && before.contains('{') {
+                return Some(abs_pos);
             }
         }
-    }
+        None
+    })
+}
 
-    false
+fn is_in_flow_mapping(key: &str, source_context: &SourceContext<'_>) -> bool {
+    let key_colon = format!("{key}:");
+    (1..=source_context.line_count())
+        .filter_map(|n| source_context.get_line(n))
+        .any(|line| flow_key_positions(line, &key_colon).next().is_some())
 }
 
 fn find_empty_value_span(key: &str, source_context: &SourceContext<'_>) -> Option<Span> {
     let key_colon = format!("{key}:");
     for line_num in 1..=source_context.line_count() {
-        if let Some(line) = source_context.get_line(line_num) {
-            let trimmed = line.trim_start();
-            let indent = line.len() - trimmed.len();
+        let Some(line) = source_context.get_line(line_num) else {
+            continue;
+        };
+        let trimmed = line.trim_start();
 
-            // Block mapping: key starts trimmed line
-            if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
-                let abs_colon_pos = indent + key.len();
-                // Use pre-built line offset index — O(1) instead of O(line_num) sum.
-                let line_offset = source_context.get_line_offset(line_num);
-                return Some(Span::new(
-                    Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
-                    Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
-                ));
-            }
+        let colon_in_line = if trimmed.starts_with(key) && trimmed[key.len()..].starts_with(':') {
+            Some(line.len() - trimmed.len() + key.len())
+        } else {
+            flow_key_positions(line, &key_colon)
+                .next()
+                .map(|pos| pos + key.len())
+        };
 
-            // Flow mapping: key appears after '{' on the same line
-            let mut search_from = 0;
-            while let Some(rel_pos) = line[search_from..].find(key_colon.as_str()) {
-                let abs_pos = search_from + rel_pos;
-                let before_ok = abs_pos == 0
-                    || !line
-                        .as_bytes()
-                        .get(abs_pos - 1)
-                        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-');
-                if before_ok && line[..abs_pos].contains('{') {
-                    let abs_colon_pos = abs_pos + key.len();
-                    // Use pre-built line offset index — O(1) instead of O(line_num) sum.
-                    let line_offset = source_context.get_line_offset(line_num);
-                    return Some(Span::new(
-                        Location::new(line_num, abs_colon_pos + 1, line_offset + abs_colon_pos),
-                        Location::new(line_num, abs_colon_pos + 2, line_offset + abs_colon_pos + 1),
-                    ));
-                }
-                search_from = abs_pos + 1;
-            }
+        if let Some(colon) = colon_in_line {
+            let start = source_context.line_start(line_num).add_bytes(colon);
+            return Some(source_context.span_at(start, 1));
         }
     }
 

@@ -1,9 +1,6 @@
 //! Rule to detect trailing whitespace.
 
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Rule to detect trailing whitespace.
@@ -32,30 +29,11 @@ impl super::LintRule for TrailingWhitespaceRule {
 
         for line_num in 1..=ctx.line_count() {
             if let Some(line) = ctx.get_line(line_num) {
-                // Strip carriage return from CRLF line endings before checking
-                // trailing whitespace — \r is part of the line ending, not user
-                // content, so it must not trigger a trailing-whitespace warning.
-                let line = line.trim_end_matches('\r');
-                // Check for trailing whitespace (excluding final newline)
                 let trimmed = line.trim_end();
 
                 if trimmed.len() < line.len() {
-                    // Has trailing whitespace
-                    let ws_start_col = trimmed.len() + 1;
-
-                    // Calculate byte offset for the start of trailing whitespace
-                    let line_start_offset = (1..line_num)
-                        .filter_map(|ln| ctx.get_line(ln))
-                        .map(|l| l.len() + 1) // +1 for newline
-                        .sum::<usize>();
-
-                    let ws_start_offset = line_start_offset + trimmed.len();
-                    let ws_end_offset = line_start_offset + line.len();
-
-                    let span = Span::new(
-                        Location::new(line_num, ws_start_col, ws_start_offset),
-                        Location::new(line_num, line.len() + 1, ws_end_offset),
-                    );
+                    let start = ctx.line_start(line_num).add_bytes(trimmed.len());
+                    let span = ctx.span_at(start, line.len() - trimmed.len());
 
                     let diagnostic = DiagnosticBuilder::new(
                         DiagnosticCode::TRAILING_WHITESPACE,

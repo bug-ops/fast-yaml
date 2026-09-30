@@ -1,8 +1,8 @@
 //! Rule to check empty lines.
 
+use crate::context::source_lines;
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
 };
 use fast_yaml_core::Value;
 
@@ -67,18 +67,18 @@ impl super::LintRule for EmptyLinesRule {
             .unwrap_or(0);
 
         let mut diagnostics = Vec::new();
-        let lines: Vec<&str> = source.lines().collect();
+        let lines: Vec<(usize, &str)> = source_lines(source).collect();
 
         if lines.is_empty() {
             return diagnostics;
         }
+        let source_context = context.source_context();
 
         // Track consecutive empty lines
         let mut empty_count = 0;
         let mut empty_start_line = 0;
-        let mut offset = 0;
 
-        for (idx, line) in lines.iter().enumerate() {
+        for (idx, (_, line)) in lines.iter().enumerate() {
             let line_num = idx + 1;
 
             if line.trim().is_empty() {
@@ -106,7 +106,8 @@ impl super::LintRule for EmptyLinesRule {
                         let severity =
                             config.get_effective_severity(self.code(), self.default_severity());
 
-                        let location = Location::new(empty_start_line, 1, offset - empty_count);
+                        let location =
+                            source_context.location_at(source_context.line_start(empty_start_line));
                         let span = Span::new(location, location);
 
                         let position = if empty_start_line == 1 {
@@ -131,8 +132,6 @@ impl super::LintRule for EmptyLinesRule {
                     empty_count = 0;
                 }
             }
-
-            offset += line.len() + 1; // +1 for newline
         }
 
         // Check trailing empty lines at end
@@ -147,7 +146,8 @@ impl super::LintRule for EmptyLinesRule {
             if max_end >= 0 && empty_count_i64 > max_end {
                 let severity = config.get_effective_severity(self.code(), self.default_severity());
 
-                let location = Location::new(empty_start_line, 1, offset - empty_count);
+                let location =
+                    source_context.location_at(source_context.line_start(empty_start_line));
                 let span = Span::new(location, location);
 
                 diagnostics.push(

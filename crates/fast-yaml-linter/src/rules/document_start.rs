@@ -1,5 +1,6 @@
 //! Rule to check for document start marker (---).
 
+use crate::context::source_lines;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     SourceContext, Span,
@@ -123,7 +124,7 @@ fn has_document_start_marker(source: &str) -> bool {
 }
 
 fn find_document_start_marker(source: &str) -> Option<(usize, Span)> {
-    for (line_num, line) in source.lines().enumerate() {
+    for (line_num, (offset, line)) in source_lines(source).enumerate() {
         let trimmed = line.trim_start();
 
         // Skip empty lines and comments
@@ -133,12 +134,6 @@ fn find_document_start_marker(source: &str) -> Option<(usize, Span)> {
 
         if trimmed.starts_with("---") {
             let col = line.len() - trimmed.len() + 1;
-            let offset = source
-                .lines()
-                .take(line_num)
-                .map(|l| l.len() + 1)
-                .sum::<usize>();
-
             return Some((
                 line_num + 1,
                 Span::new(

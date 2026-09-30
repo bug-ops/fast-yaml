@@ -1,8 +1,7 @@
 //! Rule to check for newline at end of file.
 
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
 };
 use fast_yaml_core::Value;
 
@@ -50,31 +49,20 @@ impl super::LintRule for NewLineAtEndOfFileRule {
             return Vec::new();
         }
 
-        if source.ends_with('\n') {
+        if source.ends_with(['\n', '\r']) {
             Vec::new()
         } else {
             let severity = config.get_effective_severity(self.code(), Severity::Info);
-            let last_line = source.lines().count().max(1);
-            let last_offset = source.len();
+            let eof = context.source_context().offset_to_location(source.len());
 
             vec![
                 DiagnosticBuilder::new(
                     self.code(),
                     severity,
                     "no newline at end of file",
-                    Span::new(
-                        Location::new(last_line, 1, last_offset),
-                        Location::new(last_line, 1, last_offset),
-                    ),
+                    Span::new(eof, eof),
                 )
-                .with_suggestion(
-                    "Add newline",
-                    Span::new(
-                        Location::new(last_line, 1, last_offset),
-                        Location::new(last_line, 1, last_offset),
-                    ),
-                    Some("\n".to_string()),
-                )
+                .with_suggestion("Add newline", Span::new(eof, eof), Some("\n".to_string()))
                 .build_with_context(context.source_context()),
             ]
         }
