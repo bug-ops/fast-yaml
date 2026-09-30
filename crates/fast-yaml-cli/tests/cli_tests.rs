@@ -366,3 +366,34 @@ fn test_bom_convert_json_to_yaml() {
         .success()
         .stdout(predicate::str::contains("a: 1"));
 }
+
+fn format_stdin(input: &str) -> String {
+    let out = Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .write_stdin(input.to_owned())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    String::from_utf8(out).unwrap()
+}
+
+#[test]
+fn test_format_preserves_explicit_tags() {
+    let out = format_stdin("a: !!str 123\nb: !custom x\n");
+    assert_eq!(out, "a: !!str 123\nb: !custom x\n");
+}
+
+#[test]
+fn test_format_keep_chomp_is_idempotent() {
+    let input = "a: |+\n  x\n\n";
+    assert_eq!(format_stdin(input), input);
+}
+
+#[test]
+fn test_format_complex_keys_stay_valid() {
+    let out = format_stdin("? [a, b]\n: c\n");
+    assert_eq!(out, "?\n  - a\n  - b\n: c\n");
+}

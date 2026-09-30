@@ -65,6 +65,10 @@ pub(crate) enum Context {
     MappingKey,
     /// Inside a mapping, expecting a value
     MappingValue,
+    /// Inside a mapping, emitting the collection of an explicit `?` key
+    ExplicitKey,
+    /// Inside a mapping, the explicit key is complete and `:` is due
+    ExplicitValue,
 }
 
 /// Fix special float value for YAML 1.2 compliance.

@@ -27,6 +27,71 @@ fn chomp_indicator(value: &str) -> &'static str {
     }
 }
 
+/// Writes a tag in its shortest re-parseable form.
+///
+/// Core-schema tags become `!!x`, primary-handle tags `!x`, the non-specific tag `!`;
+/// everything else (already expanded by the parser) is written verbatim as `!<...>`.
+/// The parser percent-decodes tag text, so characters outside the YAML tag charset
+/// are percent-encoded again.
+fn write_tag(out: &mut String, tag: &Tag) {
+    if tag.handle == YAML_CORE_TAG_PREFIX {
+        out.push_str("!!");
+        push_tag_text(out, &tag.suffix, TagForm::Shorthand);
+    } else if tag.handle == "!" {
+        out.push('!');
+        push_tag_text(out, &tag.suffix, TagForm::Shorthand);
+    } else if tag.handle.is_empty() && tag.suffix == "!" {
+        out.push('!');
+    } else {
+        out.push_str("!<");
+        push_tag_text(out, &tag.handle, TagForm::Verbatim);
+        push_tag_text(out, &tag.suffix, TagForm::Verbatim);
+        out.push('>');
+    }
+}
+
+/// Tag prefix the parser expands `!!` to.
+const YAML_CORE_TAG_PREFIX: &str = "tag:yaml.org,2002:";
+
+/// Non-alphanumeric characters allowed unescaped in every tag form.
+const TAG_SAFE_CHARS: &str = "-#;/?:@&=+$_.~*'()";
+
+/// Additional characters allowed unescaped only inside `!<...>`.
+const VERBATIM_ONLY_TAG_CHARS: &str = "!,[]";
+
+/// Syntactic form a tag is written in; decides which characters need escaping.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TagForm {
+    /// `!x` / `!!x`
+    Shorthand,
+    /// `!<...>`
+    Verbatim,
+}
+
+/// Appends `text`, percent-encoding bytes outside the allowed tag charset.
+fn push_tag_text(out: &mut String, text: &str, form: TagForm) {
+    for c in text.chars() {
+        let allowed = c.is_ascii_alphanumeric()
+            || TAG_SAFE_CHARS.contains(c)
+            || (form == TagForm::Verbatim && VERBATIM_ONLY_TAG_CHARS.contains(c));
+        if allowed {
+            out.push(c);
+        } else {
+            let mut buf = [0; 4];
+            for b in c.encode_utf8(&mut buf).bytes() {
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+}
+
+/// Whether a scalar carries an explicit tag that pins its type.
+#[derive(Clone, Copy)]
+enum ScalarTyping {
+    Tagged,
+    Implicit,
+}
+
 /// Generic streaming formatter with pluggable backend.
 ///
 /// This struct contains ALL formatting logic and is parameterized over
@@ -90,32 +155,55 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             .unwrap_or(&Context::Root)
     }
 
-    /// Emits an anchor marker (&anchorN) if `anchor_id` is valid.
+    /// Replaces the context on top of the stack.
+    fn set_context(&mut self, ctx: Context) {
+        if let Some(last) = self.backend.context_stack_mut().last_mut() {
+            *last = ctx;
+        }
+    }
+
+    /// Emits node properties (`&anchorN` and/or the tag), space-separated.
     ///
-    /// # Arguments
-    ///
-    /// * `anchor_id` - The anchor ID to emit (must be in range `1..=MAX_ANCHOR_ID`)
-    /// * `emit_newline` - If true, emits newline after anchor; if false, emits space
-    ///
-    /// # Returns
-    ///
-    /// Returns true if an anchor was emitted, false otherwise.
-    fn emit_anchor_if_present(&mut self, anchor_id: usize, emit_newline: bool) -> bool {
-        if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
+    /// Returns true if anything was written. No leading or trailing separator is emitted.
+    fn emit_properties(&mut self, anchor_id: usize, tag: Option<&Cow<'_, Tag>>) -> bool {
+        let has_anchor = anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID;
+        if has_anchor {
             self.backend.anchor_store_mut().ensure_capacity(anchor_id);
             let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
             self.output.push('&');
             self.output.push_str(name);
-            if emit_newline {
-                self.output.push('\n');
-                self.last_char_newline = true;
-            } else {
+        }
+        if let Some(tag) = tag {
+            if has_anchor {
                 self.output.push(' ');
-                self.last_char_newline = false;
             }
-            true
-        } else {
-            false
+            write_tag(&mut self.output, tag);
+        }
+        let wrote = has_anchor || tag.is_some();
+        if wrote {
+            self.last_char_newline = false;
+        }
+        wrote
+    }
+
+    /// Like `emit_properties`, but prefixed with one space that is written only if
+    /// properties exist.
+    fn emit_properties_after_space(&mut self, anchor_id: usize, tag: Option<&Cow<'_, Tag>>) {
+        let mark = self.output.len();
+        self.output.push(' ');
+        if !self.emit_properties(anchor_id, tag) {
+            self.output.truncate(mark);
+        }
+    }
+
+    /// Writes the `:` that introduces the value of an explicit (`? `) key.
+    fn begin_explicit_value(&mut self) {
+        if self.current_context() == Context::ExplicitValue {
+            self.write_indent();
+            self.output.push(':');
+            self.pending_space = true;
+            self.last_char_newline = false;
+            self.set_context(Context::MappingValue);
         }
     }
 
@@ -142,19 +230,15 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
 
             Event::SequenceStart(anchor_id, tag) => {
-                self.start_sequence(anchor_id, tag.as_ref());
+                self.start_collection(anchor_id, tag.as_ref(), Context::Sequence);
             }
 
-            Event::SequenceEnd => {
-                self.end_sequence();
+            Event::SequenceEnd | Event::MappingEnd => {
+                self.end_collection();
             }
 
             Event::MappingStart(anchor_id, tag) => {
-                self.start_mapping(anchor_id, tag.as_ref());
-            }
-
-            Event::MappingEnd => {
-                self.end_mapping();
+                self.start_collection(anchor_id, tag.as_ref(), Context::MappingKey);
             }
 
             Event::Alias(anchor_id) => {
@@ -171,9 +255,12 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         value: &str,
         style: ScalarStyle,
         anchor_id: usize,
-        _tag: Option<&Cow<'_, Tag>>,
+        tag: Option<&Cow<'_, Tag>>,
     ) {
+        self.begin_explicit_value();
         let ctx = self.current_context();
+        let is_block = matches!(style, ScalarStyle::Literal | ScalarStyle::Folded);
+        let block_key = is_block && ctx == Context::MappingKey;
 
         // Handle pending newline from document start or collection start
         if self.pending_newline {
@@ -199,9 +286,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 } else {
                     self.write_indent();
                 }
+                if block_key {
+                    self.output.push_str("? ");
+                    self.last_char_newline = false;
+                }
             }
-            // Root level scalar needs no prefix; mapping value emits pending space
-            Context::Root => {}
+            // Root level scalar needs no prefix; mapping value emits pending space.
+            // Explicit* are consumed by begin_explicit_value and never current here.
+            Context::Root | Context::ExplicitKey | Context::ExplicitValue => {}
             Context::MappingValue => {
                 if self.pending_space {
                     self.output.push(' ');
@@ -211,46 +303,53 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             }
         }
 
-        // Handle anchor if present (with bounds check for security)
-        self.emit_anchor_if_present(anchor_id, false);
+        if self.emit_properties(anchor_id, tag) {
+            self.output.push(' ');
+        }
 
-        // Emit value with appropriate style
-        self.emit_value_with_style(value, style);
+        let typing = if tag.is_some() {
+            ScalarTyping::Tagged
+        } else {
+            ScalarTyping::Implicit
+        };
+        self.emit_value_with_style(value, style, typing);
 
         // Handle context transitions
         match ctx {
+            Context::MappingKey if block_key => {
+                self.set_context(Context::ExplicitValue);
+            }
             Context::MappingKey => {
                 self.output.push(':');
-                // Transition to expecting value
-                if let Some(last) = self.backend.context_stack_mut().last_mut() {
-                    *last = Context::MappingValue;
-                }
+                self.set_context(Context::MappingValue);
                 // Defer the space — emitted only when the value is a scalar.
                 // If the value is a nested collection, pending_space is cleared
                 // without emitting so we avoid a trailing space before the newline.
                 self.pending_space = true;
                 self.last_char_newline = false;
             }
-            Context::MappingValue => {
-                self.output.push('\n');
-                self.last_char_newline = true;
-                // Transition back to expecting key
-                if let Some(last) = self.backend.context_stack_mut().last_mut() {
-                    *last = Context::MappingKey;
+            Context::MappingValue | Context::Sequence | Context::Root => {
+                // Block scalars already end with a newline.
+                if !is_block {
+                    self.output.push('\n');
+                    self.last_char_newline = true;
+                }
+                if ctx == Context::MappingValue {
+                    self.set_context(Context::MappingKey);
                 }
             }
-            Context::Sequence | Context::Root => {
-                self.output.push('\n');
-                self.last_char_newline = true;
-            }
+            Context::ExplicitKey | Context::ExplicitValue => {}
         }
     }
 
-    fn emit_value_with_style(&mut self, value: &str, style: ScalarStyle) {
+    fn emit_value_with_style(&mut self, value: &str, style: ScalarStyle, typing: ScalarTyping) {
         match style {
             ScalarStyle::Plain => {
-                // Fix special floats for YAML 1.2 compliance
-                let fixed = super::fix_special_float_value(value);
+                // Fix special floats for YAML 1.2 compliance; an explicit tag pins the type.
+                let fixed = match typing {
+                    ScalarTyping::Tagged => value,
+                    ScalarTyping::Implicit => super::fix_special_float_value(value),
+                };
                 self.output.push_str(fixed);
                 self.last_char_newline = false;
             }
@@ -303,7 +402,9 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         }
     }
 
-    fn start_sequence(&mut self, anchor_id: usize, _tag: Option<&Cow<'_, Tag>>) {
+    /// Opens a sequence (`child == Sequence`) or mapping (`child == MappingKey`).
+    fn start_collection(&mut self, anchor_id: usize, tag: Option<&Cow<'_, Tag>>, child: Context) {
+        self.begin_explicit_value();
         let ctx = self.current_context();
 
         // Handle pending newline
@@ -313,7 +414,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             self.last_char_newline = true;
         }
 
-        // Write prefix and anchor inline per context to avoid anchors on wrong line.
+        // Write prefix and properties inline per context to avoid them landing on the wrong line.
         match ctx {
             Context::Sequence => {
                 if self.first_item_after_dash {
@@ -323,159 +424,67 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 }
                 self.output.push_str("- ");
                 self.last_char_newline = false;
-                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-                    // Emit anchor inline after "- "; then a newline.
-                    // Children need fresh indentation — do NOT set first_item_after_dash.
-                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
-                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
-                    self.output.push('&');
-                    self.output.push_str(name);
+                if self.emit_properties(anchor_id, tag) {
+                    // Properties occupy the "- " line, so children need fresh indentation.
                     self.output.push('\n');
                     self.last_char_newline = true;
-                } else {
-                    // No anchor: first child sits right after "- ".
+                } else if child == Context::Sequence {
                     self.first_item_after_dash = true;
-                }
-            }
-            Context::MappingKey => {
-                // Sequence as mapping key - unusual but valid
-                self.write_indent();
-                self.emit_anchor_if_present(anchor_id, false);
-            }
-            Context::MappingValue => {
-                // Value position - emit anchor inline if present, then newline.
-                // The pending_space after colon is consumed here: if an anchor is present,
-                // emit "key: &anchor\n"; otherwise emit "key:\n" (no trailing space).
-                self.pending_space = false;
-                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-                    self.output.push(' ');
-                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
-                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
-                    self.output.push('&');
-                    self.output.push_str(name);
-                }
-                self.output.push('\n');
-                self.last_char_newline = true;
-            }
-            Context::Root => {
-                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
-                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
-                    self.output.push('&');
-                    self.output.push_str(name);
-                    self.output.push('\n');
-                    self.last_char_newline = true;
-                }
-            }
-        }
-
-        // Update context for mapping value -> key transition
-        if ctx == Context::MappingValue
-            && let Some(last) = self.backend.context_stack_mut().last_mut()
-        {
-            *last = Context::MappingKey;
-        }
-
-        // Push sequence context and increase indent (with depth limit)
-        if self.backend.context_stack().len() < MAX_DEPTH {
-            self.backend.context_stack_mut().push(Context::Sequence);
-            self.indent_level += 1;
-        }
-    }
-
-    fn end_sequence(&mut self) {
-        self.backend.context_stack_mut().pop();
-        self.indent_level = self.indent_level.saturating_sub(1);
-    }
-
-    fn start_mapping(&mut self, anchor_id: usize, _tag: Option<&Cow<'_, Tag>>) {
-        let ctx = self.current_context();
-
-        // Handle pending newline
-        if self.pending_newline {
-            self.output.push('\n');
-            self.pending_newline = false;
-            self.last_char_newline = true;
-        }
-
-        // Write prefix and anchor inline per context to avoid anchors on wrong line.
-        match ctx {
-            Context::Sequence => {
-                if self.first_item_after_dash {
-                    self.first_item_after_dash = false;
                 } else {
-                    self.write_indent();
-                }
-                self.output.push_str("- ");
-                self.last_char_newline = false;
-                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-                    // Emit anchor inline after "- "; then a newline.
-                    // Anchor occupies the "- " line, so the first key goes on its own
-                    // indented line — do NOT set first_key_after_dash.
-                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
-                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
-                    self.output.push('&');
-                    self.output.push_str(name);
-                    self.output.push('\n');
-                    self.last_char_newline = true;
-                    self.first_key_after_dash = false;
-                } else {
-                    // No anchor: first key sits right after "- "; no extra indent.
                     self.first_key_after_dash = true;
                 }
             }
             Context::MappingKey => {
-                // Mapping as mapping key - unusual but valid (complex key)
-                self.write_indent();
-                self.emit_anchor_if_present(anchor_id, false);
-            }
-            Context::MappingValue => {
-                // Value position - emit anchor inline if present, then newline.
-                // The pending_space after colon is consumed here: if an anchor is present,
-                // emit "key: &anchor\n"; otherwise emit "key:\n" (no trailing space).
-                self.pending_space = false;
-                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-                    self.output.push(' ');
-                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
-                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
-                    self.output.push('&');
-                    self.output.push_str(name);
+                // Collection as mapping key: explicit `?` entry, children on following lines.
+                if self.first_key_after_dash {
+                    self.first_key_after_dash = false;
+                } else {
+                    self.write_indent();
                 }
+                self.output.push('?');
+                self.emit_properties_after_space(anchor_id, tag);
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
-            Context::Root => {
-                if anchor_id > 0 && anchor_id <= MAX_ANCHOR_ID {
-                    self.backend.anchor_store_mut().ensure_capacity(anchor_id);
-                    let name = self.backend.anchor_store_mut().set_if_empty(anchor_id);
-                    self.output.push('&');
-                    self.output.push_str(name);
+            Context::MappingValue => {
+                // The pending_space after colon is dropped: "key: &anchor\n" or "key:\n".
+                self.pending_space = false;
+                self.emit_properties_after_space(anchor_id, tag);
+                self.output.push('\n');
+                self.last_char_newline = true;
+            }
+            // Explicit* are consumed by begin_explicit_value and never current here.
+            Context::Root | Context::ExplicitKey | Context::ExplicitValue => {
+                if self.emit_properties(anchor_id, tag) {
                     self.output.push('\n');
                     self.last_char_newline = true;
                 }
             }
         }
 
-        // Update context for mapping value -> key transition
-        if ctx == Context::MappingValue
-            && let Some(last) = self.backend.context_stack_mut().last_mut()
-        {
-            *last = Context::MappingKey;
+        match ctx {
+            Context::MappingValue => self.set_context(Context::MappingKey),
+            Context::MappingKey => self.set_context(Context::ExplicitKey),
+            _ => {}
         }
 
-        // Push mapping context and increase indent (with depth limit)
+        // Push child context and increase indent (with depth limit)
         if self.backend.context_stack().len() < MAX_DEPTH {
-            self.backend.context_stack_mut().push(Context::MappingKey);
+            self.backend.context_stack_mut().push(child);
             self.indent_level += 1;
         }
     }
 
-    fn end_mapping(&mut self) {
+    fn end_collection(&mut self) {
         self.backend.context_stack_mut().pop();
         self.indent_level = self.indent_level.saturating_sub(1);
+        if self.current_context() == Context::ExplicitKey {
+            self.set_context(Context::ExplicitValue);
+        }
     }
 
     fn emit_alias(&mut self, anchor_id: usize) {
+        self.begin_explicit_value();
         let ctx = self.current_context();
 
         // Handle pending newline
@@ -499,7 +508,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             Context::MappingKey => {
                 self.write_indent();
             }
-            Context::Root => {}
+            // Explicit* are consumed by begin_explicit_value and never current here.
+            Context::Root | Context::ExplicitKey | Context::ExplicitValue => {}
             Context::MappingValue => {
                 if self.pending_space {
                     self.output.push(' ');
@@ -523,38 +533,20 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
         match ctx {
             Context::MappingKey => {
                 self.output.push(':');
-                if let Some(last) = self.backend.context_stack_mut().last_mut() {
-                    *last = Context::MappingValue;
-                }
+                self.set_context(Context::MappingValue);
                 self.pending_space = true;
                 // last_char_newline remains false
             }
             Context::MappingValue => {
                 self.output.push('\n');
                 self.last_char_newline = true;
-                if let Some(last) = self.backend.context_stack_mut().last_mut() {
-                    *last = Context::MappingKey;
-                }
+                self.set_context(Context::MappingKey);
             }
             Context::Sequence | Context::Root => {
                 self.output.push('\n');
                 self.last_char_newline = true;
             }
-        }
-    }
-
-    /// Derive YAML block scalar chomp indicator from content.
-    ///
-    /// - `"+"` (keep): value ends with two or more newlines
-    /// - `"-"` (strip): value does not end with a newline
-    /// - `""` (clip): value ends with exactly one newline
-    fn chomp_indicator(value: &str) -> &'static str {
-        if value.ends_with("\n\n") {
-            "+"
-        } else if !value.ends_with('\n') {
-            "-"
-        } else {
-            ""
+            Context::ExplicitKey | Context::ExplicitValue => {}
         }
     }
 
@@ -565,10 +557,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
     fn write_block_scalar_lines(&mut self, value: &str) {
         let indent_chars = self.indent_level.saturating_mul(self.config.indent);
 
-        // Track the last non-empty line position to handle keep (+) chomp.
-        // value.lines() drops trailing empty entries produced by trailing newlines.
-        let last_non_empty = value.trim_end_matches('\n');
-
+        // `lines()` yields interior blank lines and drops only the final terminator,
+        // which is exactly what keep (+) chomping needs.
         for line in value.lines() {
             // Blank lines inside block scalars must not receive indentation — that
             // would create trailing whitespace, which is a lint violation.
@@ -581,18 +571,6 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                 self.output.push_str(line);
             }
             self.output.push('\n');
-        }
-
-        // For keep (+) chomp: value.lines() drops trailing empty entries.
-        // After the last non-empty line, emit the extra blank lines that lines() skipped.
-        // Example: "text\n\n" → lines() yields ["text"], but we need "text\n\n".
-        // The loop above already emitted one \n after the last content line,
-        // so we emit (trailing_count - 1) additional newlines.
-        if value.ends_with("\n\n") {
-            let trailing_count = value.len() - last_non_empty.len();
-            for _ in 1..trailing_count {
-                self.output.push('\n');
-            }
         }
     }
 
@@ -616,5 +594,191 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             self.output.push('\n');
         }
         self.output
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use saphyr_parser::{Event, Parser};
+
+    use crate::EmitterConfig;
+    use crate::streaming::format_streaming;
+
+    fn fmt(yaml: &str) -> String {
+        format_streaming(yaml, &EmitterConfig::default()).unwrap()
+    }
+
+    /// Parser events with tags, anchors, and values but without spans, styles, or `---` markers.
+    fn events(yaml: &str) -> Vec<String> {
+        let tag = |t: Option<&saphyr_parser::Tag>| t.map(|t| format!("{}{}", t.handle, t.suffix));
+        Parser::new_from_str(yaml)
+            .map(|r| match r.unwrap().0 {
+                Event::DocumentStart(_) => "doc".to_owned(),
+                Event::Scalar(v, _, a, t) => format!("scalar {v:?} &{a} {:?}", tag(t.as_deref())),
+                Event::SequenceStart(a, t) => format!("seq &{a} {:?}", tag(t.as_deref())),
+                Event::MappingStart(a, t) => format!("map &{a} {:?}", tag(t.as_deref())),
+                other => format!("{other:?}"),
+            })
+            .collect()
+    }
+
+    /// Formats twice and checks idempotency and that the event stream is unchanged.
+    fn assert_stable(yaml: &str) -> String {
+        let once = fmt(yaml);
+        assert_eq!(fmt(&once), once, "not idempotent for {yaml:?}");
+        assert_eq!(
+            events(&once),
+            events(yaml),
+            "events changed: {yaml:?} -> {once:?}"
+        );
+        once
+    }
+
+    #[test]
+    fn tags_preserved_on_scalars() {
+        let out = assert_stable(
+            "t: !!str 123\nu: !!str true\nv: !!int \"7\"\nc: !custom x\nb: !!binary aGk=\n",
+        );
+        assert_eq!(
+            out,
+            "t: !!str 123\nu: !!str true\nv: !!int \"7\"\nc: !custom x\nb: !!binary aGk=\n"
+        );
+    }
+
+    #[test]
+    fn tags_preserved_on_collections() {
+        assert_eq!(
+            assert_stable("s: !!set {a, b}\n"),
+            "s: !!set\n  a: \n  b: \n"
+        );
+        assert_eq!(assert_stable("- !!seq [a]\n"), "- !!seq\n  - a\n");
+        assert_eq!(assert_stable("&a !!map {k: v}\n"), "&a !!map\nk: v\n");
+    }
+
+    #[test]
+    fn tagged_special_float_untouched() {
+        assert_eq!(assert_stable("a: !!str inf\n"), "a: !!str inf\n");
+    }
+
+    #[test]
+    fn tag_forms_round_trip() {
+        let out = assert_stable("%TAG !e! tag:example.com,2000:\n---\na: !e!x 1\n");
+        assert!(out.contains("!<tag:example.com,2000:x> 1"), "{out:?}");
+        assert!(assert_stable("a: !<tag:x.org,1:y> z\n").contains("!<tag:x.org,1:y> z"));
+        assert!(assert_stable("q: !\n").contains("q: !"));
+    }
+
+    #[test]
+    fn tag_suffix_is_percent_encoded() {
+        assert_eq!(assert_stable("a: !foo%20bar x\n"), "a: !foo%20bar x\n");
+        assert_eq!(assert_stable("a: !foo%21bar x\n"), "a: !foo%21bar x\n");
+        assert_eq!(assert_stable("a: !foo%2Cbar x\n"), "a: !foo%2Cbar x\n");
+        let out = assert_stable("a: !<tag:x.org,2000:a%20b> z\n");
+        assert!(out.contains("!<tag:x.org,2000:a%20b> z"), "{out:?}");
+    }
+
+    #[test]
+    fn anchor_and_tag_together() {
+        assert_stable("a: &x !!str 1\nb: *x\n");
+        assert_stable("- &x !custom y\n- *x\n");
+        assert_stable("- &x !!seq [a]\n- *x\n");
+        assert_stable("a: &x !!map {k: v}\nb: *x\n");
+    }
+
+    #[test]
+    fn tagged_empty_and_quoted_scalars() {
+        assert_stable("a: !!null\nb: 1\n");
+        assert_stable("- !!null\n- x\n");
+        assert_eq!(
+            assert_stable("a: !!str \"x y\"\nb: !t 'q'\n"),
+            "a: !!str \"x y\"\nb: !t 'q'\n"
+        );
+    }
+
+    #[test]
+    fn tagged_block_scalar() {
+        assert_eq!(
+            assert_stable("a: !!str |+\n  x\n\n"),
+            "a: !!str |+\n  x\n\n"
+        );
+        assert_eq!(assert_stable("- !t >\n  x\n"), "- !t >\n  x\n");
+    }
+
+    #[test]
+    fn tags_in_multi_document_stream() {
+        let out = assert_stable("%TAG !e! tag:e.com,2000:\n---\na: !e!x 1\n---\nb: !!str 2\n");
+        assert!(out.contains("!<tag:e.com,2000:x> 1"), "{out:?}");
+        assert!(out.contains("b: !!str 2"), "{out:?}");
+    }
+
+    #[test]
+    fn keep_chomp_stable() {
+        assert_eq!(assert_stable("a: |+\n  x\n\n"), "a: |+\n  x\n\n");
+        assert_eq!(
+            assert_stable("a: |+\n  x\n\n\nb: 1\n"),
+            "a: |+\n  x\n\n\nb: 1\n"
+        );
+        assert_eq!(
+            assert_stable("a: |+\n  x\n\n\n\nb: 1\n"),
+            "a: |+\n  x\n\n\n\nb: 1\n"
+        );
+    }
+
+    #[test]
+    fn keep_chomp_in_containers() {
+        assert_eq!(assert_stable("- |+\n  x\n\n- y\n"), "- |+\n  x\n\n- y\n");
+        assert_stable("a:\n  b: |+\n    x\n\nc: 1\n");
+        assert_stable("a: |+\n  x\n\n---\nb: |+\n  y\n\n");
+        assert_stable("a: >+\n  x\n\nb: 1\n");
+        assert_stable("- >+\n  x\n\n\n- y\n");
+    }
+
+    #[test]
+    fn strip_chomp_with_trailing_blanks_stable() {
+        assert_eq!(
+            assert_stable("a: |-\n  x\n\n\nb: 1\n"),
+            "a: |-\n  x\nb: 1\n"
+        );
+    }
+
+    #[test]
+    fn clip_block_has_no_extra_blank_line() {
+        assert_eq!(fmt("a: |\n  x\nb: 1\n"), "a: |\n  x\nb: 1\n");
+        assert_eq!(fmt("- >\n  x\n- y\n"), "- >\n  x\n- y\n");
+    }
+
+    #[test]
+    fn complex_keys_valid_and_stable() {
+        for yaml in [
+            "? [a, b]\n: c\n",
+            "? {a: 1}\n: v\n",
+            "? |\n  block key\n: v\n",
+            "? >\n  folded key\n: v\n",
+            "k: 1\n? [a]\n: [b]\n",
+            "- ? [a]\n  : b\n",
+            "- c: d\n  ? [a]\n  : b\n",
+            "- ? |\n    k\n  : v\n",
+            "outer:\n  ? [a]\n  : b\n",
+            "? [a]\n: [b]\n? [c]\n: d\n",
+            "? [[a], b]\n: c\n",
+            "? {? [a] : b}\n: c\n",
+            "? [a]\n: |\n  text\n",
+            "? &k [a]\n: b\nc: *k\n",
+            "? !!seq [a]\n: b\n",
+            "? [a]\n: b\n---\n? {c: d}\n: e\n",
+        ] {
+            assert_stable(yaml);
+        }
+        assert_eq!(fmt("? [a, b]\n: c\n"), "?\n  - a\n  - b\n: c\n");
+        assert_eq!(fmt("? |\n  block key\n: v\n"), "? |\n  block key\n: v\n");
+    }
+
+    #[test]
+    fn complex_key_indent_4() {
+        let config = EmitterConfig::new().with_indent(4);
+        let yaml = "? [a, b]\n: c\n";
+        let once = format_streaming(yaml, &config).unwrap();
+        assert_eq!(format_streaming(&once, &config).unwrap(), once);
+        assert_eq!(events(&once), events(yaml));
     }
 }
