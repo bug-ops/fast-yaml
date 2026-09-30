@@ -112,14 +112,6 @@ jobs:
               labelsToAdd.add('enhancement');
             }
 
-            // Default: add needs-triage if no type label found
-            const typeLabels = ['bug', 'enhancement', 'question', 'documentation', 'security'];
-            const hasTypeLabel = Array.from(labelsToAdd).some(label => typeLabels.includes(label));
-
-            if (!hasTypeLabel) {
-              labelsToAdd.add('status:needs-triage');
-            }
-
             // Apply all collected labels
             if (labelsToAdd.size > 0) {
               const currentLabels = context.payload.issue.labels.map(label => label.name);
