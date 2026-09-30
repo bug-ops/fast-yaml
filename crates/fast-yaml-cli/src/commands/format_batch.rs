@@ -55,7 +55,7 @@ pub fn execute_batch(
     let processor = FileProcessor::with_config(
         ParallelConfig::new()
             .with_workers(target.workers.map(NonZeroUsize::get))
-            .with_max_input_size(max_input.get()),
+            .with_max_input_bytes(max_input),
     );
 
     let result = match write {

@@ -1,12 +1,11 @@
 //! Batch lint command execution.
 
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use fast_yaml_core::decode_input_owned;
-use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
+use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader};
 use rayon::prelude::*;
 
 use crate::cli::LintFormat;
@@ -14,7 +13,15 @@ use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
-use crate::io::input::read_file_capped;
+
+/// Formats a read failure for stderr; `Io` already names the path, the other variants do not.
+fn read_error_line(path: &Path, err: &ParallelError) -> String {
+    let hint = RaiseHint::of(err).map_or_else(String::new, |h| format!(" ({h})"));
+    match err {
+        ParallelError::Io { .. } => format!("error: {err}{hint}"),
+        _ => format!("error: '{}': {err}{hint}", path.display()),
+    }
+}
 
 /// Execute batch linting on multiple files.
 ///
@@ -26,7 +33,6 @@ pub fn execute_lint_batch(
     target: &BatchTarget,
     lint_config: &LintConfig,
     format: LintFormat,
-    max_input: MaxInputBytes,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -51,16 +57,18 @@ pub fn execute_lint_batch(
 
     // Process files in parallel, collecting (path, content, diagnostics, has_errors) tuples.
     // Read/lint errors are printed to stderr directly; has_errors=true is set in that case.
+    let reader = SmartReader::with_threshold(u64::MAX);
     let results: Vec<(PathBuf, String, Vec<Diagnostic>, bool)> = pool.install(|| {
         file_paths
             .par_iter()
             .map(|path| {
-                let content = match read_file_capped(path, max_input)
-                    .and_then(|bytes| Ok(decode_input_owned(bytes)?))
+                let content = match reader
+                    .read(path, lint_config.max_input_bytes)
+                    .and_then(FileContent::into_string)
                 {
                     Ok(c) => c,
                     Err(e) => {
-                        eprintln!("error: failed to read '{}': {e}", path.display());
+                        eprintln!("{}", read_error_line(path, &e));
                         return (path.clone(), String::new(), vec![], true);
                     }
                 };

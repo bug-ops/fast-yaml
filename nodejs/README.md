@@ -171,7 +171,7 @@ console.log(`Changed ${result.changed} files`);
 interface BatchConfig {
   workers?: number;           // Worker threads (null = auto)
   mmapThreshold?: number;     // Mmap threshold (default: 512KB)
-  maxInputSize?: number;      // Max file size (default: 100MB)
+  maxInputBytes?: number;     // Max file size, 1..1073741824 (default: 100MiB)
   indent?: number;            // Indentation (default: 2)
   width?: number;             // Line width (default: 80)
   sortKeys?: boolean;         // Sort keys (default: false)
@@ -246,6 +246,7 @@ safeLoad(aliasHeavyYaml, { maxAliasBytes: 2 ** 28 }); // default 64MiB, range 1.
 
 - Values must be integers within the range; `0`, negatives, fractions, `NaN`, and out-of-range values throw `maxDepth must be between 1 and 512, got N`.
 - `maxAliasBytes` is an estimate of alias-expansion cost per call (per file in batch runs); JavaScript objects cost several times the estimate, so keep it modest on memory-constrained hosts.
+- `parseParallel` / `parseParallelAsync` also accept `maxDocuments` (integer, 1..10000000, default 100000) and `maxInputBytes`; `processFiles` accepts `maxInputBytes`; all throw the same `... must be between 1 and N, got V` error for invalid values.
 - `lint` / `Linter` also accept `maxInputBytes` (integer, 1..1073741824, default 100MiB) and reject larger sources. It bounds linting work on oversized input; the source is already in memory when checked, so it is not a memory bound.
 - The calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (for example a worker with `stackSizeMb: 0.5`) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
 - `formatFiles` / `formatFilesInPlace` validate the options but do not apply them (fixed formatter depth limit).

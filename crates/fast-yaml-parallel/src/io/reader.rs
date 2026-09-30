@@ -1,8 +1,10 @@
 //! Smart file reading with automatic strategy selection based on file size.
 
 use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_core::{decode_input, decode_input_owned};
 use memmap2::Mmap;
 
@@ -40,6 +42,30 @@ impl FileContent {
         }
     }
 
+    /// Consumes the content and returns it as an owned string.
+    ///
+    /// A string read is returned as is; a mapped file is decoded and copied.
+    ///
+    /// # Errors
+    ///
+    /// Returns `Error::Decode` if a mapped file is not valid UTF-8 text.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_parallel::FileContent;
+    ///
+    /// let content = FileContent::String("key: value\n".to_string());
+    /// assert_eq!(content.into_string()?, "key: value\n");
+    /// # Ok::<(), fast_yaml_parallel::Error>(())
+    /// ```
+    pub fn into_string(self) -> Result<String> {
+        match self {
+            Self::String(s) => Ok(s),
+            mapped @ Self::Mmap { .. } => mapped.as_str().map(str::to_owned),
+        }
+    }
+
     /// Returns true if content is memory-mapped
     pub const fn is_mmap(&self) -> bool {
         matches!(self, Self::Mmap { .. })
@@ -74,13 +100,13 @@ impl SmartReader {
     /// # Examples
     ///
     /// ```
+    /// use fast_yaml_core::limits::MaxInputBytes;
     /// use fast_yaml_parallel::SmartReader;
-    /// use std::path::Path;
     ///
     /// let reader = SmartReader::new();
     /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
     /// # std::fs::write(temp_file.path(), "key: value\n").unwrap();
-    /// let content = reader.read(temp_file.path())?;
+    /// let content = reader.read(temp_file.path(), MaxInputBytes::DEFAULT)?;
     /// let yaml = content.as_str()?;
     /// assert!(yaml.contains("key"));
     /// # Ok::<(), fast_yaml_parallel::Error>(())
@@ -111,52 +137,75 @@ impl SmartReader {
     /// - an in-memory read for files < threshold
     /// - `mmap` for files >= threshold
     ///
-    /// Falls back to an in-memory read if mmap fails.
+    /// Falls back to an in-memory read if mmap fails. The file is opened once and its size is
+    /// checked against `max` before any content is read; the in-memory read is additionally
+    /// capped at `max + 1` bytes and a mapping is re-measured, so a file that grows after the
+    /// size check is still rejected.
     ///
     /// # Errors
     ///
     /// Returns `Error::Io` if:
     /// - Path does not exist
-    /// - Path is a directory
+    /// - Path is a directory, FIFO or device rather than a regular file
     /// - Insufficient permissions
+    ///
+    /// Returns `Error::InputTooLarge` if the file is larger than `max`.
     ///
     /// Returns `Error::Decode` if a file below the threshold starts with a UTF-16 or
     /// UTF-32 byte order mark or is not valid UTF-8. Memory-mapped files report the
     /// same error from [`FileContent::as_str`].
-    pub fn read(&self, path: &Path) -> Result<FileContent> {
-        let metadata = std::fs::metadata(path).map_err(|source| Error::Io {
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::MaxInputBytes;
+    /// use fast_yaml_parallel::{Error, SmartReader};
+    ///
+    /// # let temp_file = tempfile::NamedTempFile::new().unwrap();
+    /// # std::fs::write(temp_file.path(), "key: value\n").unwrap();
+    /// let max = MaxInputBytes::new(4).unwrap();
+    /// assert!(matches!(
+    ///     SmartReader::new().read(temp_file.path(), max),
+    ///     Err(Error::InputTooLarge(_))
+    /// ));
+    /// ```
+    pub fn read(&self, path: &Path, max: MaxInputBytes) -> Result<FileContent> {
+        let io_error = |source| Error::Io {
             path: path.to_path_buf(),
             source,
-        })?;
-
-        if metadata.is_dir() {
-            return Err(Error::Io {
-                path: path.to_path_buf(),
-                source: std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "path is a directory, not a file",
-                ),
-            });
-        }
+        };
+        // Checked before opening: opening a FIFO blocks and opening a directory fails on Windows
+        ensure_regular_file(&std::fs::metadata(path).map_err(io_error)?).map_err(io_error)?;
+        let file = File::open(path).map_err(io_error)?;
+        let metadata = file.metadata().map_err(io_error)?;
+        ensure_regular_file(&metadata).map_err(io_error)?;
 
         let size = metadata.len();
+        max.check_file_len(size)?;
 
         if size >= self.mmap_threshold {
-            Self::read_mmap(path).or_else(|_| {
+            match Self::read_mmap(&file, path, max) {
+                Err(e @ Error::InputTooLarge(_)) => Err(e),
                 // Fallback to reading into memory if mmap fails
-                Self::read_string(path)
-            })
+                Err(_) => Self::read_string(&file, path, size, max),
+                Ok(content) => Ok(content),
+            }
         } else {
-            Self::read_string(path)
+            Self::read_string(&file, path, size, max)
         }
     }
 
-    /// Reads file into memory as a String
-    fn read_string(path: &Path) -> Result<FileContent> {
-        let bytes = std::fs::read(path).map_err(|source| Error::Io {
+    /// Reads file into memory as a String, reading at most one byte past `max`
+    fn read_string(file: &File, path: &Path, size: u64, max: MaxInputBytes) -> Result<FileContent> {
+        let io_error = |source| Error::Io {
             path: path.to_path_buf(),
             source,
-        })?;
+        };
+        let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or_default());
+        file.take(max.get() as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(io_error)?;
+        max.check(bytes.len())?;
         let content = decode_input_owned(bytes).map_err(|source| Error::Decode {
             path: path.to_path_buf(),
             source,
@@ -164,31 +213,42 @@ impl SmartReader {
         Ok(FileContent::String(content))
     }
 
-    /// Reads file using memory-mapped file
+    /// Maps the file read-only and rejects a mapping larger than `max`
     #[allow(unsafe_code)]
-    fn read_mmap(path: &Path) -> Result<FileContent> {
-        let file = File::open(path).map_err(|source| Error::Io {
-            path: path.to_path_buf(),
-            source,
-        })?;
-
+    fn read_mmap(file: &File, path: &Path, max: MaxInputBytes) -> Result<FileContent> {
         // SAFETY: read-only mapping, unmapped on drop. Memory safety still depends on no process
         // truncating or rewriting the file while it is mapped: truncation raises SIGBUS, and a
         // rewrite after `as_str` validated UTF-8 invalidates the `&str` the parser reads.
         // Unlike `read_string`, which snapshots the bytes, this is a real race. Callers accept it
         // for files of at least `mmap_threshold` bytes and can raise the threshold to avoid it.
         let mmap = unsafe {
-            Mmap::map(&file).map_err(|source| Error::Io {
+            Mmap::map(file).map_err(|source| Error::Io {
                 path: path.to_path_buf(),
                 source,
             })?
         };
+        max.check(mmap.len())?;
 
         Ok(FileContent::Mmap {
             map: mmap,
             path: path.to_path_buf(),
         })
     }
+}
+
+/// Rejects directories, FIFOs and devices, whose length says nothing about how much they yield.
+fn ensure_regular_file(metadata: &std::fs::Metadata) -> std::io::Result<()> {
+    let message = if metadata.is_dir() {
+        "path is a directory, not a file"
+    } else if !metadata.is_file() {
+        "path is not a regular file"
+    } else {
+        return Ok(());
+    };
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        message,
+    ))
 }
 
 impl Default for SmartReader {
@@ -224,7 +284,7 @@ mod tests {
         write!(file, "small: content").unwrap();
 
         let reader = SmartReader::new();
-        let content = reader.read(file.path()).unwrap();
+        let content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         assert!(!content.is_mmap());
         assert_eq!(content.as_str().unwrap(), "small: content");
@@ -239,7 +299,7 @@ mod tests {
         write!(file, "{large_content}").unwrap();
 
         let reader = SmartReader::new();
-        let content = reader.read(file.path()).unwrap();
+        let content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         assert!(content.is_mmap());
         assert_eq!(content.len(), large_content.len());
@@ -252,7 +312,7 @@ mod tests {
 
         // Threshold of 5 bytes should trigger mmap for our 12-byte file
         let reader = SmartReader::with_threshold(5);
-        let content = reader.read(file.path()).unwrap();
+        let content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         // Should use mmap since file > 5 bytes
         assert!(content.is_mmap());
@@ -269,7 +329,7 @@ mod tests {
     #[test]
     fn test_read_nonexistent_file() {
         let reader = SmartReader::new();
-        let result = reader.read(Path::new("/nonexistent/file.yaml"));
+        let result = reader.read(Path::new("/nonexistent/file.yaml"), MaxInputBytes::DEFAULT);
         assert!(result.is_err());
     }
 
@@ -288,7 +348,7 @@ mod tests {
         write!(file, "{content}").unwrap();
 
         let reader = SmartReader::new();
-        let file_content = reader.read(file.path()).unwrap();
+        let file_content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         // Should be mmap and valid UTF-8
         assert!(file_content.is_mmap());
@@ -308,7 +368,9 @@ mod tests {
             let mut file = NamedTempFile::new().unwrap();
             file.write_all(bom).unwrap();
 
-            let err = SmartReader::new().read(file.path()).unwrap_err();
+            let err = SmartReader::new()
+                .read(file.path(), MaxInputBytes::DEFAULT)
+                .unwrap_err();
             assert!(matches!(err, Error::Decode { .. }), "{err:?}");
             let text = err.to_string();
             assert!(text.contains("unsupported encoding"), "{text}");
@@ -327,7 +389,9 @@ mod tests {
             file.write_all(bom).unwrap();
             file.write_all(&vec![b'x'; 600 * 1024]).unwrap();
 
-            let content = SmartReader::new().read(file.path()).unwrap();
+            let content = SmartReader::new()
+                .read(file.path(), MaxInputBytes::DEFAULT)
+                .unwrap();
             assert!(content.is_mmap());
             let err = content.as_str().unwrap_err();
             assert!(matches!(err, Error::Decode { .. }), "{err:?}");
@@ -346,7 +410,9 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"a: \xC3\x28\n").unwrap();
 
-        let err = SmartReader::new().read(file.path()).unwrap_err();
+        let err = SmartReader::new()
+            .read(file.path(), MaxInputBytes::DEFAULT)
+            .unwrap_err();
         assert!(err.to_string().contains("not valid UTF-8"), "{err}");
     }
 
@@ -355,7 +421,9 @@ mod tests {
         let mut file = NamedTempFile::new().unwrap();
         file.write_all(b"\xEF\xBB\xBFa: 1\n").unwrap();
 
-        let content = SmartReader::new().read(file.path()).unwrap();
+        let content = SmartReader::new()
+            .read(file.path(), MaxInputBytes::DEFAULT)
+            .unwrap();
         assert!(content.as_str().is_ok());
     }
 
@@ -376,7 +444,7 @@ mod tests {
 
         // Reader should follow symlink and read content
         let reader = SmartReader::new();
-        let content = reader.read(&link).unwrap();
+        let content = reader.read(&link, MaxInputBytes::DEFAULT).unwrap();
 
         assert_eq!(content.as_str().unwrap(), "key: value\n");
     }
@@ -395,7 +463,7 @@ mod tests {
 
         // Reading broken symlink should fail
         let reader = SmartReader::new();
-        let result = reader.read(&link);
+        let result = reader.read(&link, MaxInputBytes::DEFAULT);
 
         assert!(result.is_err());
     }
@@ -409,7 +477,7 @@ mod tests {
         write!(file, "{content}").unwrap();
 
         let reader = SmartReader::new();
-        let file_content = reader.read(file.path()).unwrap();
+        let file_content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         // At threshold, should use mmap
         assert!(file_content.is_mmap());
@@ -425,7 +493,7 @@ mod tests {
         write!(file, "{content}").unwrap();
 
         let reader = SmartReader::new();
-        let file_content = reader.read(file.path()).unwrap();
+        let file_content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         // Below threshold, should use String
         assert!(!file_content.is_mmap());
@@ -441,7 +509,7 @@ mod tests {
         write!(file, "{content}").unwrap();
 
         let reader = SmartReader::new();
-        let file_content = reader.read(file.path()).unwrap();
+        let file_content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         // Above threshold, should use mmap
         assert!(file_content.is_mmap());
@@ -454,7 +522,7 @@ mod tests {
         // Don't write anything - file is empty
 
         let reader = SmartReader::new();
-        let content = reader.read(file.path()).unwrap();
+        let content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         assert!(content.is_empty());
         assert_eq!(content.len(), 0);
@@ -466,7 +534,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         let reader = SmartReader::new();
-        let result = reader.read(temp_dir.path());
+        let result = reader.read(temp_dir.path(), MaxInputBytes::DEFAULT);
 
         // Reading a directory should fail
         assert!(result.is_err());
@@ -482,7 +550,7 @@ mod tests {
         std::fs::write(&path, invalid_bytes).unwrap();
 
         let reader = SmartReader::new();
-        let result = reader.read(&path);
+        let result = reader.read(&path, MaxInputBytes::DEFAULT);
 
         // Should fail on UTF-8 validation
         assert!(result.is_err());
@@ -499,7 +567,7 @@ mod tests {
         std::fs::write(&path, invalid_content).unwrap();
 
         let reader = SmartReader::new();
-        let file_content = reader.read(&path).unwrap();
+        let file_content = reader.read(&path, MaxInputBytes::DEFAULT).unwrap();
 
         // File read succeeds (mmap created)
         assert!(file_content.is_mmap());
@@ -519,7 +587,7 @@ mod tests {
 
         // Force mmap with low threshold
         let reader = SmartReader::with_threshold(0);
-        let content = reader.read(&path).unwrap();
+        let content = reader.read(&path, MaxInputBytes::DEFAULT).unwrap();
 
         // Empty files might use String path even with low threshold
         // This is OK - just verify it works
@@ -534,7 +602,7 @@ mod tests {
         write!(file, "{content}").unwrap();
 
         let reader = SmartReader::new();
-        let file_content = reader.read(file.path()).unwrap();
+        let file_content = reader.read(file.path(), MaxInputBytes::DEFAULT).unwrap();
 
         assert!(file_content.is_mmap());
         assert_eq!(file_content.len(), 600 * 1024);
@@ -557,7 +625,7 @@ mod tests {
 
         // Reading directory symlink should fail
         let reader = SmartReader::new();
-        let result = reader.read(&link);
+        let result = reader.read(&link, MaxInputBytes::DEFAULT);
 
         assert!(result.is_err());
         match result {
@@ -566,5 +634,60 @@ mod tests {
             }
             _ => panic!("expected Io error"),
         }
+    }
+
+    #[test]
+    fn test_read_rejects_file_above_limit_before_reading() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "key: value").unwrap();
+        let max = MaxInputBytes::new(9).unwrap();
+
+        for reader in [SmartReader::new(), SmartReader::with_threshold(1)] {
+            let err = reader.read(file.path(), max).unwrap_err();
+            assert!(
+                matches!(&err, Error::InputTooLarge(e) if e.size == 10 && e.limit == max),
+                "{err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_accepts_file_at_limit() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "key: value").unwrap();
+        let max = MaxInputBytes::new(10).unwrap();
+
+        for reader in [SmartReader::new(), SmartReader::with_threshold(1)] {
+            let content = reader.read(file.path(), max).unwrap();
+            assert_eq!(content.into_string().unwrap(), "key: value");
+        }
+    }
+
+    #[test]
+    fn test_into_string_decodes_mapped_file() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "a: 1").unwrap();
+        let content = SmartReader::with_threshold(1)
+            .read(file.path(), MaxInputBytes::DEFAULT)
+            .unwrap();
+        assert!(content.is_mmap());
+        assert_eq!(content.into_string().unwrap(), "a: 1");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_read_rejects_fifo_without_blocking() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let fifo = dir.path().join("pipe.yaml");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let err = SmartReader::new()
+            .read(&fifo, MaxInputBytes::DEFAULT)
+            .unwrap_err();
+        assert!(err.to_string().contains("not a regular file"), "{err}");
     }
 }

@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use crate::limits;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::emitter::EmitterConfig;
+use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes};
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
     FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
@@ -182,7 +183,6 @@ pub struct PyBatchConfig {
 }
 
 const MAX_WORKERS: usize = 128;
-const MAX_INPUT_SIZE: usize = 1024 * 1024 * 1024; // 1GB
 
 #[pymethods]
 impl PyBatchConfig {
@@ -190,7 +190,7 @@ impl PyBatchConfig {
     #[pyo3(signature = (
         workers=None,
         mmap_threshold=512*1024,
-        max_input_size=100*1024*1024,
+        max_input_bytes=None,
         sequential_threshold=4096,
         indent=2,
         width=80,
@@ -202,7 +202,7 @@ impl PyBatchConfig {
     fn new(
         workers: Option<usize>,
         mmap_threshold: usize,
-        max_input_size: usize,
+        max_input_bytes: Option<&Bound<'_, PyAny>>,
         sequential_threshold: usize,
         indent: usize,
         width: usize,
@@ -218,14 +218,14 @@ impl PyBatchConfig {
                 "workers {w} exceeds maximum {MAX_WORKERS}"
             )));
         }
-        if max_input_size > MAX_INPUT_SIZE {
-            return Err(PyValueError::new_err("max_input_size exceeds 1GB limit"));
-        }
 
         let config = RustConfig::new()
             .with_workers(workers)
             .with_mmap_threshold(mmap_threshold)
-            .with_max_input_size(max_input_size)
+            .with_max_input_bytes(limits::bounded::<InputBytes>(
+                "max_input_bytes",
+                max_input_bytes,
+            )?)
             .with_sequential_threshold(sequential_threshold)
             .with_parse_limits(parse_limits);
 
@@ -261,7 +261,7 @@ impl PyBatchConfig {
     ///     `TypeError`: If depth is not an int (`bool` included)
     fn with_max_depth(&self, depth: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
-            max_depth: limits::max_depth(depth)?,
+            max_depth: limits::bounded::<Depth>("max_depth", depth)?,
             ..self.inner.parse_limits()
         };
         Ok(Self {
@@ -279,7 +279,7 @@ impl PyBatchConfig {
     ///     `TypeError`: If bytes is not an int (`bool` included)
     fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
-            max_alias_bytes: limits::max_alias_bytes(bytes)?,
+            max_alias_bytes: limits::bounded::<AliasBytes>("max_alias_bytes", bytes)?,
             ..self.inner.parse_limits()
         };
         Ok(Self {

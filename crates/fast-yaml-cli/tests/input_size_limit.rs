@@ -1,4 +1,4 @@
-//! End-to-end tests for the `--max-input-size` cap on single-file and stdin input.
+//! End-to-end tests for the `--max-input-bytes` cap on single-file and stdin input.
 
 #![allow(clippy::missing_docs_in_private_items)]
 #![allow(deprecated)] // Command::cargo_bin is deprecated but still works
@@ -24,12 +24,12 @@ fn file_over_limit_fails_for_every_subcommand() {
 
     for cmd in [&["parse"][..], &["format"], &["lint"], &["convert", "json"]] {
         let mut args = cmd.to_vec();
-        args.extend(["--max-input-size", "5", path]);
+        args.extend(["--max-input-bytes", "5", path]);
         let output = fy(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{cmd:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains("maximum size of 5 bytes"), "{stderr}");
-        assert!(stderr.contains("--max-input-size"), "{stderr}");
+        assert!(stderr.contains("maximum allowed 5 bytes"), "{stderr}");
+        assert!(stderr.contains("--max-input-bytes"), "{stderr}");
     }
 }
 
@@ -40,14 +40,14 @@ fn file_at_limit_is_accepted() {
     fs::write(&path, YAML).unwrap();
     let limit = YAML.len().to_string();
 
-    fy(&["parse", "--max-input-size", &limit, path.to_str().unwrap()])
+    fy(&["parse", "--max-input-bytes", &limit, path.to_str().unwrap()])
         .assert()
         .success();
 }
 
 #[test]
 fn bare_stdin_format_honors_limit() {
-    fy(&["--max-input-size", "5"])
+    fy(&["--max-input-bytes", "5"])
         .write_stdin(YAML)
         .assert()
         .code(1);
@@ -78,17 +78,17 @@ fn quiet_and_verbose_conflict_in_every_placement() {
 #[test]
 fn stdin_at_limit_is_accepted_and_one_over_is_rejected() {
     let limit = YAML.len();
-    fy(&["parse", "--max-input-size", &limit.to_string()])
+    fy(&["parse", "--max-input-bytes", &limit.to_string()])
         .write_stdin(YAML)
         .assert()
         .success();
-    let output = fy(&["parse", "--max-input-size", &(limit - 1).to_string()])
+    let output = fy(&["parse", "--max-input-bytes", &(limit - 1).to_string()])
         .write_stdin(YAML)
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("maximum size of 10 bytes"), "{stderr}");
+    assert!(stderr.contains("maximum allowed 10 bytes"), "{stderr}");
 }
 
 #[test]
@@ -104,7 +104,7 @@ fn invalid_sizes_are_usage_errors() {
         "17179869184GiB",
         "18446744073709551615KiB",
     ] {
-        let output = fy(&["parse", "--max-input-size", bad])
+        let output = fy(&["parse", "--max-input-bytes", bad])
             .write_stdin(YAML)
             .output()
             .unwrap();
@@ -123,7 +123,7 @@ fn batch_format_honors_limit() {
     let (a, b) = (a.to_str().unwrap(), b.to_str().unwrap());
 
     for paths in [vec![root], vec![a, b]] {
-        let mut args = vec!["format", "--dry-run", "--max-input-size", "5"];
+        let mut args = vec!["format", "--dry-run", "--max-input-bytes", "5"];
         args.extend(&paths);
         let output = fy(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{paths:?}");
@@ -145,12 +145,12 @@ fn batch_lint_honors_limit() {
     fs::write(dir.path().join("a.yaml"), YAML).unwrap();
     let root = dir.path().to_str().unwrap();
 
-    let output = fy(&["lint", "--max-input-size", "5", root])
+    let output = fy(&["lint", "--max-input-bytes", "5", root])
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("maximum size of 5 bytes"), "{stderr}");
+    assert!(stderr.contains("maximum allowed 5 bytes"), "{stderr}");
 
     let output = fy(&["lint", root]).output().unwrap();
     assert_eq!(output.status.code(), Some(0));

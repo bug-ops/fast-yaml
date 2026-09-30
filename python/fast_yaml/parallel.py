@@ -67,7 +67,7 @@ def parse_parallel(
 
         >>> config = yaml_parallel.ParallelConfig(
         ...     thread_count=8,
-        ...     max_input_size=200 * 1024 * 1024,  # 200MB
+        ...     max_input_bytes=200 * 1024 * 1024,  # 200MB
         ... )
         >>> docs = yaml_parallel.parse_parallel(yaml, config=config)
     """

@@ -23,13 +23,16 @@
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
 use fast_yaml_core::{
-    DumpBudget, IntRadix, LimitKind, MaxDepth, MaxOutputBytes, ResolvedScalar, resolve_scalar,
+    DumpBudget, IntRadix, LimitKind, MaxDepth, MaxInputBytes, MaxOutputBytes, ResolvedScalar,
+    core_set_tag, resolve_scalar,
 };
 use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyMapping, PyString};
+use pyo3::types::{
+    PyBool, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PySet, PyString,
+};
 use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 use saphyr_parser::{ScalarStyle, Tag};
 use std::borrow::Cow;
@@ -297,11 +300,12 @@ impl Mark {
     }
 }
 
-/// Maximum input size in bytes for `safe_load` (100MB).
-///
-/// This limit prevents denial-of-service attacks via extremely large inputs.
-/// Inputs exceeding this size will be rejected with a `ValueError`.
-const MAX_INPUT_SIZE: usize = 100 * 1024 * 1024;
+/// Fails when a `safe_load` source of `len` bytes exceeds [`MaxInputBytes::DEFAULT`].
+fn check_input_len(len: usize) -> PyResult<()> {
+    MaxInputBytes::DEFAULT
+        .check(len)
+        .map_err(|e| PyValueError::new_err(e.to_string()))
+}
 
 /// Resolve a `Representation` scalar to a Python object, applying YAML core schema coercion.
 pub(crate) fn repr_to_python(
@@ -378,6 +382,8 @@ enum Shape {
     Sequence,
     // Children alternate key, value.
     Mapping,
+    // Children are the members; dumped as `!!set`.
+    Set,
 }
 
 /// A container whose children are still being converted.
@@ -403,6 +409,13 @@ impl OpenContainer<'_> {
                     map.insert(key, value);
                 }
                 YamlOwned::Mapping(map)
+            }
+            Shape::Set => {
+                let mut map = MappingOwned::with_capacity(self.done.len());
+                for member in self.done {
+                    map.insert(member, YamlOwned::Value(ScalarOwned::Null));
+                }
+                YamlOwned::Tagged(core_set_tag(), Box::new(YamlOwned::Mapping(map)))
             }
         }
     }
@@ -554,6 +567,14 @@ fn container_children<'py>(
             .map_err(limit_error)?;
         return Ok((Shape::Mapping, collect_pairs(mapping.items()?.as_any())?));
     }
+    if obj.is_instance_of::<PySet>() || obj.is_instance_of::<PyFrozenSet>() {
+        enter_container(depth)?;
+        let children = obj.try_iter()?.collect::<PyResult<Vec<_>>>()?;
+        budget
+            .charge_nodes(children.len().saturating_mul(2))
+            .map_err(limit_error)?;
+        return Ok((Shape::Set, children));
+    }
     if let Ok(iter) = obj.try_iter() {
         enter_container(depth)?;
         let children = iter.collect::<PyResult<Vec<_>>>()?;
@@ -612,14 +633,7 @@ fn safe_load(
     max_alias_bytes: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let limits = limits::parse_limits(max_depth, max_alias_bytes)?;
-    // Validate input size to prevent DoS attacks
-    if yaml_str.len() > MAX_INPUT_SIZE {
-        return Err(PyValueError::new_err(format!(
-            "input size {} exceeds maximum allowed {} (100MB)",
-            yaml_str.len(),
-            MAX_INPUT_SIZE
-        )));
-    }
+    check_input_len(yaml_str.len())?;
 
     let docs = event_loader::load_all(py, yaml_str, limits)?;
     Ok(docs.into_iter().next().unwrap_or_else(|| py.None()))
@@ -661,14 +675,7 @@ fn safe_load_all(
     max_alias_bytes: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     let limits = limits::parse_limits(max_depth, max_alias_bytes)?;
-    // Validate input size to prevent DoS attacks
-    if yaml_str.len() > MAX_INPUT_SIZE {
-        return Err(PyValueError::new_err(format!(
-            "input size {} exceeds maximum allowed {} (100MB)",
-            yaml_str.len(),
-            MAX_INPUT_SIZE
-        )));
-    }
+    check_input_len(yaml_str.len())?;
 
     let docs = event_loader::load_all(py, yaml_str, limits)?;
     let list = PyList::new(py, &docs)?;
@@ -921,6 +928,9 @@ pub(crate) fn sort_yaml_keys(yaml: &YamlOwned) -> YamlOwned {
             YamlOwned::Mapping(new_map)
         }
         YamlOwned::Sequence(arr) => YamlOwned::Sequence(arr.iter().map(sort_yaml_keys).collect()),
+        YamlOwned::Tagged(tag, inner) => {
+            YamlOwned::Tagged(tag.clone(), Box::new(sort_yaml_keys(inner)))
+        }
         other => other.clone(),
     }
 }

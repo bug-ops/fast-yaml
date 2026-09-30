@@ -592,8 +592,8 @@ class parallel:  # noqa: N801
             thread_count: int | None = None,
             min_chunk_size: int = 4096,
             max_chunk_size: int = 10 * 1024 * 1024,
-            max_input_size: int = 100 * 1024 * 1024,
-            max_documents: int = 100_000,
+            max_input_bytes: int | None = None,
+            max_documents: int | None = None,
             auto_tune: bool = True,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
@@ -601,8 +601,8 @@ class parallel:  # noqa: N801
         def with_max_depth(self, depth: int | None) -> "parallel.ParallelConfig": ...
         def with_max_alias_bytes(self, bytes: int | None) -> "parallel.ParallelConfig": ...
         def with_thread_count(self, count: int | None) -> "parallel.ParallelConfig": ...
-        def with_max_input_size(self, size: int) -> "parallel.ParallelConfig": ...
-        def with_max_documents(self, count: int) -> "parallel.ParallelConfig": ...
+        def with_max_input_bytes(self, bytes: int | None) -> "parallel.ParallelConfig": ...
+        def with_max_documents(self, count: int | None) -> "parallel.ParallelConfig": ...
         def with_min_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
         def with_max_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
         def with_auto_tune(self, auto_tune: bool) -> "parallel.ParallelConfig": ...
@@ -620,8 +620,10 @@ class parallel:  # noqa: N801
             List of parsed YAML documents
 
         Raises:
-            ValueError: If parsing fails, limits are exceeded, or a document holds a decimal
-                integer beyond the i64 range with more digits than ``sys.get_int_max_str_digits()``
+            ValueError: If parsing fails, limits are exceeded (input size, or more than
+                ``max_documents`` documents, 100 000 by default even without a config),
+                or a document holds a decimal integer beyond the i64 range with more digits
+                than ``sys.get_int_max_str_digits()``
                     (CPython's ``int()`` limit)
         """
         ...
@@ -733,7 +735,7 @@ class batch:  # noqa: N801
             self,
             workers: int | None = None,
             mmap_threshold: int = 512 * 1024,
-            max_input_size: int = 100 * 1024 * 1024,
+            max_input_bytes: int | None = None,
             sequential_threshold: int = 4096,
             indent: int = 2,
             width: int = 80,

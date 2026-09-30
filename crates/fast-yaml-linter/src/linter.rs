@@ -513,7 +513,7 @@ impl Default for Linter {
 #[non_exhaustive]
 pub enum LintError {
     /// Failed to parse YAML.
-    #[error("failed to parse YAML: {0}")]
+    #[error(transparent)]
     ParseError(#[from] fast_yaml_core::ParseError),
     /// Source exceeds the configured input size limit.
     #[error(transparent)]

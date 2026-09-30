@@ -136,7 +136,10 @@ fy format -i src/              # Format entire directory
 fy format -i "**/*.yaml"       # Format with glob pattern
 fy format -i -j 8 project/     # Parallel processing (8 workers)
 fy lint --exclude "tests/**" . # Lint all except tests
+fy lint --max-input-bytes 10MiB big.yaml  # Reject inputs over 10 MiB (KiB/MiB/GiB suffixes)
 ```
+
+Every `fy` command rejects inputs over 100 MiB by default, like the library and bindings; `--max-input-bytes` (alias `--max-input-size`) raises or lowers it. `fy lint` also reads the limit from `max-input-bytes: <integer bytes>` in `.fast-yaml.yaml` (fast-yaml-only key, no size suffixes; leave it out of files shared with yamllint); the flag overrides the config key.
 
 > [!TIP]
 > Batch mode activates automatically for directories, globs, or multiple files. Supports parallel processing, include/exclude patterns, and respects `.gitignore`. A run that finds no YAML files exits 1.
@@ -215,7 +218,7 @@ from fast_yaml._core.parallel import parse_parallel, ParallelConfig
 
 # Parse ONE file with MULTIPLE documents in parallel
 multi_doc_yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3"
-config = ParallelConfig(thread_count=4, max_input_size=100*1024*1024)
+config = ParallelConfig(thread_count=4, max_input_bytes=100*1024*1024)
 docs = parse_parallel(multi_doc_yaml, config)  # 3 documents parsed in parallel
 ```
 
@@ -401,10 +404,9 @@ Input validation prevents denial-of-service attacks.
 
 | Limit | Default | Configurable |
 |-------|---------|--------------|
-| Max input size | 100 MB | Yes (up to 1GB) |
+| Max input size | 100 MiB | Yes (1 byte to 1 GiB; `fy --max-input-bytes`, `fy lint` config key `max-input-bytes`) |
 | Max documents | 100,000 | Yes (up to 10M) |
 | Max threads | 128 | Yes |
-| Max input size (CLI, per file or stdin) | 100 MiB | Yes (1 byte to 1 GiB, `--max-input-size`) |
 | Max nesting depth | 256 | Yes (1 to 512, `--max-depth`) |
 | Max alias expansion | 64 MiB | Yes (1 byte to 1 GiB, `--max-alias-bytes`) |
 

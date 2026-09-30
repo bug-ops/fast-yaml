@@ -1,10 +1,10 @@
 //! Error types for parallel processing operations.
 
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use fast_yaml_core::DecodeError;
 use fast_yaml_core::ParseError as CoreParseError;
+use fast_yaml_core::limits::{InputTooLarge, MaxDocuments};
 use thiserror::Error;
 
 /// Unified error type for all parallel operations.
@@ -20,16 +20,6 @@ pub enum Error {
         /// The underlying parse error from fast-yaml-core.
         #[source]
         source: CoreParseError,
-    },
-
-    /// The input holds more documents than [`Config::with_max_documents`](crate::Config::with_max_documents) allows.
-    #[error("document {} exceeds the limit of {max} documents", .index + 1)]
-    DocumentLimitExceeded {
-        /// The configured limit.
-        max: NonZeroUsize,
-
-        /// Zero-based index of the first document past the limit.
-        index: usize,
     },
 
     /// File I/O error.
@@ -97,14 +87,18 @@ pub enum Error {
         source: std::io::Error,
     },
 
-    /// Input too large (`DoS` protection).
-    #[error("input size {size} bytes exceeds maximum {max} bytes")]
-    InputTooLarge {
-        /// Actual input size.
-        size: usize,
+    /// Input larger than the configured maximum (`DoS` protection).
+    #[error(transparent)]
+    InputTooLarge(#[from] InputTooLarge),
 
-        /// Maximum allowed size.
-        max: usize,
+    /// Input holds more documents than the configured maximum (`DoS` protection).
+    #[error("input has at least {count} documents, more than the maximum of {limit}")]
+    TooManyDocuments {
+        /// Documents counted when the limit was hit; exact after parsing, a lower bound before.
+        count: usize,
+
+        /// The limit that was exceeded.
+        limit: MaxDocuments,
     },
 
     /// Building the Rayon thread pool failed.

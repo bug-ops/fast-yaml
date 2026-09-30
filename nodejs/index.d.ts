@@ -164,7 +164,9 @@ export interface BatchConfig {
   workers?: number
   /** Mmap threshold for large file reading (default: 512KB) */
   mmapThreshold?: number
-  /** Maximum input size in bytes (default: 100MB) */
+  /** Maximum input size in bytes per file (integer, 1..=1073741824, default: 104857600) */
+  maxInputBytes?: number
+  /** Removed: renamed to `maxInputBytes`; passing it throws. */
   maxInputSize?: number
   /** Sequential threshold (default: 4KB) */
   sequentialThreshold?: number
@@ -540,7 +542,7 @@ export interface Location {
  *
  * const config = {
  *   threadCount: 8,
- *   maxInputSize: 200 * 1024 * 1024
+ *   maxInputBytes: 200 * 1024 * 1024
  * };
  * const docs = parseParallel(yamlString, config);
  * ```
@@ -550,9 +552,11 @@ export interface ParallelConfig {
   threadCount?: number
   /** Minimum bytes per chunk (default: 4096). */
   minChunkSize?: number
-  /** Maximum total input size in bytes (default: 100MB, max: 1GB). */
+  /** Maximum total input size in bytes (integer, 1..=1073741824, default: 104857600). */
+  maxInputBytes?: number
+  /** Removed: renamed to `maxInputBytes`; passing it throws. */
   maxInputSize?: number
-  /** Maximum number of documents allowed (default: 100k, max: 10M). */
+  /** Maximum number of documents allowed (integer, 1..=10000000, default: 100000). */
   maxDocuments?: number
   /**
    * Maximum collection nesting depth (integer, 1..=512, default: 256).

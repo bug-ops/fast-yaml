@@ -145,3 +145,18 @@ impl<'py> NumericKeys<'py> {
         Ok(None)
     }
 }
+
+/// Builds a Python `set` from `members`, or reports the index and clash of the first member
+/// that equals an earlier member of another numeric kind.
+pub(crate) fn build_set<'py>(
+    py: Python<'py>,
+    members: &[Bound<'py, PyAny>],
+) -> PyResult<Result<Bound<'py, PySet>, (usize, KeyClash)>> {
+    let mut numeric = NumericKeys::new(py);
+    for (index, member) in members.iter().enumerate() {
+        if let Some(clash) = numeric.record(member)? {
+            return Ok(Err((index, clash)));
+        }
+    }
+    Ok(Ok(PySet::new(py, members)?))
+}

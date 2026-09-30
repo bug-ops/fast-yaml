@@ -3,9 +3,11 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::limits::{LimitRangeError, MaxInputBytes};
 use fast_yaml_core::{DecodeError, ParseError, Parser, decode_input_owned};
 use serde_norway::Value;
 
+use crate::config::rules::value_kind;
 use crate::config::{IndentSize, RuleConfigError, RuleName, RulesConfig};
 use crate::echo::{KEY_LIMIT, echo};
 use crate::linter::LintConfig;
@@ -14,6 +16,9 @@ use crate::linter::LintConfig;
 const MAX_DISCOVERY_DEPTH: usize = 20;
 
 /// Top-level structure of a `.fast-yaml.yaml` config file.
+///
+/// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
+/// suffixes) that caps the input the linter accepts. Omit it from files shared with yamllint.
 ///
 /// # Examples
 ///
@@ -28,6 +33,8 @@ const MAX_DISCOVERY_DEPTH: usize = 20;
 pub struct ConfigFile {
     /// Typed settings of the built-in rules.
     pub rules: RulesConfig,
+    /// Input size limit from `max-input-bytes`, or `None` when the file does not set it.
+    pub max_input_bytes: Option<MaxInputBytes>,
 }
 
 /// Top-level keys yamllint accepts that fast-yaml does not implement.
@@ -110,9 +117,30 @@ pub enum ConfigFileError {
         key: String,
     },
 
+    /// `max-input-bytes` is not a positive integer (negative, fractional, suffixed or not a number).
+    #[error(
+        "config file '{}': 'max-input-bytes' must be a positive integer number of bytes without a size suffix, got {found}",
+        .path.display()
+    )]
+    MaxInputBytesNotPositive {
+        /// Path that failed.
+        path: PathBuf,
+        /// The rejected value as written.
+        found: String,
+    },
+
+    /// `max-input-bytes` is outside the accepted range.
+    #[error("config file '{}': invalid 'max-input-bytes'", .path.display())]
+    MaxInputBytesOutOfRange {
+        /// Path that failed.
+        path: PathBuf,
+        /// The accepted range.
+        source: LimitRangeError,
+    },
+
     /// A top-level key is not recognized.
     #[error(
-        "config file '{}': unknown top-level key '{}', expected 'rules'",
+        "config file '{}': unknown top-level key '{}', expected 'rules' or 'max-input-bytes'",
         .path.display(),
         echo(.key, KEY_LIMIT)
     )]
@@ -162,6 +190,7 @@ impl ConfigFile {
             }
         };
         let mut rules_value = Value::Null;
+        let mut max_input_bytes = None;
         for (key, value) in entries {
             let key = match key {
                 Value::String(key) => key,
@@ -169,6 +198,8 @@ impl ConfigFile {
             };
             if key == "rules" {
                 rules_value = value;
+            } else if key == "max-input-bytes" {
+                max_input_bytes = Some(parse_max_input_bytes(path, &value)?);
             } else if YAMLLINT_TOP_LEVEL_KEYS.contains(&key.as_str()) {
                 return Err(ConfigFileError::UnsupportedKey {
                     path: path.to_owned(),
@@ -188,7 +219,10 @@ impl ConfigFile {
                 path: path.to_owned(),
                 source,
             })?;
-        Ok(Self { rules })
+        Ok(Self {
+            rules,
+            max_input_bytes,
+        })
     }
 
     /// Walk up the directory tree from `start_dir` looking for `.fast-yaml.yaml`
@@ -217,6 +251,7 @@ impl ConfigFile {
     pub fn into_lint_config(self) -> LintConfig {
         LintConfig {
             rules: self.rules,
+            max_input_bytes: self.max_input_bytes.unwrap_or_default(),
             ..LintConfig::default()
         }
     }
@@ -243,6 +278,32 @@ impl ConfigFile {
         }
         config
     }
+}
+
+fn parse_max_input_bytes(path: &Path, value: &Value) -> Result<MaxInputBytes, ConfigFileError> {
+    let bytes = value
+        .as_u64()
+        .ok_or_else(|| ConfigFileError::MaxInputBytesNotPositive {
+            path: path.to_owned(),
+            found: match value {
+                Value::Number(n) => n.to_string(),
+                Value::String(text) => format!("'{}'", echo(text, KEY_LIMIT)),
+                other => value_kind(other).to_owned(),
+            },
+        })?;
+    usize::try_from(bytes)
+        .ok()
+        .map_or(
+            Err(LimitRangeError {
+                value: usize::MAX,
+                max: MaxInputBytes::MAX.get(),
+            }),
+            MaxInputBytes::new,
+        )
+        .map_err(|source| ConfigFileError::MaxInputBytesOutOfRange {
+            path: path.to_owned(),
+            source,
+        })
 }
 
 #[cfg(test)]
@@ -282,6 +343,68 @@ mod tests {
         assert!(cfg.rules.line_length.enabled);
         assert_eq!(cfg.rules.line_length.options.max, NonZeroUsize::new(100));
         assert!(!cfg.rules.key_ordering.enabled);
+    }
+
+    #[test]
+    fn test_max_input_bytes_key() {
+        let cfg = load_str("max-input-bytes: 4096\n").unwrap();
+        assert_eq!(cfg.max_input_bytes, Some(MaxInputBytes::new(4096).unwrap()));
+        assert_eq!(
+            cfg.into_lint_config().max_input_bytes,
+            MaxInputBytes::new(4096).unwrap()
+        );
+        let unset = load_str("rules: {}\n").unwrap();
+        assert_eq!(unset.max_input_bytes, None);
+        assert_eq!(
+            unset.into_lint_config().max_input_bytes,
+            MaxInputBytes::DEFAULT
+        );
+    }
+
+    #[test]
+    fn test_max_input_bytes_rejects_invalid_values() {
+        for (text, found) in [
+            ("max-input-bytes: 1MiB\n", "got '1MiB'"),
+            ("max-input-bytes: -5\n", "got -5"),
+            ("max-input-bytes: 1.5\n", "got 1.5"),
+            ("max-input-bytes: [1]\n", "got a list"),
+        ] {
+            let err = load_str(text).unwrap_err();
+            assert!(
+                matches!(err, ConfigFileError::MaxInputBytesNotPositive { .. }),
+                "{text}: {err:?}"
+            );
+            let message = err.to_string();
+            assert!(
+                message.contains("positive integer") && message.contains(found),
+                "{message}"
+            );
+        }
+        for text in [
+            "max-input-bytes: 0\n",
+            "max-input-bytes: 4294967296000000\n",
+        ] {
+            let err = load_str(text).unwrap_err();
+            assert!(
+                matches!(err, ConfigFileError::MaxInputBytesOutOfRange { .. }),
+                "{text}: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_max_input_bytes_out_of_range_message_names_the_range() {
+        let err = load_str("max-input-bytes: 0\n").unwrap_err();
+        let source = std::error::Error::source(&err).unwrap().to_string();
+        assert!(source.contains("between 1 and"), "{source}");
+    }
+
+    #[test]
+    fn test_max_input_bytes_beyond_u64_is_a_parse_error_naming_the_key() {
+        let err = load_str("max-input-bytes: 99999999999999999999\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::Parse { .. }), "{err:?}");
+        let source = std::error::Error::source(&err).unwrap().to_string();
+        assert!(source.contains("max-input-bytes"), "{source}");
     }
 
     #[test]

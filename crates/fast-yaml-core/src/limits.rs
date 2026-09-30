@@ -8,6 +8,7 @@ use crate::error::{ParseError, ParseResult, SourcePosition};
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
 use std::fmt;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
@@ -34,48 +35,58 @@ pub struct LimitRangeError {
     pub max: usize,
 }
 
-/// Maximum nesting depth of sequences and mappings.
+mod sealed {
+    pub trait Sealed {}
+}
+
+/// Marker describing one configurable, range-checked limit: its largest value, default and name.
 ///
-/// Valid values lie between `1` and [`MAX`](Self::MAX) inclusive. Zero is rejected so it cannot be mistaken for
-/// "unlimited".
+/// Sealed: the set of bounded limits is fixed by this crate. Every bounded limit accepts values
+/// from `1` to [`MAX`](Self::MAX) inclusive, so zero can never be mistaken for "unlimited".
+pub trait Bounds: sealed::Sealed {
+    /// Largest accepted value.
+    const MAX: usize;
+    /// Value used when the caller does not choose one.
+    const DEFAULT: usize;
+    /// Type name shown by `Debug`.
+    const NAME: &'static str;
+}
+
+/// A limit of kind `K`, guaranteed to lie between `1` and `K::MAX` inclusive.
+///
+/// Limits of different kinds are distinct types, so a [`MaxInputBytes`] can never be passed where
+/// a [`MaxAliasBytes`] is expected. Use the aliases [`MaxDepth`], [`MaxAliasBytes`],
+/// [`MaxInputBytes`] and [`MaxDocuments`] rather than naming `Bounded` directly.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::limits::MaxDepth;
+/// use fast_yaml_core::limits::MaxDocuments;
 ///
-/// assert_eq!(MaxDepth::default(), MaxDepth::DEFAULT);
-/// assert_eq!(MaxDepth::new(8).unwrap().get(), 8);
-/// assert!(MaxDepth::new(0).is_err());
-/// assert!(MaxDepth::new(MaxDepth::MAX.get() + 1).is_err());
+/// assert_eq!(MaxDocuments::default(), MaxDocuments::DEFAULT);
+/// assert_eq!(MaxDocuments::new(3).unwrap().get(), 3);
+/// assert!(MaxDocuments::new(0).is_err());
+/// assert!(MaxDocuments::new(MaxDocuments::MAX.get() + 1).is_err());
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MaxDepth(usize);
+pub struct Bounded<K: Bounds>(usize, PhantomData<K>);
 
-impl MaxDepth {
-    /// Default depth: matches saphyr's flow-nesting cap and keeps recursive
-    /// consumers well inside small thread stacks.
-    pub const DEFAULT: Self = Self(256);
+impl<K: Bounds> Bounded<K> {
+    /// Default limit for this kind.
+    pub const DEFAULT: Self = Self(K::DEFAULT, PhantomData);
 
-    /// Largest accepted depth: twice the default.
-    ///
-    /// The calling thread needs about 1 MiB of stack at this depth (worst case: nested tagged
-    /// block mappings, roughly 980 KiB measured in release). On 512 KiB or smaller stacks
-    /// (small thread stacks, `ulimit -s 512`) the process can abort, and a stack overflow cannot
-    /// be caught; the default depth of 256 is safe there. The emitter and formatter keep their
-    /// own fixed depth of 256 (TODO #427), so data parsed deeper than that may fail to dump.
-    pub const MAX: Self = Self(512);
+    /// Largest accepted limit for this kind.
+    pub const MAX: Self = Self(K::MAX, PhantomData);
 
-    /// Smallest accepted depth: a single level of nesting.
-    pub const MIN: Self = Self(1);
+    /// Smallest accepted limit: one.
+    pub const MIN: Self = Self(1, PhantomData);
 
-    pub(crate) const UNBOUNDED: Self = Self(usize::MAX);
+    pub(crate) const UNBOUNDED: Self = Self(usize::MAX, PhantomData);
 
-    /// Creates a depth limit of `depth` nested collections.
+    /// Creates a limit of `value`.
     ///
     /// # Errors
     ///
-    /// Returns [`LimitRangeError`] when `depth` is outside `1` to [`MAX`](Self::MAX) inclusive.
+    /// Returns [`LimitRangeError`] when `value` is outside `1` to [`MAX`](Self::MAX) inclusive.
     ///
     /// # Examples
     ///
@@ -85,14 +96,11 @@ impl MaxDepth {
     /// assert_eq!(MaxDepth::new(512), Ok(MaxDepth::MAX));
     /// assert_eq!(MaxDepth::new(513), Err(LimitRangeError { value: 513, max: 512 }));
     /// ```
-    pub const fn new(depth: usize) -> Result<Self, LimitRangeError> {
-        if depth < Self::MIN.0 || depth > Self::MAX.0 {
-            Err(LimitRangeError {
-                value: depth,
-                max: Self::MAX.0,
-            })
+    pub const fn new(value: usize) -> Result<Self, LimitRangeError> {
+        if value < 1 || value > K::MAX {
+            Err(LimitRangeError { value, max: K::MAX })
         } else {
-            Ok(Self(depth))
+            Ok(Self(value, PhantomData))
         }
     }
 
@@ -101,7 +109,161 @@ impl MaxDepth {
     pub const fn get(self) -> usize {
         self.0
     }
+}
 
+impl<K: Bounds> Clone for Bounded<K> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<K: Bounds> Copy for Bounded<K> {}
+
+impl<K: Bounds> PartialEq for Bounded<K> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<K: Bounds> Eq for Bounded<K> {}
+
+impl<K: Bounds> fmt::Debug for Bounded<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple(K::NAME).field(&self.0).finish()
+    }
+}
+
+impl<K: Bounds> Default for Bounded<K> {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+impl<K: Bounds> fmt::Display for Bounded<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Marker for [`MaxDepth`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Depth {}
+
+/// Marker for [`MaxAliasBytes`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AliasBytes {}
+
+/// Marker for [`MaxInputBytes`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputBytes {}
+
+/// Marker for [`MaxDocuments`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Documents {}
+
+impl sealed::Sealed for Depth {}
+impl sealed::Sealed for AliasBytes {}
+impl sealed::Sealed for InputBytes {}
+impl sealed::Sealed for Documents {}
+
+impl Bounds for Depth {
+    const MAX: usize = 512;
+    const DEFAULT: usize = 256;
+    const NAME: &'static str = "MaxDepth";
+}
+
+impl Bounds for AliasBytes {
+    const MAX: usize = 1 << 30;
+    const DEFAULT: usize = 64 * 1024 * 1024;
+    const NAME: &'static str = "MaxAliasBytes";
+}
+
+impl Bounds for InputBytes {
+    const MAX: usize = 1 << 30;
+    const DEFAULT: usize = 100 * 1024 * 1024;
+    const NAME: &'static str = "MaxInputBytes";
+}
+
+impl Bounds for Documents {
+    const MAX: usize = 10_000_000;
+    const DEFAULT: usize = 100_000;
+    const NAME: &'static str = "MaxDocuments";
+}
+
+/// Maximum nesting depth of sequences and mappings.
+///
+/// Valid values lie between `1` and `MAX` (512) inclusive; the default of 256 matches saphyr's
+/// flow-nesting cap and keeps recursive consumers well inside small thread stacks.
+///
+/// The calling thread needs about 1 MiB of stack at the maximum depth (worst case: nested tagged
+/// block mappings, roughly 980 KiB measured in release). On 512 KiB or smaller stacks the process
+/// can abort, and a stack overflow cannot be caught. The emitter and formatter keep their own
+/// fixed depth of 256 (TODO #427), so data parsed deeper than that may fail to dump.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxDepth;
+///
+/// assert_eq!(MaxDepth::default(), MaxDepth::DEFAULT);
+/// assert_eq!(MaxDepth::new(8).unwrap().get(), 8);
+/// assert!(MaxDepth::new(0).is_err());
+/// ```
+pub type MaxDepth = Bounded<Depth>;
+
+/// Maximum estimated memory, in bytes, materialized by alias expansion over a whole stream.
+///
+/// Each expanded node costs [`NODE_BYTES`] plus the length of its scalar and tag text, so both wide
+/// and long-scalar amplification are bounded. The budget is shared by all documents of a
+/// stream, not reset per document. Valid values lie between `1` and `MAX` (1 GiB, about 16 Mi
+/// expanded nodes) inclusive; host objects built from the expansion can cost several times the
+/// estimate.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxAliasBytes;
+///
+/// assert_eq!(MaxAliasBytes::default(), MaxAliasBytes::DEFAULT);
+/// assert_eq!(MaxAliasBytes::new(10).unwrap().get(), 10);
+/// assert!(MaxAliasBytes::new(0).is_err());
+/// ```
+pub type MaxAliasBytes = Bounded<AliasBytes>;
+
+/// Maximum size, in bytes, of a source text accepted for processing.
+///
+/// Bounds the work done on oversized input. Checks on an in-memory source are not a memory bound;
+/// file readers apply it before reading. Valid values lie between `1` and `MAX` (1 GiB)
+/// inclusive; the default is 100 MiB.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxInputBytes;
+///
+/// assert_eq!(MaxInputBytes::default(), MaxInputBytes::DEFAULT);
+/// let max = MaxInputBytes::new(4).unwrap();
+/// assert!(max.check(4).is_ok());
+/// assert!(max.check(5).is_err());
+/// assert!(MaxInputBytes::new(0).is_err());
+/// ```
+pub type MaxInputBytes = Bounded<InputBytes>;
+
+/// Maximum number of YAML documents accepted from one stream.
+///
+/// Valid values lie between `1` and `MAX` (10 million) inclusive; the default is 100 000.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxDocuments;
+///
+/// assert_eq!(MaxDocuments::default().get(), 100_000);
+/// assert!(MaxDocuments::new(0).is_err());
+/// ```
+pub type MaxDocuments = Bounded<Documents>;
+
+impl MaxDepth {
     /// Enters one more container level below `depth` enclosing ones.
     ///
     /// # Errors
@@ -126,96 +288,6 @@ impl MaxDepth {
     }
 }
 
-impl Default for MaxDepth {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-impl fmt::Display for MaxDepth {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// Maximum estimated memory, in bytes, materialized by alias expansion over a whole stream.
-///
-/// Each expanded node costs [`NODE_BYTES`] plus the length of its scalar and tag text, so both wide
-/// and long-scalar amplification are bounded. The budget is shared by all documents of a
-/// stream, not reset per document. Valid values lie between `1` and [`MAX`](Self::MAX) inclusive.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::limits::MaxAliasBytes;
-///
-/// assert_eq!(MaxAliasBytes::default(), MaxAliasBytes::DEFAULT);
-/// assert_eq!(MaxAliasBytes::new(10).unwrap().get(), 10);
-/// assert!(MaxAliasBytes::new(0).is_err());
-/// assert!(MaxAliasBytes::new(MaxAliasBytes::MAX.get() + 1).is_err());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MaxAliasBytes(usize);
-
-impl MaxAliasBytes {
-    /// Default budget: 64 MiB of expanded data per stream.
-    pub const DEFAULT: Self = Self(64 * 1024 * 1024);
-
-    /// Largest accepted budget: 1 GiB, about 16 Mi expanded nodes at [`NODE_BYTES`] each.
-    ///
-    /// This bounds estimated memory of the expanded tree, independent of any input-size cap;
-    /// host objects built from it can cost several times the estimate.
-    pub const MAX: Self = Self(1 << 30);
-
-    /// Smallest accepted budget: one byte.
-    pub const MIN: Self = Self(1);
-
-    pub(crate) const UNBOUNDED: Self = Self(usize::MAX);
-
-    /// Creates a budget of `bytes` expanded bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LimitRangeError`] when `bytes` is outside `1` to [`MAX`](Self::MAX) inclusive.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_core::limits::MaxAliasBytes;
-    ///
-    /// assert_eq!(MaxAliasBytes::new(1 << 30), Ok(MaxAliasBytes::MAX));
-    /// assert_eq!(MaxAliasBytes::new(0).unwrap_err().max, 1 << 30);
-    /// ```
-    pub const fn new(bytes: usize) -> Result<Self, LimitRangeError> {
-        if bytes < Self::MIN.0 || bytes > Self::MAX.0 {
-            Err(LimitRangeError {
-                value: bytes,
-                max: Self::MAX.0,
-            })
-        } else {
-            Ok(Self(bytes))
-        }
-    }
-
-    /// Returns the budget as a plain number.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-}
-
-impl Default for MaxAliasBytes {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-impl fmt::Display for MaxAliasBytes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 /// Input larger than the configured [`MaxInputBytes`].
 ///
 /// # Examples
@@ -230,72 +302,12 @@ impl fmt::Display for MaxAliasBytes {
 #[error("input size {size} bytes exceeds maximum allowed {limit} bytes")]
 pub struct InputTooLarge {
     /// Size of the rejected input in bytes.
-    pub size: usize,
+    pub size: u64,
     /// The limit that was exceeded.
     pub limit: MaxInputBytes,
 }
 
-/// Maximum size, in bytes, of a source text accepted for processing.
-///
-/// Bounds the work done on oversized input. The source is already in memory when the check runs, so
-/// this is not a memory bound. Valid values lie between `1` and [`MAX`](Self::MAX) inclusive.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::limits::MaxInputBytes;
-///
-/// assert_eq!(MaxInputBytes::default(), MaxInputBytes::DEFAULT);
-/// let max = MaxInputBytes::new(4).unwrap();
-/// assert!(max.check(4).is_ok());
-/// assert!(max.check(5).is_err());
-/// assert!(MaxInputBytes::new(0).is_err());
-/// assert!(MaxInputBytes::new(MaxInputBytes::MAX.get() + 1).is_err());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MaxInputBytes(usize);
-
 impl MaxInputBytes {
-    /// Default limit: 100 MiB of source text.
-    pub const DEFAULT: Self = Self(100 * 1024 * 1024);
-
-    /// Largest accepted limit: 1 GiB.
-    pub const MAX: Self = Self(1 << 30);
-
-    /// Smallest accepted limit: one byte.
-    pub const MIN: Self = Self(1);
-
-    /// Creates a limit of `bytes` source bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LimitRangeError`] when `bytes` is outside `1` to [`MAX`](Self::MAX) inclusive.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_core::limits::MaxInputBytes;
-    ///
-    /// assert_eq!(MaxInputBytes::new(1 << 30), Ok(MaxInputBytes::MAX));
-    /// assert_eq!(MaxInputBytes::new(0).unwrap_err().max, 1 << 30);
-    /// ```
-    pub const fn new(bytes: usize) -> Result<Self, LimitRangeError> {
-        if bytes < Self::MIN.0 || bytes > Self::MAX.0 {
-            Err(LimitRangeError {
-                value: bytes,
-                max: Self::MAX.0,
-            })
-        } else {
-            Ok(Self(bytes))
-        }
-    }
-
-    /// Returns the limit as a plain number.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-
     /// Checks a source length against the limit.
     ///
     /// # Errors
@@ -312,7 +324,26 @@ impl MaxInputBytes {
     /// assert_eq!(max.check(9).unwrap_err().size, 9);
     /// ```
     pub const fn check(self, len: usize) -> Result<(), InputTooLarge> {
-        if len > self.0 {
+        self.check_file_len(len as u64)
+    }
+
+    /// Checks a file length reported by the filesystem against the limit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InputTooLarge`] when `len` exceeds the limit.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::MaxInputBytes;
+    ///
+    /// let max = MaxInputBytes::new(8).unwrap();
+    /// assert!(max.check_file_len(8).is_ok());
+    /// assert_eq!(max.check_file_len(u64::MAX).unwrap_err().size, u64::MAX);
+    /// ```
+    pub const fn check_file_len(self, len: u64) -> Result<(), InputTooLarge> {
+        if len > self.0 as u64 {
             Err(InputTooLarge {
                 size: len,
                 limit: self,
@@ -320,18 +351,6 @@ impl MaxInputBytes {
         } else {
             Ok(())
         }
-    }
-}
-
-impl Default for MaxInputBytes {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-impl fmt::Display for MaxInputBytes {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
     }
 }
 
@@ -912,6 +931,32 @@ mod tests {
     use super::*;
     use saphyr_parser::{Marker, ScalarStyle};
     use std::borrow::Cow;
+
+    #[test]
+    fn bounded_debug_names_the_limit() {
+        assert_eq!(format!("{:?}", MaxDepth::DEFAULT), "MaxDepth(256)");
+        assert_eq!(format!("{:?}", MaxDocuments::MIN), "MaxDocuments(1)");
+    }
+
+    #[test]
+    fn bounded_rejects_out_of_range_values() {
+        assert_eq!(
+            MaxDocuments::new(0),
+            Err(LimitRangeError {
+                value: 0,
+                max: 10_000_000
+            })
+        );
+        assert!(MaxDocuments::new(10_000_001).is_err());
+        assert_eq!(MaxDocuments::new(10_000_000), Ok(MaxDocuments::MAX));
+    }
+
+    #[test]
+    fn check_file_len_does_not_truncate() {
+        let max = MaxInputBytes::new(8).unwrap();
+        assert_eq!(max.check_file_len(9).unwrap_err().size, 9);
+        assert_eq!(max.check_file_len(1 << 40).unwrap_err().size, 1 << 40);
+    }
 
     fn span() -> Span {
         Span::empty(Marker::new(0, 1, 0))

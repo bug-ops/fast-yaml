@@ -5,7 +5,7 @@ use fast_yaml_linter::{
     config::IndentSize,
 };
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::LintFormat;
 use crate::config::CommonConfig;
@@ -26,6 +26,8 @@ pub struct LintArgs {
     pub format: LintFormat,
     /// Allow duplicate keys override (from `--allow-duplicate-keys`).
     pub allow_duplicate_keys: Option<bool>,
+    /// Input size limit override (from `--max-input-bytes`).
+    pub max_input_bytes: Option<MaxInputBytes>,
     pub parse_limits: ParseLimits,
 }
 
@@ -43,16 +45,20 @@ impl LintCommand {
     /// # Errors
     ///
     /// Returns error if an explicit `--config` path cannot be read or parsed.
-    pub fn build(config: CommonConfig, args: LintArgs, input: &InputSource) -> Result<Self> {
-        let file_lint_config = Self::load_lint_config(args.config_path, args.no_config, input)?;
+    pub fn build(config: CommonConfig, args: LintArgs, input_path: Option<&Path>) -> Result<Self> {
+        let file = Self::load_config_file(args.config_path, args.no_config, input_path)?;
+        let max_input_bytes = args
+            .max_input_bytes
+            .or(file.max_input_bytes)
+            .unwrap_or(MaxInputBytes::DEFAULT);
         let lint_config = ConfigFile::merge_cli_overrides(
-            file_lint_config,
+            file.into_lint_config(),
             args.max_line_length,
             args.indent_size,
             args.allow_duplicate_keys,
         )
         .with_parse_limits(args.parse_limits)
-        .with_max_input_bytes(MaxInputBytes::MAX);
+        .with_max_input_bytes(max_input_bytes);
         Ok(Self {
             config,
             lint_config,
@@ -60,28 +66,27 @@ impl LintCommand {
         })
     }
 
-    /// Load `LintConfig` from config file (explicit path, auto-discovered, or default).
-    fn load_lint_config(
+    /// Load the config file (explicit path, auto-discovered, or default).
+    fn load_config_file(
         config_path: Option<PathBuf>,
         no_config: bool,
-        input: &InputSource,
-    ) -> Result<LintConfig> {
+        input_path: Option<&Path>,
+    ) -> Result<ConfigFile> {
         if no_config {
-            return Ok(LintConfig::default());
+            return Ok(ConfigFile::default());
         }
 
         if let Some(path) = config_path {
             // Explicit --config: hard error if missing or invalid
             let cfg = ConfigFile::load(&path)
                 .with_context(|| format!("failed to load config file '{}'", path.display()))?;
-            return Ok(cfg.into_lint_config());
+            return Ok(cfg);
         }
 
         // Auto-discovery: start from CWD (matches yamllint behavior)
         let start_dir = std::env::current_dir().unwrap_or_else(|_| {
-            input
-                .file_path()
-                .and_then(|p| p.parent().map(std::path::Path::to_owned))
+            input_path
+                .and_then(|p| p.parent().map(Path::to_owned))
                 .unwrap_or_else(|| PathBuf::from("."))
         });
 
@@ -90,10 +95,10 @@ impl LintCommand {
             let cfg = ConfigFile::load(&discovered).with_context(|| {
                 format!("failed to load config file '{}'", discovered.display())
             })?;
-            return Ok(cfg.into_lint_config());
+            return Ok(cfg);
         }
 
-        Ok(LintConfig::default())
+        Ok(ConfigFile::default())
     }
 
     /// Execute lint command
@@ -201,15 +206,16 @@ mod tests {
                 indent_size: None,
                 format,
                 allow_duplicate_keys,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            input,
+            input.file_path(),
         )
         .unwrap()
     }
 
     #[test]
-    fn test_build_lifts_input_size_limit() {
+    fn test_build_defaults_input_size_limit() {
         let input = stdin_input("a: 1");
         let cmd = build_no_config(
             create_test_config(Verbosity::Quiet, false, 2),
@@ -218,7 +224,45 @@ mod tests {
             None,
             &input,
         );
-        assert_eq!(cmd.lint_config.max_input_bytes, MaxInputBytes::MAX);
+        assert_eq!(cmd.lint_config.max_input_bytes, MaxInputBytes::DEFAULT);
+    }
+
+    fn build_with_limit(config_text: Option<&str>, flag: Option<usize>) -> LintCommand {
+        let mut f = tempfile::NamedTempFile::new().unwrap();
+        if let Some(text) = config_text {
+            writeln!(f, "{text}").unwrap();
+        }
+        LintCommand::build(
+            create_test_config(Verbosity::Quiet, false, 2),
+            LintArgs {
+                config_path: config_text.map(|_| f.path().to_owned()),
+                no_config: config_text.is_none(),
+                max_line_length: None,
+                indent_size: None,
+                format: LintFormat::Text,
+                allow_duplicate_keys: None,
+                max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
+                parse_limits: ParseLimits::default(),
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_max_input_bytes_precedence_flag_over_config_over_default() {
+        let limit = |n| MaxInputBytes::new(n).unwrap();
+        let both = build_with_limit(Some("max-input-bytes: 200"), Some(100));
+        assert_eq!(both.lint_config.max_input_bytes, limit(100));
+        let config_only = build_with_limit(Some("max-input-bytes: 200"), None);
+        assert_eq!(config_only.lint_config.max_input_bytes, limit(200));
+        let config_without_key = build_with_limit(Some("rules: {}"), None);
+        assert_eq!(
+            config_without_key.lint_config.max_input_bytes,
+            MaxInputBytes::DEFAULT
+        );
+        let flag_only = build_with_limit(None, Some(100));
+        assert_eq!(flag_only.lint_config.max_input_bytes, limit(100));
     }
 
     #[test]
@@ -348,9 +392,10 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            &input,
+            None,
         )
         .unwrap();
         let result = cmd.execute(&input);
@@ -359,7 +404,6 @@ mod tests {
 
     #[test]
     fn test_explicit_config_missing_file_returns_error() {
-        let input = stdin_input("name: test");
         let config = create_test_config(Verbosity::Normal, false, 2);
         let result = LintCommand::build(
             config,
@@ -370,9 +414,10 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            &input,
+            None,
         );
         assert!(result.is_err());
     }
@@ -382,7 +427,6 @@ mod tests {
         // Regression: config file line-length.max must reach the typed line-length options.
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
-        let input = stdin_input("name: test");
         let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
@@ -393,9 +437,10 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            &input,
+            None,
         )
         .unwrap();
         assert_eq!(
@@ -421,9 +466,10 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Json,
                 allow_duplicate_keys: None,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            &input,
+            None,
         )
         .unwrap();
         let result = cmd.execute(&input);
@@ -435,7 +481,6 @@ mod tests {
     fn test_cli_overrides_config_file_max_line_length() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
-        let input = stdin_input("name: test");
         let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
@@ -446,9 +491,10 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            &input,
+            None,
         )
         .unwrap();
         // CLI value wins over config file value
@@ -462,7 +508,6 @@ mod tests {
     fn test_allow_duplicate_keys_none_does_not_override() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules: {{}}").unwrap();
-        let input = stdin_input("key: 1\nkey: 2");
         let config = create_test_config(Verbosity::Normal, false, 2);
         let cmd = LintCommand::build(
             config,
@@ -473,9 +518,10 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_input_bytes: None,
                 parse_limits: ParseLimits::default(),
             },
-            &input,
+            None,
         )
         .unwrap();
         assert!(cmd.lint_config.rules.duplicate_key.enabled);

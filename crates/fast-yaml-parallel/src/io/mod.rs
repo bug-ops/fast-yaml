@@ -17,12 +17,13 @@
 //! # Examples
 //!
 //! ```
+//! use fast_yaml_core::limits::MaxInputBytes;
 //! use fast_yaml_parallel::SmartReader;
 //!
 //! let reader = SmartReader::new();
 //! # let temp_file = tempfile::NamedTempFile::new().unwrap();
 //! # std::fs::write(temp_file.path(), "key: value\n").unwrap();
-//! let content = reader.read(temp_file.path())?;
+//! let content = reader.read(temp_file.path(), MaxInputBytes::DEFAULT)?;
 //! let yaml_str = content.as_str()?;
 //! # Ok::<(), fast_yaml_parallel::Error>(())
 //! ```

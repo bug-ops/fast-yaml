@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::limits::parse_limits;
+use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size};
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
@@ -116,7 +116,6 @@ impl From<RustBatchResult> for BatchResult {
 }
 
 const MAX_WORKERS: u64 = 128;
-const MAX_INPUT_SIZE: u64 = 1024 * 1024 * 1024; // 1GB
 
 /// Configuration for batch file processing.
 #[napi(object)]
@@ -126,7 +125,9 @@ pub struct BatchConfig {
     pub workers: Option<f64>,
     /// Mmap threshold for large file reading (default: 512KB)
     pub mmap_threshold: Option<f64>,
-    /// Maximum input size in bytes (default: 100MB)
+    /// Maximum input size in bytes per file (integer, 1..=1073741824, default: 104857600)
+    pub max_input_bytes: Option<f64>,
+    /// Removed: renamed to `maxInputBytes`; passing it throws.
     pub max_input_size: Option<f64>,
     /// Sequential threshold (default: 4KB)
     pub sequential_threshold: Option<f64>,
@@ -154,9 +155,8 @@ impl BatchConfig {
         if let Some(t) = checked_opt_uint("mmapThreshold", self.mmap_threshold, 0, U32_MAX)? {
             config = config.with_mmap_threshold(t);
         }
-        if let Some(s) = checked_opt_uint("maxInputSize", self.max_input_size, 0, MAX_INPUT_SIZE)? {
-            config = config.with_max_input_size(s);
-        }
+        reject_legacy_max_input_size(self.max_input_size)?;
+        config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
         if let Some(t) =
             checked_opt_uint("sequentialThreshold", self.sequential_threshold, 0, U32_MAX)?
         {

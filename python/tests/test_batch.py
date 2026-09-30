@@ -86,7 +86,7 @@ class TestBatchConfig:
     def test_custom_limits(self):
         """Test custom limits."""
         config = batch.BatchConfig(
-            max_input_size=50 * 1024 * 1024,
+            max_input_bytes=50 * 1024 * 1024,
             mmap_threshold=1024 * 1024,
         )
         assert config is not None
@@ -117,10 +117,15 @@ class TestBatchConfig:
         with pytest.raises(ValueError):
             batch.BatchConfig(workers=1000)
 
-    def test_max_input_size_limit(self):
-        """Test max input size limit."""
-        with pytest.raises(ValueError):
-            batch.BatchConfig(max_input_size=2 * 1024 * 1024 * 1024)
+    def test_max_input_bytes_limit(self):
+        """Test max input bytes limit."""
+        with pytest.raises(ValueError, match="max_input_bytes must be between 1 and 1073741824"):
+            batch.BatchConfig(max_input_bytes=2 * 1024 * 1024 * 1024)
+
+    def test_max_input_bytes_rejects_zero(self):
+        """Zero is not "unlimited"."""
+        with pytest.raises(ValueError, match="max_input_bytes must be between 1 and"):
+            batch.BatchConfig(max_input_bytes=0)
 
 
 class TestProcessFiles:

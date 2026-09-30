@@ -39,6 +39,7 @@ impl NodeKind {
     }
 }
 
+#[derive(Debug)]
 enum OpenKind {
     /// Mapping; `set` marks a `!!set`, `merge_key` the span of a just-seen `<<` key.
     Mapping {
@@ -48,6 +49,7 @@ enum OpenKind {
     Sequence(Result<(), MergeError>),
 }
 
+#[derive(Debug)]
 struct Open {
     kind: OpenKind,
     role: NodeRole,
@@ -56,7 +58,34 @@ struct Open {
 }
 
 /// Rejects `<<` values that cannot be merged, from the parser event stream.
-#[derive(Default)]
+///
+/// Feed it every event of one stream, in order. It is the single implementation of merge-value
+/// validation: the core loader, the streaming formatter and the Python loader all use it, so each
+/// reports the same first invalid merge in document order.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{MergeKeyValidator, NodeRole};
+/// use saphyr_parser::Parser;
+///
+/// let mut validator = MergeKeyValidator::default();
+/// let mut roles = Vec::new();
+/// for event in Parser::new_from_str("{<<: {a: 1}}") {
+///     let (event, span) = event?;
+///     roles.extend(validator.observe(&event, span)?);
+/// }
+/// assert!(roles.contains(&NodeRole::MergeKey));
+///
+/// let mut validator = MergeKeyValidator::default();
+/// let invalid = Parser::new_from_str("{<<: 1}").try_for_each(|event| {
+///     let (event, span) = event.unwrap();
+///     validator.observe(&event, span).map(drop)
+/// });
+/// assert!(invalid.is_err());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Default)]
 pub struct MergeKeyValidator {
     tracker: MergeKeyTracker,
     open: Vec<Open>,
@@ -67,14 +96,30 @@ pub struct MergeKeyValidator {
 impl MergeKeyValidator {
     /// Feeds the next event with its span.
     ///
+    /// Returns the role of the node the event starts, `None` for events that start no node.
+    ///
     /// # Errors
     ///
     /// Returns [`ParseError::Merge`] at the `<<` key of the first invalid merge value.
-    pub fn observe(&mut self, event: &Event<'_>, span: Span) -> Result<(), ParseError> {
+    pub fn observe(
+        &mut self,
+        event: &Event<'_>,
+        span: Span,
+    ) -> Result<Option<NodeRole>, ParseError> {
         let role = self.tracker.observe(event);
-        let Some(role) = role else {
-            return self.observe_structure(event);
-        };
+        match role {
+            Some(role) => self.observe_node(role, event, span)?,
+            None => self.observe_structure(event)?,
+        }
+        Ok(role)
+    }
+
+    fn observe_node(
+        &mut self,
+        role: NodeRole,
+        event: &Event<'_>,
+        span: Span,
+    ) -> Result<(), ParseError> {
         match event {
             Event::Scalar(_, _, anchor, _) => self.settle(role, NodeKind::Scalar, *anchor, span),
             Event::Alias(id) => {
