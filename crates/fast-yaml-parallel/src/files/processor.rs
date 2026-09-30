@@ -113,7 +113,7 @@ impl FileProcessor {
         self.process(paths, |path, content| {
             fast_yaml_core::Parser::parse_str_with_limits(content, &self.config.parse_limits())
                 .map_err(|source| Error::Parse {
-                    index: source.document_index().unwrap_or(0),
+                    index: source.document_index(),
                     source,
                 })?
                 .ok_or_else(|| Error::EmptyDocument {

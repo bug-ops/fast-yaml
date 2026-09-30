@@ -106,6 +106,15 @@ class TestSafeDumpTo:
         bytes_written = fast_yaml.safe_dump_to(data, stream, chunk_size=1024)
         assert bytes_written > 0
 
+    @pytest.mark.parametrize("char", ["é", "€", "\U0001f600"], ids=["2byte", "3byte", "4byte"])
+    @pytest.mark.parametrize("pad", range(4))
+    def test_dump_to_multibyte_across_chunk_boundary(self, char, pad):
+        """Chunk boundaries must not split multi-byte characters."""
+        data = {"k" + "a" * pad: char * 3000}
+        stream = io.StringIO()
+        fast_yaml.safe_dump_to(data, stream, chunk_size=1024)
+        assert stream.getvalue() == fast_yaml.safe_dump(data)
+
     def test_dump_to_with_very_small_chunk_size(self):
         """Test dumping with very small chunk size (clamped to 1KB min)."""
         stream = io.StringIO()

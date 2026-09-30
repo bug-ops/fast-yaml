@@ -2,6 +2,10 @@
 
 #![allow(clippy::redundant_pub_crate)]
 
+use std::num::NonZeroUsize;
+
+use crate::error::{Error, Result};
+
 /// Position of a chunk in the whole input, used to relocate parse error marks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct SourceOrigin {
@@ -63,10 +67,19 @@ enum State {
 /// # Performance
 ///
 /// O(n) in input length with zero-copy slicing.
-pub(crate) fn chunk_documents(input: &str) -> Vec<Chunk<'_>> {
+///
+/// # Errors
+///
+/// Returns [`Error::DocumentLimitExceeded`] as soon as the chunk count would pass `max`, so an
+/// input of millions of empty documents is never fully materialized.
+pub(crate) fn chunk_documents(input: &str, max: Option<NonZeroUsize>) -> Result<Vec<Chunk<'_>>> {
     if input.is_empty() {
-        return Vec::new();
+        return Ok(Vec::new());
     }
+    let admit = |count: usize| match max {
+        Some(max) if count >= max.get() => Err(Error::DocumentLimitExceeded { max, index: count }),
+        _ => Ok(()),
+    };
 
     let mut chunks = Vec::new();
     let mut state = State::AfterEnd;
@@ -101,6 +114,7 @@ pub(crate) fn chunk_documents(input: &str) -> Vec<Chunk<'_>> {
 
         if let Some(boundary) = boundary {
             if has_doc {
+                admit(chunks.len())?;
                 chunks.push(Chunk {
                     index: chunks.len(),
                     content: &input[start.byte..boundary.byte],
@@ -118,13 +132,14 @@ pub(crate) fn chunk_documents(input: &str) -> Vec<Chunk<'_>> {
         here.origin.char_index += line.chars;
     }
 
+    admit(chunks.len())?;
     chunks.push(Chunk {
         index: chunks.len(),
         content: &input[start.byte..],
         origin: start.origin,
     });
 
-    chunks
+    Ok(chunks)
 }
 
 fn classify(text: &str) -> LineKind {
@@ -195,13 +210,17 @@ mod tests {
     use super::*;
 
     fn contents(input: &str) -> Vec<&str> {
-        chunk_documents(input).iter().map(|c| c.content).collect()
+        chunk_documents(input, None)
+            .unwrap()
+            .iter()
+            .map(|c| c.content)
+            .collect()
     }
 
     #[test]
     fn test_chunk_single_document() {
         let yaml = "foo: 1\nbar: 2";
-        let chunks = chunk_documents(yaml);
+        let chunks = chunk_documents(yaml, None).unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].index, 0);
         assert_eq!(chunks[0].content, yaml);
@@ -209,7 +228,7 @@ mod tests {
 
     #[test]
     fn test_chunk_explicit_multi_document() {
-        let chunks = chunk_documents("---\nfoo: 1\n---\nbar: 2");
+        let chunks = chunk_documents("---\nfoo: 1\n---\nbar: 2", None).unwrap();
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].index, 0);
         assert_eq!(chunks[1].index, 1);
@@ -230,7 +249,7 @@ mod tests {
 
     #[test]
     fn test_chunk_origin() {
-        let chunks = chunk_documents("first\n---\nsécond\n---\nthird");
+        let chunks = chunk_documents("first\n---\nsécond\n---\nthird", None).unwrap();
         assert_eq!(
             chunks[1].origin,
             SourceOrigin {
@@ -249,7 +268,7 @@ mod tests {
 
     #[test]
     fn test_chunk_empty_input() {
-        assert!(chunk_documents("").is_empty());
+        assert!(chunk_documents("", None).unwrap().is_empty());
     }
 
     #[test]

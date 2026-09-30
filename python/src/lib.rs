@@ -893,9 +893,11 @@ fn safe_dump_to(
         let output = check_output_size(output)?;
 
         // Write in chunks to avoid holding entire string reference
-        for chunk in output.as_bytes().chunks(chunk_size) {
-            let s = std::str::from_utf8(chunk).map_err(|e| PyValueError::new_err(e.to_string()))?;
-            writer.write(s)?;
+        let mut rest = output.as_str();
+        while !rest.is_empty() {
+            let (chunk, tail) = rest.split_at(rest.floor_char_boundary(chunk_size));
+            writer.write(chunk)?;
+            rest = tail;
         }
     }
 

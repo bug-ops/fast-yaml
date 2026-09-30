@@ -1,5 +1,6 @@
 use crate::error::{ParseError, ParseResult};
-use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
+use crate::limits::{DocumentCursor, LimitGuard, ParseLimits, StreamBudget};
+use crate::loader::ValueLoader;
 use crate::merge::{
     MergeError, MergeSource, MergeTarget, is_core_set_tag, is_set_marker, merge_into,
     set_marker_tag,
@@ -7,10 +8,8 @@ use crate::merge::{
 use crate::merge_check::MergeKeyValidator;
 use crate::scalar::{ResolvedScalar, resolve_scalar};
 use crate::value::{Map, Value};
-use saphyr::{ScalarOwned, YamlLoader};
-use saphyr_parser::{
-    Event, Marker, Parser as SaphyrParser, ScalarStyle, SpannedEventReceiver, Tag,
-};
+use saphyr::ScalarOwned;
+use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle, Tag};
 use std::borrow::Cow;
 use std::collections::HashMap;
 
@@ -207,15 +206,17 @@ fn load_documents_with_budget(
     };
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
     let mut parser = SaphyrParser::new_from_str(reject_nul(text)?);
-    let mut loader = YamlLoader::<Value>::default();
-    loader.early_parse(false);
+    let mut loader = ValueLoader::default();
     let mut guard = LimitGuard::with_budget(budget.clone());
     let mut merge_keys = MergeKeyValidator::default();
     while let Some(event) = parser.next_event() {
-        let (event, span) = event?;
+        let (event, span) = event.map_err(|error| ParseError::Scanner {
+            error,
+            document: guard.document(),
+        })?;
         guard.observe(&event, span)?;
         merge_keys.observe(&event, span)?;
-        loader.on_event(mark_set(event), span);
+        loader.on_event(mark_set(event));
     }
     Ok(inject_implicit_null_if_empty(
         loader.into_documents(),
@@ -257,10 +258,20 @@ pub fn reject_nul(input: &str) -> ParseResult<&str> {
         prev = Some(c);
     }
     let marker = Marker::new(chars, line, col);
-    Err(ParseError::Scanner(saphyr::ScanError::new(
-        marker,
-        "NUL (U+0000) is not allowed in YAML".to_owned(),
-    )))
+    Err(ParseError::Scanner {
+        error: saphyr::ScanError::new(marker, "NUL (U+0000) is not allowed in YAML".to_owned()),
+        document: document_at_end_of(&input[..offset]),
+    })
+}
+
+/// Index of the document the text after `prefix` belongs to, as every other scanner error counts.
+fn document_at_end_of(prefix: &str) -> usize {
+    let mut cursor = DocumentCursor::default();
+    for event in SaphyrParser::new_from_str(prefix) {
+        let Ok((event, _)) = event else { break };
+        cursor.observe(&event);
+    }
+    cursor.index()
 }
 
 /// Strips one leading UTF-8 byte order mark (U+FEFF) from `input`.
@@ -1210,7 +1221,7 @@ m:
         let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
         assert_eq!(
             err.to_string(),
-            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3 (document 1)"
+            "merge key `<<` requires a mapping or a sequence of mappings at line 2, column 3"
         );
     }
 
@@ -1361,17 +1372,11 @@ m:
     fn test_hidden_merge_error_in_later_document_and_first_error_wins() {
         let yaml = "a: 1\n---\nx: {<<: 1}\nx: 2\n";
         assert_rejected_everywhere(yaml, (MergeError::NotMapping, 3, 5));
-        assert_eq!(
-            Parser::parse_all(yaml).unwrap_err().document_index(),
-            Some(1)
-        );
+        assert_eq!(Parser::parse_all(yaml).unwrap_err().document_index(), 1);
 
         let yaml = "a: {<<: 1}\n---\nb: {<<: !!set {x}}\n---\nc: {<<: 2}\n";
         assert_rejected_everywhere(yaml, (MergeError::NotMapping, 1, 5));
-        assert_eq!(
-            Parser::parse_all(yaml).unwrap_err().document_index(),
-            Some(0)
-        );
+        assert_eq!(Parser::parse_all(yaml).unwrap_err().document_index(), 0);
     }
 
     #[test]
@@ -1383,9 +1388,88 @@ m:
             Parser::parse_all(yaml).unwrap_err(),
             Parser::parse_chunk_with_budget(yaml, &budget).unwrap_err(),
         ] {
-            assert_eq!(err.document_index(), Some(2));
+            assert_eq!(err.document_index(), 2);
             assert!(err.to_string().ends_with("(document 3)"), "{err}");
         }
+    }
+
+    #[test]
+    fn test_scanner_and_limit_errors_report_their_document() {
+        let scanner = Parser::parse_all(
+            "a: 1\n---
+b: 2\n---\nc: [\n",
+        )
+        .unwrap_err();
+        assert!(
+            matches!(scanner, ParseError::Scanner { document: 2, .. }),
+            "{scanner:?}"
+        );
+        assert_eq!(scanner.document_index(), 2);
+
+        let limits = ParseLimits {
+            max_depth: crate::MaxDepth::new(2).unwrap(),
+            ..ParseLimits::default()
+        };
+        let err =
+            Parser::parse_all_with_limits("a: 1\n---\nb: 2\n---\nc: {d: {e: {f: 1}}}\n", &limits)
+                .unwrap_err();
+        assert!(
+            matches!(err, ParseError::LimitExceeded { document: 2, .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn test_error_display_names_only_later_documents() {
+        let first = Parser::parse_all("a: [\n").unwrap_err().to_string();
+        assert!(!first.contains("document"), "{first}");
+        let later = Parser::parse_all("a: 1\n---\nb: [\n")
+            .unwrap_err()
+            .to_string();
+        assert!(later.ends_with("(document 2)"), "{later}");
+    }
+
+    #[test]
+    fn test_nul_after_document_end_belongs_to_the_following_document() {
+        let err = Parser::parse_all("a: 1\n...\n\0\n").unwrap_err();
+        assert_eq!(err.document_index(), 1);
+    }
+
+    #[test]
+    fn test_self_referencing_alias_key_loads_as_bad_value_like_a_self_referencing_item() {
+        let Some(Value::Mapping(map)) = Parser::parse_str("&a {*a : 1}\n").unwrap() else {
+            panic!("expected a mapping");
+        };
+        assert_eq!(map.keys().collect::<Vec<_>>(), [&Value::BadValue]);
+        let Some(Value::Sequence(items)) = Parser::parse_str("&a [*a]\n").unwrap() else {
+            panic!("expected a sequence");
+        };
+        assert_eq!(items, [Value::BadValue]);
+    }
+
+    #[test]
+    fn test_anchors_do_not_cross_documents_in_the_loader() {
+        let docs = Parser::parse_all("a: &x 1\n---\nb: &x 2\nc: *x\n").unwrap();
+        let Value::Mapping(second) = &docs[1] else {
+            panic!("expected a mapping");
+        };
+        let c = Value::Value(ScalarOwned::String("c".into()));
+        assert_eq!(second.get(&c), Some(&Value::Value(ScalarOwned::Integer(2))));
+    }
+
+    #[test]
+    fn test_first_document_error_reports_index_zero() {
+        let err = Parser::parse_all("a: [\n---\nb: 1\n").unwrap_err();
+        assert_eq!(err.document_index(), 0);
+    }
+
+    #[test]
+    fn test_stale_alias_error_reports_its_document() {
+        let err = Parser::parse_all("a: &x 1\n---\nb: *x\n").unwrap_err();
+        assert!(
+            matches!(err, ParseError::Scanner { document: 1, .. }),
+            "{err:?}"
+        );
     }
 
     #[test]
@@ -1790,6 +1874,113 @@ m:
                 (&text("k"), &Value::Value(ScalarOwned::Integer(2))),
             ]
         );
+    }
+
+    fn string_keys(value: &Value) -> Vec<String> {
+        let Value::Mapping(map) = value else {
+            panic!("expected a mapping")
+        };
+        map.keys()
+            .map(|k| match k {
+                Value::Value(ScalarOwned::String(s)) => s.clone(),
+                other => panic!("unexpected key {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_literal_duplicate_keys_keep_first_position_with_last_value() {
+        let doc = Parser::parse_str("a: 1\nb: 2\na: 3\nc: 4\na: 5\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(string_keys(&doc), ["a", "b", "c"]);
+        let Value::Mapping(map) = &doc else {
+            unreachable!()
+        };
+        let a = Value::Value(ScalarOwned::String("a".into()));
+        assert_eq!(map[&a], Value::Value(ScalarOwned::Integer(5)));
+    }
+
+    #[test]
+    fn test_duplicate_keys_with_anchor_tag_alias_or_complex_shape_keep_first_position() {
+        for input in [
+            "&x a: 1\nb: 2\na: 3\n",
+            "a: 1\nb: 2\n&x a: 3\n",
+            "&x a: 1\nb: 2\n&y a: 3\n",
+            "k: &x a\nm: {a: 1, b: 2, *x : 3}\n",
+            "!!str a: 1\nb: 2\n!!str a: 3\n",
+            "!!str a: 1\nb: 2\na: 3\n",
+            "a: 1\nb: 2\n!!str a: 3\n",
+            "? [a]\n: 1\nb: 2\n? [a]\n: 3\n",
+            "? {p: 1}\n: 1\nb: 2\n? {p: 1}\n: 3\n",
+        ] {
+            let mut doc = Parser::parse_str(input).unwrap().unwrap();
+            if input.starts_with("k:") {
+                let Value::Mapping(top) = &doc else {
+                    unreachable!()
+                };
+                doc = top[&Value::Value(ScalarOwned::String("m".into()))].clone();
+            }
+            let Value::Mapping(map) = &doc else {
+                panic!("expected a mapping for {input:?}");
+            };
+            let entries: Vec<_> = map.iter().collect();
+            assert_eq!(entries.len(), 2, "{input:?}: {entries:?}");
+            assert!(
+                matches!(entries[1].0, Value::Value(ScalarOwned::String(s)) if s == "b"),
+                "{input:?}: {entries:?}"
+            );
+            assert_eq!(
+                entries[1].1,
+                &Value::Value(ScalarOwned::Integer(2)),
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_literal_duplicate_keys_in_nested_and_flow_mappings() {
+        let doc = Parser::parse_str(
+            "m:\n  x: 1\n  y: 2\n  x: 3\nf: {p: 1, q: 2, p: 3}\ns:\n  - {k: 1, j: 2, k: 3}\n",
+        )
+        .unwrap()
+        .unwrap();
+        let Value::Mapping(top) = &doc else {
+            unreachable!()
+        };
+        let get = |key: &str| top[&Value::Value(ScalarOwned::String(key.into()))].clone();
+        assert_eq!(string_keys(&get("m")), ["x", "y"]);
+        assert_eq!(string_keys(&get("f")), ["p", "q"]);
+        let Value::Sequence(items) = get("s") else {
+            unreachable!()
+        };
+        assert_eq!(string_keys(&items[0]), ["k", "j"]);
+    }
+
+    #[test]
+    fn test_literal_duplicate_keys_leave_no_marker_in_output() {
+        let doc = Parser::parse_str("a: 1\nb: 2\na: 3\n").unwrap().unwrap();
+        assert!(matches!(
+            &doc,
+            Value::Mapping(map) if map.keys().all(|k| matches!(k, Value::Value(_)))
+        ));
+    }
+
+    #[test]
+    fn test_literal_duplicate_keys_in_aliased_mapping_and_merge() {
+        let input = "base: &b\n  x: 1\n  y: 2\n  x: 3\nchild:\n  <<: *b\n  z: 4\n";
+        let Some(Value::Mapping(top)) = Parser::parse_str(input).unwrap() else {
+            unreachable!()
+        };
+        let child = &top[&Value::Value(ScalarOwned::String("child".into()))];
+        assert_eq!(string_keys(child), ["x", "y", "z"]);
+    }
+
+    #[test]
+    fn test_duplicate_keys_across_documents_are_independent() {
+        let docs = Parser::parse_all("a: 1\nb: 2\na: 3\n---\nb: 1\na: 2\n").unwrap();
+        assert_eq!(string_keys(&docs[0]), ["a", "b"]);
+        assert_eq!(string_keys(&docs[1]), ["b", "a"]);
     }
 
     #[test]
@@ -2508,7 +2699,7 @@ m:
         #[test]
         fn cross_document_alias_is_unknown_anchor() {
             let err = Parser::parse_all("--- &a [x]\n--- *a\n").unwrap_err();
-            assert!(matches!(err, ParseError::Scanner(_)), "{err:?}");
+            assert!(matches!(err, ParseError::Scanner { .. }), "{err:?}");
             assert!(err.to_string().contains("unknown anchor"));
         }
 

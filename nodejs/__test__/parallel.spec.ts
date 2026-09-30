@@ -44,13 +44,7 @@ describe('parseParallel', () => {
     // Thread count too high
     expect(() => parseParallel(yaml, { threadCount: 1000 })).toThrow(/threadCount|thread|128/i);
 
-    // Invalid chunk sizes - max < min
-    expect(() =>
-      parseParallel(yaml, {
-        minChunkSize: 10000,
-        maxChunkSize: 1000,
-      })
-    ).toThrow(/chunk|size/i);
+    expect(() => parseParallel(yaml, { minChunkSize: 0 })).toThrow(/minChunkSize/);
   });
 });
 
@@ -83,13 +77,7 @@ describe('parseParallelAsync', () => {
       /threadCount|thread|128/i
     );
 
-    // Invalid chunk sizes - max < min
-    await expect(
-      parseParallelAsync(yaml, {
-        minChunkSize: 10000,
-        maxChunkSize: 1000,
-      })
-    ).rejects.toThrow(/chunk|size/i);
+    await expect(parseParallelAsync(yaml, { minChunkSize: 0 })).rejects.toThrow(/minChunkSize/);
   });
 
   it('returns error on invalid YAML in async mode', async () => {

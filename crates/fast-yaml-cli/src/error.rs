@@ -278,6 +278,7 @@ mod tests {
                 kind: LimitKind::Depth(MaxDepth::DEFAULT),
                 line: 1,
                 column: 1,
+                document: 0,
             },
         };
         assert_eq!(RaiseHint::of(&error), None);
@@ -291,6 +292,7 @@ mod tests {
             kind,
             line: 1,
             column: 1,
+            document: 0,
         };
         assert_eq!(
             RaiseHint::of(&limit(LimitKind::Depth(MaxDepth::DEFAULT))),

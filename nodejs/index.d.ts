@@ -455,7 +455,7 @@ export interface LintConfig {
  * console.log(data); // { name: 'test' }
  * ```
  */
-export declare function load(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<unknown>
+export declare function load(yamlStr: string, options?: LoadOptions | undefined | null): unknown
 
 /**
  * Parse a YAML string containing multiple documents with options (js-yaml compatible).
@@ -490,7 +490,7 @@ bar: 2', { schema: 'SafeSchema' });
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function loadAll(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<Array<unknown>>
+export declare function loadAll(yamlStr: string, options?: LoadOptions | undefined | null): Array<unknown>
 
 /** Options for YAML parsing (js-yaml compatible). */
 export interface LoadOptions {
@@ -550,8 +550,6 @@ export interface ParallelConfig {
   threadCount?: number
   /** Minimum bytes per chunk (default: 4096). */
   minChunkSize?: number
-  /** Maximum bytes per chunk (default: 10MB). */
-  maxChunkSize?: number
   /** Maximum total input size in bytes (default: 100MB, max: 1GB). */
   maxInputSize?: number
   /** Maximum number of documents allowed (default: 100k, max: 10M). */
@@ -608,7 +606,7 @@ baz: 3';
  * console.log(docs.length); // 3
  * ```
  */
-export declare function parseParallel(yamlStr: string, config?: ParallelConfig | undefined | null): NapiResult<Array<unknown>>
+export declare function parseParallel(yamlStr: string, config?: ParallelConfig | undefined | null): Array<unknown>
 
 /**
  * Parse multi-document YAML in parallel (asynchronous).
@@ -693,7 +691,7 @@ value: 123
 '
  * ```
  */
-export declare function safeDump(data: unknown, options?: DumpOptions | undefined | null): NapiResult<string>
+export declare function safeDump(data: unknown, options?: DumpOptions | undefined | null): string
 
 /**
  * Serialize multiple JavaScript objects to a YAML string with document separators.
@@ -732,7 +730,7 @@ b: 2
 '
  * ```
  */
-export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOptions | undefined | null): NapiResult<string>
+export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOptions | undefined | null): string
 
 /**
  * Parse a YAML string and return a JavaScript object.
@@ -768,7 +766,7 @@ value: 123');
  * console.log(data); // { name: 'test', value: 123 }
  * ```
  */
-export declare function safeLoad(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<unknown>
+export declare function safeLoad(yamlStr: string, options?: LoadOptions | undefined | null): unknown
 
 /**
  * Parse a YAML string containing multiple documents.
@@ -807,7 +805,7 @@ bar: 2');
  * console.log(docs); // [{ foo: 1 }, { bar: 2 }]
  * ```
  */
-export declare function safeLoadAll(yamlStr: string, options?: LoadOptions | undefined | null): NapiResult<Array<unknown>>
+export declare function safeLoadAll(yamlStr: string, options?: LoadOptions | undefined | null): Array<unknown>
 
 /**
  * YAML schema types for parsing behavior (js-yaml compatible).

@@ -1,5 +1,7 @@
 //! Configuration for parallel processing behavior.
 
+use std::num::NonZeroUsize;
+
 use fast_yaml_core::limits::ParseLimits;
 
 /// Maximum number of threads allowed (security limit).
@@ -41,6 +43,9 @@ pub struct Config {
 
     /// Parser resource limits applied to every parse
     pub(crate) parse_limits: ParseLimits,
+
+    /// Maximum documents in one stream (default: unlimited)
+    pub(crate) max_documents: Option<NonZeroUsize>,
 }
 
 impl Config {
@@ -185,6 +190,38 @@ impl Config {
         self
     }
 
+    /// Sets the maximum number of documents accepted in one stream.
+    ///
+    /// [`parse_parallel`](crate::parse_parallel) splits the input into documents before parsing
+    /// and rejects it with [`Error::DocumentLimitExceeded`](crate::Error::DocumentLimitExceeded)
+    /// as soon as the count passes `max`, so a stream of millions of empty documents is never
+    /// materialized. Default: unlimited.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::num::NonZeroUsize;
+    /// use fast_yaml_parallel::{Config, Error, parse_parallel_with_config};
+    ///
+    /// let config = Config::new().with_max_documents(NonZeroUsize::new(2).unwrap());
+    /// assert_eq!(parse_parallel_with_config("a: 1\n---\nb: 2\n", &config)?.len(), 2);
+    ///
+    /// let err = parse_parallel_with_config("a: 1\n---\nb: 2\n---\nc: 3\n", &config).unwrap_err();
+    /// assert!(matches!(err, Error::DocumentLimitExceeded { index: 2, .. }));
+    /// # Ok::<(), Error>(())
+    /// ```
+    #[must_use]
+    pub const fn with_max_documents(mut self, max: NonZeroUsize) -> Self {
+        self.max_documents = Some(max);
+        self
+    }
+
+    /// Returns the maximum number of documents per stream, `None` when unlimited.
+    #[must_use]
+    pub const fn max_documents(&self) -> Option<NonZeroUsize> {
+        self.max_documents
+    }
+
     /// Returns the parser resource limits.
     #[must_use]
     pub const fn parse_limits(&self) -> ParseLimits {
@@ -224,6 +261,7 @@ impl Default for Config {
             max_input_size: 100 * 1024 * 1024, // 100MB
             sequential_threshold: 4096,        // 4KB
             parse_limits: ParseLimits::default(),
+            max_documents: None,
         }
     }
 }
