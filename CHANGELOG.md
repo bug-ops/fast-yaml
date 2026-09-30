@@ -13,8 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/Parallel**: error texts end with ` (document N)` from the second document on, and parallel `Error::Parse` displays `failed to parse YAML: ...` (#517) (#530)
 - **Parallel**: `Config::with_max_documents` and `Error::DocumentLimitExceeded` are added; the limit is checked while chunking (#435) (#530)
 - **Node.js**: `ParallelConfig.maxChunkSize` is removed, `maxDocuments` is enforced (default 100000), and `NapiResult` is dropped from the typings (#435) (#530)
-- **CLI**: `fy` now fails on any input file or stdin above 100 MiB (single-file, stdin and `fy lint` batch were unbounded); raise with `--max-input-size` (#342) (#TBD)
-- **CLI**: `--quiet` together with `--verbose` exits 2 wherever the flags are placed, including on both sides of the subcommand (#330) (#TBD)
+- **CLI**: `fy` now fails on any input file or stdin above 100 MiB (single-file, stdin and `fy lint` batch were unbounded); raise with `--max-input-size` (#342) (#534)
+- **CLI**: `--quiet` together with `--verbose` exits 2 wherever the flags are placed, including on both sides of the subcommand (#330) (#534)
 - **Breaking:** `fast-yaml-parallel` replaces `Error::Utf8` with `Error::Decode { path, source }` and `FileContent::Mmap(Mmap)` with `Mmap { map, path }`; `fast-yaml-linter` adds `ConfigFileError::Decode` (#334) (#524)
 - **Core**: `ParseError::Merge` becomes a struct variant `Merge { error, line, column, document }`, `From<MergeError> for ParseError` is removed, and `ParseError::relocated` takes a document count (#504) (#520)
 - **CLI**: `fy format`/`fy lint` exit 1 when every input is filtered out or a directory has no YAML files, even with `-q`; an empty `--stdin-files` list still exits 0 (#514) (#523)
@@ -64,8 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **CLI**: global `--max-input-size` flag (1 B to 1 GiB, suffixes `KiB`/`MiB`/`GiB`) capping every input file and stdin (#342) (#TBD)
-- **Core**: `#![forbid(unsafe_code)]` in `fast-yaml-core` (#342) (#TBD)
+- **CLI**: global `--max-input-size` flag (1 B to 1 GiB, suffixes `KiB`/`MiB`/`GiB`) capping every input file and stdin (#342) (#534)
+- **Core**: `#![forbid(unsafe_code)]` in `fast-yaml-core` (#342) (#534)
 - **Core**: `decode_input`, `decode_input_owned`, `DecodeError` and `UnsupportedEncoding` detect UTF-16/UTF-32 byte order marks when decoding raw input bytes (#334) (#524)
 - **CI**: `test-core-no-arena` job builds and tests `fast-yaml-core` without the `arena` feature (#410) (#524)
 - **Linter/Python/Node.js**: `max_input_bytes`/`maxInputBytes` lint option (1 B to 1 GiB, default 100 MiB) backed by core `MaxInputBytes` and `LintError::InputTooLarge` (#436) (#510)
@@ -75,10 +75,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#TBD)
-- **Node.js**: `safeLoad`/`safeLoadAll`/`load`/`loadAll`/`parseParallel` return env-bound values without a lifetime transmute, and napi coercions use safe `FromNapiValue::from_unknown` (#342) (#330) (#TBD)
-- **Parallel**: corrected the mmap `SAFETY` comment to state the real truncation/rewrite race (#342) (#TBD)
-- **Linter**: `octal-values` reads its options inside `check_line`, dropping a `too_many_arguments` allow (#330) (#TBD)
+- **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
+- **Node.js**: `safeLoad`/`safeLoadAll`/`load`/`loadAll`/`parseParallel` return env-bound values without a lifetime transmute, and napi coercions use safe `FromNapiValue::from_unknown` (#342) (#330) (#534)
+- **Parallel**: corrected the mmap `SAFETY` comment to state the real truncation/rewrite race (#342) (#534)
+- **Linter**: `octal-values` reads its options inside `check_line`, dropping a `too_many_arguments` allow (#330) (#534)
 - **Linter/Python/Node.js**: linting rejects sources over 100 MiB by default (previously unbounded) (#436) (#510)
 - **CLI**: `fy lint` rejects input above 1 GiB (previously unbounded) (#436) (#510)
 - **Python**: documented and tested that decimal integers beyond `i64` with more digits than `sys.get_int_max_str_digits()` raise CPython's `ValueError` on load and dump (#488) (#510)
