@@ -1,5 +1,8 @@
 //! Rule to check spacing around colons.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::{Limit, RuleOptions};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
@@ -11,9 +14,9 @@ use fast_yaml_core::Value;
 ///
 /// Validates spacing before and after colons in mappings.
 ///
-/// Configuration options:
-/// - `max-spaces-before`: integer (default: 0)
-/// - `max-spaces-after`: integer (default: 1)
+/// Configuration options (see [`ColonsOptions`]):
+/// - `max-spaces-before`: integer, -1 disables (default: 0)
+/// - `max-spaces-after`: integer, -1 disables (default: 1)
 ///
 /// Special cases (ignored):
 /// - URLs (e.g., `http://`, `https://`)
@@ -22,20 +25,40 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::ColonsRule, rules::LintRule, LintConfig, config::RuleConfig};
+/// use fast_yaml_linter::{rules::ColonsRule, rules::LintRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = ColonsRule;
 /// let yaml = "name: John";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let config = LintConfig::new()
-///     .with_rule_config("colons", RuleConfig::new().with_option("max-spaces-after", 1i64));
+/// let config = LintConfig::default();
 ///
 /// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct ColonsRule;
+
+/// Options of the colons rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct ColonsOptions {
+    /// Maximum spaces before a colon.
+    pub max_spaces_before: Limit,
+    /// Maximum spaces after a colon.
+    pub max_spaces_after: Limit,
+}
+
+impl Default for ColonsOptions {
+    fn default() -> Self {
+        Self {
+            max_spaces_before: Limit::Max(0),
+            max_spaces_after: Limit::Max(1),
+        }
+    }
+}
+
+impl RuleOptions for ColonsOptions {}
 
 impl super::LintRule for ColonsRule {
     fn code(&self) -> &str {
@@ -59,14 +82,9 @@ impl super::LintRule for ColonsRule {
         let source_context = context.source_context();
         let tokenizer = FlowTokenizer::new(source, source_context);
 
-        let rule_config = config.get_rule_config(self.code());
-        let max_spaces_before = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-before"))
-            .unwrap_or(0);
-
-        let max_spaces_after = rule_config
-            .and_then(|rc| rc.options.get_int("max-spaces-after"))
-            .unwrap_or(1);
+        let options = &config.rules.colons.options;
+        let max_spaces_before = options.max_spaces_before;
+        let max_spaces_after = options.max_spaces_after;
 
         let mut diagnostics = Vec::new();
         let colons = tokenizer.find_all(TokenType::Colon);
@@ -136,7 +154,7 @@ fn check_spaces_before_colon(
     source: &str,
     source_context: &SourceContext<'_>,
     colon_offset: usize,
-    max_spaces: i64,
+    max_spaces: Limit,
     code: &str,
     config: &LintConfig,
 ) -> Option<Diagnostic> {
@@ -158,15 +176,8 @@ fn check_spaces_before_colon(
         }
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
+        let severity = config.rules.colons.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(colon_offset);
         let span = Span::new(loc, loc);
 
@@ -191,7 +202,7 @@ fn check_spaces_after_colon(
     source: &str,
     source_context: &SourceContext<'_>,
     colon_offset: usize,
-    max_spaces: i64,
+    max_spaces: Limit,
     code: &str,
     config: &LintConfig,
 ) -> Option<Diagnostic> {
@@ -223,15 +234,8 @@ fn check_spaces_after_colon(
         return None;
     }
 
-    #[allow(
-        clippy::cast_possible_truncation,
-        clippy::cast_possible_wrap,
-        clippy::cast_lossless
-    )]
-    let spaces_i64 = spaces as i64;
-
-    if max_spaces >= 0 && spaces_i64 > max_spaces {
-        let severity = config.get_effective_severity(code, Severity::Warning);
+    if max_spaces.exceeded_by(spaces) {
+        let severity = config.rules.colons.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(colon_offset + 1);
         let span = Span::new(loc, loc);
 
@@ -254,7 +258,10 @@ fn check_spaces_after_colon(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -304,10 +311,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
-        let config = LintConfig::new().with_rule_config(
-            "colons",
-            RuleConfig::new().with_option("max-spaces-after", 2i64),
-        );
+        let config = config_with_rule(RuleName::Colons, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

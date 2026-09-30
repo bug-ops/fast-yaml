@@ -37,7 +37,10 @@ impl super::LintRule for TrailingWhitespaceRule {
 
                     let diagnostic = DiagnosticBuilder::new(
                         DiagnosticCode::TRAILING_WHITESPACE,
-                        config.get_effective_severity(self.code(), self.default_severity()),
+                        config
+                            .rules
+                            .trailing_whitespace
+                            .severity_or(self.default_severity()),
                         "trailing whitespace detected".to_string(),
                         span,
                     )
@@ -56,7 +59,10 @@ impl super::LintRule for TrailingWhitespaceRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -164,10 +170,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TrailingWhitespaceRule;
-        let config = LintConfig::new().with_rule_config(
-            "trailing-whitespace",
-            RuleConfig::new().with_severity(Severity::Error),
-        );
+        let config = config_with_rule(RuleName::TrailingWhitespace, "{severity: error}");
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
 

@@ -503,21 +503,22 @@ class TestPerRuleSeverity:
         """Invalid severity string raises ValueError."""
         import pytest
 
-        with pytest.raises(ValueError, match="Invalid severity"):
+        with pytest.raises(ValueError, match="unknown severity"):
             lint.LintConfig(rules={"duplicate-key": "critical"})
 
     def test_with_rule_config_invalid_severity(self):
         """Invalid severity in builder raises ValueError."""
         import pytest
 
-        with pytest.raises(ValueError, match="Invalid severity"):
+        with pytest.raises(ValueError, match="unknown severity"):
             lint.LintConfig().with_rule_config("duplicate-key", severity="critical")
 
-    def test_unknown_rule_is_accepted(self):
-        """Unknown rule code is silently accepted without error."""
-        config = lint.LintConfig(rules={"nonexistent-rule": {"severity": "error"}})
-        diagnostics = lint.lint("key: value\n", config)
-        assert isinstance(diagnostics, list)
+    def test_unknown_rule_is_rejected(self):
+        """Unknown rule code raises ValueError naming the rule."""
+        import pytest
+
+        with pytest.raises(ValueError, match="unknown rule 'nonexistent-rule'"):
+            lint.LintConfig(rules={"nonexistent-rule": {"severity": "error"}})
 
     def test_all_four_severity_values(self):
         """All four severity values are accepted."""

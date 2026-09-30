@@ -179,7 +179,7 @@ The linter includes 21+ rules covering syntax, style, and best practices:
 - `lint-directive` — Invalid inline directive (unknown rule or verb, misplaced `disable-file`); config-only, cannot be suppressed by a directive
 
 > [!NOTE]
-> All rules are configurable. Disable specific rules via `LintConfig::with_disabled_rule("rule-name")`.
+> All rules are configurable. Disable specific rules via `LintConfig::with_disabled_rule(RuleName::LineLength)`.
 
 ## Inline Directives
 
@@ -210,18 +210,88 @@ a: 3
 
 ## Configuration
 
+Every built-in rule has typed options. Unknown rules, unknown option keys, wrong value types and
+invalid severities are rejected with an error that names the rule and the option.
+
 ### Rust
 
 ```rust
+use std::num::NonZeroUsize;
 use fast_yaml_linter::{Linter, LintConfig};
+use fast_yaml_linter::config::{IndentSize, RuleName};
 
 let config = LintConfig::new()
-    .with_max_line_length(Some(120))
-    .with_indent_size(4)
-    .with_disabled_rule("line-length");
+    .with_max_line_length(NonZeroUsize::new(120))
+    .with_indent_size(IndentSize::try_from(4u64).unwrap())
+    .with_disabled_rule(RuleName::KeyOrdering);
 
 let linter = Linter::with_config(config);
 ```
+
+Rules can also be configured from a YAML mapping, the same form used by `.fast-yaml.yaml`:
+
+```rust
+use fast_yaml_linter::config::RulesConfig;
+
+let mut rules = RulesConfig::default();
+rules
+    .apply(serde_norway::Deserializer::from_str(
+        "line-length: {max: 120}\nquoted-strings: {quote-type: single}\nkey-ordering: disable",
+    ))
+    .unwrap();
+```
+
+### Config file
+
+```yaml
+rules:
+  line-length: {max: 120}          # `max: ~` removes the limit
+  document-start: {present: true}  # true | false | required | forbidden | allowed
+  quoted-strings:
+    quote-type: single             # any | single | double
+    required: only-when-needed     # true | false | always | not-required | only-when-needed | never
+  braces: {forbid: non-empty}      # false | true | non-empty | all
+  key-ordering: disable            # shorthand for `enabled: false`
+  comments: warning                # shorthand for `severity: warning`
+```
+
+An entry is `null` (no change), a severity (`error`, `warning`, `info`, `hint`, any case),
+`enable`, `disable`, or a mapping with `enabled`, `severity` and the options below. Options
+an entry does not mention keep their current values. A limit of `-1` disables that check.
+
+| Rule | Options (default) |
+|------|-------------------|
+| `braces`, `brackets` | `forbid` (false), `min-spaces-inside` (0), `max-spaces-inside` (0), `min-spaces-inside-empty` (-1, inherit), `max-spaces-inside-empty` (-1, inherit) |
+| `colons` | `max-spaces-before` (0), `max-spaces-after` (1) |
+| `commas` | `max-spaces-before` (0), `min-spaces-after` (1), `max-spaces-after` (1) |
+| `hyphens` | `max-spaces-after` (1) |
+| `comments` | `require-starting-space` (true), `ignore-shebangs` (true), `min-spaces-from-content` (2) |
+| `document-start` | `present` (allowed) |
+| `document-end` | `present` (allowed; `true` or `required` to require `...`) |
+| `empty-lines` | `max` (2), `max-start` (0), `max-end` (0) |
+| `empty-values` | `forbid-in-block-mappings` (true), `forbid-in-flow-mappings` (true), `forbid-in-block-sequences` (true) |
+| `float-values` | `require-numeral-before-decimal` (true), `forbid-scientific-notation` (false), `forbid-nan` (false), `forbid-inf` (false) |
+| `indentation` | `indent-size` (2, 1 to 16) |
+| `key-ordering` | `case-sensitive` (true) |
+| `line-length` | `max` (80, `null` for no limit) |
+| `new-lines` | `type` (unix; unix, dos or platform) |
+| `octal-values` | `forbid-implicit-octal` (true), `forbid-explicit-octal` (true) |
+| `quoted-strings` | `quote-type` (any), `required` (only-when-needed), `extra-required` ([], only with `only-when-needed`), `extra-allowed` ([], only with `always`); patterns are plain substrings and regular expression syntax is rejected; a patch only checks the pattern option it sets |
+| `truthy` | `allowed-values` (['true', 'false'], quoted), `check-keys` (false) |
+| `duplicate-key`, `invalid-anchor`, `trailing-whitespace`, `new-line-at-end-of-file`, `comments-indentation` | none |
+
+`min-spaces-inside-empty` and `max-spaces-inside-empty` override the non-empty limits for empty
+collections independently of each other. A minimum above the maximum is not rejected; as in
+yamllint it flags every collection.
+
+Options that yamllint has but fast-yaml does not implement (for example
+`line-length.allow-non-breakable-words`, `indentation.spaces`, `key-ordering.ignored-keys`,
+`quoted-strings.check-keys`) and `document-end: {present: false}` are rejected explicitly
+instead of being ignored.
+
+Custom rules added with `Linter::add_rule` are configured with
+`LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through
+`LintConfig::severity_for`.
 
 ### Python
 

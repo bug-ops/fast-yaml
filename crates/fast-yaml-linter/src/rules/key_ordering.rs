@@ -1,5 +1,8 @@
 //! Rule to check key ordering in mappings.
 
+use serde::{Deserialize, Serialize};
+
+use crate::config::RuleOptions;
 use crate::context::KeyIndex;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
@@ -32,6 +35,26 @@ use fast_yaml_core::Value;
 /// ```
 pub struct KeyOrderingRule;
 
+/// Options of the key-ordering rule.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct KeyOrderingOptions {
+    /// Compare keys case-sensitively.
+    pub case_sensitive: bool,
+}
+
+impl Default for KeyOrderingOptions {
+    fn default() -> Self {
+        Self {
+            case_sensitive: true,
+        }
+    }
+}
+
+impl RuleOptions for KeyOrderingOptions {
+    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["ignored-keys"];
+}
+
 impl super::LintRule for KeyOrderingRule {
     fn code(&self) -> &str {
         DiagnosticCode::KEY_ORDERING
@@ -55,11 +78,7 @@ impl super::LintRule for KeyOrderingRule {
 
     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
-        let rule_config = config.get_rule_config(DiagnosticCode::KEY_ORDERING);
-
-        let case_sensitive = rule_config
-            .and_then(|rc| rc.options.get_bool("case-sensitive"))
-            .unwrap_or(true);
+        let case_sensitive = config.rules.key_ordering.options.case_sensitive;
 
         let mut diagnostics = Vec::new();
         let mut cursor = context.doc_start_line();
@@ -175,8 +194,7 @@ fn emit_ordering_diagnostics(
             };
 
             if out_of_order {
-                let severity =
-                    config.get_effective_severity(DiagnosticCode::KEY_ORDERING, Severity::Info);
+                let severity = config.rules.key_ordering.severity_or(Severity::Info);
                 let line_offset = context.source_context().get_line_offset(*line_num);
                 let location = Location::new(*line_num, 1, line_offset);
                 let span = Span::new(
@@ -209,7 +227,10 @@ fn emit_ordering_diagnostics(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -245,10 +266,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = KeyOrderingRule;
-        let config = LintConfig::new().with_rule_config(
-            "key-ordering",
-            RuleConfig::new().with_option("case-sensitive", false),
-        );
+        let config = config_with_rule(RuleName::KeyOrdering, "{case-sensitive: false}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);

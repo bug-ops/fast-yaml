@@ -13,7 +13,8 @@ use std::ops::Range;
 
 use fast_yaml_core::find_comments;
 
-use crate::config::config_file::KNOWN_RULE_CODES;
+use crate::config::RuleName;
+use crate::echo::{KEY_LIMIT, echo};
 use crate::rules::RuleRegistry;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, SourceContext};
 
@@ -140,8 +141,6 @@ enum Prefix {
 
 /// Names listed per category in a problem message.
 const MAX_LISTED: usize = 5;
-/// Characters kept from each reported name.
-const MAX_NAME_CHARS: usize = 40;
 
 /// Problems found among a directive's rule names, reported as one message.
 #[derive(Default)]
@@ -187,7 +186,7 @@ fn listed(names: &BTreeSet<String>) -> String {
 }
 
 fn truncated(name: &str) -> String {
-    name.chars().take(MAX_NAME_CHARS).collect()
+    echo(name, KEY_LIMIT)
 }
 
 fn is_rule_name(name: &str) -> bool {
@@ -316,8 +315,7 @@ impl Directives {
         };
 
         let ctx = SourceContext::new(source);
-        let is_known =
-            |name: &str| KNOWN_RULE_CODES.contains(&name) || registry.get(name).is_some();
+        let is_known = |name: &str| is_known_code(name) || registry.get(name).is_some();
         let mut state = DisabledRules::default();
         let mut problems: Vec<(Range<usize>, String)> = Vec::new();
         let mut content_line = None;
@@ -393,9 +391,11 @@ impl Directives {
             }
         }
 
-        if !config.is_rule_disabled(DiagnosticCode::LINT_DIRECTIVE) {
-            let severity =
-                config.get_effective_severity(DiagnosticCode::LINT_DIRECTIVE, Severity::Warning);
+        if config.rules.is_enabled(RuleName::LintDirective) {
+            let severity = config
+                .rules
+                .severity(RuleName::LintDirective)
+                .unwrap_or(Severity::Warning);
             this.warnings = problems
                 .into_iter()
                 .map(|(range, message)| {
@@ -439,6 +439,11 @@ impl Directives {
     }
 }
 
+/// Whether `name` is a built-in rule or a diagnostic code a built-in rule emits.
+fn is_known_code(name: &str) -> bool {
+    name == DiagnosticCode::UNDEFINED_ALIAS || name.parse::<RuleName>().is_ok()
+}
+
 /// Cheap prefilter: some `#` is followed by a directive prefix.
 fn may_contain_directive(source: &str) -> bool {
     source.match_indices('#').any(|(i, _)| {
@@ -466,7 +471,7 @@ mod tests {
     use crate::Linter;
 
     fn known(name: &str) -> bool {
-        KNOWN_RULE_CODES.contains(&name)
+        is_known_code(name)
     }
 
     fn codes(names: &[&str]) -> RuleSelector {
@@ -700,7 +705,7 @@ mod tests {
         let registry = RuleRegistry::with_default_rules();
         for (_, targets) in ALIASES {
             for target in *targets {
-                assert!(KNOWN_RULE_CODES.contains(target), "{target}");
+                assert!(is_known_code(target), "{target}");
                 // Undefined aliases are parse errors, so no registered rule emits that code.
                 if *target != DiagnosticCode::UNDEFINED_ALIAS {
                     assert!(registry.get(target).is_some(), "{target}");
@@ -775,7 +780,7 @@ mod tests {
 
     #[test]
     fn block_directive_suppresses_offset_zero_diagnostic() {
-        let config = LintConfig::new().with_max_line_length(Some(10));
+        let config = LintConfig::new().with_max_line_length(std::num::NonZeroUsize::new(10));
         let source = "# fy: disable line-length\na: 1\nkey: a long value here that is long\n";
         let diagnostics = Linter::with_all_rules_and_config(config)
             .lint(source)
@@ -843,16 +848,14 @@ mod tests {
     fn lint_directive_respects_config() {
         let source = "# fy: disable bogus\na: 1\n";
 
-        let disabled = LintConfig::new().with_disabled_rule(DiagnosticCode::LINT_DIRECTIVE);
+        let disabled = LintConfig::new().with_disabled_rule(RuleName::LintDirective);
         let diagnostics = Linter::with_all_rules_and_config(disabled)
             .lint(source)
             .unwrap();
         assert!(!codes_of(&diagnostics).contains(&"lint-directive"));
 
-        let escalated = LintConfig::new().with_rule_config(
-            DiagnosticCode::LINT_DIRECTIVE,
-            crate::config::RuleConfig::new().with_severity(Severity::Error),
-        );
+        let mut escalated = LintConfig::new();
+        escalated.rules.lint_directive.severity = Some(Severity::Error);
         let diagnostics = Linter::with_all_rules_and_config(escalated)
             .lint(source)
             .unwrap();

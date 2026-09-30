@@ -21,6 +21,7 @@ mod indentation;
 mod invalid_anchors;
 mod key_ordering;
 mod line_length;
+mod lint_directive;
 mod new_line_at_end_of_file;
 mod new_lines;
 mod octal_values;
@@ -30,27 +31,30 @@ mod truthy;
 
 pub use braces::BracesRule;
 pub use brackets::BracketsRule;
-pub use colons::ColonsRule;
-pub use commas::CommasRule;
-pub use comments::CommentsRule;
+pub use colons::{ColonsOptions, ColonsRule};
+pub use commas::{CommasOptions, CommasRule};
+pub use comments::{CommentsOptions, CommentsRule};
 pub use comments_indentation::CommentsIndentationRule;
-pub use document_end::DocumentEndRule;
-pub use document_start::DocumentStartRule;
-pub use duplicate_keys::DuplicateKeysRule;
-pub use empty_lines::EmptyLinesRule;
-pub use empty_values::EmptyValuesRule;
-pub use float_values::FloatValuesRule;
-pub use hyphens::HyphensRule;
-pub use indentation::IndentationRule;
-pub use invalid_anchors::InvalidAnchorsRule;
-pub use key_ordering::KeyOrderingRule;
-pub use line_length::LineLengthRule;
+pub use document_end::{DocumentEndOptions, DocumentEndPresence, DocumentEndRule};
+pub use document_start::{DocumentStartOptions, DocumentStartPresence, DocumentStartRule};
+pub use duplicate_keys::{DuplicateKeysOptions, DuplicateKeysRule};
+pub use empty_lines::{EmptyLinesOptions, EmptyLinesRule};
+pub use empty_values::{EmptyValuesOptions, EmptyValuesRule};
+pub use float_values::{FloatValuesOptions, FloatValuesRule};
+pub use flow_common::{FlowCollectionOptions, Forbid};
+pub use hyphens::{HyphensOptions, HyphensRule};
+pub use indentation::{IndentationOptions, IndentationRule};
+pub use invalid_anchors::{InvalidAnchorsOptions, InvalidAnchorsRule};
+pub use key_ordering::{KeyOrderingOptions, KeyOrderingRule};
+pub use line_length::{LineLengthOptions, LineLengthRule};
+pub use lint_directive::LintDirectiveRule;
 pub use new_line_at_end_of_file::NewLineAtEndOfFileRule;
-pub use new_lines::NewLinesRule;
-pub use octal_values::OctalValuesRule;
-pub use quoted_strings::QuotedStringsRule;
+pub use new_lines::{LineEndingType, NewLinesOptions, NewLinesRule};
+pub use octal_values::{OctalValuesOptions, OctalValuesRule};
+pub use quoted_strings::{QuoteRequirement, QuoteType, QuotedStringsOptions, QuotedStringsRule};
 pub use trailing_whitespace::TrailingWhitespaceRule;
-pub use truthy::TruthyRule;
+pub(crate) use truthy::NON_STANDARD_BOOLS;
+pub use truthy::{TruthyOptions, TruthyRule, TruthySpelling, UnknownTruthySpelling};
 
 /// Trait for implementing lint rules.
 ///
@@ -192,45 +196,14 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 23);
+    /// assert_eq!(registry.rules().len(), 24);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
         let mut registry = Self::new();
-
-        // Phase 1 rules (7)
-        registry.add(Box::new(DuplicateKeysRule));
-        registry.add(Box::new(LineLengthRule));
-        registry.add(Box::new(TrailingWhitespaceRule));
-        registry.add(Box::new(DocumentStartRule));
-        registry.add(Box::new(DocumentEndRule));
-        registry.add(Box::new(EmptyValuesRule));
-        registry.add(Box::new(NewLineAtEndOfFileRule));
-
-        // Phase 2 rules (5)
-        registry.add(Box::new(BracesRule));
-        registry.add(Box::new(BracketsRule));
-        registry.add(Box::new(ColonsRule));
-        registry.add(Box::new(CommasRule));
-        registry.add(Box::new(HyphensRule));
-
-        // Phase 3 rules (5)
-        registry.add(Box::new(CommentsRule));
-        registry.add(Box::new(CommentsIndentationRule));
-        registry.add(Box::new(EmptyLinesRule));
-        registry.add(Box::new(NewLinesRule));
-        registry.add(Box::new(OctalValuesRule));
-
-        // Phase 4 rules (4)
-        registry.add(Box::new(TruthyRule));
-        registry.add(Box::new(QuotedStringsRule));
-        registry.add(Box::new(KeyOrderingRule));
-        registry.add(Box::new(FloatValuesRule));
-
-        registry.add(Box::new(InvalidAnchorsRule));
-
-        registry.add(Box::new(IndentationRule));
-
+        for rule in crate::config::default_rules() {
+            registry.add(rule);
+        }
         registry
     }
 
@@ -302,7 +275,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 23);
+        assert_eq!(registry.rules().len(), 24);
     }
 
     #[test]
@@ -329,6 +302,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 23);
+        assert_eq!(registry.rules().len(), 24);
     }
 }

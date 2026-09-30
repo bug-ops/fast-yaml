@@ -10,25 +10,24 @@ use fast_yaml_core::Value;
 ///
 /// Validates spacing and usage of flow mappings `{}`.
 ///
-/// Configuration options:
-/// - `forbid`: "no" | "non-empty" | "all" (default: "no")
-/// - `min-spaces-inside`: integer (default: 0)
-/// - `max-spaces-inside`: integer (default: 0)
-/// - `min-spaces-inside-empty`: integer (default: -1, disabled)
-/// - `max-spaces-inside-empty`: integer (default: -1, disabled)
+/// Configuration options (see [`FlowCollectionOptions`](super::FlowCollectionOptions)):
+/// - `forbid`: `false` | `true` | "non-empty" | "all" (default: `false`)
+/// - `min-spaces-inside`: integer, -1 disables (default: 0)
+/// - `max-spaces-inside`: integer, -1 disables (default: 0)
+/// - `min-spaces-inside-empty`: integer, -1 inherits `min-spaces-inside` (default: -1)
+/// - `max-spaces-inside-empty`: integer, -1 inherits `max-spaces-inside` (default: -1)
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::BracesRule, rules::LintRule, LintConfig, LintContext, config::RuleConfig};
+/// use fast_yaml_linter::{rules::BracesRule, rules::LintRule, LintConfig, LintContext};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = BracesRule;
 /// let yaml = "object: {key: value}";
 /// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let config = LintConfig::new()
-///     .with_rule_config("braces", RuleConfig::new().with_option("forbid", "no"));
+/// let config = LintConfig::default();
 ///
 /// let diagnostics = rule.check(&LintContext::new(yaml), &value, &config);
 /// assert!(diagnostics.is_empty());
@@ -55,7 +54,7 @@ impl super::LintRule for BracesRule {
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         check_flow_collection(
             context,
-            config,
+            &config.rules.braces,
             self.code(),
             self.default_severity(),
             FlowCollection::Mapping,
@@ -66,7 +65,10 @@ impl super::LintRule for BracesRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{config::RuleConfig, rules::LintRule};
+    use crate::{
+        config::{RuleName, test_support::config_with_rule},
+        rules::LintRule,
+    };
     use fast_yaml_core::Parser;
 
     #[test]
@@ -88,8 +90,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new()
-            .with_rule_config("braces", RuleConfig::new().with_option("forbid", "all"));
+        let config = config_with_rule(RuleName::Braces, "{forbid: all}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -103,10 +104,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("forbid", "non-empty"),
-        );
+        let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -120,10 +118,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("forbid", "non-empty"),
-        );
+        let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -136,10 +131,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("min-spaces-inside", 1i64),
-        );
+        let config = config_with_rule(RuleName::Braces, "{min-spaces-inside: 1}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -153,10 +145,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("max-spaces-inside", 0i64),
-        );
+        let config = config_with_rule(RuleName::Braces, "{max-spaces-inside: 0}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -170,11 +159,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new()
-                .with_option("min-spaces-inside", 1i64)
-                .with_option("max-spaces-inside", 1i64),
+        let config = config_with_rule(
+            RuleName::Braces,
+            "{min-spaces-inside: 1, max-spaces-inside: 1}",
         );
 
         let context = LintContext::new(yaml);
@@ -201,11 +188,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new()
-                .with_option("min-spaces-inside-empty", 1i64)
-                .with_option("max-spaces-inside-empty", 1i64),
+        let config = config_with_rule(
+            RuleName::Braces,
+            "{min-spaces-inside-empty: 1, max-spaces-inside-empty: 1}",
         );
 
         let context = LintContext::new(yaml);
@@ -242,10 +227,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("max-spaces-inside", 0i64),
-        );
+        let config = config_with_rule(RuleName::Braces, "{max-spaces-inside: 0}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -270,10 +252,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("max-spaces-inside", 0i64),
-        );
+        let config = config_with_rule(RuleName::Braces, "{max-spaces-inside: 0}");
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
@@ -326,11 +305,9 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = BracesRule;
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new()
-                .with_option("min-spaces-inside", 0i64)
-                .with_option("max-spaces-inside", 0i64),
+        let config = config_with_rule(
+            RuleName::Braces,
+            "{min-spaces-inside: 0, max-spaces-inside: 0}",
         );
 
         let context = LintContext::new(yaml);
@@ -356,10 +333,7 @@ mod tests {
         let yaml = "a: {b: {}}\n";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
         let context = LintContext::new(yaml);
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("forbid", "non-empty"),
-        );
+        let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
         let diagnostics = BracesRule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert_eq!(diagnostics[0].span.start.column, 4);
@@ -370,10 +344,7 @@ mod tests {
         let yaml = "a: {}\n";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
         let context = LintContext::new(yaml);
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("min-spaces-inside", 1i64),
-        );
+        let config = config_with_rule(RuleName::Braces, "{min-spaces-inside: 1}");
         let diagnostics = BracesRule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
@@ -382,10 +353,7 @@ mod tests {
     fn test_braces_non_ascii_key_location() {
         let yaml = "—: { a: 1 }\n";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
-        let config = LintConfig::new().with_rule_config(
-            "braces",
-            RuleConfig::new().with_option("forbid", "non-empty"),
-        );
+        let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
         let diagnostics = BracesRule.check(&LintContext::new(yaml), &value, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let start = diagnostics[0].span.start;

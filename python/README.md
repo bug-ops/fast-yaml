@@ -59,6 +59,30 @@ The alias budget is per stream, so parallel and batch runs can use up to workers
 - **Batch processing** — Process multiple files in parallel
 - **Type stubs** — Full IDE support with `.pyi` files
 
+## Linter Configuration
+
+Per-rule severity and options are passed through `rules`; the option keys are the same kebab-case keys as in the `fy` config file, and errors use the same messages as `fy lint --config`:
+
+```python
+from fast_yaml._core import lint
+
+config = lint.LintConfig(
+    rules={
+        "line-length": {"max": 120, "severity": "error"},
+        "quoted-strings": {"quote-type": "double", "required": True},
+        "document-start": {"present": True},
+        "duplicate-key": "warning",
+    },
+)
+diagnostics = lint.lint("a: 1\n", config)
+
+# Unknown rules, option keys, wrong types and invalid severities raise ValueError
+lint.LintConfig(rules={"quoted-strings": {"quote-type": "singel"}})
+```
+
+Keyword arguments are applied first, then `rules`, then `disabled_rules` (which always wins).
+`max_line_length=None` (or `{"line-length": {"max": None}}`) removes the line length limit.
+
 ## Batch Processing
 
 Process multiple YAML files in parallel:

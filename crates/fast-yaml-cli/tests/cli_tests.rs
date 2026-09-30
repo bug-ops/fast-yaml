@@ -679,7 +679,7 @@ fn test_lint_directory_succeeds() {
 
 #[test]
 #[cfg(feature = "linter")]
-fn test_lint_warns_on_unknown_rule_in_config() {
+fn test_lint_rejects_unknown_rule_in_config() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("lint.yaml");
     let file = dir.path().join("clean.yaml");
@@ -692,9 +692,8 @@ fn test_lint_warns_on_unknown_rule_in_config() {
         .arg(&config)
         .arg(&file)
         .assert()
-        .stderr(predicate::str::contains(
-            "warning: unknown rule 'no-such-rule' in config file",
-        ));
+        .failure()
+        .stderr(predicate::str::contains("unknown rule 'no-such-rule'"));
 }
 
 #[test]
