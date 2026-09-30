@@ -168,6 +168,7 @@ impl<'bump> FormatterBackend for ArenaBackend<'bump> {
 /// # }
 /// ```
 pub fn format_streaming_arena(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+    let input = crate::parser::strip_bom(input);
     // Create arena sized for typical YAML overhead
     // 4KB minimum handles most documents; larger inputs get proportional arenas
     let arena_size = (input.len() / 4).max(4096);
@@ -307,5 +308,12 @@ mod tests {
         let result = format_streaming_arena(yaml, &config).unwrap();
         assert!(result.contains("key:"));
         assert!(result.contains("value"));
+    }
+
+    #[test]
+    fn test_format_streaming_arena_strips_bom() {
+        let out = format_streaming_arena("\u{FEFF}# c\na: 1\n", &EmitterConfig::default()).unwrap();
+        assert!(!out.contains('\u{FEFF}'));
+        assert!(out.contains("a: 1"));
     }
 }

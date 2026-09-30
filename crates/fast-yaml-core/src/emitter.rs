@@ -463,6 +463,7 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn format_with_config(input: &str, config: &EmitterConfig) -> EmitResult<String> {
+        let input = crate::parser::strip_bom(input);
         // Extract %YAML / %TAG directives before formatting; the streaming
         // formatter (and DOM fallback) silently drops them.
         let directives = Self::extract_directives(input);
@@ -1901,5 +1902,34 @@ mod tests {
         let result = Emitter::reindent(input, 4);
         assert!(result.contains("---"), "--- marker must be preserved");
         assert!(result.contains("key: value"));
+    }
+
+    #[test]
+    fn test_format_with_config_strips_bom() {
+        let out =
+            Emitter::format_with_config("\u{FEFF}# c\na: 1\n", &EmitterConfig::default()).unwrap();
+        assert!(!out.contains('\u{FEFF}'), "BOM leaked into output: {out:?}");
+        assert!(out.contains("a: 1"));
+    }
+
+    #[test]
+    fn test_format_with_config_bom_before_directive() {
+        let out = Emitter::format_with_config(
+            "\u{FEFF}%YAML 1.2\n---\na: 1\n",
+            &EmitterConfig::default(),
+        )
+        .unwrap();
+        assert!(out.starts_with("%YAML 1.2\n"), "got {out:?}");
+    }
+
+    #[test]
+    fn test_format_with_config_bom_crlf_multi_doc() {
+        let out = Emitter::format_with_config(
+            "\u{FEFF}---\r\na: 1\r\n---\r\nb: 2\r\n",
+            &EmitterConfig::default(),
+        )
+        .unwrap();
+        assert!(!out.contains('\u{FEFF}'));
+        assert!(out.contains("a: 1") && out.contains("b: 2"));
     }
 }

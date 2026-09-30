@@ -27,7 +27,7 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_str(input: &str) -> ParseResult<Option<Value>> {
-        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(input.chars()));
+        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
         let mut loader = YamlLoader::<Value>::default();
         loader.early_parse(false);
         saphyr_parser.load(&mut loader, true)?;
@@ -53,7 +53,7 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all(input: &str) -> ParseResult<Vec<Value>> {
-        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(input.chars()));
+        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
         let mut loader = YamlLoader::<Value>::default();
         loader.early_parse(false);
         saphyr_parser.load(&mut loader, true)?;
@@ -75,7 +75,7 @@ impl Parser {
     ///
     /// [`parse_all`]: Parser::parse_all
     pub fn parse_all_preserving_styles(input: &str) -> ParseResult<Vec<Value>> {
-        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(input.chars()));
+        let mut saphyr_parser = SaphyrParser::new(BufferedInput::new(strip_bom(input).chars()));
         let mut loader = YamlLoader::<Value>::default();
         loader.early_parse(false);
         saphyr_parser.load(&mut loader, true)?;
@@ -84,6 +84,24 @@ impl Parser {
             input,
         ))
     }
+}
+
+/// Strips one leading UTF-8 byte order mark (U+FEFF) from `input`.
+///
+/// The BOM is an encoding signature, not YAML content (YAML 1.2 §5.2); a BOM in the
+/// middle of the text is data and is left untouched.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::strip_bom;
+///
+/// assert_eq!(strip_bom("\u{FEFF}a: 1"), "a: 1");
+/// assert_eq!(strip_bom("a: \u{FEFF}1"), "a: \u{FEFF}1");
+/// ```
+#[must_use]
+pub fn strip_bom(input: &str) -> &str {
+    input.strip_prefix('\u{FEFF}').unwrap_or(input)
 }
 
 /// Returns `true` when `tag` is the YAML non-specific tag `!`.
@@ -955,5 +973,66 @@ merged:
         );
         // Null should not format as empty string.
         assert_ne!(formatted.trim(), "", "null doc must not format to empty");
+    }
+
+    #[test]
+    fn test_bom_before_comment_and_mapping_parses() {
+        let value = Parser::parse_str("\u{FEFF}# c\na: 1").unwrap().unwrap();
+        let Value::Mapping(map) = value else {
+            panic!("expected mapping, got {value:?}");
+        };
+        assert!(
+            map.keys()
+                .any(|k| matches!(k, Value::Value(ScalarOwned::String(s)) if s == "a"))
+        );
+    }
+
+    #[test]
+    fn test_bom_not_part_of_first_key() {
+        let docs = Parser::parse_all("\u{FEFF}a: 1").unwrap();
+        let Value::Mapping(map) = &docs[0] else {
+            panic!("expected mapping");
+        };
+        assert!(
+            map.keys()
+                .any(|k| matches!(k, Value::Value(ScalarOwned::String(s)) if s == "a"))
+        );
+    }
+
+    #[test]
+    fn test_bom_preserving_styles_parses() {
+        let docs = Parser::parse_all_preserving_styles("\u{FEFF}# c\na: 1").unwrap();
+        assert_eq!(docs.len(), 1);
+    }
+
+    #[test]
+    fn test_mid_text_bom_stays_data() {
+        let v = get_mapping_val("b: \u{FEFF}x", "b");
+        assert!(matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "\u{FEFF}x"));
+    }
+
+    #[test]
+    fn test_strip_bom_strips_single_leading_bom_only() {
+        assert_eq!(strip_bom("\u{FEFF}\u{FEFF}a"), "\u{FEFF}a");
+        assert_eq!(strip_bom("a"), "a");
+        assert_eq!(strip_bom(""), "");
+    }
+
+    #[test]
+    fn test_bom_crlf_parses() {
+        let v = get_mapping_val("\u{FEFF}# c\r\na: 1\r\n", "a");
+        assert!(matches!(v, Value::Value(ScalarOwned::Integer(1))));
+    }
+
+    #[test]
+    fn test_bom_multi_document() {
+        let docs = Parser::parse_all("\u{FEFF}---\na: 1\n---\nb: 2\n").unwrap();
+        assert_eq!(docs.len(), 2);
+    }
+
+    #[test]
+    fn test_bom_only_parse_str_is_null() {
+        let v = Parser::parse_str("\u{FEFF}").unwrap();
+        assert!(matches!(v, Some(Value::Value(ScalarOwned::Null))));
     }
 }
