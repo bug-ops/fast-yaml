@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/fastyaml-rs)](https://www.npmjs.com/package/fastyaml-rs)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)](../LICENSE-MIT)
-[![Node.js](https://img.shields.io/badge/node-20+-green.svg)](https://nodejs.org/)
+[![Node.js](https://img.shields.io/badge/node-22+-green.svg)](https://nodejs.org/)
 
 **High-performance YAML 1.2.2 parser for Node.js, powered by Rust.**
 
@@ -23,7 +23,7 @@ yarn add fastyaml-rs
 pnpm add fastyaml-rs
 ```
 
-**Requirements:** Node.js 20+. TypeScript definitions included.
+**Requirements:** Node.js 22+. TypeScript definitions included.
 
 ## Quick Start
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Node.js**: minimum supported Node.js raised from 20 to 22 (Node 20 is EOL); CI covers 22 and 24 (#472)
 - **Linter**: diagnostic context lines are windowed to 120 chars around the highlight, and `ContextLine` gains `column_offset`/`truncated_end` (Python, Node.js and JSON output too), fixing quadratic memory on long lines (#454) (#468)
 - **Core**: `canonicalize` keeps integers overflowing `i64` as `Value::Representation` instead of `ScalarOwned::String`, so consumers can tell them from strings, and adds `value::scalar_key_text`; CLI and Node.js output is unchanged (#392) (#462)
 - **Core**: `fy format` no longer rewrites plain `inf`/`-inf`/`NaN` scalars to `.inf`/`-.inf`/`.nan`; they stay strings (#362) (#450)
@@ -40,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Python**: wheels are now abi3 (`cp310-abi3`), one per platform instead of one per Python version (#472)
+- **CI**: Python test matrix reduced from 9 to 4 jobs and release wheel builds from 35 to 7; `docs/CI-CD-QUICKSTART.md` test matrix corrected (#472)
 - **CI**: all GitHub Actions pinned to commit SHAs, Dependabot auto-merge checks the PR author instead of `github.actor`, and actionlint/zizmor plus a nightly fuzz workflow are added (#432)
 - `fast-yaml-parallel` parse errors now include the underlying cause instead of only the document index (#433)
 - Python/Node.js `format_files` and `fast-yaml-parallel` now use the streaming formatter, so output matches `fy format` (`null` instead of `~`, anchors, duplicate keys and `---` kept, no `YAML scanner error:` prefix on parse errors) (#408)
