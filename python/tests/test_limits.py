@@ -1,5 +1,7 @@
 """Resource-limit and cyclic-structure tests (#336, #337)."""
 
+import threading
+
 import pytest
 
 import fast_yaml
@@ -33,6 +35,37 @@ def _nested(depth):
         current.append(nxt)
         current = nxt
     return data
+
+
+def _with_stack(func, size):
+    """Run ``func`` on a thread with a ``size``-byte stack.
+
+    Emitting a valid 256-deep tree recurses inside the third-party YAML emitter
+    (about 1.5 KB per level in debug builds), which does not fit a 1 MB host stack.
+    """
+    outcome = []
+
+    def target():
+        try:
+            outcome.append(func())
+        except BaseException as exc:  # noqa: BLE001
+            outcome.append(exc)
+
+    previous = threading.stack_size(size)
+    try:
+        thread = threading.Thread(target=target)
+        thread.start()
+        thread.join()
+    finally:
+        threading.stack_size(previous)
+    result = outcome[0]
+    if isinstance(result, BaseException):
+        raise result
+    return result
+
+
+def _with_big_stack(func):
+    return _with_stack(func, 64 * 1024 * 1024)
 
 
 def _self_list():
@@ -90,7 +123,7 @@ def test_deep_list_round_trips():
         current.append(nxt)
         current = nxt
     current.append("leaf")
-    assert fast_yaml.safe_load(fast_yaml.safe_dump(data)) == data
+    assert _with_big_stack(lambda: fast_yaml.safe_load(fast_yaml.safe_dump(data))) == data
 
 
 def test_shared_aliases_still_load():
@@ -100,6 +133,21 @@ def test_shared_aliases_still_load():
 
 
 def test_dump_depth_boundary():
-    assert fast_yaml.safe_load(fast_yaml.safe_dump(_nested(256))) == _nested(256)
+    assert _with_big_stack(
+        lambda: fast_yaml.safe_load(fast_yaml.safe_dump(_nested(256)))
+    ) == _nested(256)
     with pytest.raises(ValueError, match="circular reference"):
         fast_yaml.safe_dump(_nested(257))
+
+
+def test_conversion_does_not_depend_on_host_stack():
+    deep_map = "".join(" " * i + "k:\n" for i in range(255)) + " " * 255 + "x"
+
+    def work():
+        with pytest.raises(ValueError, match="circular reference"):
+            fast_yaml.safe_dump(_self_list())
+        with pytest.raises(ValueError, match="limit exceeded"):
+            fast_yaml.safe_load(DEEP)
+        assert fast_yaml.safe_load(deep_map) is not None
+
+    _with_stack(work, 512 * 1024)

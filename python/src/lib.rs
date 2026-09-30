@@ -412,8 +412,80 @@ pub(crate) fn repr_to_python(
 ///
 /// Handles Python types including special float values (inf, -inf, nan)
 /// converting them to YAML 1.2.2 compliant representations.
+///
+/// The walk is iterative (explicit heap stack), so host thread stack size does not bound
+/// nesting; [`MaxDepth::DEFAULT`] does, which also catches self-referential containers.
 pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<YamlOwned> {
-    python_to_yaml_at(obj, 0)
+    let mut stack = vec![OpenContainer {
+        shape: Shape::Root,
+        children: vec![obj.clone()].into_iter(),
+        done: Vec::new(),
+    }];
+    // Depth below is stack.len() - 1: the synthetic root frame is not a container.
+    while let Some(top) = stack.last_mut() {
+        if let Some(child) = top.children.next() {
+            let depth = stack.len() - 1;
+            match classify(&child, depth)? {
+                Classified::Scalar(value) => {
+                    if let Some(top) = stack.last_mut() {
+                        top.done.push(value);
+                    }
+                }
+                Classified::Container(open) => stack.push(open),
+            }
+        } else if let Some(finished) = stack.pop() {
+            let value = finished.finish();
+            match stack.last_mut() {
+                Some(parent) => parent.done.push(value),
+                None => return Ok(value),
+            }
+        }
+    }
+    Err(PyValueError::new_err(
+        "internal error: empty conversion stack",
+    ))
+}
+
+/// How a finished container's converted children combine into one YAML node.
+#[derive(Clone, Copy)]
+enum Shape {
+    Root,
+    Sequence,
+    // Children alternate key, value.
+    Mapping,
+}
+
+/// A container whose children are still being converted.
+struct OpenContainer<'py> {
+    shape: Shape,
+    children: std::vec::IntoIter<Bound<'py, PyAny>>,
+    done: Vec<YamlOwned>,
+}
+
+impl OpenContainer<'_> {
+    fn finish(self) -> YamlOwned {
+        match self.shape {
+            Shape::Root => self
+                .done
+                .into_iter()
+                .next()
+                .unwrap_or(YamlOwned::Value(ScalarOwned::Null)),
+            Shape::Sequence => YamlOwned::Sequence(self.done),
+            Shape::Mapping => {
+                let mut map = MappingOwned::with_capacity(self.done.len() / 2);
+                let mut pairs = self.done.into_iter();
+                while let (Some(key), Some(value)) = (pairs.next(), pairs.next()) {
+                    map.insert(key, value);
+                }
+                YamlOwned::Mapping(map)
+            }
+        }
+    }
+}
+
+enum Classified<'py> {
+    Scalar(YamlOwned),
+    Container(OpenContainer<'py>),
 }
 
 /// Enter one more container level, failing past [`MaxDepth::DEFAULT`].
@@ -427,86 +499,74 @@ fn enter_container(depth: usize) -> PyResult<usize> {
     })
 }
 
-/// Recursive worker for [`python_to_yaml`]; `depth` counts enclosing containers.
-fn python_to_yaml_at(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<YamlOwned> {
-    // Check None first
-    if obj.is_none() {
-        return Ok(YamlOwned::Value(ScalarOwned::Null));
+/// Convert a scalar, or open a container whose children are `depth` levels deep.
+fn classify<'py>(obj: &Bound<'py, PyAny>, depth: usize) -> PyResult<Classified<'py>> {
+    if let Some(scalar) = python_scalar_to_yaml(obj)? {
+        return Ok(Classified::Scalar(scalar));
     }
+    let (shape, children) = container_children(obj, depth)?;
+    Ok(Classified::Container(OpenContainer {
+        shape,
+        children: children.into_iter(),
+        done: Vec::new(),
+    }))
+}
 
-    // Check bool before int (bool is subclass of int in Python)
-    if obj.is_instance_of::<PyBool>() {
-        let b: bool = obj.extract()?;
-        return Ok(YamlOwned::Value(ScalarOwned::Boolean(b)));
-    }
+/// Convert `None`, bool, int, float and str; `None` result means "not a scalar".
+fn python_scalar_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Option<YamlOwned>> {
+    let scalar = if obj.is_none() {
+        ScalarOwned::Null
+    } else if obj.is_instance_of::<PyBool>() {
+        // bool is checked before int: it is a subclass of int in Python
+        ScalarOwned::Boolean(obj.extract()?)
+    } else if obj.is_instance_of::<PyInt>() {
+        ScalarOwned::Integer(obj.extract()?)
+    } else if obj.is_instance_of::<PyFloat>() {
+        ScalarOwned::FloatingPoint(OrderedFloat(obj.extract()?))
+    } else if obj.is_instance_of::<PyString>() {
+        ScalarOwned::String(obj.extract()?)
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(YamlOwned::Value(scalar)))
+}
 
-    // Check int
-    if obj.is_instance_of::<PyInt>() {
-        let i: i64 = obj.extract()?;
-        return Ok(YamlOwned::Value(ScalarOwned::Integer(i)));
-    }
-
-    // Check float - handle special values per YAML 1.2.2 spec
-    if obj.is_instance_of::<PyFloat>() {
-        let f: f64 = obj.extract()?;
-        return Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(OrderedFloat(
-            f,
-        ))));
-    }
-
-    // Check string
-    if obj.is_instance_of::<PyString>() {
-        let s: String = obj.extract()?;
-        return Ok(YamlOwned::Value(ScalarOwned::String(s)));
-    }
-
-    // Check list
+/// Collect the children of a list, dict, other iterable, or `items()` provider.
+fn container_children<'py>(
+    obj: &Bound<'py, PyAny>,
+    depth: usize,
+) -> PyResult<(Shape, Vec<Bound<'py, PyAny>>)> {
     if let Ok(list) = obj.cast::<PyList>() {
-        let depth = enter_container(depth)?;
-        let mut arr = Vec::with_capacity(list.len());
-        for item in list.iter() {
-            arr.push(python_to_yaml_at(&item, depth)?);
-        }
-        return Ok(YamlOwned::Sequence(arr));
+        enter_container(depth)?;
+        return Ok((Shape::Sequence, list.iter().collect()));
     }
-
-    // Check dict
     if let Ok(dict) = obj.cast::<PyDict>() {
-        let depth = enter_container(depth)?;
-        let mut map = MappingOwned::with_capacity(dict.len());
+        enter_container(depth)?;
+        let mut children = Vec::with_capacity(dict.len() * 2);
         for (k, v) in dict.iter() {
-            map.insert(python_to_yaml_at(&k, depth)?, python_to_yaml_at(&v, depth)?);
+            children.push(k);
+            children.push(v);
         }
-        return Ok(YamlOwned::Mapping(map));
+        return Ok((Shape::Mapping, children));
     }
-
-    // Try to convert other iterables to list
     if let Ok(iter) = obj.try_iter() {
-        let depth = enter_container(depth)?;
-        let mut arr = Vec::new();
-        for item in iter {
-            arr.push(python_to_yaml_at(&item?, depth)?);
-        }
-        return Ok(YamlOwned::Sequence(arr));
+        enter_container(depth)?;
+        let children = iter.collect::<PyResult<Vec<_>>>()?;
+        return Ok((Shape::Sequence, children));
     }
-
-    // Try to convert other mappings via items()
     if let Ok(items) = obj.call_method0("items")
         && let Ok(iter) = items.try_iter()
     {
-        let depth = enter_container(depth)?;
-        let mut map = MappingOwned::new();
+        enter_container(depth)?;
+        let mut children = Vec::new();
         for item in iter {
-            let item = item?;
-            if let Ok(tuple) = item.cast::<pyo3::types::PyTuple>() {
-                let k = tuple.get_item(0)?;
-                let v = tuple.get_item(1)?;
-                map.insert(python_to_yaml_at(&k, depth)?, python_to_yaml_at(&v, depth)?);
+            if let Ok(tuple) = item?.cast_into::<pyo3::types::PyTuple>() {
+                children.push(tuple.get_item(0)?);
+                children.push(tuple.get_item(1)?);
             }
         }
-        return Ok(YamlOwned::Mapping(map));
+        return Ok((Shape::Mapping, children));
     }
-
     Err(PyTypeError::new_err(format!(
         "Cannot serialize object of type '{}' to YAML",
         obj.get_type().name()?

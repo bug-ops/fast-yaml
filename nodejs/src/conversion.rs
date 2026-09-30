@@ -112,7 +112,86 @@ fn yaml_key_to_string(yaml: &YamlOwned) -> NapiResult<String> {
 ///
 /// Returns an error if the JavaScript value contains non-serializable types.
 pub fn js_to_yaml(env: Env, js_value: Unknown) -> NapiResult<YamlOwned> {
-    js_to_yaml_at(&env, js_value, 0)
+    let mut stack: Vec<OpenContainer> = Vec::new();
+    match classify(&env, js_value, 0)? {
+        Classified::Scalar(value) => return Ok(value),
+        Classified::Container(open) => stack.push(open),
+    }
+    // The walk is iterative (explicit heap stack), so host stack size does not bound
+    // nesting; `MaxDepth::DEFAULT` does, which also catches self-referential values.
+    loop {
+        let depth = stack.len();
+        let Some(top) = stack.last_mut() else {
+            return Err(napi::Error::from_reason(
+                "internal error: empty conversion stack",
+            ));
+        };
+        if let Some(child) = top.next_child() {
+            match classify(&env, child.value, depth)? {
+                Classified::Scalar(value) => top.accept(child.key, value),
+                Classified::Container(open) => {
+                    top.pending_key = child.key;
+                    stack.push(open);
+                }
+            }
+        } else if let Some(finished) = stack.pop() {
+            let value = finished.finish();
+            match stack.last_mut() {
+                Some(parent) => {
+                    let key = parent.pending_key.take();
+                    parent.accept(key, value);
+                }
+                None => return Ok(value),
+            }
+        }
+    }
+}
+
+/// A child value plus, for object members, its property name.
+struct Child<'a> {
+    key: Option<String>,
+    value: Unknown<'a>,
+}
+
+/// A container whose children are still being converted.
+struct OpenContainer<'a> {
+    children: std::vec::IntoIter<Child<'a>>,
+    /// Property name of the child container currently being converted.
+    pending_key: Option<String>,
+    done: Done,
+}
+
+enum Done {
+    Sequence(Vec<YamlOwned>),
+    Mapping(MappingOwned),
+}
+
+impl<'a> OpenContainer<'a> {
+    fn next_child(&mut self) -> Option<Child<'a>> {
+        self.children.next()
+    }
+
+    fn accept(&mut self, key: Option<String>, value: YamlOwned) {
+        match (&mut self.done, key) {
+            (Done::Mapping(map), Some(key)) => {
+                map.insert(YamlOwned::Value(ScalarOwned::String(key)), value);
+            }
+            (Done::Sequence(items), _) => items.push(value),
+            (Done::Mapping(_), None) => {}
+        }
+    }
+
+    fn finish(self) -> YamlOwned {
+        match self.done {
+            Done::Sequence(items) => YamlOwned::Sequence(items),
+            Done::Mapping(map) => YamlOwned::Mapping(map),
+        }
+    }
+}
+
+enum Classified<'a> {
+    Scalar(YamlOwned),
+    Container(OpenContainer<'a>),
 }
 
 /// Enter one more container level, failing past [`MaxDepth::DEFAULT`].
@@ -126,94 +205,89 @@ fn enter_container(depth: usize) -> NapiResult<usize> {
     })
 }
 
-/// Recursive worker for [`js_to_yaml`]; `depth` counts enclosing containers.
-fn js_to_yaml_at(env: &Env, js_value: Unknown, depth: usize) -> NapiResult<YamlOwned> {
+/// Convert a scalar, or open a container whose children are `depth` levels deep.
+fn classify<'a>(env: &Env, js_value: Unknown<'a>, depth: usize) -> NapiResult<Classified<'a>> {
     let js_type = js_value.get_type()?;
 
     match js_type {
-        ValueType::Null | ValueType::Undefined => Ok(YamlOwned::Value(ScalarOwned::Null)),
+        ValueType::Null | ValueType::Undefined => {
+            Ok(Classified::Scalar(YamlOwned::Value(ScalarOwned::Null)))
+        }
 
         ValueType::Boolean => {
             let b: bool = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
-            Ok(YamlOwned::Value(ScalarOwned::Boolean(b)))
+            Ok(Classified::Scalar(YamlOwned::Value(ScalarOwned::Boolean(
+                b,
+            ))))
         }
 
         ValueType::Number => {
             let num: f64 = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
-
-            // Check if it's an integer that can be represented exactly
-            if num.fract() == 0.0 && num.is_finite() {
-                // Safe integer range for f64 is -(2^53) to 2^53
-                const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
-                #[allow(clippy::cast_possible_truncation)]
-                if num.abs() <= MAX_SAFE_INTEGER {
-                    let i = num as i64;
-                    return Ok(YamlOwned::Value(ScalarOwned::Integer(i)));
-                }
-            }
-
-            // Float value (including inf, -inf, nan)
-            Ok(YamlOwned::Value(ScalarOwned::FloatingPoint(OrderedFloat(
-                num,
-            ))))
+            Ok(Classified::Scalar(YamlOwned::Value(number_to_scalar(num))))
         }
 
         ValueType::String => {
             let s: String = unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
-            Ok(YamlOwned::Value(ScalarOwned::String(s)))
+            Ok(Classified::Scalar(YamlOwned::Value(ScalarOwned::String(s))))
         }
 
         ValueType::Object => {
             let js_obj: Object =
                 unsafe { FromNapiValue::from_napi_value(env.raw(), js_value.raw())? };
+            enter_container(depth)?;
 
-            // Check if it's an array
-            let depth = enter_container(depth)?;
             if js_obj.is_array()? {
                 let len: u32 = js_obj.get_array_length()?;
-
-                // Pre-allocate Vec with known capacity to avoid O(n) reallocation overhead.
-                // For large arrays (10K+ elements), this prevents multiple capacity doublings
-                // and associated memory copies, reducing conversion time significantly.
-                let mut arr = Vec::with_capacity(len as usize);
-
+                let mut children = Vec::with_capacity(len as usize);
                 for i in 0..len {
-                    let elem: Unknown = js_obj.get_element(i)?;
-                    arr.push(js_to_yaml_at(env, elem, depth)?);
+                    children.push(Child {
+                        key: None,
+                        value: js_obj.get_element(i)?,
+                    });
                 }
-
-                return Ok(YamlOwned::Sequence(arr));
+                return Ok(Classified::Container(OpenContainer {
+                    children: children.into_iter(),
+                    pending_key: None,
+                    done: Done::Sequence(Vec::with_capacity(len as usize)),
+                }));
             }
 
-            // It's a plain object
             let property_names = js_obj.get_property_names()?;
             let len = property_names.get_array_length()?;
-
-            // Pre-allocate MappingOwned with known property count to avoid rehashing.
-            // For large objects (1K+ properties), this reduces HashMap resize operations
-            // from O(n log n) to O(1), improving conversion performance.
-            let mut map = MappingOwned::with_capacity(len as usize);
-
+            let mut children = Vec::with_capacity(len as usize);
             for i in 0..len {
                 let key: Unknown = property_names.get_element(i)?;
                 let key_str: String =
                     unsafe { FromNapiValue::from_napi_value(env.raw(), key.raw())? };
-
                 let value: Unknown = js_obj.get_named_property(&key_str)?;
-
-                map.insert(
-                    YamlOwned::Value(ScalarOwned::String(key_str)),
-                    js_to_yaml_at(env, value, depth)?,
-                );
+                children.push(Child {
+                    key: Some(key_str),
+                    value,
+                });
             }
-
-            Ok(YamlOwned::Mapping(map))
+            Ok(Classified::Container(OpenContainer {
+                children: children.into_iter(),
+                pending_key: None,
+                done: Done::Mapping(MappingOwned::with_capacity(len as usize)),
+            }))
         }
 
         _ => Err(napi::Error::from_reason(format!(
             "cannot serialize JavaScript value of type {js_type:?} to YAML"
         ))),
     }
+}
+
+/// Integral numbers within the exact `f64` range become integers; the rest stay floats.
+fn number_to_scalar(num: f64) -> ScalarOwned {
+    // Safe integer range for f64 is -(2^53) to 2^53
+    const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
+    #[allow(clippy::cast_possible_truncation)]
+    if num.fract() == 0.0 && num.is_finite() && num.abs() <= MAX_SAFE_INTEGER {
+        return ScalarOwned::Integer(num as i64);
+    }
+    // Float value (including inf, -inf, nan)
+    ScalarOwned::FloatingPoint(OrderedFloat(num))
 }
 
 #[cfg(test)]
