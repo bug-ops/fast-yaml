@@ -63,6 +63,6 @@ pub use limits::{
     DumpBudget, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDumpNodes,
     MaxOutputBytes, MaxTagBytes, ParseLimits, StreamBudget,
 };
-pub use parser::{Parser, canonicalize, strip_bom};
+pub use parser::{Parser, canonicalize, reject_nul, strip_bom};
 pub use scalar::{DecimalBigInt, ResolvedScalar, resolve_scalar};
 pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};

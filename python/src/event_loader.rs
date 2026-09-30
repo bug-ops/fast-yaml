@@ -24,8 +24,10 @@ use crate::repr_to_python;
 ///
 /// Returns `PyValueError` on invalid YAML syntax or when `limits` are exceeded.
 pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Vec<Py<PyAny>>> {
+    let source =
+        fast_yaml_core::reject_nul(fast_yaml_core::strip_bom(input)).map_err(|e| limit_err(&e))?;
     let mut loader = EventLoader {
-        parser: Parser::new_from_str(fast_yaml_core::strip_bom(input)),
+        parser: Parser::new_from_str(source),
         anchors: HashMap::new(),
         guard: LimitGuard::new(limits),
     };

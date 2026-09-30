@@ -93,7 +93,7 @@ let value = Parser::parse_str(yaml)?;
 
 // Lint the pre-parsed value (no re-parsing)
 let linter = Linter::with_all_rules();
-let diagnostics = linter.lint_value(yaml, &value);
+let diagnostics = linter.lint_value(yaml, &value)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 

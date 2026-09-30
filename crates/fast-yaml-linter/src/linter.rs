@@ -411,11 +411,16 @@ impl Linter {
     /// let value = Parser::parse_str(yaml).unwrap().unwrap();
     ///
     /// let linter = Linter::with_all_rules();
-    /// let diagnostics = linter.lint_value(yaml, &value);
+    /// let diagnostics = linter.lint_value(yaml, &value).unwrap();
     /// ```
-    #[must_use]
-    pub fn lint_value(&self, source: &str, value: &Value) -> Vec<Diagnostic> {
+    ///
+    /// # Errors
+    ///
+    /// Returns `LintError::ParseError` if `source` contains a NUL character, which the
+    /// tokenizer would otherwise treat as end of input.
+    pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
         let (source, bom_len) = split_bom(source);
+        fast_yaml_core::reject_nul(source)?;
         let directives = Directives::from_source(source, &self.config, &self.registry);
         let context = LintContext::new(source);
         let mut diagnostics = Vec::new();
@@ -432,7 +437,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
-        finish(diagnostics, directives, bom_len)
+        Ok(finish(diagnostics, directives, bom_len))
     }
 
     /// Gets the current configuration.
@@ -851,7 +856,7 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let linter = Linter::with_all_rules();
-        let diagnostics = linter.lint_value(yaml, &value);
+        let diagnostics = linter.lint_value(yaml, &value).unwrap();
 
         assert!(
             diagnostics
@@ -1051,12 +1056,22 @@ mod tests {
     }
 
     #[test]
+    fn test_lint_value_rejects_nul() {
+        let value = Parser::parse_str("a: 1").unwrap().unwrap();
+        assert!(
+            Linter::with_all_rules()
+                .lint_value("a: 1\0\nb: 2", &value)
+                .is_err()
+        );
+    }
+
+    #[test]
     fn test_lint_value_bom_shifts_offset() {
         let linter = Linter::with_all_rules();
         let src = "a: 1";
         let value = fast_yaml_core::Parser::parse_str(src).unwrap().unwrap();
-        let plain = linter.lint_value(src, &value);
-        let bom = linter.lint_value("\u{FEFF}a: 1", &value);
+        let plain = linter.lint_value(src, &value).unwrap();
+        let bom = linter.lint_value("\u{FEFF}a: 1", &value).unwrap();
         assert!(!plain.is_empty());
         assert_eq!(bom[0].span.start.offset, plain[0].span.start.offset + 3);
     }

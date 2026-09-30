@@ -37,6 +37,13 @@ CASES = [
     ("007", 7),
     ("1.5e10", 1.5e10),
     ("-.inf", -math.inf),
+    ("+.inf", math.inf),
+    ("+.INF", math.inf),
+    (".5", 0.5),
+    ("-.5", -0.5),
+    ("+.5e1", 5.0),
+    ("+.nan", "+.nan"),
+    (".e5", ".e5"),
     ("99999999999999999999", 99999999999999999999),
     ("0xFFFFFFFFFFFFFFFFFF", "0xFFFFFFFFFFFFFFFFFF"),
     ('"true"', "true"),
@@ -92,3 +99,10 @@ def test_tagged_scalars_in_collections_anchors_and_documents():
 def test_nan_resolution():
     assert math.isnan(fast_yaml.safe_load("v: .nan")["v"])
     assert math.isnan(fast_yaml.safe_load('v: !!float ".nan"')["v"])
+
+
+@pytest.mark.parametrize("text", ["+.inf", "+.Inf", "+.INF", ".5", "-.5"])
+def test_dump_keeps_float_lookalike_strings(text):
+    for data in ({"k": text}, {text: 1}, [text]):
+        assert fast_yaml.safe_load(fast_yaml.safe_dump(data)) == data
+        assert fast_yaml.safe_load(fast_yaml.safe_dump(data, default_flow_style=True)) == data

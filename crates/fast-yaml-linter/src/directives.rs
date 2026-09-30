@@ -735,7 +735,7 @@ mod tests {
     fn lint_value_honors_directives() {
         let source = "a: 1\na: 2  # fy: disable-line duplicate-key\n# fy: disable bogus\n";
         let value = fast_yaml_core::Parser::parse_str(source).unwrap().unwrap();
-        let diagnostics = Linter::with_all_rules().lint_value(source, &value);
+        let diagnostics = Linter::with_all_rules().lint_value(source, &value).unwrap();
         assert!(!codes_of(&diagnostics).contains(&"duplicate-key"));
         assert!(codes_of(&diagnostics).contains(&"lint-directive"));
     }

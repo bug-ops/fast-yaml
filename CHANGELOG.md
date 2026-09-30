@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Core**: `canonicalize` keeps integers overflowing `i64` as `Value::Representation` instead of `ScalarOwned::String`, so consumers can tell them from strings, and adds `value::scalar_key_text`; CLI and Node.js output is unchanged (#392) (#462)
 - **Core**: `fy format` no longer rewrites plain `inf`/`-inf`/`NaN` scalars to `.inf`/`-.inf`/`.nan`; they stay strings (#362) (#450)
+- **Core/Linter**: NUL input is now a parse error instead of loading a truncated document, `Linter::lint_value` returns `Result` and rejects NUL, plain `.5`/`-.5`/`+.inf` now load as floats (were strings) so `fy convert json` fails on `+.inf` like `.inf` (#417) (#393) (#458)
 - **Core**: `MaxDepth::new` and `MaxAliasBytes::new` now return `Result<_, LimitRangeError>` (depth 1..=512, alias bytes 1..=1 GiB); `LintConfig` gains a public `parse_limits` field; Node.js `processFiles`/`formatFiles`/`formatFilesInPlace` now throw instead of returning the error as a value (#433)
 - **Linter**: rule options are typed per-rule structs validated at config load; unknown rules, option keys, wrong types, `null` and unknown top-level config keys are errors in the CLI, Python and Node.js, and `RuleConfig`/`RuleOption`/`RuleOptions` and the string-keyed `LintConfig` fields are replaced by `RulesConfig` (#324) (#426)
 - **Linter**: `Severity` implements `FromStr`/`Deserialize` and `ConfigFileSeverity` is removed; Python and Node.js `rules` now accept every rule option and Python `with_rule_config` takes `options` (#327) (#426)
@@ -73,6 +74,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Parallel**: documented known divergence from `Parser::parse_all` for column-0 `---` inside top-level block scalars (saphyr behavior) and pinned it in tests (#407, #455)
 - Python `parse_parallel` returns `int` for integers beyond `i64`, matching `safe_load` (#392) (#462)
 - Python `safe_dump`/`dump_all`/`dump_parallel` serialize `collections.abc.Mapping` objects (`UserDict`, `MappingProxyType`) as mappings instead of key lists (#376) (#462)
+- **Core/CLI/Python**: input containing a NUL character is rejected with a positioned error instead of being silently truncated at the NUL; adds `reject_nul` (#417) (#458)
+- **Core**: core-schema floats accept a leading dot (`.5`, `-.5`) and `+.inf`/`+.Inf`/`+.INF` (#393) (#458)
+- **Linter**: `quoted-strings` decides which quoted scalars need quotes with the core scalar resolver, so `"+.inf"` and `".5"` are no longer reported as unnecessarily quoted (#393) (#458)
+- **Core**: the flow-style emitter escapes and quotes mapping keys (quotes, backslashes, newlines, indicators, values that would re-read as non-strings) (#379) (#458)
 - `fy lint` no longer panics when a highlighted column exceeds 65535 (#416, #440)
 - **Linter**: octal-values, float-values, invalid-anchors, key-ordering, line-length, new-lines, document-start/end and empty-values report char columns and correct offsets (#352, #440)
 - **Linter**: the `commas` rule no longer flags commas in `%` directives and verbatim tags (#388, #440)
