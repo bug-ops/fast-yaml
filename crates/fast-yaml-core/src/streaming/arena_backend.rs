@@ -11,7 +11,8 @@ use bumpalo::Bump;
 use saphyr_parser::Parser;
 
 use super::Context;
-use super::extract_anchor_names;
+use super::Formatted;
+use super::format_with_anchor_names;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
@@ -169,6 +170,14 @@ impl<'bump> FormatterBackend for ArenaBackend<'bump> {
 /// ```
 pub fn format_streaming_arena(input: &str, config: &EmitterConfig) -> EmitResult<String> {
     let input = crate::parser::strip_bom(input);
+    format_with_anchor_names(input, |names| format_with_names(input, config, names))
+}
+
+fn format_with_names(
+    input: &str,
+    config: &EmitterConfig,
+    anchor_names: Vec<String>,
+) -> EmitResult<Formatted> {
     // Create arena sized for typical YAML overhead
     // 4KB minimum handles most documents; larger inputs get proportional arenas
     let arena_size = (input.len() / 4).max(4096);
@@ -182,7 +191,6 @@ pub fn format_streaming_arena(input: &str, config: &EmitterConfig) -> EmitResult
     // Pre-allocate context stack in arena (16 levels handles 99% of cases)
     let context_capacity = 16;
 
-    let anchor_names = extract_anchor_names(input);
     let mut backend = ArenaBackend::new(context_capacity, &arena);
     // Seed anchor store with original names extracted from input.
     // ensure_capacity + direct write mirrors how StdBackend is seeded.
