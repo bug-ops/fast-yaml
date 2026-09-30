@@ -1,4 +1,5 @@
 use crate::limits::{LimitKind, MaxTagBytes};
+use crate::merge::MergeError;
 use thiserror::Error;
 
 /// Errors that can occur during YAML parsing.
@@ -19,6 +20,10 @@ pub enum ParseError {
         /// Column number of the offending event (1-indexed, in characters).
         column: usize,
     },
+
+    /// A `<<` merge key has a value that cannot be merged.
+    #[error(transparent)]
+    Merge(#[from] MergeError),
 }
 
 impl ParseError {
@@ -55,6 +60,7 @@ impl ParseError {
                 line: line + lines,
                 column,
             },
+            merge @ Self::Merge(_) => merge,
         }
     }
 }

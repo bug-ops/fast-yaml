@@ -582,7 +582,9 @@ fn container_children<'py>(
 /// Merge keys:
 ///     `<<` entries come first, explicit keys override them in place, and for `<<: [*a, *b]`
 ///     the earlier item wins. A repeated `<<` in one mapping keeps only its last value
-///     (`PyYAML` merges all of them).
+///     (`PyYAML` merges all of them). Only the plain `<<` merges; quoted or tagged forms are
+///     ordinary keys. A merge value that is not a mapping or a sequence of mappings, or is a
+///     `!!set`, raises `ValueError`.
 ///
 /// Security:
 ///     Maximum input size is limited to 100MB to prevent denial-of-service attacks.
