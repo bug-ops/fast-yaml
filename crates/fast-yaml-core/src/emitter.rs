@@ -456,7 +456,9 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
+    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted, and
+    /// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
+    /// document exceeds the formatter's nesting or per-document anchor limits.
     ///
     /// # Examples
     ///
@@ -876,7 +878,9 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted.
+    /// Returns `EmitError::Emit` if the YAML cannot be parsed or formatted, and
+    /// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
+    /// document exceeds the formatter's nesting or per-document anchor limits.
     ///
     /// # Examples
     ///

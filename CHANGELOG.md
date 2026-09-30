@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Core**: `EmitError` gains `DepthLimitExceeded` and `AnchorLimitExceeded` variants returned by `format_streaming`, `format_streaming_arena`, and `Emitter::format*`; exhaustive matches must handle them (#371) (#383)
+
 ### Changed
 
 - **Breaking:** `fast-yaml-core` adds `ParseError::LimitExceeded`, `ParseLimits` and `parse_*_with_limits`; Python `safe_load`/`safe_load_all` now reject over-limit input and cross-document aliases (#369)
@@ -19,6 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Make `parse_parallel` match `Parser::parse_all`: empty documents are kept as null and `Error::Parse` indices align with the real stream (#364)
+- `fy format` returns an error instead of silently dropping anchors or nesting levels beyond 4096 anchors per document or 256 levels (#371) (#383)
+- `fy format` emits scalar mapping keys longer than 1024 characters in explicit `? ` form so the output re-parses (#378) (#383)
 - Fix `fy format` dropping leading spaces of block scalars: emit the indentation indicator and stop extra blank lines after them (#367)
 - Fix `fy format` emitting empty values with trailing whitespace: omitted nulls are now written as `null` (#367)
 - Bump Node.js dev dependency `js-yaml` to 5.4.2 to fix GHSA-r3ph-w7gj-g6xm (#368)

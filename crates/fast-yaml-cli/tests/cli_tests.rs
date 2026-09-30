@@ -533,3 +533,99 @@ fn test_format_indent_4_alias_key_in_nested_mapping() {
     let once = String::from_utf8(once).unwrap();
     assert_eq!(convert_json_stdin(&once), convert_json_stdin(input));
 }
+
+fn nested_maps(depth: usize) -> String {
+    let mut yaml = String::new();
+    for level in 0..depth {
+        yaml.push_str(&"  ".repeat(level));
+        yaml.push_str("a:\n");
+    }
+    yaml.push_str(&"  ".repeat(depth));
+    yaml.push_str("v\n");
+    yaml
+}
+
+#[test]
+fn test_format_depth_limit_roundtrips_at_256() {
+    assert_format_roundtrips(&nested_maps(256));
+}
+
+#[test]
+fn test_format_in_place_depth_limit_leaves_file_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("deep.yaml");
+    let input = nested_maps(257);
+    std::fs::write(&file, &input).unwrap();
+
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["format", "-i", file.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nesting depth"));
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), input);
+}
+
+#[test]
+fn test_format_stdin_depth_limit_is_an_error() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .write_stdin(nested_maps(257))
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("nesting depth"));
+}
+
+#[test]
+fn test_format_anchor_limit_is_per_document() {
+    use std::fmt::Write as _;
+    let mut input = String::new();
+    for _ in 0..3 {
+        input.push_str("---\n");
+        for i in 1..=3000 {
+            writeln!(input, "- &a{i} v").unwrap();
+        }
+        input.push_str("- *a3000\n");
+    }
+    fy_stdout(&["format"], &input);
+}
+
+#[test]
+fn test_format_anchor_limit_is_an_error() {
+    use std::fmt::Write as _;
+    let mut input = String::new();
+    for i in 1..=4097 {
+        writeln!(input, "- &a{i} v").unwrap();
+    }
+    input.push_str("- *a4097\n");
+    Command::cargo_bin("fy")
+        .unwrap()
+        .arg("format")
+        .write_stdin(input)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("anchor definitions"));
+}
+
+#[test]
+fn test_format_long_keys_use_explicit_form() {
+    let long = "k".repeat(1025);
+    for input in [
+        format!("? {long}\n: v\n"),
+        format!("? \"{long}\"\n: v\n"),
+        format!("{{{long}: v}}\n"),
+    ] {
+        let out = assert_format_roundtrips(&input);
+        assert!(out.starts_with("? "), "{out:.20?}");
+    }
+    let edge = format!("{}: v\n", "k".repeat(1024));
+    assert_eq!(assert_format_roundtrips(&edge), edge);
+}
+
+#[test]
+fn test_format_multiline_plain_and_single_quoted_roundtrip() {
+    for input in ["a: x\n  y\n\n  z\n", "a: 'x\n\n  y'\n", "- x\n  y\n\n  z\n"] {
+        assert_format_roundtrips(input);
+    }
+}
