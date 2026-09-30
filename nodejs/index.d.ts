@@ -216,7 +216,11 @@ export interface ContextLine {
   lineNumber: number
   /** Source text content. */
   content: string
-  /** Highlight ranges as [[start, end], ...] (column positions). */
+  /** Number of chars of the line dropped before `content`. */
+  columnOffset: number
+  /** Whether chars of the line were dropped after `content`. */
+  truncatedEnd: boolean
+  /** Highlight ranges as [[start, end], ...] (absolute column positions). */
   highlights: Array<Array<number>>
 }
 

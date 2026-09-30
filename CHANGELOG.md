@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: diagnostic context lines are windowed to 120 chars around the highlight, and `ContextLine` gains `column_offset`/`truncated_end` (Python, Node.js and JSON output too), fixing quadratic memory on long lines (#454) (#468)
 - **Core**: `canonicalize` keeps integers overflowing `i64` as `Value::Representation` instead of `ScalarOwned::String`, so consumers can tell them from strings, and adds `value::scalar_key_text`; CLI and Node.js output is unchanged (#392) (#462)
 - **Core**: `fy format` no longer rewrites plain `inf`/`-inf`/`NaN` scalars to `.inf`/`-.inf`/`.nan`; they stay strings (#362) (#450)
 - **Core/Linter**: NUL input is now a parse error instead of loading a truncated document, `Linter::lint_value` returns `Result` and rejects NUL, plain `.5`/`-.5`/`+.inf` now load as floats (were strings) so `fy convert json` fails on `+.inf` like `.inf` (#417) (#393) (#458)

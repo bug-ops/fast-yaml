@@ -418,10 +418,17 @@ class lint:  # noqa: N801
 
         line_number: int
         content: str
+        column_offset: int
+        truncated_end: bool
         highlights: list[tuple[int, int]]
 
         def __init__(
-            self, line_number: int, content: str, highlights: list[tuple[int, int]]
+            self,
+            line_number: int,
+            content: str,
+            highlights: list[tuple[int, int]],
+            column_offset: int = 0,
+            truncated_end: bool = False,
         ) -> None: ...
         def __repr__(self) -> str: ...
 
