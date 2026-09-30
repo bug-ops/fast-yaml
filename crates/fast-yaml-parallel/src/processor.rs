@@ -5,6 +5,7 @@
 use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
+use fast_yaml_core::limits::{ParseLimits, StreamBudget};
 use fast_yaml_core::{Parser, ScalarOwned, Value};
 use rayon::prelude::*;
 
@@ -39,9 +40,11 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
         return Ok(vec![Value::Value(ScalarOwned::Null)]);
     }
 
+    let budget = StreamBudget::new(ParseLimits::default());
+
     // Step 3: Check if parallelism is worthwhile
     if should_use_sequential(&chunks, config) {
-        return parse_sequential(&chunks);
+        return parse_sequential(&chunks, &budget);
     }
 
     // Step 4: Use global thread pool (fast path) or custom pool if explicitly configured
@@ -51,11 +54,11 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
     {
         // Only create custom pool if explicitly requested AND different from current
         let pool = configure_thread_pool(config)?;
-        return pool.install(|| parse_chunks_parallel(&chunks));
+        return pool.install(|| parse_chunks_parallel(&chunks, &budget));
     }
 
     // Step 5: Parse chunks in parallel using global pool (no creation overhead)
-    parse_chunks_parallel(&chunks)
+    parse_chunks_parallel(&chunks, &budget)
 }
 
 /// Determines if sequential processing is more efficient.
@@ -82,17 +85,22 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
 }
 
 /// Parse chunks sequentially (fallback for small inputs).
-fn parse_sequential(chunks: &[Chunk<'_>]) -> Result<Vec<Value>> {
-    chunks.iter().map(parse_chunk).collect()
+fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<Value>> {
+    let mut docs = Vec::with_capacity(chunks.len());
+    for chunk in chunks {
+        docs.extend(parse_chunk(chunk, budget)?);
+    }
+    Ok(docs)
 }
 
-/// Parse one chunk; a document without content is `null`, as in `Parser::parse_all`.
-fn parse_chunk(chunk: &Chunk<'_>) -> Result<Value> {
-    let doc = Parser::parse_str(chunk.content).map_err(|source| Error::Parse {
+/// Parse one chunk with the stream-wide budget; a document without content is `null`.
+///
+/// Error marks are relocated to whole-input coordinates.
+fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> Result<Vec<Value>> {
+    Parser::parse_all_with_budget(chunk.content, budget).map_err(|source| Error::Parse {
         index: chunk.index,
-        source,
-    })?;
-    Ok(doc.unwrap_or(Value::Value(ScalarOwned::Null)))
+        source: source.relocated(chunk.origin.line, chunk.origin.char_index),
+    })
 }
 
 /// Configure Rayon thread pool based on config.
@@ -107,14 +115,29 @@ fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
 
 /// Parse chunks in parallel using Rayon.
 ///
-/// Uses indexed parallel iterator to preserve document order.
-fn parse_chunks_parallel(chunks: &[Chunk<'_>]) -> Result<Vec<Value>> {
-    chunks.par_iter().map(parse_chunk).collect()
+/// Uses indexed parallel iterator to preserve document order; the error of the lowest-index
+/// failing chunk is returned. Whether a stream exceeds the shared alias budget is
+/// deterministic, but which chunk reports it depends on scheduling.
+fn parse_chunks_parallel(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<Value>> {
+    let parsed: Vec<Result<Vec<Value>>> = chunks
+        .par_iter()
+        .map(|chunk| parse_chunk(chunk, budget))
+        .collect();
+    let mut docs = Vec::with_capacity(parsed.len());
+    for chunk_docs in parsed {
+        docs.extend(chunk_docs?);
+    }
+    Ok(docs)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunker::SourceOrigin;
+
+    fn budget() -> StreamBudget {
+        StreamBudget::new(ParseLimits::default())
+    }
 
     #[test]
     fn test_process_parallel_rejects_alias_bomb() {
@@ -179,6 +202,43 @@ mod tests {
     }
 
     #[test]
+    fn test_tag_budget_is_shared_across_chunks() {
+        use fast_yaml_core::limits::MaxTagBytes;
+        const CHUNKS: usize = 4;
+        let doc = format!(
+            "%TAG !e! tag:e.com,{}\n---\nk: !e!x v\n...\n",
+            "a".repeat(4_000)
+        );
+        let stream = doc.repeat(CHUNKS);
+        let chunks = chunk_documents(&stream);
+        assert!(chunks.len() >= CHUNKS);
+        let fresh = || {
+            StreamBudget::new(ParseLimits {
+                max_tag_bytes: MaxTagBytes::new(10_000),
+                ..ParseLimits::default()
+            })
+        };
+        for chunk in &chunks {
+            assert!(parse_chunk(chunk, &fresh()).is_ok());
+        }
+        for result in [
+            parse_sequential(&chunks, &fresh()),
+            parse_chunks_parallel(&chunks, &fresh()),
+        ] {
+            assert!(matches!(
+                result,
+                Err(Error::Parse {
+                    source: fast_yaml_core::ParseError::LimitExceeded {
+                        kind: fast_yaml_core::LimitKind::TagBytes(_),
+                        ..
+                    },
+                    ..
+                })
+            ));
+        }
+    }
+
+    #[test]
     fn test_process_parallel_with_thread_limit() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
         let config = Config::new().with_workers(Some(2));
@@ -201,7 +261,7 @@ mod tests {
         let chunks = vec![Chunk {
             index: 0,
             content: "foo: 1",
-            offset: 0,
+            origin: SourceOrigin::default(),
         }];
         let config = Config::default();
 
@@ -214,12 +274,12 @@ mod tests {
             Chunk {
                 index: 0,
                 content: "a: 1",
-                offset: 0,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
                 content: "b: 2",
-                offset: 4,
+                origin: SourceOrigin::default(),
             },
         ];
         let config = Config::default();
@@ -233,12 +293,12 @@ mod tests {
             Chunk {
                 index: 0,
                 content: "foo: 1",
-                offset: 0,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
                 content: "bar: 2",
-                offset: 6,
+                origin: SourceOrigin::default(),
             },
         ];
         let config = Config::new().with_workers(Some(0));
@@ -254,12 +314,12 @@ mod tests {
             Chunk {
                 index: 0,
                 content: &large_content,
-                offset: 0,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
                 content: &large_content,
-                offset: 2048,
+                origin: SourceOrigin::default(),
             },
         ];
         let config = Config::default(); // sequential_threshold = 4096
@@ -273,16 +333,16 @@ mod tests {
             Chunk {
                 index: 0,
                 content: "---\nvalid: true",
-                offset: 0,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
                 content: "---\ninvalid: [",
-                offset: 15,
+                origin: SourceOrigin::default(),
             },
         ];
 
-        let result = parse_sequential(&chunks);
+        let result = parse_sequential(&chunks, &budget());
         assert!(result.is_err());
 
         if let Err(Error::Parse { index, .. }) = result {
@@ -312,21 +372,21 @@ mod tests {
             Chunk {
                 index: 0,
                 content: "---\nfirst: 0",
-                offset: 0,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
                 content: "---\nsecond: 1",
-                offset: 13,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 2,
                 content: "---\nthird: 2",
-                offset: 27,
+                origin: SourceOrigin::default(),
             },
         ];
 
-        let docs = parse_chunks_parallel(&chunks).unwrap();
+        let docs = parse_chunks_parallel(&chunks, &budget()).unwrap();
         assert_eq!(docs.len(), 3);
     }
 
@@ -336,21 +396,21 @@ mod tests {
             Chunk {
                 index: 0,
                 content: "---\nvalid: 1",
-                offset: 0,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
                 content: "---\ninvalid: [",
-                offset: 13,
+                origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 2,
                 content: "---\nvalid: 2",
-                offset: 27,
+                origin: SourceOrigin::default(),
             },
         ];
 
-        let result = parse_chunks_parallel(&chunks);
+        let result = parse_chunks_parallel(&chunks, &budget());
         assert!(result.is_err());
 
         if let Err(Error::Parse { index, .. }) = result {
@@ -421,5 +481,114 @@ mod tests {
         let yaml = "\u{FEFF}---\nfoo: 1\n---\nbar: 2";
         let docs = process_parallel(yaml, &Config::default()).unwrap();
         assert_eq!(docs.len(), 2);
+    }
+
+    fn sequential() -> Config {
+        Config::new().with_workers(Some(0))
+    }
+
+    fn bomb_doc() -> String {
+        use std::fmt::Write as _;
+        let mut yaml = String::from("---\na0: &a0 [x,x,x,x,x,x,x,x,x]\n");
+        for i in 1..=5 {
+            let refs = vec![format!("*a{}", i - 1); 9].join(",");
+            writeln!(yaml, "a{i}: &a{i} [{refs}]").unwrap();
+        }
+        yaml
+    }
+
+    fn assert_alias_limit(result: &Result<Vec<Value>>) {
+        use fast_yaml_core::ParseError;
+        use fast_yaml_core::limits::LimitKind;
+        assert!(matches!(
+            result,
+            Err(Error::Parse {
+                source: ParseError::LimitExceeded {
+                    kind: LimitKind::AliasBytes(_),
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_alias_budget_is_shared_across_chunks() {
+        let stream = bomb_doc().repeat(4);
+        assert!(Parser::parse_all(&bomb_doc()).is_ok());
+        assert!(matches!(
+            Parser::parse_all(&stream),
+            Err(fast_yaml_core::ParseError::LimitExceeded {
+                kind: fast_yaml_core::LimitKind::AliasBytes(_),
+                ..
+            })
+        ));
+        assert_alias_limit(&process_parallel(&stream, &sequential()));
+        assert_alias_limit(&process_parallel(&stream, &Config::default()));
+        assert_alias_limit(&process_parallel(
+            &stream,
+            &Config::new().with_workers(Some(2)),
+        ));
+    }
+
+    const PARITY_INPUTS: &[&str] = &[
+        "a: 1\n---\u{A0}b\n",
+        "a: 1\n---\u{85}b\n",
+        "a\n...\nb",
+        "a\n... # c\nb",
+        "a\n...\n...\nb",
+        "--- |\nfoo\n...\nbar",
+        "a\r...\rb",
+        "---\ra: 1\r---\rb: 2\r",
+        "---\r---\r",
+        "a: 1\n...\n# c\n",
+        "...\n%YAML 1.2\n---\nb\n",
+        "a\n...\n%TAG !e! tag:x,2000:\n---\nb: !e!y 1\n",
+        "%YAML 1.2\n---\na\n...\n%YAML 1.2\n---\nb\n",
+        "a\r\n...\r\nb\r\n",
+        "a\n...x\n",
+        "a\n...\n# c\n%YAML 1.2\n---\nb\n",
+        "%YAML 1.2\n",
+        "# only a comment\n",
+        "\n\n---\nfoo: 1\n",
+        "%YAML 1.2\na: 1\n",
+        "%FOO bar\nkey: value\n",
+        "... junk\na: 1\n",
+        "%\n...x\r",
+        "a\n...\n%YAML 1.2\nb\n",
+    ];
+
+    #[test]
+    fn test_parity_with_parse_all() {
+        for input in PARITY_INPUTS {
+            let expected = Parser::parse_all(input);
+            let actual = process_parallel(input, &sequential());
+            match (expected, actual) {
+                (Ok(e), Ok(a)) => assert_eq!(e, a, "{input:?}"),
+                (Err(_), Err(_)) => {}
+                (e, a) => panic!("{input:?}: parse_all {e:?} vs parallel {a:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_error_marks_match_parse_all() {
+        for input in [
+            "---\na: 1\n---\nb: *x\n",
+            "---\na: 1\n---\nb: 2\n---\nc: [\n",
+            "a: 1\r---\rb: 2\r---\rc: [\r",
+            "---\nключ: 1\n---\nb: [\n",
+        ] {
+            let expected = Parser::parse_all(input).unwrap_err().to_string();
+            let Err(Error::Parse { source, .. }) = process_parallel(input, &sequential()) else {
+                panic!("{input:?}: expected parse error");
+            };
+            assert_eq!(expected, source.to_string(), "{input:?}");
+            let Err(Error::Parse { source, .. }) = process_parallel(input, &Config::default())
+            else {
+                panic!("{input:?}: expected parse error");
+            };
+            assert_eq!(expected, source.to_string(), "{input:?}");
+        }
     }
 }

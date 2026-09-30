@@ -61,7 +61,7 @@ pub use emitter::{Emitter, EmitterConfig};
 pub use error::{EmitError, EmitResult, ParseError, ParseResult};
 pub use limits::{
     DumpBudget, LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, MaxDumpNodes, MaxOutputBytes,
-    MaxTagBytes, ParseLimits,
+    MaxTagBytes, ParseLimits, StreamBudget,
 };
 pub use parser::{Parser, canonicalize, strip_bom};
 pub use scalar::{DecimalBigInt, ResolvedScalar, resolve_scalar};

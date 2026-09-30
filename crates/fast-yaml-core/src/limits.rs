@@ -8,6 +8,8 @@ use crate::error::{ParseError, ParseResult};
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use thiserror::Error;
 
 /// Maximum nesting depth of sequences and mappings.
@@ -364,6 +366,98 @@ pub struct ParseLimits {
     pub max_tag_bytes: MaxTagBytes,
 }
 
+/// Alias-expansion and tag-prefix budget shared by every document of one stream.
+///
+/// Cloning yields a handle to the same counter, not a copy: clones share one limit, so
+/// chunks parsed on different threads draw from a single budget. A budget therefore belongs
+/// to exactly one stream (one parse call); never reuse it across calls, create a fresh one
+/// instead. Whether the stream fits is deterministic; which chunk observes the overrun first
+/// depends on scheduling.
+///
+/// # Examples
+///
+/// Clones draw from one limit:
+///
+/// ```
+/// use fast_yaml_core::Parser;
+/// use fast_yaml_core::limits::{MaxAliasBytes, ParseLimits, StreamBudget};
+///
+/// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(100), ..ParseLimits::default() };
+/// let budget = StreamBudget::new(limits);
+/// let clone = budget.clone();
+/// let doc = "- &a x\n- *a\n";
+/// assert!(Parser::parse_all_with_budget(doc, &budget).is_ok());
+/// assert!(Parser::parse_all_with_budget(doc, &clone).is_err());
+/// ```
+///
+/// A fresh budget per call starts from zero:
+///
+/// ```
+/// use fast_yaml_core::Parser;
+/// use fast_yaml_core::limits::{MaxAliasBytes, ParseLimits, StreamBudget};
+///
+/// let limits = ParseLimits { max_alias_bytes: MaxAliasBytes::new(100), ..ParseLimits::default() };
+/// let budget = StreamBudget::new(limits);
+/// let doc = "- &a x\n- *a\n";
+/// assert!(Parser::parse_all_with_budget(doc, &budget).is_ok());
+/// assert!(Parser::parse_all_with_budget(doc, &budget).is_err());
+/// ```
+#[derive(Debug, Clone)]
+pub struct StreamBudget {
+    limits: ParseLimits,
+    used: Arc<StreamUsage>,
+}
+
+#[derive(Debug, Default)]
+struct StreamUsage {
+    alias_bytes: AtomicUsize,
+    tag_prefix_bytes: AtomicUsize,
+}
+
+fn charge(counter: &AtomicUsize, bytes: usize, max: usize) -> bool {
+    let mut used = counter.load(Ordering::Relaxed);
+    loop {
+        let Some(total) = used.checked_add(bytes).filter(|total| *total <= max) else {
+            return false;
+        };
+        match counter.compare_exchange_weak(used, total, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return true,
+            Err(actual) => used = actual,
+        }
+    }
+}
+
+impl StreamBudget {
+    /// Creates a fresh budget enforcing `limits`.
+    #[must_use]
+    pub fn new(limits: ParseLimits) -> Self {
+        Self {
+            limits,
+            used: Arc::default(),
+        }
+    }
+
+    /// Returns the limits this budget enforces.
+    #[must_use]
+    pub const fn limits(&self) -> &ParseLimits {
+        &self.limits
+    }
+
+    fn charge_alias(&self, bytes: usize) -> Result<(), LimitKind> {
+        let max = self.limits.max_alias_bytes;
+        charge(&self.used.alias_bytes, bytes, max.get())
+            .then_some(())
+            .ok_or(LimitKind::AliasBytes(max))
+    }
+
+    fn charge_tag_prefix(&self, bytes: usize) -> Result<(), LimitKind> {
+        let max = self.limits.max_tag_bytes;
+        charge(&self.used.tag_prefix_bytes, bytes, max.get())
+            .then_some(())
+            .ok_or(LimitKind::TagBytes(max))
+    }
+}
+
 /// Identifies which limit was exceeded, carrying its configured value.
 #[derive(Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LimitKind {
@@ -427,11 +521,9 @@ struct Frame {
 /// ```
 #[derive(Debug)]
 pub struct LimitGuard {
-    limits: ParseLimits,
+    budget: StreamBudget,
     stack: Vec<Frame>,
     completed: HashMap<usize, Subtree>,
-    alias_bytes: usize,
-    tag_prefix_bytes: usize,
     max_anchor_seen: usize,
     // Anchors below this id belong to earlier documents and are out of scope.
     doc_anchor_floor: usize,
@@ -441,12 +533,16 @@ impl LimitGuard {
     /// Creates a guard enforcing `limits` from the start of a stream.
     #[must_use]
     pub fn new(limits: ParseLimits) -> Self {
+        Self::with_budget(StreamBudget::new(limits))
+    }
+
+    /// Creates a guard drawing alias and tag-prefix bytes from `budget`, which may be shared with other guards.
+    #[must_use]
+    pub fn with_budget(budget: StreamBudget) -> Self {
         Self {
-            limits,
+            budget,
             stack: Vec::new(),
             completed: HashMap::new(),
-            alias_bytes: 0,
-            tag_prefix_bytes: 0,
             max_anchor_seen: 0,
             doc_anchor_floor: 0,
         }
@@ -467,9 +563,9 @@ impl LimitGuard {
             }
             Event::SequenceStart(anchor, tag) | Event::MappingStart(anchor, tag) => {
                 self.charge_tag_prefix(tag.as_deref(), span)?;
-                if self.stack.len() >= self.limits.max_depth.get() {
+                if self.stack.len() >= self.budget.limits.max_depth.get() {
                     return Err(Self::exceeded(
-                        LimitKind::Depth(self.limits.max_depth),
+                        LimitKind::Depth(self.budget.limits.max_depth),
                         span,
                     ));
                 }
@@ -514,18 +610,11 @@ impl LimitGuard {
         Ok(())
     }
 
-    fn charge_tag_prefix(&mut self, tag: Option<&Tag>, span: Span) -> ParseResult<()> {
+    fn charge_tag_prefix(&self, tag: Option<&Tag>, span: Span) -> ParseResult<()> {
         let Some(tag) = tag else { return Ok(()) };
-        self.tag_prefix_bytes = self
-            .tag_prefix_bytes
-            .saturating_add(tag.handle.len().saturating_sub(TAG_PREFIX_ALLOWANCE));
-        if self.tag_prefix_bytes > self.limits.max_tag_bytes.get() {
-            return Err(Self::exceeded(
-                LimitKind::TagBytes(self.limits.max_tag_bytes),
-                span,
-            ));
-        }
-        Ok(())
+        self.budget
+            .charge_tag_prefix(tag.handle.len().saturating_sub(TAG_PREFIX_ALLOWANCE))
+            .map_err(|kind| Self::exceeded(kind, span))
     }
 
     fn observe_alias(&mut self, id: usize, span: Span) -> ParseResult<()> {
@@ -539,16 +628,12 @@ impl LimitGuard {
             bytes: NODE_BYTES,
             height: 0,
         });
-        self.alias_bytes = self.alias_bytes.saturating_add(subtree.bytes);
-        if self.alias_bytes > self.limits.max_alias_bytes.get() {
+        self.budget
+            .charge_alias(subtree.bytes)
+            .map_err(|kind| Self::exceeded(kind, span))?;
+        if self.stack.len().saturating_add(subtree.height) > self.budget.limits.max_depth.get() {
             return Err(Self::exceeded(
-                LimitKind::AliasBytes(self.limits.max_alias_bytes),
-                span,
-            ));
-        }
-        if self.stack.len().saturating_add(subtree.height) > self.limits.max_depth.get() {
-            return Err(Self::exceeded(
-                LimitKind::Depth(self.limits.max_depth),
+                LimitKind::Depth(self.budget.limits.max_depth),
                 span,
             ));
         }
@@ -621,7 +706,30 @@ mod tests {
     }
 
     #[test]
-    fn doubling_alias_chain_saturates_without_panic() {
+    fn charge_alias_never_wraps() {
+        let budget = StreamBudget::new(ParseLimits {
+            max_alias_bytes: MaxAliasBytes::new(usize::MAX),
+            ..ParseLimits::default()
+        });
+        assert!(budget.charge_alias(usize::MAX).is_ok());
+        assert!(budget.charge_alias(1).is_err());
+        assert!(budget.charge_alias(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn tag_budget_is_shared_between_clones() {
+        let budget = StreamBudget::new(ParseLimits {
+            max_tag_bytes: MaxTagBytes::new(10),
+            ..ParseLimits::default()
+        });
+        let other = budget.clone();
+        assert!(budget.charge_tag_prefix(6).is_ok());
+        assert!(other.charge_tag_prefix(6).is_err());
+        assert!(other.charge_tag_prefix(4).is_ok());
+    }
+
+    #[test]
+    fn doubling_alias_chain_errors_instead_of_wrapping() {
         let limits = ParseLimits {
             max_alias_bytes: MaxAliasBytes::new(usize::MAX),
             max_depth: MaxDepth::new(1_000),
@@ -631,14 +739,26 @@ mod tests {
         let scalar = Event::Scalar(Cow::Borrowed("x"), ScalarStyle::Plain, 1, None);
         guard.observe(&Event::DocumentStart(false), span()).unwrap();
         guard.observe(&scalar, span()).unwrap();
+        let mut outcome = Ok(());
         for id in 2..200 {
             guard
                 .observe(&Event::SequenceStart(id, None), span())
                 .unwrap();
-            guard.observe(&Event::Alias(id - 1), span()).unwrap();
-            guard.observe(&Event::Alias(id - 1), span()).unwrap();
+            outcome = guard
+                .observe(&Event::Alias(id - 1), span())
+                .and_then(|()| guard.observe(&Event::Alias(id - 1), span()));
+            if outcome.is_err() {
+                break;
+            }
             guard.observe(&Event::SequenceEnd, span()).unwrap();
         }
+        assert!(matches!(
+            outcome,
+            Err(ParseError::LimitExceeded {
+                kind: LimitKind::AliasBytes(_),
+                ..
+            })
+        ));
     }
 
     fn tagged_scalar(prefix_len: usize) -> Event<'static> {
