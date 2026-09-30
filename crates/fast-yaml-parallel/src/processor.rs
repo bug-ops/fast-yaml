@@ -110,7 +110,7 @@ fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
     rayon::ThreadPoolBuilder::new()
         .num_threads(num_threads)
         .build()
-        .map_err(|e| Error::ThreadPool(e.to_string()))
+        .map_err(Error::ThreadPool)
 }
 
 /// Parse chunks in parallel using Rayon.

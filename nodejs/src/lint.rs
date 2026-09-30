@@ -30,10 +30,11 @@ pub enum Severity {
 impl From<RustSeverity> for Severity {
     fn from(s: RustSeverity) -> Self {
         match s {
-            RustSeverity::Error => Self::Error,
             RustSeverity::Warning => Self::Warning,
             RustSeverity::Info => Self::Info,
             RustSeverity::Hint => Self::Hint,
+            // Severity is non_exhaustive; treat future levels as the most severe
+            RustSeverity::Error | _ => Self::Error,
         }
     }
 }

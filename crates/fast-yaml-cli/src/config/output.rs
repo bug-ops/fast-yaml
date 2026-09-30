@@ -9,6 +9,7 @@ pub struct OutputConfig {
     /// Suppress all non-error output
     quiet: bool,
     /// Show detailed progress and timing
+    #[cfg(any(test, feature = "linter"))]
     verbose: bool,
     /// Use ANSI color codes in output
     use_color: bool,
@@ -32,6 +33,7 @@ impl OutputConfig {
     pub fn from_cli(quiet: bool, verbose: bool, no_color: bool) -> Self {
         Self {
             quiet,
+            #[cfg(any(test, feature = "linter"))]
             verbose,
             use_color: !no_color && Self::detect_color_support(),
             show_timing: verbose,
@@ -49,7 +51,7 @@ impl OutputConfig {
         }
         #[cfg(feature = "colors")]
         {
-            use is_terminal::IsTerminal;
+            use std::io::IsTerminal;
             std::io::stderr().is_terminal()
         }
         #[cfg(not(feature = "colors"))]
@@ -95,6 +97,7 @@ impl OutputConfig {
     }
 
     /// Returns whether verbose mode is enabled.
+    #[cfg(any(test, feature = "linter"))]
     #[must_use]
     pub const fn is_verbose(&self) -> bool {
         self.verbose

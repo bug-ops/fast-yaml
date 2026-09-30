@@ -33,6 +33,12 @@ pub struct LintCommand {
     format: LintFormat,
 }
 
+fn warn_unknown_rules(cfg: &ConfigFile) {
+    for name in cfg.unknown_rules() {
+        eprintln!("warning: unknown rule '{name}' in config file");
+    }
+}
+
 impl LintCommand {
     /// Build the lint command, loading config file and applying CLI overrides.
     ///
@@ -68,7 +74,7 @@ impl LintCommand {
             // Explicit --config: hard error if missing or invalid
             let cfg = ConfigFile::load(&path)
                 .with_context(|| format!("failed to load config file '{}'", path.display()))?;
-            cfg.warn_unknown_rules();
+            warn_unknown_rules(&cfg);
             return Ok(cfg.into_lint_config());
         }
 
@@ -85,7 +91,7 @@ impl LintCommand {
             let cfg = ConfigFile::load(&discovered).with_context(|| {
                 format!("failed to load config file '{}'", discovered.display())
             })?;
-            cfg.warn_unknown_rules();
+            warn_unknown_rules(&cfg);
             return Ok(cfg.into_lint_config());
         }
 

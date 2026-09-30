@@ -402,7 +402,6 @@ dependencies = [
  "globset",
  "ignore",
  "indoc",
- "is-terminal",
  "num_cpus",
  "ordered-float",
  "predicates",
@@ -434,7 +433,6 @@ version = "0.6.6"
 dependencies = [
  "fast-yaml-core",
  "indoc",
- "is-terminal",
  "saphyr-parser",
  "serde",
  "serde_json",
@@ -710,17 +708,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "79cf5c93f93228cf8efb3ba362535fb11199ac548a09ce117c9b1adc3030d706"
 dependencies = [
  "rustversion",
-]
-
-[[package]]
-name = "is-terminal"
-version = "0.4.17"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
-dependencies = [
- "hermit-abi",
- "libc",
- "windows-sys",
 ]
 
 [[package]]

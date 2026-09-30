@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "json-output", serde(rename_all = "lowercase"))]
+#[non_exhaustive]
 pub enum Severity {
     /// Suggestion for improvement.
     Hint,

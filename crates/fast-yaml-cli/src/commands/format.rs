@@ -14,9 +14,12 @@ use crate::reporter::{ReportEvent, Reporter};
 const STRIP_COMMENTS_HINT: &str = "use --strip-comments to allow this";
 
 /// Renders a batch error for the CLI, adding the `--strip-comments` hint where it applies.
+///
+/// The reporter already prefixes the file path, so format errors omit it.
 pub fn error_message(error: &ParallelError) -> String {
     match error {
         ParallelError::CommentsWouldBeStripped => format!("{error}; {STRIP_COMMENTS_HINT}"),
+        ParallelError::Format { source, .. } => source.to_string(),
         _ => error.to_string(),
     }
 }

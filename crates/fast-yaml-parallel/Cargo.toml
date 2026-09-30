@@ -20,7 +20,6 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
-fast-yaml-core = { workspace = true }
 proptest = { workspace = true }
 tempfile = { workspace = true }
 

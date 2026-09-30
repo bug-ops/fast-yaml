@@ -174,8 +174,8 @@ mod tests {
         assert!(unchanged.is_success());
 
         let failed = FileOutcome::Error {
-            error: Error::Format {
-                message: "test".to_string(),
+            error: Error::EmptyDocument {
+                path: PathBuf::from("test"),
             },
             duration: Duration::from_millis(5),
         };
@@ -243,8 +243,8 @@ mod tests {
             FileResult::new(
                 PathBuf::from("/test/file4.yaml"),
                 FileOutcome::Error {
-                    error: Error::Format {
-                        message: "error".to_string(),
+                    error: Error::EmptyDocument {
+                        path: PathBuf::from("error"),
                     },
                     duration: Duration::from_millis(2),
                 },
@@ -337,8 +337,8 @@ mod tests {
             FileResult::new(
                 PathBuf::from("/a.yaml"),
                 FileOutcome::Error {
-                    error: Error::Format {
-                        message: "error1".to_string(),
+                    error: Error::EmptyDocument {
+                        path: PathBuf::from("error1"),
                     },
                     duration: Duration::from_millis(1),
                 },
@@ -346,8 +346,8 @@ mod tests {
             FileResult::new(
                 PathBuf::from("/b.yaml"),
                 FileOutcome::Error {
-                    error: Error::Format {
-                        message: "error2".to_string(),
+                    error: Error::EmptyDocument {
+                        path: PathBuf::from("error2"),
                     },
                     duration: Duration::from_millis(2),
                 },
@@ -506,7 +506,7 @@ mod tests {
             for i in 0..failed {
                 errors.push((
                     PathBuf::from(format!("/file{i}.yaml")),
-                    Error::Format { message: format!("error{i}") }
+                    Error::EmptyDocument { path: PathBuf::from(format!("error{i}")) }
                 ));
             }
 

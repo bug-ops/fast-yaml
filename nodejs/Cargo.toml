@@ -33,13 +33,6 @@ thiserror = { workspace = true }
 [build-dependencies]
 napi-build = { workspace = true }
 
-# NAPI-RS modules should not use panic = "abort"
-[profile.release]
-lto = true
-codegen-units = 1
-opt-level = 3
-strip = true
-
 # Override workspace lints for NAPI-RS (uses unsafe internally)
 [lints.rust]
 unsafe_code = "allow"

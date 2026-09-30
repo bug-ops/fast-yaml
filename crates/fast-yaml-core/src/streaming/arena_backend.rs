@@ -15,7 +15,7 @@ use super::extract_anchor_names;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
-use crate::error::{EmitError, EmitResult};
+use crate::error::{EmitResult, ParseError};
 
 /// Arena allocation backend.
 ///
@@ -26,8 +26,6 @@ use crate::error::{EmitError, EmitResult};
 pub(super) struct ArenaBackend<'bump> {
     context_stack: bumpalo::collections::Vec<'bump, Context>,
     anchor_names: bumpalo::collections::Vec<'bump, bumpalo::collections::String<'bump>>,
-    #[allow(dead_code)] // Keep arena reference for potential future use
-    arena: &'bump Bump,
 }
 
 impl<'bump> ArenaBackend<'bump> {
@@ -45,7 +43,6 @@ impl<'bump> ArenaBackend<'bump> {
         Self {
             context_stack,
             anchor_names: bumpalo::collections::Vec::new_in(arena),
-            arena,
         }
     }
 }
@@ -151,7 +148,7 @@ impl<'bump> FormatterBackend for ArenaBackend<'bump> {
 ///
 /// # Errors
 ///
-/// Returns `EmitError::Emit` if the parser encounters invalid YAML,
+/// Returns `EmitError::Parse` if the parser encounters invalid YAML,
 /// `EmitError::DepthLimitExceeded` or `EmitError::AnchorLimitExceeded` if the
 /// document exceeds the formatter's nesting or per-document anchor limits, and
 /// `EmitError::TagLimitExceeded` if `%TAG` prefix expansion exceeds the tag budget.
@@ -202,7 +199,7 @@ pub fn format_streaming_arena(input: &str, config: &EmitterConfig) -> EmitResult
 
     let mut guard = super::tag_budget_guard();
     for result in parser {
-        let (event, span) = result.map_err(|e| EmitError::Emit(e.to_string()))?;
+        let (event, span) = result.map_err(ParseError::from)?;
         guard
             .observe(&event, span)
             .map_err(super::tag_budget_error)?;
@@ -270,9 +267,9 @@ mod tests {
         assert_eq!(store.get(100), None); // Out of bounds
 
         // Test is_empty (from trait)
-        assert!(AnchorStoreOps::is_empty(&store, 2));
-        assert!(!AnchorStoreOps::is_empty(&store, 3));
-        assert!(AnchorStoreOps::is_empty(&store, 100));
+        assert!(store.get(2).is_none_or(str::is_empty));
+        assert!(!store.get(3).is_none_or(str::is_empty));
+        assert!(store.get(100).is_none_or(str::is_empty));
     }
 
     #[test]

@@ -11,11 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Core**: the `streaming` feature is removed; the streaming formatter is always compiled and is the only `Emitter::format*` path; `Parser::parse_all_preserving_styles` and `streaming::is_streaming_suitable` are removed (#408)
 - **Build**: MSRV raised to Rust 1.91 and workspace resolver switched to 3; `ordered-float` updated to 5.5 (#399)
+- **Core/Linter/Parallel**: `ParseError`, `EmitError`, parallel `Error`, `Severity`, `LintError`, `ConfigFileError` and `RuleOption` are `#[non_exhaustive]` (#PR)
+- **Core/Parallel**: unused `ParseError::Syntax`/`InvalidFloat` and parallel `Error::Chunking`/`Config` removed (#PR)
+- **Core/Parallel**: `EmitError::Emit(String)` replaced by `Format`/`Parse`, `Error::ThreadPool` wraps the Rayon error, parallel `Error::Format` carries `path` and a typed `EmitError`, and `Error::EmptyDocument` is added (#PR)
+- **Core/Parallel**: `ParseError::Scanner` no longer exposes its inner error as `source`, and `EmitError`, `ThreadPool` and `Format` message texts changed (#PR)
+- **Linter**: `ConfigFile::warn_unknown_rules` replaced by `unknown_rules`, which returns names instead of printing to stderr (#PR)
+- **CLI**: `is-terminal` dependency dropped in favor of `std::io::IsTerminal` (#PR)
 - **Core**: `EmitError` gains `DepthLimitExceeded` and `AnchorLimitExceeded` variants returned by `format_streaming`, `format_streaming_arena`, and `Emitter::format*`; exhaustive matches must handle them (#371) (#383)
 
 ### Changed
 
 - Python/Node.js `format_files` and `fast-yaml-parallel` now use the streaming formatter, so output matches `fy format` (`null` instead of `~`, anchors, duplicate keys and `---` kept, no `YAML scanner error:` prefix on parse errors) (#408)
+- Workspace hygiene: restore the `dead_code` lint and delete dead items, remove ignored binding `[profile.release]` sections (#PR)
 - **Breaking:** `fast-yaml-parallel` `format_files`/`format_in_place` take a `CommentPolicy`, `format_files` returns `FormatOutput { formatted, changed }`, and `Error::CommentsWouldBeStripped` is added; Python and Node.js bindings keep stripping comments (#397)
 - **Breaking:** Python and Node.js `format_files_in_place` now report untouched files as `Unchanged` instead of `Success` (#397)
 - **Breaking:** `fy format --dry-run` exits with code 5 when any file would change (1 still means a failure) (#397)

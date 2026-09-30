@@ -147,51 +147,6 @@ impl<'a> SourceMapper<'a> {
         self.key_positions.get(key).cloned().unwrap_or_default()
     }
 
-    /// Finds a key in a line, accounting for YAML syntax.
-    fn find_key_in_line(line: &str, key: &str) -> Option<usize> {
-        // Skip leading whitespace
-        let trimmed_start = line.len() - line.trim_start().len();
-        let content = &line[trimmed_start..];
-
-        // Check if line starts with the key followed by ':'
-        if let Some(after_key) = content.strip_prefix(key)
-            && (after_key.starts_with(':') || after_key.starts_with(' '))
-        {
-            return Some(trimmed_start);
-        }
-
-        // Look for the key elsewhere in the line (for flow mappings)
-        // We need to find a complete word match, not a substring
-        let mut search_pos = 0;
-        while let Some(pos) = content[search_pos..].find(key) {
-            let absolute_pos = search_pos + pos;
-
-            // Check if it's a word boundary before the key
-            let is_start_boundary = absolute_pos == 0 || {
-                content[..absolute_pos]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|c| !c.is_alphanumeric() && c != '_')
-            };
-
-            if is_start_boundary {
-                // Make sure it's followed by ':' or space
-                let after = &content[absolute_pos + key.len()..];
-                if after.trim_start().starts_with(':') {
-                    return Some(trimmed_start + absolute_pos);
-                }
-            }
-
-            search_pos = absolute_pos
-                + content[absolute_pos..]
-                    .chars()
-                    .next()
-                    .map_or(1, char::len_utf8);
-        }
-
-        None
-    }
-
     /// Finds the colon position after a key.
     ///
     /// # Examples
@@ -275,13 +230,6 @@ impl<'a> SourceMapper<'a> {
         }
 
         in_single || in_double
-    }
-
-    /// Gets the byte offset where a line starts (1-indexed).
-    ///
-    /// Delegates to the pre-computed index in [`SourceContext`] for O(1) access.
-    fn get_line_start_offset(&self, line_num: usize) -> usize {
-        self.context.get_line_offset(line_num)
     }
 
     /// Gets the source context.
@@ -368,42 +316,6 @@ mod tests {
 
         assert!(!SourceMapper::is_inside_string_at(line, 5)); // At first colon
         assert!(SourceMapper::is_inside_string_at(line, 13)); // At second colon (inside string)
-    }
-
-    #[test]
-    fn test_get_line_start_offset() {
-        let source = "line1\nline2\nline3";
-        let mapper = SourceMapper::new(source);
-
-        assert_eq!(mapper.get_line_start_offset(1), 0);
-        assert_eq!(mapper.get_line_start_offset(2), 6); // "line1\n" = 6 bytes
-        assert_eq!(mapper.get_line_start_offset(3), 12); // "line1\nline2\n" = 12 bytes
-    }
-
-    #[test]
-    fn test_find_key_in_line() {
-        assert_eq!(
-            SourceMapper::find_key_in_line("name: John", "name"),
-            Some(0)
-        );
-        assert_eq!(
-            SourceMapper::find_key_in_line("  name: John", "name"),
-            Some(2)
-        );
-        assert_eq!(
-            SourceMapper::find_key_in_line("other: name: John", "name"),
-            Some(7)
-        );
-        assert_eq!(
-            SourceMapper::find_key_in_line("username: John", "name"),
-            None
-        );
-    }
-
-    #[test]
-    fn test_find_key_in_line_non_ascii_neighbours() {
-        assert_eq!(SourceMapper::find_key_in_line("aé: 1, é: 2", "é"), Some(8));
-        assert_eq!(SourceMapper::find_key_in_line("éé: 1", "é"), None);
     }
 
     #[test]

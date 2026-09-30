@@ -113,8 +113,8 @@ impl FileProcessor {
         self.process(paths, |path, content| {
             fast_yaml_core::Parser::parse_str(content)
                 .map_err(|source| Error::Parse { index: 0, source })?
-                .ok_or_else(|| Error::Format {
-                    message: format!("empty document in {}", path.display()),
+                .ok_or_else(|| Error::EmptyDocument {
+                    path: path.to_path_buf(),
                 })?;
             Ok(())
         })
@@ -225,10 +225,12 @@ impl FileProcessor {
         let file_content = self.reader.read(path)?;
         let content = file_content.as_str()?;
 
-        let formatted =
-            Emitter::format_with_config(content, emitter_config).map_err(|e| Error::Format {
-                message: format!("{}: {}", path.display(), e),
-            })?;
+        let formatted = Emitter::format_with_config(content, emitter_config).map_err(|source| {
+            Error::Format {
+                path: path.to_path_buf(),
+                source,
+            }
+        })?;
 
         if comments == CommentPolicy::Reject
             && has_comments(content).map_err(|source| Error::CommentScan { source })?
