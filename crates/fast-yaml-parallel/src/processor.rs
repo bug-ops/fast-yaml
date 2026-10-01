@@ -6,7 +6,7 @@ use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use fast_yaml_core::limits::StreamBudget;
-use fast_yaml_core::{NormalizedInput, Parser, Value};
+use fast_yaml_core::{NormalizedInput, ParseError, ParseResult, Parser, Value};
 use rayon::prelude::*;
 
 /// Rejects a document count above the configured maximum.
@@ -94,17 +94,25 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
 fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<Value>> {
     let mut docs = Vec::with_capacity(chunks.len());
     for chunk in chunks {
-        docs.extend(parse_chunk(chunk, budget)?);
+        let parsed = parse_chunk(chunk, budget);
+        docs.extend(collect_chunk(parsed, docs.len())?);
     }
     Ok(docs)
 }
 
 /// Parse one chunk with the stream-wide budget; a document without content is `null`.
 ///
-/// Error marks are relocated to whole-input coordinates.
-fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> Result<Vec<Value>> {
-    Parser::parse_normalized(&chunk.input, budget).map_err(|source| {
-        let source = source.relocated(chunk.origin.line, chunk.index);
+/// Error lines are relocated to whole-input coordinates; the document index is added by
+/// [`collect_chunk`] because a chunk may hold several documents.
+fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
+    Parser::parse_normalized(&chunk.input, budget)
+        .map_err(|source| source.relocated(chunk.origin.line, 0))
+}
+
+/// Attributes a chunk error to its document, given the documents parsed before the chunk.
+fn collect_chunk(parsed: ParseResult<Vec<Value>>, preceding: usize) -> Result<Vec<Value>> {
+    parsed.map_err(|source: ParseError| {
+        let source = source.relocated(0, preceding);
         Error::Parse {
             index: source.document_index(),
             source,
@@ -128,13 +136,13 @@ fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
 /// failing chunk is returned. Whether a stream exceeds the shared alias budget is
 /// deterministic, but which chunk reports it depends on scheduling.
 fn parse_chunks_parallel(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<Value>> {
-    let parsed: Vec<Result<Vec<Value>>> = chunks
+    let parsed: Vec<ParseResult<Vec<Value>>> = chunks
         .par_iter()
         .map(|chunk| parse_chunk(chunk, budget))
         .collect();
     let mut docs = Vec::with_capacity(parsed.len());
     for chunk_docs in parsed {
-        docs.extend(chunk_docs?);
+        docs.extend(collect_chunk(chunk_docs, docs.len())?);
     }
     Ok(docs)
 }
@@ -342,7 +350,6 @@ mod tests {
     #[test]
     fn test_should_use_sequential_single_doc() {
         let chunks = vec![Chunk {
-            index: 0,
             input: NormalizedInput::new("foo: 1").unwrap(),
             origin: SourceOrigin::default(),
         }];
@@ -355,12 +362,10 @@ mod tests {
     fn test_should_use_sequential_small_input() {
         let chunks = vec![
             Chunk {
-                index: 0,
                 input: NormalizedInput::new("a: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 1,
                 input: NormalizedInput::new("b: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
@@ -374,12 +379,10 @@ mod tests {
     fn test_should_use_sequential_explicit() {
         let chunks = vec![
             Chunk {
-                index: 0,
                 input: NormalizedInput::new("foo: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 1,
                 input: NormalizedInput::new("bar: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
@@ -395,12 +398,10 @@ mod tests {
         let large_content = "x".repeat(2048);
         let chunks = vec![
             Chunk {
-                index: 0,
                 input: NormalizedInput::new(&large_content).unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 1,
                 input: NormalizedInput::new(&large_content).unwrap(),
                 origin: SourceOrigin::default(),
             },
@@ -414,12 +415,10 @@ mod tests {
     fn test_parse_sequential_error() {
         let chunks = vec![
             Chunk {
-                index: 0,
                 input: NormalizedInput::new("---\nvalid: true").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 1,
                 input: NormalizedInput::new("---\ninvalid: [").unwrap(),
                 origin: SourceOrigin::default(),
             },
@@ -453,17 +452,14 @@ mod tests {
     fn test_parse_chunks_parallel_order_preserved() {
         let chunks = vec![
             Chunk {
-                index: 0,
                 input: NormalizedInput::new("---\nfirst: 0").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 1,
                 input: NormalizedInput::new("---\nsecond: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 2,
                 input: NormalizedInput::new("---\nthird: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
@@ -477,17 +473,14 @@ mod tests {
     fn test_parse_chunks_parallel_error_with_index() {
         let chunks = vec![
             Chunk {
-                index: 0,
                 input: NormalizedInput::new("---\nvalid: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 1,
                 input: NormalizedInput::new("---\ninvalid: [").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
-                index: 2,
                 input: NormalizedInput::new("---\nvalid: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },

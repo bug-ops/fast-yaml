@@ -19,27 +19,26 @@ use std::collections::HashSet;
 use saphyr_parser::{Event, ScalarStyle, Tag};
 use thiserror::Error;
 
-pub use crate::merge_check::MergeKeyValidator;
-use crate::scalar::core_tag_suffix;
+use crate::scalar::core_tag_suffix_raw;
 use crate::value::{Mapping, Value};
 
 /// Whether `tag` is the core-schema `!!set` tag, in any spelling.
 pub(crate) fn is_core_set_tag(tag: &Tag) -> bool {
-    core_tag_suffix(tag) == Some("set")
+    core_tag_suffix_raw(tag) == Some("set")
 }
 
 /// Whether `event` is a scalar that makes the key it stands for a merge key: the plain,
 /// untagged `<<`, or any scalar tagged `!!merge`.
 fn is_merge_key_scalar(event: &Event<'_>) -> bool {
     match event {
-        Event::Scalar(_, _, _, Some(tag)) => core_tag_suffix(tag) == Some("merge"),
+        Event::Scalar(_, _, _, Some(tag)) => core_tag_suffix_raw(tag) == Some("merge"),
         Event::Scalar(text, ScalarStyle::Plain, _, None) => text == "<<",
         _ => false,
     }
 }
 
 /// Structural role of a node within its parent, as reported by
-/// [`MergeKeyValidator::observe`](crate::MergeKeyValidator::observe).
+/// the merge key validator behind [`EventStream`](crate::events::EventStream).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NodeRole {
@@ -72,7 +71,7 @@ struct Frame {
 /// Classifies parser events by their role in the tree, spotting `<<` merge keys.
 ///
 /// The single definition of which keys are merge keys, shared by the core loader and the
-/// streaming formatter through [`MergeKeyValidator`], which the bindings use as well.
+/// streaming formatter through the merge key validator, which `EventStream` applies as well.
 #[derive(Debug, Default)]
 pub(crate) struct MergeKeyTracker {
     frames: Vec<Frame>,

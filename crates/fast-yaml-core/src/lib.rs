@@ -45,6 +45,8 @@ pub mod emitter;
 pub mod encoding;
 /// Error types for parsing and emitting operations.
 pub mod error;
+/// Guarded parser event stream for language bindings.
+pub mod events;
 /// Validated, BOM-normalized parser input.
 pub mod input;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
@@ -71,13 +73,14 @@ pub use encoding::{
     DecodeError, EncodingEvidence, UnsupportedEncoding, decode_input, decode_input_owned,
 };
 pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition, SyntaxError};
+pub use events::ScalarStyle;
 pub use input::NormalizedInput;
 pub use limits::{
-    DumpBudget, Indent, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes,
-    MaxDepth, MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
+    DumpBudget, Indent, InputTooLarge, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
+    MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
     StreamBudget, Width,
 };
-pub use merge::{MergeError, MergeKeyValidator, MergeSource, MergeTarget, NodeRole, merge_into};
+pub use merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 pub use parser::{Parser, strip_bom};
 pub use scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
 pub use value::{BigInt, Float, Mapping, Set, Value};

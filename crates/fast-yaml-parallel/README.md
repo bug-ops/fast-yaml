@@ -62,7 +62,7 @@ let docs = parse_parallel_with_config(yaml, &config)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-**Known differences from `Parser::parse_all`:** the chunker follows YAML 1.2.2 and treats a column-0 `---` as a document marker even inside a top-level block scalar, whereas the underlying `saphyr` parser reads it as scalar content. In that case (for example `--- |\nx\n---\nb: 1\n`) `parse_parallel` returns two documents where `parse_all` returns one (or fails, with an explicit indent indicator such as `|2`). An empty block scalar before `---` is `""` in `parse_all` but `"\n"` in `parse_parallel`, because the chunk ends at EOF where `saphyr` yields `"\n"`.
+**Known differences from `Parser::parse_all`:** a top-level block scalar with an explicit indentation indicator followed directly by `---` (for example `--- |2\n---\nb: 1\n`) fails in `parse_all` but yields two documents in `parse_parallel`. Top-level block scalars without an indentation indicator agree with `parse_all`, whether the body is unindented (`--- |\nx\n---\nb: 1\n`) or indented. An empty block scalar before `---` is `""` in `parse_all` but `"\n"` in `parse_parallel`, because the chunk ends at EOF where `saphyr` yields `"\n"`.
 
 ### File-Level Parallelism
 

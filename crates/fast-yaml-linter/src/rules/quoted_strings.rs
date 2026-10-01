@@ -407,7 +407,7 @@ impl QuotedStringsRule {
 /// Whether a plain `s` loads as anything but a string under the core schema.
 fn is_scalar_literal(s: &str) -> bool {
     !matches!(
-        resolve_scalar(s, ScalarStyle::Plain, None),
+        resolve_scalar(s, fast_yaml_core::ScalarStyle::Plain, None),
         ResolvedScalar::Str(_)
     )
 }

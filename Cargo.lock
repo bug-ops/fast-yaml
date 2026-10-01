@@ -381,7 +381,6 @@ dependencies = [
  "num_cpus",
  "pyo3",
  "rayon",
- "saphyr-parser",
  "serde_norway",
 ]
 

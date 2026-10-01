@@ -176,17 +176,42 @@ impl<'a> NormalizedInput<'a> {
     }
 }
 
+const SCAN_CHUNK: usize = 16;
+
+const fn is_plain_ascii(b: u8) -> bool {
+    matches!(b, b'\t' | b'\n' | b'\r' | 0x20..=0x7E)
+}
+
+/// Offset of the first byte that is not printable ASCII, scanning in chunks the optimizer vectorizes.
+fn first_non_plain_ascii(bytes: &[u8]) -> Option<usize> {
+    let (chunks, tail) = bytes.as_chunks::<SCAN_CHUNK>();
+    for (n, chunk) in chunks.iter().enumerate() {
+        if !chunk.iter().all(|&b| is_plain_ascii(b)) {
+            return chunk
+                .iter()
+                .position(|&b| !is_plain_ascii(b))
+                .map(|i| n * SCAN_CHUNK + i);
+        }
+    }
+    let start = bytes.len() - tail.len();
+    tail.iter()
+        .position(|&b| !is_plain_ascii(b))
+        .map(|i| start + i)
+}
+
 /// Finds the first character outside `c-printable`, with its byte offset.
 fn first_non_printable(text: &str) -> Option<(usize, char)> {
-    text.bytes().enumerate().find_map(|(i, b)| {
-        let suspect = match b {
-            b'\t' | b'\n' | b'\r' => false,
-            0x00..=0x1F | 0x7F | 0xC2 | 0xEF => true,
-            _ => false,
-        };
-        let c = suspect.then(|| text.get(i..)?.chars().next()).flatten()?;
-        (!is_c_printable(c)).then_some((i, c))
-    })
+    let mut base = 0;
+    while let Some(rest) = text.get(base..) {
+        let at = first_non_plain_ascii(rest.as_bytes())?;
+        let offset = base + at;
+        let c = text.get(offset..)?.chars().next()?;
+        if !is_c_printable(c) {
+            return Some((offset, c));
+        }
+        base = offset + c.len_utf8();
+    }
+    None
 }
 
 /// Index of the document the text after `prefix` belongs to, as scanner errors count it.
@@ -196,7 +221,7 @@ fn document_at(prefix: &str) -> usize {
     for event in saphyr_parser::Parser::new_from_str(prefix) {
         let Ok((event, span)) = event else { break };
         // The parser closes the truncated prefix with a DocumentEnd at its end; the text after it is not past that document.
-        let at = SourcePosition::from(span);
+        let at = SourcePosition::from_span(span);
         if matches!(event, saphyr_parser::Event::DocumentEnd)
             && (at.line, at.column) >= (end.line, end.column)
         {
@@ -472,5 +497,62 @@ mod tests {
     fn many_bom_comment_lines_are_linear() {
         let input = format!("a\n{}", format!("{B}# c\n").repeat(50_000));
         assert_eq!(NormalizedInput::new(&input).unwrap().as_str(), input);
+    }
+
+    fn control_at(len: usize, pos: usize, filler: &str) -> String {
+        let mut text = filler.repeat(len);
+        text.insert(pos, '\u{1}');
+        text
+    }
+
+    #[test]
+    fn control_character_is_found_at_chunk_boundaries() {
+        for len in [15, 16, 17, 32, 33] {
+            for pos in [0, 15, 16, 17] {
+                if pos > len {
+                    continue;
+                }
+                let text = control_at(len, pos, "a");
+                assert_eq!(
+                    first_non_printable(&text),
+                    Some((pos, '\u{1}')),
+                    "len {len} pos {pos}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn printable_text_of_chunk_sized_lengths_is_accepted() {
+        for len in [0, 15, 16, 17, 32, 33] {
+            assert_eq!(first_non_printable(&"a".repeat(len)), None, "len {len}");
+        }
+    }
+
+    #[test]
+    fn non_ascii_char_at_chunk_seam_is_decoded_whole() {
+        for pad in [14, 15, 16, 17] {
+            let text = format!("{}\u{e9}\u{2028}x", "a".repeat(pad));
+            assert_eq!(first_non_printable(&text), None, "pad {pad}");
+            let text = format!("{}\u{e9}\u{FFFE}", "a".repeat(pad));
+            assert_eq!(
+                first_non_printable(&text),
+                Some((pad + 2, '\u{FFFE}')),
+                "pad {pad}"
+            );
+        }
+    }
+
+    #[test]
+    fn multibyte_char_before_control_in_one_chunk() {
+        let text = "\u{e9}\u{4e2d}\u{1F600}\u{7}tail";
+        assert_eq!(first_non_printable(text), Some((9, '\u{7}')));
+    }
+
+    #[test]
+    fn delete_and_c1_controls_are_rejected() {
+        assert_eq!(first_non_printable("ab\u{7F}"), Some((2, '\u{7F}')));
+        assert_eq!(first_non_printable("ab\u{80}"), Some((2, '\u{80}')));
+        assert_eq!(first_non_printable("tab\there\r\n"), None);
     }
 }
