@@ -142,9 +142,7 @@ describe('numeric option validation', () => {
 
   it('enforces maxDocuments', () => {
     expect(parseParallel(MULTI, { maxDocuments: 2 })).toHaveLength(2);
-    expect(() => parseParallel(MULTI, { maxDocuments: 1 })).toThrow(
-      /document count exceeds 1/
-    );
+    expect(() => parseParallel(MULTI, { maxDocuments: 1 })).toThrow(/document count exceeds 1/);
   });
 
   it('enforces maxDocuments asynchronously', async () => {

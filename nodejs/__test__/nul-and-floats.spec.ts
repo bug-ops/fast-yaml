@@ -40,7 +40,9 @@ describe('negative zero and BigInt (#557)', () => {
     expect(safeDump(5n)).toBe('5\n');
     expect(safeDump(-(2n ** 63n))).toBe('-9223372036854775808\n');
     expect(safeDump({ k: 2n ** 70n })).toBe('k: 1180591620717411303424\n');
-    expect(safeDump([-(2n ** 70n)], { defaultFlowStyle: true })).toBe('[-1180591620717411303424]\n');
+    expect(safeDump([-(2n ** 70n)], { defaultFlowStyle: true })).toBe(
+      '[-1180591620717411303424]\n'
+    );
     expect(safeDump(10n ** 400n)).toBe(`1${'0'.repeat(400)}\n`);
   });
 

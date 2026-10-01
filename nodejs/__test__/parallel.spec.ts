@@ -70,7 +70,9 @@ describe('parseParallel limits', () => {
   });
 
   it('enforces maxDocuments in async mode', async () => {
-    await expect(parseParallelAsync(docs(3), { maxDocuments: 2 })).rejects.toThrow(/document count exceeds 2/);
+    await expect(parseParallelAsync(docs(3), { maxDocuments: 2 })).rejects.toThrow(
+      /document count exceeds 2/
+    );
   });
 });
 
