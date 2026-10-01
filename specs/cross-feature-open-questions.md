@@ -20,4 +20,4 @@ Items that span several capabilities and are not owned by one spec. A feature sp
 | X-5 | Lint exit codes by failure class | CLI | A single syntax error exits 1, batch exits 2 ([[003-lint/spec]] D-1). | One code per class on every path. |
 | X-6 | Lint output formats in bindings | Python, Node.js | Structured diagnostics and text/json only ([[003-lint/spec]] D-16). | Expose github, sarif, parsable. |
 | X-7 | Per-rule `ignore` anchoring | CLI, Python, Node.js | CLI anchors at the declaring config's directory; bindings at the process working directory; yamllint matches the typed path relative to the working directory ([[003-lint/spec]] D-26). | Confirm the canonical-path semantics. |
-| X-8 | Lint speed on flow-heavy input | CLI, bindings | 10-35% slower wall time, 26-48% lower RSS after lazy excerpts and the positioned node index ([[003-lint/spec]] D-34). | Profile the per-token cost; no regression gate exists in CI. |
+| X-8 | Lint speed on flow-heavy input | CLI, bindings | Wall time is within noise of 5db14de on equal output after #600 ([[003-lint/spec]] D-34); the residual is RSS proportional to the diagnostic count. | No regression gate exists in CI. |

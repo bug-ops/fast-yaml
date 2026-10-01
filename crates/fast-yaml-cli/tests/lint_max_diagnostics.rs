@@ -116,7 +116,7 @@ fn an_omitted_error_stays_visible_as_an_error_in_every_format() {
     );
 
     let plain = lint(&["--max-diagnostics", "2"], &file);
-    assert!(String::from_utf8_lossy(&plain.stdout).contains("more diagnostics not shown"));
+    assert!(String::from_utf8_lossy(&plain.stdout).contains("output truncated: "));
 }
 
 #[test]
@@ -208,4 +208,31 @@ fn every_file_of_a_batch_is_capped_on_its_own() {
     assert_eq!(summaries, 2, "{found:?}");
     assert_eq!(found.len(), 6, "{found:?}");
     assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn the_text_footer_does_not_count_the_summary() {
+    let dir = TempDir::new().unwrap();
+    let file = write(dir.path(), "a.yaml", &noisy());
+    let output = lint(&["--max-diagnostics", "1"], &file);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(!text.contains("1 errors"), "{text}");
+}
+
+#[test]
+fn exactly_the_cap_and_one_more() {
+    let dir = TempDir::new().unwrap();
+    let file = write(dir.path(), "a.yaml", &noisy());
+    let total = json(&lint(&["--format", "json"], &file)).len();
+    let at = |cap: usize| {
+        json(&lint(
+            &["--format", "json", "--max-diagnostics", &cap.to_string()],
+            &file,
+        ))
+    };
+    assert_eq!(at(total).len(), total);
+    assert!(at(total).iter().all(|d| d["code"] != "diagnostic-limit"));
+    let past = at(total - 1);
+    assert_eq!(past.len(), total);
+    assert_eq!(past[total - 1]["code"], "diagnostic-limit");
 }

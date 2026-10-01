@@ -134,7 +134,7 @@ impl MaxDiagnostics {
     /// assert_eq!(found[1].severity, Severity::Error);
     /// assert_eq!(
     ///     found[1].message,
-    ///     "2 more diagnostics not shown (1 errors, 1 warnings); limit is 1 per file"
+    ///     "output truncated: 2 more diagnostics not shown (1 error, 1 warning); limit is 1 per file"
     /// );
     /// ```
     pub fn truncate(self, diagnostics: &mut Vec<Diagnostic>) {
@@ -146,7 +146,18 @@ impl MaxDiagnostics {
         let Some(first) = omitted.first() else {
             return;
         };
-        let count = |severity| omitted.iter().filter(|d| d.severity == severity).count();
+        let breakdown: Vec<String> = [
+            (Severity::Error, "error"),
+            (Severity::Warning, "warning"),
+            (Severity::Info, "info"),
+            (Severity::Hint, "hint"),
+        ]
+        .into_iter()
+        .filter_map(|(severity, noun)| {
+            let count = omitted.iter().filter(|d| d.severity == severity).count();
+            (count > 0).then(|| format!("{count} {noun}{}", if count == 1 { "" } else { "s" }))
+        })
+        .collect();
         let summary = DiagnosticBuilder::new(
             DiagnosticCode::DIAGNOSTIC_LIMIT,
             omitted
@@ -155,10 +166,10 @@ impl MaxDiagnostics {
                 .max()
                 .unwrap_or(first.severity),
             format!(
-                "{} more diagnostics not shown ({} errors, {} warnings); limit is {limit} per file",
+                "output truncated: {} more diagnostic{} not shown ({}); limit is {limit} per file",
                 omitted.len(),
-                count(Severity::Error),
-                count(Severity::Warning),
+                if omitted.len() == 1 { "" } else { "s" },
+                breakdown.join(", "),
             ),
             first.span,
         )
@@ -551,7 +562,43 @@ mod tests {
         assert_eq!(summary.excerpt, Excerpt::Omitted);
         assert_eq!(
             summary.message,
-            "3 more diagnostics not shown (0 errors, 3 warnings); limit is 2 per file"
+            "output truncated: 3 more diagnostics not shown (3 warnings); limit is 2 per file"
+        );
+    }
+
+    #[test]
+    fn truncate_at_the_boundary_and_one_past_it() {
+        let make = |n| {
+            (1..=n)
+                .map(|line| finding(Severity::Info, line))
+                .collect::<Vec<_>>()
+        };
+        let mut exact = make(3);
+        cap(3).truncate(&mut exact);
+        assert_eq!(exact, make(3));
+
+        let mut one_past = make(4);
+        cap(3).truncate(&mut one_past);
+        assert_eq!(one_past.len(), 4);
+        assert_eq!(
+            one_past[3].message,
+            "output truncated: 1 more diagnostic not shown (1 info); limit is 3 per file"
+        );
+    }
+
+    #[test]
+    fn the_summary_counts_every_severity() {
+        let mut found = vec![
+            finding(Severity::Warning, 1),
+            finding(Severity::Error, 2),
+            finding(Severity::Info, 3),
+            finding(Severity::Hint, 4),
+            finding(Severity::Hint, 5),
+        ];
+        cap(1).truncate(&mut found);
+        assert_eq!(
+            found[1].message,
+            "output truncated: 4 more diagnostics not shown (1 error, 1 info, 2 hints); limit is 1 per file"
         );
     }
 
