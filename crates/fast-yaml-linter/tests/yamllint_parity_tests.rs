@@ -151,6 +151,18 @@ fn truthy_reports_true_and_false_when_they_are_not_allowed() {
 }
 
 #[test]
+fn key_ordering_checks_the_first_key_of_sequence_items() {
+    assert_eq!(
+        lines(
+            "../linter/key_ordering_sequence_items.yaml",
+            "  key-ordering: enable\n",
+            DiagnosticCode::KEY_ORDERING
+        ),
+        [3, 5]
+    );
+}
+
+#[test]
 fn truthy_does_not_report_single_letters() {
     assert_eq!(
         lines(

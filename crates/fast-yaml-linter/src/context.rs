@@ -1345,9 +1345,13 @@ impl<'a> LintContext<'a> {
 
 /// Extracts the unquoted key preceding the first colon of a source line.
 ///
+/// Leading sequence markers (`- `) are skipped, so the first key of a `- b: 1` item is found.
 /// Quotes are stripped only when the key is a complete quoted scalar.
 pub fn line_key(line: &str) -> Option<&str> {
-    let trimmed = line.trim_start();
+    let mut trimmed = line.trim_start();
+    while let Some(rest) = trimmed.strip_prefix("- ") {
+        trimmed = rest.trim_start();
+    }
     let raw_key = trimmed.split_once(':')?.0.trim();
     let unquoted = ['"', '\'']
         .into_iter()
@@ -1497,6 +1501,13 @@ mod lint_context_tests {
         assert!(metadata[0].is_empty);
         assert!(metadata[1].is_empty);
         assert!(metadata[2].is_empty);
+    }
+
+    #[test]
+    fn test_line_key_skips_sequence_markers() {
+        assert_eq!(line_key("  - b: 1"), Some("b"));
+        assert_eq!(line_key("- - 'c': 1"), Some("c"));
+        assert_eq!(line_key("- item"), None);
     }
 
     #[test]

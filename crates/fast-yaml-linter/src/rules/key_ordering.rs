@@ -599,8 +599,10 @@ mod tests {
     fn test_key_ordering_sequence_item_keys() {
         let diagnostics =
             check_yaml("items:\n  - b: 1\n    a: 2\n  - b: 3\n    a: 4\nz: 1\ny: 2\n");
-        assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].message.contains("key 'y'"));
+        assert_eq!(diagnostics.len(), 3);
+        assert!(diagnostics[0].message.contains("key 'a'"));
+        assert!(diagnostics[1].message.contains("key 'a'"));
+        assert!(diagnostics[2].message.contains("key 'y'"));
     }
 
     #[test]
