@@ -5,10 +5,11 @@
 
 use std::ops::{ControlFlow, Range};
 
-use crate::error::{ParseResult, SourcePosition};
+use crate::error::ParseResult;
 use crate::events::{self, Event, EventItem, ScalarStyle};
 use crate::input::NormalizedInput;
 use crate::limits::MaxScanAhead;
+use crate::marker::{char_offset, line_starts};
 
 /// Returns `true` if `input` contains at least one YAML comment.
 ///
@@ -230,28 +231,6 @@ fn drive(
         }
     }
     Ok(())
-}
-
-/// Char offsets at which each line starts, splitting like saphyr (`\n`, `\r\n`, lone `\r`).
-fn line_starts(chars: &[char]) -> Vec<usize> {
-    let mut starts = vec![0];
-    for (i, &c) in chars.iter().enumerate() {
-        let ends_line = c == '\n' || (c == '\r' && chars.get(i + 1) != Some(&'\n'));
-        if ends_line {
-            starts.push(i + 1);
-        }
-    }
-    starts
-}
-
-/// Converts a line and column to a char offset; the parser's own index is unusable because it
-/// adds byte counts after non-ASCII directive names.
-fn char_offset(line_starts: &[usize], position: SourcePosition) -> usize {
-    line_starts
-        .get(position.line.wrapping_sub(1))
-        .map_or(usize::MAX, |start| {
-            start + position.column.saturating_sub(1)
-        })
 }
 
 fn byte_len(chars: &[char]) -> usize {
