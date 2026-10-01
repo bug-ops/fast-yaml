@@ -319,3 +319,69 @@ fn test_lint_batch_text_output_follows_file_order() {
         assert!(positions_in(&stdout, &paths).is_sorted(), "{stdout}");
     }
 }
+
+#[test]
+fn test_lint_stdin_files_accepts_crlf_lines() {
+    let temp = TempDir::new().unwrap();
+    let first = temp.path().join("a.yaml");
+    let second = temp.path().join("b.yaml");
+    fs::write(&first, "---\na: 1 \n").unwrap();
+    fs::write(&second, CLEAN).unwrap();
+
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin(format!(
+            "{}\r\n\r\n# note\r\n  {}  \r\n",
+            first.display(),
+            second.display()
+        ))
+        .assert()
+        .stdout(predicate::str::contains("a.yaml"))
+        .stdout(predicate::str::contains("trailing-whitespace"));
+}
+
+#[test]
+fn test_lint_stdin_files_line_limit_is_4096_bytes() {
+    let at_limit = "x".repeat(4096);
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin(format!("{at_limit}\n"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds 4096 bytes").not());
+
+    let over_limit = "x".repeat(4097);
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin(format!("{over_limit}\n"))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("exceeds 4096 bytes"));
+}
+
+#[test]
+fn test_lint_file_with_a_bom_reports_bom_free_positions() {
+    let temp = TempDir::new().unwrap();
+    let bom = temp.path().join("bom.yaml");
+    let plain = temp.path().join("plain.yaml");
+    fs::write(&bom, "\u{FEFF}---\na: 1   \n").unwrap();
+    fs::write(&plain, "---\na: 1   \n").unwrap();
+
+    let lint = |path: &std::path::Path| {
+        let output = fy()
+            .args(["lint", "--format", "json", path.to_str().unwrap()])
+            .output()
+            .unwrap();
+        let mut value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        for diagnostic in value.as_array_mut().unwrap() {
+            diagnostic.as_object_mut().unwrap().remove("file");
+        }
+        value
+    };
+    let expected = lint(&plain);
+    assert!(!expected.as_array().unwrap().is_empty());
+    assert_eq!(lint(&bom), expected);
+
+    fy().args(["lint", "--format", "json"])
+        .arg(&bom)
+        .arg(&plain)
+        .assert()
+        .stdout(predicate::str::contains("\"offset\": 8"));
+}

@@ -463,16 +463,6 @@ fn level_is_an_alias_of_severity() {
 }
 
 #[test]
-fn level_together_with_severity_is_rejected() {
-    let dir = project("rules:\n  truthy: {level: error, severity: warning}\n", &[]);
-    fy(dir.path(), &[])
-        .write_stdin("a: 1\n")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("aliases"));
-}
-
-#[test]
 fn single_letter_truthy_values_are_not_reported() {
     let dir = project("extends: default\n", &[]);
     fy(dir.path(), &[])

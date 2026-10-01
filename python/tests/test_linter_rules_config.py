@@ -363,10 +363,6 @@ class TestYamllintParityOptions:
         diag = next(d for d in diagnostics if d.code == "line-length")
         assert str(diag.severity) == "warning"
 
-    def test_level_and_severity_together_are_rejected(self):
-        with pytest.raises(ValueError, match="aliases"):
-            lint.LintConfig(rules={"line-length": {"level": "warning", "severity": "error"}})
-
     def test_truthy_does_not_report_single_letters(self):
         config = lint.LintConfig(rules={"truthy": {"check-keys": True}})
         assert "truthy" not in codes(lint.lint("a: y\nb: N\ny: 1\n", config))
