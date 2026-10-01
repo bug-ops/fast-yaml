@@ -9,7 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Core**: `LimitExceeded` gains `document`, `From<ScanError> for ParseError` is replaced by `ParseError::scanner(&ScanError, document)` and `document_index()` returns `usize` (#517) (#530) (#561)
+- **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
+- **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)
+- **Python**: `saphyr-parser` is no longer a dependency of the bindings (#542) (#562)
+- **Core**: `LimitExceeded` gains `document`, `From<ScanError> for ParseError` is removed and `document_index()` returns `usize` (#517) (#530) (#561) (#562)
 - **Core/Parallel**: error texts end with ` (document N)` from the second document on, and parallel `Error::Parse` displays `failed to parse YAML: ...` (#517) (#530)
 - **Parallel**: `Config::with_max_documents` and `Error::DocumentLimitExceeded` are added; the limit is checked while chunking (#435) (#530)
 - **Node.js**: `ParallelConfig.maxChunkSize` is removed, `maxDocuments` is enforced (default 100000), and `NapiResult` is dropped from the typings (#435) (#530)
@@ -25,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/CLI**: `Emitter::format_with_config` and `fy format` keep a BOM at the start of the input, so `fy format -i` and `--dry-run` no longer change BOM files (#333) (#561)
 - **Core**: `DecodeError::UnsupportedEncoding` becomes a struct variant `{ encoding, evidence }` (#525) (#561)
 - **CLI/Node.js**: distinct YAML keys that map to the same JSON key or JavaScript property are an error instead of keeping the last (#479) (#561)
-- **Core**: `MergeTarget::reject` becomes an `Error: From<MergeError>` bound; `NodeRole` and `MergeKeyValidator` are public, `MergeKeyTracker` stays crate-private (#493) (#561)
+- **Core**: `MergeTarget::reject` becomes an `Error: From<MergeError>` bound; `NodeRole` is public, `MergeKeyTracker` stays crate-private (#493) (#561) (#562)
 - **Core/Python/Node.js**: a scalar tagged `!!merge` is a merge key whatever its style or text, like in PyYAML (#491) (#561)
 - **Core**: `EmitterConfig.indent`/`width` are `Indent` (1..=9) and `Width` (20..=1000) newtypes, and `LimitRangeError` gains `min` (#382) (#561)
 - **CLI/Python/Node.js**: out-of-range `indent`/`width` fail instead of being clamped, and `--indent` accepts 1..=9 (#382) (#561)
@@ -90,12 +93,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Core**: new `events` module with `EventStream`, `Event`, `ScalarStyle`, `Tag` and `AnchorId`, and a root `ScalarStyle` re-export (#542) (#562)
+- **Core**: `MaxInputBytes` documents the flow-collection memory amplification of saphyr-parser (#553) (#562)
 - **CLI**: global `--max-input-size` flag (1 B to 1 GiB, suffixes `KiB`/`MiB`/`GiB`) capping every input file and stdin (#342) (#534)
 - **Core**: `#![forbid(unsafe_code)]` in `fast-yaml-core` (#342) (#534)
 - **Linter/CLI/Python/Node.js**: `document-end: {present: false}` flags `...` at column 0, and `quoted-strings` `extra-required`/`extra-allowed` take regular expressions (#538)
 - **Linter/CLI**: config `extends: default|relaxed` presets, `ignore` and `yaml-files` with yamllint semantics, and a yamllint rule-name hint in the unknown-rule error (#538)
 - **CLI/Linter**: `fy lint` reads a `max-input-bytes` config key (integer bytes, `.fast-yaml.yaml` only); the global input size flag is now `--max-input-bytes` (old name `--max-input-size` kept as an alias) and overrides the key, with a 100 MiB default (#508) (#537)
-- **Core**: `MergeKeyValidator`, `NodeRole` and `MaxDocuments` are public (#518) (#508) (#537) (#561)
+- **Core**: `NodeRole` and `MaxDocuments` are public (#518) (#508) (#537) (#561) (#562)
 - **Testing**: clippy bans `BufferedInput::new` and `Tag::is_yaml_core_schema`, and nextest terminates a test after 3 x 60 s so a hang fails CI (#418) (#561)
 - **CLI/Python/Node.js**: `fy format --max-depth`, `BatchConfig(max_depth=)` and `formatFiles({ maxDepth })` set the formatter depth limit (#427) (#561)
 - **Core**: `Float` remembers the source spelling of a JSON number so `fy convert yaml` keeps `1.0e+5` and `2.50` (#412) (#561)
@@ -109,6 +114,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Core**: faster `NormalizedInput` scan and no per-float allocation in `Float::parse` and `to_saphyr` (#558) (#562)
 - **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
 - **Node.js**: `safeLoad`/`safeLoadAll`/`load`/`loadAll`/`parseParallel` return env-bound values without a lifetime transmute, and napi coercions use safe `FromNapiValue::from_unknown` (#342) (#330) (#534)
 - **Parallel**: corrected the mmap `SAFETY` comment to state the real truncation/rewrite race (#342) (#534)
@@ -150,11 +156,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Parallel**: `parse_parallel` agrees with `parse_all` on a root block scalar followed by `---`, and parse errors report the document index (#552) (#562)
 - **Core**: a repeated mapping key keeps its first position with the last value for every key form, as Python `safe_load` does (#522) (#530)
 - **Core/Parallel**: scanner, limit and NUL errors in later documents report the real document index (#517) (#530)
 - **Python**: `safe_dump_to` splits output on char boundaries instead of raising `ValueError` on multi-byte characters (#527) (#530)
 - **Node.js**: `LintConfig.rules` type errors name their cause and a non-object `rules` is rejected (#435) (#530)
-- **Python**: `safe_load` validates `<<` with the core `MergeKeyValidator`, so merge errors carry line, column and document and agree with core and Node.js on the first invalid `<<` (#518) (#537)
+- **Python**: `safe_load` validates `<<` with the core merge validation, so merge errors carry line, column and document and agree with core and Node.js on the first invalid `<<` (#518) (#537)
 - **CLI**: `fy lint` prints an invalid `<<` or scanner error once, and single-file and stdin input is size-checked before it is fully read (#519) (#509) (#537)
 - **Core**: the emitter writes `!!set` tags in block and flow styles without a trailing space (#490) (#537)
 - **Core/Parallel/CLI**: `fy lint` batch checks file size before reading, and the document limit stops chunking at the limit instead of buffering every chunk (#509) (#529) (#537)
