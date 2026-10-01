@@ -274,3 +274,27 @@ def test_float_keys_read_the_same_in_every_message(doc):
 
     expected = detail(fast_yaml.safe_load)
     assert detail(parallel.parse_parallel).split(" (document")[0] == expected.split(" (document")[0]
+
+
+@pytest.mark.parametrize(
+    ("doc", "message"),
+    [
+        pytest.param("a: 1\n---\n1: x\ntrue: y\n", "bool key true", id="mapping-key"),
+        pytest.param("a: 1\n---\n!!set {1, true}\n", "bool key true", id="set-member"),
+        pytest.param("a: 1\n---\nm:\n  <<: 1\n", "merge key", id="merge-value"),
+        pytest.param(
+            "a: 1\n---\nb: &x {1: a}\nc:\n  <<: *x\n  true: b\n",
+            "through merge key",
+            id="merged-clash",
+        ),
+    ],
+)
+def test_errors_name_the_document(doc, message):
+    for load in (fast_yaml.safe_load, lambda text: list(fast_yaml.safe_load_all(text))):
+        with pytest.raises(ValueError, match=rf"{message}.* \(document 2\)$"):
+            load(doc)
+
+
+def test_first_document_error_has_no_document_suffix():
+    with pytest.raises(ValueError, match=r"at line 2, column 1$"):
+        fast_yaml.safe_load("1: a\ntrue: b\n")
