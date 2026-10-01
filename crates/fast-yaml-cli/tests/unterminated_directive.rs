@@ -1,14 +1,12 @@
 //! Regression tests for #403: input ending in an unterminated `%` directive must fail, not hang.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::time::Duration;
 
 fn assert_fails_without_hanging(args: &[&str]) {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .args(args)
         .write_stdin("%")
         .timeout(Duration::from_secs(10))
@@ -44,8 +42,7 @@ fn convert_rejects_unterminated_directive() {
 
 #[test]
 fn format_keeps_comment_after_non_ascii_directive() {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin("%FOO ééééé\n---\na: b # c\n")
         .timeout(Duration::from_secs(10))

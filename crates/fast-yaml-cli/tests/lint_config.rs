@@ -1,10 +1,8 @@
 //! End-to-end tests for typed rule configuration in `fy lint --config` (#324, #327).
 
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
-
 use std::path::{Path, PathBuf};
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -15,7 +13,7 @@ fn fixture(relative: &str) -> PathBuf {
 }
 
 fn lint(config: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.args(["lint", "--config"]).arg(config);
     cmd
 }
@@ -216,8 +214,7 @@ fn cli_rejects_invalid_numeric_overrides() {
         ["--indent-size", "0"],
         ["--indent-size", "17"],
     ] {
-        Command::cargo_bin("fy")
-            .unwrap()
+        cargo_bin_cmd!("fy")
             .arg("lint")
             .args(args)
             .write_stdin("a: 1\n")

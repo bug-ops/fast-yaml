@@ -2,7 +2,7 @@
 
 #![allow(clippy::missing_docs_in_private_items)]
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::fs;
 use tempfile::TempDir;
 
@@ -16,8 +16,7 @@ fn repo() -> TempDir {
 }
 
 fn fy(args: &[&str], dir: &TempDir) -> std::process::Output {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(args)
         .arg(dir.path())
         .output()

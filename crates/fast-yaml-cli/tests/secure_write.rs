@@ -1,12 +1,11 @@
 //! Secure atomic write tests for `fy format -i` / `-o` (single-file and batch paths).
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use std::fs;
 use tempfile::TempDir;
 
-#[allow(deprecated)]
 fn fy() -> Command {
-    Command::cargo_bin("fy").unwrap()
+    cargo_bin_cmd!("fy")
 }
 
 const UNFORMATTED: &str = "key:   value\n";

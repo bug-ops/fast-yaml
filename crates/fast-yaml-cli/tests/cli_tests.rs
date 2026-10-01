@@ -1,15 +1,13 @@
 //! Integration tests for the `fy` CLI tool.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use predicates::prelude::*;
 
 #[test]
 fn test_version() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--version")
         .assert()
         .success()
@@ -18,8 +16,7 @@ fn test_version() {
 
 #[test]
 fn test_help() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--help")
         .assert()
         .success()
@@ -28,8 +25,7 @@ fn test_help() {
 
 #[test]
 fn test_parse_stdin() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--quiet")
         .arg("parse")
         .write_stdin("name: test\nvalue: 123")
@@ -39,8 +35,7 @@ fn test_parse_stdin() {
 
 #[test]
 fn test_parse_invalid_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("invalid: [")
         .assert()
@@ -50,8 +45,7 @@ fn test_parse_invalid_yaml() {
 
 #[test]
 fn test_format_stdin() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin("name:   test\nvalue:    123")
         .assert()
@@ -61,8 +55,7 @@ fn test_format_stdin() {
 
 #[test]
 fn test_convert_yaml_to_json() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("name: test\nvalue: 123")
@@ -73,8 +66,7 @@ fn test_convert_yaml_to_json() {
 
 #[test]
 fn test_convert_json_big_integer_key_and_value() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("9223372036854775808: -99999999999999999999\n!!int 99999999999999999999: x")
@@ -88,8 +80,7 @@ fn test_convert_json_big_integer_key_and_value() {
 
 #[test]
 fn test_convert_json_big_integers_are_numbers() {
-    let out = Command::cargo_bin("fy")
-        .unwrap()
+    let out = cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(
@@ -111,8 +102,7 @@ fn test_convert_json_big_integers_are_numbers() {
 
 #[test]
 fn test_convert_yaml_big_integers_keep_digits() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin(
@@ -132,8 +122,7 @@ fn test_convert_yaml_big_integers_keep_digits() {
 #[test]
 fn test_convert_big_integers_json_yaml_json_round_trip() {
     let json = r#"{"a":9223372036854775808,"b":-99999999999999999999,"c":[18446744073709551616]}"#;
-    let yaml = Command::cargo_bin("fy")
-        .unwrap()
+    let yaml = cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin(json)
@@ -142,8 +131,7 @@ fn test_convert_big_integers_json_yaml_json_round_trip() {
         .get_output()
         .stdout
         .clone();
-    let back = Command::cargo_bin("fy")
-        .unwrap()
+    let back = cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(yaml)
@@ -159,8 +147,7 @@ fn test_convert_big_integers_json_yaml_json_round_trip() {
 
 #[test]
 fn test_convert_json_big_integer_key_is_canonical() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("+99999999999999999999: v\n")
@@ -171,8 +158,7 @@ fn test_convert_json_big_integer_key_is_canonical() {
 
 #[test]
 fn test_convert_json_equivalent_big_integer_keys_collapse_last_wins() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("? 99999999999999999999\n: first\n? +99999999999999999999\n: second\n")
@@ -186,8 +172,7 @@ fn test_convert_json_equivalent_big_integer_keys_collapse_last_wins() {
 
 #[test]
 fn test_convert_yaml_json_negative_zero_is_integer_zero() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin(r#"{"z":-0}"#)
@@ -198,8 +183,7 @@ fn test_convert_yaml_json_negative_zero_is_integer_zero() {
 
 #[test]
 fn test_convert_json_to_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin(r#"{"name": "test", "value": 123}"#)
@@ -210,8 +194,7 @@ fn test_convert_json_to_yaml() {
 
 #[test]
 fn test_default_format_passthrough() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .write_stdin("test: value")
         .assert()
         .success()
@@ -220,8 +203,7 @@ fn test_default_format_passthrough() {
 
 #[test]
 fn test_no_color_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--no-color")
         .arg("--quiet")
         .arg("parse")
@@ -232,8 +214,7 @@ fn test_no_color_flag() {
 
 #[test]
 fn test_quiet_mode() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--quiet")
         .arg("parse")
         .write_stdin("test: value")
@@ -244,8 +225,7 @@ fn test_quiet_mode() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_valid_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--quiet")
         .arg("lint")
         .write_stdin("name: test\nvalue: 123\n")
@@ -257,8 +237,7 @@ fn test_lint_valid_yaml() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_with_warnings() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--max-line-length")
         .arg("80")
@@ -271,8 +250,7 @@ fn test_lint_with_warnings() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_invalid_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin("invalid: [unclosed")
         .assert()
@@ -284,8 +262,7 @@ fn test_lint_invalid_yaml() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_non_ascii_before_block_scalar_no_panic() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin(include_str!(
             "../../fast-yaml-linter/tests/fixtures/edge_cases/non_ascii_block_scalar_braces.yaml"
@@ -298,8 +275,7 @@ fn test_lint_non_ascii_before_block_scalar_no_panic() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_json_format() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--format")
         .arg("json")
@@ -313,8 +289,7 @@ fn test_lint_json_format() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_duplicate_keys_reported_by_default() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin("key: value1\nkey: value2\n")
         .assert()
@@ -326,8 +301,7 @@ fn test_lint_duplicate_keys_reported_by_default() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_duplicate_keys_allowed_with_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--allow-duplicate-keys")
         .write_stdin("key: value1\nkey: value2\n")
@@ -339,8 +313,7 @@ fn test_lint_duplicate_keys_allowed_with_flag() {
 #[cfg(unix)]
 #[test]
 fn test_format_output_dev_stdout() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("-o")
         .arg("/dev/stdout")
@@ -352,8 +325,7 @@ fn test_format_output_dev_stdout() {
 
 #[test]
 fn test_format_output_dash() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("-o")
         .arg("-")
@@ -365,8 +337,7 @@ fn test_format_output_dash() {
 
 #[test]
 fn test_convert_output_dash() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .arg("-o")
@@ -380,8 +351,7 @@ fn test_convert_output_dash() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_verbose_mode() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--verbose")
         .arg("lint")
         .write_stdin("name: test\n")
@@ -394,8 +364,7 @@ const BOM_YAML: &str = "\u{FEFF}# c\na: 1\n";
 
 #[test]
 fn test_bom_parse_stdin() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin(BOM_YAML)
         .assert()
@@ -405,8 +374,7 @@ fn test_bom_parse_stdin() {
 
 #[test]
 fn test_bom_format_keeps_bom() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin("\u{FEFF}a: 1\n")
         .assert()
@@ -419,15 +387,13 @@ fn test_bom_file_is_unchanged_by_format_check() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("bom.yaml");
     std::fs::write(&file, "\u{FEFF}a: 1\nb:\n  - x\n").unwrap();
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["format", "--dry-run"])
         .arg(&file)
         .assert()
         .success()
         .code(0);
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["format", "-i"])
         .arg(&file)
         .assert()
@@ -440,8 +406,7 @@ fn test_bom_file_is_unchanged_by_format_check() {
 
 #[test]
 fn test_bom_lint_stdin_reports_bom_free_offsets() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--format")
         .arg("json")
@@ -455,8 +420,7 @@ fn test_bom_lint_stdin_reports_bom_free_offsets() {
 
 #[test]
 fn test_bom_only_convert_json_yields_null() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("\u{FEFF}")
@@ -467,8 +431,7 @@ fn test_bom_only_convert_json_yields_null() {
 
 #[test]
 fn test_double_bom_strips_only_one() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("\u{FEFF}\u{FEFF}a: 1\n")
@@ -481,8 +444,7 @@ fn test_double_bom_strips_only_one() {
 fn test_bom_lint_directory() {
     let dir = tempfile::TempDir::new().unwrap();
     std::fs::write(dir.path().join("bom.yaml"), "\u{FEFF}# c\na: 1\n").unwrap();
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg(dir.path())
         .assert()
@@ -492,8 +454,7 @@ fn test_bom_lint_directory() {
 
 #[test]
 fn test_bom_convert_yaml_to_json_key_has_no_bom() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("\u{FEFF}a: 1\n")
@@ -505,8 +466,7 @@ fn test_bom_convert_yaml_to_json_key_has_no_bom() {
 
 #[test]
 fn test_bom_convert_json_to_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin("\u{FEFF}{\"a\": 1}")
@@ -516,8 +476,7 @@ fn test_bom_convert_json_to_yaml() {
 }
 
 fn fy_stdout(args: &[&str], stdin: &str) -> String {
-    let out = Command::cargo_bin("fy")
-        .unwrap()
+    let out = cargo_bin_cmd!("fy")
         .args(args)
         .write_stdin(stdin.to_owned())
         .assert()
@@ -601,8 +560,7 @@ fn test_format_null_values_emit_null_and_lint_clean() {
 }
 
 fn convert_json_stdin(input: &str) -> String {
-    let out = Command::cargo_bin("fy")
-        .unwrap()
+    let out = cargo_bin_cmd!("fy")
         .args(["convert", "json"])
         .write_stdin(input.to_owned())
         .assert()
@@ -669,8 +627,7 @@ fn test_format_block_scalar_under_alias_key_roundtrips() {
 #[test]
 fn test_format_indent_4_alias_key_in_nested_mapping() {
     let input = "&k a: 1\nx:\n  y:\n    *k : \"p\\nq\"\n    z: 2\n";
-    let once = Command::cargo_bin("fy")
-        .unwrap()
+    let once = cargo_bin_cmd!("fy")
         .args(["format", "--indent", "4"])
         .write_stdin(input.to_owned())
         .assert()
@@ -705,8 +662,7 @@ fn test_format_in_place_depth_limit_leaves_file_untouched() {
     let input = nested_maps(257);
     std::fs::write(&file, &input).unwrap();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["format", "-i", file.to_str().unwrap()])
         .assert()
         .failure()
@@ -716,8 +672,7 @@ fn test_format_in_place_depth_limit_leaves_file_untouched() {
 
 #[test]
 fn test_format_stdin_depth_limit_is_an_error() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin(nested_maps(257))
         .assert()
@@ -747,8 +702,7 @@ fn test_format_anchor_limit_is_an_error() {
         writeln!(input, "- &a{i} v").unwrap();
     }
     input.push_str("- *a4097\n");
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin(input)
         .assert()
@@ -786,8 +740,7 @@ fn test_lint_missing_path_with_clean_file_fails() {
     let clean = dir.path().join("clean.yaml");
     std::fs::write(&clean, "key: value\n").unwrap();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .arg(&missing)
         .arg(&clean)
@@ -802,8 +755,7 @@ fn test_lint_zero_match_glob_fails() {
     let dir = tempfile::tempdir().unwrap();
     let pattern = dir.path().join("*.nomatch");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .arg(&pattern)
         .assert()
@@ -814,8 +766,7 @@ fn test_lint_zero_match_glob_fails() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_batch_flags_without_input_fail() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .arg("-j2")
         .assert()
@@ -831,8 +782,7 @@ fn test_lint_directory_succeeds() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("clean.yaml"), "key: value\n").unwrap();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .arg(dir.path())
         .assert()
@@ -848,8 +798,7 @@ fn test_lint_rejects_unknown_rule_in_config() {
     std::fs::write(&config, "rules:\n  no-such-rule:\n    enabled: true\n").unwrap();
     std::fs::write(&file, "key: value\n").unwrap();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--config"])
         .arg(&config)
         .arg(&file)
@@ -861,8 +810,7 @@ fn test_lint_rejects_unknown_rule_in_config() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_directive_suppresses_duplicate_key() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .write_stdin("key: value1\nkey: value2  # fy: disable-line duplicate-key\n")
         .assert()
@@ -881,14 +829,12 @@ fn test_lint_directive_in_file_and_batch_dir() {
     )
     .unwrap();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .arg(&file)
         .assert()
         .success();
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config"])
         .arg(dir.path())
         .assert()
@@ -902,8 +848,7 @@ fn test_lint_directive_severity_from_config_file() {
     let config = dir.path().join("fy.yaml");
     std::fs::write(&config, "rules:\n  lint-directive:\n    severity: error\n").unwrap();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--config")
         .arg(&config)
@@ -916,8 +861,7 @@ fn test_lint_directive_severity_from_config_file() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_directive_unknown_rule_reported_in_json() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["lint", "--no-config", "--format", "json"])
         .write_stdin("# fy: disable no-such-rule\nk: 1\n")
         .assert()

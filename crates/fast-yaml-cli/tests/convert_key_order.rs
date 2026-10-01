@@ -2,11 +2,10 @@
 
 #![allow(clippy::missing_docs_in_private_items)]
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 
 fn convert(to: &str, input: &str) -> String {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .args(["convert", to])
         .write_stdin(input)
         .output()

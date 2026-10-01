@@ -1,9 +1,8 @@
 //! End-to-end tests for the `--max-depth` and `--max-alias-bytes` flags.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,12 +17,7 @@ fn write_fixture(dir: &TempDir, name: &str, content: &str) -> PathBuf {
 }
 
 fn run(args: &[&str], path: &Path) -> (Option<i32>, String) {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
-        .args(args)
-        .arg(path)
-        .output()
-        .unwrap();
+    let output = cargo_bin_cmd!("fy").args(args).arg(path).output().unwrap();
     (
         output.status.code(),
         String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -114,8 +108,7 @@ fn lint_batch_failure_hints_at_flag() {
     write_fixture(&dir, "a.yaml", SMALL_ALIAS_YAML);
     write_fixture(&dir, "b.yaml", "k: v\n");
     write_fixture(&dir, "c.yaml", "[[[1]]]\n");
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .args(["lint", "--max-alias-bytes", "256", "--max-depth", "2"])
         .arg(dir.path())
         .output()
@@ -198,8 +191,7 @@ fn boundary_limit_values_are_accepted() {
 
 #[test]
 fn convert_to_yaml_ignores_parse_limits() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["convert", "yaml", "--max-depth", "1"])
         .write_stdin("{\"a\": {\"b\": {\"c\": 1}}}")
         .assert()
@@ -208,13 +200,11 @@ fn convert_to_yaml_ignores_parse_limits() {
 
 #[test]
 fn format_accepts_max_depth_but_not_alias_limits() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["format", "--max-alias-bytes", "256"])
         .assert()
         .code(2);
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["format", "--help"])
         .assert()
         .success()
@@ -224,8 +214,7 @@ fn format_accepts_max_depth_but_not_alias_limits() {
 #[test]
 fn limit_flags_are_documented_in_help() {
     for sub in ["parse", "convert", "lint"] {
-        Command::cargo_bin("fy")
-            .unwrap()
+        cargo_bin_cmd!("fy")
             .args([sub, "--help"])
             .assert()
             .success()

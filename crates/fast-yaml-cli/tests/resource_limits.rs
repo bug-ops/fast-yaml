@@ -2,9 +2,8 @@
 //! (non-zero exit, no signal) instead of overflowing the stack or exhausting memory.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::fmt::Write as _;
 use std::fs;
 use tempfile::TempDir;
@@ -65,12 +64,7 @@ fn write_fixture(dir: &TempDir, name: &str, content: &str) -> std::path::PathBuf
 }
 
 fn assert_limit_failure(args: &[&str], path: &std::path::Path) {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
-        .args(args)
-        .arg(path)
-        .output()
-        .unwrap();
+    let output = cargo_bin_cmd!("fy").args(args).arg(path).output().unwrap();
     let code = output.status.code();
     assert!(code.is_some(), "terminated by signal: {:?}", output.status);
     assert_ne!(code, Some(0));
@@ -127,8 +121,7 @@ fn convert_json_rejects_deep_and_bomb_inputs() {
 fn format_streams_the_bomb_without_expanding_aliases() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "bomb.yaml", &bomb_yaml());
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg(&path)
         .assert()
@@ -139,8 +132,7 @@ fn format_streams_the_bomb_without_expanding_aliases() {
 fn format_rejects_tag_prefix_amplification() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "tagprefix.yaml", &tag_prefix_yaml());
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .arg("format")
         .arg(&path)
         .output()
@@ -156,8 +148,7 @@ fn legitimate_tag_directive_passes_every_subcommand() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "legit.yaml", LEGIT_TAG_YAML);
     for args in [&["parse"][..], &["lint"], &["format"], &["convert", "json"]] {
-        Command::cargo_bin("fy")
-            .unwrap()
+        cargo_bin_cmd!("fy")
             .args(args)
             .arg(&path)
             .assert()

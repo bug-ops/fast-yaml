@@ -3,9 +3,8 @@
 //! Tests cover all commands, options, flags, and error conditions.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use indoc::indoc;
 use predicates::prelude::*;
 use std::fs;
@@ -32,8 +31,7 @@ fn create_temp_json(content: &str) -> NamedTempFile {
 
 #[test]
 fn test_parse_valid_yaml_stdin() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("name: test\nvalue: 123")
         .assert()
@@ -46,8 +44,7 @@ fn test_parse_valid_yaml_stdin() {
 fn test_parse_valid_yaml_file() {
     let file = create_temp_yaml("name: test\nvalue: 123");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg(file.path())
         .assert()
@@ -58,8 +55,7 @@ fn test_parse_valid_yaml_file() {
 
 #[test]
 fn test_parse_with_stats_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--stats")
         .write_stdin("name: test\nvalue: 123\nnested:\n  key: value")
@@ -73,8 +69,7 @@ fn test_parse_with_stats_flag() {
 
 #[test]
 fn test_parse_quiet_mode() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--quiet")
         .arg("parse")
         .write_stdin("name: test")
@@ -86,8 +81,7 @@ fn test_parse_quiet_mode() {
 
 #[test]
 fn test_parse_invalid_yaml_syntax() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("invalid: [unclosed")
         .assert()
@@ -98,8 +92,7 @@ fn test_parse_invalid_yaml_syntax() {
 
 #[test]
 fn test_parse_empty_document() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("")
         .assert()
@@ -110,8 +103,7 @@ fn test_parse_empty_document() {
 
 #[test]
 fn test_parse_null_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("~")
         .assert()
@@ -122,8 +114,7 @@ fn test_parse_null_yaml() {
 
 #[test]
 fn test_parse_comment_only_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("# just a comment\n")
         .assert()
@@ -149,8 +140,7 @@ fn test_parse_complex_nested_yaml() {
               port: 5432
     "};
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--stats")
         .write_stdin(yaml)
@@ -166,8 +156,7 @@ fn test_parse_complex_nested_yaml() {
 
 #[test]
 fn test_format_stdin_to_stdout() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin("name:   test\nvalue:    123")
         .assert()
@@ -181,8 +170,7 @@ fn test_format_stdin_to_stdout() {
 fn test_format_file_to_stdout() {
     let file = create_temp_yaml("name:   test\nvalue:    123");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg(file.path())
         .assert()
@@ -195,8 +183,7 @@ fn test_format_file_to_stdout() {
 fn test_format_with_custom_indent() {
     let yaml = "parent:\n  child: value";
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("--indent")
         .arg("4")
@@ -208,8 +195,7 @@ fn test_format_with_custom_indent() {
 
 #[test]
 fn test_format_with_custom_width() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("--width")
         .arg("120")
@@ -224,8 +210,7 @@ fn test_format_in_place_flag() {
     let file = create_temp_yaml("name:   test\nvalue:    123");
     let path = file.path().to_path_buf();
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("-i")
         .arg(&path)
@@ -244,8 +229,7 @@ fn test_format_to_output_file() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path().join("output.yaml");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("--output")
         .arg(&output_path)
@@ -262,8 +246,7 @@ fn test_format_to_output_file() {
 
 #[test]
 fn test_format_invalid_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .write_stdin("invalid: [")
         .assert()
@@ -277,8 +260,7 @@ fn test_format_invalid_yaml() {
 
 #[test]
 fn test_convert_yaml_to_json() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("name: test\nvalue: 123")
@@ -307,8 +289,7 @@ fn test_convert_yaml_to_json_scalar_resolution_edges() {
         "i: &x !!float \"2.5\"\n",
         "j: *x\n",
     );
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(input)
@@ -340,8 +321,7 @@ fn test_convert_yaml_to_json_radix_big_integers() {
         "plus: +0099999999999999999999\n",
         "0xFFFFFFFFFFFFFFFFFF: key\n",
     );
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(input)
@@ -360,8 +340,7 @@ fn test_convert_yaml_to_json_radix_big_integers() {
 
 #[test]
 fn test_convert_yaml_to_json_negative_octal_i64_min() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("w: -0o1000000000000000000000\n")
@@ -373,8 +352,7 @@ fn test_convert_yaml_to_json_negative_octal_i64_min() {
 #[test]
 fn test_convert_yaml_to_json_hex_beyond_bit_cap_is_string() {
     let literal = format!("0x1{}", "0".repeat(3571));
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(format!("v: {literal}\n"))
@@ -385,8 +363,7 @@ fn test_convert_yaml_to_json_hex_beyond_bit_cap_is_string() {
 
 #[test]
 fn test_convert_yaml_to_json_tagged_multi_document() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("--- !!int \"1\"\n--- !!bool \"false\"\n")
@@ -397,8 +374,7 @@ fn test_convert_yaml_to_json_tagged_multi_document() {
 
 #[test]
 fn test_convert_json_to_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin(r#"{"name": "test", "value": 123}"#)
@@ -413,8 +389,7 @@ fn test_convert_json_to_yaml() {
 fn test_convert_yaml_to_json_file_input() {
     let file = create_temp_yaml("name: test\nvalue: 123");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .arg(file.path())
@@ -428,8 +403,7 @@ fn test_convert_yaml_to_json_file_input() {
 fn test_convert_json_to_yaml_file_input() {
     let file = create_temp_json(r#"{"name": "test", "value": 123}"#);
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .arg(file.path())
@@ -441,8 +415,7 @@ fn test_convert_json_to_yaml_file_input() {
 
 #[test]
 fn test_convert_with_pretty_flag_true() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .arg("--pretty")
@@ -455,8 +428,7 @@ fn test_convert_with_pretty_flag_true() {
 
 #[test]
 fn test_convert_with_pretty_flag_false() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .arg("--pretty=false")
@@ -478,8 +450,7 @@ fn test_convert_complex_yaml_to_json() {
           - monitoring
     "};
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(yaml)
@@ -492,8 +463,7 @@ fn test_convert_complex_yaml_to_json() {
 
 #[test]
 fn test_convert_invalid_yaml_to_json() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("invalid: [")
@@ -504,8 +474,7 @@ fn test_convert_invalid_yaml_to_json() {
 
 #[test]
 fn test_convert_invalid_json_to_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin("{invalid json}")
@@ -519,8 +488,7 @@ fn test_convert_with_output_file() {
     let temp_dir = TempDir::new().unwrap();
     let output_path = temp_dir.path().join("output.json");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .arg("--output")
@@ -542,8 +510,7 @@ fn test_convert_with_output_file() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_valid_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin("name: test\nvalue: 123\n")
         .assert()
@@ -557,8 +524,7 @@ fn test_lint_with_warnings() {
     let long_line = "name: this is a very very very very very very very very very very very very very very very very very very very very long line";
 
     // line-length rule emits info-severity diagnostics.
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--max-line-length")
         .arg("80")
@@ -572,8 +538,7 @@ fn test_lint_with_warnings() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_invalid_yaml() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin("invalid: [unclosed")
         .assert()
@@ -584,8 +549,7 @@ fn test_lint_invalid_yaml() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_with_max_line_length_option() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--max-line-length")
         .arg("120")
@@ -598,8 +562,7 @@ fn test_lint_with_max_line_length_option() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_with_indent_size_option() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--indent-size")
         .arg("4")
@@ -613,8 +576,7 @@ fn test_lint_with_indent_size_option() {
 #[cfg(feature = "linter")]
 fn test_lint_text_format() {
     // Clean YAML produces no diagnostics — stdout must be empty.
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--format")
         .arg("text")
@@ -628,8 +590,7 @@ fn test_lint_text_format() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_json_format() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--format")
         .arg("json")
@@ -643,8 +604,7 @@ fn test_lint_json_format() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_quiet_mode() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--quiet")
         .arg("lint")
         .write_stdin("name: test\n")
@@ -656,8 +616,7 @@ fn test_lint_quiet_mode() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_verbose_mode() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--verbose")
         .arg("lint")
         .write_stdin("name: test\n")
@@ -672,8 +631,7 @@ fn test_lint_verbose_mode() {
 fn test_lint_file_input() {
     let file = create_temp_yaml("name: test\nvalue: 123\n");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg(file.path())
         .assert()
@@ -685,8 +643,7 @@ fn test_lint_file_input() {
 #[cfg(feature = "linter")]
 fn test_lint_trailing_whitespace() {
     // trailing-whitespace rule emits hint-severity diagnostics.
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin("name: test   \nvalue: 123\n")
         .assert()
@@ -701,8 +658,7 @@ fn test_lint_trailing_whitespace() {
 
 #[test]
 fn test_default_command_formats() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .write_stdin("name:   test\nvalue:    123")
         .assert()
         .success()
@@ -730,8 +686,7 @@ fn test_default_command_formats() {
 
 #[test]
 fn test_no_color_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--no-color")
         .arg("parse")
         .write_stdin("name: test")
@@ -741,8 +696,7 @@ fn test_no_color_flag() {
 
 #[test]
 fn test_quiet_flag_suppresses_output() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--quiet")
         .arg("parse")
         .write_stdin("name: test")
@@ -753,8 +707,7 @@ fn test_quiet_flag_suppresses_output() {
 
 #[test]
 fn test_verbose_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--verbose")
         .arg("parse")
         .write_stdin("name: test")
@@ -764,8 +717,7 @@ fn test_verbose_flag() {
 
 #[test]
 fn test_version_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--version")
         .assert()
         .success()
@@ -774,8 +726,7 @@ fn test_version_flag() {
 
 #[test]
 fn test_help_flag() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("--help")
         .assert()
         .success()
@@ -785,8 +736,7 @@ fn test_help_flag() {
 
 #[test]
 fn test_parse_help() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--help")
         .assert()
@@ -796,8 +746,7 @@ fn test_parse_help() {
 
 #[test]
 fn test_format_help() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("--help")
         .assert()
@@ -807,8 +756,7 @@ fn test_format_help() {
 
 #[test]
 fn test_convert_help() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("--help")
         .assert()
@@ -819,8 +767,7 @@ fn test_convert_help() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_help() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg("--help")
         .assert()
@@ -834,8 +781,7 @@ fn test_lint_help() {
 
 #[test]
 fn test_file_not_found() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("/nonexistent/file.yaml")
         .assert()
@@ -846,8 +792,7 @@ fn test_file_not_found() {
 
 #[test]
 fn test_invalid_argument() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--invalid-flag")
         .write_stdin("name: test")
@@ -857,8 +802,7 @@ fn test_invalid_argument() {
 
 #[test]
 fn test_in_place_without_file() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("-i")
         .write_stdin("name: test")
@@ -869,8 +813,7 @@ fn test_in_place_without_file() {
 
 #[test]
 fn test_parse_error_exit_code() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .write_stdin("invalid: [")
         .assert()
@@ -881,8 +824,7 @@ fn test_parse_error_exit_code() {
 #[test]
 #[cfg(feature = "linter")]
 fn test_lint_error_exit_code() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .write_stdin("invalid: [")
         .assert()
@@ -898,8 +840,7 @@ fn test_lint_error_exit_code() {
 fn test_unicode_content() {
     let yaml = "name: тест\nvalue: 日本語\nemoji: 🚀";
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--quiet")
         .write_stdin(yaml)
@@ -919,8 +860,7 @@ fn test_multiline_strings() {
           string.
     "};
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--quiet")
         .write_stdin(yaml)
@@ -932,8 +872,7 @@ fn test_multiline_strings() {
 fn test_large_numbers() {
     let yaml = "big_int: 9223372036854775807\nfloat: 3.14159265358979323846";
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--quiet")
         .write_stdin(yaml)
@@ -951,8 +890,7 @@ fn test_special_yaml_values() {
         number_string: "123"
     "#};
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--quiet")
         .write_stdin(yaml)
@@ -970,8 +908,7 @@ fn test_empty_collections() {
           array: []
     "};
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--quiet")
         .write_stdin(yaml)
@@ -989,8 +926,7 @@ fn test_convert_preserves_types() {
         null_value: null
     "#};
 
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(yaml)
@@ -1011,8 +947,7 @@ fn test_roundtrip_yaml_json_yaml() {
     let original_yaml = "name: test\nvalue: 123\n";
 
     // Convert to JSON
-    let json_output = Command::cargo_bin("fy")
-        .unwrap()
+    let json_output = cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(original_yaml)
@@ -1023,8 +958,7 @@ fn test_roundtrip_yaml_json_yaml() {
         .clone();
 
     // Convert back to YAML
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("yaml")
         .write_stdin(String::from_utf8(json_output).unwrap())
@@ -1039,8 +973,7 @@ fn test_convert_yaml_non_string_keys_to_json() {
     // YAML maps with null, boolean, and integer keys should convert to JSON
     // with those keys coerced to their string representations.
     let yaml = "null: null_val\ntrue: bool_val\n42: int_val\n";
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin(yaml)
@@ -1066,8 +999,7 @@ fn test_parse_file_after_subcommand() {
     let file = create_temp_yaml("name: test\nvalue: 123");
 
     // New syntax: fy parse file.yaml
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg(file.path())
         .assert()
@@ -1097,8 +1029,7 @@ fn test_parse_file_after_subcommand() {
 fn test_format_file_after_subcommand() {
     let file = create_temp_yaml("name:   test\nvalue:    123");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg(file.path())
         .assert()
@@ -1111,8 +1042,7 @@ fn test_format_file_after_subcommand() {
 fn test_convert_file_after_subcommand() {
     let file = create_temp_yaml("name: test\nvalue: 123");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .arg(file.path())
@@ -1127,8 +1057,7 @@ fn test_convert_file_after_subcommand() {
 fn test_lint_file_after_subcommand() {
     let file = create_temp_yaml("name: test\nvalue: 123\n");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("lint")
         .arg(file.path())
         .assert()
@@ -1140,8 +1069,7 @@ fn test_lint_file_after_subcommand() {
 fn test_format_file_with_flags_after_subcommand() {
     let file = create_temp_yaml("parent:\n  child: value");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("format")
         .arg("--indent")
         .arg("4")
@@ -1155,8 +1083,7 @@ fn test_format_file_with_flags_after_subcommand() {
 fn test_parse_file_with_stats_after_subcommand() {
     let file = create_temp_yaml("name: test\nvalue: 123");
 
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .arg("parse")
         .arg("--stats")
         .arg(file.path())
@@ -1168,8 +1095,7 @@ fn test_parse_file_with_stats_after_subcommand() {
 
 #[test]
 fn test_convert_json_rejects_distinct_keys_with_the_same_json_key() {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(["convert", "json"])
         .write_stdin("1: a\n1.0: b\n")
         .assert()
@@ -1197,8 +1123,7 @@ fn test_rejected_character_reports_its_document_on_every_command() {
                 Some("(document 2)"),
             ),
         ] {
-            let assert = Command::cargo_bin("fy")
-                .unwrap()
+            let assert = cargo_bin_cmd!("fy")
                 .args(args)
                 .write_stdin(input)
                 .assert()
@@ -1223,8 +1148,7 @@ fn test_non_printable_characters_are_rejected_by_every_command() {
         (&["lint"][..], "a: \"x\u{86}\"\n"),
         (&["convert", "json"][..], "a: 1\u{FFFF}\n"),
     ] {
-        Command::cargo_bin("fy")
-            .unwrap()
+        cargo_bin_cmd!("fy")
             .args(args)
             .write_stdin(input)
             .assert()

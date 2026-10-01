@@ -1,9 +1,8 @@
 //! End-to-end tests for the `github`, `parsable` and `sarif` lint report formats (#314).
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +12,7 @@ const DUPLICATE: &str = "key: 1\nkey: 2\n";
 const BROKEN: &str = "a: [\n";
 
 fn fy() -> Command {
-    Command::cargo_bin("fy").unwrap()
+    cargo_bin_cmd!("fy")
 }
 
 struct Run {

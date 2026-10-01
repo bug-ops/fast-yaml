@@ -1,9 +1,8 @@
 //! Regression tests for #334: UTF-16/UTF-32 input fails with an encoding-specific message.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use std::time::Duration;
 
 const BOMS: [(&[u8], &str); 4] = [
@@ -29,7 +28,7 @@ const NO_BOM: [(&[u8], &str); 4] = [
 const SUBCOMMANDS: [&[&str]; 4] = [&["parse"], &["lint"], &["format"], &["convert", "json"]];
 
 fn fy() -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.timeout(Duration::from_secs(10));
     cmd
 }

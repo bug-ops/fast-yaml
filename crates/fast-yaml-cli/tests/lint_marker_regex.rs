@@ -1,11 +1,9 @@
 //! End-to-end tests for `document-end: {present: false}` (#419) and regex `quoted-strings`
 //! patterns (#421) in `fy lint --config`.
 
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
-
 use std::path::PathBuf;
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -16,7 +14,7 @@ fn config_in(dir: &TempDir, content: &str) -> PathBuf {
 }
 
 fn lint(dir: &TempDir, config: &str) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.args(["lint", "--config"]).arg(config_in(dir, config));
     cmd
 }

@@ -2,9 +2,8 @@
 //! single-file lint error message (#509, #519, #508).
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
@@ -13,7 +12,7 @@ use tempfile::TempDir;
 const TWENTY_BYTES: &str = "key: 0123456789abc\n";
 
 fn fy() -> Command {
-    Command::cargo_bin("fy").unwrap()
+    cargo_bin_cmd!("fy")
 }
 
 fn run(args: &[&str], path: &Path) -> (Option<i32>, String) {

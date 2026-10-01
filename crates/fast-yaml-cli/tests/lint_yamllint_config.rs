@@ -1,12 +1,10 @@
 //! End-to-end tests for yamllint-style config keys in `fy lint`: `extends`, `ignore`,
 //! `yaml-files` and the rule-name hint (#420).
 
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
-
 use std::fs;
 use std::path::Path;
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -30,7 +28,7 @@ fn project(config: &str, files: &[&str]) -> TempDir {
 }
 
 fn fy(cwd: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.current_dir(cwd).arg("lint").args(args);
     cmd
 }
