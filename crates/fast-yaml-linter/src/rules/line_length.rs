@@ -101,7 +101,9 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
                 seen_mapping = true;
                 roles.start_mapping(line, range);
             }
-            Event::SequenceStart(..) => roles.start_sequence(line, range),
+            Event::SequenceStart(..) => {
+                roles.start_sequence(line, range);
+            }
             Event::MappingEnd | Event::SequenceEnd => roles.leave(),
             Event::Alias(..) => {
                 roles.node();

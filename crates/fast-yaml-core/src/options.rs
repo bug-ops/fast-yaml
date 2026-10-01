@@ -64,16 +64,45 @@ pub enum DuplicateMergeKeys {
     LastWins,
 }
 
+/// How a `!!set` member that carries a value is treated.
+///
+/// The loader drops such values either way; the policy decides whether the file is rejected.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{LoadOptions, ParseError, Parser, SetValues};
+/// use fast_yaml_core::limits::ParseLimits;
+///
+/// let yaml = "!!set {a: 1}\n";
+/// let err = Parser::parse_all(yaml).unwrap_err();
+/// assert!(matches!(err, ParseError::SetValue { line: 1, .. }));
+///
+/// let lenient = LoadOptions::new().with_set_values(SetValues::Ignore);
+/// assert!(Parser::parse_all_with_options(yaml, &ParseLimits::default(), lenient).is_ok());
+/// ```
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum SetValues {
+    /// A member with a value is a [`ParseError::SetValue`](crate::ParseError::SetValue).
+    #[default]
+    Reject,
+    /// The value is ignored, so a linter can report it as a diagnostic instead of failing the
+    /// whole file.
+    Ignore,
+}
+
 /// Policy applied while loading documents.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::{DuplicateMergeKeys, KeyDomain, LoadOptions};
+/// use fast_yaml_core::{DuplicateMergeKeys, KeyDomain, LoadOptions, SetValues};
 ///
 /// let options = LoadOptions::new().with_keys(KeyDomain::Python);
 /// assert_eq!(options.keys, KeyDomain::Python);
 /// assert_eq!(options.duplicate_merge_keys, DuplicateMergeKeys::Reject);
+/// assert_eq!(options.set_values, SetValues::Reject);
 /// assert_eq!(LoadOptions::default(), LoadOptions::new());
 /// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -82,15 +111,19 @@ pub struct LoadOptions {
     pub keys: KeyDomain,
     /// Treatment of a repeated `<<` key.
     pub duplicate_merge_keys: DuplicateMergeKeys,
+    /// Treatment of a `!!set` member that has a value.
+    pub set_values: SetValues,
 }
 
 impl LoadOptions {
-    /// Creates the default options: YAML key identity, a repeated `<<` rejected.
+    /// Creates the default options: YAML key identity, a repeated `<<` and a `!!set`
+    /// member value rejected.
     #[must_use]
     pub const fn new() -> Self {
         Self {
             keys: KeyDomain::Yaml,
             duplicate_merge_keys: DuplicateMergeKeys::Reject,
+            set_values: SetValues::Reject,
         }
     }
 
@@ -105,6 +138,13 @@ impl LoadOptions {
     #[must_use]
     pub const fn with_duplicate_merge_keys(mut self, policy: DuplicateMergeKeys) -> Self {
         self.duplicate_merge_keys = policy;
+        self
+    }
+
+    /// Sets how a `!!set` member value is treated.
+    #[must_use]
+    pub const fn with_set_values(mut self, policy: SetValues) -> Self {
+        self.set_values = policy;
         self
     }
 }

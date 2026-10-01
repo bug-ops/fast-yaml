@@ -7,10 +7,10 @@ use std::str::FromStr;
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
 use crate::directives::Directives;
 use crate::rules::MarkerPresence;
-use crate::scan::{ScanCollector, SourceScan};
+use crate::scan::{ScanCollector, SourceScan, lint_load_options};
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
-use fast_yaml_core::{DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser, Value};
+use fast_yaml_core::{NormalizedInput, Parser, Value};
 
 /// Configuration for the linter.
 ///
@@ -398,13 +398,12 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let options = LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins);
         let context = LintContext::new(source);
         let mut collector = ScanCollector::new(&normalized, source, context.source_context());
         let docs = Parser::parse_normalized_observed(
             &normalized,
             &StreamBudget::new(self.config.parse_limits),
-            options,
+            lint_load_options(),
             |item| collector.observe(item),
         )?;
         let scan = collector.finish();
@@ -850,7 +849,7 @@ mod tests {
     #[test]
     fn test_linter_with_all_rules() {
         let linter = Linter::with_all_rules();
-        assert_eq!(linter.registry().rules().len(), 24);
+        assert_eq!(linter.registry().rules().len(), 25);
     }
 
     #[test]

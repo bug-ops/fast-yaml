@@ -198,6 +198,7 @@ fn default_rules() -> RulesConfig {
         }),
         invalid_anchor: error(),
         indentation: error(),
+        set_values: error(),
         lint_directive: RuleSettings::<NoOptions>::default(),
     }
 }

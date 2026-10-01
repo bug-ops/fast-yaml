@@ -252,7 +252,7 @@ fn load_documents_with_budget(
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
     let mut parser = SaphyrParser::new_from_str(input.as_str());
     let mut guard = LimitGuard::with_budget(budget.clone());
-    let mut merge_keys = MergeKeyValidator::new(options.duplicate_merge_keys);
+    let mut merge_keys = MergeKeyValidator::new(options);
     let mut builder = Builder::new(options.keys);
     while let Some(event) = parser.next_event() {
         let (event, span) = event.map_err(|error| ParseError::scanner(&error, guard.document()))?;

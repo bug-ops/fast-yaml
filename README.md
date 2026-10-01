@@ -130,6 +130,7 @@ fy format -i --strip-comments config.yaml  # Format and strip comments silently
 fy format --dry-run config.yaml            # Preview: exit 5 if the file would change
 fy convert json config.yaml    # YAML → JSON
 fy lint config.yaml            # Lint with diagnostics
+fy lint --format github .      # CI output: github, sarif or parsable
 
 # Batch mode (directories, globs, multiple files)
 fy format -i src/              # Format entire directory

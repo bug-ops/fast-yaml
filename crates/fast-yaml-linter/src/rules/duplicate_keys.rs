@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
+use crate::echo::{KEY_LIMIT, echo};
 use crate::scan::{KeyRepeat, RepeatedKey};
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
@@ -84,18 +85,23 @@ impl super::LintRule for DuplicateKeysRule {
         context
             .key_repeats()
             .iter()
-            .filter(|repeat| repeat.kind == RepeatedKey::Ordinary || forbid_merge_repeats)
+            .filter(|repeat| repeat.kind != RepeatedKey::Merge || forbid_merge_repeats)
             .map(
                 |KeyRepeat {
                      key,
                      first_line,
                      span,
-                     ..
+                     kind,
                  }| {
+                    let what = match kind {
+                        RepeatedKey::Merge => "merge key '<<'".to_owned(),
+                        RepeatedKey::Alias => "alias key".to_owned(),
+                        RepeatedKey::Ordinary => format!("key '{}'", echo(key, KEY_LIMIT)),
+                    };
                     DiagnosticBuilder::new(
                         DiagnosticCode::DUPLICATE_KEY,
                         severity,
-                        format!("duplicate key '{key}' (first defined at line {first_line})"),
+                        format!("duplicate {what} (first defined at line {first_line})"),
                         *span,
                     )
                     .with_suggestion("remove this duplicate key or rename it", *span, None)
@@ -427,5 +433,79 @@ mod tests {
                     .forbid_duplicated_merge_keys
             );
         }
+    }
+    #[test]
+    fn test_alias_written_duplicate_merge_key_is_reported() {
+        let diags = run("a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate merge key '<<'"));
+    }
+
+    #[test]
+    fn test_merge_tag_and_plain_merge_key_collide() {
+        let diags = run("a: &a {x: 1}\nb: &b {y: 2}\nc: {<<: *a, !!merge x: *b}\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate merge key '<<'"));
+    }
+
+    #[test]
+    fn test_plain_duplicate_merge_key_message() {
+        let diags = run("a: &a {x: 1}\nc:\n  <<: *a\n  <<: *a\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate merge key '<<'"));
+        assert!(diags[0].message.contains("first defined at line 3"));
+    }
+
+    #[test]
+    fn test_quoted_merge_text_is_not_a_merge_key() {
+        assert!(run("a: &a {x: 1}\nc: {\"<<\": 1, <<: *a}\n").is_empty());
+    }
+
+    #[test]
+    fn test_alias_key_to_scalar_collides_with_its_text() {
+        let diags = run("x: &k a\nm:\n  *k : 1\n  a: 2\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key 'a'"));
+    }
+
+    #[test]
+    fn test_anchored_scalar_key_collides_with_its_alias() {
+        let diags = run("{&k a: 1, *k : 2}");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key 'a'"));
+    }
+
+    #[test]
+    fn test_repeated_alias_to_collection_is_reported() {
+        let diags = run("c: &c [1]\nm:\n  *c : 1\n  *c : 2\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate alias key"));
+    }
+
+    #[test]
+    fn test_merge_key_inside_set_is_an_ordinary_key() {
+        assert!(run("!!set {<<, a}\n").is_empty());
+        let diags = run("!!set {<<, <<}\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key '<<'"));
+    }
+
+    #[test]
+    fn test_anchored_collection_key_collides_with_its_alias() {
+        assert_eq!(run("{&c [1]: a, *c : b}").len(), 1);
+        assert_eq!(run("{&c {x: 1}: a, *c : b}").len(), 1);
+        assert!(run("{&c [1]: a, &d [1]: b}").is_empty());
+    }
+
+    #[test]
+    fn test_long_alias_key_is_truncated_in_the_message() {
+        let yaml = format!("{{&k {}: 1, *k : 2}}", "a".repeat(10_000));
+        let diags = run(&yaml);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            diags[0].message.chars().count() < 200,
+            "{}",
+            diags[0].message
+        );
     }
 }

@@ -32,7 +32,7 @@ YAML linter with rich diagnostics for the fast-yaml ecosystem.
 **Available formatters**:
 - **TextFormatter** — rustc-style output with colors
 - **JsonFormatter** — JSON format for IDE/CI integration
-- **SarifFormatter** — SARIF format for code analysis tools
+- **ReportFormat** — CI reports naming each file: GitHub Actions annotations, yamllint-style `parsable` lines and SARIF 2.1.0
 
 > [!TIP]
 > **Linter vs Formatter**: Linter validates YAML (what's wrong), Formatters display results (how to show it).
@@ -42,7 +42,7 @@ YAML linter with rich diagnostics for the fast-yaml ecosystem.
 - **Precise error locations**: Line, column, and byte offset tracking
 - **Rich diagnostics**: Source context with highlighting
 - **Pluggable rules**: Extensible rule system
-- **Multiple output formats**: Text (rustc-style), JSON, SARIF
+- **Multiple output formats**: Text (rustc-style), JSON, GitHub annotations, parsable, SARIF
 - **Zero-cost abstractions**: Efficient linting without double-parsing
 - **Pre-parsed documents**: `lint_value()` accepts already-parsed YAML to avoid double parsing
 
@@ -167,6 +167,7 @@ The linter includes 21+ rules covering syntax, style, and best practices:
 - `quoted-strings` — Enforce string quoting style
 - `float-values` — Validate float formatting
 - `octal-values` — Detect octal notation
+- `set-values` — `!!set` members must not have values (default error)
 
 **Comments:**
 - `comments` — Comment formatting rules
@@ -280,7 +281,7 @@ an entry does not mention keep their current values. A limit of `-1` disables th
 | `quoted-strings` | `quote-type` (any), `required` (only-when-needed), `extra-required` ([] regexes; not with `always` or `never`), `extra-allowed` ([] regexes; only with `only-when-needed`), `allow-quoted-quotes` (false), `check-keys` (false: keys are skipped); scalars with a `!!` core tag are skipped; see "Regular expressions" below |
 | `truthy` | `allowed-values` (['true', 'false'], quoted; `y`/`n` are not truthy spellings), `check-keys` (false) |
 | `duplicate-key` | `forbid-duplicated-merge-keys` (true; the yamllint presets set false). Keys are equal when their resolved values are, so `99` and `+99` collide and `"1"` and `1` do not (yamllint compares the text) |
-| `invalid-anchor`, `trailing-whitespace`, `new-line-at-end-of-file`, `comments-indentation` | none |
+| `set-values`, `invalid-anchor`, `trailing-whitespace`, `new-line-at-end-of-file`, `comments-indentation` | none |
 
 `min-spaces-inside-empty` and `max-spaces-inside-empty` override the non-empty limits for empty
 collections independently of each other. A minimum above the maximum is not rejected; as in
@@ -408,18 +409,21 @@ let json = formatter.format(&diagnostics, yaml);
 ]
 ```
 
-### SarifFormatter (for code analysis tools)
+### ReportFormat (for CI systems)
 
 ```rust
-use fast_yaml_linter::SarifFormatter;
+use std::path::Path;
+use fast_yaml_linter::formatter::{FileReport, ReportFormat, ReportPath, ReportSource};
 
-let formatter = SarifFormatter::new();
-let sarif = formatter.format(&diagnostics, yaml);
-// SARIF 2.1.0 compatible output
+let source = ReportSource::File(ReportPath::from_absolute(Path::new("/work/config.yaml"))?);
+let report = FileReport { source: &source, diagnostics: &diagnostics };
+let annotations = ReportFormat::Github.render(&[report]);
 ```
 
+Files are always named by absolute path (`ReportPath` strips Windows `\\?\` prefixes and builds RFC 3986 `file:` URIs for SARIF). Inputs that cannot be linted are reported with `syntax_diagnostic` / `input_error_diagnostic` (code `syntax`). GitHub shows at most 10 annotations per level per step, and SARIF rules carry only their `id`.
+
 > [!NOTE]
-> JsonFormatter requires the `json-output` feature. SarifFormatter requires `sarif-output` feature.
+> JsonFormatter requires the `json-output` feature. `ReportFormat::Sarif` requires the `sarif-output` feature.
 
 ## Cargo Features
 

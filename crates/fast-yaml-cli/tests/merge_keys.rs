@@ -154,25 +154,21 @@ fn duplicate_merge_key_stays_a_lint_diagnostic() {
 }
 
 #[test]
-fn duplicate_merge_key_written_through_an_alias_is_not_seen_by_lint() {
+fn duplicate_merge_key_written_through_an_alias_is_reported_by_lint() {
     let output = run(
         &["lint"],
         "a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n",
     );
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(
-        !String::from_utf8_lossy(&output.stdout).contains("duplicate-key"),
+        String::from_utf8_lossy(&output.stdout).contains("duplicate-key"),
         "{output:?}"
     );
 }
 
 #[test]
 fn set_member_value_is_rejected_with_its_position_by_every_yaml_command() {
-    for args in [
-        &["convert", "json"][..],
-        &["parse"][..],
-        &["format"][..],
-        &["lint"][..],
-    ] {
+    for args in [&["convert", "json"][..], &["parse"][..], &["format"][..]] {
         let output = run(args, "s: !!set {a: 1}\n");
         assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -184,6 +180,15 @@ fn set_member_value_is_rejected_with_its_position_by_every_yaml_command() {
     }
     let json = to_json("s: !!set {a, b: }\n");
     assert_eq!(json["s"], serde_json::json!({"a": null, "b": null}));
+}
+
+#[test]
+fn set_member_value_is_a_lint_diagnostic_with_exit_code_two() {
+    let output = run(&["lint"], "s: !!set {a: 1, b: 2}\nk: 1\nk: 2\n");
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.matches("set-values").count(), 2, "{stdout}");
+    assert!(stdout.contains("duplicate-key"), "{stdout}");
 }
 
 #[test]

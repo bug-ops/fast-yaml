@@ -283,15 +283,17 @@ describe('merge keys and sets in lint', () => {
     expect(result.some((d) => d.code === 'duplicate-key')).toBe(true);
   });
 
-  it('does not see a repeated << written through an alias (known blind spot)', () => {
+  it('reports a repeated << written through an alias as a duplicate-key diagnostic', () => {
     const result = lint('a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n');
-    expect(result.some((d) => d.code === 'duplicate-key')).toBe(false);
+    expect(result.some((d) => d.code === 'duplicate-key')).toBe(true);
   });
 
-  it('rejects a !!set member with a value with its position', () => {
-    expect(() => lint('s: !!set {a: 1}\n')).toThrow(
-      /member has a non-null value.*line 1, column 11/
-    );
+  it('reports a !!set member with a value as a set-values diagnostic at its key', () => {
+    const result = lint('s: !!set {a: 1}\n');
+    const diagnostics = result.filter((d) => d.code === 'set-values');
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0].span.start.line).toBe(1);
+    expect(diagnostics[0].span.start.column).toBe(11);
   });
 });
 

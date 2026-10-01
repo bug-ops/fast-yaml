@@ -385,3 +385,86 @@ fn test_lint_file_with_a_bom_reports_bom_free_positions() {
         .assert()
         .stdout(predicate::str::contains("\"offset\": 8"));
 }
+
+/// Runs `fy lint --format <format>` over `paths` with `jobs` workers and returns (stdout, stderr).
+fn report(format: &str, jobs: &str, paths: &[String]) -> (String, String) {
+    let output = fy()
+        .args(["lint", "--format", format, "-j", jobs])
+        .args(paths)
+        .output()
+        .unwrap();
+    (
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn test_lint_report_formats_are_identical_for_any_worker_count_and_list_files_by_path() {
+    let temp = TempDir::new().unwrap();
+    let mut paths = shuffled_files(&temp, "r", 120, "---\na: 1 \n");
+    paths.extend(shuffled_files(&temp, "bad", 20, BROKEN));
+
+    for format in ["parsable", "github", "sarif"] {
+        let (one, one_err) = report(format, "1", &paths);
+        let (many, many_err) = report(format, "8", &paths);
+        assert_eq!(one, many, "{format}");
+        assert_eq!(one_err.lines().count(), 20, "{format}");
+        assert_eq!(many_err.lines().count(), 20, "{format}");
+
+        // Failures are reported on stderr in file order, like the classic formats
+        let name_of = |path: &str| path.rsplit('/').next().unwrap().to_owned();
+        let failure_order: Vec<String> = one_err
+            .lines()
+            .filter_map(|line| line.split('\'').nth(1))
+            .map(name_of)
+            .collect();
+        let expected: Vec<String> = paths
+            .iter()
+            .filter(|p| p.contains("bad"))
+            .map(|p| name_of(p))
+            .collect();
+        assert_eq!(failure_order, expected, "{format}");
+    }
+
+    // The parsable report lists every file, broken ones as syntax errors, sorted by path
+    let (parsable, _) = report("parsable", "4", &paths);
+    let listed: Vec<&str> = parsable
+        .lines()
+        .map(|line| line.split(':').next().unwrap())
+        .collect();
+    assert!(listed.is_sorted(), "{parsable}");
+    assert_eq!(
+        parsable.lines().filter(|l| l.contains("(syntax)")).count(),
+        20
+    );
+}
+
+#[test]
+fn test_lint_report_formats_use_bom_free_positions() {
+    let temp = TempDir::new().unwrap();
+    let bom = temp.path().join("bom.yaml");
+    let plain = temp.path().join("plain.yaml");
+    let bom_broken = temp.path().join("bom_broken.yaml");
+    let plain_broken = temp.path().join("plain_broken.yaml");
+    fs::write(&bom, "\u{FEFF}---\na: 1   \n").unwrap();
+    fs::write(&plain, "---\na: 1   \n").unwrap();
+    fs::write(&bom_broken, "\u{FEFF}a: [1\nb: 2\n]x\n").unwrap();
+    fs::write(&plain_broken, "a: [1\nb: 2\n]x\n").unwrap();
+
+    let strip = |text: String, name: &str| text.replace(name, "FILE");
+    for format in ["parsable", "github", "sarif"] {
+        for (with_bom, without_bom) in [(&bom, &plain), (&bom_broken, &plain_broken)] {
+            let run = |path: &std::path::Path| {
+                let (stdout, _) = report(format, "2", &[path.to_str().unwrap().to_owned()]);
+                let name = path.file_name().unwrap().to_str().unwrap();
+                // SARIF names the file by URI; compare with the file name masked
+                strip(stdout, name)
+            };
+            assert_eq!(run(with_bom), run(without_bom), "{format}");
+        }
+    }
+
+    let (parsable, _) = report("parsable", "1", &[bom.to_str().unwrap().to_owned()]);
+    assert!(parsable.contains(":2:5:"), "{parsable}");
+}

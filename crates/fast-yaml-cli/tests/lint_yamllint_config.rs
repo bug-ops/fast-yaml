@@ -493,7 +493,7 @@ fn duplicated_merge_keys_follow_the_option_and_the_presets() {
         .write_stdin(source)
         .assert()
         .code(2)
-        .stdout(predicate::str::contains("duplicate key '<<'"));
+        .stdout(predicate::str::contains("duplicate merge key '<<'"));
 
     let dir = project("extends: default\n", &[]);
     fy(dir.path(), &[])

@@ -536,6 +536,9 @@ jobs:
       - name: Install Python dependencies
         run: cd python && uv sync
 
+      - name: Build fy binary
+        run: cargo build --bin fy
+
       - name: Build Python extension
         run: cd python && uv run maturin develop
 
@@ -552,6 +555,7 @@ jobs:
         run: cd python && uv run pytest tests/ -v
         env:
           YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
+          FY_BIN: ${{ github.workspace }}/target/debug/fy${{ runner.os == 'Windows' && '.exe' || '' }}
 
 
   # NodeJS bindings tests
@@ -612,11 +616,16 @@ jobs:
       - name: Install NodeJS dependencies
         run: cd nodejs && pnpm install --no-frozen-lockfile
 
+      - name: Build fy binary
+        run: cargo build --bin fy
+
       - name: Build NodeJS extension
         run: cd nodejs && pnpm run build:test
 
       - name: Run NodeJS tests
         run: cd nodejs && pnpm test
+        env:
+          FY_BIN: ${{ github.workspace }}/target/debug/fy${{ runner.os == 'Windows' && '.exe' || '' }}
 
 
   # Python coverage (Linux only)
@@ -660,6 +669,9 @@ jobs:
       - name: Install Python dependencies
         run: cd python && uv sync
 
+      - name: Build fy binary
+        run: cargo build --bin fy
+
       - name: Build Python extension
         run: cd python && uv run maturin develop
 
@@ -676,6 +688,7 @@ jobs:
         run: cd python && uv run pytest tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
         env:
           YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
+          FY_BIN: ${{ github.workspace }}/target/debug/fy
 
       - name: Upload Python coverage to codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -729,11 +742,16 @@ jobs:
       - name: Install NodeJS dependencies
         run: cd nodejs && pnpm install --no-frozen-lockfile
 
+      - name: Build fy binary
+        run: cargo build --bin fy
+
       - name: Build NodeJS extension
         run: cd nodejs && pnpm run build:test
 
       - name: Run tests with coverage
         run: cd nodejs && pnpm run test:coverage
+        env:
+          FY_BIN: ${{ github.workspace }}/target/debug/fy
 
       - name: Upload NodeJS coverage to codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1

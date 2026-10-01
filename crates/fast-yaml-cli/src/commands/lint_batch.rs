@@ -16,6 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
+use fast_yaml_linter::formatter::{
+    FileReport as ReportedFile, ReportFormat, input_error_diagnostic, syntax_diagnostic,
+};
 use fast_yaml_linter::{
     Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
 };
@@ -24,7 +27,8 @@ use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
 
-use crate::cli::LintFormat;
+use crate::cli::{LintFormat, LintOutput};
+use crate::commands::lint::report_source;
 use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
@@ -80,18 +84,30 @@ struct Linted<P> {
     payload: P,
 }
 
-struct FileReport<P> {
+/// A file that could not be linted, with what its output format keeps of the failure.
+struct Failed<X> {
+    failure: FileFailure,
+    salvage: X,
+}
+
+struct FileReport<P, X = ()> {
     path: PathBuf,
-    outcome: Result<Linted<P>, FileFailure>,
+    outcome: Result<Linted<P>, Failed<X>>,
 }
 
 /// An output format: what a worker keeps of a file's diagnostics, and how the reports are
 /// written. One type per format, so a report can only reach the emitter of its own format.
 trait OutputFormat: Sync {
     type Payload: Send;
+    /// What the format keeps of a failure besides its message on stderr.
+    type Salvage: Send;
 
     /// Reduces the diagnostics of a file with this `content` to what the emitter needs.
     fn payload(&self, diagnostics: Vec<Diagnostic>, content: &str) -> Self::Payload;
+
+    /// Reduces a failure to what the emitter needs; `content` is known when linting failed
+    /// after reading.
+    fn salvage(&self, failure: &FileFailure, content: Option<&str>) -> Self::Salvage;
 
     /// Writes the reports in file order, failures to `err` and results to `out`, and returns
     /// whether any file had an error. A write error stops the run.
@@ -99,7 +115,7 @@ trait OutputFormat: Sync {
         &self,
         out: W,
         err: E,
-        reports: impl Iterator<Item = FileReport<Self::Payload>>,
+        reports: impl Iterator<Item = FileReport<Self::Payload, Self::Salvage>>,
     ) -> Result<bool>;
 }
 
@@ -111,13 +127,18 @@ struct TextOutput {
 /// One JSON array of all diagnostics.
 struct JsonOutput;
 
+/// A CI report: github annotations, SARIF or parsable lines, listed by absolute path.
+struct ReportOutput {
+    format: ReportFormat,
+}
+
 fn lint_one<F: OutputFormat>(
     path: &Path,
     reader: &SmartReader,
     linter: &Linter,
     format: &F,
     is_quiet: bool,
-) -> FileReport<F::Payload> {
+) -> FileReport<F::Payload, F::Salvage> {
     FileReport {
         path: path.to_path_buf(),
         outcome: lint_content(path, reader, linter, format, is_quiet),
@@ -130,18 +151,32 @@ fn lint_content<F: OutputFormat>(
     linter: &Linter,
     format: &F,
     is_quiet: bool,
-) -> Result<Linted<F::Payload>, FileFailure> {
+) -> Result<Linted<F::Payload>, Failed<F::Salvage>> {
+    let failed = |failure: FileFailure, content: Option<&str>| Failed {
+        salvage: format.salvage(&failure, content),
+        failure,
+    };
     let content = reader
         .read(path, linter.config().max_input_bytes)
         .and_then(FileContent::into_string)
-        .map_err(|source| FileFailure::Read {
-            path: path.to_path_buf(),
-            source,
+        .map_err(|source| {
+            failed(
+                FileFailure::Read {
+                    path: path.to_path_buf(),
+                    source,
+                },
+                None,
+            )
         })?;
 
-    let mut diagnostics = linter.lint(&content).map_err(|source| FileFailure::Lint {
-        path: path.to_path_buf(),
-        source,
+    let mut diagnostics = linter.lint(&content).map_err(|source| {
+        failed(
+            FileFailure::Lint {
+                path: path.to_path_buf(),
+                source,
+            },
+            Some(&content),
+        )
     })?;
     if is_quiet {
         diagnostics.retain(|d| d.severity == Severity::Error);
@@ -183,8 +218,8 @@ pub fn execute_lint_batch(
     let linter = Linter::with_config(lint_config.clone());
     let is_quiet = common.output.is_quiet();
 
-    let any_errors = match format {
-        LintFormat::Text => run_batch(
+    let any_errors = match format.output() {
+        LintOutput::Text => run_batch(
             &pool,
             &file_paths,
             &linter,
@@ -193,7 +228,14 @@ pub fn execute_lint_batch(
             },
             is_quiet,
         ),
-        LintFormat::Json => run_batch(&pool, &file_paths, &linter, &JsonOutput, is_quiet),
+        LintOutput::Json => run_batch(&pool, &file_paths, &linter, &JsonOutput, is_quiet),
+        LintOutput::Report(format) => run_batch(
+            &pool,
+            &file_paths,
+            &linter,
+            &ReportOutput { format },
+            is_quiet,
+        ),
     }?;
 
     if any_errors {
@@ -330,6 +372,9 @@ impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Iterator for Ordered<'_
 
 impl OutputFormat for TextOutput {
     type Payload = String;
+    type Salvage = ();
+
+    fn salvage(&self, _failure: &FileFailure, _content: Option<&str>) {}
 
     fn payload(&self, diagnostics: Vec<Diagnostic>, content: &str) -> String {
         if diagnostics.is_empty() {
@@ -349,7 +394,7 @@ impl OutputFormat for TextOutput {
         let mut any_errors = false;
         for FileReport { path, outcome } in reports {
             match outcome {
-                Err(failure) => {
+                Err(Failed { failure, .. }) => {
                     any_errors = true;
                     writeln!(err, "{failure}").context("Failed to write to stderr")?;
                 }
@@ -371,8 +416,79 @@ impl OutputFormat for TextOutput {
     }
 }
 
+impl OutputFormat for ReportOutput {
+    type Payload = Vec<Diagnostic>;
+    /// The `syntax` or input-error diagnostic that stands for the file in the report.
+    type Salvage = Diagnostic;
+
+    fn payload(&self, diagnostics: Vec<Diagnostic>, _content: &str) -> Vec<Diagnostic> {
+        diagnostics
+    }
+
+    fn salvage(&self, failure: &FileFailure, content: Option<&str>) -> Diagnostic {
+        match failure {
+            FileFailure::Read { source, .. } => input_error_diagnostic(source.to_string()),
+            FileFailure::Lint { source, .. } => syntax_diagnostic(source, content.unwrap_or("")),
+        }
+    }
+
+    /// Renders one report of all files, sorted by path (the formats list files in path order,
+    /// so the reports are collected before anything is written).
+    fn emit<W: Write, E: Write>(
+        &self,
+        mut out: W,
+        mut err: E,
+        reports: impl Iterator<Item = FileReport<Vec<Diagnostic>, Diagnostic>>,
+    ) -> Result<bool> {
+        let mut any_errors = false;
+        let mut files: Vec<(PathBuf, Vec<Diagnostic>)> = Vec::new();
+        for FileReport { path, outcome } in reports {
+            match outcome {
+                Err(Failed { failure, salvage }) => {
+                    any_errors = true;
+                    writeln!(err, "{failure}").context("Failed to write to stderr")?;
+                    files.push((path, vec![salvage]));
+                }
+                Ok(Linted {
+                    has_errors,
+                    payload,
+                }) => {
+                    any_errors |= has_errors;
+                    files.push((path, payload));
+                }
+            }
+        }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let mut resolved = Vec::with_capacity(files.len());
+        for (path, diagnostics) in &files {
+            match report_source(Some(path)) {
+                Ok(source) => resolved.push((source, diagnostics)),
+                Err(error) => {
+                    any_errors = true;
+                    writeln!(err, "error: {error:#}").context("Failed to write to stderr")?;
+                }
+            }
+        }
+        let reports: Vec<ReportedFile<'_>> = resolved
+            .iter()
+            .map(|(source, diagnostics)| ReportedFile {
+                source,
+                diagnostics,
+            })
+            .collect();
+        write!(out, "{}", self.format.render(&reports))
+            .and_then(|()| out.flush())
+            .context("Failed to write lint output")?;
+        Ok(any_errors)
+    }
+}
+
 impl OutputFormat for JsonOutput {
     type Payload = Vec<Diagnostic>;
+    type Salvage = ();
+
+    fn salvage(&self, _failure: &FileFailure, _content: Option<&str>) {}
 
     fn payload(&self, diagnostics: Vec<Diagnostic>, _content: &str) -> Vec<Diagnostic> {
         diagnostics
@@ -394,7 +510,7 @@ impl OutputFormat for JsonOutput {
 
         for FileReport { path, outcome } in reports {
             match outcome {
-                Err(failure) => {
+                Err(Failed { failure, .. }) => {
                     any_errors = true;
                     writeln!(err, "{failure}").context("Failed to write to stderr")?;
                 }
@@ -458,9 +574,12 @@ mod tests {
     fn failed<P>(path: &str) -> FileReport<P> {
         FileReport {
             path: PathBuf::from(path),
-            outcome: Err(FileFailure::Lint {
-                path: PathBuf::from(path),
-                source: Linter::with_all_rules().lint("a: [").unwrap_err(),
+            outcome: Err(Failed {
+                failure: FileFailure::Lint {
+                    path: PathBuf::from(path),
+                    source: Linter::with_all_rules().lint("a: [").unwrap_err(),
+                },
+                salvage: (),
             }),
         }
     }

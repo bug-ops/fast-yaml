@@ -19,7 +19,7 @@ anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive", "cargo", "env", "wrap_help"] }
 colored = { workspace = true, optional = true }
 fast-yaml-core = { workspace = true }
-fast-yaml-linter = { workspace = true, optional = true, features = ["json-output"] }
+fast-yaml-linter = { workspace = true, optional = true, features = ["json-output", "sarif-output"] }
 fast-yaml-parallel = { workspace = true }
 glob = { workspace = true }
 globset = { workspace = true }

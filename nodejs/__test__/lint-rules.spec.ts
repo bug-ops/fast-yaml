@@ -268,7 +268,9 @@ describe('severity strings', () => {
   });
 });
 
-const fy = resolve(__dirname, '../../target/debug/fy');
+const fy =
+  process.env.FY_BIN ??
+  resolve(__dirname, `../../target/debug/fy${process.platform === 'win32' ? '.exe' : ''}`);
 const workDir = mkdtempSync(join(tmpdir(), 'fy-node-'));
 afterAll(() => rmSync(workDir, { recursive: true, force: true }));
 
@@ -287,8 +289,13 @@ const summarize = (
     .sort();
 
 const fyMissing = !existsSync(fy);
+const inCi = Boolean(process.env.CI);
 
-describe.skipIf(fyMissing)('parity with fy lint --config', () => {
+it.runIf(inCi)('fy binary is available in CI', () => {
+  expect(fyMissing, `fy binary not found at ${fy}; set FY_BIN`).toBe(false);
+});
+
+describe.skipIf(fyMissing && !inCi)('parity with fy lint --config', () => {
   const cases: [string, string, string, LintConfig][] = [
     [
       'quoted-strings and document-start',

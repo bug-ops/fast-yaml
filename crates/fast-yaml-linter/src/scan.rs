@@ -4,15 +4,23 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::ops::RangeInclusive;
 
-use fast_yaml_core::events::{Event, EventItem, ScalarStyle};
+use fast_yaml_core::events::{AnchorId, Event, EventItem, ScalarStyle};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
 use fast_yaml_core::{
     CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, ParseError, Parser,
-    Value, resolve_scalar,
+    SetValues, Value, resolve_scalar,
 };
 
 use crate::source::offset::{ByteOffset, ByteRange};
 use crate::{Location, SourceContext, Span, comments::Comment};
+
+/// How the linter loads a document: a repeated `<<` and a `!!set` member with a value load, so
+/// the `duplicate-key` and `set-values` rules can report them instead of the load failing.
+pub const fn lint_load_options() -> LoadOptions {
+    LoadOptions::new()
+        .with_duplicate_merge_keys(DuplicateMergeKeys::LastWins)
+        .with_set_values(SetValues::Ignore)
+}
 
 /// How a document starts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,8 +64,11 @@ pub const IMPLICIT_DOCUMENT: DocumentMarkers = DocumentMarkers {
 pub enum RepeatedKey {
     /// An ordinary key; keys are equal when their resolved values are.
     Ordinary,
-    /// A `<<` merge key.
+    /// A `<<` merge key, written out or through an alias.
     Merge,
+    /// An anchored collection used as a key, or an alias to one; collections are only equal
+    /// through their anchor.
+    Alias,
 }
 
 /// A mapping key that repeats an earlier key of the same mapping.
@@ -85,16 +96,32 @@ pub struct SourceScan<'a> {
     pub complete: bool,
 }
 
+/// What a mapping key stands for when two keys of one mapping are compared.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum KeyIdentity {
+    /// A scalar, or an alias to one, by its resolved value.
+    Value(Value),
+    /// An anchored collection, or an alias to it.
+    Collection(AnchorId),
+}
+
+/// An anchored node as far as key comparison is concerned.
+struct AnchoredKey {
+    identity: KeyIdentity,
+    /// The scalar text, empty for a collection.
+    text: String,
+}
+
 /// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
 #[derive(Default)]
 struct MappingKeys {
-    values: HashMap<Value, usize>,
+    values: HashMap<KeyIdentity, usize>,
     merge_first_line: Option<usize>,
 }
 
 impl MappingKeys {
     /// Records `key` and returns the first line it was seen on if it repeats.
-    fn record(&mut self, kind: RepeatedKey, key: Value, line: usize) -> Option<usize> {
+    fn record(&mut self, kind: RepeatedKey, key: KeyIdentity, line: usize) -> Option<usize> {
         if kind == RepeatedKey::Merge {
             let first = self.merge_first_line;
             self.merge_first_line.get_or_insert(line);
@@ -128,11 +155,10 @@ impl<'a> SourceScan<'a> {
             Err(error) => return (Self::default(), Some(error)),
         };
         let mut collector = ScanCollector::new(&input, source, context);
-        let options = LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins);
         let loaded = Parser::parse_normalized_observed(
             &input,
             &StreamBudget::new(limits),
-            options,
+            lint_load_options(),
             |item| collector.observe(item),
         );
         match loaded {
@@ -165,6 +191,7 @@ pub struct ScanCollector<'a, 'c, 'n> {
     documents: Vec<DocumentMarkers>,
     open: Option<(DocumentStart, usize)>,
     mappings: Vec<MappingKeys>,
+    anchors: HashMap<AnchorId, AnchoredKey>,
     key_repeats: Vec<KeyRepeat>,
     block_scalars: Vec<RangeInclusive<usize>>,
 }
@@ -189,6 +216,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
             documents: Vec::new(),
             open: None,
             mappings: Vec::new(),
+            anchors: HashMap::new(),
             key_repeats: Vec::new(),
             block_scalars: Vec::new(),
         }
@@ -216,6 +244,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
         let _ = self.scanner.observe(item);
         match &item.event {
             Event::DocumentStart { explicit } => {
+                self.anchors.clear();
                 let span = self.span(item);
                 let first_line = match (self.documents.is_empty(), explicit) {
                     (true, _) => 1,
@@ -244,43 +273,109 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                     first_line,
                 });
             }
-            Event::MappingStart { .. } => self.mappings.push(MappingKeys::default()),
+            _ => self.observe_node(item),
+        }
+    }
+
+    /// Tracks mappings, anchors and keys.
+    fn observe_node(&mut self, item: &EventItem<'_>) {
+        match &item.event {
+            Event::MappingStart { anchor, .. } | Event::SequenceStart { anchor, .. } => {
+                if let Some(id) = anchor {
+                    self.anchors.insert(
+                        *id,
+                        AnchoredKey {
+                            identity: KeyIdentity::Collection(*id),
+                            text: String::new(),
+                        },
+                    );
+                    if item.role == Some(NodeRole::Key) {
+                        self.record_key(item, RepeatedKey::Alias, KeyIdentity::Collection(*id), "");
+                    }
+                }
+                if matches!(item.event, Event::MappingStart { .. }) {
+                    self.mappings.push(MappingKeys::default());
+                }
+            }
             Event::MappingEnd => {
                 self.mappings.pop();
             }
-            Event::Scalar {
-                style: ScalarStyle::Literal | ScalarStyle::Folded,
-                ..
-            } => {
-                // The token starts at its content and ends on the line that stopped it
-                let last = item.end.line.saturating_sub(1);
-                if last >= item.at.line {
-                    self.block_scalars.push(item.at.line..=last);
+            Event::Alias(id) => match item.role {
+                Some(NodeRole::MergeKey) => {
+                    self.record_key(item, RepeatedKey::Merge, KeyIdentity::Collection(*id), "<<");
                 }
-            }
+                Some(NodeRole::Key) => {
+                    let Some(anchored) = self.anchors.get(id) else {
+                        return;
+                    };
+                    let kind = match anchored.identity {
+                        KeyIdentity::Collection(_) => RepeatedKey::Alias,
+                        KeyIdentity::Value(_) => RepeatedKey::Ordinary,
+                    };
+                    let (identity, text) = (anchored.identity.clone(), anchored.text.clone());
+                    self.record_key(item, kind, identity, &text);
+                }
+                _ => {}
+            },
             Event::Scalar {
-                value, style, tag, ..
+                value,
+                style,
+                anchor,
+                tag,
             } => {
-                let kind = match item.role {
-                    Some(NodeRole::Key) => RepeatedKey::Ordinary,
-                    Some(NodeRole::MergeKey) => RepeatedKey::Merge,
-                    _ => return,
+                if matches!(style, ScalarStyle::Literal | ScalarStyle::Folded) {
+                    // The token starts at its content and ends on the line that stopped it
+                    let last = item.end.line.saturating_sub(1);
+                    if last >= item.at.line {
+                        self.block_scalars.push(item.at.line..=last);
+                    }
+                }
+                let key_kind = match item.role {
+                    Some(NodeRole::Key) => Some(RepeatedKey::Ordinary),
+                    Some(NodeRole::MergeKey) => Some(RepeatedKey::Merge),
+                    _ => None,
                 };
-                let Some(keys) = self.mappings.last_mut() else {
+                if anchor.is_none() && key_kind.is_none() {
                     return;
-                };
-                let resolved = Value::from(resolve_scalar(value, *style, tag.as_ref()));
-                if let Some(first_line) = keys.record(kind, resolved, item.at.line) {
-                    let span = self.span(item);
-                    self.key_repeats.push(KeyRepeat {
-                        key: value.as_ref().to_owned(),
-                        first_line,
-                        span,
-                        kind,
-                    });
+                }
+                let identity =
+                    KeyIdentity::Value(Value::from(resolve_scalar(value, *style, tag.as_ref())));
+                if let Some(id) = anchor {
+                    self.anchors.insert(
+                        *id,
+                        AnchoredKey {
+                            identity: identity.clone(),
+                            text: value.as_ref().to_owned(),
+                        },
+                    );
+                }
+                if let Some(kind) = key_kind {
+                    self.record_key(item, kind, identity, value);
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Records a key of the innermost mapping and notes it when it repeats an earlier one.
+    fn record_key(
+        &mut self,
+        item: &EventItem<'_>,
+        kind: RepeatedKey,
+        identity: KeyIdentity,
+        text: &str,
+    ) {
+        let Some(keys) = self.mappings.last_mut() else {
+            return;
+        };
+        if let Some(first_line) = keys.record(kind, identity, item.at.line) {
+            let span = self.span(item);
+            self.key_repeats.push(KeyRepeat {
+                key: text.to_owned(),
+                first_line,
+                span,
+                kind,
+            });
         }
     }
 

@@ -148,7 +148,13 @@ fy lint --format json config.yaml
 
 # Changed YAML files only (deleted and non-YAML entries are errors)
 git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files
+# CI reports (files are named by absolute path)
+fy lint --format github .      # GitHub Actions annotations
+fy lint --format sarif . > results.sarif   # SARIF 2.1.0 for code scanning
+fy lint --format parsable .    # path:line:col: [level] message (code)
 ```
+
+`parsable` prints `info` and `hint` diagnostics as `warning`, like yamllint's two levels. Report formats list files in path order. Lines and columns (and the offsets of the `syntax` diagnostic) refer to the file text with a leading byte order mark removed. A file that cannot be parsed or read is reported as a `syntax` error, and the exit code and stderr message stay the same as with `--format text`. GitHub shows at most 10 annotations per level per step. The `github` format writes `file=` as an absolute path, which the runner maps relative to the workspace.
 
 ### Parser resource limits
 

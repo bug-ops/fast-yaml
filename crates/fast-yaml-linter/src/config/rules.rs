@@ -17,7 +17,7 @@ use crate::rules::{
     DocumentEndRule, DocumentStartRule, DuplicateKeysRule, EmptyLinesRule, EmptyValuesRule,
     FloatValuesRule, HyphensRule, IndentationRule, InvalidAnchorsRule, KeyOrderingRule,
     LineLengthRule, LintDirectiveRule, LintRule, NewLineAtEndOfFileRule, NewLinesRule,
-    OctalValuesRule, QuotedStringsRule, TrailingWhitespaceRule, TruthyRule,
+    OctalValuesRule, QuotedStringsRule, SetValuesRule, TrailingWhitespaceRule, TruthyRule,
 };
 use crate::rules::{
     ColonsOptions, CommasOptions, CommentsOptions, DocumentEndOptions, DocumentStartOptions,
@@ -648,6 +648,7 @@ builtin_rules! {
     (FloatValues, float_values, DiagnosticCode::FLOAT_VALUES, FloatValuesOptions, FloatValuesRule, "Float number forms."),
     (InvalidAnchor, invalid_anchor, DiagnosticCode::INVALID_ANCHOR, InvalidAnchorsOptions, InvalidAnchorsRule, "Invalid anchor names."),
     (Indentation, indentation, DiagnosticCode::INDENTATION, IndentationOptions, IndentationRule, "Indentation size."),
+    (SetValues, set_values, DiagnosticCode::SET_VALUES, NoOptions, SetValuesRule, "`!!set` members without values."),
     (LintDirective, lint_directive, DiagnosticCode::LINT_DIRECTIVE, NoOptions, LintDirectiveRule, "Invalid inline lint directives."),
 }
 
@@ -834,7 +835,7 @@ mod tests {
         let codes: Vec<&str> = registry.rules().iter().map(|rule| rule.code()).collect();
         let names: Vec<&str> = RuleName::ALL.iter().map(|name| name.as_str()).collect();
         assert_eq!(codes, names);
-        assert_eq!(RuleName::ALL.len(), 24);
+        assert_eq!(RuleName::ALL.len(), 25);
     }
 
     #[test]

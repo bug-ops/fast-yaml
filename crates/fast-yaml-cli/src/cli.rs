@@ -365,8 +365,51 @@ pub enum ConvertFormat {
 #[cfg(feature = "linter")]
 #[derive(ValueEnum, Clone, Copy, Debug)]
 pub enum LintFormat {
+    /// Human-readable diagnostics with source context
     Text,
+    /// JSON array of diagnostics
     Json,
+    /// GitHub Actions workflow commands (inline annotations; GitHub caps them per step)
+    Github,
+    /// SARIF 2.1.0 log for code scanning
+    Sarif,
+    /// One `path:line:col: [level] message (code)` line per diagnostic
+    Parsable,
+}
+
+/// How a [`LintFormat`] is rendered: a classic single-stream format or a CI report.
+#[cfg(feature = "linter")]
+#[derive(Clone, Copy, Debug)]
+pub enum LintOutput {
+    /// Human-readable diagnostics for one stream.
+    Text,
+    /// A JSON array of diagnostics.
+    Json,
+    /// A CI report that names each file by absolute path.
+    Report(fast_yaml_linter::formatter::ReportFormat),
+}
+
+#[cfg(feature = "linter")]
+impl LintFormat {
+    /// Classifies this format by how it is rendered.
+    pub const fn output(self) -> LintOutput {
+        use fast_yaml_linter::formatter::ReportFormat;
+        match self {
+            Self::Text => LintOutput::Text,
+            Self::Json => LintOutput::Json,
+            Self::Github => LintOutput::Report(ReportFormat::Github),
+            Self::Sarif => LintOutput::Report(ReportFormat::Sarif),
+            Self::Parsable => LintOutput::Report(ReportFormat::Parsable),
+        }
+    }
+
+    /// The CI report format this value selects, if any.
+    pub const fn report(self) -> Option<fast_yaml_linter::formatter::ReportFormat> {
+        match self.output() {
+            LintOutput::Report(format) => Some(format),
+            LintOutput::Text | LintOutput::Json => None,
+        }
+    }
 }
 
 #[cfg(test)]

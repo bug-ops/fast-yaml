@@ -23,6 +23,7 @@ thiserror = { workspace = true }
 
 [dev-dependencies]
 indoc = { workspace = true }
+jsonschema = { workspace = true }
 tempfile = { workspace = true }
 
 [features]
@@ -30,6 +31,10 @@ default = []
 json-output = ["dep:serde_json"]
 sarif-output = ["dep:serde_json"]
 all-formats = ["json-output", "sarif-output"]
+
+[[test]]
+name = "sarif_schema"
+required-features = ["sarif-output"]
 
 [lints]
 workspace = true

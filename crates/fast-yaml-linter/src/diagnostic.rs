@@ -118,6 +118,10 @@ impl DiagnosticCode {
     pub const KEY_ORDERING: &'static str = "key-ordering";
     /// Predefined code for float values.
     pub const FLOAT_VALUES: &'static str = "float-values";
+    /// Predefined code for `!!set` members that carry a value.
+    pub const SET_VALUES: &'static str = "set-values";
+    /// Predefined code for YAML syntax errors in CI report formats (not a rule, never configurable).
+    pub const SYNTAX: &'static str = "syntax";
     /// Predefined code for problems in inline lint directives (config-only, never suppressible).
     pub const LINT_DIRECTIVE: &'static str = "lint-directive";
 
@@ -484,6 +488,8 @@ mod tests {
         assert_eq!(DiagnosticCode::DUPLICATE_KEY, "duplicate-key");
         assert_eq!(DiagnosticCode::INVALID_ANCHOR, "invalid-anchor");
         assert_eq!(DiagnosticCode::INDENTATION, "indentation");
+        assert_eq!(DiagnosticCode::SET_VALUES, "set-values");
+        assert_eq!(DiagnosticCode::SYNTAX, "syntax");
     }
 
     #[test]
