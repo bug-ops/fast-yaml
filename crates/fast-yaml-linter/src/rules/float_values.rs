@@ -187,7 +187,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -200,7 +200,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
                 .message
@@ -221,7 +221,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -248,7 +248,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -289,7 +289,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Quoted values should be ignored
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -335,7 +335,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
     }
 
     #[test]
@@ -388,7 +388,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     fn lint_messages(yaml: &str, options: &str) -> Vec<String> {
@@ -404,7 +404,10 @@ mod tests {
     #[test]
     fn strings_that_are_not_core_floats_are_ignored() {
         let options = "{forbid-nan: true, forbid-inf: true, forbid-scientific-notation: true}";
-        assert!(lint_messages("a: .5e\nb: 1e+\nc: NaN\nd: inf\ne: 1e\nf: .e5", options).is_empty());
+        assert_eq!(
+            lint_messages("a: .5e\nb: 1e+\nc: NaN\nd: inf\ne: 1e\nf: .e5", options),
+            [] as [String; 0]
+        );
     }
 
     #[test]
@@ -416,7 +419,7 @@ mod tests {
 
     #[test]
     fn keys_are_not_checked() {
-        assert!(lint_messages(".5: x", "{}").is_empty());
+        assert_eq!(lint_messages(".5: x", "{}"), [] as [String; 0]);
     }
 
     #[test]
@@ -430,13 +433,16 @@ mod tests {
     fn tagged_scalars_are_skipped() {
         let opts = "{forbid-nan: true, forbid-scientific-notation: true}";
         let yaml = "a: !!float .5\nb: !custom .5\nc: !!float .nan\nd: !!float 1e3";
-        assert!(lint_messages(yaml, opts).is_empty());
+        assert_eq!(lint_messages(yaml, opts), [] as [String; 0]);
     }
 
     #[test]
     fn negative_strings_and_alias_between_keys() {
         let opts = "{forbid-nan: true, forbid-scientific-notation: true}";
-        assert!(lint_messages("- -.5e\n- -NaN\n- -1e+\n- '.5'\n", opts).is_empty());
+        assert_eq!(
+            lint_messages("- -.5e\n- -NaN\n- -1e+\n- '.5'\n", opts),
+            [] as [String; 0]
+        );
         assert_eq!(lint_messages("x: &v 1.5\ny: *v\nz: .5\n", "{}").len(), 1);
         assert_eq!(lint_messages("[.5]", "{}").len(), 1);
     }

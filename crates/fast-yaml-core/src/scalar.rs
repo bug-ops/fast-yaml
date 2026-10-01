@@ -1,7 +1,7 @@
 //! YAML 1.2 core-schema scalar resolution shared by the core loader and the language bindings.
 //!
 //! [`resolve_scalar`] is the single place that decides which type a scalar has, given its
-//! text, style and tag. The core loader ([`Parser`](crate::Parser)) and the Python bindings
+//! text, style and tag. The core loader ([`Parser`]) and the Python bindings
 //! both adapt its [`ResolvedScalar`] result to their own value types, so the rules cannot drift
 //! between surfaces.
 

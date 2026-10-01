@@ -631,7 +631,7 @@ mod tests {
     fn test_config_default() {
         let config = DiscoveryConfig::default();
         assert_eq!(config.include, IncludePatterns::Default);
-        assert!(config.exclude_patterns.is_empty());
+        assert_eq!(config.exclude_patterns, [] as [String; 0]);
         assert_eq!(config.max_depth, Some(100));
         assert!(!config.include_hidden);
         assert!(config.respect_gitignore);

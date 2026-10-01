@@ -169,7 +169,7 @@ mod tests {
         let context = LintContext::new(yaml);
 
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
         let context = LintContext::new(yaml);
 
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("wrong line ending"));
         assert!(diagnostics[0].message.contains("DOS"));
     }
@@ -197,7 +197,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -210,7 +210,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("wrong line ending"));
     }
 
@@ -225,7 +225,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Should report the DOS line
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
     }
 
     #[test]
@@ -240,7 +240,7 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         // On Unix platforms, this should be valid
         #[cfg(not(target_os = "windows"))]
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
 
         // On Windows, should report error
         #[cfg(target_os = "windows")]
@@ -257,7 +257,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]

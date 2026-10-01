@@ -328,6 +328,23 @@ fn apply_entry<O: RuleOptions>(
     }
 }
 
+/// The two spellings of a rule's severity key.
+#[derive(Clone, Copy)]
+enum SeveritySpelling {
+    Severity,
+    /// yamllint's name for `severity`.
+    Level,
+}
+
+impl SeveritySpelling {
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Severity => "severity",
+            Self::Level => "level",
+        }
+    }
+}
+
 fn apply_mapping<O: RuleOptions>(
     rule: RuleName,
     settings: &mut RuleSettings<O>,
@@ -335,6 +352,7 @@ fn apply_mapping<O: RuleOptions>(
 ) -> Result<(), RuleConfigError> {
     let mut overlay = Mapping::new();
     let mut bool_word_keys = Vec::new();
+    let mut severity_key: Option<SeveritySpelling> = None;
     for (key, value) in map {
         let Value::String(key) = key else {
             return Err(RuleConfigError::InvalidEntry {
@@ -357,8 +375,24 @@ fn apply_mapping<O: RuleOptions>(
                     });
                 }
             },
-            "severity" => match value {
+            "severity" | "level" => match value {
                 Value::String(text) => {
+                    let spelling = if key == "level" {
+                        SeveritySpelling::Level
+                    } else {
+                        SeveritySpelling::Severity
+                    };
+                    if let Some(first) = severity_key.replace(spelling) {
+                        return Err(RuleConfigError::InvalidOption {
+                            rule,
+                            key,
+                            message: format!(
+                                "`{}` and `{}` are aliases and cannot both be set",
+                                first.key(),
+                                spelling.key()
+                            ),
+                        });
+                    }
                     settings.severity = Some(
                         text.parse()
                             .map_err(|cause| RuleConfigError::InvalidSeverity { rule, cause })?,
@@ -372,14 +406,6 @@ fn apply_mapping<O: RuleOptions>(
                     });
                 }
             },
-            "level" => {
-                return Err(RuleConfigError::InvalidOption {
-                    rule,
-                    key,
-                    message: "unknown option; the yamllint `level` is called `severity` here"
-                        .to_owned(),
-                });
-            }
             "ignore" | "ignore-from-file" => {
                 return Err(RuleConfigError::UnsupportedOption {
                     rule,
@@ -963,15 +989,10 @@ mod tests {
     #[test]
     fn yamllint_only_options_are_refused() {
         let cases = [
-            ("line-length", "allow-non-breakable-words"),
-            ("line-length", "allow-non-breakable-inline-mappings"),
             ("indentation", "spaces"),
             ("indentation", "indent-sequences"),
             ("indentation", "check-multi-line-strings"),
             ("key-ordering", "ignored-keys"),
-            ("quoted-strings", "allow-quoted-quotes"),
-            ("quoted-strings", "check-keys"),
-            ("duplicate-key", "forbid-duplicated-merge-keys"),
             ("invalid-anchor", "forbid-undeclared-aliases"),
             ("invalid-anchor", "forbid-duplicated-anchors"),
             ("invalid-anchor", "forbid-unused-anchors"),
@@ -981,6 +1002,28 @@ mod tests {
             assert!(message.contains("supported by yamllint"), "{message}");
             assert!(message.contains(rule) && message.contains(key), "{message}");
         }
+    }
+
+    #[test]
+    fn implemented_yamllint_options_are_accepted() {
+        let mut rules = RulesConfig::default();
+        apply(
+            &mut rules,
+            "line-length: {allow-non-breakable-words: false, allow-non-breakable-inline-mappings: true}\n\
+             quoted-strings: {allow-quoted-quotes: true, check-keys: true}\n\
+             duplicate-key: {forbid-duplicated-merge-keys: false}",
+        )
+        .unwrap();
+        assert!(!rules.line_length.options.allow_non_breakable_words);
+        assert!(
+            rules
+                .line_length
+                .options
+                .allow_non_breakable_inline_mappings
+        );
+        assert!(rules.quoted_strings.options.allow_quoted_quotes);
+        assert!(rules.quoted_strings.options.check_keys);
+        assert!(!rules.duplicate_key.options.forbid_duplicated_merge_keys);
     }
 
     #[test]
@@ -1019,12 +1062,32 @@ mod tests {
     }
 
     #[test]
-    fn level_key_points_to_severity() {
-        let message = error_of("line-length: {level: warning}");
-        assert!(
-            message.contains("level") && message.contains("severity"),
-            "{message}"
-        );
+    fn level_is_an_alias_of_severity() {
+        let mut rules = RulesConfig::default();
+        apply(&mut rules, "line-length: {level: warning}").unwrap();
+        assert_eq!(rules.line_length.severity, Some(Severity::Warning));
+        apply(&mut rules, "braces: {level: error}").unwrap();
+        assert_eq!(rules.braces.severity, Some(Severity::Error));
+    }
+
+    #[test]
+    fn level_and_severity_together_are_rejected() {
+        for yaml in [
+            "line-length: {level: warning, severity: error}",
+            "line-length: {severity: error, level: warning}",
+        ] {
+            let message = error_of(yaml);
+            assert!(
+                message.contains("aliases") && message.contains("level"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_level_value_names_the_severity_error() {
+        assert!(error_of("braces: {level: loud}").contains("loud"));
+        assert!(error_of("braces: {level: 1}").contains("expected a string"));
     }
 
     #[test]

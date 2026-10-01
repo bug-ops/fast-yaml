@@ -220,7 +220,7 @@ fn test_carriage_return_only() {
     // Old Mac style line endings
     let yaml = "---\rfoo: 1\r---\rbar: 2";
     let docs = parse_parallel(yaml).unwrap();
-    assert!(!docs.is_empty());
+    assert_ne!(docs, []);
 }
 
 #[test]

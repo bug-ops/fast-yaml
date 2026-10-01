@@ -71,7 +71,7 @@ pub mod value;
 /// without building an intermediate DOM representation.
 pub mod streaming;
 
-pub use comments::{find_comments, has_comments, has_comments_normalized};
+pub use comments::{CommentScanner, find_comments, has_comments, has_comments_normalized};
 pub use emitter::{Emitter, EmitterConfig};
 pub use encoding::{
     DecodeError, EncodingEvidence, UnsupportedEncoding, decode_input, decode_input_owned,

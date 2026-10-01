@@ -75,7 +75,7 @@ mod tests {
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -129,7 +129,7 @@ mod tests {
         let diagnostics = rule.check(&lint_context, &value, &config);
 
         // Empty lines should not trigger
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]

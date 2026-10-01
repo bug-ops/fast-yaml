@@ -111,7 +111,10 @@ fn clean_file_gives_empty_report_and_success() {
     let sarif = run("sarif", &[&path], None);
     assert_eq!(sarif.code, Some(0), "{}", sarif.stderr);
     let json: Value = serde_json::from_str(&sarif.stdout).unwrap();
-    assert!(json["runs"][0]["results"].as_array().unwrap().is_empty());
+    assert_eq!(
+        json["runs"][0]["results"].as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
     for format in ["github", "parsable"] {
         let out = run(format, &[&path], None);
         assert_eq!(out.code, Some(0), "{}", out.stderr);
@@ -192,7 +195,10 @@ fn ignored_file_prints_empty_sarif() {
         .unwrap();
     assert_eq!(output.status.code(), Some(0));
     let json: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert!(json["runs"][0]["results"].as_array().unwrap().is_empty());
+    assert_eq!(
+        json["runs"][0]["results"].as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
 }
 
 #[test]

@@ -1,0 +1,9 @@
+---
+url: http://localhost/very/very/very/very/very/very/very/very/long/url
+list:
+  - http://localhost/very/very/very/very/very/very/very/very/long/url
+  - key: http://localhost/very/very/very/very/very/very/very/very/long/url
+# http://localhost/very/very/very/very/very/very/very/very/long/url
+words: this line has several words and is longer than the configured limit
+flow: {a: http://localhost/very/very/very/very/very/very/very/very/long/url}
+tagged: !!str http://localhost/very/very/very/very/very/very/very/very/long/url

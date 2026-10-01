@@ -179,13 +179,17 @@ pub enum Event<'a> {
     MappingEnd,
 }
 
-/// An event with the position of its start and, for an event that starts a node, its role.
+/// An event with the position of its start and end and, for an event that starts a node, its role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventItem<'a> {
     /// The event.
     pub event: Event<'a>,
     /// Where the event starts in the source.
     pub at: SourcePosition,
+    /// Where the event's token ends: the closing quote of a quoted scalar, the end of a plain or
+    /// block scalar, the end of a `---` or `...` marker. Equal to `at` for events without text
+    /// (a block collection start, most ends).
+    pub end: SourcePosition,
     /// Role of the node the event starts, `None` for events that start no node.
     pub role: Option<NodeRole>,
 }
@@ -247,6 +251,8 @@ impl<'a> EventStream<'a> {
         self.guard.document()
     }
 
+    /// The one mapping from the parser's event to the public one; `None` for the placeholder and
+    /// for an alias to an unknown anchor (id 0).
     fn convert(event: saphyr_parser::Event<'a>) -> Option<Event<'a>> {
         use saphyr_parser::Event as Raw;
         Some(match event {
@@ -295,11 +301,29 @@ impl<'a> EventStream<'a> {
                 return Ok(Some(EventItem {
                     event,
                     at: SourcePosition::from_span(span),
+                    end: SourcePosition::end_of(span),
                     role,
                 }));
             }
         }
     }
+}
+
+/// Builds the public item for a raw event, cloning it (the loader still needs the raw one).
+///
+/// Like [`EventStream::convert`] it yields nothing for events without a public form: the parser's
+/// placeholder and an alias to an unknown anchor, which the loader rejects itself.
+pub(crate) fn item_of<'a>(
+    raw: &saphyr_parser::Event<'a>,
+    span: Span,
+    role: Option<NodeRole>,
+) -> Option<EventItem<'a>> {
+    Some(EventItem {
+        event: EventStream::convert(raw.clone())?,
+        at: SourcePosition::from_span(span),
+        end: SourcePosition::end_of(span),
+        role,
+    })
 }
 
 impl fmt::Debug for EventStream<'_> {
@@ -575,5 +599,40 @@ mod tests {
         let mut events = stream(&input);
         assert!(events.any(|item| item.is_err()));
         assert_eq!(events.document(), 1);
+    }
+
+    #[test]
+    fn items_carry_the_end_of_their_token() {
+        let input = NormalizedInput::new("a: \"bc\"\n---\nd\n...\n").unwrap();
+        let items: Vec<_> = stream(&input).collect::<Result<_, _>>().unwrap();
+        let span_of = |wanted: &Event<'_>| {
+            let item = items.iter().find(|item| &item.event == wanted).unwrap();
+            (
+                (item.at.line, item.at.column),
+                (item.end.line, item.end.column),
+            )
+        };
+        let quoted = Event::Scalar {
+            value: "bc".into(),
+            style: ScalarStyle::DoubleQuoted,
+            anchor: None,
+            tag: None,
+        };
+        assert_eq!(span_of(&quoted), ((1, 4), (1, 8)));
+        assert_eq!(
+            span_of(&Event::DocumentStart { explicit: true }),
+            ((2, 1), (2, 4))
+        );
+    }
+
+    #[test]
+    fn events_without_a_public_form_are_skipped_the_same_way_on_both_paths() {
+        use saphyr_parser::Event as Raw;
+        let span = Span::empty(saphyr_parser::Marker::new(0, 1, 0));
+        for raw in [Raw::Nothing, Raw::Alias(0)] {
+            assert!(item_of(&raw, span, None).is_none(), "{raw:?}");
+            assert!(EventStream::convert(raw).is_none());
+        }
+        assert!(item_of(&Raw::Alias(3), span, None).is_some());
     }
 }

@@ -9,6 +9,8 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
+use fast_yaml_core::events::Tag;
+use fast_yaml_core::scalar::core_tag_suffix;
 use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
 use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
@@ -129,17 +131,23 @@ pub struct QuotedStringsOptions {
     pub extra_required: PatternList,
     /// Regular expressions for values that may stay unquoted; valid only with `only-when-needed`.
     pub extra_allowed: PatternList,
+    /// Accepts the other quote style for a string that contains the configured quote character.
+    pub allow_quoted_quotes: bool,
+    /// Also checks mapping keys; they are skipped by default.
+    pub check_keys: bool,
 }
 
 impl QuotedStringsOptions {
     fn quotes_redundant_for(&self, value: &str) -> bool {
         !self.extra_required.is_match(value) && !self.extra_allowed.is_match(value)
     }
+
+    fn allows_quoted_quote(&self, value: &str, configured_quote: char) -> bool {
+        self.allow_quoted_quotes && value.contains(configured_quote)
+    }
 }
 
 impl RuleOptions for QuotedStringsOptions {
-    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["allow-quoted-quotes", "check-keys"];
-
     fn conflicts(&self) -> Vec<OptionConflict> {
         let mut conflicts = Vec::new();
         if !self.extra_required.is_empty()
@@ -185,6 +193,12 @@ impl super::LintRule for QuotedStringsRule {
         let mut diagnostics = Vec::new();
         let mut roles = RoleTracker::default();
 
+        let check = ScalarCheck {
+            source,
+            source_ctx: context.source_context(),
+            config,
+        };
+
         #[allow(
             clippy::disallowed_methods,
             reason = "source passed the guarded parse in the same lint call"
@@ -203,19 +217,23 @@ impl super::LintRule for QuotedStringsRule {
                 Event::Alias(..) => {
                     roles.node();
                 }
-                Event::Scalar(ref value, style, ..) => {
+                Event::Scalar(ref value, style, _, ref tag) => {
                     let in_flow = roles.in_flow();
-                    let is_key = roles.node() == NodeRole::MappingKey;
+                    let role = roles.node();
                     self.check_scalar(
-                        source,
-                        context.source_context(),
-                        config,
+                        &check,
+                        &ScalarEvent {
+                            value,
+                            style,
+                            role,
+                            in_flow,
+                            core_tagged: tag
+                                .as_deref()
+                                .map(|tag| Tag::new(tag.handle.clone(), tag.suffix.clone()))
+                                .is_some_and(|tag| core_tag_suffix(&tag).is_some()),
+                            span: context.source_context().span_of(span),
+                        },
                         &mut diagnostics,
-                        value,
-                        style,
-                        is_key,
-                        in_flow,
-                        context.source_context().span_of(span),
                     );
                 }
 
@@ -227,22 +245,49 @@ impl super::LintRule for QuotedStringsRule {
     }
 }
 
+/// Source and configuration shared by every scalar check of one lint run.
+struct ScalarCheck<'a> {
+    source: &'a str,
+    source_ctx: &'a SourceContext<'a>,
+    config: &'a LintConfig,
+}
+
+/// One scalar event with the context the rule needs to judge it.
+struct ScalarEvent<'a> {
+    value: &'a str,
+    style: ScalarStyle,
+    role: NodeRole,
+    in_flow: bool,
+    /// Carries a YAML core schema tag such as `!!str`, which sets the type explicitly.
+    core_tagged: bool,
+    span: Span,
+}
+
 impl QuotedStringsRule {
     /// Checks a single scalar event and appends diagnostics as needed.
-    #[allow(clippy::too_many_arguments)]
     fn check_scalar(
         &self,
-        source: &str,
-        source_ctx: &SourceContext<'_>,
-        config: &LintConfig,
+        check: &ScalarCheck<'_>,
+        event: &ScalarEvent<'_>,
         diagnostics: &mut Vec<Diagnostic>,
-        value: &str,
-        style: ScalarStyle,
-        is_key: bool,
-        in_flow: bool,
-        scalar_span: Span,
     ) {
+        let ScalarCheck {
+            source,
+            source_ctx,
+            config,
+        } = *check;
+        let ScalarEvent {
+            value,
+            style,
+            role,
+            in_flow,
+            core_tagged,
+            span: scalar_span,
+        } = *event;
         let options = &config.rules.quoted_strings.options;
+        if core_tagged || (role == NodeRole::MappingKey && !options.check_keys) {
+            return;
+        }
         let severity = config
             .rules
             .quoted_strings
@@ -274,10 +319,14 @@ impl QuotedStringsRule {
                 }
 
                 match (options.quote_type, style) {
-                    (QuoteType::Single, ScalarStyle::DoubleQuoted) => {
+                    (QuoteType::Single, ScalarStyle::DoubleQuoted)
+                        if !options.allows_quoted_quote(value, '\'') =>
+                    {
                         report("string should use single quotes");
                     }
-                    (QuoteType::Double, ScalarStyle::SingleQuoted) => {
+                    (QuoteType::Double, ScalarStyle::SingleQuoted)
+                        if !options.allows_quoted_quote(value, '"') =>
+                    {
                         report("string should use double quotes");
                     }
                     _ => {}
@@ -289,8 +338,7 @@ impl QuotedStringsRule {
             }
 
             ScalarStyle::Plain
-                if !is_key
-                    && !is_scalar_literal(value)
+                if !is_scalar_literal(value)
                     && (options.required == QuoteRequirement::Always
                         || options.extra_required.is_match(value)) =>
             {
@@ -356,8 +404,7 @@ impl QuotedStringsRule {
             return true;
         }
 
-        // yamllint does not treat y/n as booleans, so their quotes are never required
-        if (s.len() > 1 && NON_STANDARD_BOOLS.contains(&s)) || is_scalar_literal(s) {
+        if NON_STANDARD_BOOLS.contains(&s) || is_scalar_literal(s) {
             return true;
         }
 
@@ -452,7 +499,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("single quotes"));
     }
 
@@ -469,7 +516,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("double quotes"));
     }
 
@@ -483,7 +530,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("does not need quotes"));
     }
 
@@ -498,7 +545,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // These should not be flagged as they need quotes
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -526,7 +573,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("should not be quoted"));
     }
 
@@ -541,7 +588,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Should not flag as unnecessary because it contains '-'
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     const HOSTS: &str = "[^http://, ^ftp://]";
@@ -550,7 +597,7 @@ mod tests {
     fn extra_required_flags_matching_plain_scalars_when_not_required() {
         let options = format!("{{required: false, extra-required: {HOSTS}}}");
         let ok = "- 123\n- \"123\"\n- localhost\n- \"localhost\"\n- \"http://localhost\"\n- \"ftp://localhost\"\n";
-        assert!(messages(ok, &options).is_empty());
+        assert_eq!(messages(ok, &options), [] as [String; 0]);
         let bad = "- http://localhost\n- ftp://localhost\n";
         assert_eq!(
             messages(bad, &options),
@@ -565,14 +612,17 @@ mod tests {
             messages("- http://localhost\n- localhost\n", &options),
             ["string should be quoted"]
         );
-        assert!(messages("- \"http://localhost\"\n", &options).is_empty());
+        assert_eq!(
+            messages("- \"http://localhost\"\n", &options),
+            [] as [String; 0]
+        );
     }
 
     #[test]
     fn extra_allowed_keeps_plain_scalars_when_only_needed() {
         let options = format!("{{extra-allowed: {HOSTS}}}");
         let ok = "- 123\n- \"123\"\n- localhost\n- http://localhost\n- ftp://localhost\n- \"http://localhost\"\n";
-        assert!(messages(ok, &options).is_empty());
+        assert_eq!(messages(ok, &options), [] as [String; 0]);
         assert_eq!(
             messages("- \"localhost\"\n", &options),
             ["string does not need quotes"]
@@ -581,9 +631,9 @@ mod tests {
 
     #[test]
     fn comma_needs_quotes_only_inside_flow_collections() {
-        assert!(messages("e: [ \"a,b\" ]\n", "{}").is_empty());
-        assert!(messages("e: { k: 'a,b' }\n", "{}").is_empty());
-        assert!(messages("e: [ k: 'a,b' ]\n", "{}").is_empty());
+        assert_eq!(messages("e: [ \"a,b\" ]\n", "{}"), [] as [String; 0]);
+        assert_eq!(messages("e: { k: 'a,b' }\n", "{}"), [] as [String; 0]);
+        assert_eq!(messages("e: [ k: 'a,b' ]\n", "{}"), [] as [String; 0]);
         assert_eq!(
             messages("e: \"a,b\"\n", "{}"),
             ["string does not need quotes"]
@@ -634,13 +684,16 @@ mod tests {
     #[test]
     fn redundant_quotes_matching_extra_patterns_are_silent() {
         let options = "{quote-type: single, extra-required: ['^J']}";
-        assert!(messages("a: \"John\"\n", options).is_empty());
+        assert_eq!(messages("a: \"John\"\n", options), [] as [String; 0]);
     }
 
     #[test]
     fn extra_required_does_not_quote_keys_or_non_strings() {
         let options = "{extra-required: ['.']}";
-        assert!(messages("a.b: 1\nc: 1.5\nd: null\n", options).is_empty());
+        assert_eq!(
+            messages("a.b: 1\nc: 1.5\nd: null\n", options),
+            [] as [String; 0]
+        );
     }
 
     #[test]
@@ -675,7 +728,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Quotes are needed because of the colon
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -845,8 +898,8 @@ mod tests {
 
     #[test]
     fn test_non_ascii_key_does_not_hide_unicode_escape() {
-        assert!(run("—: \"\\u00e9\"").is_empty());
-        assert!(run("ключ: \"\\x41\"").is_empty());
+        assert_eq!(run("—: \"\\u00e9\""), []);
+        assert_eq!(run("ключ: \"\\x41\""), []);
     }
 
     #[test]
@@ -867,12 +920,15 @@ mod tests {
         let span = diagnostics[0].span;
         assert_eq!((span.start.column, span.start.offset), (4, 6));
         assert_eq!((span.end.column, span.end.offset), (7, 10));
-        assert!(run("🎉: \"\\u00e9\"").is_empty());
+        assert_eq!(run("🎉: \"\\u00e9\""), []);
     }
 
     #[test]
     fn test_non_ascii_quoted_key_span() {
-        let diagnostics = run("\"ключ\": 1");
+        let yaml = "\"ключ\": 1";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let config = config_with_rule(RuleName::QuotedStrings, "{check-keys: true}");
+        let diagnostics = QuotedStringsRule.check(&LintContext::new(yaml), &value, &config);
         assert_eq!(diagnostics.len(), 1);
         let span = diagnostics[0].span;
         assert_eq!((span.start.column, span.start.offset), (1, 0));
@@ -936,22 +992,25 @@ mod tests {
 
     #[test]
     fn quotes_that_preserve_a_float_type_are_needed() {
-        assert!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n").is_empty());
+        assert_eq!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n"), []);
     }
 
     #[test]
     fn quotes_that_preserve_a_radix_big_int_type_are_needed() {
-        assert!(run("a: \"0xFFFFFFFFFFFFFFFFFF\"\nb: '0o7777777777777777777777'\n").is_empty());
+        assert_eq!(
+            run("a: \"0xFFFFFFFFFFFFFFFFFF\"\nb: '0o7777777777777777777777'\n"),
+            []
+        );
     }
 
     #[test]
     fn plain_radix_big_int_needs_no_quotes_under_always() {
-        assert!(
+        assert_eq!(
             messages(
                 "a: 0xFFFFFFFFFFFFFFFFFF\nb: 0o7777777777777777777777\n",
                 "{required: always}"
-            )
-            .is_empty()
+            ),
+            [] as [String; 0]
         );
     }
 
@@ -989,12 +1048,70 @@ mod tests {
             messages("a: \"y\"\nb: 'n'\nc: \"Y\"\nd: \"N\"\n", "{}").len(),
             4
         );
-        assert!(messages("a: 'yes'\nb: 'No'\n", "{}").is_empty());
+        assert_eq!(messages("a: 'yes'\nb: 'No'\n", "{}"), [] as [String; 0]);
     }
 
     #[test]
     fn required_always_checks_root_scalar() {
         assert_eq!(messages("word\n", "{required: always}").len(), 1);
-        assert!(messages("12\n", "{required: always}").is_empty());
+        assert_eq!(messages("12\n", "{required: always}"), [] as [String; 0]);
+    }
+
+    #[test]
+    fn keys_are_skipped_unless_check_keys() {
+        for yaml in ["'a': 1\n", "\"a\": 1\n", "a: 1\n"] {
+            assert!(messages(yaml, "{}").is_empty(), "{yaml:?}");
+            assert!(messages(yaml, "{required: always}").is_empty(), "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn check_keys_applies_the_rules_to_keys() {
+        assert_eq!(messages("'a': 1\n", "{check-keys: true}").len(), 1);
+        assert_eq!(
+            messages("'a': 'b'\n", "{required: always, check-keys: true}"),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            messages("key: b\n", "{required: always, check-keys: true}").len(),
+            2
+        );
+    }
+
+    #[test]
+    fn core_tagged_scalars_are_skipped() {
+        assert_eq!(
+            messages("a: !!str 'x'\nb: !!str x\n", "{required: always}"),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            messages("a: !!str \"x\"\n", "{quote-type: single}"),
+            [] as [String; 0]
+        );
+        assert_eq!(messages("a: !local x\n", "{required: always}").len(), 1);
+    }
+
+    #[test]
+    fn allow_quoted_quotes_accepts_the_other_style_for_configured_quote() {
+        let single = "{quote-type: single, required: not-required}";
+        assert_eq!(messages("a: \"it's\"\n", single).len(), 1);
+        assert_eq!(
+            messages(
+                "a: \"it's\"\n",
+                "{quote-type: single, required: not-required, allow-quoted-quotes: true}"
+            ),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            messages(
+                "a: \"plain\"\n",
+                "{quote-type: single, required: not-required, allow-quoted-quotes: true}"
+            )
+            .len(),
+            1
+        );
+        let double = "{quote-type: double, required: not-required, allow-quoted-quotes: true}";
+        assert_eq!(messages("a: 'say \"hi\"'\n", double), [] as [String; 0]);
+        assert_eq!(messages("a: 'plain'\n", double).len(), 1);
     }
 }

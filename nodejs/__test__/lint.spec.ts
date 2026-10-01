@@ -296,3 +296,51 @@ describe('merge keys and sets in lint', () => {
     expect(diagnostics[0].span.start.column).toBe(11);
   });
 });
+
+describe('BOM coordinates', () => {
+  const spans = (source: string) =>
+    lint(source).map((d) => [
+      d.code,
+      d.span.start.line,
+      d.span.start.column,
+      d.span.start.offset,
+      d.span.end.offset,
+    ]);
+
+  it('leading BOM does not shift spans', () => {
+    const plain = spans('a: 1   \n');
+    expect(plain.length).toBeGreaterThan(0);
+    expect(spans('\uFEFFa: 1   \n')).toEqual(plain);
+  });
+
+  it('prefix BOM in a later document does not shift spans', () => {
+    const plain = spans('a: 1\n...\nb: 2   \n');
+    expect(plain.length).toBeGreaterThan(0);
+    expect(spans('a: 1\n...\n\uFEFFb: 2   \n')).toEqual(plain);
+  });
+});
+
+describe('comments inside scalars', () => {
+  it('hash in a multi-line quoted scalar is not a comment', () => {
+    const result = lint('a: "one\n  #two\n  three"\n');
+    expect(result.filter((d) => d.code === 'comments')).toHaveLength(0);
+  });
+
+  it('a real comment is still checked', () => {
+    const result = lint('a: 1 #bad\n');
+    expect(result.some((d) => d.code === 'comments')).toBe(true);
+  });
+});
+
+describe('duplicate keys by value', () => {
+  const duplicates = (source: string) => lint(source).filter((d) => d.code === 'duplicate-key');
+
+  it('equal values with different spelling are duplicates', () => {
+    expect(duplicates('99: a\n+99: b\n')).toHaveLength(1);
+    expect(duplicates('0x10: a\n16: b\n')).toHaveLength(1);
+  });
+
+  it('different types are not duplicates', () => {
+    expect(duplicates('"1": a\n1: b\n')).toHaveLength(0);
+  });
+});

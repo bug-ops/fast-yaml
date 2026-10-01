@@ -25,7 +25,11 @@ pub struct Location {
     pub line: usize,
     /// Column number (1-indexed, human-readable).
     pub column: usize,
-    /// Byte offset from the start of the file (0-indexed).
+    /// Byte offset from the start of the text with document-prefix BOMs removed (0-indexed).
+    ///
+    /// Line and column refer to the same text, so a location never mixes coordinate systems.
+    /// To address the original bytes, map the offset back with
+    /// `fast_yaml_core::NormalizedInput::original_offset` on `NormalizedInput::new(source)`.
     pub offset: usize,
 }
 

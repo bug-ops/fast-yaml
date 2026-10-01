@@ -1,5 +1,5 @@
 use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
-use crate::events::ScalarStyle;
+use crate::events::{self, EventItem, ScalarStyle};
 use crate::input::NormalizedInput;
 use crate::keys::{KeyError, KeyGuard};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
@@ -200,7 +200,44 @@ impl Parser {
         budget: &StreamBudget,
         options: LoadOptions,
     ) -> ParseResult<Vec<Value>> {
-        load_documents_with_budget(input, budget, options)
+        load_documents_with_budget(input, budget, options, None)
+    }
+
+    /// Parse all YAML documents of an already normalized input, showing every event to
+    /// `on_event` as the loader consumes it.
+    ///
+    /// `on_event` sees each [`EventItem`] in order, with its start and
+    /// end position, its role and no parser types, so a caller can collect side data (comments,
+    /// document markers) in the same pass that builds the values. Positions refer to
+    /// `input.as_str()`.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Parser::parse_normalized`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{CommentScanner, LoadOptions, NormalizedInput, Parser};
+    /// use fast_yaml_core::limits::{ParseLimits, StreamBudget};
+    ///
+    /// let budget = StreamBudget::new(ParseLimits::default());
+    /// let input = NormalizedInput::new("a: 1 # one\n")?;
+    /// let mut scanner = CommentScanner::new(&input);
+    /// let docs = Parser::parse_normalized_observed(&input, &budget, LoadOptions::default(), |item| {
+    ///     let _ = scanner.observe(item);
+    /// })?;
+    /// assert_eq!(docs.len(), 1);
+    /// assert_eq!(scanner.finish().len(), 1);
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn parse_normalized_observed(
+        input: &NormalizedInput<'_>,
+        budget: &StreamBudget,
+        options: LoadOptions,
+        mut on_event: impl FnMut(&EventItem<'_>),
+    ) -> ParseResult<Vec<Value>> {
+        load_documents_with_budget(input, budget, options, Some(&mut on_event))
     }
 }
 
@@ -210,6 +247,7 @@ fn load_documents_with_budget(
     input: &NormalizedInput<'_>,
     budget: &StreamBudget,
     options: LoadOptions,
+    mut on_event: Option<&mut dyn FnMut(&EventItem<'_>)>,
 ) -> ParseResult<Vec<Value>> {
     let mut parser = input.scanner(budget.limits().max_scan_ahead);
     let mut guard = LimitGuard::with_budget(budget.clone());
@@ -219,6 +257,11 @@ fn load_documents_with_budget(
         let (event, span) = event?;
         guard.observe(&event, span)?;
         let role = merge_keys.observe(&event, span)?;
+        if let Some(on_event) = on_event.as_mut()
+            && let Some(item) = events::item_of(&event, span, role)
+        {
+            on_event(&item);
+        }
         builder.event(event, span, role)?;
     }
     Ok(inject_implicit_null_if_empty(

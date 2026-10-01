@@ -146,7 +146,7 @@ fn format_rejects_tag_prefix_amplification() {
         .output()
         .unwrap();
     assert!(output.status.code().is_some_and(|c| c != 0));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, []);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("tag prefix expansion"), "stderr: {stderr}");
 }

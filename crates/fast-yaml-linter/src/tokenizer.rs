@@ -45,11 +45,32 @@ impl Token {
 /// Accurately identifies flow syntax elements while ignoring tokens
 /// inside quoted strings and comments.
 pub struct FlowTokenizer<'a> {
-    _source: &'a str,
     context: &'a SourceContext<'a>,
-    block_scalar_ranges: Vec<ByteRange>,
+    pub(crate) index: &'a FlowIndex,
+}
+
+/// Source ranges the flow tokenizer must skip, computed once per source.
+///
+/// Building the index parses the source; share one index between all tokenizers of the same
+/// source (see [`LintContext::flow_tokenizer`](crate::LintContext::flow_tokenizer)).
+pub struct FlowIndex {
+    block_scalars: Vec<ByteRange>,
     flow_ranges: Vec<ByteRange>,
     masked_ranges: Vec<ByteRange>,
+}
+
+impl FlowIndex {
+    /// Builds the index for `source`, whose line table is `context`.
+    #[must_use]
+    pub fn new(source: &str, context: &SourceContext<'_>) -> Self {
+        let scalars = collect_scalar_ranges(source, context);
+        let masked_ranges = collect_masked_ranges(source, &scalars);
+        Self {
+            block_scalars: scalars.block,
+            flow_ranges: scalars.flow,
+            masked_ranges,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -208,16 +229,8 @@ impl PlainScalarScanner {
 impl<'a> FlowTokenizer<'a> {
     /// Creates a new flow tokenizer.
     #[must_use]
-    pub fn new(source: &'a str, context: &'a SourceContext<'a>) -> Self {
-        let scalars = collect_scalar_ranges(source, context);
-        let masked_ranges = collect_masked_ranges(source, &scalars);
-        Self {
-            _source: source,
-            context,
-            block_scalar_ranges: scalars.block,
-            flow_ranges: scalars.flow,
-            masked_ranges,
-        }
+    pub const fn new(index: &'a FlowIndex, context: &'a SourceContext<'a>) -> Self {
+        Self { context, index }
     }
 
     /// Finds all tokens of a specific type in the source.
@@ -282,12 +295,12 @@ impl<'a> FlowTokenizer<'a> {
 
     /// Checks if a byte offset falls inside a block scalar range.
     fn is_in_block_scalar(&self, offset: ByteOffset) -> bool {
-        Self::in_ranges(&self.block_scalar_ranges, offset)
+        Self::in_ranges(&self.index.block_scalars, offset)
     }
 
     /// Checks if a byte offset falls inside an outermost flow collection.
     fn is_in_flow(&self, offset: ByteOffset) -> bool {
-        Self::in_ranges(&self.flow_ranges, offset)
+        Self::in_ranges(&self.index.flow_ranges, offset)
     }
 
     /// Checks if `offset` falls inside one of the sorted, disjoint `ranges`.
@@ -307,7 +320,7 @@ impl<'a> FlowTokenizer<'a> {
 
     /// Checks if a byte offset falls inside a comment or quoted scalar.
     fn is_masked(&self, offset: ByteOffset) -> bool {
-        Self::in_ranges(&self.masked_ranges, offset)
+        Self::in_ranges(&self.index.masked_ranges, offset)
     }
 
     /// Checks if a hyphen at a position is a list item marker.
@@ -639,7 +652,8 @@ mod tests {
     fn test_find_all_ignores_tokens_in_quotes_and_comments() {
         let yaml = "list: [1, 2, 3]";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         assert_eq!(tokenizer.find_all(TokenType::BracketOpen).len(), 1);
     }
 
@@ -647,7 +661,8 @@ mod tests {
     fn test_find_in_span_scans_only_the_span() {
         let yaml = "a: b\nc: {d: e}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
         assert_eq!(tokenizer.find_in_span(span).len(), 4);
     }
@@ -656,7 +671,8 @@ mod tests {
     fn test_tokenizer_simple_braces() {
         let yaml = "object: {key: value}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let braces = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(braces.len(), 1);
@@ -667,7 +683,8 @@ mod tests {
     fn test_tokenizer_nested_braces() {
         let yaml = "{a: {b: c}}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let open_braces = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(open_braces.len(), 2);
@@ -680,7 +697,8 @@ mod tests {
     fn test_tokenizer_ignore_in_strings() {
         let yaml = r#"url: "http://example.com""#;
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let colons = tokenizer.find_all(TokenType::Colon);
         // Only the mapping separator, not the one in the URL
@@ -692,7 +710,8 @@ mod tests {
     fn test_tokenizer_brackets() {
         let yaml = "list: [1, 2, 3]";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let open = tokenizer.find_all(TokenType::BracketOpen);
         assert_eq!(open.len(), 1);
@@ -705,7 +724,8 @@ mod tests {
     fn test_tokenizer_commas() {
         let yaml = "[a, b, c]";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let commas = tokenizer.find_all(TokenType::Comma);
         assert_eq!(commas.len(), 2);
@@ -715,7 +735,8 @@ mod tests {
     fn test_tokenizer_colons() {
         let yaml = "a: b\nc: d";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let colons = tokenizer.find_all(TokenType::Colon);
         assert_eq!(colons.len(), 2);
@@ -725,7 +746,8 @@ mod tests {
     fn test_tokenizer_hyphens() {
         let yaml = "- item1\n- item2";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let hyphens = tokenizer.find_all(TokenType::Hyphen);
         assert_eq!(hyphens.len(), 2);
@@ -735,7 +757,8 @@ mod tests {
     fn test_tokenizer_hyphen_not_in_middle() {
         let yaml = "key: some-value";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let hyphens = tokenizer.find_all(TokenType::Hyphen);
         // Should not match the hyphen in "some-value"
@@ -746,7 +769,8 @@ mod tests {
     fn test_tokenizer_find_in_span() {
         let yaml = "a: b\nc: {d: e}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         // Search only in line 2
         let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
@@ -758,7 +782,8 @@ mod tests {
 
     fn count(yaml: &str, token_type: TokenType) -> usize {
         let context = SourceContext::new(yaml);
-        FlowTokenizer::new(yaml, &context)
+        let index = FlowIndex::new(yaml, &context);
+        FlowTokenizer::new(&index, &context)
             .find_all(token_type)
             .len()
     }
@@ -938,7 +963,8 @@ mod tests {
         assert_eq!(count(yaml, TokenType::BraceClose), 1);
         assert_eq!(count(yaml, TokenType::BracketOpen), 0);
         let context = SourceContext::new(yaml);
-        let braces = FlowTokenizer::new(yaml, &context).find_all(TokenType::BraceOpen);
+        let index = FlowIndex::new(yaml, &context);
+        let braces = FlowTokenizer::new(&index, &context).find_all(TokenType::BraceOpen);
         assert_eq!(braces[0].span.start.line, 3);
         assert_eq!(braces[0].span.start.column, 4);
     }
@@ -947,7 +973,8 @@ mod tests {
     fn test_find_in_span_ignores_comments_and_quotes() {
         let yaml = "a: {b: \"c, d\"} # e, f }";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let span = Span::new(
             Location::new(1, 1, 0),
             Location::new(1, yaml.len() + 1, yaml.len()),
@@ -1030,7 +1057,8 @@ mod tests {
     fn test_find_in_span_starting_inside_multiline_quote() {
         let yaml = "a: \"first {\n  second, }\"\nb: {c: d}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let start = yaml.find("second").unwrap();
         let span = Span::new(Location::new(2, 3, start), Location::new(3, 9, yaml.len()));
         let tokens = tokenizer.find_in_span(span);
@@ -1055,7 +1083,8 @@ mod tests {
     fn test_multiline_flow_mapping() {
         let yaml = "{\n  key: value\n}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let open = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(open.len(), 1);
@@ -1070,7 +1099,8 @@ mod tests {
     fn test_empty_flow_collections() {
         let yaml = "{}\n[]";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let braces = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(braces.len(), 1);
@@ -1085,7 +1115,8 @@ mod tests {
         // GitHub Actions YAML: bash double-bracket syntax inside `run: |`
         let yaml = "steps:\n  - name: Check result\n    run: |\n      if [[ \"$result\" != \"success\" ]]; then\n        exit 1\n      fi\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let brackets = tokenizer.find_all(TokenType::BracketOpen);
         assert_eq!(
@@ -1107,7 +1138,8 @@ mod tests {
     fn test_block_scalar_folded_no_brace_tokens() {
         let yaml = "message: >\n  This has {braces} and [brackets] inside.\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         let braces = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(
@@ -1129,7 +1161,8 @@ mod tests {
         // Tokens in real YAML after a block scalar must still be linted
         let yaml = "run: |\n  echo hello\nlist: [1, 2, 3]\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
 
         // The block scalar body must not produce bracket tokens
         // The flow sequence on `list:` line must produce exactly 1 open bracket
@@ -1148,7 +1181,8 @@ mod tests {
         // é is 2 bytes — char index and byte offset diverge after it
         let yaml = "items:\n  - {données: 1, key: 2}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let commas = tokenizer.find_all(TokenType::Comma);
         assert_eq!(commas.len(), 1, "should find exactly 1 comma");
         assert_eq!(commas[0].span.start.line, 2);
@@ -1159,7 +1193,8 @@ mod tests {
         // ✓ is 3 bytes — list items after it must not trigger false positives
         let yaml = "items:\n  - note: \"contains ✓ checkmark\"\n  - item1\n  - item2";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let hyphens = tokenizer.find_all(TokenType::Hyphen);
         assert_eq!(hyphens.len(), 3, "should find exactly 3 list item hyphens");
     }
@@ -1169,7 +1204,8 @@ mod tests {
         // CJK characters are 3 bytes each
         let yaml = "data: {名前: value, key: other}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let colons = tokenizer.find_all(TokenType::Colon);
         assert_eq!(
             colons.len(),
@@ -1185,13 +1221,14 @@ mod tests {
         // Emoji are 4 bytes each
         let yaml = "data: {emoji: \"🎉\", key: value}";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let commas = tokenizer.find_all(TokenType::Comma);
         assert_eq!(commas.len(), 1, "should find exactly 1 comma");
     }
 
     #[test]
-    fn test_collect_block_scalar_ranges_literal() {
+    fn test_collect_block_scalars_literal() {
         let yaml = "key: |\n  content [bracket]\n";
         let ranges = collect_scalar_ranges(yaml, &SourceContext::new(yaml)).block;
         assert_eq!(ranges.len(), 1);
@@ -1200,7 +1237,7 @@ mod tests {
     }
 
     #[test]
-    fn test_block_scalar_ranges_are_byte_offsets_with_non_ascii_prefix() {
+    fn test_block_scalars_are_byte_offsets_with_non_ascii_prefix() {
         let yaml = "# ———\nrun: |\n  echo\n  tail }\nc: {a: b}\n";
         let ranges = collect_scalar_ranges(yaml, &SourceContext::new(yaml)).block;
         assert_eq!(ranges.len(), 1);
@@ -1215,7 +1252,8 @@ mod tests {
     fn test_is_in_block_scalar_lookup_across_multiple_ranges() {
         let yaml = "a: |\n  {x}\nb: {y: 1}\nc: >\n  [z]\nd: [w]\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let inside = |needle: &str| {
             tokenizer.is_in_block_scalar(ByteOffset::new(yaml.find(needle).unwrap()))
         };
@@ -1232,7 +1270,8 @@ mod tests {
     fn test_is_in_block_scalar_range_boundaries() {
         let yaml = "a: |\n  {x}\nb: >\n  [y]\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         let ranges = collect_scalar_ranges(yaml, &context).block;
         assert_eq!(ranges.len(), 2);
         for range in &ranges {
@@ -1246,7 +1285,8 @@ mod tests {
     fn test_is_in_block_scalar_empty_block() {
         let yaml = "a: |\nb: {c: 1}\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         assert!(!tokenizer.is_in_block_scalar(ByteOffset::new(yaml.find('{').unwrap())));
         assert_eq!(tokenizer.find_all(TokenType::BraceOpen).len(), 1);
     }
@@ -1255,7 +1295,8 @@ mod tests {
     fn test_non_ascii_prefix_block_scalar_no_brace_tokens() {
         let yaml = "# ———\nrun: |\n  echo\n  ok\n  tail }\n  [ x { y\n";
         let context = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let index = FlowIndex::new(yaml, &context);
+        let tokenizer = FlowTokenizer::new(&index, &context);
         for token_type in [
             TokenType::BraceOpen,
             TokenType::BraceClose,
@@ -1294,7 +1335,8 @@ mod tests {
         let yaml = format!("a: x[{}\n", "!<[".repeat(40_000));
         let context = SourceContext::new(&yaml);
         let started = std::time::Instant::now();
-        let _ = FlowTokenizer::new(&yaml, &context);
+        let index = FlowIndex::new(&yaml, &context);
+        let _ = FlowTokenizer::new(&index, &context);
         assert!(started.elapsed().as_secs() < 2);
     }
 

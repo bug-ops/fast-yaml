@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{
+    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+};
 use fast_yaml_core::Value;
 
 /// Linting rule for comment formatting.
@@ -87,14 +89,12 @@ impl super::LintRule for CommentsRule {
 
         for comment in comments {
             // Skip shebangs if configured
-            if comment.is_shebang && ignore_shebangs {
+            if comment.kind == CommentKind::Shebang && ignore_shebangs {
                 continue;
             }
 
             // Check for space after '#'
-            if require_starting_space
-                && !comment.content.is_empty()
-                && !comment.content.starts_with(' ')
+            if require_starting_space && !comment.text.is_empty() && !comment.text.starts_with(' ')
             {
                 let severity = config.rules.comments.severity_or(self.default_severity());
 
@@ -110,7 +110,7 @@ impl super::LintRule for CommentsRule {
             }
 
             // Check spacing from content for inline comments
-            if comment.is_inline {
+            if comment.kind == CommentKind::Inline {
                 // Find the line and check spacing before '#'
                 let line_num = comment.span.start.line;
                 let line_offset = context.source_context().get_line_offset(line_num);
@@ -171,7 +171,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -184,7 +184,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -197,7 +197,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("should start with a space"));
     }
 
@@ -211,7 +211,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -224,7 +224,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
                 .message
@@ -242,7 +242,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -255,7 +255,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("should start with a space"));
     }
 
@@ -283,7 +283,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Empty comment is valid (no content to check)
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -328,6 +328,20 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
+    }
+
+    #[test]
+    fn test_hash_inside_multiline_scalars_is_not_a_comment() {
+        for yaml in [
+            "a: \"one\n  #two\n  three\"\n",
+            "a: 'one\n  #two\n  three'\n",
+            "a: |\n  #two\n  three\n",
+        ] {
+            let value = Parser::parse_str(yaml).unwrap().unwrap();
+            let context = LintContext::new(yaml);
+            let diagnostics = CommentsRule.check(&context, &value, &LintConfig::default());
+            assert!(diagnostics.is_empty(), "{yaml:?}: {diagnostics:?}");
+        }
     }
 }

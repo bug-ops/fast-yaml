@@ -52,7 +52,7 @@ fn format_keeps_comment_after_non_ascii_directive() {
         .output()
         .unwrap();
     assert_eq!(output.status.code(), Some(1), "{:?}", output.status);
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, []);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("would strip"), "{stderr}");
 }

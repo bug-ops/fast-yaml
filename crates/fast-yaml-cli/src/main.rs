@@ -161,6 +161,7 @@ fn run() -> Result<ExitCode> {
         #[cfg(feature = "linter")]
         Some(Command::Lint {
             paths,
+            stdin_files,
             config: config_path,
             no_config,
             max_line_length,
@@ -175,7 +176,7 @@ fn run() -> Result<ExitCode> {
                     "--in-place is not supported by `fy lint` (auto-fix is not implemented)"
                 );
             }
-            let target = Target::resolve(paths, false, &batch)?;
+            let target = Target::resolve(paths, stdin_files, &batch)?;
             let args = commands::lint::LintArgs {
                 config_path,
                 no_config,

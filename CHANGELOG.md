@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#576)
+- **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#576)
+- **Linter**: `line-length` lets a one-word line through by default (#576)
+- **Linter**: `document-start`/`document-end` check every document (#576)
+- **Linter**: `QuotedStringsOptions`, `LineLengthOptions` and `DuplicateKeysOptions` gain fields (#576)
+- **Core**: `events::EventItem` gains `end`, the position where the event's token ends (#576)
+- **Linter**: `duplicate-key` now compares resolved values (`99`/`+99` collide, `"1"`/`1` do not), where yamllint compares text (#576)
+- **Linter**: `duplicate-key` gains `forbid-duplicated-merge-keys`, on by default (the yamllint presets turn it off), so a repeated `<<` stays reported (#576)
+- **Linter**: `Linter::lint_value` returns `LintError::ParseError` when `source` does not load under the configured limits (#576)
+- **Linter**: `comment_parser` is removed and `Comment<'a> { text, span, kind: CommentKind }` replaces `content`/`is_inline`/`is_shebang` (#576)
+- **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#576)
+- **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331; map an offset back with `NormalizedInput::original_offset` (#576)
 - **CLI/Python/Node.js**: `fy lint` on a `!!set` member with a value exits 2 with a `set-values` diagnostic instead of exiting 1 with a parse error, and Python/Node.js `lint` no longer raise on set values (#565) (#570)
 - **Core**: `LoadOptions` has a new public `set_values` field (#565) (#570)
 - **Linter**: `SarifFormatter` is removed in favor of `formatter::ReportFormat::Sarif`, a typed SARIF 2.1.0 report that names files by absolute `file:` URI (#314) (#570)
@@ -113,6 +125,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#576)
+- **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#576)
+- **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#576)
 - **Linter**: `set-values` rule (default error) reports every `!!set` member that has a value, so linting continues (#565) (#570)
 - **Core**: `ParseError::reason` returns the error text without its position (#314) (#570)
 - **Core**: `SetValues` load policy, `LoadOptions::with_set_values`, and public `merge::is_merge_key_scalar` / `merge::is_set_tag` (#565) (#570)
@@ -141,6 +156,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Linter**: the flow rules share one `FlowIndex` per lint run instead of building a tokenizer index each (#576)
+- **Linter/CLI**: the `syntax` diagnostic of the CI report formats uses BOM-free line, column and offset like every other span, and `fy lint` batch lists report formats through the same ordered pipeline (#576)
+- **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#576)
+- **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#576)
 - **Core**: faster `NormalizedInput` scan and no per-float allocation in `Float::parse` and `to_saphyr` (#558) (#562)
 - **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
 - **Node.js**: `safeLoad`/`safeLoadAll`/`load`/`loadAll`/`parseParallel` return env-bound values without a lifetime transmute, and napi coercions use safe `FromNapiValue::from_unknown` (#342) (#330) (#534)
@@ -183,6 +202,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `comments-indentation` skips a comment that follows a block scalar, as yamllint does (#576)
+- **Linter**: `comments`, `comments-indentation` and inline directives no longer treat a `#` inside a multi-line quoted or block scalar as a comment, and document start lines are read from parser events instead of `---` lines (#576)
 - **Linter**: `duplicate-key` detects a repeated `<<` written through an alias and a repeated alias key to a collection; a duplicate `<<` reads `duplicate merge key '<<'` and plain and quoted `<<` no longer collide (#565) (#570)
 - **Parallel**: `parse_parallel` agrees with `parse_all` on a root block scalar followed by `---`, and parse errors report the document index (#552) (#562)
 - **Core/CLI**: flow nesting beyond 255 levels is a `FlowNesting` limit error that `--max-depth` cannot raise (#556) (#564)

@@ -602,3 +602,51 @@ def test_set_member_with_a_value_is_a_diagnostic_at_its_key():
     result = [d for d in lint.lint("s: !!set {a: 1}\n") if d.code == "set-values"]
     assert len(result) == 1
     assert (result[0].span.start.line, result[0].span.start.column) == (1, 11)
+
+
+class TestBomCoordinates:
+    """Spans use the coordinates of the text with the BOM removed (#550)."""
+
+    @staticmethod
+    def _spans(source: str):
+        return [
+            (d.code, d.span.start.line, d.span.start.column, d.span.start.offset, d.span.end.offset)
+            for d in lint.lint(source)
+        ]
+
+    def test_leading_bom_does_not_shift_spans(self):
+        plain = self._spans("a: 1   \n")
+        assert plain
+        assert self._spans("\ufeffa: 1   \n") == plain
+
+    def test_prefix_bom_in_later_document_does_not_shift_spans(self):
+        plain = self._spans("a: 1\n...\nb: 2   \n")
+        assert plain
+        assert self._spans("a: 1\n...\n\ufeffb: 2   \n") == plain
+
+
+class TestCommentsInScalars:
+    """A `#` inside a multi-line quoted or block scalar is not a comment (#438)."""
+
+    def test_hash_in_multiline_quoted_scalar_is_not_a_comment(self):
+        diagnostics = lint.lint('a: "one\n  #two\n  three"\n')
+        assert [d.code for d in diagnostics if d.code == "comments"] == []
+
+    def test_real_comment_is_still_checked(self):
+        diagnostics = lint.lint("a: 1 #bad\n")
+        assert any(d.code == "comments" for d in diagnostics)
+
+
+class TestDuplicateKeysByValue:
+    """Keys are compared by resolved value, not spelling (#545)."""
+
+    @staticmethod
+    def _duplicates(source: str):
+        return [d for d in lint.lint(source) if d.code == "duplicate-key"]
+
+    def test_equal_values_with_different_spelling_are_duplicates(self):
+        assert len(self._duplicates("99: a\n+99: b\n")) == 1
+        assert len(self._duplicates("0x10: a\n16: b\n")) == 1
+
+    def test_different_types_are_not_duplicates(self):
+        assert self._duplicates('"1": a\n1: b\n') == []

@@ -439,7 +439,7 @@ fn test_bom_file_is_unchanged_by_format_check() {
 }
 
 #[test]
-fn test_bom_lint_stdin_reports_bom_relative_offsets() {
+fn test_bom_lint_stdin_reports_bom_free_offsets() {
     Command::cargo_bin("fy")
         .unwrap()
         .arg("lint")
@@ -450,7 +450,7 @@ fn test_bom_lint_stdin_reports_bom_relative_offsets() {
         .success()
         .stdout(predicate::str::contains("trailing-whitespace"))
         .stdout(predicate::str::contains("\"column\": 5"))
-        .stdout(predicate::str::contains("\"offset\": 7"));
+        .stdout(predicate::str::contains("\"offset\": 4"));
 }
 
 #[test]

@@ -12,8 +12,8 @@ use crate::{
 ///
 /// The span is zero-length at the position the error reports, clamped to the text, so the
 /// diagnostic is valid even for errors raised at end of input. Positions follow the linter's
-/// convention: lines and columns refer to the text with prefix byte order marks removed, offsets
-/// to the original `source`. Errors without a position (size limit) point at 1:1.
+/// convention: line, column and byte offset all refer to the text with prefix byte order marks
+/// removed (map an offset back with `NormalizedInput::original_offset`). Errors without a position (size limit) point at 1:1.
 ///
 /// # Examples
 ///
@@ -71,12 +71,7 @@ fn located_span(source: &str, line: usize, column: usize) -> Span {
     let text = normalized.as_ref().map_or(source, NormalizedInput::as_str);
     let ctx = SourceContext::new(text);
     let offset = ctx.byte_offset_of(Marker::new(0, line, column.saturating_sub(1)));
-    let mut span = ctx.span_at(offset, 0);
-    if let Some(normalized) = &normalized {
-        span.start.offset = normalized.original_offset(span.start.offset);
-        span.end.offset = normalized.original_offset(span.end.offset);
-    }
-    span
+    ctx.span_at(offset, 0)
 }
 
 #[cfg(test)]
@@ -90,11 +85,11 @@ mod tests {
     }
 
     #[test]
-    fn bom_keeps_columns_of_stripped_text_and_original_offsets() {
-        let d = diagnostic_of("\u{FEFF}a: [1\nb: 2\n]x\n");
-        assert_eq!(d.code.as_str(), "syntax");
-        assert!(d.span.start.line >= 1);
-        assert!(d.span.start.offset >= 3);
+    fn bom_is_ignored_in_line_column_and_offset() {
+        let bom = diagnostic_of("\u{FEFF}a: [1\nb: 2\n]x\n");
+        let plain = diagnostic_of("a: [1\nb: 2\n]x\n");
+        assert_eq!(bom.code.as_str(), "syntax");
+        assert_eq!(bom.span, plain.span);
     }
 
     #[test]

@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{Limit, RuleOptions};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
-    tokenizer::{FlowTokenizer, TokenType},
+    SourceContext, Span, tokenizer::TokenType,
 };
 use fast_yaml_core::Value;
 
@@ -80,7 +79,7 @@ impl super::LintRule for CommasRule {
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let source_context = context.source_context();
-        let tokenizer = FlowTokenizer::new(source, source_context);
+        let tokenizer = context.flow_tokenizer();
 
         let options = &config.rules.commas.options;
         let max_spaces_before = options.max_spaces_before;
@@ -260,7 +259,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -273,7 +272,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces before"));
     }
 
@@ -287,7 +286,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too few spaces after"));
     }
 
@@ -301,7 +300,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces after"));
     }
 
@@ -318,7 +317,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -331,7 +330,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -344,7 +343,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -357,7 +356,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -387,7 +386,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert_eq!(
             diagnostics[0].span.start.line, 2,
             "violation should be on line 2, got: {}",

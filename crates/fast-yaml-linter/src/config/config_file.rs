@@ -299,6 +299,10 @@ impl ConfigFile {
     /// Returns `ConfigFileError` on I/O failure, when the core parser rejects the file (syntax error or
     /// the default [`fast_yaml_core::limits::ParseLimits`] exceeded), or when `rules:` contains an
     /// unknown rule, an unknown or mistyped option, or an invalid severity.
+    ///
+    /// The file must be valid YAML 1.2, like every input of `fy`: a tab as the indentation of a
+    /// flow collection's continuation line is rejected, and the error names its line and column.
+    /// Indent with spaces.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
         let bytes = std::fs::read(path).map_err(|source| ConfigFileError::Io {
             path: path.to_owned(),
@@ -669,6 +673,18 @@ mod tests {
     }
 
     #[test]
+    fn test_tab_indented_flow_collection_is_rejected_with_its_position() {
+        let err = load_str("rules: {\n\tline-length: {max: 10}\n}\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::Rejected { .. }), "{err:?}");
+        let message = format!("{err:?}");
+        assert!(message.contains("tab"), "{message}");
+        assert!(
+            message.contains("line: 2") || message.contains("line 2"),
+            "{message}"
+        );
+    }
+
+    #[test]
     fn test_top_level_typo_is_rejected() {
         let err = load_str("rulez:\n  line-length: {max: 10}\n").unwrap_err();
         assert!(matches!(err, ConfigFileError::UnknownKey { .. }), "{err:?}");
@@ -990,7 +1006,7 @@ mod tests {
         ] {
             let (found, message) = invalid_key(load_in(&dir, content).unwrap_err());
             assert_eq!(found, key, "{content}");
-            assert!(!message.is_empty());
+            assert_ne!(message, "");
         }
     }
 

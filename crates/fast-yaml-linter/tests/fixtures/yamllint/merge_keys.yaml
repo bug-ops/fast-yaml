@@ -1,0 +1,11 @@
+base: &base
+  x: 1
+other: &other
+  y: 2
+merged:
+  <<: *base
+  <<: *other
+  z: 3
+plain:
+  k: 1
+  k: 2

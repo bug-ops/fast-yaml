@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{MarkerPresence, RuleOptions};
-use crate::context::{lines_of, source_lines};
+use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
@@ -13,7 +13,8 @@ use fast_yaml_core::Value;
 
 /// Linting rule for document end marker.
 ///
-/// Requires, forbids, or allows the YAML document end marker `...`.
+/// Requires, forbids, or allows the YAML document end marker `...`. `required` checks every
+/// document of the stream, `forbidden` flags every `...` at column 0.
 ///
 /// Configuration options:
 /// - `present`: "required" | "forbidden" | "allowed" (default: "allowed"); `true` and `false`
@@ -77,32 +78,47 @@ impl super::LintRule for DocumentEndRule {
     }
 }
 
+/// Flags each document that is not closed by `...`: the ones followed by another document at that
+/// document's `---` line, and the last one at the end of the file.
 fn check_required(context: &LintContext, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
     let source = context.source();
-    if has_document_end_marker(source) {
-        return Vec::new();
-    }
+    let source_context = context.source_context();
     let severity = config.rules.document_end.severity_or(Severity::Warning);
-    let eof_span = context
-        .source_context()
-        .span_at(ByteOffset::new(source.len()), 0);
+    let documents = context.document_markers();
 
-    let marker = if source.is_empty() || source.ends_with(['\n', '\r']) {
-        "..."
-    } else {
-        "\n..."
-    };
-
-    vec![
-        DiagnosticBuilder::new(
-            code,
-            severity,
-            "missing document end marker '...'",
-            eof_span,
-        )
-        .with_suggestion("Add '...' at the end", eof_span, Some(marker.to_string()))
-        .build_with_context(context.source_context()),
-    ]
+    documents
+        .iter()
+        .enumerate()
+        .filter(|(_, document)| document.end.is_none())
+        .map(|(index, _)| {
+            let next_marker = documents
+                .get(index + 1)
+                .and_then(|next| next.start.marker());
+            let (span, replacement) = next_marker.map_or_else(
+                || {
+                    let eof = source_context.span_at(ByteOffset::new(source.len()), 0);
+                    let marker = if source.is_empty() || source.ends_with(['\n', '\r']) {
+                        "..."
+                    } else {
+                        "\n..."
+                    };
+                    (eof, marker)
+                },
+                |marker| {
+                    let at =
+                        source_context.span_at(source_context.line_start(marker.start.line), 0);
+                    (at, "...\n")
+                },
+            );
+            DiagnosticBuilder::new(code, severity, "missing document end marker '...'", span)
+                .with_suggestion(
+                    "Add '...' to close this document",
+                    span,
+                    Some(replacement.to_owned()),
+                )
+                .build_with_context(source_context)
+        })
+        .collect()
 }
 
 /// Flags every `...` at column 0; YAML makes such a line end the document even inside scalars.
@@ -136,14 +152,6 @@ fn check_forbidden(
         .collect()
 }
 
-fn has_document_end_marker(source: &str) -> bool {
-    lines_of(source)
-        .map(str::trim)
-        .filter(|trimmed| !trimmed.is_empty() && !trimmed.starts_with('#'))
-        .last()
-        == Some("...")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,7 +171,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -191,12 +199,12 @@ mod tests {
         let value_with = Parser::parse_str(yaml_with).unwrap().unwrap();
         let context_with = LintContext::new(yaml_with);
         let diag_with = rule.check(&context_with, &value_with, &config);
-        assert!(diag_with.is_empty());
+        assert_eq!(diag_with, []);
 
         let value_without = Parser::parse_str(yaml_without).unwrap().unwrap();
         let context_without = LintContext::new(yaml_without);
         let diag_without = rule.check(&context_without, &value_without, &config);
-        assert!(diag_without.is_empty());
+        assert_eq!(diag_without, []);
     }
 
     #[test]
@@ -209,18 +217,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
-    }
-
-    #[test]
-    fn test_has_document_end_marker() {
-        assert!(has_document_end_marker("test: value\n..."));
-        assert!(has_document_end_marker("test: value\n...  \n# comment"));
-        assert!(has_document_end_marker("test: value\n...\n\n"));
-        assert!(has_document_end_marker("é: 1\r...\r"));
-        assert!(has_document_end_marker("é: 1\r\n  ...\n"));
-        assert!(!has_document_end_marker("test: value"));
-        assert!(!has_document_end_marker(""));
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -266,12 +263,12 @@ mod tests {
 
     #[test]
     fn forbidden_ignores_non_markers() {
-        assert!(forbidden("a: 1\n").is_empty());
-        assert!(forbidden("a: 1\n....\n").is_empty());
-        assert!(forbidden("a: ...\n").is_empty());
-        assert!(forbidden("a: |\n  ...\n  text\n").is_empty());
-        assert!(forbidden("a: 1\n  ...\n").is_empty());
-        assert!(forbidden("a: 1\n...x\n").is_empty());
+        assert_eq!(forbidden("a: 1\n"), []);
+        assert_eq!(forbidden("a: 1\n....\n"), []);
+        assert_eq!(forbidden("a: ...\n"), []);
+        assert_eq!(forbidden("a: |\n  ...\n  text\n"), []);
+        assert_eq!(forbidden("a: 1\n  ...\n"), []);
+        assert_eq!(forbidden("a: 1\n...x\n"), []);
     }
 
     #[test]
@@ -291,5 +288,58 @@ mod tests {
         let diagnostics = forbidden("a: 1\n...\n");
         assert_eq!(diagnostics[0].suggestions.len(), 1);
         assert_eq!(diagnostics[0].suggestions[0].replacement, None);
+    }
+
+    fn required(yaml: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str("a: 1").unwrap().unwrap();
+        let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
+        DocumentEndRule.check(&LintContext::new(yaml), &value, &config)
+    }
+
+    fn required_lines(yaml: &str) -> Vec<(usize, usize)> {
+        required(yaml)
+            .iter()
+            .map(|d| (d.span.start.line, d.span.start.column))
+            .collect()
+    }
+
+    #[test]
+    fn required_checks_every_document() {
+        assert_eq!(required("a: 1\n...\n---\nb: 2\n...\n"), []);
+        assert_eq!(required_lines("a: 1\n---\nb: 2\n..."), [(2, 1)]);
+        assert_eq!(required_lines("a: 1\n...\n---\nb: 2\n"), [(5, 1)]);
+        assert_eq!(
+            required_lines("a: 1\n---\nb: 2\n---\nc: 3\n"),
+            [(2, 1), (4, 1), (6, 1)]
+        );
+    }
+
+    #[test]
+    fn required_accepts_a_marker_with_a_comment() {
+        assert_eq!(required("a: 1\n... # end\n"), []);
+        assert_eq!(required("--- # c\na: 1\n... # e\n"), []);
+    }
+
+    #[test]
+    fn required_does_not_take_an_indented_or_scalar_marker_for_an_end() {
+        assert_eq!(required("a: 1\n  ...\n").len(), 1);
+        assert_eq!(required("a: |\n  ...\n").len(), 1);
+    }
+
+    #[test]
+    fn required_suggestions_close_the_document() {
+        let found = required("a: 1\n---\nb: 2\n");
+        assert_eq!(
+            found[0].suggestions[0].replacement.as_deref(),
+            Some("...\n")
+        );
+        assert_eq!(found[0].suggestions[0].span.start.offset, "a: 1\n".len());
+        assert_eq!(found[1].suggestions[0].replacement.as_deref(), Some("..."));
+    }
+
+    #[test]
+    fn required_comment_only_and_empty_sources_count_as_one_document() {
+        assert_eq!(required("# c\n").len(), 1);
+        assert_eq!(required("").len(), 1);
     }
 }

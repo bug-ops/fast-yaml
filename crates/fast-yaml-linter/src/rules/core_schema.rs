@@ -2,7 +2,7 @@
 //! `!!set` and null.
 
 use fast_yaml_core::events::Tag;
-use fast_yaml_core::merge::{is_merge_key_scalar, is_set_tag};
+use fast_yaml_core::merge::is_set_tag;
 use fast_yaml_core::{ResolvedScalar, ScalarStyle, resolve_scalar};
 use saphyr_parser::{ScalarStyle as SaphyrStyle, Tag as SaphyrTag};
 
@@ -18,11 +18,6 @@ const fn core_style(style: SaphyrStyle) -> ScalarStyle {
 
 fn core_tag(tag: &SaphyrTag) -> Tag<'static> {
     Tag::new(tag.handle.clone(), tag.suffix.clone())
-}
-
-/// Whether the scalar is a merge key: plain untagged `<<` or any `!!merge` scalar.
-pub(super) fn is_merge_key(text: &str, style: SaphyrStyle, tag: Option<&SaphyrTag>) -> bool {
-    is_merge_key_scalar(text, core_style(style), tag.map(core_tag).as_ref())
 }
 
 /// Whether the collection tag is the core `!!set` tag.
@@ -44,13 +39,6 @@ mod tests {
             handle: "tag:yaml.org,2002:".to_owned(),
             suffix: suffix.to_owned(),
         }
-    }
-
-    #[test]
-    fn merge_keys_follow_core_definition() {
-        assert!(is_merge_key("<<", SaphyrStyle::Plain, None));
-        assert!(!is_merge_key("<<", SaphyrStyle::SingleQuoted, None));
-        assert!(is_merge_key("x", SaphyrStyle::Plain, Some(&tag("merge"))));
     }
 
     #[test]

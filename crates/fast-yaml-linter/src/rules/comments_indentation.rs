@@ -1,18 +1,10 @@
 //! Rule to check comment indentation.
 
-use crate::context::lines_of;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::context::LineMetadata;
+use crate::{
+    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+};
 use fast_yaml_core::Value;
-
-/// Metadata about a line for efficient indentation checking.
-struct LineInfo {
-    /// Number of leading spaces
-    indent: usize,
-    /// true if line is empty or only whitespace
-    is_empty: bool,
-    /// true if line is a comment
-    is_comment: bool,
-}
 
 /// Linting rule for comment indentation.
 ///
@@ -54,28 +46,14 @@ impl super::LintRule for CommentsIndentationRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let comments = context.comments();
 
         let mut diagnostics = Vec::new();
 
-        let lines: Vec<&str> = lines_of(source).collect();
-
-        // Pre-compute line metadata to avoid O(n²) complexity
-        let line_info: Vec<LineInfo> = lines
-            .iter()
-            .map(|line| {
-                let trimmed = line.trim_start();
-                LineInfo {
-                    indent: get_line_indentation(line),
-                    is_empty: trimmed.is_empty(),
-                    is_comment: trimmed.starts_with('#'),
-                }
-            })
-            .collect();
+        let line_info = context.line_metadata();
 
         let content_indent =
-            |info: &LineInfo| (!info.is_empty && !info.is_comment).then_some(info.indent);
+            |info: &LineMetadata| (!info.is_empty && !info.is_comment).then_some(info.indent);
 
         // next_content[i] / prev_content[i]: indent of the nearest content line strictly after / before i
         let mut next_content: Vec<Option<usize>> = line_info
@@ -96,19 +74,41 @@ impl super::LintRule for CommentsIndentationRule {
                 Some(current)
             })
             .collect();
+        // Line number of the nearest content line strictly before each line
+        let prev_content_line: Vec<Option<usize>> = line_info
+            .iter()
+            .enumerate()
+            .scan(None, |prev, (idx, info)| {
+                let current = *prev;
+                if content_indent(info).is_some() {
+                    *prev = Some(idx + 1);
+                }
+                Some(current)
+            })
+            .collect();
 
         for comment in comments {
             // Skip inline comments (they follow content indentation)
-            if comment.is_inline {
+            if comment.kind == CommentKind::Inline {
                 continue;
             }
 
             let comment_line = comment.span.start.line;
-            if comment_line == 0 || comment_line > lines.len() {
+            if comment_line == 0 || comment_line > line_info.len() {
                 continue;
             }
 
             let comment_line_idx = comment_line - 1;
+
+            // yamllint does not check comments that follow a block scalar
+            if prev_content_line
+                .get(comment_line_idx)
+                .copied()
+                .flatten()
+                .is_some_and(|line| context.in_block_scalar(line))
+            {
+                continue;
+            }
             let Some(comment_indent) = line_info.get(comment_line_idx).map(|info| info.indent)
             else {
                 continue;
@@ -153,11 +153,6 @@ impl super::LintRule for CommentsIndentationRule {
 
         diagnostics
     }
-}
-
-/// Gets the indentation level of a line (number of leading spaces).
-fn get_line_indentation(line: &str) -> usize {
-    line.chars().take_while(|&c| c == ' ').count()
 }
 
 #[cfg(test)]
@@ -238,7 +233,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -251,7 +246,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
                 .message
@@ -270,7 +265,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Inline comments are not checked for indentation
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -283,7 +278,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -296,7 +291,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
     }
 
     #[test]
@@ -309,7 +304,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -322,7 +317,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -335,15 +330,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
-    }
-
-    #[test]
-    fn test_get_line_indentation() {
-        assert_eq!(get_line_indentation("no indent"), 0);
-        assert_eq!(get_line_indentation("  two spaces"), 2);
-        assert_eq!(get_line_indentation("    four spaces"), 4);
-        assert_eq!(get_line_indentation(""), 0);
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -356,7 +343,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     // Regression tests for issue #166: top-level comment after nested block false positive
@@ -444,5 +431,53 @@ mod tests {
             !diagnostics.is_empty(),
             "incorrectly indented nested comment should produce diagnostics"
         );
+    }
+
+    #[test]
+    fn test_hash_inside_multiline_scalars_is_not_a_comment() {
+        for yaml in [
+            "a:\n  b: \"one\n      #two\n    three\"\n  c: 1\n",
+            "a:\n  b: |\n    three\n      #two\n    more\n  c: 1\n",
+        ] {
+            assert_eq!(diag_count(yaml), 0, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_hash_line_inside_scalar_counts_as_content() {
+        let yaml = "a:\n  b: |\n    #x\n  # real\n  c: 1\n";
+        assert_eq!(diag_count(yaml), 0);
+        let yaml = "a:\n  b: \"p\n      #x\"\n# misplaced\n  c: 1\n";
+        assert_eq!(diag_count(yaml), 1);
+    }
+
+    #[test]
+    fn test_comments_after_a_block_scalar_are_not_checked() {
+        for yaml in [
+            "a: |-\n  x\n # c\nb: 1\n",
+            "a: |-\n  x\n  # c\nb: 1\n",
+            "a: |-\n  x\n# c\nb: 1\n",
+            "a: |-\n  x\n   # c\nb: 1\n",
+            "a: |-\n  x\n # c\n",
+            "a: >\n   x\n  # c\n",
+            "k:\n  a: |\n    x\n  # c\n  b: 1\n",
+            "k:\n  a: |\n    x\n   # c\n  b: 1\n",
+            "k:\n  a: |\n    x\n # c\n  b: 1\n",
+            "a: |\n  x\n\n # c\n # d\nb: 1\n",
+        ] {
+            assert_eq!(diag_count(yaml), 0, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_comments_after_other_content_are_still_checked() {
+        for yaml in ["a: 1\n # c\nb: 1\n", "a:\n  - x\n # c\nb: 1\n"] {
+            assert_eq!(diag_count(yaml), 1, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_comment_after_a_block_scalar_that_is_followed_by_more_content() {
+        assert_eq!(diag_count("a: |\n  x\nb: 1\n # c\nc: 1\n"), 1);
     }
 }

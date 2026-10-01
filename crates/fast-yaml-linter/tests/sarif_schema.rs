@@ -40,7 +40,7 @@ fn empty_report_is_valid() {
 fn lint_findings_are_valid() {
     let source = "key: 1\nkey: 2\n";
     let diagnostics = lint(source);
-    assert!(!diagnostics.is_empty());
+    assert_ne!(diagnostics, []);
     let first = file("a b.yaml");
     let second = ReportSource::Stdin;
     let out = ReportFormat::Sarif.render(&[

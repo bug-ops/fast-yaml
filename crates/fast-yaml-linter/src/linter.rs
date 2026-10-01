@@ -5,12 +5,12 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
-use crate::context::lines_of;
 use crate::directives::Directives;
 use crate::rules::MarkerPresence;
+use crate::scan::{ScanCollector, SourceScan, lint_load_options};
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
-use fast_yaml_core::{DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser, SetValues, Value};
+use fast_yaml_core::{NormalizedInput, Parser, Value};
 
 /// Configuration for the linter.
 ///
@@ -376,6 +376,10 @@ impl Linter {
     /// also spelled `# yamllint ...`). Problems in directives are reported as `lint-directive`
     /// diagnostics.
     ///
+    /// Every location (line, column, byte offset, suggestion spans) refers to `source` with
+    /// document-prefix BOMs removed, the same text the parser reports syntax errors against; use
+    /// [`NormalizedInput::original_offset`] to map an offset back to `source`.
+    ///
     /// # Errors
     ///
     /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
@@ -394,17 +398,17 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let options = LoadOptions::new()
-            .with_duplicate_merge_keys(DuplicateMergeKeys::LastWins)
-            .with_set_values(SetValues::Ignore);
-        let docs = Parser::parse_normalized(
+        let context = LintContext::new(source);
+        let mut collector = ScanCollector::new(&normalized, source, context.source_context());
+        let docs = Parser::parse_normalized_observed(
             &normalized,
             &StreamBudget::new(self.config.parse_limits),
-            options,
+            lint_load_options(),
+            |item| collector.observe(item),
         )?;
-        let doc_start_lines = compute_doc_start_lines(source, docs.len());
-        let directives = Directives::from_source(source, &self.config, &self.registry);
-        let mut context = LintContext::new(source);
+        let scan = collector.finish();
+        let mut context = context.with_scan(scan);
+        let directives = Directives::from_context(&context, &self.config, &self.registry);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
@@ -417,7 +421,7 @@ impl Linter {
 
             if rule.needs_value() {
                 for (idx, doc) in docs.iter().enumerate() {
-                    let start_line = doc_start_lines.get(idx).copied().unwrap_or(1);
+                    let start_line = context.documents().get(idx).map_or(1, |d| d.first_line);
                     context.set_doc_start_line(start_line);
                     diagnostics.extend(rule.check(&context, doc, &self.config));
                 }
@@ -428,7 +432,7 @@ impl Linter {
             }
         }
 
-        Ok(finish(diagnostics, directives, &normalized))
+        Ok(finish(diagnostics, directives))
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -448,19 +452,32 @@ impl Linter {
     /// let diagnostics = linter.lint_value(yaml, &value).unwrap();
     /// ```
     ///
+    /// Locations use the same BOM-free coordinates as [`Linter::lint`].
+    ///
+    /// Comments and document markers are read from `source` itself under
+    /// [`LintConfig::parse_limits`], so `source` must load.
+    ///
     /// # Errors
     ///
     /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
-    /// and `LintError::ParseError` if `source` contains a NUL character, which the
+    /// and `LintError::ParseError` if `source` does not load (it exceeds the parse limits or is
+    /// not valid YAML) or contains a NUL character, which the
     /// tokenizer would otherwise treat as end of input, or if the scanner reads more than
     /// [`ParseLimits::max_scan_ahead`] past a node.
     pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
-        normalized.check_scan_ahead(self.config.parse_limits.max_scan_ahead)?;
         let source = normalized.as_str();
-        let directives = Directives::from_source(source, &self.config, &self.registry);
         let context = LintContext::new(source);
+        // Comments and markers come from the source itself, under the configured limits; a source
+        // that does not load is an error here, as it is in `lint`
+        let (scan, failure) =
+            SourceScan::scan(source, context.source_context(), self.config.parse_limits);
+        if let Some(error) = failure {
+            return Err(error.into());
+        }
+        let context = context.with_scan(scan);
+        let directives = Directives::from_context(&context, &self.config, &self.registry);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
@@ -475,7 +492,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
-        Ok(finish(diagnostics, directives, &normalized))
+        Ok(finish(diagnostics, directives))
     }
 
     /// Gets the current configuration.
@@ -530,53 +547,11 @@ pub enum LintError {
     InputTooLarge(#[from] InputTooLarge),
 }
 
-/// Returns a `Vec` where `result[i]` is the 1-based line number at which
-/// document `i` begins in `source`.
-///
-/// Document boundaries are detected by scanning for lines that consist solely
-/// of `---` (the YAML directive-end marker). The first document always starts
-/// at line 1. Each `---` line introduces the *next* document, which begins on
-/// the following line.
-fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(doc_count);
-    starts.push(1usize);
-
-    for (idx, line) in lines_of(source).enumerate() {
-        if line == "---" {
-            starts.push(idx + 2); // line after `---` (1-based)
-            if starts.len() == doc_count {
-                break;
-            }
-        }
-    }
-
-    starts
-}
-
-/// Applies inline directives, rebases spans onto the original file and sorts.
-fn finish(
-    mut diagnostics: Vec<Diagnostic>,
-    directives: Directives,
-    normalized: &NormalizedInput<'_>,
-) -> Vec<Diagnostic> {
+/// Applies inline directives and sorts.
+fn finish(mut diagnostics: Vec<Diagnostic>, directives: Directives) -> Vec<Diagnostic> {
     directives.apply(&mut diagnostics);
-    shift_offsets(&mut diagnostics, normalized);
     diagnostics.sort_by_key(|d| d.span.start);
     diagnostics
-}
-
-/// Rebases span offsets onto the original file, which still contains the removed BOMs.
-///
-/// Lines and columns stay as the rules saw them, in the normalized text, so a line that lost a
-/// BOM reads as if the BOM were absent.
-fn shift_offsets(diagnostics: &mut [Diagnostic], normalized: &NormalizedInput<'_>) {
-    let spans = diagnostics.iter_mut().flat_map(|d| {
-        std::iter::once(&mut d.span).chain(d.suggestions.iter_mut().map(|s| &mut s.span))
-    });
-    for span in spans {
-        span.start.offset = normalized.original_offset(span.start.offset);
-        span.end.offset = normalized.original_offset(span.end.offset);
-    }
 }
 
 #[cfg(test)]
@@ -1167,68 +1142,51 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_lint_bom_input_keeps_line_column_and_shifts_offset() {
-        let linter = Linter::with_all_rules();
-        let plain = linter.lint("# c\na: 1").unwrap();
-        let bom = linter.lint("\u{FEFF}# c\na: 1").unwrap();
-        assert!(!plain.is_empty());
+    fn assert_same_coordinates(plain: &[Diagnostic], bom: &[Diagnostic], normalized: &str) {
+        assert_ne!(plain, []);
         assert_eq!(plain.len(), bom.len());
-        for (p, b) in plain.iter().zip(&bom) {
+        for (p, b) in plain.iter().zip(bom) {
             assert_eq!(p.code, b.code);
+            assert_eq!(p.span, b.span, "{}", p.code.as_str());
             assert_eq!(
-                (p.span.start.line, p.span.start.column),
-                (b.span.start.line, b.span.start.column)
+                p.suggestions.iter().map(|s| s.span).collect::<Vec<_>>(),
+                b.suggestions.iter().map(|s| s.span).collect::<Vec<_>>(),
+                "{}",
+                p.code.as_str()
             );
-            assert_eq!(b.span.start.offset, p.span.start.offset + 3);
-            assert_eq!(b.span.end.offset, p.span.end.offset + 3);
+            assert!(
+                normalized
+                    .get(b.span.start.offset..b.span.end.offset)
+                    .is_some()
+            );
         }
     }
 
     #[test]
-    fn test_lint_prefix_bom_lines_keep_columns_and_shift_offsets() {
+    fn test_lint_bom_input_uses_normalized_coordinates() {
+        let linter = Linter::with_all_rules();
+        let plain = linter.lint("# c\na: 1").unwrap();
+        let bom = linter.lint("\u{FEFF}# c\na: 1").unwrap();
+        assert_same_coordinates(&plain, &bom, "# c\na: 1");
+    }
+
+    #[test]
+    fn test_lint_prefix_bom_lines_use_normalized_coordinates() {
         let linter = Linter::with_all_rules();
         let bom = '\u{FEFF}';
-        for (plain_src, bom_src, bom_lines) in [
+        for (plain_src, bom_src) in [
             (
                 "a: 1\n...\nb: 2   \nc:  3\n".to_owned(),
                 format!("a: 1\n...\n{bom}b: 2   \nc:  3\n"),
-                vec![3],
             ),
             (
                 "a: 1\n...\n# c\n---\nb: 2   \n".to_owned(),
                 format!("{bom}a: 1\n...\n{bom}# c\n{bom}---\nb: 2   \n"),
-                vec![1, 3, 4],
             ),
         ] {
             let plain = linter.lint(&plain_src).unwrap();
             let shifted = linter.lint(&bom_src).unwrap();
-            assert!(!plain.is_empty(), "{plain_src:?}");
-            assert_eq!(plain.len(), shifted.len(), "{bom_src:?}");
-            for (p, b) in plain.iter().zip(&shifted) {
-                assert_eq!(p.code, b.code);
-                assert_eq!(
-                    (p.span.start.line, p.span.start.column),
-                    (b.span.start.line, b.span.start.column),
-                    "{}",
-                    p.code.as_str()
-                );
-                let before = |line: usize| bom_lines.iter().filter(|&&l| l <= line).count() * 3;
-                assert_eq!(
-                    b.span.start.offset,
-                    p.span.start.offset + before(p.span.start.line),
-                    "{}",
-                    p.code.as_str()
-                );
-                assert_eq!(
-                    b.span.end.offset,
-                    p.span.end.offset + before(p.span.end.line)
-                );
-                assert_eq!(
-                    &bom_src[b.span.start.offset..b.span.end.offset],
-                    &plain_src[p.span.start.offset..p.span.end.offset]
-                );
-            }
+            assert_same_coordinates(&plain, &shifted, &plain_src);
         }
     }
 
@@ -1251,14 +1209,13 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_value_bom_shifts_offset() {
+    fn test_lint_value_bom_uses_normalized_coordinates() {
         let linter = Linter::with_all_rules();
         let src = "a: 1";
         let value = fast_yaml_core::Parser::parse_str(src).unwrap().unwrap();
         let plain = linter.lint_value(src, &value).unwrap();
         let bom = linter.lint_value("\u{FEFF}a: 1", &value).unwrap();
-        assert!(!plain.is_empty());
-        assert_eq!(bom[0].span.start.offset, plain[0].span.start.offset + 3);
+        assert_same_coordinates(&plain, &bom, src);
     }
 
     #[test]
@@ -1273,5 +1230,50 @@ mod tests {
             .lint("x: {<<: 1}\nx: 2\n")
             .unwrap_err();
         assert!(err.to_string().contains("line 1, column 5"), "{err}");
+    }
+
+    #[test]
+    fn test_comment_only_source_lints_without_documents() {
+        let diagnostics = Linter::with_all_rules().lint("# only a comment\n").unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn test_lint_scans_comments_in_the_loader_pass() {
+        let diagnostics = Linter::with_all_rules()
+            .lint("a: 1\n---\nb: 2 #x\n")
+            .unwrap();
+        let lines: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == "comments")
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(lines, [3, 3]);
+    }
+
+    #[test]
+    fn test_lint_value_applies_directives_under_the_configured_limits() {
+        use fast_yaml_core::limits::{MaxDepth, ParseLimits};
+        use std::fmt::Write as _;
+
+        let mut source = String::from("# fy: disable-file\n");
+        for depth in 0..300 {
+            writeln!(source, "{}k:", " ".repeat(depth)).unwrap();
+        }
+        writeln!(source, "{}v: 1 ", " ".repeat(300)).unwrap();
+        let value = Value::Null;
+
+        let limits = |depth| ParseLimits {
+            max_depth: MaxDepth::new(depth).unwrap(),
+            ..ParseLimits::default()
+        };
+        let raised = Linter::with_config(LintConfig::new().with_parse_limits(limits(512)));
+        assert_eq!(raised.lint_value(&source, &value).unwrap(), []);
+
+        let lowered = Linter::with_config(LintConfig::new().with_parse_limits(limits(8)));
+        assert!(matches!(
+            lowered.lint_value(&source, &value),
+            Err(LintError::ParseError(_))
+        ));
     }
 }

@@ -156,7 +156,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert!(rule.check(&ctx, &value, &config).is_empty());
+        assert_eq!(rule.check(&ctx, &value, &config), []);
     }
 
     #[test]
@@ -195,7 +195,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert!(rule.check(&ctx, &value, &config).is_empty());
+        assert_eq!(rule.check(&ctx, &value, &config), []);
     }
 
     #[test]
@@ -205,7 +205,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        assert!(rule.check(&ctx, &value, &config).is_empty());
+        assert_eq!(rule.check(&ctx, &value, &config), []);
     }
 
     #[test]
@@ -230,7 +230,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(tab_source);
-        assert!(rule.check(&ctx, &value, &config).is_empty());
+        assert_eq!(rule.check(&ctx, &value, &config), []);
     }
 
     #[test]

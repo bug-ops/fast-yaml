@@ -247,7 +247,7 @@ describe('yamllint forms and shorthands', () => {
 
   it.each([
     ['indentation', 'spaces', 2],
-    ['line-length', 'allow-non-breakable-words', true],
+    ['indentation', 'indent-sequences', true],
   ])('yamllint-only option %s.%s is rejected', (rule, option, value) => {
     expect(() => lint('a: 1\n', bad({ [rule]: { [option]: value } }))).toThrow(
       new RegExp(`rule '${rule}'.*'${option}'.*not implemented by fast-yaml`)
@@ -359,5 +359,71 @@ describe.skipIf(fyMissing && !inCi)('parity with fy lint --config', () => {
     }
     expect(message).not.toBe('');
     expect(out.stderr).toContain(message);
+  });
+});
+
+describe('yamllint parity options (#536)', () => {
+  const codesOf = (source: string, rules: Record<string, unknown>) =>
+    lint(source, bad(rules)).map((d) => d.code);
+
+  it('level is an alias of severity', () => {
+    const result = lint(
+      `key: ${'x'.repeat(20)}\n`,
+      bad({ 'line-length': { max: 10, level: 'warning' } })
+    );
+    expect(result.find((d) => d.code === 'line-length')?.severity).toBe('Warning');
+    expect(() =>
+      lint('a: 1\n', bad({ 'line-length': { level: 'warning', severity: 'error' } }))
+    ).toThrow(/aliases/);
+  });
+
+  it('truthy does not report single letters', () => {
+    const rules = { truthy: { 'check-keys': true } };
+    expect(codesOf('a: y\nb: N\ny: 1\n', rules)).not.toContain('truthy');
+    expect(codesOf('a: yes\n', rules)).toContain('truthy');
+  });
+
+  it('quoted-strings check-keys and allow-quoted-quotes', () => {
+    expect(codesOf('"a": "b"\n', { 'quoted-strings': { required: true } })).not.toContain(
+      'quoted-strings'
+    );
+    expect(
+      codesOf('a: "b"\n', { 'quoted-strings': { required: true, 'check-keys': true } })
+    ).toContain('quoted-strings');
+    const quotes = {
+      'quoted-strings': { 'quote-type': 'single', required: false, 'allow-quoted-quotes': true },
+    };
+    expect(codesOf('a: "it\'s"\n', quotes)).not.toContain('quoted-strings');
+    expect(codesOf('a: "plain"\n', quotes)).toContain('quoted-strings');
+  });
+
+  it('forbid-duplicated-merge-keys', () => {
+    const source = 'a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n';
+    expect(codesOf(source, {})).toContain('duplicate-key');
+    expect(
+      codesOf(source, { 'duplicate-key': { 'forbid-duplicated-merge-keys': false } })
+    ).not.toContain('duplicate-key');
+  });
+
+  it('line-length non-breakable options', () => {
+    const url = 'http://localhost/very/very/very/very/very/very/very/very/long/url';
+    expect(codesOf(`- ${url}\n`, { 'line-length': { max: 20 } })).not.toContain('line-length');
+    expect(
+      codesOf(`- ${url}\n`, { 'line-length': { max: 20, 'allow-non-breakable-words': false } })
+    ).toContain('line-length');
+    expect(
+      codesOf(`key: ${url}\n`, {
+        'line-length': { max: 20, 'allow-non-breakable-inline-mappings': true },
+      })
+    ).not.toContain('line-length');
+  });
+
+  it('document markers are checked per document', () => {
+    const start = { 'document-start': { present: true } };
+    expect(codesOf('---\na: 1\n...\n---\nb: 2\n', start)).not.toContain('document-start');
+    const lines = lint('a: 1\n---\nb: 2\n', bad(start))
+      .filter((d) => d.code === 'document-start')
+      .map((d) => d.span.start.line);
+    expect(lines).toEqual([1]);
   });
 });

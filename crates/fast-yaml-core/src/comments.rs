@@ -5,9 +5,8 @@
 
 use std::ops::{ControlFlow, Range};
 
-use saphyr_parser::{Event, Marker, ScalarStyle};
-
-use crate::error::ParseResult;
+use crate::error::{ParseResult, SourcePosition};
+use crate::events::{self, Event, EventItem, ScalarStyle};
 use crate::input::NormalizedInput;
 use crate::limits::MaxScanAhead;
 
@@ -58,12 +57,9 @@ pub fn has_comments_normalized(
     input: &NormalizedInput<'_>,
     max: MaxScanAhead,
 ) -> ParseResult<bool> {
-    let mut found = false;
-    scan_comments(input, max, |_, _| {
-        found = true;
-        ControlFlow::Break(())
-    })?;
-    Ok(found)
+    let mut scanner = CommentScanner::new(input);
+    drive(input, max, |item| scanner.observe(item))?;
+    Ok(scanner.found_any() || !scanner.finish().is_empty())
 }
 
 /// Returns the byte range of every YAML comment in `input`, from `#` to the end of its line.
@@ -90,54 +86,149 @@ pub fn has_comments_normalized(
 /// ```
 pub fn find_comments(input: &str, max: MaxScanAhead) -> ParseResult<Vec<Range<usize>>> {
     let normalized = NormalizedInput::new(input)?;
-    let mut ranges = Vec::new();
-    // (char index, byte offset) of the last range end; hits arrive in source order.
-    let mut pos = (0usize, 0usize);
-    scan_comments(&normalized, max, |chars, hash| {
-        let start = pos.1 + byte_len(&chars[pos.0..hash]);
-        let end = line_end(chars, hash);
-        let end_byte = start + byte_len(&chars[hash..end]);
-        ranges.push(normalized.original_offset(start)..normalized.original_offset(end_byte));
-        pos = (end, end_byte);
+    let mut scanner = CommentScanner::new(&normalized);
+    drive(&normalized, max, |item| {
+        let _ = scanner.observe(item);
         ControlFlow::Continue(())
     })?;
-    Ok(ranges)
+    Ok(scanner
+        .finish()
+        .into_iter()
+        .map(|r| normalized.original_offset(r.start)..normalized.original_offset(r.end))
+        .collect())
 }
 
-/// Feeds the chars and the index of each comment's `#` to `on_hit`, stopping early on `Break`.
-fn scan_comments(
-    input: &NormalizedInput<'_>,
-    max: MaxScanAhead,
-    mut on_hit: impl FnMut(&[char], usize) -> ControlFlow<()>,
-) -> ParseResult<()> {
-    let chars: Vec<char> = input.as_str().chars().collect();
-    let line_starts = line_starts(&chars);
-    let mut parser = input.scanner(max);
-    let mut cursor = 0usize;
+/// Locates comments from the parser events of one normalized text.
+///
+/// Feed it every [`EventItem`], in order, then call [`finish`](Self::finish). It lets a
+/// caller that already drives a parser find the comments in the same pass instead of parsing
+/// the text again.
+///
+/// The scanner works on the exact text it was built from; building it from a
+/// [`NormalizedInput`] guarantees that this is the text the parser sees (saphyr does not skip a
+/// leading BOM). It keeps a `Vec<char>` copy of the text, about four times its size.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{CommentScanner, NormalizedInput};
+/// use fast_yaml_core::events::EventStream;
+/// use fast_yaml_core::limits::ParseLimits;
+///
+/// let input = NormalizedInput::new("a: 1 # one\nb: \"# not\"\n")?;
+/// let mut scanner = CommentScanner::new(&input);
+/// for item in EventStream::new(&input, ParseLimits::default()) {
+///     let _ = scanner.observe(&item?);
+/// }
+/// let ranges = scanner.finish();
+/// assert_eq!(&input.as_str()[ranges[0].clone()], "# one");
+/// assert_eq!(ranges.len(), 1);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug)]
+pub struct CommentScanner {
+    chars: Vec<char>,
+    line_starts: Vec<usize>,
+    cursor: usize,
+    // (char index, byte offset) of the last range end; hits arrive in source order
+    pos: (usize, usize),
+    ranges: Vec<Range<usize>>,
+}
 
-    while let Some(event) = parser.next_event() {
-        let (event, span) = event?;
-        let Event::Scalar(_, style, _, _) = event else {
-            continue;
-        };
-        let (start, end) = (
-            char_offset(&line_starts, span.start),
-            char_offset(&line_starts, span.end),
-        );
-        if start == end || start < cursor {
-            continue;
+impl CommentScanner {
+    /// Creates a scanner for `input`, the text whose events will be observed.
+    #[must_use]
+    pub fn new(input: &NormalizedInput<'_>) -> Self {
+        let chars: Vec<char> = input.as_str().chars().collect();
+        let line_starts = line_starts(&chars);
+        Self {
+            chars,
+            line_starts,
+            cursor: 0,
+            pos: (0, 0),
+            ranges: Vec::new(),
         }
-        if scan_gap(&chars, cursor, start, &mut on_hit).is_break() {
-            return Ok(());
-        }
-        cursor = match style {
-            ScalarStyle::SingleQuoted => skip_quoted(&chars, start, '\''),
-            ScalarStyle::DoubleQuoted => skip_quoted(&chars, start, '"'),
-            _ => end,
-        };
     }
 
-    let _ = scan_gap(&chars, cursor, chars.len(), &mut on_hit);
+    /// Processes the next parser event.
+    ///
+    /// Returns `Break` as soon as at least one comment has been located, so a caller that only
+    /// asks whether a comment exists can stop parsing; callers that want every comment ignore it.
+    pub fn observe(&mut self, item: &EventItem<'_>) -> ControlFlow<()> {
+        if let Event::Scalar { style, .. } = item.event {
+            let (start, end) = (
+                char_offset(&self.line_starts, item.at),
+                char_offset(&self.line_starts, item.end),
+            );
+            if start != end && start >= self.cursor {
+                self.scan_gap(self.cursor, start);
+                self.cursor = match style {
+                    ScalarStyle::SingleQuoted => skip_quoted(&self.chars, start, '\''),
+                    ScalarStyle::DoubleQuoted => skip_quoted(&self.chars, start, '"'),
+                    _ => end,
+                };
+            }
+        }
+        if self.found_any() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    }
+
+    /// Whether a comment has been located so far.
+    #[must_use]
+    pub const fn found_any(&self) -> bool {
+        !self.ranges.is_empty()
+    }
+
+    /// Scans the text after the last scalar and returns the byte range of every comment.
+    ///
+    /// Ranges run from `#` to the end of its line, exclude the line terminator, are relative to
+    /// the text the scanner was built from and come in source order.
+    #[must_use]
+    pub fn finish(mut self) -> Vec<Range<usize>> {
+        self.scan_gap(self.cursor, self.chars.len());
+        self.ranges
+    }
+
+    fn scan_gap(&mut self, from: usize, to: usize) {
+        let to = to.min(self.chars.len());
+        let mut i = from;
+        while i < to {
+            let chars = &self.chars;
+            if chars[i] == '#' && (i == 0 || matches!(chars[i - 1], ' ' | '\t' | '\n' | '\r')) {
+                let end = line_end(chars, i);
+                let start_byte = self.pos.1 + byte_len(&chars[self.pos.0..i]);
+                let end_byte = start_byte + byte_len(&chars[i..end]);
+                self.ranges.push(start_byte..end_byte);
+                self.pos = (end, end_byte);
+                i = end;
+            }
+            i += 1;
+        }
+    }
+}
+
+/// Parses `input` event by event, feeding each event to `on_event` until it returns `Break`.
+///
+/// Unlike [`EventStream`](crate::events::EventStream) it applies only the scan-ahead bound, no
+/// other limits or merge checks: finding comments must not fail on input the formatter would
+/// reject later with its own error.
+fn drive(
+    input: &NormalizedInput<'_>,
+    max: MaxScanAhead,
+    mut on_event: impl FnMut(&EventItem<'_>) -> ControlFlow<()>,
+) -> ParseResult<()> {
+    let mut parser = input.scanner(max);
+    while let Some(event) = parser.next_event() {
+        let (event, span) = event?;
+        if let Some(item) = events::item_of(&event, span, None)
+            && on_event(&item).is_break()
+        {
+            break;
+        }
+    }
     Ok(())
 }
 
@@ -153,31 +244,14 @@ fn line_starts(chars: &[char]) -> Vec<usize> {
     starts
 }
 
-/// Converts a marker's line and column to a char offset; `Marker::index` is unusable because
-/// saphyr adds byte counts to it after non-ASCII directive names.
-#[allow(clippy::disallowed_methods)]
-fn char_offset(line_starts: &[usize], marker: Marker) -> usize {
+/// Converts a line and column to a char offset; the parser's own index is unusable because it
+/// adds byte counts after non-ASCII directive names.
+fn char_offset(line_starts: &[usize], position: SourcePosition) -> usize {
     line_starts
-        .get(marker.line().wrapping_sub(1))
-        .map_or(usize::MAX, |start| start + marker.col())
-}
-
-fn scan_gap(
-    chars: &[char],
-    from: usize,
-    to: usize,
-    on_hit: &mut impl FnMut(&[char], usize) -> ControlFlow<()>,
-) -> ControlFlow<()> {
-    let to = to.min(chars.len());
-    let mut i = from;
-    while i < to {
-        if chars[i] == '#' && (i == 0 || matches!(chars[i - 1], ' ' | '\t' | '\n' | '\r')) {
-            on_hit(chars, i)?;
-            i = line_end(chars, i);
-        }
-        i += 1;
-    }
-    ControlFlow::Continue(())
+        .get(position.line.wrapping_sub(1))
+        .map_or(usize::MAX, |start| {
+            start + position.column.saturating_sub(1)
+        })
 }
 
 fn byte_len(chars: &[char]) -> usize {
@@ -215,6 +289,8 @@ fn skip_quoted(chars: &[char], open: usize, quote: char) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::EventStream;
+    use crate::limits::ParseLimits;
 
     fn has(input: &str) -> bool {
         has_comments(input, MaxScanAhead::DEFAULT).unwrap()
@@ -412,8 +488,11 @@ mod tests {
 
     #[test]
     fn find_comments_skips_scalars() {
-        assert!(ranges("a: 'x # y'\nb: \"p # q\"\nc: \"m\n  # n\"\n").is_empty());
-        assert!(ranges("s: |\n  # body\n  text\n").is_empty());
+        assert_eq!(
+            ranges("a: 'x # y'\nb: \"p # q\"\nc: \"m\n  # n\"\n"),
+            [] as [&str; 0]
+        );
+        assert_eq!(ranges("s: |\n  # body\n  text\n"), [] as [&str; 0]);
     }
 
     #[test]
@@ -430,5 +509,36 @@ mod tests {
     fn plain_scalar_continuation() {
         assert!(has("a: one\n  two # c\n"));
         assert!(!has("a: one\n  two#three\n"));
+    }
+
+    #[test]
+    fn scanner_breaks_once_a_comment_is_found() {
+        let input = NormalizedInput::new("a: \"x\" # c\nb: 'y'\n").unwrap();
+        let mut scanner = CommentScanner::new(&input);
+        let mut broke_at = None;
+        let mut seen = 0;
+        for item in EventStream::new(&input, ParseLimits::default()) {
+            seen += 1;
+            if scanner.observe(&item.unwrap()).is_break() {
+                broke_at = Some(seen);
+                break;
+            }
+        }
+        assert!(broke_at.is_some_and(|n| n < 10));
+        assert!(scanner.found_any());
+    }
+
+    #[test]
+    fn scanner_matches_find_comments_in_input_coordinates() {
+        let text = "\u{e9}: 1 # a\n---\nb: \"# no\" # b\n";
+        let input = NormalizedInput::new(text).unwrap();
+        let mut scanner = CommentScanner::new(&input);
+        for item in EventStream::new(&input, ParseLimits::default()) {
+            let _ = scanner.observe(&item.unwrap());
+        }
+        assert_eq!(
+            scanner.finish(),
+            find_comments(text, MaxScanAhead::DEFAULT).unwrap()
+        );
     }
 }

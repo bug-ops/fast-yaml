@@ -212,7 +212,7 @@ mod edge_case_fixtures {
     fn assert_offsets_consistent(yaml: &str) {
         let linter = Linter::with_all_rules();
         let diagnostics = linter.lint(yaml).unwrap();
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
 
         for d in &diagnostics {
             let (start, end) = (d.span.start, d.span.end);
