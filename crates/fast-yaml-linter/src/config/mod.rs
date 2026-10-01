@@ -8,7 +8,10 @@ mod preset;
 mod rules;
 mod values;
 
-pub use config_file::{ConfigFile, ConfigFileError, FileSelection, MAX_EXTENDS_DEPTH, TopLevelKey};
+pub use config_file::{
+    ConfigFile, ConfigFileError, FileSelection, MAX_CONFIG_FILE_BYTES, MAX_EXTENDS_DEPTH,
+    TopLevelKey,
+};
 pub use path_patterns::{IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, YamlFiles};
 pub use preset::{Preset, UnknownPresetError};
 pub(crate) use rules::default_rules;

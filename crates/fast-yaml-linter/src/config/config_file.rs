@@ -23,8 +23,8 @@ const MAX_DISCOVERY_DEPTH: usize = 20;
 /// Longest chain of config files linked by `extends`, the extending file included.
 pub const MAX_EXTENDS_DEPTH: usize = 8;
 
-/// Largest accepted `ignore-from-file` file, in bytes.
-const MAX_IGNORE_FILE_BYTES: usize = 1 << 20;
+/// Largest config file, `extends` target or `ignore-from-file` file, in bytes.
+pub const MAX_CONFIG_FILE_BYTES: usize = 1 << 20;
 
 /// Top-level structure of a `.fast-yaml.yaml` config file.
 ///
@@ -245,6 +245,28 @@ pub enum ConfigFileError {
         key: String,
     },
 
+    /// A config, `extends` or `ignore-from-file` path is not a regular file (a directory, a pipe
+    /// or a device), so it is not opened.
+    #[error("'{}' is not a regular file", .path.display())]
+    NotRegularFile {
+        /// The rejected path.
+        path: PathBuf,
+    },
+
+    /// A config, `extends` or `ignore-from-file` file is larger than [`MAX_CONFIG_FILE_BYTES`].
+    #[error("'{}' is larger than {MAX_CONFIG_FILE_BYTES} bytes", .path.display())]
+    TooLarge {
+        /// The oversized file.
+        path: PathBuf,
+    },
+
+    /// A file named by `extends` is not a valid config file; its content is not echoed.
+    #[error("'{}' is not a valid config file (its content is not shown)", .path.display())]
+    Malformed {
+        /// The extended file.
+        path: PathBuf,
+    },
+
     /// The file named by `extends` could not be loaded.
     #[error("config file '{}': failed to load the file named by 'extends'", .path.display())]
     Extended {
@@ -348,35 +370,48 @@ fn config_dir(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// Lines of the `ignore-from-file` files, each at most [`MAX_IGNORE_FILE_BYTES`] long.
+/// Reads a regular file of at most [`MAX_CONFIG_FILE_BYTES`], the only way config files are read.
+///
+/// The path is checked before it is opened, so a pipe is never opened (opening one would block),
+/// and the opened file is checked again. At most one byte over the cap is read, so an endless
+/// file cannot exhaust memory.
+fn read_bounded(path: &Path) -> Result<Vec<u8>, ConfigFileError> {
+    let io = |source: std::io::Error| ConfigFileError::Io {
+        path: path.to_owned(),
+        source,
+    };
+    let not_regular = || ConfigFileError::NotRegularFile {
+        path: path.to_owned(),
+    };
+    if !std::fs::metadata(path).map_err(io)?.is_file() {
+        return Err(not_regular());
+    }
+    let file = std::fs::File::open(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
+        return Err(not_regular());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() > MAX_CONFIG_FILE_BYTES {
+        return Err(ConfigFileError::TooLarge {
+            path: path.to_owned(),
+        });
+    }
+    Ok(bytes)
+}
+
+/// Lines of the `ignore-from-file` files.
 fn ignore_file_lines(path: &Path, names: &[String]) -> Result<Vec<String>, ConfigFileError> {
     let mut lines = Vec::new();
     for name in names {
         let file_path = config_dir(path).join(name);
-        let io = |source| ConfigFileError::Io {
-            path: file_path.clone(),
-            source,
-        };
-        let mut bytes = Vec::new();
-        std::fs::File::open(&file_path)
-            .and_then(|file| {
-                file.take(MAX_IGNORE_FILE_BYTES as u64 + 1)
-                    .read_to_end(&mut bytes)
-            })
-            .map_err(io)?;
-        if bytes.len() > MAX_IGNORE_FILE_BYTES {
-            return Err(ConfigFileError::InvalidKey {
-                path: path.to_owned(),
-                key: TopLevelKey::IgnoreFromFile,
-                message: format!(
-                    "'{}' is larger than {MAX_IGNORE_FILE_BYTES} bytes",
-                    echo(name, KEY_LIMIT)
-                ),
-            });
-        }
-        let text = decode_input_owned(bytes).map_err(|source| ConfigFileError::Decode {
-            path: file_path.clone(),
-            source,
+        let text = decode_input_owned(read_bounded(&file_path)?).map_err(|source| {
+            ConfigFileError::Decode {
+                path: file_path.clone(),
+                source,
+            }
         })?;
         lines.extend(text.lines().map(str::to_owned));
     }
@@ -391,6 +426,21 @@ fn config_root(path: &Path) -> Result<PathBuf, ConfigFileError> {
             path: path.to_owned(),
             source,
         })
+}
+
+impl ConfigFileError {
+    /// Replaces errors that quote the file's text by [`ConfigFileError::Malformed`], for a file
+    /// that the user's config merely points at.
+    fn without_content(self) -> Self {
+        match self {
+            Self::UnknownKey { path, .. }
+            | Self::UnsupportedKey { path, .. }
+            | Self::Parse { path, .. }
+            | Self::Rejected { path, .. }
+            | Self::LimitNotPositive { path, .. } => Self::Malformed { path },
+            other => other,
+        }
+    }
 }
 
 impl ConfigFile {
@@ -432,14 +482,11 @@ impl ConfigFile {
     }
 
     fn load_file(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
-        let bytes = std::fs::read(path).map_err(|source| ConfigFileError::Io {
-            path: path.to_owned(),
-            source,
-        })?;
-        let content = decode_input_owned(bytes).map_err(|source| ConfigFileError::Decode {
-            path: path.to_owned(),
-            source,
-        })?;
+        let content =
+            decode_input_owned(read_bounded(path)?).map_err(|source| ConfigFileError::Decode {
+                path: path.to_owned(),
+                source,
+            })?;
         // serde_norway has no depth or alias limits, so the core parser vets the text first.
         if let Err(source) = Parser::parse_all(&content) {
             return Err(ConfigFileError::Rejected {
@@ -476,7 +523,7 @@ impl ConfigFile {
                     Self::load_chain(&config_dir(path).join(name), chain).map_err(|source| {
                         ConfigFileError::Extended {
                             path: path.to_owned(),
-                            source: Box::new(source),
+                            source: Box::new(source.without_content()),
                         }
                     })?;
                 let mut rules = base.rules.clone();
@@ -1320,15 +1367,115 @@ mod tests {
         assert!(matches!(err, ConfigFileError::Io { .. }), "{err:?}");
         let (key, _) = invalid_key(load_in(&dir, "ignore-from-file: 5\n").unwrap_err());
         assert_eq!(key, TopLevelKey::IgnoreFromFile);
+    }
+
+    fn innermost(mut error: ConfigFileError) -> ConfigFileError {
+        while let ConfigFileError::Extended { source, .. } = error {
+            error = *source;
+        }
+        error
+    }
+
+    #[test]
+    fn oversized_files_are_rejected_for_every_read() {
+        let dir = tempfile::tempdir().unwrap();
         write_file(
             &dir,
             "huge.txt",
-            &"a\n".repeat(MAX_IGNORE_FILE_BYTES / 2 + 1),
+            &"a\n".repeat(MAX_CONFIG_FILE_BYTES / 2 + 1),
         );
-        let (key, message) =
-            invalid_key(load_in(&dir, "ignore-from-file: huge.txt\n").unwrap_err());
-        assert_eq!(key, TopLevelKey::IgnoreFromFile);
-        assert!(message.contains("larger than"), "{message}");
+        let err = load_in(&dir, "ignore-from-file: huge.txt\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::TooLarge { .. }), "{err:?}");
+        assert!(err.to_string().contains(&MAX_CONFIG_FILE_BYTES.to_string()));
+        let huge = write_file(
+            &dir,
+            "huge.yaml",
+            &format!("#{}\n", "a".repeat(MAX_CONFIG_FILE_BYTES)),
+        );
+        assert!(matches!(
+            ConfigFile::load(&huge).unwrap_err(),
+            ConfigFileError::TooLarge { .. }
+        ));
+        let main = write_file(&dir, "main.yaml", "extends: huge.yaml\n");
+        let err = innermost(ConfigFile::load(&main).unwrap_err());
+        assert!(matches!(err, ConfigFileError::TooLarge { .. }), "{err:?}");
+        let exact = write_file(&dir, "exact.yaml", &"#".repeat(MAX_CONFIG_FILE_BYTES));
+        assert!(ConfigFile::load(&exact).is_ok());
+    }
+
+    #[test]
+    fn directories_are_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        for content in ["extends: sub\n", "ignore-from-file: sub\n"] {
+            let err = innermost(load_in(&dir, content).unwrap_err());
+            assert!(
+                matches!(err, ConfigFileError::NotRegularFile { .. }),
+                "{content}: {err:?}"
+            );
+        }
+        let err = ConfigFile::load(&dir.path().join("sub")).unwrap_err();
+        assert!(
+            matches!(err, ConfigFileError::NotRegularFile { .. }),
+            "{err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pipes_and_devices_are_never_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        for content in ["extends: pipe\n", "ignore-from-file: pipe\n"] {
+            let err = innermost(load_in(&dir, content).unwrap_err());
+            assert!(
+                matches!(err, ConfigFileError::NotRegularFile { .. }),
+                "{content}: {err:?}"
+            );
+        }
+        assert!(matches!(
+            ConfigFile::load(&fifo).unwrap_err(),
+            ConfigFileError::NotRegularFile { .. }
+        ));
+        for device in ["/dev/zero", "/dev/null"] {
+            for content in [
+                format!("extends: {device}\n"),
+                format!("ignore-from-file: {device}\n"),
+            ] {
+                let err = innermost(load_in(&dir, &content).unwrap_err());
+                assert!(
+                    matches!(err, ConfigFileError::NotRegularFile { .. }),
+                    "{content}: {err:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn errors_of_an_extended_file_do_not_quote_its_content() {
+        let dir = tempfile::tempdir().unwrap();
+        for (base, secret) in [
+            ("sekret-key: 1\n", "sekret-key"),
+            ("rules: [sekret-value\n", "sekret-value"),
+            ("max-input-bytes: sekret-value\n", "sekret-value"),
+            ("locale: sekret-value\n", "locale"),
+        ] {
+            write_file(&dir, "base.yaml", base);
+            let err = load_in(&dir, "extends: base.yaml\n").unwrap_err();
+            let mut chain = err.to_string();
+            let mut source = std::error::Error::source(&err);
+            while let Some(cause) = source {
+                chain.push_str(&cause.to_string());
+                source = cause.source();
+            }
+            assert!(!chain.contains(secret), "{base}: {chain}");
+            assert!(chain.contains("base.yaml"), "{chain}");
+        }
     }
 
     #[test]
