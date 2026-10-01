@@ -317,7 +317,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Documentation
 
-- **Specs**: feature specifications added under `specs/` (parse, format, lint, convert, batch, CLI, Python, Node.js, limits)
+- **Specs**: feature specifications added under `specs/` (parse, format, lint, convert, batch, CLI, Python, Node.js, limits) (#583)
 
 ## [0.6.6] - 2026-08-26
 
