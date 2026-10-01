@@ -52,14 +52,10 @@ def test_format_files_honors_max_depth():
     with tempfile.TemporaryDirectory() as tmpdir:
         path = Path(tmpdir) / "nested.yaml"
         path.write_text("[[[1]]]\n")
-        [(_, content, error)] = batch.format_files(
-            [str(path)], batch.BatchConfig(max_depth=2)
-        )
+        [(_, content, error)] = batch.format_files([str(path)], batch.BatchConfig(max_depth=2))
         assert content is None
         assert "nesting depth exceeds 2" in error
 
-        [(_, content, error)] = batch.format_files(
-            [str(path)], batch.BatchConfig(max_depth=3)
-        )
+        [(_, content, error)] = batch.format_files([str(path)], batch.BatchConfig(max_depth=3))
         assert error is None
         assert "1" in content

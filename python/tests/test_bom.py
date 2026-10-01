@@ -50,7 +50,6 @@ def test_non_printable_characters_are_rejected():
             fast_yaml.parallel.parse_parallel(f"a: x{char}y\n")
 
 
-
 def _write(tmp_path, name, data):
     path = tmp_path / name
     path.write_bytes(data)
