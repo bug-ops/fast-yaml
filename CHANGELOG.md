@@ -167,6 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs**: removed `docs/CI-CD-QUICKSTART.md` and the unused `Makefile.toml` (cargo-make); maintainer CI notes moved to `CONTRIBUTING.md` (#596)
 - **CLI/Parallel**: batch runs scale the default scan-ahead limit per worker and retry a rejected file at the full limit (#577) (#595)
 - **Linter**: rules share the loader pass, so `fy lint` of a long flow line uses about 1.1-1.25x the memory of `fy parse` (was 3.5x) (#579) (#578) (#573) (#595)
 - **Linter**: errors about an `extends` target name the file and do not quote its content (#571) (#595)
