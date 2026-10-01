@@ -469,7 +469,8 @@ class lint:  # noqa: N801
         wrong types and invalid severities raise ``ValueError``. Order of
         application: ``rules``, then the keyword arguments you set (the boolean
         ones only when ``True``), then ``disabled_rules``. Omitted ``max_line_length``
-        and ``indent_size`` keep the defaults (80 and 2, which ``rules`` can replace); ``max_line_length=None`` removes the limit.
+        and ``indent_size`` keep the defaults (80 and 2, which ``rules`` can
+        replace); ``max_line_length=None`` removes the limit.
 
         ``max_input_bytes`` (1..=1 GiB, default 100 MiB) rejects larger sources
         with ``ValueError``. It bounds linting work on oversized input; the

@@ -446,4 +446,3 @@ class TestShorthandPrecedence:
     def test_max_line_length_rejects_bool(self):
         with pytest.raises(TypeError, match="not bool"):
             lint.LintConfig(max_line_length=True)
-
