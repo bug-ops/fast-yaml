@@ -284,14 +284,26 @@ impl KeyedKind {
 /// `size` and `entries` brand-check their receiver through the built-in `size` getter, so an
 /// object that only claims the tag throws a `TypeError`, a real `Set` or `Map` from any realm
 /// works, and the user's own `size`, `length` and `Symbol.iterator` are never consulted. `entries`
-/// takes at most `size` steps of the built-in iterator.
+/// takes at most `size` steps of the built-in iterator. `brand` reports which built-in, if any,
+/// an object is an instance of (0 none, 1 `Set`, 2 `Map`), whatever its `Symbol.toStringTag` says.
 const KEYED_INTRINSICS: &str = r"(() => {
   const apply = Reflect.apply;
   const sizeOf = (proto) => Object.getOwnPropertyDescriptor(proto, 'size').get;
   const sizes = [sizeOf(Set.prototype), sizeOf(Map.prototype)];
   const openers = [Set.prototype.values, Map.prototype.entries];
   const nexts = [new Set().values().next, new Map().entries().next];
+  const brandOf = (object) => {
+    for (let i = 0; i < 2; i++) {
+      try {
+        apply(sizes[i], object, []);
+        return i + 1;
+      } catch {}
+    }
+    return 0;
+  };
   return {
+    objectPrototype: Object.prototype,
+    brand: brandOf,
     size: (isMap, object) => apply(sizes[+isMap], object, []),
     entries: (isMap, object, size) => {
       const iterator = apply(openers[+isMap], object, []);
@@ -310,11 +322,14 @@ const KEYED_INTRINSICS: &str = r"(() => {
 /// Handles needed to recognise and read a `Set` or `Map`, fetched on the first plain object.
 struct KeyedHandles<'a> {
     to_string_tag: Unknown<'a>,
+    object_prototype: Unknown<'a>,
+    brand: Function<'a, FnArgs<(Object<'a>,)>, u32>,
     size: Function<'a, FnArgs<(bool, Object<'a>)>, f64>,
     entries: Function<'a, FnArgs<(bool, Object<'a>, f64)>, Object<'a>>,
 }
 
-/// Recognises `Set` and `Map` objects by `Symbol.toStringTag`, which also holds across realms.
+/// Recognises `Set` and `Map` objects across realms: by built-in brand when the prototype is not
+/// the plain `Object.prototype` (a subclass may override `Symbol.toStringTag`), else by the tag.
 struct KeyedCollections<'a> {
     env: Env,
     handles: Option<KeyedHandles<'a>>,
@@ -332,6 +347,8 @@ impl<'a> KeyedCollections<'a> {
             let intrinsics: Object = self.env.run_script(KEYED_INTRINSICS)?;
             self.handles = Some(KeyedHandles {
                 to_string_tag: symbol.get_named_property("toStringTag")?,
+                object_prototype: intrinsics.get_named_property("objectPrototype")?,
+                brand: intrinsics.get_named_property("brand")?,
                 size: intrinsics.get_named_property("size")?,
                 entries: intrinsics.get_named_property("entries")?,
             });
@@ -342,6 +359,22 @@ impl<'a> KeyedCollections<'a> {
     }
 
     fn kind(&mut self, object: Object<'a>) -> NapiResult<Option<KeyedKind>> {
+        let env = self.env;
+        let handles = self.handles()?;
+        let prototype = object.get_prototype()?;
+        let plain = prototype.get_type()? == ValueType::Null
+            || env.strict_equals(prototype, handles.object_prototype)?;
+        if !plain {
+            match handles.brand.call(FnArgs::from((object,)))? {
+                1 => return Ok(Some(KeyedKind::Set)),
+                2 => return Ok(Some(KeyedKind::Map)),
+                _ => {}
+            }
+        }
+        self.kind_by_tag(object)
+    }
+
+    fn kind_by_tag(&mut self, object: Object<'a>) -> NapiResult<Option<KeyedKind>> {
         let tag: Unknown = object.get_property(self.handles()?.to_string_tag)?;
         if tag.get_type()? != ValueType::String {
             return Ok(None);
