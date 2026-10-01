@@ -124,7 +124,6 @@ describe('Resource limits - dump', () => {
   it.each([
     ['function', () => 1],
     ['symbol', Symbol('s')],
-    ['bigint', 1n],
   ])('safeDump throws for %s', (_name, value) => {
     expect(() => safeDump(value)).toThrow(/cannot serialize/);
     expect(() => safeDumpAll([value])).toThrow(/cannot serialize/);

@@ -309,6 +309,8 @@ are the same YAML value (`null` and `undefined`) are an error. `safeLoad` reject
 position, a `!!set` member that has a value, a repeated `<<` key in one mapping, and keys that
 differ in YAML but share a property name (`1` and `"1"`).
 
+Integers beyond the `i64` range load as decimal strings, not `BigInt`, so `safeLoad` never loses digits; `safeDump` writes a JavaScript `BigInt` as a YAML integer, so `safeDump(2n ** 70n)` gives `1180591620717411303424` and loads back as that string. `-0` dumps as `-0.0` and loads back as `-0`.
+
 ## Security
 
 Input validation is enforced to prevent denial-of-service attacks:

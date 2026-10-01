@@ -4,7 +4,7 @@
 //! between `fast_yaml_core::Value` and NAPI-RS JavaScript values.
 
 use fast_yaml_core::value::quote_key;
-use fast_yaml_core::{DumpBudget, Float, LimitKind, Mapping, MaxDepth, Set, Value};
+use fast_yaml_core::{BigInt, DumpBudget, Float, LimitKind, Mapping, MaxDepth, Set, Value};
 use napi::{Result as NapiResult, bindgen_prelude::*};
 use std::collections::HashSet;
 
@@ -26,6 +26,7 @@ fn set_own(env: Env, object: &mut Object, key: &str, value: Unknown) -> NapiResu
 /// - `Value::Null` → `null`
 /// - `Value::Bool` → `boolean`
 /// - `Value::Int` → `number`
+/// - `Value::BigInt` (beyond `i64`) → decimal `string`
 /// - `Value::Float` → `number`
 /// - `Value::String` → `string`
 /// - `Value::Sequence` → `Array`
@@ -466,6 +467,12 @@ fn classify<'a>(
             Ok(Classified::Scalar(number_to_scalar(num)))
         }
 
+        ValueType::BigInt => {
+            let digits = js_value.coerce_to_string()?.into_utf8()?.into_owned()?;
+            budget.charge(digits.len()).map_err(limit_error)?;
+            Ok(Classified::Scalar(bigint_to_scalar(&digits)?))
+        }
+
         ValueType::String => {
             let s: String = FromNapiValue::from_unknown(js_value)?;
             budget.charge(s.len()).map_err(limit_error)?;
@@ -548,16 +555,51 @@ fn number_to_scalar(num: f64) -> Value {
     // Safe integer range for f64 is -(2^53) to 2^53
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
     #[allow(clippy::cast_possible_truncation)]
-    if num.fract() == 0.0 && num.is_finite() && num.abs() <= MAX_SAFE_INTEGER {
+    if num.fract() == 0.0
+        && num.is_finite()
+        && num.abs() <= MAX_SAFE_INTEGER
+        && !(num == 0.0 && num.is_sign_negative())
+    {
         return Value::Int(num as i64);
     }
-    // Float value (including inf, -inf, nan)
+    // Float value (including inf, -inf, nan, and -0, which must keep its sign)
     Value::Float(Float::new(num))
+}
+
+/// Decimal text of a JavaScript `BigInt`: an `Int` when it fits `i64`, a `BigInt` beyond.
+fn bigint_to_scalar(digits: &str) -> NapiResult<Value> {
+    digits
+        .parse()
+        .map(Value::Int)
+        .or_else(|_| BigInt::parse(digits).map(Value::BigInt).ok_or(()))
+        .map_err(|()| napi::Error::from_reason("cannot serialize BigInt to YAML"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn negative_zero_stays_a_float() {
+        assert!(matches!(number_to_scalar(-0.0), Value::Float(f) if f.get().is_sign_negative()));
+        assert!(matches!(number_to_scalar(0.0), Value::Int(0)));
+    }
+
+    #[test]
+    fn bigint_digits_split_at_i64() {
+        assert!(matches!(
+            bigint_to_scalar("-9223372036854775808"),
+            Ok(Value::Int(i64::MIN))
+        ));
+        assert!(matches!(
+            bigint_to_scalar("9223372036854775808"),
+            Ok(Value::BigInt(_))
+        ));
+        assert!(matches!(
+            bigint_to_scalar("-9223372036854775809"),
+            Ok(Value::BigInt(_))
+        ));
+    }
 
     #[test]
     fn test_yaml_key_to_string() {
