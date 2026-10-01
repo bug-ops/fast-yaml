@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::ops::RangeInclusive;
 
-use fast_yaml_core::events::{Event, EventItem};
+use fast_yaml_core::events::{Event, EventItem, ScalarStyle};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
 use fast_yaml_core::{
     CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, Parser, Value,
@@ -77,6 +78,8 @@ pub struct SourceScan<'a> {
     pub comments: Vec<Comment<'a>>,
     pub documents: Vec<DocumentMarkers>,
     pub key_repeats: Vec<KeyRepeat>,
+    /// Content lines of every literal and folded scalar, in source order.
+    pub block_scalars: Vec<RangeInclusive<usize>>,
 }
 
 /// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
@@ -142,6 +145,7 @@ pub struct ScanCollector<'a, 'c> {
     open: Option<(DocumentStart, usize)>,
     mappings: Vec<MappingKeys>,
     key_repeats: Vec<KeyRepeat>,
+    block_scalars: Vec<RangeInclusive<usize>>,
 }
 
 impl<'a, 'c> ScanCollector<'a, 'c> {
@@ -159,6 +163,7 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
             open: None,
             mappings: Vec::new(),
             key_repeats: Vec::new(),
+            block_scalars: Vec::new(),
         }
     }
 
@@ -197,6 +202,16 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
             Event::MappingStart { .. } => self.mappings.push(MappingKeys::default()),
             Event::MappingEnd => {
                 self.mappings.pop();
+            }
+            Event::Scalar {
+                style: ScalarStyle::Literal | ScalarStyle::Folded,
+                ..
+            } => {
+                // The token starts at its content and ends on the line that stopped it
+                let last = item.end.line.saturating_sub(1);
+                if last >= item.at.line {
+                    self.block_scalars.push(item.at.line..=last);
+                }
             }
             Event::Scalar {
                 value, style, tag, ..
@@ -242,6 +257,7 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
             comments,
             documents: self.documents,
             key_repeats: self.key_repeats,
+            block_scalars: self.block_scalars,
         }
     }
 }

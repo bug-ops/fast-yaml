@@ -74,6 +74,18 @@ impl super::LintRule for CommentsIndentationRule {
                 Some(current)
             })
             .collect();
+        // Line number of the nearest content line strictly before each line
+        let prev_content_line: Vec<Option<usize>> = line_info
+            .iter()
+            .enumerate()
+            .scan(None, |prev, (idx, info)| {
+                let current = *prev;
+                if content_indent(info).is_some() {
+                    *prev = Some(idx + 1);
+                }
+                Some(current)
+            })
+            .collect();
 
         for comment in comments {
             // Skip inline comments (they follow content indentation)
@@ -87,6 +99,16 @@ impl super::LintRule for CommentsIndentationRule {
             }
 
             let comment_line_idx = comment_line - 1;
+
+            // yamllint does not check comments that follow a block scalar
+            if prev_content_line
+                .get(comment_line_idx)
+                .copied()
+                .flatten()
+                .is_some_and(|line| context.in_block_scalar(line))
+            {
+                continue;
+            }
             let Some(comment_indent) = line_info.get(comment_line_idx).map(|info| info.indent)
             else {
                 continue;
@@ -427,5 +449,35 @@ mod tests {
         assert_eq!(diag_count(yaml), 0);
         let yaml = "a:\n  b: \"p\n      #x\"\n# misplaced\n  c: 1\n";
         assert_eq!(diag_count(yaml), 1);
+    }
+
+    #[test]
+    fn test_comments_after_a_block_scalar_are_not_checked() {
+        for yaml in [
+            "a: |-\n  x\n # c\nb: 1\n",
+            "a: |-\n  x\n  # c\nb: 1\n",
+            "a: |-\n  x\n# c\nb: 1\n",
+            "a: |-\n  x\n   # c\nb: 1\n",
+            "a: |-\n  x\n # c\n",
+            "a: >\n   x\n  # c\n",
+            "k:\n  a: |\n    x\n  # c\n  b: 1\n",
+            "k:\n  a: |\n    x\n   # c\n  b: 1\n",
+            "k:\n  a: |\n    x\n # c\n  b: 1\n",
+            "a: |\n  x\n\n # c\n # d\nb: 1\n",
+        ] {
+            assert_eq!(diag_count(yaml), 0, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_comments_after_other_content_are_still_checked() {
+        for yaml in ["a: 1\n # c\nb: 1\n", "a:\n  - x\n # c\nb: 1\n"] {
+            assert_eq!(diag_count(yaml), 1, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_comment_after_a_block_scalar_that_is_followed_by_more_content() {
+        assert_eq!(diag_count("a: |\n  x\nb: 1\n # c\nc: 1\n"), 1);
     }
 }

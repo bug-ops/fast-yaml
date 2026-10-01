@@ -1159,6 +1159,15 @@ impl<'a> LintContext<'a> {
             .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
     }
 
+    /// Whether `line` is a content line of a literal or folded scalar.
+    pub(crate) fn in_block_scalar(&self, line: usize) -> bool {
+        let scalars = &self.scan().block_scalars;
+        let after = scalars.partition_point(|range| *range.end() < line);
+        scalars
+            .get(after)
+            .is_some_and(|range| *range.start() <= line)
+    }
+
     /// Returns the keys that repeat an earlier key of their mapping.
     pub(crate) fn key_repeats(&self) -> &[KeyRepeat] {
         &self.scan().key_repeats
