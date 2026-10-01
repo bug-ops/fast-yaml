@@ -1,0 +1,190 @@
+//! Scan-ahead limit scaled to the worker count, with a serialized retry at the full limit.
+//!
+//! Every worker may buffer up to [`MaxScanAhead`] characters of look-ahead (about 190 bytes
+//! per character in the worst case), so a batch of adversarial files multiplies that peak by
+//! the worker count. [`ScanAheadLane`] divides the default among the workers, and a file that
+//! only fails because of the smaller limit is re-run at the full limit one at a time, so the
+//! outcome of every file equals what a single-file run gives on any machine.
+
+use std::num::NonZeroUsize;
+use std::sync::{Mutex, PoisonError};
+
+use fast_yaml_core::limits::MaxScanAhead;
+
+/// How a batch bounds the scanner look-ahead of its workers.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::{Config, ScanAheadPolicy};
+///
+/// assert_eq!(Config::new().scan_ahead_policy(), ScanAheadPolicy::Fixed);
+/// let scaled = Config::new().with_scan_ahead_policy(ScanAheadPolicy::Scaled);
+/// assert_eq!(scaled.scan_ahead_policy(), ScanAheadPolicy::Scaled);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScanAheadPolicy {
+    /// Every worker parses at the configured limit.
+    #[default]
+    Fixed,
+    /// Workers parse at the configured limit divided by their number (never below 1 MiB);
+    /// a file the smaller limit rejects is retried at the configured limit, one file at a
+    /// time. Use it only when the limit was not chosen explicitly.
+    Scaled,
+}
+
+/// The limits one batch run parses under, and the lane that serializes full-limit retries.
+///
+/// # Examples
+///
+/// ```
+/// use std::num::NonZeroUsize;
+/// use fast_yaml_core::limits::MaxScanAhead;
+/// use fast_yaml_parallel::ScanAheadLane;
+///
+/// let lane = ScanAheadLane::scaled(MaxScanAhead::DEFAULT, NonZeroUsize::new(16).unwrap());
+/// assert_eq!(lane.first_limit().get(), 1 << 20);
+///
+/// let first_try = |limit: MaxScanAhead| {
+///     if limit == MaxScanAhead::DEFAULT { Ok("parsed") } else { Err("too long") }
+/// };
+/// assert_eq!(lane.run(first_try, |err| *err == "too long"), Ok("parsed"));
+/// ```
+#[derive(Debug)]
+pub struct ScanAheadLane {
+    first: MaxScanAhead,
+    full: MaxScanAhead,
+    retries: Mutex<()>,
+}
+
+impl ScanAheadLane {
+    /// Smallest limit a scaled lane starts with: 1 MiB of characters.
+    pub const MIN_SCALED: usize = 1 << 20;
+
+    /// A lane where every attempt uses `full` and nothing is retried.
+    #[must_use]
+    pub const fn fixed(full: MaxScanAhead) -> Self {
+        Self {
+            first: full,
+            full,
+            retries: Mutex::new(()),
+        }
+    }
+
+    /// A lane starting at `full / workers` (at least [`Self::MIN_SCALED`], at most `full`).
+    #[must_use]
+    pub fn scaled(full: MaxScanAhead, workers: NonZeroUsize) -> Self {
+        let share = (full.get() / workers.get()).max(Self::MIN_SCALED);
+        let first = MaxScanAhead::new(share.min(full.get())).unwrap_or(full);
+        Self {
+            first,
+            full,
+            retries: Mutex::new(()),
+        }
+    }
+
+    /// A lane for `policy`, the configured `full` limit and the number of `workers`.
+    #[must_use]
+    pub fn for_policy(policy: ScanAheadPolicy, full: MaxScanAhead, workers: NonZeroUsize) -> Self {
+        match policy {
+            ScanAheadPolicy::Fixed => Self::fixed(full),
+            ScanAheadPolicy::Scaled => Self::scaled(full, workers),
+        }
+    }
+
+    /// The limit the first attempt on every file runs under.
+    #[must_use]
+    pub const fn first_limit(&self) -> MaxScanAhead {
+        self.first
+    }
+
+    /// Runs `attempt` under the first limit and, when it fails with an error for which
+    /// `exceeded` holds while the first limit is below the full one, once more under the full
+    /// limit while holding the lane, so at most one full-limit parse runs at a time.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of the last attempt.
+    pub fn run<T, E>(
+        &self,
+        attempt: impl Fn(MaxScanAhead) -> Result<T, E>,
+        exceeded: impl Fn(&E) -> bool,
+    ) -> Result<T, E> {
+        match attempt(self.first) {
+            Err(error) if self.first.get() < self.full.get() && exceeded(&error) => {
+                let _lane = self.retries.lock().unwrap_or_else(PoisonError::into_inner);
+                attempt(self.full)
+            }
+            result => result,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn workers(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
+    #[test]
+    fn test_scaled_first_limit_divides_the_default_down_to_one_mebichar() {
+        let first = |n| ScanAheadLane::scaled(MaxScanAhead::DEFAULT, workers(n)).first_limit();
+        assert_eq!(first(1), MaxScanAhead::DEFAULT);
+        assert_eq!(first(2).get(), 2 << 20);
+        assert_eq!(first(4).get(), 1 << 20);
+        assert_eq!(first(128).get(), 1 << 20);
+    }
+
+    #[test]
+    fn test_scaled_never_exceeds_a_small_full_limit() {
+        let full = MaxScanAhead::new(1024).unwrap();
+        assert_eq!(ScanAheadLane::scaled(full, workers(8)).first_limit(), full);
+    }
+
+    #[test]
+    fn test_fixed_lane_never_retries() {
+        let lane = ScanAheadLane::fixed(MaxScanAhead::DEFAULT);
+        let calls = AtomicUsize::new(0);
+        let result: Result<(), &str> = lane.run(
+            |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Err("too long")
+            },
+            |_| true,
+        );
+        assert_eq!(result, Err("too long"));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_scaled_lane_retries_only_the_exceeded_error_once() {
+        let lane = ScanAheadLane::scaled(MaxScanAhead::DEFAULT, workers(8));
+        let limits = Mutex::new(Vec::new());
+        let result: Result<(), &str> = lane.run(
+            |limit| {
+                limits.lock().unwrap().push(limit);
+                Err("too long")
+            },
+            |_| true,
+        );
+        assert_eq!(result, Err("too long"));
+        assert_eq!(
+            *limits.lock().unwrap(),
+            [lane.first_limit(), MaxScanAhead::DEFAULT]
+        );
+
+        let calls = AtomicUsize::new(0);
+        let other: Result<(), &str> = lane.run(
+            |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Err("syntax")
+            },
+            |error| *error == "too long",
+        );
+        assert_eq!(other, Err("syntax"));
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+}

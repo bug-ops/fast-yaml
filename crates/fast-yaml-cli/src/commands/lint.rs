@@ -7,6 +7,7 @@ use fast_yaml_linter::{
     ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
     config::IndentSize,
 };
+use fast_yaml_parallel::ScanAheadPolicy;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -45,6 +46,8 @@ pub struct LintCommand {
     pub lint_config: LintConfig,
     /// Files the config file selects or drops (exposed for batch discovery).
     pub file_filter: FileFilter,
+    /// Whether batch workers scale the scan-ahead limit (no explicit limit was given).
+    pub scan_ahead: ScanAheadPolicy,
     format: LintFormat,
 }
 
@@ -105,10 +108,13 @@ impl LintCommand {
             .max_input_bytes
             .or(file.max_input_bytes)
             .unwrap_or(MaxInputBytes::DEFAULT);
-        let max_scan_ahead = args
-            .max_scan_ahead
-            .or(file.max_scan_ahead)
-            .unwrap_or_default();
+        let explicit_scan_ahead = args.max_scan_ahead.or(file.max_scan_ahead);
+        let scan_ahead = if explicit_scan_ahead.is_some() {
+            ScanAheadPolicy::Fixed
+        } else {
+            ScanAheadPolicy::Scaled
+        };
+        let max_scan_ahead = explicit_scan_ahead.unwrap_or_default();
         let (file_lint_config, file_filter) = split_config(file);
         let lint_config = ConfigFile::merge_cli_overrides(
             file_lint_config,
@@ -122,6 +128,7 @@ impl LintCommand {
             config,
             lint_config,
             file_filter,
+            scan_ahead,
             format: args.format,
         })
     }

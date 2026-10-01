@@ -38,7 +38,7 @@ use anyhow::Result;
 #[cfg(feature = "linter")]
 use fast_yaml_cli::file_filter;
 use fast_yaml_cli::{discovery, error};
-use fast_yaml_parallel::CommentPolicy;
+use fast_yaml_parallel::{CommentPolicy, ScanAheadPolicy};
 
 mod cli;
 mod commands;
@@ -137,8 +137,13 @@ fn run() -> Result<ExitCode> {
                             "use -i to format files in-place or --dry-run to preview changes"
                         ),
                     };
+                    let scan_ahead = if cli.max_scan_ahead.is_some() {
+                        ScanAheadPolicy::Fixed
+                    } else {
+                        ScanAheadPolicy::Scaled
+                    };
                     commands::format_batch::execute_batch(
-                        &common, &target, write, comments, max_input,
+                        &common, &target, write, comments, max_input, scan_ahead,
                     )?
                 }
             }
@@ -228,6 +233,7 @@ fn run() -> Result<ExitCode> {
                         &target,
                         &cmd.lint_config,
                         format,
+                        cmd.scan_ahead,
                     )?
                 }
             }

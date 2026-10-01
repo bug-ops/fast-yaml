@@ -60,7 +60,10 @@ pub struct Cli {
     /// value per input): a flow collection read whole (at the root, in a `- ` entry, nested in flow
     /// or after a tab, so any JSON document longer than this), one scalar, or a run of comments
     /// longer than this is rejected. For `lint` it overrides the
-    /// `max-scan-ahead` config key
+    /// `max-scan-ahead` config key. Without this flag, batch runs start each file at the default
+    /// divided by the worker count (at least 1MiB) and re-run a rejected file at the full
+    /// default one at a time, so the result matches a single-file run; with the flag the limit
+    /// is used as is
     #[arg(long, global = true, value_name = "CHARS", value_parser = parse_max_scan_ahead)]
     pub max_scan_ahead: Option<MaxScanAhead>,
 
@@ -166,6 +169,7 @@ impl BatchArgs {
 
 /// Parser resource limits shared by every subcommand that parses YAML.
 #[derive(Args, Debug, Clone, Copy)]
+#[allow(clippy::struct_field_names)] // field names are the flag names
 pub struct ParseLimitArgs {
     /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
     #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]

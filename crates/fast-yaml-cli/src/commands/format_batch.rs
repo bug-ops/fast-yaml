@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use fast_yaml_parallel::{
-    BatchResult as ParallelBatchResult, CommentPolicy, FileProcessor, FormatOutput,
+    BatchResult as ParallelBatchResult, CommentPolicy, FileProcessor, FormatOutput, ScanAheadPolicy,
 };
 
 use crate::commands::format::error_message;
@@ -33,6 +33,7 @@ pub fn execute_batch(
     write: BatchWrite,
     comments: CommentPolicy,
     max_input: MaxInputBytes,
+    scan_ahead: ScanAheadPolicy,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -56,7 +57,8 @@ pub fn execute_batch(
     let processor = FileProcessor::with_config(
         ParallelConfig::new()
             .with_workers(target.workers.map(NonZeroUsize::get))
-            .with_max_input_bytes(max_input),
+            .with_max_input_bytes(max_input)
+            .with_scan_ahead_policy(scan_ahead),
     );
 
     let result = match write {

@@ -1,11 +1,13 @@
 //! Parallel file processor for batch YAML operations.
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use fast_yaml_core::emitter::{Emitter, EmitterConfig};
-use fast_yaml_core::{NormalizedInput, has_comments_normalized};
+use fast_yaml_core::limits::MaxScanAhead;
+use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comments_normalized};
 use rayon::prelude::*;
 
 use crate::config::Config;
@@ -13,6 +15,7 @@ use crate::error::{Error, Result};
 use crate::io::read_file;
 use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
+use crate::scan_ahead::ScanAheadLane;
 
 /// Whether formatting may discard YAML comments, which the emitter cannot preserve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -151,7 +154,8 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> Vec<(PathBuf, Result<FormatOutput>)> {
-        let process_file = |path: &Path| self.format_content(path, emitter_config, comments);
+        let lane = self.lane(emitter_config);
+        let process_file = |path: &Path| self.format_content(path, emitter_config, comments, &lane);
 
         if self.should_use_sequential(paths) {
             paths
@@ -193,17 +197,18 @@ impl FileProcessor {
             return BatchResult::new();
         }
 
+        let lane = self.lane(emitter_config);
         let results = if self.should_use_sequential(paths) {
             paths
                 .iter()
-                .map(|path| self.format_single_file(path, emitter_config, comments))
+                .map(|path| self.format_single_file(path, emitter_config, comments, &lane))
                 .collect()
         } else {
             self.install(
                 || {
                     paths
                         .par_iter()
-                        .map(|path| self.format_single_file(path, emitter_config, comments))
+                        .map(|path| self.format_single_file(path, emitter_config, comments, &lane))
                         .collect()
                 },
                 |error| {
@@ -220,12 +225,26 @@ impl FileProcessor {
         batch
     }
 
+    /// The scan-ahead lane of one format run, from the limit `emitter_config` carries.
+    fn lane(&self, emitter_config: &EmitterConfig) -> ScanAheadLane {
+        let workers = match self.config.workers() {
+            Some(_) => NonZeroUsize::new(self.config.effective_workers()),
+            None => NonZeroUsize::new(rayon::current_num_threads()),
+        };
+        ScanAheadLane::for_policy(
+            self.config.scan_ahead_policy(),
+            emitter_config.parse_limits.max_scan_ahead,
+            workers.unwrap_or(NonZeroUsize::MIN),
+        )
+    }
+
     /// Reads `path` once, enforces the size limit and comment policy, and formats it.
     fn format_content(
         &self,
         path: &Path,
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
+        lane: &ScanAheadLane,
     ) -> Result<FormatOutput> {
         let content = read_file(path, self.config.max_input_bytes())?;
 
@@ -233,20 +252,26 @@ impl FileProcessor {
             path: path.to_path_buf(),
             source: source.into(),
         })?;
-        let formatted =
-            Emitter::format_normalized(&normalized, emitter_config).map_err(|source| {
-                Error::Format {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
+        let format_at = |limit: MaxScanAhead| {
+            let mut limited = emitter_config.clone();
+            limited.parse_limits.max_scan_ahead = limit;
+            let formatted =
+                Emitter::format_normalized(&normalized, &limited).map_err(|source| {
+                    Error::Format {
+                        path: path.to_path_buf(),
+                        source,
+                    }
+                })?;
 
-        if comments == CommentPolicy::Reject
-            && has_comments_normalized(&normalized, emitter_config.parse_limits.max_scan_ahead)
-                .map_err(|source| Error::CommentScan { source })?
-        {
-            return Err(Error::CommentsWouldBeStripped);
-        }
+            if comments == CommentPolicy::Reject
+                && has_comments_normalized(&normalized, limit)
+                    .map_err(|source| Error::CommentScan { source })?
+            {
+                return Err(Error::CommentsWouldBeStripped);
+            }
+            Ok(formatted)
+        };
+        let formatted = lane.run(format_at, exceeds_scan_ahead)?;
 
         Ok(FormatOutput {
             changed: content != formatted,
@@ -260,10 +285,11 @@ impl FileProcessor {
         path: &Path,
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
+        lane: &ScanAheadLane,
     ) -> FileResult {
         let start = std::time::Instant::now();
 
-        let output = match self.format_content(path, emitter_config, comments) {
+        let output = match self.format_content(path, emitter_config, comments, lane) {
             Ok(output) => output,
             Err(error) => {
                 return FileResult::new(
@@ -420,6 +446,25 @@ impl FileProcessor {
 
         total_size < 1_000_000 && file_count < 10
     }
+}
+
+/// Whether `error` is the scanner look-ahead limit, the only failure a larger limit can cure.
+const fn exceeds_scan_ahead(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Format {
+            source: EmitError::Parse(ParseError::LimitExceeded {
+                kind: LimitKind::ScanAhead(_),
+                ..
+            }),
+            ..
+        } | Error::CommentScan {
+            source: ParseError::LimitExceeded {
+                kind: LimitKind::ScanAhead(_),
+                ..
+            },
+        }
+    )
 }
 
 impl Default for FileProcessor {

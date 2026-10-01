@@ -80,6 +80,7 @@ mod files;
 mod io;
 mod pool;
 mod result;
+mod scan_ahead;
 
 // Core public API
 pub use atomic::write_atomic;
@@ -93,6 +94,7 @@ pub use files::{CommentPolicy, FileProcessor, FormatOutput};
 pub use io::read_file;
 pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};
+pub use scan_ahead::{ScanAheadLane, ScanAheadPolicy};
 
 /// Parse multi-document YAML stream in parallel.
 ///

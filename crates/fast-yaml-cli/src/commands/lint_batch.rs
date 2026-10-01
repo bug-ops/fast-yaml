@@ -16,13 +16,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
+use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
+use fast_yaml_core::{LimitKind, ParseError};
 use fast_yaml_linter::formatter::{
     FileReport as ReportedFile, ReportFormat, input_error_diagnostic, syntax_diagnostic,
 };
 use fast_yaml_linter::{
     Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
 };
-use fast_yaml_parallel::{Error as ParallelError, read_file, shared_pool};
+use fast_yaml_parallel::{
+    Error as ParallelError, ScanAheadLane, ScanAheadPolicy, read_file, shared_pool,
+};
 use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
@@ -132,9 +136,60 @@ struct ReportOutput {
     format: ReportFormat,
 }
 
+/// The linters of one batch: workers start under the lane's first limit and a file it
+/// rejects for scan-ahead is linted again, one at a time, under the full limit.
+struct Linters {
+    lane: ScanAheadLane,
+    first: Linter,
+    full: Linter,
+}
+
+impl Linters {
+    fn new(config: &LintConfig, policy: ScanAheadPolicy, workers: NonZeroUsize) -> Self {
+        let full_limits = config.parse_limits;
+        let lane = ScanAheadLane::for_policy(policy, full_limits.max_scan_ahead, workers);
+        let first_limits = ParseLimits {
+            max_scan_ahead: lane.first_limit(),
+            ..full_limits
+        };
+        Self {
+            first: Linter::with_config(config.clone().with_parse_limits(first_limits)),
+            full: Linter::with_config(config.clone()),
+            lane,
+        }
+    }
+
+    const fn max_input_bytes(&self) -> MaxInputBytes {
+        self.full.config().max_input_bytes
+    }
+
+    fn lint(&self, content: &str) -> Result<Vec<Diagnostic>, LintError> {
+        let first = self.lane.first_limit();
+        self.lane.run(
+            |limit| {
+                let linter = if limit == first {
+                    &self.first
+                } else {
+                    &self.full
+                };
+                linter.lint(content)
+            },
+            |error| {
+                matches!(
+                    error,
+                    LintError::ParseError(ParseError::LimitExceeded {
+                        kind: LimitKind::ScanAhead(_),
+                        ..
+                    })
+                )
+            },
+        )
+    }
+}
+
 fn lint_one<F: OutputFormat>(
     path: &Path,
-    linter: &Linter,
+    linter: &Linters,
     format: &F,
     is_quiet: bool,
 ) -> FileReport<F::Payload, F::Salvage> {
@@ -146,7 +201,7 @@ fn lint_one<F: OutputFormat>(
 
 fn lint_content<F: OutputFormat>(
     path: &Path,
-    linter: &Linter,
+    linter: &Linters,
     format: &F,
     is_quiet: bool,
 ) -> Result<Linted<F::Payload>, Failed<F::Salvage>> {
@@ -154,7 +209,7 @@ fn lint_content<F: OutputFormat>(
         salvage: format.salvage(&failure, content),
         failure,
     };
-    let content = read_file(path, linter.config().max_input_bytes).map_err(|source| {
+    let content = read_file(path, linter.max_input_bytes()).map_err(|source| {
         failed(
             FileFailure::Read {
                 path: path.to_path_buf(),
@@ -192,6 +247,7 @@ pub fn execute_lint_batch(
     target: &BatchTarget,
     lint_config: &LintConfig,
     format: LintFormat,
+    scan_ahead: ScanAheadPolicy,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -206,7 +262,7 @@ pub fn execute_lint_batch(
     let pool = shared_pool(workers).context("Failed to build thread pool")?;
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-    let linter = Linter::with_config(lint_config.clone());
+    let linter = Linters::new(lint_config, scan_ahead, workers);
     let is_quiet = common.output.is_quiet();
 
     let any_errors = match format.output() {
@@ -240,7 +296,7 @@ pub fn execute_lint_batch(
 fn run_batch<F: OutputFormat>(
     pool: &ThreadPool,
     file_paths: &[PathBuf],
-    linter: &Linter,
+    linter: &Linters,
     format: &F,
     is_quiet: bool,
 ) -> Result<bool> {

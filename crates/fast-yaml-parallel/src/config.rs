@@ -3,6 +3,8 @@
 use fast_yaml_core::KeyDomain;
 use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
 
+use crate::scan_ahead::ScanAheadPolicy;
+
 /// Maximum number of threads allowed (security limit).
 const MAX_THREADS: usize = 128;
 
@@ -40,6 +42,9 @@ pub struct Config {
 
     /// Parser resource limits applied to every parse
     pub(crate) parse_limits: ParseLimits,
+
+    /// How batch file operations bound the scanner look-ahead of their workers
+    pub(crate) scan_ahead: ScanAheadPolicy,
 
     /// Which keys count as the same key when parsing
     pub(crate) key_domain: KeyDomain,
@@ -105,6 +110,22 @@ impl Config {
     #[must_use]
     pub const fn with_max_input_bytes(mut self, max: MaxInputBytes) -> Self {
         self.max_input_bytes = max;
+        self
+    }
+
+    /// Sets how [`FileProcessor`](crate::FileProcessor) formatting bounds the scanner
+    /// look-ahead of its workers. Default: [`ScanAheadPolicy::Fixed`]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_parallel::{Config, ScanAheadPolicy};
+    ///
+    /// let config = Config::new().with_scan_ahead_policy(ScanAheadPolicy::Scaled);
+    /// ```
+    #[must_use]
+    pub const fn with_scan_ahead_policy(mut self, policy: ScanAheadPolicy) -> Self {
+        self.scan_ahead = policy;
         self
     }
 
@@ -189,6 +210,12 @@ impl Config {
         self.parse_limits
     }
 
+    /// Returns how batch file operations bound the scanner look-ahead.
+    #[must_use]
+    pub const fn scan_ahead_policy(&self) -> ScanAheadPolicy {
+        self.scan_ahead
+    }
+
     /// Returns worker count setting.
     #[must_use]
     pub const fn workers(&self) -> Option<usize> {
@@ -215,6 +242,7 @@ impl Default for Config {
             max_input_bytes: MaxInputBytes::DEFAULT,
             sequential_threshold: 4096, // 4KB
             parse_limits: ParseLimits::default(),
+            scan_ahead: ScanAheadPolicy::Fixed,
             key_domain: KeyDomain::Yaml,
         }
     }
