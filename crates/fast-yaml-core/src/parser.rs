@@ -200,7 +200,7 @@ impl Parser {
         budget: &StreamBudget,
         options: LoadOptions,
     ) -> ParseResult<Vec<Value>> {
-        Self::parse_normalized_observed(input, budget, options, |_| {})
+        load_documents_with_budget(input, budget, options, None)
     }
 
     /// Parse all YAML documents of an already normalized input, showing every event to
@@ -235,9 +235,9 @@ impl Parser {
         input: &NormalizedInput<'_>,
         budget: &StreamBudget,
         options: LoadOptions,
-        on_event: impl FnMut(&EventItem<'_>),
+        mut on_event: impl FnMut(&EventItem<'_>),
     ) -> ParseResult<Vec<Value>> {
-        load_documents_with_budget(input, budget, options, on_event)
+        load_documents_with_budget(input, budget, options, Some(&mut on_event))
     }
 }
 
@@ -247,7 +247,7 @@ fn load_documents_with_budget(
     input: &NormalizedInput<'_>,
     budget: &StreamBudget,
     options: LoadOptions,
-    mut on_event: impl FnMut(&EventItem<'_>),
+    mut on_event: Option<&mut dyn FnMut(&EventItem<'_>)>,
 ) -> ParseResult<Vec<Value>> {
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
     let mut parser = SaphyrParser::new_from_str(input.as_str());
@@ -258,7 +258,9 @@ fn load_documents_with_budget(
         let (event, span) = event.map_err(|error| ParseError::scanner(&error, guard.document()))?;
         guard.observe(&event, span)?;
         let role = merge_keys.observe(&event, span)?;
-        if let Some(item) = events::item_of(&event, span, role) {
+        if let Some(on_event) = on_event.as_mut()
+            && let Some(item) = events::item_of(&event, span, role)
+        {
             on_event(&item);
         }
         builder.event(event, span, role)?;

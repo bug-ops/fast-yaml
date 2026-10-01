@@ -248,6 +248,8 @@ impl<'a> EventStream<'a> {
         self.guard.document()
     }
 
+    /// The one mapping from the parser's event to the public one; `None` for the placeholder and
+    /// for an alias to an unknown anchor (id 0).
     fn convert(event: saphyr_parser::Event<'a>) -> Option<Event<'a>> {
         use saphyr_parser::Event as Raw;
         Some(match event {
@@ -305,44 +307,17 @@ impl<'a> EventStream<'a> {
     }
 }
 
-/// Builds the public item for a raw event the loader is about to consume, borrowing its text.
-pub(crate) fn item_of<'r>(
-    raw: &'r saphyr_parser::Event<'_>,
+/// Builds the public item for a raw event, cloning it (the loader still needs the raw one).
+///
+/// Like [`EventStream::convert`] it yields nothing for events without a public form: the parser's
+/// placeholder and an alias to an unknown anchor, which the loader rejects itself.
+pub(crate) fn item_of<'a>(
+    raw: &saphyr_parser::Event<'a>,
     span: Span,
     role: Option<NodeRole>,
-) -> Option<EventItem<'r>> {
-    use saphyr_parser::Event as Raw;
-    let tag = |tag: &'r Option<Cow<'_, saphyr_parser::Tag>>| {
-        tag.as_deref().map(|tag| Tag(Cow::Borrowed(tag)))
-    };
-    let event = match raw {
-        Raw::Nothing | Raw::Alias(0) => return None,
-        Raw::Alias(id) => Event::Alias(AnchorId::new(*id)?),
-        Raw::StreamStart => Event::StreamStart,
-        Raw::StreamEnd => Event::StreamEnd,
-        Raw::DocumentStart(explicit) => Event::DocumentStart {
-            explicit: *explicit,
-        },
-        Raw::DocumentEnd => Event::DocumentEnd,
-        Raw::Scalar(value, style, anchor, tag_) => Event::Scalar {
-            value: Cow::Borrowed(value.as_ref()),
-            style: ScalarStyle::from_saphyr(*style),
-            anchor: AnchorId::new(*anchor),
-            tag: tag(tag_),
-        },
-        Raw::SequenceStart(anchor, tag_) => Event::SequenceStart {
-            anchor: AnchorId::new(*anchor),
-            tag: tag(tag_),
-        },
-        Raw::SequenceEnd => Event::SequenceEnd,
-        Raw::MappingStart(anchor, tag_) => Event::MappingStart {
-            anchor: AnchorId::new(*anchor),
-            tag: tag(tag_),
-        },
-        Raw::MappingEnd => Event::MappingEnd,
-    };
+) -> Option<EventItem<'a>> {
     Some(EventItem {
-        event,
+        event: EventStream::convert(raw.clone())?,
         at: SourcePosition::from_span(span),
         end: SourcePosition::end_of(span),
         role,
@@ -628,5 +603,16 @@ mod tests {
             span_of(&Event::DocumentStart { explicit: true }),
             ((2, 1), (2, 4))
         );
+    }
+
+    #[test]
+    fn events_without_a_public_form_are_skipped_the_same_way_on_both_paths() {
+        use saphyr_parser::Event as Raw;
+        let span = Span::empty(saphyr_parser::Marker::new(0, 1, 0));
+        for raw in [Raw::Nothing, Raw::Alias(0)] {
+            assert!(item_of(&raw, span, None).is_none(), "{raw:?}");
+            assert!(EventStream::convert(raw).is_none());
+        }
+        assert!(item_of(&Raw::Alias(3), span, None).is_some());
     }
 }
