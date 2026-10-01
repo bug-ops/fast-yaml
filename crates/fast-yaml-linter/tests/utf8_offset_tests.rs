@@ -163,27 +163,23 @@ fn mapper_find_colon_after_key_multibyte() {
     assert_eq!(colon.offset, "x: 1\nключ".len());
 }
 
-/// Lints `yaml` with every rule and checks each span is in-bounds, on char boundaries, ordered,
-/// and that line, column and offset of both ends agree with each other.
+/// Lints `yaml` with every rule and checks each span is in-bounds in the BOM-free text, on char
+/// boundaries, ordered, and that line, column and offset of both ends agree with each other.
 fn assert_spans_valid(yaml: &str) {
     let Ok(diags) = Linter::with_all_rules().lint(yaml) else {
         return;
     };
-    let body = fast_yaml_core::strip_bom(yaml);
-    let bom_len = yaml.len() - body.len();
+    let normalized = fast_yaml_core::NormalizedInput::new(yaml).unwrap();
+    let body = normalized.as_str();
     let ctx = SourceContext::new(body);
-    let expected_location = |offset: usize| {
-        let mut loc = ctx.offset_to_location(offset - bom_len);
-        loc.offset = offset;
-        loc
-    };
+    let expected_location = |offset: usize| ctx.offset_to_location(offset);
     for d in diags {
         let spans = std::iter::once(d.span).chain(d.suggestions.iter().map(|s| s.span));
         for span in spans {
             let (s, e) = (span.start.offset, span.end.offset);
-            assert!(s <= e && e <= yaml.len(), "{yaml:?}: {d:?}");
+            assert!(s <= e && e <= body.len(), "{yaml:?}: {d:?}");
             assert!(
-                yaml.is_char_boundary(s) && yaml.is_char_boundary(e),
+                body.is_char_boundary(s) && body.is_char_boundary(e),
                 "{yaml:?}: {d:?}"
             );
             assert_eq!(span.start, expected_location(s), "{yaml:?}: {d:?}");
@@ -284,16 +280,19 @@ fn empty_value_with_bom() {
     let span = diags[0].span;
     assert_eq!(
         (span.start.line, span.start.column, span.start.offset),
-        (1, 5, 11)
+        (1, 5, 8)
     );
-    assert_eq!(SourceContext::new(yaml).get_snippet(span), ":");
+    assert_eq!(SourceContext::new("ключ:\nk: 1\n").get_snippet(span), ":");
 
     let yaml = "\u{feff}a: 1\r\nключ:\r\nk: 1\r\n";
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1);
     let span = diags[0].span;
     assert_eq!((span.start.line, span.start.column), (2, 5));
-    assert_eq!(SourceContext::new(yaml).get_snippet(span), ":");
+    assert_eq!(
+        SourceContext::new("a: 1\r\nключ:\r\nk: 1\r\n").get_snippet(span),
+        ":"
+    );
 }
 
 #[test]
