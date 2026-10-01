@@ -393,6 +393,8 @@ yaml_str = fast_yaml.safe_dump_all([doc1, doc2, doc3])
 | `[a, b, c]` | `list` |
 | `{a: 1, b: 2}` | `dict` |
 
+Floats are written with a dot and a signed exponent so YAML 1.1 readers such as PyYAML read them as floats (`1e300` becomes `1.0e+300`).
+
 </details>
 
 ## Security
@@ -407,7 +409,7 @@ Input validation prevents denial-of-service attacks.
 | Max input size | 100 MiB | Yes (1 byte to 1 GiB; `fy --max-input-bytes`, `fy lint` config key `max-input-bytes`) |
 | Max documents | 100,000 | Yes (up to 10M) |
 | Max threads | 128 | Yes |
-| Max nesting depth | 256 | Yes (1 to 512, `--max-depth`) |
+| Max nesting depth | 256 | Yes (1 to 512, `--max-depth`); flow collections (`[]`, `{}`) stop at 255 levels |
 | Max alias expansion | 64 MiB | Yes (1 byte to 1 GiB, `--max-alias-bytes`) |
 
 </details>

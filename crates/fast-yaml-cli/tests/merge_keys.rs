@@ -109,10 +109,104 @@ fn nested_invalid_merge_values_are_rejected() {
     }
 }
 
+const DUPLICATE_MERGE_CASES: [(&str, &str); 2] = [
+    (
+        "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n",
+        "line 5, column 3",
+    ),
+    ("m: {<<: {x: 1}, <<: {y: 2}}\n", "line 1, column 17"),
+];
+
 #[test]
-fn duplicate_plain_merge_key_keeps_the_last() {
-    let json = to_json("a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n");
-    assert_eq!(json["m"], serde_json::json!({"y": 2}));
+fn duplicate_plain_merge_key_is_rejected_with_its_position_by_every_yaml_command() {
+    for args in [&["convert", "json"][..], &["parse"][..], &["format"][..]] {
+        for (yaml, position) in DUPLICATE_MERGE_CASES {
+            let output = run(args, yaml);
+            assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+            assert!(output.stdout.is_empty(), "{args:?}");
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(
+                stderr.contains("duplicate merge key `<<`") && stderr.contains(position),
+                "{args:?}: {stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn duplicate_merge_key_stays_a_lint_diagnostic() {
+    let output = run(&["lint"], "m: {<<: {x: 1}, <<: {y: 2}}\n");
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("duplicate-key"), "{stdout}");
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("error:"),
+        "{output:?}"
+    );
+    let suppressed = run(
+        &["lint"],
+        "m: {<<: {x: 1}, <<: {y: 2}} # fy: disable-line\n",
+    );
+    assert!(
+        !String::from_utf8_lossy(&suppressed.stdout).contains("duplicate-key"),
+        "{suppressed:?}"
+    );
+}
+
+#[test]
+fn duplicate_merge_key_written_through_an_alias_is_not_seen_by_lint() {
+    let output = run(
+        &["lint"],
+        "a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n",
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("duplicate-key"),
+        "{output:?}"
+    );
+}
+
+#[test]
+fn set_member_value_is_rejected_with_its_position_by_every_yaml_command() {
+    for args in [
+        &["convert", "json"][..],
+        &["parse"][..],
+        &["format"][..],
+        &["lint"][..],
+    ] {
+        let output = run(args, "s: !!set {a: 1}\n");
+        assert_eq!(output.status.code(), Some(1), "{args:?}: {output:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("!!set member has a non-null value")
+                && stderr.contains("line 1, column 11"),
+            "{args:?}: {stderr}"
+        );
+    }
+    let json = to_json("s: !!set {a, b: }\n");
+    assert_eq!(json["s"], serde_json::json!({"a": null, "b": null}));
+}
+
+#[test]
+fn format_keeps_the_float_spellings_it_was_given() {
+    let output = run(&["format"], "a: -.5\nb: 1.0E5\nc: 1e300\n");
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "a: -.5\nb: 1.0E5\nc: 1e300\n"
+    );
+}
+
+#[test]
+fn convert_yaml_writes_floats_that_yaml_11_readers_read_as_floats() {
+    let output = run(
+        &["convert", "yaml"],
+        r#"{"a": 1e300, "b": 1.23e10, "c": 1.0E5, "d": 2.50, "e": 1.5e-7}"#,
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "a: 1.0e+300\nb: 1.23e+10\nc: 1.0e+5\nd: 2.50\ne: 1.5e-7\n"
+    );
 }
 
 #[test]

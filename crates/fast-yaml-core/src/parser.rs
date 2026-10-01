@@ -1,9 +1,11 @@
 use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
 use crate::events::ScalarStyle;
 use crate::input::NormalizedInput;
+use crate::keys::{KeyError, KeyGuard};
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
-use crate::merge::{MergeError, NodeRole, merge_into};
+use crate::merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 use crate::merge_check::MergeKeyValidator;
+use crate::options::{KeyDomain, LoadOptions};
 use crate::scalar::{ResolvedScalar, core_tag_suffix_raw, resolve_scalar_raw};
 use crate::value::{Mapping, Value};
 use saphyr_parser::{Event, Parser as SaphyrParser, Span};
@@ -128,7 +130,45 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-        Self::parse_normalized(&NormalizedInput::new(input)?, budget)
+        Self::parse_normalized(
+            &NormalizedInput::new(input)?,
+            budget,
+            LoadOptions::default(),
+        )
+    }
+
+    /// Parse all YAML documents, enforcing explicit [`ParseLimits`] and [`LoadOptions`].
+    ///
+    /// Use it to load for a host format whose keys are coarser than YAML's (see [`KeyDomain`]), or
+    /// to accept a repeated `<<` key (see [`DuplicateMergeKeys`](crate::DuplicateMergeKeys)).
+    ///
+    /// # Errors
+    ///
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, `ParseError::Merge` or
+    /// `ParseError::SetValue` for an invalid merge or set, `ParseError::Key` for a key collision
+    /// in the requested domain, or `ParseError::LimitExceeded` if the input exceeds `limits`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{KeyDomain, LoadOptions, Parser};
+    /// use fast_yaml_core::limits::ParseLimits;
+    ///
+    /// let options = LoadOptions::new().with_keys(KeyDomain::StringKeys);
+    /// let limits = ParseLimits::default();
+    /// assert!(Parser::parse_all_with_options("1: a\n2: b\n", &limits, options).is_ok());
+    /// assert!(Parser::parse_all_with_options("1: a\n'1': b\n", &limits, options).is_err());
+    /// ```
+    pub fn parse_all_with_options(
+        input: &str,
+        limits: &ParseLimits,
+        options: LoadOptions,
+    ) -> ParseResult<Vec<Value>> {
+        Self::parse_normalized(
+            &NormalizedInput::new(input)?,
+            &StreamBudget::new(*limits),
+            options,
+        )
     }
 
     /// Parse all YAML documents of an already normalized input.
@@ -140,25 +180,27 @@ impl Parser {
     /// # Errors
     ///
     /// Returns `ParseError::Syntax` if the YAML syntax is invalid, or
-    /// `ParseError::LimitExceeded` if the input exceeds the budget's limits.
+    /// `ParseError::LimitExceeded` if the input exceeds the budget's limits; see
+    /// [`Parser::parse_all_with_options`] for the errors `options` can add.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{NormalizedInput, Parser};
+    /// use fast_yaml_core::{LoadOptions, NormalizedInput, Parser};
     /// use fast_yaml_core::limits::{ParseLimits, StreamBudget};
     ///
     /// let budget = StreamBudget::new(ParseLimits::default());
     /// let input = NormalizedInput::new("a: 1\n---\nb: 2\n")?;
     /// let second = input.slice(5..input.as_str().len()).unwrap();
-    /// assert_eq!(Parser::parse_normalized(&second, &budget)?.len(), 1);
+    /// assert_eq!(Parser::parse_normalized(&second, &budget, LoadOptions::default())?.len(), 1);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_normalized(
         input: &NormalizedInput<'_>,
         budget: &StreamBudget,
+        options: LoadOptions,
     ) -> ParseResult<Vec<Value>> {
-        load_documents_with_budget(input, budget)
+        load_documents_with_budget(input, budget, options)
     }
 }
 
@@ -167,12 +209,13 @@ impl Parser {
 fn load_documents_with_budget(
     input: &NormalizedInput<'_>,
     budget: &StreamBudget,
+    options: LoadOptions,
 ) -> ParseResult<Vec<Value>> {
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
     let mut parser = SaphyrParser::new_from_str(input.as_str());
     let mut guard = LimitGuard::with_budget(budget.clone());
-    let mut merge_keys = MergeKeyValidator::default();
-    let mut builder = Builder::default();
+    let mut merge_keys = MergeKeyValidator::new(options.duplicate_merge_keys);
+    let mut builder = Builder::new(options.keys);
     while let Some(event) = parser.next_event() {
         let (event, span) = event.map_err(|error| ParseError::scanner(&error, guard.document()))?;
         guard.observe(&event, span)?;
@@ -220,7 +263,7 @@ fn inject_implicit_null_if_empty(docs: Vec<Value>, original_len: usize) -> Vec<V
 /// What the builder expects next inside an open mapping.
 enum Slot {
     Key,
-    Value(Value),
+    Value(Value, Span),
     MergeValue,
 }
 
@@ -228,24 +271,70 @@ struct MappingFrame {
     set: bool,
     entries: Mapping,
     merge: Option<Value>,
+    merge_at: Option<Span>,
     slot: Slot,
+    keys: KeyGuard,
 }
 
 enum Body {
     Sequence(Vec<Value>),
-    Mapping(MappingFrame),
+    Mapping(Box<MappingFrame>),
 }
 
 struct Frame {
     anchor: usize,
     role: NodeRole,
+    span: Span,
     body: Body,
+}
+
+/// Failure of the merge sink: a rejected `<<` value or a key collision among merged keys.
+enum MergeFailure {
+    Merge(MergeError),
+    Key(KeyError),
+}
+
+impl From<MergeError> for MergeFailure {
+    fn from(error: MergeError) -> Self {
+        Self::Merge(error)
+    }
+}
+
+/// [`Mapping`] sink that also reports keys the domain cannot tell apart.
+struct GuardedMapping {
+    map: Mapping,
+    keys: KeyGuard,
+}
+
+impl MergeTarget for GuardedMapping {
+    type Node = Value;
+    type Error = MergeFailure;
+    type Entries = Mapping;
+    type Items = Vec<Value>;
+
+    fn classify(&self, node: Value) -> Result<MergeSource<Mapping, Vec<Value>>, MergeFailure> {
+        Ok(self.map.classify(node)?)
+    }
+
+    fn set_if_absent(&mut self, key: Value, value: Value) -> Result<(), MergeFailure> {
+        self.keys
+            .check(&key, self.map.keys())
+            .map_err(MergeFailure::Key)?;
+        Ok(self.map.set_if_absent(key, value)?)
+    }
+
+    fn set(&mut self, key: Value, value: Value) -> Result<(), MergeFailure> {
+        self.keys
+            .check(&key, self.map.keys())
+            .map_err(MergeFailure::Key)?;
+        Ok(self.map.set(key, value)?)
+    }
 }
 
 /// Iterative tree builder: a heap stack instead of recursion, so nesting depth cannot overflow
 /// the call stack. Merge values are validated by `MergeKeyValidator` before they reach it.
-#[derive(Default)]
 struct Builder {
+    domain: KeyDomain,
     stack: Vec<Frame>,
     anchors: HashMap<usize, Value>,
     root: Option<Value>,
@@ -253,6 +342,16 @@ struct Builder {
 }
 
 impl Builder {
+    fn new(domain: KeyDomain) -> Self {
+        Self {
+            domain,
+            stack: Vec::new(),
+            anchors: HashMap::new(),
+            root: None,
+            documents: Vec::new(),
+        }
+    }
+
     fn event(&mut self, event: Event<'_>, span: Span, role: Option<NodeRole>) -> ParseResult<()> {
         let role = role.unwrap_or(NodeRole::Root);
         match event {
@@ -272,7 +371,7 @@ impl Builder {
                     ResolvedScalar::Str(_) => Value::String(text.into_owned()),
                     other => Value::from(other),
                 };
-                self.deliver(value, anchor, role);
+                self.deliver(value, anchor, role, span)?;
             }
             Event::Alias(id) => {
                 let value = self.anchors.get(&id).cloned().ok_or_else(|| {
@@ -281,27 +380,31 @@ impl Builder {
                         self.documents.len(),
                     ))
                 })?;
-                self.deliver(value, 0, role);
+                self.deliver(value, 0, role, span)?;
             }
             Event::SequenceStart(anchor, _) => self.stack.push(Frame {
                 anchor,
                 role,
+                span,
                 body: Body::Sequence(Vec::new()),
             }),
             Event::MappingStart(anchor, tag) => self.stack.push(Frame {
                 anchor,
                 role,
-                body: Body::Mapping(MappingFrame {
+                span,
+                body: Body::Mapping(Box::new(MappingFrame {
                     set: tag.as_deref().and_then(core_tag_suffix_raw) == Some("set"),
                     entries: Mapping::new(),
                     merge: None,
+                    merge_at: None,
                     slot: Slot::Key,
-                }),
+                    keys: KeyGuard::new(self.domain),
+                })),
             }),
             Event::SequenceEnd | Event::MappingEnd => {
                 if let Some(frame) = self.stack.pop() {
                     let value = self.finish(frame.body, span)?;
-                    self.deliver(value, frame.anchor, frame.role);
+                    self.deliver(value, frame.anchor, frame.role, frame.span)?;
                 }
             }
             Event::Nothing | Event::StreamStart | Event::StreamEnd => {}
@@ -310,41 +413,64 @@ impl Builder {
     }
 
     fn finish(&self, body: Body, span: Span) -> ParseResult<Value> {
-        Ok(match body {
-            Body::Sequence(items) => Value::Sequence(items),
-            Body::Mapping(MappingFrame {
+        let frame = match body {
+            Body::Sequence(items) => return Ok(Value::Sequence(items)),
+            Body::Mapping(frame) => *frame,
+        };
+        Ok(match frame {
+            MappingFrame {
                 set: true, entries, ..
-            }) => Value::Set(entries.into_iter().map(|(member, _)| member).collect()),
-            Body::Mapping(MappingFrame {
+            } => Value::Set(entries.into_iter().map(|(member, _)| member).collect()),
+            MappingFrame {
                 entries,
                 merge: None,
                 ..
-            }) => Value::Mapping(entries),
-            Body::Mapping(MappingFrame {
+            } => Value::Mapping(entries),
+            MappingFrame {
                 entries,
                 merge: Some(merge),
+                merge_at,
                 ..
-            }) => {
-                let mut merged = Mapping::with_capacity(entries.len());
+            } => {
+                let mut merged = GuardedMapping {
+                    map: Mapping::with_capacity(entries.len()),
+                    keys: KeyGuard::new(self.domain),
+                };
                 merge_into(&mut merged, Some(merge), entries)
-                    .map_err(|error| self.merge_error(error, span))?;
-                Value::Mapping(merged)
+                    .map_err(|failure| self.merge_failure(failure, merge_at.unwrap_or(span)))?;
+                Value::Mapping(merged.map)
             }
         })
     }
 
-    // Unreachable for parser-loaded input, which `MergeKeyValidator` has already checked.
-    fn merge_error(&self, error: MergeError, span: Span) -> ParseError {
-        let SourcePosition { line, column } = SourcePosition::from_span(span);
-        ParseError::Merge {
-            error,
-            line,
-            column,
-            document: self.documents.len(),
+    // A rejected merge value is unreachable for parser-loaded input, which `MergeKeyValidator`
+    // has already checked; a key collision among merged keys is reported at the `<<` key.
+    fn merge_failure(&self, failure: MergeFailure, at: Span) -> ParseError {
+        let SourcePosition { line, column } = SourcePosition::from_span(at);
+        let document = self.documents.len();
+        match failure {
+            MergeFailure::Merge(error) => ParseError::Merge {
+                error,
+                line,
+                column,
+                document,
+            },
+            MergeFailure::Key(error) => ParseError::Key {
+                error: error.through_merge(),
+                line,
+                column,
+                document,
+            },
         }
     }
 
-    fn deliver(&mut self, value: Value, anchor: usize, role: NodeRole) {
+    fn deliver(
+        &mut self,
+        value: Value,
+        anchor: usize,
+        role: NodeRole,
+        span: Span,
+    ) -> ParseResult<()> {
         if anchor > 0 {
             self.anchors.insert(anchor, value.clone());
         }
@@ -354,20 +480,35 @@ impl Builder {
             Some(Body::Mapping(frame)) => match std::mem::replace(&mut frame.slot, Slot::Key) {
                 Slot::Key if role == NodeRole::MergeKey => {
                     frame.slot = Slot::MergeValue;
+                    frame.merge_at = Some(span);
                 }
-                Slot::Key => frame.slot = Slot::Value(value),
-                Slot::Value(key) => {
+                Slot::Key => frame.slot = Slot::Value(value, span),
+                Slot::Value(key, at) => {
+                    frame
+                        .keys
+                        .check(&key, frame.entries.keys())
+                        .map_err(|error| {
+                            let SourcePosition { line, column } = SourcePosition::from_span(at);
+                            ParseError::Key {
+                                error,
+                                line,
+                                column,
+                                document: self.documents.len(),
+                            }
+                        })?;
                     frame.entries.insert(key, value);
                 }
                 Slot::MergeValue => frame.merge = Some(value),
             },
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::options::DuplicateMergeKeys;
     use crate::value::BigInt;
 
     #[test]
@@ -794,14 +935,17 @@ m:
     }
 
     #[test]
-    fn test_merge_key_repeated_last_wins() {
+    fn test_merge_key_repeated_is_rejected() {
         let yaml = "a: &a {x: 1}
 b: &b {y: 2}
 m:
   <<: *a
   <<: *b
 ";
-        assert_eq!(merged_entries(yaml, "m"), ["y: 2"]);
+        assert_eq!(
+            merge_at(Parser::parse_str(yaml)),
+            (MergeError::DuplicateKey, 5, 3)
+        );
     }
 
     #[test]
@@ -928,7 +1072,12 @@ m:
             ("m:\n  <<: [{a: 1}, 5]\n", MergeError::NotMapping, 2, 3),
             ("m: {k: 0, <<: 1}\n", MergeError::NotMapping, 1, 11),
             ("m:\n  <<: 1\n  <<: {a: 1}\n", MergeError::NotMapping, 2, 3),
-            ("m:\n  <<: {a: 1}\n  <<: 1\n", MergeError::NotMapping, 3, 3),
+            (
+                "m:\n  <<: {a: 1}\n  <<: 1\n",
+                MergeError::DuplicateKey,
+                3,
+                3,
+            ),
             ("a:\n  b:\n    <<: 1\n", MergeError::NotMapping, 3, 5),
             ("- x: 1\n- <<: 1\n", MergeError::NotMapping, 2, 3),
             ("m:\n  \u{e9}: 1\n  <<: 1\n", MergeError::NotMapping, 3, 3),
@@ -999,7 +1148,8 @@ m:
         assert_eq!(
             merge_at(Parser::parse_normalized(
                 &NormalizedInput::new(yaml).unwrap(),
-                &budget
+                &budget,
+                LoadOptions::default()
             )),
             expected,
             "{yaml:?}"
@@ -1016,7 +1166,12 @@ m:
             "{yaml:?}"
         );
         assert!(
-            Parser::parse_normalized(&NormalizedInput::new(yaml).unwrap(), &budget).is_ok(),
+            Parser::parse_normalized(
+                &NormalizedInput::new(yaml).unwrap(),
+                &budget,
+                LoadOptions::default()
+            )
+            .is_ok(),
             "{yaml:?}"
         );
         assert!(
@@ -1049,7 +1204,7 @@ m:
                 5,
             ),
             (
-                "s: &s !!set {<<: {a: 1}}\nx: {<<: *s}\n",
+                "s: &s !!set {<<, a}\nx: {<<: *s}\n",
                 MergeError::SetSource,
                 2,
                 5,
@@ -1095,7 +1250,7 @@ m:
 
     #[test]
     fn test_valid_merges_unaffected_by_duplicates() {
-        let yaml = "x: {<<: {a: 1}}\nx: 2\nm: {<<: {a: 1}, <<: {b: 2}}\n";
+        let yaml = "x: {<<: {a: 1}}\nx: 2\nm: {<<: {b: 2}}\n";
         let Some(Value::Mapping(map)) = Parser::parse_str(yaml).unwrap() else {
             panic!("mapping expected");
         };
@@ -1142,7 +1297,12 @@ m:
         for err in [
             Parser::parse_str(yaml).unwrap_err(),
             Parser::parse_all(yaml).unwrap_err(),
-            Parser::parse_normalized(&NormalizedInput::new(yaml).unwrap(), &budget).unwrap_err(),
+            Parser::parse_normalized(
+                &NormalizedInput::new(yaml).unwrap(),
+                &budget,
+                LoadOptions::default(),
+            )
+            .unwrap_err(),
         ] {
             assert_eq!(err.document_index(), 2);
             assert!(err.to_string().ends_with("(document 3)"), "{err}");
@@ -1295,9 +1455,30 @@ b: 2\n---\nc: [\n",
     }
 
     #[test]
-    fn test_duplicate_plain_merge_key_last_wins() {
+    fn test_duplicate_plain_merge_key_last_wins_when_allowed() {
         let yaml = "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n";
-        assert_eq!(merged_entries(yaml, "m"), ["y: 2"]);
+        let options = LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins);
+        let docs = Parser::parse_all_with_options(yaml, &ParseLimits::default(), options).unwrap();
+        assert_eq!(entry_texts(&sub_mapping(&docs[0], "m")), ["y: 2"]);
+    }
+
+    #[test]
+    fn test_duplicate_merge_key_is_rejected_in_every_spelling() {
+        for yaml in [
+            "m: {<<: {a: 1}, <<: {b: 2}}\n",
+            "m: {<<: {a: 1}, !!merge x: {b: 2}}\n",
+            "k: &k <<\nm:\n  <<: {a: 1}\n  *k : {b: 2}\n",
+            "m: {<<: [{a: 1}], a: 1, <<: {b: 2}}\n",
+        ] {
+            assert_eq!(merge_error(yaml), Some(MergeError::DuplicateKey), "{yaml}");
+        }
+        for yaml in [
+            "m: {<<: {a: 1}, '<<': {b: 2}}\n",
+            "a: {<<: {x: 1}}\nb: {<<: {y: 2}}\n",
+            "m: !!set {<<, <<}\n",
+        ] {
+            assert_eq!(merge_error(yaml), None, "{yaml}");
+        }
     }
 
     #[test]
@@ -2668,6 +2849,148 @@ m:
                 assert!(err.to_string().starts_with(c), "{err}");
                 assert!(err.to_string().contains("not allowed in YAML"), "{err}");
             }
+        }
+    }
+
+    mod load_policy {
+        use super::*;
+        use crate::limits::LimitKind;
+
+        fn load(yaml: &str, keys: KeyDomain) -> ParseResult<Vec<Value>> {
+            let options = LoadOptions::new().with_keys(keys);
+            Parser::parse_all_with_options(yaml, &ParseLimits::default(), options)
+        }
+
+        #[test]
+        fn set_member_with_a_value_is_rejected_at_the_member() {
+            for (yaml, line, column) in [
+                ("!!set {a: 1}", 1, 8),
+                ("s: !!set\n  a: 1\n", 2, 3),
+                ("!!set {a, b: x}", 1, 11),
+                ("!!set {a: [1]}", 1, 8),
+                ("!!set {a: {b}}", 1, 8),
+                ("!!set {a: ''}", 1, 8),
+                ("n: &n 1\ns: !!set {a: *n}", 2, 11),
+            ] {
+                let err = Parser::parse_all(yaml).unwrap_err();
+                assert!(matches!(err, ParseError::SetValue { .. }), "{yaml}: {err}");
+                let at = err.position();
+                assert_eq!((at.line, at.column), (line, column), "{yaml}");
+            }
+        }
+
+        #[test]
+        fn null_set_members_and_open_anchors_are_accepted_or_recursive() {
+            for yaml in [
+                "!!set {a, b: , c: ~, d: null, e: !!null }",
+                "n: &n ~\ns: !!set {a: *n}",
+                "!!set\n? a\n? b\n",
+            ] {
+                assert!(Parser::parse_all(yaml).is_ok(), "{yaml}");
+            }
+            assert!(matches!(
+                Parser::parse_all("&a !!set {x: *a}"),
+                Err(ParseError::Syntax(_))
+            ));
+        }
+
+        #[test]
+        fn set_value_error_reports_its_document() {
+            let err = Parser::parse_all("a: 1\n---\n!!set {x: 1}\n").unwrap_err();
+            assert_eq!(err.document_index(), 1);
+            assert!(err.to_string().ends_with("(document 2)"), "{err}");
+            assert!(err.relocated(4, 1).position().line > 4);
+        }
+
+        #[test]
+        fn string_keys_domain_reports_the_later_key() {
+            for (yaml, line, column) in [
+                ("1: a\n'1': b\n", 2, 1),
+                ("'1': a\n1: b\n", 2, 1),
+                ("a: 1\ntrue: x\n'true': y\n", 3, 1),
+                ("m:\n  1: a\n  1.0: b\n", 3, 3),
+                ("!!set {1, '1'}", 1, 11),
+                ("m: {<<: {1: a}, '1': b}", 1, 5),
+                ("m: {<<: [{1: a}, {'1': b}]}", 1, 5),
+            ] {
+                let err = load(yaml, KeyDomain::StringKeys).unwrap_err();
+                let ParseError::Key { error, .. } = &err else {
+                    panic!("{yaml}: {err}");
+                };
+                assert!(matches!(error, KeyError::StringCollision { .. }), "{yaml}");
+                let at = err.position();
+                assert_eq!((at.line, at.column), (line, column), "{yaml}");
+            }
+            assert!(load("1: a\n'1': b\n", KeyDomain::Yaml).is_ok());
+        }
+
+        #[test]
+        fn collisions_with_a_merged_key_are_reported_at_the_merge_key() {
+            for (yaml, line, column) in [
+                ("b: &b {1: x}\nm:\n  <<: *b\n  '1': y\n", 3, 3),
+                ("b: &b {1: x}\nm:\n  '1': y\n  <<: *b\n", 4, 3),
+                ("m: {x: 0, <<: [{1: a}, {'1': b}]}", 1, 11),
+            ] {
+                let err = load(yaml, KeyDomain::StringKeys).unwrap_err();
+                assert!(
+                    err.to_string().contains("(through merge key `<<`)"),
+                    "{yaml}: {err}"
+                );
+                let at = err.position();
+                assert_eq!((at.line, at.column), (line, column), "{yaml}");
+            }
+            let err = load("b: &b {x: 1}\nm: {'1': y, 1: z}\n", KeyDomain::StringKeys).unwrap_err();
+            assert!(!err.to_string().contains("merge key"), "{err}");
+        }
+
+        #[test]
+        fn string_keys_domain_accepts_one_key_in_every_spelling() {
+            let docs = load("1.0: a\n1.00: b\n1.0e0: c\n", KeyDomain::StringKeys);
+            assert!(docs.is_ok(), "{docs:?}");
+            assert!(load("a: 1\nb: 2\n1: x\n2: y\n", KeyDomain::StringKeys).is_ok());
+        }
+
+        #[test]
+        fn python_domain_collides_only_numerically_equal_keys() {
+            for yaml in ["1: a\ntrue: b\n", "0: a\n-0.0: b\n", "1.0: a\n1: b\n"] {
+                let err = load(yaml, KeyDomain::Python).unwrap_err();
+                let ParseError::Key { error, .. } = &err else {
+                    panic!("{yaml}: {err}");
+                };
+                assert!(matches!(error, KeyError::PythonCollision { .. }), "{yaml}");
+            }
+            for yaml in ["1: a\n'1': b\n", "1: a\n1.5: b\n", "null: a\n'null': b\n"] {
+                assert!(load(yaml, KeyDomain::Python).is_ok(), "{yaml}");
+            }
+        }
+
+        #[test]
+        fn flow_nesting_is_a_limit_error_with_its_cap() {
+            let flow = |depth: usize| format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
+            assert!(Parser::parse_all(&flow(255)).is_ok());
+            for result in [
+                Parser::parse_all(&flow(256)),
+                Parser::parse_str(&flow(256)).map(|_| vec![]),
+            ] {
+                let Err(ParseError::LimitExceeded {
+                    kind, line, column, ..
+                }) = result
+                else {
+                    panic!("limit error expected");
+                };
+                assert_eq!(kind, LimitKind::FlowNesting);
+                assert_eq!((line, column), (1, 256));
+            }
+            let message = Parser::parse_all(&flow(256)).unwrap_err().to_string();
+            assert!(message.contains("255"), "{message}");
+        }
+
+        #[test]
+        fn scanner_flow_nesting_text_is_pinned() {
+            let err = saphyr_parser::Parser::new_from_str(&"[".repeat(256))
+                .find_map(Result::err)
+                .unwrap();
+            assert_eq!(err.info(), "recursion limit exceeded");
         }
     }
 }

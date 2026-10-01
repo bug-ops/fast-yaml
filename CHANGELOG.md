@@ -90,11 +90,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/Parallel/Python/Node.js**: `parse_parallel` enforces `max_documents`/`maxDocuments` (default 100000) even without a config (#529) (#537)
 - **Core/Python/Node.js**: `!!set` loads as `Value::Set`, so `parse_parallel` returns a Python `set` like `safe_load`, and dumping a `set`/`frozenset` writes `!!set` (#490) (#537) (#412) (#561)
 - **Linter**: lint parse errors no longer start with "failed to parse YAML:" (#519) (#537)
+- **Core**: `parse_normalized` takes `LoadOptions`; `ParseError` gains `SetValue` and `Key`, `MergeError` `DuplicateKey`, `LimitKind` `FlowNesting` (#548) (#554) (#555) (#556) (#564)
+- **Core/CLI/Python/Node.js**: floats are written as YAML 1.1 readers expect (`1e300` becomes `1.0e+300`, `-.5` becomes `-0.5`) (#549) (#564)
+- **Core/CLI/Python/Node.js**: a repeated `<<` in one mapping is an error with its position instead of keeping the last; `fy lint` still reports `duplicate-key` (#554) (#564)
+- **Core/CLI/Python/Node.js**: a `!!set` member with a non-null value is an error with its position; Python `safe_load` and `parse_parallel` now raise where PyYAML drops it (#555) (#541) (#564)
+- **Parallel**: `Config` gains `with_key_domain`/`key_domain`; Python `parse_parallel` uses the Python domain and Node.js `parseParallel` the string-key domain (#548) (#564)
+- **CLI/Node.js/Python**: key collision errors carry the line and column of the later key (the `<<` key for merged keys) and have new text (#548) (#564)
 
 ### Added
 
 - **Core**: new `events` module with `EventStream`, `Event`, `ScalarStyle`, `Tag` and `AnchorId`, and a root `ScalarStyle` re-export (#542) (#562)
 - **Core**: `MaxInputBytes` documents the flow-collection memory amplification of saphyr-parser (#553) (#562)
+- **Node.js**: `safeDump` writes a `Set` as a `!!set` and a `Map` as a mapping, including ones from another realm, instead of dropping their contents (#547) (#541) (#564)
+- **Core**: `LoadOptions` selects the key domain (`Yaml`, `StringKeys`, `Python`) and the repeated-`<<` policy for the loader (#548) (#554) (#564)
 - **CLI**: global `--max-input-size` flag (1 B to 1 GiB, suffixes `KiB`/`MiB`/`GiB`) capping every input file and stdin (#342) (#534)
 - **Core**: `#![forbid(unsafe_code)]` in `fast-yaml-core` (#342) (#534)
 - **Linter/CLI/Python/Node.js**: `document-end: {present: false}` flags `...` at column 0, and `quoted-strings` `extra-required`/`extra-allowed` take regular expressions (#538)
@@ -157,6 +165,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Parallel**: `parse_parallel` agrees with `parse_all` on a root block scalar followed by `---`, and parse errors report the document index (#552) (#562)
+- **Core/CLI**: flow nesting beyond 255 levels is a `FlowNesting` limit error that `--max-depth` cannot raise (#556) (#564)
 - **Core**: a repeated mapping key keeps its first position with the last value for every key form, as Python `safe_load` does (#522) (#530)
 - **Core/Parallel**: scanner, limit and NUL errors in later documents report the real document index (#517) (#530)
 - **Python**: `safe_dump_to` splits output on char boundaries instead of raising `ValueError` on multi-byte characters (#527) (#530)

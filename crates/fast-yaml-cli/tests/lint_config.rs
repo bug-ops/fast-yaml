@@ -252,5 +252,5 @@ fn deeply_nested_config_fails_fast() {
         .write_stdin("a: 1\n")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("recursion limit exceeded"));
+        .stderr(predicate::str::contains("flow collection nesting exceeds"));
 }

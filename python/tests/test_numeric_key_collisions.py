@@ -29,11 +29,41 @@ def test_cross_kind_collision_is_rejected(doc, incoming, kept, line, column):
         fast_yaml.safe_load(doc)
 
 
-@pytest.mark.parametrize("doc", [c.values[0] for c in COLLIDING])
-def test_parallel_path_rejects_cross_kind_collision_without_position(doc):
-    with pytest.raises(ValueError, match="is distinct in YAML") as excinfo:
+@pytest.mark.parametrize(("doc", "incoming", "kept", "line", "column"), COLLIDING)
+def test_parallel_path_reports_the_same_collision_position(doc, incoming, kept, line, column):
+    message = (
+        f"{incoming} is distinct in YAML but equal as a Python dict key to a key of type {kept}"
+        f".*at line {line}, column {column}"
+    )
+    with pytest.raises(ValueError, match=message):
         parallel.parse_parallel(doc)
-    assert "at line" not in str(excinfo.value)
+
+
+def test_parallel_collision_position_in_a_later_document():
+    doc = "a: 1\n---\nb: 2\n---\nm:\n  1: x\n  true: y\n"
+    with pytest.raises(ValueError, match=r"bool key true.*at line 7, column 3 \(document 3\)"):
+        parallel.parse_parallel(doc)
+
+
+@pytest.mark.parametrize(
+    "doc",
+    ["1: a\n'1': b\n", "1: a\n1.5: b\n", "null: a\n'null': b\n", "1e300: a\n10: b\n"],
+)
+def test_parallel_path_keeps_unequal_keys_apart(doc):
+    assert len(parallel.parse_parallel(doc)[0]) == 2
+    assert len(fast_yaml.safe_load(doc)) == 2
+
+
+def test_float_and_big_int_keys_follow_exact_value():
+    big = "1" + "0" * 300
+    assert len(parallel.parse_parallel(f"1e300: a\n{big}: b\n")[0]) == 2
+    assert len(fast_yaml.safe_load(f"1e300: a\n{big}: b\n")) == 2
+    assert len(parallel.parse_parallel("9223372036854775808: a\n9223372036854775807: b\n")[0]) == 2
+    exact = "9223372036854775808.0: a\n9223372036854775808: b\n"
+    with pytest.raises(ValueError, match="is distinct in YAML"):
+        parallel.parse_parallel(exact)
+    with pytest.raises(ValueError, match="is distinct in YAML"):
+        fast_yaml.safe_load(exact)
 
 
 @pytest.mark.parametrize("newline", ["\n", "\r\n"])
@@ -45,7 +75,7 @@ def test_collision_position_in_second_document(newline):
 
 def test_collision_between_merge_source_and_explicit_key():
     doc = "b: &b {1: one}\nc:\n  <<: *b\n  true: z\n"
-    with pytest.raises(ValueError, match=r"bool key true.*at line 4, column 3"):
+    with pytest.raises(ValueError, match=r"bool key true.*merge key.*at line 3, column 3"):
         fast_yaml.safe_load(doc)
 
 
@@ -57,7 +87,7 @@ def test_collision_between_merged_sources_points_at_merge_key():
 
 def test_collision_with_explicit_key_added_after_merge():
     doc = "b: &x {true: b}\nc: {<<: *x, 1: z}\n"
-    with pytest.raises(ValueError, match=r"int key 1.*at line 2, column 13"):
+    with pytest.raises(ValueError, match=r"int key 1.*merge key.*at line 2, column 5"):
         fast_yaml.safe_load(doc)
 
 
@@ -156,3 +186,91 @@ def test_nan_is_not_shared_across_loads():
     first = next(iter(fast_yaml.safe_load(".nan: a")))
     second = next(iter(fast_yaml.safe_load(".nan: a")))
     assert first is not second
+
+
+DIFFERENTIAL_KEYS = [
+    "1",
+    "true",
+    "false",
+    "0",
+    "-0",
+    "0.0",
+    "-0.0",
+    "1.0",
+    "1.5",
+    "1e300",
+    "1e16",
+    "9223372036854775807",
+    "9223372036854775808",
+    "9223372036854775808.0",
+    "-9223372036854775808",
+    "-9223372036854775809",
+    "-9223372036854775808.0",
+    "18446744073709551616",
+    "18446744073709551616.0",
+    "'1'",
+    "null",
+    ".nan",
+    ".inf",
+    "0x10",
+    "16.0",
+]
+
+
+def _outcome(load, doc):
+    try:
+        load(doc)
+    except ValueError as error:
+        return "collision" if "is distinct in YAML" in str(error) else str(error)
+    return "ok"
+
+
+@pytest.mark.parametrize("first", DIFFERENTIAL_KEYS)
+@pytest.mark.parametrize("second", DIFFERENTIAL_KEYS)
+def test_parallel_and_safe_load_agree_on_collisions(first, second):
+    doc = f"{first}: a\n{second}: b\n"
+    assert _outcome(parallel.parse_parallel, doc) == _outcome(fast_yaml.safe_load, doc)
+    set_doc = f"!!set {{{first}, {second}}}\n"
+    assert _outcome(parallel.parse_parallel, set_doc) == _outcome(fast_yaml.safe_load, set_doc)
+
+
+MERGED_COLLISIONS = [
+    pytest.param("b: &b {1: x}\nm:\n  <<: *b\n  true: y\n", 3, 3, id="merge-first"),
+    pytest.param("b: &b {1: x}\nm:\n  true: y\n  <<: *b\n", 4, 3, id="explicit-first"),
+    pytest.param("b: &b {1: x}\nc: &c {true: y}\nm: {<<: [*b, *c]}\n", 3, 5, id="two-sources"),
+]
+
+
+@pytest.mark.parametrize(("doc", "line", "column"), MERGED_COLLISIONS)
+def test_collision_with_a_merged_key_is_reported_at_the_merge_key_everywhere(doc, line, column):
+    message = rf"through merge key `<<`\) at line {line}, column {column}"
+    with pytest.raises(ValueError, match=message):
+        fast_yaml.safe_load(doc)
+    with pytest.raises(ValueError, match=message):
+        parallel.parse_parallel(doc)
+
+
+def test_explicit_collision_next_to_a_merge_is_reported_at_the_explicit_key():
+    doc = "b: &b {x: 1}\nm:\n  <<: *b\n  1: a\n  true: b\n"
+    for load in (fast_yaml.safe_load, parallel.parse_parallel):
+        with pytest.raises(ValueError, match=r"at line 5, column 3") as excinfo:
+            load(doc)
+        assert "merge key" not in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "doc",
+    [
+        "9223372036854775808: a\n9223372036854775808.0: b\n",
+        "0: a\n-0.0: b\n",
+    ],
+)
+def test_float_keys_read_the_same_in_every_message(doc):
+    def detail(load):
+        with pytest.raises(ValueError, match="is distinct in YAML") as excinfo:
+            load(doc)
+        text = str(excinfo.value)
+        return text[text.index("float key") :] if "float key" in text else text
+
+    expected = detail(fast_yaml.safe_load)
+    assert detail(parallel.parse_parallel).split(" (document")[0] == expected.split(" (document")[0]

@@ -579,7 +579,7 @@ fn container_children<'py>(
 ///
 /// Args:
 ///     `yaml_str`: A YAML document as a string
-///     `max_depth`: Maximum collection nesting depth, 1..=512 (default: 256)
+///     `max_depth`: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     `max_alias_bytes`: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///
 /// Returns:
@@ -625,7 +625,7 @@ fn safe_load(
 ///
 /// Args:
 ///     `yaml_str`: A YAML string potentially containing multiple documents
-///     `max_depth`: Maximum collection nesting depth, 1..=512 (default: 256)
+///     `max_depth`: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     `max_alias_bytes`: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///
 /// Returns:
@@ -1021,7 +1021,7 @@ fn safe_dump_all(
 /// Args:
 ///     stream: A YAML document as a string
 ///     loader: Optional loader instance (SafeLoader, FullLoader, Loader)
-///     max_depth: Maximum collection nesting depth, 1..=512 (default: 256)
+///     max_depth: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///
 /// Returns:
@@ -1065,7 +1065,7 @@ fn load(
 /// Args:
 ///     stream: A YAML string potentially containing multiple documents
 ///     loader: Optional loader instance (SafeLoader, FullLoader, Loader)
-///     max_depth: Maximum collection nesting depth, 1..=512 (default: 256)
+///     max_depth: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///
 /// Returns:

@@ -1,3 +1,4 @@
+use crate::keys::KeyError;
 use crate::limits::{LimitKind, MaxTagBytes};
 use crate::merge::MergeError;
 use saphyr_parser::Span;
@@ -208,6 +209,52 @@ pub enum ParseError {
         /// Zero-based index of the document in the stream.
         document: usize,
     },
+
+    /// A `!!set` member has a non-null value; a set holds members only.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{ParseError, Parser};
+    ///
+    /// let err = Parser::parse_str("!!set {a: 1}").unwrap_err();
+    /// assert!(matches!(err, ParseError::SetValue { line: 1, column: 8, document: 0 }));
+    /// assert!(Parser::parse_str("!!set {a: , b: null}").is_ok());
+    /// ```
+    #[error("!!set member has a non-null value, but a set holds members only (write `key:` without a value) at line {line}, column {column}{}", InDocument(*.document))]
+    SetValue {
+        /// Line number of the member (1-indexed).
+        line: usize,
+        /// Column number of the member (1-indexed, in characters).
+        column: usize,
+        /// Zero-based index of the document in the stream.
+        document: usize,
+    },
+
+    /// Two keys that YAML keeps distinct are one key in the requested [`KeyDomain`](crate::KeyDomain).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{KeyDomain, LoadOptions, ParseError, Parser};
+    /// use fast_yaml_core::limits::ParseLimits;
+    ///
+    /// let options = LoadOptions::new().with_keys(KeyDomain::StringKeys);
+    /// let err = Parser::parse_all_with_options("a: 1\n1: x\n\"1\": y\n", &ParseLimits::default(), options)
+    ///     .unwrap_err();
+    /// assert!(matches!(err, ParseError::Key { line: 3, column: 1, document: 0, .. }));
+    /// ```
+    #[error("{error} at line {line}, column {column}{}", InDocument(*.document))]
+    Key {
+        /// Which keys collide.
+        error: KeyError,
+        /// Line number of the later key (1-indexed).
+        line: usize,
+        /// Column number of the later key (1-indexed, in characters).
+        column: usize,
+        /// Zero-based index of the document in the stream.
+        document: usize,
+    },
 }
 
 impl ParseError {
@@ -258,6 +305,26 @@ impl ParseError {
                 column,
                 document: document + documents,
             },
+            Self::SetValue {
+                line,
+                column,
+                document,
+            } => Self::SetValue {
+                line: line + lines,
+                column,
+                document: document + documents,
+            },
+            Self::Key {
+                error,
+                line,
+                column,
+                document,
+            } => Self::Key {
+                error,
+                line: line + lines,
+                column,
+                document: document + documents,
+            },
         }
     }
 
@@ -275,12 +342,13 @@ impl ParseError {
     pub const fn position(&self) -> SourcePosition {
         match self {
             Self::Syntax(e) => e.position(),
-            Self::LimitExceeded { line, column, .. } | Self::Merge { line, column, .. } => {
-                SourcePosition {
-                    line: *line,
-                    column: *column,
-                }
-            }
+            Self::LimitExceeded { line, column, .. }
+            | Self::Merge { line, column, .. }
+            | Self::SetValue { line, column, .. }
+            | Self::Key { line, column, .. } => SourcePosition {
+                line: *line,
+                column: *column,
+            },
         }
     }
 
@@ -303,7 +371,10 @@ impl ParseError {
     pub const fn document_index(&self) -> usize {
         match self {
             Self::Syntax(e) => e.document,
-            Self::LimitExceeded { document, .. } | Self::Merge { document, .. } => *document,
+            Self::LimitExceeded { document, .. }
+            | Self::Merge { document, .. }
+            | Self::SetValue { document, .. }
+            | Self::Key { document, .. } => *document,
         }
     }
 }
@@ -351,6 +422,10 @@ pub enum EmitError {
     },
 }
 
+/// Text of the scanner's flow nesting error; a test pins it so a parser upgrade cannot change it
+/// unnoticed.
+const SCANNER_FLOW_NESTING_INFO: &str = "recursion limit exceeded";
+
 impl ParseError {
     /// Wraps a scanner error found in the document with zero-based index `document`.
     #[must_use]
@@ -358,12 +433,21 @@ impl ParseError {
     #[allow(clippy::disallowed_methods)]
     pub(crate) fn scanner(error: &saphyr_parser::ScanError, document: usize) -> Self {
         let marker = error.marker();
+        let position = SourcePosition {
+            line: marker.line(),
+            column: marker.col() + 1,
+        };
+        if error.info() == SCANNER_FLOW_NESTING_INFO {
+            return Self::LimitExceeded {
+                kind: LimitKind::FlowNesting,
+                line: position.line,
+                column: position.column,
+                document,
+            };
+        }
         Self::Syntax(SyntaxError::new(
             SyntaxReason::Scanner(error.info().into()),
-            SourcePosition {
-                line: marker.line(),
-                column: marker.col() + 1,
-            },
+            position,
             document,
         ))
     }

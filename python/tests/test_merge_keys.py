@@ -32,11 +32,6 @@ ORDERED_CASES = [
     pytest.param("m:\n  <<: {x: 1}\n  y: 2\n", [("x", 1), ("y", 2)], id="inline-map"),
     pytest.param("m:\n  k: 0\n  <<: {k: 1}\n", [("k", 0)], id="explicit-wins"),
     pytest.param(
-        "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n",
-        [("y", 2)],
-        id="repeated-merge-last-wins",
-    ),
-    pytest.param(
         "b: &b {x: 1, y: 2}\nm: {k: 0, <<: *b, y: 9}\n",
         [("x", 1), ("y", 9), ("k", 0)],
         id="flow-mapping",
@@ -207,10 +202,20 @@ def test_explicitly_tagged_merge_values_are_mappings():
     assert parallel.parse_parallel(doc)[0]["m"] == {"x": 1, "y": 2, "k": 0}
 
 
-def test_duplicate_plain_merge_key_last_wins():
-    doc = "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n"
-    assert fast_yaml.safe_load(doc)["m"] == {"y": 2}
-    assert parallel.parse_parallel(doc)[0]["m"] == {"y": 2}
+@pytest.mark.parametrize(
+    "doc",
+    [
+        "a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n",
+        "m: {<<: {x: 1}, <<: {y: 2}}\n",
+        "k: &k <<\nm:\n  <<: {x: 1}\n  *k : {y: 2}\n",
+    ],
+)
+def test_duplicate_plain_merge_key_is_rejected_with_its_position(doc):
+    match = r"duplicate merge key `<<`.* at line \d+, column \d+"
+    with pytest.raises(ValueError, match=match):
+        fast_yaml.safe_load(doc)
+    with pytest.raises(ValueError, match=match):
+        parallel.parse_parallel(doc)
 
 
 @pytest.mark.parametrize(

@@ -177,7 +177,7 @@ export interface BatchConfig {
   /** Sort dictionary keys alphabetically (default: false) */
   sortKeys?: boolean
   /**
-   * Maximum collection nesting depth (integer, 1..=512, default: 256);
+   * Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections stop at 255 levels;
    * applies to `processFiles` and `formatFiles`.
    * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` rejects input nested deeper than this limit.
    */
@@ -414,7 +414,7 @@ export interface LintConfig {
    */
   rules?: LintRulesConfig
   /**
-   * Maximum collection nesting depth (integer, 1..=512, default: 256).
+   * Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections (`[]`, `{}`) stop at 255 levels whatever this is.
    * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
    */
   maxDepth?: number
@@ -509,7 +509,7 @@ export interface LoadOptions {
    */
   allowDuplicateKeys?: boolean
   /**
-   * Maximum collection nesting depth (integer, 1..=512, default: 256).
+   * Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections (`[]`, `{}`) stop at 255 levels whatever this is.
    * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
    */
   maxDepth?: number
@@ -559,7 +559,7 @@ export interface ParallelConfig {
   /** Maximum number of documents allowed (integer, 1..=10000000, default: 100000). */
   maxDocuments?: number
   /**
-   * Maximum collection nesting depth (integer, 1..=512, default: 256).
+   * Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections (`[]`, `{}`) stop at 255 levels whatever this is.
    * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
    */
   maxDepth?: number
@@ -673,16 +673,22 @@ export declare function processFiles(paths: Array<string>, config?: BatchConfig 
  *
  * # Arguments
  *
- * * `data` - A JavaScript object to serialize (Object, Array, string, number, boolean, null)
+ * * `data` - A JavaScript object to serialize (Object, Array, Set, Map, string, number, boolean, null)
  * * `options` - Optional serialization options
  *
  * # Returns
  *
  * A YAML string representation of the object
  *
+ * # Sets and maps
+ *
+ * A `Set` is written as a `!!set` and a `Map` as a mapping. `safeLoad` reads a `!!set` back as an
+ * object with `null` values (js-yaml's form), so the mapping is one-way.
+ *
  * # Errors
  *
- * Throws an error if the object contains non-serializable types.
+ * Throws an error if the object contains non-serializable types, or if two `Set` members or
+ * `Map` keys are the same YAML value.
  *
  * # Example
  *
@@ -748,12 +754,15 @@ export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOpt
  *
  * # Returns
  *
- * The parsed YAML document as JavaScript objects (Object, Array, string, number, boolean, null)
+ * The parsed YAML document as JavaScript objects (Object, Array, string, number, boolean, null).
+ * A `!!set` loads as an object whose members are keys with `null` values, like js-yaml.
  *
  * # Errors
  *
  * Throws an error if:
  * - The YAML is invalid
+ * - A `!!set` member has a non-null value, a `<<` key is repeated in one mapping, or two keys differ in
+ *   YAML but share a JavaScript property name (`1` and `"1"`); the message carries the position
  * - Input exceeds size limit (100MB)
  *
  * # Security

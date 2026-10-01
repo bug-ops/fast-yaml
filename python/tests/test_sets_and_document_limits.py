@@ -85,10 +85,12 @@ class TestMergeErrorOrder:
             with pytest.raises(ValueError, match=r"\(document 3\)"):
                 load(doc)
 
-    def test_overwritten_merge_value_is_discarded(self):
+    def test_repeated_merge_key_is_rejected(self):
         doc = "{<<: [{1: a}, {true: b}], <<: {c: 1}}"
-        assert fast_yaml.safe_load(doc) == {"c": 1}
-        assert parallel.parse_parallel(doc) == [{"c": 1}]
+        with pytest.raises(ValueError, match="duplicate merge key"):
+            fast_yaml.safe_load(doc)
+        with pytest.raises(ValueError, match="duplicate merge key"):
+            parallel.parse_parallel(doc)
 
     def test_aliased_merge_key_is_validated(self):
         with pytest.raises(ValueError, match="merge key"):
@@ -146,9 +148,25 @@ class TestSets:
         with pytest.raises(ValueError, match=COMPLEX_KEY):
             parallel.parse_parallel(doc)
 
-    def test_set_with_values_drops_values(self):
-        assert fast_yaml.safe_load("!!set {a: 1, b: 2}\n") == {"a", "b"}
-        assert parallel.parse_parallel("!!set {a: 1, b: 2}\n") == [{"a", "b"}]
+    @pytest.mark.parametrize(
+        "doc", ["!!set {a: 1, b: 2}\n", "!!set {a, b: [x]}\n", "k: !!set\n  a: {b}\n"]
+    )
+    def test_set_member_with_a_value_is_rejected(self, doc):
+        match = r"!!set member has a non-null value.* at line \d+, column \d+"
+        with pytest.raises(ValueError, match=match):
+            fast_yaml.safe_load(doc)
+        with pytest.raises(ValueError, match=match):
+            parallel.parse_parallel(doc)
+
+    def test_set_value_error_position(self):
+        with pytest.raises(ValueError, match=r"line 1, column 8"):
+            fast_yaml.safe_load("!!set {a: 1}")
+        with pytest.raises(ValueError, match=r"line 4, column 3 \(document 2\)"):
+            fast_yaml.safe_load_all("a: 1\n---\n!!set\n  x: 1\n")
+
+    def test_null_set_members_are_accepted(self):
+        assert fast_yaml.safe_load("!!set {a, b: , c: ~, d: null}\n") == {"a", "b", "c", "d"}
+        assert parallel.parse_parallel("!!set {a, b: ~}\n") == [{"a", "b"}]
 
     def test_tagged_sequence_stays_a_list(self):
         assert fast_yaml.safe_load("!!set [a, b]\n") == ["a", "b"]

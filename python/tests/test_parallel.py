@@ -586,3 +586,10 @@ class TestParseParallelLoader:
     def test_recursive_alias_is_an_error(self):
         with pytest.raises(ValueError, match="still being defined"):
             parallel.parse_parallel("&a [*a]")
+
+
+def test_parse_parallel_keeps_its_docstring():
+    from fast_yaml._core import parallel as core_parallel
+
+    assert core_parallel.parse_parallel.__doc__
+    assert "Parse multi-document YAML in parallel" in core_parallel.parse_parallel.__doc__

@@ -198,8 +198,10 @@ impl Bounds for Documents {
 
 /// Maximum nesting depth of sequences and mappings.
 ///
-/// Valid values lie between `1` and `MAX` (512) inclusive; the default of 256 matches saphyr's
-/// flow-nesting cap and keeps recursive consumers well inside small thread stacks.
+/// Valid values lie between `1` and `MAX` (512) inclusive; the default of 256 keeps recursive
+/// consumers well inside small thread stacks. Flow collections (`[]`, `{}`) are capped at
+/// [`MAX_FLOW_NESTING`] (255) levels by the scanner whatever this value is; that failure is
+/// reported as [`LimitKind::FlowNesting`].
 ///
 /// The calling thread needs about 1 MiB of stack at the maximum depth (worst case: nested tagged
 /// block mappings, roughly 980 KiB measured in release). On 512 KiB or smaller stacks the process
@@ -872,7 +874,18 @@ pub enum LimitKind {
     /// The value being dumped expands to more nodes than the limit.
     #[error("dump node count exceeds {0}")]
     DumpNodes(MaxDumpNodes),
+    /// Flow collections are nested deeper than the scanner supports, whatever the depth limit.
+    #[error(
+        "flow collection nesting exceeds the scanner limit of {MAX_FLOW_NESTING} levels, which the depth limit cannot raise"
+    )]
+    FlowNesting,
 }
+
+/// Deepest nesting of flow collections (`[]` and `{}`) the scanner accepts.
+///
+/// [`MaxDepth`] can be set above this value, but block collections are the only way to nest
+/// deeper.
+pub const MAX_FLOW_NESTING: usize = 255;
 
 /// Estimated fixed cost of one expanded node, in bytes, charged on top of scalar and tag text.
 pub const NODE_BYTES: usize = 64;

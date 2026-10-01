@@ -586,3 +586,20 @@ class TestInlineDirectives:
         yaml = "# fy: disable duplicate-key\na: 1\na: 2\n# fy: enable duplicate-key\nb: 1\nb: 2\n"
         lines = [d.span.start.line for d in lint.lint(yaml) if d.code == "duplicate-key"]
         assert lines == [6]
+
+
+def test_repeated_merge_key_is_a_diagnostic_not_an_exception():
+    result = lint.lint("a: &a {x: 1}\nb: &b {y: 2}\nc: {<<: *a, <<: *b}\n")
+    assert any(d.code == "duplicate-key" for d in result)
+
+
+def test_repeated_merge_key_through_an_alias_is_not_seen():
+    result = lint.lint("a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n")
+    assert not any(d.code == "duplicate-key" for d in result)
+
+
+def test_set_member_with_a_value_aborts_linting_with_its_position():
+    import pytest
+
+    with pytest.raises(ValueError, match=r"member has a non-null value.*line 1, column 11"):
+        lint.lint("s: !!set {a: 1}\n")

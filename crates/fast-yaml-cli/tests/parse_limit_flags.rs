@@ -204,3 +204,36 @@ fn limit_flags_are_documented_in_help() {
             .stdout(predicates::str::contains("--max-alias-bytes"));
     }
 }
+
+#[test]
+fn flow_nesting_is_capped_at_255_whatever_max_depth_says() {
+    let dir = TempDir::new().unwrap();
+    let flow = |depth: usize| format!("{}1{}\n", "[".repeat(depth), "]".repeat(depth));
+    let ok = write_fixture(&dir, "flow255.yaml", &flow(255));
+    let too_deep = write_fixture(&dir, "flow256.yaml", &flow(256));
+    for cmd in [&["parse"][..], &["format"][..], &["convert", "json"][..]] {
+        let (code, stderr) = run(&with_flag(cmd, "--max-depth", "512"), &ok);
+        assert_eq!(code, Some(0), "{cmd:?}: {stderr}");
+
+        let (code, stderr) = run(&with_flag(cmd, "--max-depth", "512"), &too_deep);
+        assert_eq!(code, Some(1), "{cmd:?}: {stderr}");
+        assert!(
+            stderr.contains("flow collection nesting exceeds the scanner limit of 255"),
+            "{cmd:?}: {stderr}"
+        );
+        assert!(!stderr.contains("raise with --max-depth"), "{stderr}");
+    }
+}
+
+#[test]
+fn block_nesting_beyond_255_still_follows_max_depth() {
+    let dir = TempDir::new().unwrap();
+    let mut nested = String::new();
+    for level in 0..300 {
+        let _ = writeln!(nested, "{}k:", " ".repeat(level));
+    }
+    let _ = writeln!(nested, "{}v: 1", " ".repeat(300));
+    let path = write_fixture(&dir, "block300.yaml", &nested);
+    let (code, stderr) = run(&with_flag(&["format"], "--max-depth", "512"), &path);
+    assert_eq!(code, Some(0), "{stderr}");
+}

@@ -10,7 +10,7 @@ use crate::directives::Directives;
 use crate::rules::MarkerPresence;
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
-use fast_yaml_core::{NormalizedInput, Parser, Value};
+use fast_yaml_core::{DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser, Value};
 
 /// Configuration for the linter.
 ///
@@ -394,8 +394,12 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let docs =
-            Parser::parse_normalized(&normalized, &StreamBudget::new(self.config.parse_limits))?;
+        let options = LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins);
+        let docs = Parser::parse_normalized(
+            &normalized,
+            &StreamBudget::new(self.config.parse_limits),
+            options,
+        )?;
         let doc_start_lines = compute_doc_start_lines(source, docs.len());
         let directives = Directives::from_source(source, &self.config, &self.registry);
         let mut context = LintContext::new(source);

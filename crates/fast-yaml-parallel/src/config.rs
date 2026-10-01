@@ -1,5 +1,6 @@
 //! Configuration for parallel processing behavior.
 
+use fast_yaml_core::KeyDomain;
 use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes, ParseLimits};
 
 /// Maximum number of threads allowed (security limit).
@@ -45,6 +46,9 @@ pub struct Config {
 
     /// Parser resource limits applied to every parse
     pub(crate) parse_limits: ParseLimits,
+
+    /// Which keys count as the same key when parsing
+    pub(crate) key_domain: KeyDomain,
 }
 
 impl Config {
@@ -219,6 +223,35 @@ impl Config {
         self
     }
 
+    /// Sets which keys [`parse_parallel`](crate::parse_parallel) treats as the same key.
+    ///
+    /// Choose the domain of the host the documents are converted to, so keys that YAML keeps
+    /// distinct but the host would merge (`1` and `true` in a Python dict) fail with a positioned
+    /// error instead of silently losing an entry. Default: [`KeyDomain::Yaml`]. File-level
+    /// parsing ignores it, because it only validates files.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::KeyDomain;
+    /// use fast_yaml_parallel::{Config, parse_parallel_with_config};
+    ///
+    /// let config = Config::new().with_key_domain(KeyDomain::Python);
+    /// assert!(parse_parallel_with_config("1: a\ntrue: b\n", &config).is_err());
+    /// assert!(parse_parallel_with_config("1: a\ntrue: b\n", &Config::new()).is_ok());
+    /// ```
+    #[must_use]
+    pub const fn with_key_domain(mut self, keys: KeyDomain) -> Self {
+        self.key_domain = keys;
+        self
+    }
+
+    /// Returns the key domain.
+    #[must_use]
+    pub const fn key_domain(&self) -> KeyDomain {
+        self.key_domain
+    }
+
     /// Returns the parser resource limits.
     #[must_use]
     pub const fn parse_limits(&self) -> ParseLimits {
@@ -265,6 +298,7 @@ impl Default for Config {
             max_documents: MaxDocuments::DEFAULT,
             sequential_threshold: 4096, // 4KB
             parse_limits: ParseLimits::default(),
+            key_domain: KeyDomain::Yaml,
         }
     }
 }

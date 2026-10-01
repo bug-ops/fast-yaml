@@ -339,15 +339,19 @@ enum KeyOrigin {
 struct PyMergeTarget<'py> {
     dict: Bound<'py, PyDict>,
     numeric: NumericKeys<'py>,
+    /// Whether the mapping has a `<<`; explicit keys were already checked against each other, so
+    /// any clash left is with a merged key and is reported at the `<<`.
+    has_merge: bool,
     /// Explicit pairs applied so far; `set` is only called for those.
     explicit_seen: usize,
 }
 
 impl<'py> PyMergeTarget<'py> {
-    fn new(py: Python<'py>) -> Self {
+    fn new(py: Python<'py>, has_merge: bool) -> Self {
         Self {
             dict: PyDict::new(py),
             numeric: NumericKeys::new(py),
+            has_merge,
             explicit_seen: 0,
         }
     }
@@ -400,7 +404,12 @@ impl<'py> MergeTarget for PyMergeTarget<'py> {
     ) -> Result<(), PyMergeFailure> {
         let index = self.explicit_seen;
         self.explicit_seen += 1;
-        self.check(&key, KeyOrigin::Explicit(index))?;
+        let origin = if self.has_merge {
+            KeyOrigin::Merged
+        } else {
+            KeyOrigin::Explicit(index)
+        };
+        self.check(&key, origin)?;
         Ok(self.dict.set_item(key, value)?)
     }
 }
@@ -414,7 +423,15 @@ fn build_mapping(
     explicit: &[Pair],
 ) -> PyResult<Py<PyAny>> {
     let merge_at = merge.as_ref().map(|m| m.at);
-    let mut target = PyMergeTarget::new(py);
+    if merge.is_some() {
+        let mut explicit_keys = NumericKeys::new(py);
+        for pair in explicit {
+            if let Some(clash) = explicit_keys.record(pair.key.bind(py))? {
+                return Err(clash_err(&clash, known(Some(pair.at))));
+            }
+        }
+    }
+    let mut target = PyMergeTarget::new(py, merge.is_some());
     merge_into(
         &mut target,
         merge.map(|m| m.value.into_bound(py)),
@@ -429,13 +446,12 @@ fn build_mapping(
                 "YAML parse error: {error} at line {line}, column {column}"
             ))
         }
-        PyMergeFailure::Clash(clash, origin) => {
-            let at = match origin {
-                KeyOrigin::Merged => merge_at,
-                KeyOrigin::Explicit(index) => explicit.get(index).map(|p| p.at),
-            };
-            clash_err(&clash, known(at))
-        }
+        PyMergeFailure::Clash(clash, origin) => match origin {
+            KeyOrigin::Merged => clash_err(&clash.through_merge(), known(merge_at)),
+            KeyOrigin::Explicit(index) => {
+                clash_err(&clash, known(explicit.get(index).map(|p| p.at)))
+            }
+        },
         PyMergeFailure::Py(err) => err,
     })?;
     Ok(target.dict.into_any().unbind())

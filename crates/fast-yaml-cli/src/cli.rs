@@ -151,7 +151,7 @@ impl BatchArgs {
 /// Parser resource limits shared by every subcommand that parses YAML.
 #[derive(Args, Debug, Clone, Copy)]
 pub struct ParseLimitArgs {
-    /// Maximum nesting depth of sequences and mappings (min: 1, max: 512)
+    /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
     #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
     pub max_depth: MaxDepth,
 
@@ -251,7 +251,7 @@ pub enum Command {
         #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
         width: Width,
 
-        /// Maximum nesting depth of sequences and mappings (min: 1, max: 512)
+        /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
         #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
         max_depth: MaxDepth,
 
