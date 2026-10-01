@@ -1,7 +1,8 @@
 //! Parallel file processor for batch YAML operations.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use fast_yaml_core::emitter::{Emitter, EmitterConfig};
 use fast_yaml_core::{NormalizedInput, has_comments_normalized};
@@ -10,6 +11,7 @@ use rayon::prelude::*;
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::io::SmartReader;
+use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
 
 /// Whether formatting may discard YAML comments, which the emitter cannot preserve.
@@ -97,7 +99,7 @@ impl FileProcessor {
             return BatchResult::new();
         }
 
-        let results = if Self::should_use_sequential(paths) {
+        let results = if self.should_use_sequential(paths) {
             self.process_files_sequential(paths, &f)
         } else {
             self.process_files_parallel(paths, &f)
@@ -154,16 +156,26 @@ impl FileProcessor {
     ) -> Vec<(PathBuf, Result<FormatOutput>)> {
         let process_file = |path: &Path| self.format_content(path, emitter_config, comments);
 
-        if Self::should_use_sequential(paths) {
+        if self.should_use_sequential(paths) {
             paths
                 .iter()
                 .map(|path| (path.clone(), process_file(path)))
                 .collect()
         } else {
-            paths
-                .par_iter()
-                .map(|path| (path.clone(), process_file(path)))
-                .collect()
+            self.install(
+                || {
+                    paths
+                        .par_iter()
+                        .map(|path| (path.clone(), process_file(path)))
+                        .collect()
+                },
+                |error| {
+                    paths
+                        .iter()
+                        .map(|path| (path.clone(), Err(error())))
+                        .collect()
+                },
+            )
         }
     }
 
@@ -184,16 +196,26 @@ impl FileProcessor {
             return BatchResult::new();
         }
 
-        let results = if Self::should_use_sequential(paths) {
+        let results = if self.should_use_sequential(paths) {
             paths
                 .iter()
                 .map(|path| self.format_single_file(path, emitter_config, comments))
                 .collect()
         } else {
-            paths
-                .par_iter()
-                .map(|path| self.format_single_file(path, emitter_config, comments))
-                .collect()
+            self.install(
+                || {
+                    paths
+                        .par_iter()
+                        .map(|path| self.format_single_file(path, emitter_config, comments))
+                        .collect()
+                },
+                |error| {
+                    paths
+                        .iter()
+                        .map(|path| Self::failed(path, error()))
+                        .collect()
+                },
+            )
         };
 
         let mut batch = BatchResult::from_results(results);
@@ -286,10 +308,44 @@ impl FileProcessor {
         F: Fn(&Path, &str) -> Result<R> + Sync,
         R: Send,
     {
-        paths
-            .par_iter()
-            .map(|path| self.process_single_file(path, f))
-            .collect()
+        self.install(
+            || {
+                paths
+                    .par_iter()
+                    .map(|path| self.process_single_file(path, f))
+                    .collect()
+            },
+            |error| {
+                paths
+                    .iter()
+                    .map(|path| Self::failed(path, error()))
+                    .collect()
+            },
+        )
+    }
+
+    /// Runs `op` on the pool the config asks for; when that pool cannot be built, `fallback`
+    /// receives a constructor of the pool error.
+    fn install<R: Send>(
+        &self,
+        op: impl FnOnce() -> R + Send,
+        fallback: impl FnOnce(&dyn Fn() -> Error) -> R,
+    ) -> R {
+        match pool::for_config(&self.config) {
+            Ok(Some(pool)) => pool.install(op),
+            Ok(None) => op(),
+            Err(source) => fallback(&|| Error::ThreadPool(Arc::clone(&source))),
+        }
+    }
+
+    fn failed(path: &Path, error: Error) -> FileResult {
+        FileResult::new(
+            path.to_path_buf(),
+            FileOutcome::Error {
+                error,
+                duration: Duration::ZERO,
+            },
+        )
     }
 
     /// Processes files sequentially without parallel overhead.
@@ -348,15 +404,16 @@ impl FileProcessor {
     /// Returns true if sequential processing should be used.
     ///
     /// Sequential processing is preferred when:
+    /// - Workers are set to 0
     /// - Very few files (< 4)
     /// - Small total size (< 1MB) AND moderate file count (< 10)
     ///
     /// This avoids parallelism overhead for small workloads while enabling
     /// parallel processing for large files even if there are only a few of them.
-    fn should_use_sequential(paths: &[PathBuf]) -> bool {
+    fn should_use_sequential(&self, paths: &[PathBuf]) -> bool {
         let file_count = paths.len();
 
-        if file_count < 4 {
+        if self.config.workers() == Some(0) || file_count < 4 {
             return true;
         }
 

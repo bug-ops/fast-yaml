@@ -5,6 +5,7 @@
 use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::pool;
 use fast_yaml_core::limits::StreamBudget;
 use fast_yaml_core::{LoadOptions, NormalizedInput, ParseError, ParseResult, Parser, Value};
 use rayon::prelude::*;
@@ -45,16 +46,11 @@ fn parse_chunks(chunks: &[Chunk<'_>], config: &Config) -> Result<Vec<Value>> {
         return parse_sequential(chunks, &budget, options);
     }
 
-    // Use global thread pool (fast path) or custom pool if explicitly configured
-    if let Some(workers) = config.workers()
-        && workers > 0
-        && workers != rayon::current_num_threads()
-    {
-        let pool = configure_thread_pool(config)?;
-        return pool.install(|| parse_chunks_parallel(chunks, &budget, options));
-    }
-
-    parse_chunks_parallel(chunks, &budget, options)
+    let pool = pool::for_config(config).map_err(Error::ThreadPool)?;
+    pool.map_or_else(
+        || parse_chunks_parallel(chunks, &budget, options),
+        |pool| pool.install(|| parse_chunks_parallel(chunks, &budget, options)),
+    )
 }
 
 /// Determines if sequential processing is more efficient.
@@ -116,16 +112,6 @@ fn collect_chunk(parsed: ParseResult<Vec<Value>>, preceding: usize) -> Result<Ve
             source,
         }
     })
-}
-
-/// Configure Rayon thread pool based on config.
-fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
-    let num_threads = config.effective_workers();
-
-    rayon::ThreadPoolBuilder::new()
-        .num_threads(num_threads)
-        .build()
-        .map_err(Error::ThreadPool)
 }
 
 /// Parse chunks in parallel using Rayon.
@@ -435,20 +421,6 @@ mod tests {
         } else {
             panic!("Expected ParseError");
         }
-    }
-
-    #[test]
-    fn test_configure_thread_pool_default() {
-        let config = Config::default();
-        let pool = configure_thread_pool(&config);
-        assert!(pool.is_ok());
-    }
-
-    #[test]
-    fn test_configure_thread_pool_custom_threads() {
-        let config = Config::new().with_workers(Some(4));
-        let pool = configure_thread_pool(&config);
-        assert!(pool.is_ok());
     }
 
     #[test]

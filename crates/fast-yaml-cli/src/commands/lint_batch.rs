@@ -22,7 +22,7 @@ use fast_yaml_linter::formatter::{
 use fast_yaml_linter::{
     Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
 };
-use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader};
+use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader, shared_pool};
 use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
@@ -205,14 +205,10 @@ pub fn execute_lint_batch(
         .discover_source(&target.source)
         .context("Failed to discover files")?;
 
-    let workers = target
-        .workers
-        .map_or_else(rayon::current_num_threads, NonZeroUsize::get);
-
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(workers)
-        .build()
-        .context("Failed to build thread pool")?;
+    let workers = target.workers.unwrap_or_else(|| {
+        NonZeroUsize::new(rayon::current_num_threads()).unwrap_or(NonZeroUsize::MIN)
+    });
+    let pool = shared_pool(workers).context("Failed to build thread pool")?;
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
     let linter = Linter::with_config(lint_config.clone());

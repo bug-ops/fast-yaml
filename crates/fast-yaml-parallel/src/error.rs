@@ -1,6 +1,7 @@
 //! Error types for parallel processing operations.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use fast_yaml_core::DecodeError;
 use fast_yaml_core::ParseError as CoreParseError;
@@ -93,7 +94,7 @@ pub enum Error {
 
     /// Building the Rayon thread pool failed.
     #[error("failed to build thread pool")]
-    ThreadPool(#[source] rayon::ThreadPoolBuildError),
+    ThreadPool(#[source] Arc<rayon::ThreadPoolBuildError>),
 }
 
 /// Result type for parallel operations.

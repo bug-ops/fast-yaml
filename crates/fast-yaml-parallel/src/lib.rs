@@ -77,6 +77,7 @@ mod processor;
 // New modules
 mod files;
 mod io;
+mod pool;
 mod result;
 
 // Core public API
@@ -89,6 +90,7 @@ pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 // File-level parallelism
 pub use files::{CommentPolicy, FileProcessor, FormatOutput};
 pub use io::{FileContent, SmartReader};
+pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};
 
 /// Parse multi-document YAML stream in parallel.

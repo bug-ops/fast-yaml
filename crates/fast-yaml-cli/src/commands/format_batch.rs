@@ -2,6 +2,7 @@
 
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use fast_yaml_parallel::{
@@ -60,8 +61,9 @@ pub fn execute_batch(
 
     let result = match write {
         BatchWrite::DryRun => {
+            let start = Instant::now();
             let formatted = processor.format_files(&file_paths, &emitter_config, comments);
-            convert_format_results_to_batch_result(formatted)
+            convert_format_results_to_batch_result(formatted, start.elapsed())
         }
         BatchWrite::InPlace => processor.format_in_place(&file_paths, &emitter_config, comments),
     };
@@ -102,11 +104,10 @@ pub fn execute_batch(
 /// Convert `format_files` results to `BatchResult` for dry-run reporting
 fn convert_format_results_to_batch_result(
     results: Vec<(PathBuf, Result<FormatOutput, fast_yaml_parallel::Error>)>,
+    duration: Duration,
 ) -> ParallelBatchResult {
     use fast_yaml_parallel::{FileOutcome, FileResult};
-    use std::time::{Duration, Instant};
 
-    let start = Instant::now();
     let mut file_results = Vec::with_capacity(results.len());
 
     for (path, result) in results {
@@ -126,6 +127,6 @@ fn convert_format_results_to_batch_result(
     }
 
     let mut batch = ParallelBatchResult::from_results(file_results);
-    batch.duration = start.elapsed();
+    batch.duration = duration;
     batch
 }
