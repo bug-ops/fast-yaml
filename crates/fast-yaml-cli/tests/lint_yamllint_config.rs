@@ -105,10 +105,10 @@ fn extends_relaxed_disables_document_start() {
 }
 
 #[test]
-fn extends_a_config_file_or_unknown_preset_is_rejected() {
+fn extends_a_missing_config_file_is_rejected() {
     for (config, needle) in [
-        ("extends: ./base.yaml\n", "not implemented"),
-        ("extends: strict\n", "'default' or 'relaxed'"),
+        ("extends: ./base.yaml\n", "base.yaml"),
+        ("extends: strict\n", "strict"),
     ] {
         let dir = project(config, &[]);
         fy(dir.path(), &[])

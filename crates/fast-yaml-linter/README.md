@@ -321,7 +321,12 @@ rules:
 
 - `extends` starts from the yamllint `default` or `relaxed` preset, with yamllint's option
   defaults and `error` severity (`warning` where the preset says so). Without `extends` the
-  fast-yaml defaults apply. `extends: <file>` is not implemented.
+  fast-yaml defaults apply. Any other `extends` value is the path of a config file, resolved
+  against the directory of the file that names it (yamllint: against the working directory).
+  That file is loaded first and may extend another one, up to 8 files deep; a cycle is an
+  error. The extending file's rules apply over it like over a preset, and `max-input-bytes`,
+  `max-scan-ahead` and `ignore` are inherited unless set again (`yaml-files` is not, as in
+  yamllint).
 - Under `extends`, a rule the preset disables is enabled again by `enable`, a severity name or a
   mapping without `enabled`, and reports `error` unless a severity is given.
 - `extends` is not full yamllint parity: it reproduces the preset's rule set, severities and
@@ -333,13 +338,16 @@ rules:
 - `ignore` patterns are anchored at the directory of the config file, are case-sensitive, and
   apply to directory walks and explicit paths. `!` re-includes a file. `fy lint` exits 0 when
   `ignore` drops every input.
+- `ignore-from-file` takes a file name or a list of file names, relative to the config file's
+  directory; their lines are ignore patterns, read when the config is loaded and anchored at
+  the config file's directory like `ignore`. It cannot be combined with `ignore`.
 - `yaml-files` matches the file name only (`sub/*.j2` matches nothing) and replaces the default
   `*.yaml`/`*.yml` for directory walks and globs. An explicit path is linted when it matches
   the default patterns or `yaml-files` (and is not dropped by `ignore`), and `--include`
   overrides `yaml-files`. `ignore` and `yaml-files` each take at most 1024 lines.
 - yamllint rule names that differ are hinted, not accepted: `key-duplicates` is
   `duplicate-key`, `trailing-spaces` is `trailing-whitespace`, `anchors` is `invalid-anchor`.
-  `ignore-from-file`, `locale` and per-rule `ignore` are rejected explicitly.
+  `locale` and per-rule `ignore` are rejected explicitly.
 
 Custom rules added with `Linter::add_rule` are configured with
 `LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through
