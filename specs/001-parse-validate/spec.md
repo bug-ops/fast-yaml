@@ -195,13 +195,14 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-040 | THE SYSTEM SHALL provide `Parser::{parse_str, parse_str_with_limits, parse_all, parse_all_with_limits, parse_all_with_budget, parse_all_with_options, parse_normalized, parse_normalized_observed}` and `decode_input[_owned]`; no entry point takes raw bytes. | must |
+| FR-040 | THE SYSTEM SHALL provide `Parser::{parse_str, parse_str_with_limits, parse_all, parse_all_with_limits, parse_all_with_budget, parse_all_with_options, parse_normalized, parse_normalized_observed, validate_normalized_observed}` and `decode_input[_owned]`; no entry point takes raw bytes. | must |
 | FR-041 | THE SYSTEM SHALL expose a public event stream (`events::EventStream`) so linter and chunked parsing consume the same events as the loader. | must |
 | FR-042 | THE SYSTEM SHALL expose `merge_into<T: MergeTarget>` so bindings with their own mapping type get identical merge order. | should |
 | FR-043 | `ParseError` SHALL be `#[non_exhaustive]` with variants `Syntax`, `LimitExceeded`, `Merge`, `SetValue`, `Key`, each carrying line, column and document index, and SHALL expose `position()`, `reason()`, `document_index()`. | must |
 | FR-044 | `fy parse` SHALL honor `--max-depth`, `--max-alias-bytes`, `--max-documents`, `--max-input-bytes`, `--max-scan-ahead`, `--stats`, `-q`, `-v`, `--no-color` and read stdin when FILE is omitted. | must |
 | FR-045 | WHEN a stream holds more documents than `ParseLimits::max_documents` (default 100 000) THE SYSTEM SHALL fail every entry point that loads documents (`parse_all*`, `parse_str*`, events, formatter, parallel chunks sharing a `StreamBudget`) with `ParseError::LimitExceeded{Documents}` at the start of the first rejected document, including empty and comment-only documents ([[009-limits-security/spec]] FR-017). | must |
 | FR-046 | WHEN a float is used as a mapping key THE SYSTEM SHALL spell it for key collision and `StringKeys` conversion like ECMAScript `Number` toString (`1e21` is `1e+21`, `100.0` is `100`, `.inf` is `Infinity`, `-.inf` is `-Infinity`, `.nan` is `NaN`, `-0.0` is `0`). | must |
+| FR-047 | `Parser::validate_normalized_observed` SHALL report the same error and show `on_event` the same events as `parse_normalized_observed` without building the documents; it skips the tree builder only for `KeyDomain::Yaml`, where the limit guard and merge validator raise every builder error, and loads in full for any other domain. A differential test and the `validate_differential` fuzz target pin the equivalence. | must |
 
 ## 4. Key entities
 

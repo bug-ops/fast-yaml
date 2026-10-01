@@ -187,6 +187,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: top-level `locale` (C, POSIX, C.UTF-8; other values are an error only while `key-ordering` is enabled) (#605)
 - **Linter**: `indentation` options `spaces` (number or `consistent`), `indent-sequences` (`true`/`false`/`whatever`/`consistent`) and `check-multi-line-strings` (#605)
 - **Core**: `fs::read_regular_file`, a bounded reader that never blocks on a FIFO, shared by config, ignore and input reads (#605)
+- **Core**: `Parser::validate_normalized_observed` checks and observes events without building the documents (#609) (#PR)
 
 ### Changed
 

@@ -239,6 +239,52 @@ impl Parser {
     ) -> ParseResult<Vec<Value>> {
         load_documents_with_budget(input, budget, options, Some(&mut on_event))
     }
+
+    /// Checks all YAML documents of an already normalized input and shows every event to
+    /// `on_event`, without building the documents.
+    ///
+    /// Reports exactly the errors [`Parser::parse_normalized_observed`] reports and calls
+    /// `on_event` with the same items, but keeps no value tree, so a caller that only needs the
+    /// events (a linter) pays for the scan alone. With [`KeyDomain::Yaml`] the limit guard and the
+    /// merge validator raise every error the tree builder could, so the builder is skipped; any
+    /// other domain loads the documents in full and drops them, as the builder is where a key
+    /// collision in that domain surfaces.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Parser::parse_normalized`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{LoadOptions, NormalizedInput, Parser};
+    /// use fast_yaml_core::limits::{ParseLimits, StreamBudget};
+    ///
+    /// let budget = StreamBudget::new(ParseLimits::default());
+    /// let input = NormalizedInput::new("a: 1\nb: [2, 3]\n")?;
+    /// let mut scalars = 0;
+    /// Parser::validate_normalized_observed(&input, &budget, LoadOptions::default(), |_| {
+    ///     scalars += 1;
+    /// })?;
+    /// assert!(scalars > 0);
+    ///
+    /// let broken = NormalizedInput::new("a: [1\n")?;
+    /// let budget = StreamBudget::new(ParseLimits::default());
+    /// assert!(Parser::validate_normalized_observed(&broken, &budget, LoadOptions::default(), |_| {}).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn validate_normalized_observed(
+        input: &NormalizedInput<'_>,
+        budget: &StreamBudget,
+        options: LoadOptions,
+        mut on_event: impl FnMut(&EventItem<'_>),
+    ) -> ParseResult<()> {
+        if options.keys == KeyDomain::Yaml {
+            drive_events(input, budget, options, None, Some(&mut on_event))
+        } else {
+            load_documents_with_budget(input, budget, options, Some(&mut on_event)).map(drop)
+        }
+    }
 }
 
 /// Drives the parser event by event so the limit guard can reject input before the builder
@@ -247,12 +293,28 @@ fn load_documents_with_budget(
     input: &NormalizedInput<'_>,
     budget: &StreamBudget,
     options: LoadOptions,
-    mut on_event: Option<&mut dyn FnMut(&EventItem<'_>)>,
+    on_event: Option<&mut dyn FnMut(&EventItem<'_>)>,
 ) -> ParseResult<Vec<Value>> {
+    let mut builder = Builder::new(options.keys);
+    drive_events(input, budget, options, Some(&mut builder), on_event)?;
+    Ok(inject_implicit_null_if_empty(
+        builder.documents,
+        input.original_len(),
+    ))
+}
+
+/// Feeds every event through the limit guard and the merge validator, to `on_event` and, when
+/// there is one, to `builder`.
+fn drive_events(
+    input: &NormalizedInput<'_>,
+    budget: &StreamBudget,
+    options: LoadOptions,
+    mut builder: Option<&mut Builder>,
+    mut on_event: Option<&mut dyn FnMut(&EventItem<'_>)>,
+) -> ParseResult<()> {
     let mut parser = input.scanner(budget.limits().max_scan_ahead);
     let mut guard = LimitGuard::with_budget(budget.clone());
     let mut merge_keys = MergeKeyValidator::new(options);
-    let mut builder = Builder::new(options.keys);
     while let Some(event) = parser.next_event() {
         let (event, span) = event?;
         guard.observe(&event, span)?;
@@ -262,12 +324,11 @@ fn load_documents_with_budget(
         {
             on_event(&item);
         }
-        builder.event(event, span, role)?;
+        if let Some(builder) = builder.as_mut() {
+            builder.event(event, span, role)?;
+        }
     }
-    Ok(inject_implicit_null_if_empty(
-        builder.documents,
-        input.original_len(),
-    ))
+    Ok(())
 }
 
 /// Strips one leading UTF-8 byte order mark (U+FEFF) from `input`.
@@ -552,6 +613,103 @@ mod tests {
     use super::*;
     use crate::options::DuplicateMergeKeys;
     use crate::value::BigInt;
+
+    mod validate_matches_load {
+        use super::*;
+        use crate::limits::{MaxAliasBytes, MaxDepth, MaxDocuments};
+        use crate::options::SetValues;
+
+        const INPUTS: &[&str] = &[
+            "a: 1\nb: [2, 3]\n",
+            "&a [*a]\n",
+            "- *missing\n",
+            "a: &x 1\nb: *x\n",
+            "<<: 1\n",
+            "<<: [1]\n",
+            "a: &a {x: 1}\nb: &b {y: 2}\nc: {<<: *a, <<: *b}\n",
+            "a: &a {x: 1}\nc: {<<: *a, k: 2}\n",
+            "a: &a {x: 1}\nc: {<<: [*a, {y: 2}], k: 2}\n",
+            "!!set {a: 1}\n",
+            "!!set {a, b}\n",
+            "[[[[[[1]]]]]]\n",
+            "{a: {b: {c: {d: {e: 1}}}}}\n",
+            "- &a [x, y, z]\n- *a\n- *a\n- *a\n- *a\n",
+            "---\na: &x 1\n---\nb: *x\n",
+            "---\na: &x 1\n---\nb: 2\n---\nc: 3\n",
+            "1: a\n'1': b\n",
+            "a: [1\n",
+            "a: 'x\n",
+            "%YAML 1.2\n---\na: 1\n...\n%YAML 1.1\n---\nb: 2\n",
+            "",
+            "# only a comment\n",
+            "? [a, b]\n: c\n",
+            "a: &a b\n*a : c\n",
+        ];
+
+        fn option_sets() -> Vec<LoadOptions> {
+            vec![
+                LoadOptions::new()
+                    .with_duplicate_merge_keys(DuplicateMergeKeys::LastWins)
+                    .with_set_values(SetValues::Ignore),
+                LoadOptions::default(),
+                LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins),
+                LoadOptions::new().with_set_values(SetValues::Ignore),
+                LoadOptions::new().with_keys(KeyDomain::StringKeys),
+            ]
+        }
+
+        fn limit_sets() -> Vec<ParseLimits> {
+            vec![
+                ParseLimits::default(),
+                ParseLimits {
+                    max_depth: MaxDepth::new(4).unwrap(),
+                    ..ParseLimits::default()
+                },
+                ParseLimits {
+                    max_alias_bytes: MaxAliasBytes::new(64).unwrap(),
+                    ..ParseLimits::default()
+                },
+                ParseLimits {
+                    max_documents: MaxDocuments::new(1).unwrap(),
+                    ..ParseLimits::default()
+                },
+            ]
+        }
+
+        #[test]
+        fn validate_reports_the_load_error_and_the_same_events() {
+            for input in INPUTS {
+                let normalized = NormalizedInput::new(input).unwrap();
+                for options in option_sets() {
+                    for limits in limit_sets() {
+                        let mut loaded_events = 0;
+                        let loaded = Parser::parse_normalized_observed(
+                            &normalized,
+                            &StreamBudget::new(limits),
+                            options,
+                            |_| loaded_events += 1,
+                        );
+                        let mut validated_events = 0;
+                        let validated = Parser::validate_normalized_observed(
+                            &normalized,
+                            &StreamBudget::new(limits),
+                            options,
+                            |_| validated_events += 1,
+                        );
+                        assert_eq!(
+                            loaded.err().map(|e| format!("{e:?}")),
+                            validated.err().map(|e| format!("{e:?}")),
+                            "{input:?} {options:?} {limits:?}"
+                        );
+                        assert_eq!(
+                            loaded_events, validated_events,
+                            "{input:?} {options:?} {limits:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn unterminated_directive_errors_instead_of_hanging() {
