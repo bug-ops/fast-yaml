@@ -3,7 +3,9 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use fast_yaml_core::limits::{LimitRangeError, MaxInputBytes};
+use fast_yaml_core::limits::{
+    Bounded, Bounds, LimitRangeError, MaxInputBytes, MaxScanAhead, ParseLimits,
+};
 use fast_yaml_core::{DecodeError, ParseError, Parser, decode_input_owned};
 use serde_norway::Value;
 
@@ -24,7 +26,8 @@ const MAX_DISCOVERY_DEPTH: usize = 20;
 /// and `yaml-files` select the files `fy lint` visits and follow yamllint's semantics.
 ///
 /// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
-/// suffixes) that caps the input the linter accepts. Omit it from files shared with yamllint.
+/// suffixes) that caps the input the linter accepts. The `max-scan-ahead` key is likewise an
+/// integer, in characters, that sets [`MaxScanAhead`]. Omit both from files shared with yamllint.
 ///
 /// # Examples
 ///
@@ -41,6 +44,8 @@ pub struct ConfigFile {
     pub rules: RulesConfig,
     /// Input size limit from `max-input-bytes`, or `None` when the file does not set it.
     pub max_input_bytes: Option<MaxInputBytes>,
+    /// Scan-ahead limit from `max-scan-ahead`, or `None` when the file does not set it.
+    pub max_scan_ahead: Option<MaxScanAhead>,
     /// The `ignore` and `yaml-files` settings.
     pub selection: FileSelection,
 }
@@ -68,6 +73,8 @@ pub enum TopLevelKey {
     YamlFiles,
     /// `max-input-bytes`
     MaxInputBytes,
+    /// `max-scan-ahead`
+    MaxScanAhead,
 }
 
 impl TopLevelKey {
@@ -80,6 +87,7 @@ impl TopLevelKey {
             Self::Ignore => "ignore",
             Self::YamlFiles => "yaml-files",
             Self::MaxInputBytes => "max-input-bytes",
+            Self::MaxScanAhead => "max-scan-ahead",
         }
     }
 
@@ -90,6 +98,7 @@ impl TopLevelKey {
             Self::Ignore,
             Self::YamlFiles,
             Self::MaxInputBytes,
+            Self::MaxScanAhead,
         ]
         .into_iter()
         .find(|candidate| candidate.as_str() == key)
@@ -176,30 +185,34 @@ pub enum ConfigFileError {
         key: String,
     },
 
-    /// `max-input-bytes` is not a positive integer (negative, fractional, suffixed or not a number).
+    /// A limit key is not a positive integer (negative, fractional, suffixed or not a number).
     #[error(
-        "config file '{}': 'max-input-bytes' must be a positive integer number of bytes without a size suffix, got {found}",
+        "config file '{}': '{key}' must be a positive integer without a size suffix, got {found}",
         .path.display()
     )]
-    MaxInputBytesNotPositive {
+    LimitNotPositive {
         /// Path that failed.
         path: PathBuf,
+        /// The limit key.
+        key: TopLevelKey,
         /// The rejected value as written.
         found: String,
     },
 
-    /// `max-input-bytes` is outside the accepted range.
-    #[error("config file '{}': invalid 'max-input-bytes'", .path.display())]
-    MaxInputBytesOutOfRange {
+    /// A limit key is outside the accepted range.
+    #[error("config file '{}': invalid '{key}'", .path.display())]
+    LimitOutOfRange {
         /// Path that failed.
         path: PathBuf,
+        /// The limit key.
+        key: TopLevelKey,
         /// The accepted range.
         source: LimitRangeError,
     },
 
     /// A top-level key is not recognized.
     #[error(
-        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'yaml-files' or 'max-input-bytes'",
+        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'yaml-files', 'max-input-bytes' or 'max-scan-ahead'",
         .path.display(),
         echo(.key, KEY_LIMIT)
     )]
@@ -234,6 +247,7 @@ struct TopLevel {
     ignore: Option<Vec<String>>,
     yaml_files: Option<Vec<String>>,
     max_input_bytes: Option<MaxInputBytes>,
+    max_scan_ahead: Option<MaxScanAhead>,
 }
 
 fn string_items(value: Value, what: &str) -> Result<Vec<String>, String> {
@@ -350,6 +364,7 @@ impl ConfigFile {
         Ok(Self {
             rules,
             max_input_bytes: top.max_input_bytes,
+            max_scan_ahead: top.max_scan_ahead,
             selection: FileSelection { ignore, yaml_files },
         })
     }
@@ -391,7 +406,10 @@ impl ConfigFile {
                         Some(string_items(value, "file name patterns").map_err(invalid)?);
                 }
                 TopLevelKey::MaxInputBytes => {
-                    top.max_input_bytes = Some(parse_max_input_bytes(path, &value)?);
+                    top.max_input_bytes = Some(parse_limit(path, known, &value)?);
+                }
+                TopLevelKey::MaxScanAhead => {
+                    top.max_scan_ahead = Some(parse_limit(path, known, &value)?);
                 }
             }
         }
@@ -429,6 +447,10 @@ impl ConfigFile {
             LintConfig {
                 rules: self.rules,
                 max_input_bytes: self.max_input_bytes.unwrap_or_default(),
+                parse_limits: ParseLimits {
+                    max_scan_ahead: self.max_scan_ahead.unwrap_or_default(),
+                    ..ParseLimits::default()
+                },
                 ..LintConfig::default()
             },
             self.selection,
@@ -459,29 +481,35 @@ impl ConfigFile {
     }
 }
 
-fn parse_max_input_bytes(path: &Path, value: &Value) -> Result<MaxInputBytes, ConfigFileError> {
-    let bytes = value
+fn parse_limit<K: Bounds>(
+    path: &Path,
+    key: TopLevelKey,
+    value: &Value,
+) -> Result<Bounded<K>, ConfigFileError> {
+    let number = value
         .as_u64()
-        .ok_or_else(|| ConfigFileError::MaxInputBytesNotPositive {
+        .ok_or_else(|| ConfigFileError::LimitNotPositive {
             path: path.to_owned(),
+            key,
             found: match value {
                 Value::Number(n) => n.to_string(),
                 Value::String(text) => format!("'{}'", echo(text, KEY_LIMIT)),
                 other => value_kind(other).to_owned(),
             },
         })?;
-    usize::try_from(bytes)
+    usize::try_from(number)
         .ok()
         .map_or(
             Err(LimitRangeError {
                 value: usize::MAX,
                 min: 1,
-                max: MaxInputBytes::MAX.get(),
+                max: K::MAX,
             }),
-            MaxInputBytes::new,
+            Bounded::new,
         )
-        .map_err(|source| ConfigFileError::MaxInputBytesOutOfRange {
+        .map_err(|source| ConfigFileError::LimitOutOfRange {
             path: path.to_owned(),
+            key,
             source,
         })
 }
@@ -548,7 +576,7 @@ mod tests {
         ] {
             let err = load_str(text).unwrap_err();
             assert!(
-                matches!(err, ConfigFileError::MaxInputBytesNotPositive { .. }),
+                matches!(err, ConfigFileError::LimitNotPositive { .. }),
                 "{text}: {err:?}"
             );
             let message = err.to_string();
@@ -563,10 +591,42 @@ mod tests {
         ] {
             let err = load_str(text).unwrap_err();
             assert!(
-                matches!(err, ConfigFileError::MaxInputBytesOutOfRange { .. }),
+                matches!(err, ConfigFileError::LimitOutOfRange { .. }),
                 "{text}: {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn test_max_scan_ahead_key() {
+        let cfg = load_str("max-scan-ahead: 4096\n").unwrap();
+        assert_eq!(cfg.max_scan_ahead, Some(MaxScanAhead::new(4096).unwrap()));
+        assert_eq!(
+            cfg.into_parts().0.parse_limits.max_scan_ahead,
+            MaxScanAhead::new(4096).unwrap()
+        );
+        let unset = load_str("rules: {}\n").unwrap();
+        assert_eq!(unset.max_scan_ahead, None);
+        assert_eq!(
+            unset.into_parts().0.parse_limits.max_scan_ahead,
+            MaxScanAhead::DEFAULT
+        );
+        for text in ["max-scan-ahead: 4MiB\n", "max-scan-ahead: -1\n"] {
+            assert!(matches!(
+                load_str(text).unwrap_err(),
+                ConfigFileError::LimitNotPositive {
+                    key: TopLevelKey::MaxScanAhead,
+                    ..
+                }
+            ));
+        }
+        assert!(matches!(
+            load_str("max-scan-ahead: 0\n").unwrap_err(),
+            ConfigFileError::LimitOutOfRange {
+                key: TopLevelKey::MaxScanAhead,
+                ..
+            }
+        ));
     }
 
     #[test]

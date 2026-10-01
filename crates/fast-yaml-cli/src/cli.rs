@@ -1,6 +1,7 @@
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{
-    Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits, Width,
+    Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, MaxScanAhead, ParseLimits,
+    Width,
 };
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::IndentSize;
@@ -54,6 +55,15 @@ pub struct Cli {
     #[arg(long, global = true, alias = "max-input-size", value_name = "BYTES", value_parser = parse_max_input_bytes)]
     pub max_input_bytes: Option<MaxInputBytes>,
 
+    /// Maximum characters the parser may read past the last node it reported (min: 1, max: 1GiB,
+    /// default: 4MiB). Accepts KiB, MiB and GiB suffixes. Bounds parser memory (about 190x this
+    /// value per input): a flow collection read whole (at the root, in a `- ` entry, nested in flow
+    /// or after a tab, so any JSON document longer than this), one scalar, or a run of comments
+    /// longer than this is rejected. For `lint` it overrides the
+    /// `max-scan-ahead` config key
+    #[arg(long, global = true, value_name = "CHARS", value_parser = parse_max_scan_ahead)]
+    pub max_scan_ahead: Option<MaxScanAhead>,
+
     /// Verbosity resolved from `--quiet`/`--verbose` by [`Cli::validate`]; `Normal` before that.
     #[arg(skip)]
     pub verbosity: Verbosity,
@@ -64,6 +74,12 @@ impl Cli {
     #[must_use]
     pub fn max_input(&self) -> MaxInputBytes {
         self.max_input_bytes.unwrap_or_default()
+    }
+
+    /// Scan-ahead limit of commands that have no config file key: the flag or the default.
+    #[must_use]
+    pub fn scan_ahead(&self) -> MaxScanAhead {
+        self.max_scan_ahead.unwrap_or_default()
     }
 
     /// Parses the process arguments, exiting with code 2 on any usage error.
@@ -161,13 +177,24 @@ pub struct ParseLimitArgs {
     pub max_alias_bytes: MaxAliasBytes,
 }
 
+impl Default for ParseLimitArgs {
+    fn default() -> Self {
+        Self {
+            max_depth: MaxDepth::DEFAULT,
+            max_alias_bytes: MaxAliasBytes::DEFAULT,
+        }
+    }
+}
+
 impl ParseLimitArgs {
-    /// Builds the parser limits from the flags; other limits keep their defaults.
+    /// Builds the parser limits from the flags and the global scan-ahead limit; other limits
+    /// keep their defaults.
     #[must_use]
-    pub fn parse_limits(&self) -> ParseLimits {
+    pub fn parse_limits(&self, max_scan_ahead: MaxScanAhead) -> ParseLimits {
         ParseLimits {
             max_depth: self.max_depth,
             max_alias_bytes: self.max_alias_bytes,
+            max_scan_ahead,
             ..ParseLimits::default()
         }
     }
@@ -213,6 +240,10 @@ fn parse_byte_size(raw: &str) -> Result<usize, String> {
 
 fn parse_max_alias_bytes(raw: &str) -> Result<MaxAliasBytes, String> {
     MaxAliasBytes::new(parse_byte_size(raw)?).map_err(range_error)
+}
+
+fn parse_max_scan_ahead(raw: &str) -> Result<MaxScanAhead, String> {
+    MaxScanAhead::new(parse_byte_size(raw)?).map_err(range_error)
 }
 
 fn parse_max_input_bytes(raw: &str) -> Result<MaxInputBytes, String> {
@@ -489,6 +520,15 @@ mod tests {
         assert_eq!(parse_max_input_bytes("1GiB").unwrap(), MaxInputBytes::MAX);
         assert!(parse_max_input_bytes("0").is_err());
         assert!(parse_max_input_bytes("2GiB").is_err());
+    }
+
+    #[test]
+    fn scan_ahead_accepts_suffixes_and_rejects_out_of_range() {
+        assert_eq!(parse_max_scan_ahead("512").unwrap().get(), 512);
+        assert_eq!(parse_max_scan_ahead("8MiB").unwrap().get(), 8 << 20);
+        assert_eq!(parse_max_scan_ahead("1GiB").unwrap(), MaxScanAhead::MAX);
+        assert!(parse_max_scan_ahead("0").is_err());
+        assert!(parse_max_scan_ahead("2GiB").is_err());
     }
 
     #[test]

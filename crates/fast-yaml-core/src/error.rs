@@ -482,11 +482,6 @@ impl ParseError {
     }
 }
 
-pub(crate) const fn from_saphyr(err: saphyr::EmitError) -> EmitError {
-    let saphyr::EmitError::FmtError(source) = err;
-    EmitError::Format(source)
-}
-
 /// Result type for parsing operations.
 pub type ParseResult<T> = std::result::Result<T, ParseError>;
 

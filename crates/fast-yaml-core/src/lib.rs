@@ -61,6 +61,7 @@ pub mod options;
 pub mod parser;
 /// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.
 pub mod scalar;
+mod scan_guard;
 /// Resolved value types representing YAML data structures.
 pub mod value;
 
@@ -81,8 +82,8 @@ pub use input::NormalizedInput;
 pub use keys::{KeyError, KeyKind};
 pub use limits::{
     DumpBudget, Indent, InputTooLarge, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
-    MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
-    StreamBudget, Width,
+    MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxScanAhead, MaxTagBytes,
+    ParseLimits, StreamBudget, Width,
 };
 pub use merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 pub use options::{DuplicateMergeKeys, KeyDomain, LoadOptions, SetValues};

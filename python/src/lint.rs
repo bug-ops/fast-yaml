@@ -6,7 +6,7 @@
 use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
-use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes};
+use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes, ScanAhead};
 use fast_yaml_linter::config::{IndentSize, RuleName};
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
@@ -497,6 +497,7 @@ impl PyLintConfig {
         max_depth=None,
         max_alias_bytes=None,
         max_input_bytes=None,
+        max_scan_ahead=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -510,8 +511,9 @@ impl PyLintConfig {
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
+        max_scan_ahead: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
+        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
         let mut inner = RustLintConfig::new()
             .with_max_line_length(parse_max_line_length(max_line_length)?)
             .with_indent_size(parse_indent_size(indent_size)?)
@@ -592,6 +594,19 @@ impl PyLintConfig {
     fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
             max_alias_bytes: limits::bounded::<AliasBytes>("max_alias_bytes", bytes)?,
+            ..self.inner.parse_limits
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+        })
+    }
+
+    /// Sets the characters the parser may read past the last node (1..=1 Gi, default 4 Mi); `None` resets to the default.
+    ///
+    /// A flow collection at the root or in a `- ` entry, one scalar, or a run of comments longer than this is rejected.
+    fn with_max_scan_ahead(&self, chars: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_scan_ahead: limits::bounded::<ScanAhead>("max_scan_ahead", chars)?,
             ..self.inner.parse_limits
         };
         Ok(Self {

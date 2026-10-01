@@ -6,7 +6,8 @@
 
 use std::borrow::Cow;
 use std::fmt;
-use std::hash::{Hash, Hasher};
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
+use std::sync::LazyLock;
 
 use indexmap::{IndexMap, IndexSet};
 
@@ -17,7 +18,8 @@ use crate::scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
 ///
 /// The enum is exhaustive on purpose: adding a variant must break every consumer at compile time.
 /// `Value` is [`Eq`] and [`Hash`] so it can key a [`Mapping`]; floats compare by normalized value
-/// (see [`Float`]).
+/// (see [`Float`]). Mappings and sets compare and hash without regard to entry order, as YAML
+/// defines them; sequences are ordered.
 ///
 /// # Examples
 ///
@@ -442,8 +444,9 @@ impl Hash for BigInt {
 /// Insertion-ordered YAML mapping.
 ///
 /// Inserting an equal key keeps the original key and its position and replaces the value, so a
-/// duplicate key in a document takes the last value in the first key's place. Equality and hashing
-/// are order-sensitive; [`get`](Self::get) is not.
+/// duplicate key in a document takes the last value in the first key's place. Iteration follows
+/// insertion order, but equality and hashing ignore it: two mappings with the same entries in a
+/// different order are equal and hash alike, as YAML defines mapping equality.
 ///
 /// # Examples
 ///
@@ -458,6 +461,11 @@ impl Hash for BigInt {
 ///
 /// let entries: Vec<_> = map.iter().collect();
 /// assert_eq!(entries, [(&key("b"), &Value::Int(3)), (&key("a"), &Value::Int(2))]);
+///
+/// let reordered: Mapping = [(key("a"), Value::Int(2)), (key("b"), Value::Int(3))]
+///     .into_iter()
+///     .collect();
+/// assert_eq!(map, reordered);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct Mapping(Box<IndexMap<Value, Value>>);
@@ -522,9 +530,13 @@ impl Mapping {
     }
 }
 
+/// Keys the per-entry hashes of [`Mapping`] and [`Set`], so entries that an attacker can make
+/// collide under a fixed hasher still sum unpredictably.
+static ENTRY_HASHER: LazyLock<RandomState> = LazyLock::new(RandomState::new);
+
 impl PartialEq for Mapping {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().eq(other.iter())
+        self.0 == other.0
     }
 }
 
@@ -533,10 +545,11 @@ impl Eq for Mapping {}
 impl Hash for Mapping {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.len());
-        for (key, value) in self {
-            key.hash(state);
-            value.hash(state);
-        }
+        let hasher = &*ENTRY_HASHER;
+        let sum = self
+            .iter()
+            .fold(0u64, |sum, entry| sum.wrapping_add(hasher.hash_one(entry)));
+        state.write_u64(sum);
     }
 }
 
@@ -567,7 +580,7 @@ impl FromIterator<(Value, Value)> for Mapping {
 /// Insertion-ordered unique members of a YAML `!!set`.
 ///
 /// A parsed `!!set` holds its keys only; the null values YAML writes for them are implied. Equal
-/// members collapse to the first one. Equality and hashing are order-sensitive, like
+/// members collapse to the first one. Equality and hashing ignore member order, like
 /// [`Mapping`]'s.
 ///
 /// # Examples
@@ -580,6 +593,11 @@ impl FromIterator<(Value, Value)> for Mapping {
 /// assert_eq!(members, [&Value::String("b".into()), &Value::String("a".into())]);
 /// assert!(set.contains(&Value::String("a".into())));
 /// assert_eq!(Set::new().len(), 0);
+///
+/// let reordered: Set = [Value::String("a".into()), Value::String("b".into())]
+///     .into_iter()
+///     .collect();
+/// assert_eq!(set, reordered);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, Default)]
@@ -623,7 +641,7 @@ impl Set {
 
 impl PartialEq for Set {
     fn eq(&self, other: &Self) -> bool {
-        self.len() == other.len() && self.iter().eq(other.iter())
+        self.0 == other.0
     }
 }
 
@@ -632,9 +650,11 @@ impl Eq for Set {}
 impl Hash for Set {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write_usize(self.len());
-        for member in self {
-            member.hash(state);
-        }
+        let hasher = &*ENTRY_HASHER;
+        let sum = self.iter().fold(0u64, |sum, member| {
+            sum.wrapping_add(hasher.hash_one(member))
+        });
+        state.write_u64(sum);
     }
 }
 
@@ -920,18 +940,147 @@ mod tests {
         assert_eq!(value, &Value::Int(3));
     }
 
+    fn pairs(entries: &[(&str, Value)]) -> Mapping {
+        entries
+            .iter()
+            .map(|(key, value)| (text(key), value.clone()))
+            .collect()
+    }
+
     #[test]
-    fn mapping_equality_is_order_sensitive() {
-        let ab: Mapping = [(text("a"), Value::Null), (text("b"), Value::Null)]
-            .into_iter()
-            .collect();
-        let ba: Mapping = [(text("b"), Value::Null), (text("a"), Value::Null)]
-            .into_iter()
-            .collect();
+    fn mapping_equality_and_hash_ignore_order() {
+        let ab = pairs(&[("a", Value::Null), ("b", Value::Int(1))]);
+        let ba = pairs(&[("b", Value::Int(1)), ("a", Value::Null)]);
+        assert_eq!(ab, ba);
+        assert_eq!(hash_of(&ab), hash_of(&ba));
+        assert_eq!(
+            ab.iter().next().map(|(key, _)| key),
+            Some(&text("a")),
+            "iteration keeps insertion order"
+        );
+        assert_ne!(ab, pairs(&[("a", Value::Null), ("b", Value::Int(2))]));
+        assert_ne!(ab, pairs(&[("a", Value::Null)]));
+        assert_eq!(ab.get(&text("b")), Some(&Value::Int(1)));
+    }
+
+    #[test]
+    fn nested_mapping_keys_and_values_ignore_order() {
+        let inner = |reversed: bool| {
+            let mut entries = [("x", Value::Int(1)), ("y", Value::Int(2))];
+            if reversed {
+                entries.reverse();
+            }
+            Value::Mapping(pairs(&entries))
+        };
+        let a = Value::Mapping(pairs(&[("m", inner(false)), ("n", Value::Null)]));
+        let b = Value::Mapping(pairs(&[("n", Value::Null), ("m", inner(true))]));
+        assert_eq!(a, b);
+        assert_eq!(hash_of(&a), hash_of(&b));
+        let mut keyed = Mapping::new();
+        keyed.insert(inner(false), Value::Int(7));
+        assert_eq!(keyed.get(&inner(true)), Some(&Value::Int(7)));
+    }
+
+    fn mapping_of(entries: &[(i64, i64)]) -> Mapping {
+        entries
+            .iter()
+            .map(|&(k, v)| (Value::Int(k), Value::Int(v)))
+            .collect()
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn permuted_entries_stay_equal_and_hash_alike(
+            entries in proptest::collection::vec((0i64..40, 0i64..40), 0..12),
+            rotate in 0usize..12,
+            reverse in proptest::bool::ANY,
+        ) {
+            let original = mapping_of(&entries);
+            let mut unique: Vec<(i64, i64)> = original
+                .iter()
+                .map(|(k, v)| match (k, v) {
+                    (Value::Int(k), Value::Int(v)) => (*k, *v),
+                    _ => unreachable!(),
+                })
+                .collect();
+            if !unique.is_empty() {
+                let len = unique.len();
+                unique.rotate_left(rotate % len);
+            }
+            if reverse {
+                unique.reverse();
+            }
+            let permuted = mapping_of(&unique);
+            proptest::prop_assert_eq!(&original, &permuted);
+            proptest::prop_assert_eq!(hash_of(&original), hash_of(&permuted));
+            if let Some(&(k, v)) = unique.first() {
+                let mut changed = unique.clone();
+                changed[0] = (k, v + 100);
+                proptest::prop_assert_ne!(&original, &mapping_of(&changed));
+            }
+
+            let set_a: Set = unique.iter().map(|&(k, _)| Value::Int(k)).collect();
+            let set_b: Set = entries.iter().map(|&(k, _)| Value::Int(k)).collect();
+            proptest::prop_assert_eq!(&set_a, &set_b);
+            proptest::prop_assert_eq!(hash_of(&set_a), hash_of(&set_b));
+        }
+    }
+
+    #[test]
+    fn nan_keys_and_set_keys_are_found_whatever_the_order() {
+        let nan = Value::Float(Float::new(f64::NAN));
+        let mut map = Mapping::new();
+        map.insert(nan, Value::Int(1));
+        assert_eq!(
+            map.get(&Value::Float(Float::new(-f64::NAN))),
+            Some(&Value::Int(1))
+        );
+
+        let ab: Set = [text("a"), text("b")].into_iter().collect();
+        let ba: Set = [text("b"), text("a")].into_iter().collect();
+        let mut keyed = Mapping::new();
+        keyed.insert(Value::Set(ab), Value::Int(7));
+        assert_eq!(keyed.get(&Value::Set(ba)), Some(&Value::Int(7)));
+    }
+
+    #[test]
+    fn sequences_stay_ordered() {
+        let ab = Value::Sequence(vec![text("a"), text("b")]);
+        let ba = Value::Sequence(vec![text("b"), text("a")]);
         assert_ne!(ab, ba);
-        assert_eq!(ab, ab.clone());
-        assert_eq!(hash_of(&ab), hash_of(&ab.clone()));
-        assert_eq!(ab.get(&text("b")), Some(&Value::Null));
+    }
+
+    #[test]
+    fn set_equality_and_hash_ignore_order() {
+        let ab: Set = [text("a"), text("b")].into_iter().collect();
+        let ba: Set = [text("b"), text("a")].into_iter().collect();
+        assert_eq!(ab, ba);
+        assert_eq!(hash_of(&ab), hash_of(&ba));
+        assert_ne!(ab, std::iter::once(text("a")).collect());
+        assert_ne!(ab, [text("a"), text("c")].into_iter().collect());
+    }
+
+    #[test]
+    fn entries_with_swapped_keys_and_values_hash_apart() {
+        let forward = pairs(&[("a", text("b")), ("b", text("a"))]);
+        let swapped = pairs(&[("a", text("a")), ("b", text("b"))]);
+        assert_ne!(forward, swapped);
+        assert_ne!(hash_of(&forward), hash_of(&swapped));
+    }
+
+    #[test]
+    fn entry_hashes_do_not_cancel_for_repeated_structure() {
+        let mut seen = std::collections::HashSet::new();
+        for i in 0..2000_i64 {
+            let map: Mapping = [
+                (Value::Int(i), Value::Int(i)),
+                (Value::Int(i + 1), Value::Int(i)),
+            ]
+            .into_iter()
+            .collect();
+            seen.insert(hash_of(&map));
+        }
+        assert!(seen.len() > 1990, "{}", seen.len());
     }
 
     #[test]

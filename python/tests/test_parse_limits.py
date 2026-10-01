@@ -1,4 +1,4 @@
-"""Configurable parse limits: max_depth and max_alias_bytes (#372)."""
+"""Configurable parse limits: max_depth, max_alias_bytes and max_scan_ahead (#372, #563)."""
 
 from __future__ import annotations
 
@@ -339,3 +339,85 @@ def test_flow_nesting_is_capped_at_255_whatever_max_depth_says(load):
         ValueError, match="flow collection nesting exceeds the scanner limit of 255"
     ):
         load(flow(256), max_depth=MAX_DEPTH)
+
+
+MAX_SCAN_AHEAD = 1 << 30
+# A root flow sequence is tokenized whole before its first event: the shape the limit bounds.
+ROOT_FLOW = "[" + ",".join(["1"] * 200) + "]"
+SCAN_AHEAD = "parser lookahead exceeds 64 characters"
+
+
+@pytest.mark.parametrize("load", LOADERS)
+class TestScanAheadLoaders:
+    def test_default_accepts_root_flow(self, load):
+        assert load(ROOT_FLOW) == [1] * 200
+
+    def test_lowered_limit_rejects_root_flow(self, load):
+        with pytest.raises(ValueError, match=SCAN_AHEAD):
+            load(ROOT_FLOW, max_scan_ahead=64)
+
+    def test_lowered_limit_accepts_streaming_flow(self, load):
+        assert load("a: " + ROOT_FLOW, max_scan_ahead=64) == {"a": [1] * 200}
+
+    def test_raised_limit_accepts_root_flow(self, load):
+        assert load(ROOT_FLOW, max_scan_ahead=MIB) == [1] * 200
+
+    @pytest.mark.parametrize("value", [0, -1, MAX_SCAN_AHEAD + 1])
+    def test_invalid_value(self, load, value):
+        message = rf"max_scan_ahead must be between 1 and {MAX_SCAN_AHEAD}, got {value}"
+        with pytest.raises(ValueError, match=message):
+            load("a: 1", max_scan_ahead=value)
+
+    @pytest.mark.parametrize("value", [True, "3", 1.5])
+    def test_non_integer_is_type_error(self, load, value):
+        with pytest.raises(TypeError):
+            load("a: 1", max_scan_ahead=value)
+
+
+class TestScanAheadConfigs:
+    def test_parallel(self):
+        low = yaml_parallel.ParallelConfig(max_scan_ahead=64)
+        with pytest.raises(ValueError, match=SCAN_AHEAD):
+            yaml_parallel.parse_parallel(ROOT_FLOW, low)
+        high = yaml_parallel.ParallelConfig().with_max_scan_ahead(MIB)
+        assert yaml_parallel.parse_parallel(ROOT_FLOW, high)
+
+    def test_lint(self):
+        with pytest.raises(ValueError, match=SCAN_AHEAD):
+            lint.lint(ROOT_FLOW, lint.LintConfig(max_scan_ahead=64))
+        config = lint.LintConfig().with_max_scan_ahead(64).with_max_scan_ahead(None)
+        assert isinstance(lint.lint(ROOT_FLOW, config), list)
+
+    def test_batch_process_and_format(self, tmp_path):
+        path = tmp_path / "flow.yaml"
+        path.write_text(ROOT_FLOW)
+        low = batch.BatchConfig(max_scan_ahead=64)
+        assert batch.process_files([str(path)], low).failed == 1
+        [(_, content, error)] = batch.format_files([str(path)], low)
+        assert content is None
+        assert error is not None and SCAN_AHEAD in error
+        high = batch.BatchConfig().with_max_scan_ahead(MIB)
+        assert batch.process_files([str(path)], high).failed == 0
+        [(_, content, error)] = batch.format_files([str(path)], high)
+        assert error is None
+        assert content
+
+    @pytest.mark.parametrize(
+        "make",
+        [core_parallel.ParallelConfig, lint.LintConfig, batch.BatchConfig],
+    )
+    @pytest.mark.parametrize("value", [0, -1, MAX_SCAN_AHEAD + 1])
+    def test_invalid_value(self, make, value):
+        message = rf"max_scan_ahead must be between 1 and {MAX_SCAN_AHEAD}, got {value}"
+        with pytest.raises(ValueError, match=message):
+            make(max_scan_ahead=value)
+        with pytest.raises(ValueError, match=message):
+            make().with_max_scan_ahead(value)
+
+
+class TestInvalidCharacterAfterHugeFlow:
+    def test_reports_the_right_document_without_scanning_past_the_limit(self):
+        big = "[" + ",".join(["1"] * 400_000) + "]"
+        source = f"a\n---\n- {big}\n--- b\n--- c\x01"
+        with pytest.raises(ValueError, match=r"U\+0001 is not allowed.*\(document 4\)"):
+            list(fast_yaml.safe_load_all(source, max_scan_ahead=64 * 1024))

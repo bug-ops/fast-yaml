@@ -23,7 +23,7 @@
 //! ```
 
 use crate::error::{EmitError, EmitResult, ParseError};
-use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
+use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, ParseLimits};
 
 mod anchors;
 mod directives;
@@ -34,7 +34,7 @@ mod traits;
 #[cfg(feature = "arena")]
 mod arena_backend;
 
-pub(crate) use formatter::{is_unsafe_plain, write_double_quoted};
+pub(crate) use formatter::write_double_quoted;
 
 // Re-export public API
 pub use std_backend::format_streaming;
@@ -53,12 +53,28 @@ pub(crate) fn format_normalized(
     return std_backend::format_normalized(input, config);
 }
 
+/// Nesting levels, anchors and output bytes reserved up front by [`emit_block`].
+const EMIT_CONTEXT_CAPACITY: usize = 16;
+const EMIT_ANCHOR_CAPACITY: usize = 1;
+const EMIT_OUTPUT_CAPACITY: usize = 256;
+
+/// Writes the events `drive` produces as block YAML with the standard backend.
+pub(crate) fn emit_block(
+    config: &crate::EmitterConfig,
+    drive: impl FnOnce(&mut dyn crate::emitter::EventSink) -> EmitResult<()>,
+) -> EmitResult<String> {
+    let backend = std_backend::StdBackend::new(EMIT_CONTEXT_CAPACITY, EMIT_ANCHOR_CAPACITY);
+    let mut formatter =
+        formatter::StreamingFormatter::new(config, EMIT_OUTPUT_CAPACITY, backend, "");
+    drive(&mut formatter)?;
+    Ok(formatter.finish())
+}
+
 /// Guard enforcing the depth cap and the tag-prefix budget; the formatter never expands aliases.
-fn format_guard(max_depth: MaxDepth) -> LimitGuard {
+fn format_guard(limits: ParseLimits) -> LimitGuard {
     LimitGuard::new(ParseLimits {
-        max_depth,
         max_alias_bytes: MaxAliasBytes::UNBOUNDED,
-        ..ParseLimits::default()
+        ..limits
     })
 }
 

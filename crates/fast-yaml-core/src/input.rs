@@ -8,8 +8,9 @@ use std::borrow::Cow;
 use std::ops::Range;
 
 use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
-use crate::limits::DocumentCursor;
+use crate::limits::{DocumentCursor, MaxScanAhead};
 use crate::scalar::is_c_printable;
+use crate::scan_guard::GuardedParser;
 
 const BOM: char = '\u{FEFF}';
 
@@ -83,6 +84,44 @@ impl<'a> NormalizedInput<'a> {
             removed_at,
             original_len: input.len(),
         })
+    }
+
+    /// Parses the whole text once to check that no construct makes the scanner read more than
+    /// `max` characters past the last node it reported; see [`MaxScanAhead`].
+    ///
+    /// Callers that hand the text to a parser configured with the same limit get this check
+    /// from the parser itself; this is for code that scans the text another way.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ParseError::LimitExceeded`] with [`LimitKind::ScanAhead`](crate::LimitKind::ScanAhead)
+    /// when the limit is exceeded. Syntax errors are not reported: they are the caller's own
+    /// parse to find.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{MaxScanAhead, NormalizedInput};
+    ///
+    /// let input = NormalizedInput::new("[1, 2, 3, 4, 5, 6, 7, 8]")?;
+    /// assert!(input.check_scan_ahead(MaxScanAhead::DEFAULT).is_ok());
+    /// assert!(input.check_scan_ahead(MaxScanAhead::new(4)?).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn check_scan_ahead(&self, max: MaxScanAhead) -> ParseResult<()> {
+        for event in self.scanner(max) {
+            match event {
+                Err(error @ ParseError::LimitExceeded { .. }) => return Err(error),
+                Err(_) => return Ok(()),
+                Ok(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The parser every crate-internal consumer of this text drives.
+    pub(crate) fn scanner(&self, max: MaxScanAhead) -> GuardedParser<'_> {
+        GuardedParser::new(&self.text, max)
     }
 
     /// Returns the normalized text.
@@ -214,22 +253,52 @@ fn first_non_printable(text: &str) -> Option<(usize, char)> {
     None
 }
 
+/// Characters the document-index scan may read past a node: the scan runs on the error path of
+/// input that the caller's limit never saw, so it gets a small budget of its own.
+const DOCUMENT_SCAN_BUDGET: MaxScanAhead = match MaxScanAhead::new(64 * 1024) {
+    Ok(budget) => budget,
+    Err(_) => MaxScanAhead::DEFAULT,
+};
+
 /// Index of the document the text after `prefix` belongs to, as scanner errors count it.
+///
+/// When the budget trips, the events seen so far give the document the last node was in, and the
+/// column-0 `---` lines after it give the documents that followed. That count is a heuristic: it
+/// also counts such lines inside block scalars and quotes and ignores lone `\r` line breaks, so on
+/// this error path the reported document can be off.
 fn document_at(prefix: &str) -> usize {
+    let mut parser = GuardedParser::new(prefix, DOCUMENT_SCAN_BUDGET);
     let mut cursor = DocumentCursor::default();
     let end = position_at(prefix, prefix.len());
-    for event in saphyr_parser::Parser::new_from_str(prefix) {
-        let Ok((event, span)) = event else { break };
-        // The parser closes the truncated prefix with a DocumentEnd at its end; the text after it is not past that document.
-        let at = SourcePosition::from_span(span);
-        if matches!(event, saphyr_parser::Event::DocumentEnd)
-            && (at.line, at.column) >= (end.line, end.column)
-        {
-            break;
+    while let Some(event) = parser.next_event() {
+        match event {
+            Ok((event, span)) => {
+                // The parser closes the truncated prefix with a DocumentEnd at its end; the text after it is not past that document.
+                let at = SourcePosition::from_span(span);
+                if matches!(event, saphyr_parser::Event::DocumentEnd)
+                    && (at.line, at.column) >= (end.line, end.column)
+                {
+                    break;
+                }
+                cursor.observe(&event);
+            }
+            Err(ParseError::LimitExceeded { .. }) => {
+                let markers = prefix
+                    .lines()
+                    .skip(parser.last_position().line)
+                    .filter(|line| is_document_start(line))
+                    .count();
+                return cursor.index() + markers.saturating_sub(usize::from(!cursor.is_open()));
+            }
+            Err(_) => break,
         }
-        cursor.observe(&event);
     }
     cursor.index()
+}
+
+fn is_document_start(line: &str) -> bool {
+    line.strip_prefix("---")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
 }
 
 /// Line and column (1-indexed, in characters) of a byte offset, counting `\n`, `\r\n` and lone

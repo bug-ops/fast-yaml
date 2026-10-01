@@ -1,14 +1,15 @@
-use std::borrow::Cow;
-use std::fmt::Write as _;
+// TODO(#374): DumpGraph lands with Python/Node dump integration
+mod flow;
+mod scalar;
+mod walk;
 
-use crate::error::{EmitError, EmitResult, from_saphyr};
+use crate::error::EmitResult;
 use crate::input::NormalizedInput;
-use crate::limits::{Indent, MaxDepth, Width};
-use crate::scalar::{ResolvedScalar, is_c_printable, resolve_scalar};
-use crate::streaming::{is_unsafe_plain, write_double_quoted};
+use crate::limits::{Indent, MaxDepth, ParseLimits, Width};
 use crate::value::Value;
-use saphyr::{Scalar, Yaml, YamlEmitter};
-use saphyr_parser::{ScalarStyle, Tag};
+use flow::FlowWriter;
+pub(crate) use walk::EventSink;
+use walk::{Layout, WalkOptions, walk};
 
 /// Configuration for YAML emission.
 ///
@@ -17,19 +18,13 @@ use saphyr_parser::{ScalarStyle, Tag};
 pub struct EmitterConfig {
     /// Indentation width in spaces (default: 2).
     ///
-    /// Controls the number of spaces used for each indentation level.
-    ///
-    /// Note: saphyr currently uses fixed 2-space indentation.
-    /// This parameter is accepted for `PyYAML` API compatibility but
-    /// may require post-processing to fully support custom values.
+    /// Controls the number of spaces used for each indentation level of block collections and
+    /// literal block scalars.
     pub indent: Indent,
 
     /// Maximum line width for wrapping (default: 80).
     ///
-    /// When lines exceed this width, the emitter will attempt to wrap them.
-    ///
-    /// Note: saphyr has limited control over line wrapping.
-    /// This parameter is accepted for `PyYAML` API compatibility.
+    /// Accepted for `PyYAML` API compatibility; the emitter does not wrap lines.
     pub width: Width,
 
     /// Default flow style for collections (default: None).
@@ -44,25 +39,27 @@ pub struct EmitterConfig {
     /// When true, prepends `---\n` to the output.
     pub explicit_start: bool,
 
-    /// Enable compact inline notation (default: true).
-    ///
-    /// Controls whether saphyr uses compact notation for
-    /// inline sequences and mappings.
-    pub compact: bool,
-
     /// Render multiline strings in literal style (default: false).
     ///
     /// When true, strings containing newlines will be rendered
     /// using literal block scalar notation (`|`).
     pub multiline_strings: bool,
 
-    /// Maximum nesting depth of collections (default: [`MaxDepth::DEFAULT`]).
+    /// Maximum nesting depth of a value being emitted (default: [`MaxDepth::MAX`], the deepest
+    /// the parser accepts).
     ///
-    /// [`Emitter::emit_str_with_config`] fails with [`EmitError::DepthLimitExceeded`] beyond it,
-    /// and [`Emitter::format_with_config`] rejects input nested deeper with a
-    /// [`ParseError::LimitExceeded`](crate::ParseError::LimitExceeded). Parsing accepts up to
-    /// [`MaxDepth::MAX`], so raise this to emit or format data parsed with a higher limit.
-    pub max_depth: MaxDepth,
+    /// [`Emitter::emit_str_with_config`] fails with
+    /// [`EmitError::DepthLimitExceeded`](crate::EmitError::DepthLimitExceeded) beyond it. The
+    /// emitter keeps its nesting on the heap, so any value up to the maximum is safe on a small
+    /// stack. [`Emitter::format_with_config`] is bounded by [`parse_limits`](Self::parse_limits).
+    pub max_emit_depth: MaxDepth,
+
+    /// Limits enforced while [`Emitter::format_with_config`] parses its input (default:
+    /// [`ParseLimits::default`]).
+    ///
+    /// The formatter never expands aliases, so its alias budget is not applied; depth, `%TAG`
+    /// prefix bytes and [`max_scan_ahead`](ParseLimits::max_scan_ahead) are.
+    pub parse_limits: ParseLimits,
 }
 
 impl Default for EmitterConfig {
@@ -72,9 +69,9 @@ impl Default for EmitterConfig {
             width: Width::DEFAULT,
             default_flow_style: None,
             explicit_start: false,
-            compact: true,
             multiline_strings: false,
-            max_depth: MaxDepth::DEFAULT,
+            max_emit_depth: MaxDepth::MAX,
+            parse_limits: ParseLimits::default(),
         }
     }
 }
@@ -99,13 +96,40 @@ impl EmitterConfig {
         self
     }
 
-    /// Set the maximum nesting depth.
+    /// Set the maximum nesting depth of an emitted value.
     ///
-    /// Block emission recurses inside saphyr and needs about 2 MiB of stack at depth 512
-    /// (release); see [`MaxDepth`] for the smaller-stack guidance.
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Emitter, EmitterConfig, MaxDepth, Value};
+    ///
+    /// let nested = Value::Sequence(vec![Value::Sequence(vec![Value::Int(1)])]);
+    /// let shallow = EmitterConfig::new().with_max_emit_depth(MaxDepth::new(1)?);
+    /// assert!(Emitter::emit_str_with_config(&nested, &shallow).is_err());
+    /// assert!(Emitter::emit_str(&nested).is_ok());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[must_use]
-    pub const fn with_max_depth(mut self, max_depth: MaxDepth) -> Self {
-        self.max_depth = max_depth;
+    pub const fn with_max_emit_depth(mut self, max_depth: MaxDepth) -> Self {
+        self.max_emit_depth = max_depth;
+        self
+    }
+
+    /// Set the limits enforced while formatting parses its input.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Emitter, EmitterConfig, MaxScanAhead, ParseLimits};
+    ///
+    /// let limits = ParseLimits { max_scan_ahead: MaxScanAhead::new(8)?, ..ParseLimits::default() };
+    /// let config = EmitterConfig::new().with_parse_limits(limits);
+    /// assert!(Emitter::format_with_config("[1, 2, 3, 4, 5, 6, 7, 8, 9]", &config).is_err());
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub const fn with_parse_limits(mut self, parse_limits: ParseLimits) -> Self {
+        self.parse_limits = parse_limits;
         self
     }
 
@@ -123,13 +147,6 @@ impl EmitterConfig {
         self
     }
 
-    /// Set compact inline notation.
-    #[must_use]
-    pub const fn with_compact(mut self, compact: bool) -> Self {
-        self.compact = compact;
-        self
-    }
-
     /// Set multiline string rendering.
     #[must_use]
     pub const fn with_multiline_strings(mut self, multiline_strings: bool) -> Self {
@@ -140,13 +157,14 @@ impl EmitterConfig {
 
 /// Emitter for YAML documents.
 ///
-/// Serializes a [`Value`] through saphyr's block emitter, or through a dedicated flow emitter
-/// when [`EmitterConfig::default_flow_style`] is `Some(true)`. Both honor the remembered spelling
+/// Serializes a [`Value`] iteratively: it is walked into parser events that the streaming
+/// formatter writes as block YAML, or a flow writer when
+/// [`EmitterConfig::default_flow_style`] is `Some(true)`. Both honor the remembered spelling
 /// of a [`Float`](crate::Float) and quote strings that would otherwise read back as another type.
 ///
-/// Emission refuses nesting deeper than [`EmitterConfig::max_depth`] (256 by default) with
-/// [`EmitError::DepthLimitExceeded`], while parsing accepts up to [`MaxDepth::MAX`] (512), so a
-/// document parsed with raised limits needs a matching `max_depth` to emit.
+/// Emission refuses nesting deeper than [`EmitterConfig::max_emit_depth`] (512 by default, the
+/// deepest the parser accepts) with [`EmitError::DepthLimitExceeded`](crate::EmitError::DepthLimitExceeded). Nesting is kept on the
+/// heap, so no depth needs more stack.
 #[derive(Debug)]
 pub struct Emitter;
 
@@ -156,7 +174,7 @@ impl Emitter {
     /// # Errors
     ///
     /// Returns `EmitError::Format` if the value cannot be serialized,
-    /// `EmitError::DepthLimitExceeded` if it nests deeper than 256 levels, and
+    /// `EmitError::DepthLimitExceeded` if it nests deeper than `max_emit_depth`, and
     /// `EmitError::ComplexFlowKey` if flow style is requested for a sequence or mapping key.
     ///
     /// # Examples
@@ -170,75 +188,18 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_str_with_config(value: &Value, config: &EmitterConfig) -> EmitResult<String> {
-        // When flow style is requested, use the custom path that renders {k: v} / [a, b].
+        let mut options = WalkOptions {
+            layout: Layout::Block,
+            multiline: config.multiline_strings,
+            max_depth: config.max_emit_depth,
+        };
         if config.default_flow_style == Some(true) {
-            let mut raw = String::new();
-            write_flow(&mut raw, value, 0, config.max_depth)?;
-            let mut output = Self::apply_formatting(raw, config);
-            if !output.is_empty() && !output.ends_with('\n') {
-                output.push('\n');
-            }
-            return Ok(output);
+            options.layout = Layout::Flow;
+            let mut writer = FlowWriter::new(config);
+            walk(value, options, &mut writer)?;
+            return Ok(writer.finish());
         }
-
-        let estimated_size = Self::estimate_value_size(value);
-        let mut output = String::with_capacity(estimated_size);
-        {
-            let mut emitter = YamlEmitter::new(&mut output);
-
-            // Apply saphyr native configuration
-            emitter.compact(config.compact);
-            emitter.multiline_strings(config.multiline_strings);
-
-            let yaml = to_saphyr(value, 0, config.max_depth)?;
-            emitter.dump(&yaml).map_err(from_saphyr)?;
-        }
-
-        // Apply post-processing for configuration options
-        output = Self::apply_formatting(output, config);
-        if config.indent != Indent::DEFAULT {
-            output = Self::at_indent(&output, config)?;
-        }
-
-        // Ensure output always ends with a newline
-        if !output.is_empty() && !output.ends_with('\n') {
-            output.push('\n');
-        }
-
-        Ok(output)
-    }
-
-    fn estimate_value_size(value: &Value) -> usize {
-        match value {
-            Value::Null => 4,    // "null"
-            Value::Bool(_) => 5, // "false"
-            Value::Int(i) => {
-                // Decimal digits + sign (max 20 for i64)
-                if *i == 0 {
-                    1
-                } else {
-                    // Use checked_ilog10 for precise digit count without float conversion
-                    i.unsigned_abs()
-                        .checked_ilog10()
-                        .map_or(1, |d| d as usize + 1)
-                        + 1
-                }
-            }
-            Value::BigInt(big) => big.canonical().len(),
-            Value::Float(_) => 20,           // Conservative estimate
-            Value::String(s) => s.len() + 2, // Possible quotes
-            Value::Sequence(seq) => {
-                // "- " prefix (2) + newline (1) per item + recursive content
-                seq.iter().map(|v| 3 + Self::estimate_value_size(v)).sum()
-            }
-            Value::Set(set) => set.iter().map(|v| 11 + Self::estimate_value_size(v)).sum(),
-            Value::Mapping(map) => {
-                // "key: " (~10) + newline (1) + recursive content
-                map.iter()
-                    .map(|(k, v)| 11 + Self::estimate_value_size(k) + Self::estimate_value_size(v))
-                    .sum()
-            }
-        }
+        crate::streaming::emit_block(config, |sink| walk(value, options, sink))
     }
 
     /// Emit a single YAML document to a string with default configuration.
@@ -246,7 +207,7 @@ impl Emitter {
     /// # Errors
     ///
     /// Returns `EmitError::Format` if the value cannot be serialized, and
-    /// `EmitError::DepthLimitExceeded` if it nests deeper than 256 levels.
+    /// `EmitError::DepthLimitExceeded` if it nests deeper than 512 levels.
     ///
     /// # Examples
     ///
@@ -265,7 +226,8 @@ impl Emitter {
     ///
     /// # Errors
     ///
-    /// Returns `EmitError::Format` if any value cannot be serialized.
+    /// Returns `EmitError::Format` if any value cannot be serialized, and
+    /// `EmitError::DepthLimitExceeded` if one nests deeper than `max_emit_depth`.
     ///
     /// # Examples
     ///
@@ -282,11 +244,7 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_all_with_config(values: &[Value], config: &EmitterConfig) -> EmitResult<String> {
-        // Pre-calculate total estimated size for all documents
-        let total_size: usize =
-            values.iter().map(Self::estimate_value_size).sum::<usize>() + values.len() * 5; // Account for "---\n" separators
-
-        let mut output = String::with_capacity(total_size);
+        let mut output = String::new();
 
         // Create single config variant for non-first documents (avoids cloning per document)
         let inner_config = EmitterConfig {
@@ -335,34 +293,6 @@ impl Emitter {
     /// ```
     pub fn emit_all(values: &[Value]) -> EmitResult<String> {
         Self::emit_all_with_config(values, &EmitterConfig::default())
-    }
-
-    /// Apply formatting configuration to YAML output.
-    ///
-    /// Handles `explicit_start` and potentially other post-processing.
-    fn apply_formatting(mut output: String, config: &EmitterConfig) -> String {
-        // Handle explicit_start
-        if config.explicit_start {
-            if !output.starts_with("---") {
-                output.insert_str(0, "---\n");
-            }
-        } else if output.starts_with("---\n") {
-            output.drain(..4);
-        } else if output.starts_with("---") {
-            // Find where content starts after "---"
-            let skip = 3 + output[3..].chars().take_while(|c| *c == '\n').count();
-            output.drain(..skip);
-        }
-
-        strip_tag_trailing_space(output)
-    }
-
-    /// Rewrites saphyr's fixed 2-space block output at the requested indentation.
-    ///
-    /// The streaming formatter owns indentation (compact `- - x` and `? ` entries included), so
-    /// the text is re-emitted by it instead of being rescaled line by line.
-    fn at_indent(output: &str, config: &EmitterConfig) -> EmitResult<String> {
-        crate::streaming::format_normalized(&NormalizedInput::new(output)?, config)
     }
 
     /// Format a YAML string with configuration.
@@ -453,283 +383,6 @@ impl Emitter {
     }
 }
 
-/// A byte order mark is dropped by the loader at a document prefix, so strings holding one are escaped.
-const BOM: char = '\u{FEFF}';
-
-/// Enters one more collection level, mapping the limit failure to an emit error.
-fn descend(max: MaxDepth, depth: usize) -> EmitResult<usize> {
-    max.descend(depth)
-        .map_err(|_| EmitError::DepthLimitExceeded { limit: max.get() })
-}
-
-/// Whether a string key must be quoted to be read back as the same string in flow context.
-fn flow_key_needs_quotes(s: &str) -> bool {
-    !flow_key_is_plain_safe(s) || reads_as_non_string(s)
-}
-
-/// Returns `s` as a double-quoted scalar.
-fn double_quoted(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    write_double_quoted(&mut out, s);
-    out
-}
-
-/// Whether `s` is structurally safe as a plain flow key, ignoring how it resolves.
-///
-/// `<<` is rejected because a plain `<<` key is read back as a merge key.
-fn flow_key_is_plain_safe(s: &str) -> bool {
-    !(s == "<<"
-        || s.is_empty()
-        || s.starts_with(char::is_whitespace)
-        || s.ends_with(char::is_whitespace)
-        || s.contains([':', '#', ',', '[', ']', '{', '}', '"', '\''])
-        || s.contains(BOM)
-        || !s.chars().all(is_c_printable)
-        || s.chars().any(char::is_control)
-        || is_unsafe_plain(s))
-}
-
-/// Whether the plain scalar `s` would be resolved to something other than a string.
-fn reads_as_non_string(s: &str) -> bool {
-    !matches!(
-        resolve_scalar(s, crate::events::ScalarStyle::Plain, None),
-        ResolvedScalar::Str(_)
-    )
-}
-
-/// Whether a string needs a double-quoted spelling that this crate writes itself.
-///
-/// saphyr's own quoting check has a separate, narrower float grammar (so `+.inf` would be
-/// written plain and change type on re-read) and it does not escape every non-printable. A
-/// multiline string a literal block cannot represent is double-quoted.
-fn string_needs_own_quoting(s: &str) -> bool {
-    reads_as_non_string(s)
-        || s.contains(BOM)
-        || !s.chars().all(is_c_printable)
-        || (s.contains(['\n', '\r']) && !literal_block_keeps(s))
-}
-
-/// Whether a literal block scalar reads back as exactly `s`: it cannot carry a `\r`, leading
-/// whitespace, more than one trailing line break without indicators saphyr does not write, or a
-/// line that looks like a document marker or directive at the root.
-fn literal_block_keeps(s: &str) -> bool {
-    !s.contains('\r')
-        && !s.starts_with(char::is_whitespace)
-        && !s.ends_with("\n\n")
-        && !s
-            .lines()
-            .any(|line| line.starts_with("---") || line.starts_with("...") || line.starts_with('%'))
-}
-
-/// A plain-styled saphyr scalar whose text is written verbatim.
-///
-/// saphyr writes the body of a double-quoted representation without escaping it, so every
-/// spelling that is not a bare scalar is built here and passed through as plain text.
-const fn verbatim(text: String) -> Yaml<'static> {
-    Yaml::Representation(Cow::Owned(text), ScalarStyle::Plain, None)
-}
-
-/// Fails for a set in key position, which block style writes as invalid YAML.
-const fn reject_set_key(key: &Value) -> EmitResult<()> {
-    match key {
-        Value::Set(_) => Err(EmitError::SetAsKey),
-        _ => Ok(()),
-    }
-}
-
-/// Converts a mapping key; a multiline string key stays double-quoted, since a block scalar
-/// cannot be a simple key.
-fn key_to_saphyr(key: &Value, depth: usize, max: MaxDepth) -> EmitResult<Yaml<'_>> {
-    match key {
-        Value::String(s) if s.contains('\n') => Ok(verbatim(double_quoted(s))),
-        _ => to_saphyr(key, depth, max),
-    }
-}
-
-/// Converts `value` into a tree saphyr emits without panicking or changing its meaning.
-fn to_saphyr(value: &Value, depth: usize, max: MaxDepth) -> EmitResult<Yaml<'_>> {
-    Ok(match value {
-        Value::Null => Yaml::Value(Scalar::Null),
-        Value::Bool(b) => Yaml::Value(Scalar::Boolean(*b)),
-        Value::Int(i) => Yaml::Value(Scalar::Integer(*i)),
-        Value::BigInt(big) => {
-            Yaml::Representation(Cow::Borrowed(big.canonical()), ScalarStyle::Plain, None)
-        }
-        Value::Float(f) => Yaml::Representation(
-            f.spelling()
-                .map_or_else(|| Cow::Owned(f.to_string()), Cow::Borrowed),
-            ScalarStyle::Plain,
-            None,
-        ),
-        Value::String(s) if string_needs_own_quoting(s) => verbatim(double_quoted(s)),
-        Value::String(s) => Yaml::Value(Scalar::String(Cow::Borrowed(s))),
-        Value::Sequence(items) => {
-            let depth = descend(max, depth)?;
-            Yaml::Sequence(
-                items
-                    .iter()
-                    .map(|item| to_saphyr(item, depth, max))
-                    .collect::<EmitResult<_>>()?,
-            )
-        }
-        Value::Set(set) => {
-            let depth = descend(max, depth)?;
-            let mut out = saphyr::Mapping::with_capacity(set.len());
-            for member in set {
-                reject_set_key(member)?;
-                out.insert(
-                    key_to_saphyr(member, depth, max)?,
-                    Yaml::Value(Scalar::Null),
-                );
-            }
-            Yaml::Tagged(Cow::Owned(set_tag()), Box::new(Yaml::Mapping(out)))
-        }
-        Value::Mapping(map) => {
-            let depth = descend(max, depth)?;
-            let mut out = saphyr::Mapping::with_capacity(map.len());
-            for (key, value) in map {
-                reject_set_key(key)?;
-                out.insert(
-                    key_to_saphyr(key, depth, max)?,
-                    to_saphyr(value, depth, max)?,
-                );
-            }
-            Yaml::Mapping(out)
-        }
-    })
-}
-
-/// Removes the space saphyr leaves after the tag of a block collection (`k: !!set \n`).
-///
-/// Block scalar bodies are copied untouched, since trailing spaces there are content.
-fn strip_tag_trailing_space(output: String) -> String {
-    if !output.contains(" \n") {
-        return output;
-    }
-    let mut result = String::with_capacity(output.len());
-    let mut block_base: Option<usize> = None;
-    for line in output.split_inclusive('\n') {
-        let body = line.strip_suffix('\n').unwrap_or(line);
-        let trimmed = body.trim_end();
-        let indent = body.len() - body.trim_start_matches(' ').len();
-        if let Some(base) = block_base {
-            if trimmed.is_empty() || indent > base {
-                result.push_str(line);
-                continue;
-            }
-            block_base = None;
-        }
-        let last_token = trimmed.rsplit(' ').next().unwrap_or_default();
-        if last_token.starts_with(['|', '>'])
-            && last_token.get(1..).is_some_and(|rest| {
-                rest.chars()
-                    .all(|c| c == '-' || c == '+' || c.is_ascii_digit())
-            })
-        {
-            block_base = Some(indent);
-        }
-        if body.ends_with(' ') && last_token.starts_with('!') && !body.ends_with("  ") {
-            result.push_str(trimmed);
-            if line.ends_with('\n') {
-                result.push('\n');
-            }
-        } else {
-            result.push_str(line);
-        }
-    }
-    result
-}
-
-/// The tag saphyr writes as `!!set`; it prints a tag as handle followed by suffix.
-fn set_tag() -> Tag {
-    Tag {
-        handle: "!".into(),
-        suffix: "!set".into(),
-    }
-}
-
-/// Writes one scalar as a mapping key in flow style.
-fn write_flow_key(out: &mut String, key: &Value) -> EmitResult<()> {
-    match key {
-        Value::Null => out.push_str("null"),
-        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Value::Int(i) => write!(out, "{i}")?,
-        Value::BigInt(big) => out.push_str(big.canonical()),
-        Value::Float(f) => write!(out, "{f}")?,
-        Value::String(s) if flow_key_needs_quotes(s) => write_double_quoted(out, s),
-        Value::String(s) => out.push_str(s),
-        Value::Sequence(_) | Value::Mapping(_) | Value::Set(_) => {
-            return Err(EmitError::ComplexFlowKey);
-        }
-    }
-    Ok(())
-}
-
-/// Writes a scalar value in flow style through saphyr, without the document marker.
-fn write_flow_scalar(out: &mut String, value: &Value) -> EmitResult<()> {
-    let mut text = String::new();
-    {
-        let mut emitter = YamlEmitter::new(&mut text);
-        emitter.compact(true);
-        emitter
-            .dump(&to_saphyr(value, 0, MaxDepth::DEFAULT)?)
-            .map_err(from_saphyr)?;
-    }
-    // saphyr emits "---\nvalue\n"
-    out.push_str(
-        text.strip_prefix("---\n")
-            .unwrap_or(&text)
-            .trim_end_matches('\n'),
-    );
-    Ok(())
-}
-
-/// Writes `value` in YAML flow style: mappings as `{k: v}`, sequences as `[a, b]`.
-///
-/// Scalar values are rendered inline and nested collections recursively in flow style. The
-/// output has no leading `---\n` marker and no trailing newline.
-fn write_flow(out: &mut String, value: &Value, depth: usize, max: MaxDepth) -> EmitResult<()> {
-    match value {
-        Value::Mapping(map) => {
-            let depth = descend(max, depth)?;
-            out.push('{');
-            for (i, (key, value)) in map.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                write_flow_key(out, key)?;
-                out.push_str(": ");
-                write_flow(out, value, depth, max)?;
-            }
-            out.push('}');
-        }
-        Value::Sequence(seq) => {
-            let depth = descend(max, depth)?;
-            out.push('[');
-            for (i, item) in seq.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                write_flow(out, item, depth, max)?;
-            }
-            out.push(']');
-        }
-        Value::Set(set) => {
-            descend(max, depth)?;
-            out.push_str("!!set {");
-            for (i, member) in set.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
-                write_flow_key(out, member)?;
-            }
-            out.push('}');
-        }
-        scalar => write_flow_scalar(out, scalar)?,
-    }
-    Ok(())
-}
-
 /// Build a block scalar header: indicator, optional indentation digit, chomp suffix.
 ///
 /// The digit is emitted when the first non-empty line starts with a space, since
@@ -758,7 +411,8 @@ pub(crate) fn block_scalar_header(indicator: char, value: &str, indent: Indent) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::value::{BigInt, Float, Mapping, Set};
+    use crate::error::EmitError;
+    use crate::value::{Float, Mapping, Set};
 
     #[test]
     fn test_emit_str_string() {
@@ -799,10 +453,9 @@ mod tests {
         let config = EmitterConfig::default();
         assert_eq!(config.indent, Indent::DEFAULT);
         assert_eq!(config.width, Width::DEFAULT);
-        assert_eq!(config.max_depth, MaxDepth::DEFAULT);
+        assert_eq!(config.max_emit_depth, MaxDepth::MAX);
         assert_eq!(config.default_flow_style, None);
         assert!(!config.explicit_start);
-        assert!(config.compact);
         assert!(!config.multiline_strings);
     }
 
@@ -811,13 +464,11 @@ mod tests {
         let config = EmitterConfig::new()
             .with_indent(Indent::new(4).unwrap())
             .with_width(Width::new(120).unwrap())
-            .with_explicit_start(true)
-            .with_compact(false);
+            .with_explicit_start(true);
 
         assert_eq!(config.indent.get(), 4);
         assert_eq!(config.width.get(), 120);
         assert!(config.explicit_start);
-        assert!(!config.compact);
     }
 
     #[test]
@@ -838,7 +489,7 @@ mod tests {
         for _ in 0..3 {
             doc = Value::Sequence(vec![doc]);
         }
-        let config = EmitterConfig::new().with_max_depth(MaxDepth::new(2).unwrap());
+        let config = EmitterConfig::new().with_max_emit_depth(MaxDepth::new(2).unwrap());
         for flow in [None, Some(true)] {
             let config = config.clone().with_default_flow_style(flow);
             assert!(matches!(
@@ -846,7 +497,7 @@ mod tests {
                 Err(EmitError::DepthLimitExceeded { limit: 2 })
             ));
         }
-        let wide = EmitterConfig::new().with_max_depth(MaxDepth::MAX);
+        let wide = EmitterConfig::new().with_max_emit_depth(MaxDepth::MAX);
         assert!(Emitter::emit_str_with_config(&doc, &wide).is_ok());
     }
 
@@ -879,15 +530,6 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_with_compact_false() {
-        let value = Value::Sequence(vec![Value::Int(1), Value::Int(2)]);
-        let config = EmitterConfig::new().with_compact(false);
-        let result = Emitter::emit_str_with_config(&value, &config).unwrap();
-        // Should contain formatting (exact format depends on saphyr)
-        assert!(result.contains('1') && result.contains('2'));
-    }
-
-    #[test]
     fn test_emit_with_multiline_strings() {
         let value = Value::String("line1\nline2".to_string());
         let config = EmitterConfig::new().with_multiline_strings(true);
@@ -897,110 +539,12 @@ mod tests {
     }
 
     #[test]
-    fn test_estimate_value_size_scalars() {
-        let size = |v: Value| Emitter::estimate_value_size(&v);
-        assert_eq!(size(Value::Null), 4);
-        assert_eq!(size(Value::Bool(true)), 5);
-        assert_eq!(size(Value::Int(0)), 1);
-        assert!(size(Value::Int(5)) >= 1);
-        assert!(size(Value::Int(12345)) >= 5);
-        assert!(size(Value::Int(-42)) >= 2);
-        assert_eq!(size(Value::Float(Float::new(1.23456))), 20);
-        assert_eq!(size(Value::String("hello".to_string())), 7);
-        let big = BigInt::parse("99999999999999999999").unwrap();
-        assert_eq!(size(Value::BigInt(big)), 20);
-    }
-
-    #[test]
-    fn test_estimate_value_size_mapping() {
-        // Create a mapping with string keys and integer values
-        let mut map = Mapping::new();
-        map.insert(Value::String("key1".to_string()), Value::Int(100));
-        map.insert(Value::String("key2".to_string()), Value::Int(200));
-
-        let mapping = Value::Mapping(map);
-        let size = Emitter::estimate_value_size(&mapping);
-
-        // Should be > 0 and account for both key-value pairs
-        // Each pair has ~11 base overhead + key size + value size
-        assert!(
-            size > 20,
-            "Mapping estimate should be significant: got {size}"
-        );
-
-        // Test nested mapping
-        let mut nested_map = Mapping::new();
-        nested_map.insert(Value::String("outer".to_string()), mapping);
-
-        let nested_size = Emitter::estimate_value_size(&Value::Mapping(nested_map));
-        assert!(
-            nested_size > size,
-            "Nested mapping should have larger estimate"
-        );
-    }
-
-    #[test]
-    fn test_estimate_value_size_sequence() {
-        let seq = Value::Sequence(vec![
-            Value::Int(1),
-            Value::Int(2),
-            Value::String("hello".to_string()),
-        ]);
-
-        let size = Emitter::estimate_value_size(&seq);
-
-        // Each item: 3 (prefix "- " + newline) + scalar size
-        // Item 1: 3 + 2 (digit + overhead) = 5
-        // Item 2: 3 + 2 = 5
-        // Item 3: 3 + 7 (5 chars + 2 quotes) = 10
-        assert!(
-            size >= 10,
-            "Sequence estimate should be significant: got {size}"
-        );
-    }
-
-    #[test]
     fn test_emit_all_empty_slice() {
         let empty: Vec<Value> = vec![];
         let config = EmitterConfig::default();
 
         let result = Emitter::emit_all_with_config(&empty, &config).unwrap();
         assert!(result.is_empty(), "Empty input should produce empty output");
-    }
-
-    #[test]
-    fn test_emit_all_buffer_preallocation() {
-        // Create multiple documents to test buffer pre-allocation
-        let docs: Vec<Value> = (0..10)
-            .map(|i| Value::String(format!("document_{i}")))
-            .collect();
-
-        let config = EmitterConfig::default();
-        let result = Emitter::emit_all_with_config(&docs, &config).unwrap();
-
-        // Verify all documents are present
-        for i in 0..10 {
-            assert!(
-                result.contains(&format!("document_{i}")),
-                "Should contain document_{i}"
-            );
-        }
-
-        // Verify document separators (9 separators for 10 documents)
-        assert_eq!(
-            result.matches("---").count(),
-            9,
-            "Should have 9 document separators"
-        );
-    }
-
-    #[test]
-    fn test_estimate_value_size_large_integer() {
-        let size = |i: i64| Emitter::estimate_value_size(&Value::Int(i));
-        assert!(size(i64::MAX) >= 19);
-        assert!(size(i64::MIN) >= 19);
-        assert!(size(1000) >= 4);
-        assert!(size(1_000_000) >= 7);
     }
 
     // Regression tests for issue #64: YAML 1.1 boolean-like keys must not be quoted.
@@ -2474,19 +2018,19 @@ mod tests {
     #[test]
     fn nesting_beyond_the_emit_depth_is_an_error_not_a_stack_overflow() {
         let mut doc = Value::Int(1);
-        for _ in 0..=MaxDepth::DEFAULT.get() {
+        for _ in 0..=MaxDepth::MAX.get() {
             doc = Value::Sequence(vec![doc]);
         }
         for flow in [None, Some(true)] {
             let config = EmitterConfig::new().with_default_flow_style(flow);
             let err = Emitter::emit_str_with_config(&doc, &config).unwrap_err();
             assert!(
-                matches!(err, EmitError::DepthLimitExceeded { limit: 256 }),
+                matches!(err, EmitError::DepthLimitExceeded { limit: 512 }),
                 "flow={flow:?}: {err:?}"
             );
         }
         let mut ok = Value::Int(1);
-        for _ in 0..MaxDepth::DEFAULT.get() {
+        for _ in 0..MaxDepth::MAX.get() {
             ok = Value::Sequence(vec![ok]);
         }
         assert!(Emitter::emit_str(&ok).is_ok());

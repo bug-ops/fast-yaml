@@ -40,7 +40,7 @@ pub mod config;
 pub mod formatter;
 pub mod rules;
 pub mod source;
-pub mod tokenizer;
+mod tokenizer;
 
 pub use config::{ConfigFile, ConfigFileError};
 pub use context::{LineMetadata, LintContext, MAX_CONTEXT_COLUMNS, SourceContext};

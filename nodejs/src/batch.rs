@@ -2,9 +2,8 @@
 
 use std::path::PathBuf;
 
-use crate::limits::{bounded, max_input_bytes, parse_limits, reject_legacy_max_input_size};
+use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size};
 use fast_yaml_core::emitter::EmitterConfig;
-use fast_yaml_core::limits::Depth;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
     FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
@@ -145,6 +144,11 @@ pub struct BatchConfig {
     /// Maximum estimated alias-expansion bytes per file (integer, 1..=1073741824,
     /// default: 67108864); applies to `processFiles` only; peak memory can reach workers x this budget
     pub max_alias_bytes: Option<f64>,
+    /// Maximum characters the parser may read past the last node it reported (integer,
+    /// 1..=1073741824, default: 4194304); applies to `processFiles` and `formatFiles`. A flow
+    /// collection at the root or in a `- ` entry, one scalar, or a run of comments longer than
+    /// this is rejected; parser memory is bounded by about 190 times this value.
+    pub max_scan_ahead: Option<f64>,
 }
 
 impl BatchConfig {
@@ -163,14 +167,18 @@ impl BatchConfig {
         {
             config = config.with_sequential_threshold(t);
         }
-        Ok(config.with_parse_limits(parse_limits(self.max_depth, self.max_alias_bytes)?))
+        Ok(config.with_parse_limits(parse_limits(
+            self.max_depth,
+            self.max_alias_bytes,
+            self.max_scan_ahead,
+        )?))
     }
 
     fn to_emitter_config(&self) -> napi::Result<EmitterConfig> {
         Ok(EmitterConfig::new()
             .with_indent(emitter_indent(self.indent)?)
             .with_width(emitter_width(self.width)?)
-            .with_max_depth(bounded::<Depth>("maxDepth", self.max_depth)?))
+            .with_parse_limits(parse_limits(self.max_depth, None, self.max_scan_ahead)?))
     }
 }
 

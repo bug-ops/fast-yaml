@@ -383,3 +383,63 @@ describe('Batch config validation', () => {
     }
   });
 });
+
+describe('maxScanAhead (#563)', () => {
+  const rootFlow = `[${Array(200).fill('1').join(',')}]`;
+  const rejected = /parser lookahead exceeds 64 characters/;
+
+  it('rejects a root flow collection over the limit and accepts it when raised', () => {
+    expect(() => safeLoad(rootFlow, { maxScanAhead: 64 })).toThrow(rejected);
+    expect(() => safeLoadAll(rootFlow, { maxScanAhead: 64 })).toThrow(rejected);
+    expect(() => load(rootFlow, { maxScanAhead: 64 })).toThrow(rejected);
+    expect(() => loadAll(rootFlow, { maxScanAhead: 64 })).toThrow(rejected);
+    expect(() => parseParallel(rootFlow, { maxScanAhead: 64 })).toThrow(rejected);
+    expect(() => lint(rootFlow, { maxScanAhead: 64 })).toThrow(rejected);
+    expect(safeLoad(rootFlow, { maxScanAhead: 1 << 20 })).toHaveLength(200);
+    expect(safeLoad(rootFlow)).toHaveLength(200);
+  });
+
+  it('never rejects a streaming flow collection', () => {
+    expect(safeLoad(`a: ${rootFlow}`, { maxScanAhead: 64 })).toEqual({ a: Array(200).fill(1) });
+  });
+
+  it.each([
+    ['0', 0],
+    ['-1', -1],
+    ['1.5', 1.5],
+    ['NaN', Number.NaN],
+    ['too large', 1_073_741_825],
+  ])('rejects maxScanAhead %s', (_name, value) => {
+    const message = /maxScanAhead must be between 1 and 1073741824, got /;
+    expect(() => safeLoad('a: 1', { maxScanAhead: value })).toThrow(message);
+    expect(() => safeLoadAll('a: 1', { maxScanAhead: value })).toThrow(message);
+    expect(() => parseParallel('a: 1', { maxScanAhead: value })).toThrow(message);
+    expect(() => lint('a: 1', { maxScanAhead: value })).toThrow(message);
+    expect(() => processFiles([], { maxScanAhead: value })).toThrow(message);
+    expect(() => formatFiles([], { maxScanAhead: value })).toThrow(message);
+  });
+
+  it('formatFiles and processFiles apply maxScanAhead', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'limits-scan-'));
+    try {
+      const file = path.join(dir, 'flow.yaml');
+      fs.writeFileSync(file, `${rootFlow}\n`);
+      const [low] = formatFiles([file], { maxScanAhead: 64 });
+      expect(low.error).toMatch(rejected);
+      const [high] = formatFiles([file], { maxScanAhead: 1 << 20 });
+      expect(high.error).toBeFalsy();
+      expect(processFiles([file], { maxScanAhead: 64 }).failed).toBe(1);
+      expect(processFiles([file], { maxScanAhead: 1 << 20 }).failed).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('invalid character after a huge flow collection (#563)', () => {
+  it('reports the right document under a small limit', () => {
+    const big = `[${Array(400_000).fill('1').join(',')}]`;
+    const source = `a\n---\n- ${big}\n--- b\n--- c\u0001`;
+    expect(() => safeLoadAll(source, { maxScanAhead: 64 * 1024 })).toThrow(/\(document 4\)/);
+  });
+});

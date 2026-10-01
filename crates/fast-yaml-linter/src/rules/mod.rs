@@ -134,6 +134,13 @@ pub trait LintRule: Send + Sync {
     /// # Returns
     ///
     /// A vector of diagnostics found by this rule. Empty if no issues.
+    ///
+    /// # Contract
+    ///
+    /// Built-in rules re-parse `context.source()` with the raw parser. Callers outside
+    /// [`Linter`](crate::Linter) must first run `fast_yaml_core::NormalizedInput::check_scan_ahead`
+    /// on the source, as `Linter::lint` and `Linter::lint_value` do, or hostile input can make the
+    /// parser buffer far more memory than the input size suggests (#563).
     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic>;
 }
 
