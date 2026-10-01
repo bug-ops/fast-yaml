@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **CLI**: `using config file: <path>` is printed only with `-v` (it was always on stderr, even with `-q`) (#614) (#PR)
-- **Python/Node.js/Linter**: dedicated options now win over the `rules` patch on every surface (#601) (#PR)
-- **Parallel**: `Config::with_workers` takes `Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)`), `Config::workers()` returns it, and `shared_pool` and `ScanAheadLane::for_policy` take `WorkerCount` (1..=128) instead of `Option<usize>`/`NonZeroUsize` (#610) (#PR)
-- **CLI/Python/Node.js**: `-j`, `workers` and `thread_count` above 128 are rejected on every surface (the CLI `lint` previously spawned an uncapped pool, and the library silently capped), with one message shape (#610) (#PR)
-- **CLI**: `-f/--format` is removed and `-o`/`-i` exist only on the subcommands that write (#611) (#PR)
+- **CLI**: `using config file: <path>` is printed only with `-v` (it was always on stderr, even with `-q`) (#614) (#622)
+- **Python/Node.js/Linter**: dedicated options now win over the `rules` patch on every surface (#601) (#622)
+- **Parallel**: `Config::with_workers` takes `Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)`), `Config::workers()` returns it, and `shared_pool` and `ScanAheadLane::for_policy` take `WorkerCount` (1..=128) instead of `Option<usize>`/`NonZeroUsize` (#610) (#622)
+- **CLI/Python/Node.js**: `-j`, `workers` and `thread_count` above 128 are rejected on every surface (the CLI `lint` previously spawned an uncapped pool, and the library silently capped), with one message shape (#610) (#622)
+- **CLI**: `-f/--format` is removed and `-o`/`-i` exist only on the subcommands that write (#611) (#622)
 - **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#576)
 - **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#576)
 - **Linter**: `line-length` lets a one-word line through by default (#576)
@@ -161,8 +161,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#PR)
-- **Linter/Python/Node.js**: `RulesConfig::apply_rule_at`, `has_ignore` and `LintConfig::matching_path`; Python `with_rule_config` accepts per-rule `ignore`, and `lint` `path` no longer touches the file system unless a rule has `ignore` (#619) (#PR)
+- **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#622)
+- **Linter/Python/Node.js**: `RulesConfig::apply_rule_at`, `has_ignore` and `LintConfig::matching_path`; Python `with_rule_config` accepts per-rule `ignore`, and `lint` `path` no longer touches the file system unless a rule has `ignore` (#619) (#622)
 - **Linter**: config `extends` and `ignore-from-file`, `key-ordering` `ignored-keys` and `invalid-anchor` duplicate/unused/undeclared options (#571) (#572) (#595)
 - **Parallel**: `shared_pool`, `read_file`, `AtomicFile` and `ScanAheadPolicy` (#532) (#531) (#366) (#577) (#595)
 - **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#576)
@@ -203,9 +203,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **CLI/Core**: `fy lint` resolves `--config`/`--no-config` into a `ConfigSource` and builds from the input origin, `Cli::validate` returns a `ResolvedCli`, and the streaming formatter tracks the after-dash position with one `Cursor` enum (#613) (#PR)
-- **Parallel/Python**: `Workers::Auto` runs at most 128 threads even inside a larger Rayon pool, and `dump_parallel` takes its auto thread count from it, so `RAYON_NUM_THREADS` is honored (#610) (#PR)
-- **CLI/Python**: `fy` builds without default features, the unused `num_cpus` dependency is dropped, the native `_core.dump`/`dump_all` (their `stream`/`dumper` arguments were ignored) are removed, and CI runs a clippy feature powerset (#612) (#PR)
+- **CLI/Core**: `fy lint` resolves `--config`/`--no-config` into a `ConfigSource` and builds from the input origin, `Cli::validate` returns a `ResolvedCli`, and the streaming formatter tracks the after-dash position with one `Cursor` enum (#613) (#622)
+- **Parallel/Python**: `Workers::Auto` runs at most 128 threads even inside a larger Rayon pool, and `dump_parallel` takes its auto thread count from it, so `RAYON_NUM_THREADS` is honored (#610) (#622)
+- **CLI/Python**: `fy` builds without default features, the unused `num_cpus` dependency is dropped, the native `_core.dump`/`dump_all` (their `stream`/`dumper` arguments were ignored) are removed, and CI runs a clippy feature powerset (#612) (#622)
 - **Docs**: removed `docs/CI-CD-QUICKSTART.md` and the unused `Makefile.toml` (cargo-make); maintainer CI notes moved to `CONTRIBUTING.md` (#596)
 - **CLI/Parallel**: batch runs scale the default scan-ahead limit per worker and retry a rejected file at the full limit (#577) (#595)
 - **Linter**: rules share the loader pass, so `fy lint` of a long flow line uses about 1.1-1.25x the memory of `fy parse` (was 3.5x) (#579) (#578) (#573) (#595)
