@@ -39,9 +39,9 @@ subject to the limit. PyYAML reads leading-zero literals differently (`0012` is 
 
 ## Parse Limits
 
-Nesting depth and alias expansion are capped by default. Raise or lower the caps with keyword arguments on
+Nesting depth, alias expansion and parser lookahead are capped by default. Raise or lower the caps with keyword arguments on
 `safe_load`, `safe_load_all`, `load`, `load_all`, and the `ParallelConfig`, `LintConfig`, and `BatchConfig`
-constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()`; `None` resets to the default).
+constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()` / `with_max_scan_ahead()`; `None` resets to the default).
 `ParallelConfig`, `LintConfig`, and `BatchConfig` also accept `max_input_bytes` / `with_max_input_bytes()`, and `ParallelConfig` accepts `max_documents` / `with_max_documents()`:
 
 ```python
@@ -52,8 +52,11 @@ fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
 |--------|---------|-------|
 | `max_depth` | 256 | 1..=512 (flow collections stop at 255 levels) |
 | `max_alias_bytes` | 64 MiB | 1..=1 GiB |
+| `max_scan_ahead` | 4 Mi characters | 1..=1 Gi |
 | `max_input_bytes` (`ParallelConfig`, `LintConfig`, `BatchConfig`) | 100 MiB | 1..=1 GiB |
 | `max_documents` (`ParallelConfig`) | 100 000 | 1..=10 000 000 |
+
+`max_scan_ahead` bounds how far the parser reads past the last node it reported, which bounds parser memory (about 190x the value). A flow collection that the parser reads whole (at the document root, in a `- ` entry, nested in another flow collection, or after a tab), so any JSON document longer than the limit, minified or pretty-printed, a single scalar, or a run of comments longer than the limit raises `ValueError`; raise `max_scan_ahead` for such input. Block YAML, `key: [..]` and `--- [..]` are not affected.
 
 Out-of-range values raise `ValueError`; non-integers (including `bool`) raise `TypeError`.
 Depth 512 needs about 1 MiB of thread stack (up to 983 KiB measured in release builds) and can abort the process on stacks of 512 KiB or less; the default of 256 is safe.
@@ -165,8 +168,9 @@ print(f"Changed {result.changed} files")
 | `sort_keys` | False | Sort dictionary keys |
 | `max_depth` | 256 | Maximum nesting depth, 1..=512 (`process_files` and `format_files`) |
 | `max_alias_bytes` | 64 MiB | Alias-expansion budget per file, 1..=1 GiB (`process_files` only) |
+| `max_scan_ahead` | 4 Mi | Characters the parser may read past the last node, 1..=1 Gi |
 
-`format_files` applies `max_depth` and ignores `max_alias_bytes`. `indent` must be 1..=9 and `width` 20..=1000; other values raise `ValueError` instead of being clamped.
+`format_files` applies `max_depth` and `max_scan_ahead` and ignores `max_alias_bytes`. `indent` must be 1..=9 and `width` 20..=1000; other values raise `ValueError` instead of being clamped.
 
 ### BatchResult
 

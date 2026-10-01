@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::limits;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::emitter::EmitterConfig;
-use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes};
+use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes, ScanAhead};
 use fast_yaml_core::{Indent, Width};
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
@@ -171,8 +171,8 @@ impl From<RustBatchResult> for PyBatchResult {
 
 /// Configuration for batch file processing.
 ///
-/// `max_depth` applies to `process_files` and `format_files`; `max_alias_bytes` to
-/// `process_files` only. `indent` must be in 1..=9 and `width` in 20..=1000. Non-integer values
+/// `max_depth` and `max_scan_ahead` apply to `process_files` and `format_files`;
+/// `max_alias_bytes` to `process_files` only. `indent` must be in 1..=9 and `width` in 20..=1000. Non-integer values
 /// raise `TypeError`, out-of-range values `ValueError`.
 #[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig", from_py_object)]
 #[derive(Clone)]
@@ -197,7 +197,8 @@ impl PyBatchConfig {
         width=80,
         sort_keys=false,
         max_depth=None,
-        max_alias_bytes=None
+        max_alias_bytes=None,
+        max_scan_ahead=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -210,8 +211,9 @@ impl PyBatchConfig {
         sort_keys: bool,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
+        max_scan_ahead: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
+        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
         let emitter_indent = limits::indent(indent)?;
         let emitter_width = limits::width(width)?;
         if let Some(w) = workers
@@ -292,6 +294,25 @@ impl PyBatchConfig {
         })
     }
 
+    /// Sets the characters the parser may read past the last node; `None` resets to 4 Mi.
+    ///
+    /// Applies to `process_files` and `format_files`. Range: 1..=1 Gi. A flow collection at the
+    /// root or in a `- ` entry, one scalar, or a run of comments longer than this is rejected.
+    ///
+    /// Raises:
+    ///     `ValueError`: If chars is outside 1..=1 Gi
+    ///     `TypeError`: If chars is not an int (`bool` included)
+    fn with_max_scan_ahead(&self, chars: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_scan_ahead: limits::bounded::<ScanAhead>("max_scan_ahead", chars)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+            ..self.clone()
+        })
+    }
+
     fn with_indent(&self, indent: usize) -> PyResult<Self> {
         Ok(Self {
             emitter_indent: limits::indent(indent)?,
@@ -329,7 +350,7 @@ impl PyBatchConfig {
         EmitterConfig::new()
             .with_indent(self.emitter_indent)
             .with_width(self.emitter_width)
-            .with_max_depth(self.inner.parse_limits().max_depth)
+            .with_parse_limits(self.inner.parse_limits())
     }
 }
 

@@ -131,6 +131,7 @@ def safe_load(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> Any:
     """Parse a YAML string and return a Python object.
 
@@ -140,6 +141,7 @@ def safe_load(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
 
     Returns:
         The parsed YAML document as Python objects
@@ -157,6 +159,7 @@ def safe_load_all(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> list[Any]:
     """Parse a YAML string containing multiple documents.
 
@@ -166,6 +169,7 @@ def safe_load_all(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
 
     Returns:
         A list of parsed YAML documents
@@ -292,6 +296,7 @@ def load(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> Any:
     """Parse a YAML string with an optional Loader (PyYAML compatible).
 
@@ -302,6 +307,7 @@ def load(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
 
     Returns:
         The parsed YAML document as Python objects
@@ -321,6 +327,7 @@ def load_all(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> list[Any]:
     """Parse multiple YAML documents with an optional Loader (PyYAML compatible).
 
@@ -331,6 +338,7 @@ def load_all(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
 
     Returns:
         A list of parsed YAML documents
@@ -515,10 +523,12 @@ class lint:  # noqa: N801
             rules: Mapping[str, str | Mapping[str, object]] | None = None,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
+            max_scan_ahead: int | None = None,
             max_input_bytes: int | None = None,
         ) -> None: ...
         def with_max_depth(self, depth: int | None) -> "lint.LintConfig": ...
         def with_max_alias_bytes(self, bytes: int | None) -> "lint.LintConfig": ...
+        def with_max_scan_ahead(self, chars: int | None) -> "lint.LintConfig": ...
         def with_max_input_bytes(self, bytes: int | None) -> "lint.LintConfig": ...
         def with_max_line_length(self, max: int | None) -> "lint.LintConfig": ...
         def with_indent_size(self, size: int) -> "lint.LintConfig": ...
@@ -597,9 +607,11 @@ class parallel:  # noqa: N801
             auto_tune: bool = True,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
+            max_scan_ahead: int | None = None,
         ) -> None: ...
         def with_max_depth(self, depth: int | None) -> "parallel.ParallelConfig": ...
         def with_max_alias_bytes(self, bytes: int | None) -> "parallel.ParallelConfig": ...
+        def with_max_scan_ahead(self, chars: int | None) -> "parallel.ParallelConfig": ...
         def with_thread_count(self, count: int | None) -> "parallel.ParallelConfig": ...
         def with_max_input_bytes(self, bytes: int | None) -> "parallel.ParallelConfig": ...
         def with_max_documents(self, count: int | None) -> "parallel.ParallelConfig": ...
@@ -727,8 +739,8 @@ class batch:  # noqa: N801
         """Configuration for batch file processing.
 
         ``max_depth`` applies to ``process_files`` and ``format_files``;
-        ``max_alias_bytes`` to ``process_files`` only. ``indent`` must be in 1..=9 and
-        ``width`` in 20..=1000.
+        ``max_scan_ahead`` to both; ``max_alias_bytes`` to ``process_files`` only.
+        ``indent`` must be in 1..=9 and ``width`` in 20..=1000.
         Non-integer values raise ``TypeError``, out-of-range values ``ValueError``.
         """
 
@@ -743,9 +755,11 @@ class batch:  # noqa: N801
             sort_keys: bool = False,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
+            max_scan_ahead: int | None = None,
         ) -> None: ...
         def with_max_depth(self, depth: int | None) -> "batch.BatchConfig": ...
         def with_max_alias_bytes(self, bytes: int | None) -> "batch.BatchConfig": ...
+        def with_max_scan_ahead(self, chars: int | None) -> "batch.BatchConfig": ...
         def with_workers(self, workers: int | None) -> "batch.BatchConfig": ...
         def with_indent(self, indent: int) -> "batch.BatchConfig": ...
         def with_width(self, width: int) -> "batch.BatchConfig": ...

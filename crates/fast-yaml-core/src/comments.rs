@@ -5,13 +5,15 @@
 
 use std::ops::{ControlFlow, Range};
 
-use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle};
+use saphyr_parser::{Event, Marker, ScalarStyle};
 
-use crate::error::{ParseError, ParseResult};
+use crate::error::ParseResult;
 use crate::input::NormalizedInput;
-use crate::limits::DocumentCursor;
+use crate::limits::MaxScanAhead;
 
 /// Returns `true` if `input` contains at least one YAML comment.
+///
+/// `max` bounds how far the scanner may read past a node, see [`MaxScanAhead`].
 ///
 /// Comments are located from parser event spans: plain and block scalar content is opaque,
 /// quoted scalars are skipped with an escape-aware scan from their opening quote, and any `#`
@@ -19,19 +21,20 @@ use crate::limits::DocumentCursor;
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`] if `input` is not valid YAML.
+/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML or exceeds `max`.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::has_comments;
+/// use fast_yaml_core::{MaxScanAhead, has_comments};
 ///
-/// assert!(has_comments("key: value # note").unwrap());
-/// assert!(!has_comments("url: \"http://x/ # not a comment\"").unwrap());
-/// assert!(has_comments("a: foo\n  \"bar\nb: 1 # real comment\n").unwrap());
+/// let max = MaxScanAhead::DEFAULT;
+/// assert!(has_comments("key: value # note", max).unwrap());
+/// assert!(!has_comments("url: \"http://x/ # not a comment\"", max).unwrap());
+/// assert!(has_comments("a: foo\n  \"bar\nb: 1 # real comment\n", max).unwrap());
 /// ```
-pub fn has_comments(input: &str) -> ParseResult<bool> {
-    has_comments_normalized(&NormalizedInput::new(input)?)
+pub fn has_comments(input: &str, max: MaxScanAhead) -> ParseResult<bool> {
+    has_comments_normalized(&NormalizedInput::new(input)?, max)
 }
 
 /// Returns whether already validated `input` contains a YAML comment.
@@ -40,20 +43,23 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`] if `input` is not valid YAML.
+/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML or exceeds `max`.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::{NormalizedInput, has_comments_normalized};
+/// use fast_yaml_core::{MaxScanAhead, NormalizedInput, has_comments_normalized};
 ///
 /// let input = NormalizedInput::new("a: 1 # note\n")?;
-/// assert!(has_comments_normalized(&input)?);
+/// assert!(has_comments_normalized(&input, MaxScanAhead::DEFAULT)?);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn has_comments_normalized(input: &NormalizedInput<'_>) -> ParseResult<bool> {
+pub fn has_comments_normalized(
+    input: &NormalizedInput<'_>,
+    max: MaxScanAhead,
+) -> ParseResult<bool> {
     let mut found = false;
-    scan_comments(input, |_, _| {
+    scan_comments(input, max, |_, _| {
         found = true;
         ControlFlow::Break(())
     })?;
@@ -67,23 +73,27 @@ pub fn has_comments_normalized(input: &NormalizedInput<'_>) -> ParseResult<bool>
 ///
 /// # Errors
 ///
-/// Returns a [`ParseError`] if `input` is not valid YAML.
+/// Returns a [`ParseError`](crate::ParseError) if `input` is not valid YAML or exceeds `max`.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::find_comments;
+/// use fast_yaml_core::{MaxScanAhead, find_comments};
 ///
 /// let input = "a: 1 # one\nb: \"# not\"\n# two\n";
-/// let found: Vec<&str> = find_comments(input).unwrap().into_iter().map(|r| &input[r]).collect();
+/// let found: Vec<&str> = find_comments(input, MaxScanAhead::DEFAULT)
+///     .unwrap()
+///     .into_iter()
+///     .map(|r| &input[r])
+///     .collect();
 /// assert_eq!(found, ["# one", "# two"]);
 /// ```
-pub fn find_comments(input: &str) -> ParseResult<Vec<Range<usize>>> {
+pub fn find_comments(input: &str, max: MaxScanAhead) -> ParseResult<Vec<Range<usize>>> {
     let normalized = NormalizedInput::new(input)?;
     let mut ranges = Vec::new();
     // (char index, byte offset) of the last range end; hits arrive in source order.
     let mut pos = (0usize, 0usize);
-    scan_comments(&normalized, |chars, hash| {
+    scan_comments(&normalized, max, |chars, hash| {
         let start = pos.1 + byte_len(&chars[pos.0..hash]);
         let end = line_end(chars, hash);
         let end_byte = start + byte_len(&chars[hash..end]);
@@ -97,17 +107,16 @@ pub fn find_comments(input: &str) -> ParseResult<Vec<Range<usize>>> {
 /// Feeds the chars and the index of each comment's `#` to `on_hit`, stopping early on `Break`.
 fn scan_comments(
     input: &NormalizedInput<'_>,
+    max: MaxScanAhead,
     mut on_hit: impl FnMut(&[char], usize) -> ControlFlow<()>,
 ) -> ParseResult<()> {
     let chars: Vec<char> = input.as_str().chars().collect();
     let line_starts = line_starts(&chars);
-    let mut parser = SaphyrParser::new_from_str(input.as_str());
+    let mut parser = input.scanner(max);
     let mut cursor = 0usize;
-    let mut document = DocumentCursor::default();
 
     while let Some(event) = parser.next_event() {
-        let (event, span) = event.map_err(|error| ParseError::scanner(&error, document.index()))?;
-        document.observe(&event);
+        let (event, span) = event?;
         let Event::Scalar(_, style, _, _) = event else {
             continue;
         };
@@ -208,13 +217,30 @@ mod tests {
     use super::*;
 
     fn has(input: &str) -> bool {
-        has_comments(input).unwrap()
+        has_comments(input, MaxScanAhead::DEFAULT).unwrap()
+    }
+
+    #[test]
+    fn scan_ahead_limit_applies_to_comment_scans() {
+        let max = MaxScanAhead::new(8).unwrap();
+        let input = "[1, 2, 3, 4, 5, 6, 7, 8, 9] # c";
+        let limit_error = |error: Option<crate::ParseError>| {
+            matches!(
+                error,
+                Some(crate::ParseError::LimitExceeded {
+                    kind: crate::LimitKind::ScanAhead(_),
+                    ..
+                })
+            )
+        };
+        assert!(limit_error(has_comments(input, max).err()));
+        assert!(limit_error(find_comments(input, max).err()));
     }
 
     #[test]
     fn unterminated_directive_is_an_error() {
-        assert!(has_comments("%").is_err());
-        assert!(has_comments("a: 1\n%").is_err());
+        assert!(has_comments("%", MaxScanAhead::DEFAULT).is_err());
+        assert!(has_comments("a: 1\n%", MaxScanAhead::DEFAULT).is_err());
     }
 
     #[test]
@@ -324,7 +350,7 @@ mod tests {
 
     #[test]
     fn invalid_yaml_is_error() {
-        assert!(has_comments("a: [").is_err());
+        assert!(has_comments("a: [", MaxScanAhead::DEFAULT).is_err());
     }
 
     #[test]
@@ -363,7 +389,7 @@ mod tests {
     }
 
     fn ranges(input: &str) -> Vec<&str> {
-        find_comments(input)
+        find_comments(input, MaxScanAhead::DEFAULT)
             .unwrap()
             .into_iter()
             .map(|r| &input[r])
@@ -378,7 +404,7 @@ mod tests {
     #[test]
     fn find_comments_bom_offsets_are_input_relative() {
         let input = "\u{FEFF}a: 1 # c\n";
-        let found = find_comments(input).unwrap();
+        let found = find_comments(input, MaxScanAhead::DEFAULT).unwrap();
         let hash = input.find('#').unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0], hash..input.len() - 1);

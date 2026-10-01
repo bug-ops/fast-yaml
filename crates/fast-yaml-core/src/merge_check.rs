@@ -301,6 +301,10 @@ impl MergeKeyValidator {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests drive the raw parser as the reference"
+)]
 mod tests {
     use super::*;
     use saphyr_parser::Parser;

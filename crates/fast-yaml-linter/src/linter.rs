@@ -452,10 +452,12 @@ impl Linter {
     ///
     /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
     /// and `LintError::ParseError` if `source` contains a NUL character, which the
-    /// tokenizer would otherwise treat as end of input.
+    /// tokenizer would otherwise treat as end of input, or if the scanner reads more than
+    /// [`ParseLimits::max_scan_ahead`] past a node.
     pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
+        normalized.check_scan_ahead(self.config.parse_limits.max_scan_ahead)?;
         let source = normalized.as_str();
         let directives = Directives::from_source(source, &self.config, &self.registry);
         let context = LintContext::new(source);
@@ -790,6 +792,30 @@ mod tests {
             linter.lint("a: 1\n#"),
             Err(LintError::InputTooLarge(InputTooLarge { size: 6, .. }))
         ));
+    }
+
+    #[test]
+    fn test_lint_and_lint_value_honor_max_scan_ahead() {
+        let limits = ParseLimits {
+            max_scan_ahead: fast_yaml_core::limits::MaxScanAhead::new(8).unwrap(),
+            ..ParseLimits::default()
+        };
+        let linter = Linter::with_config(LintConfig::new().with_parse_limits(limits));
+        let source = "[1, 2, 3, 4, 5, 6, 7, 8, 9]";
+        let scan_ahead = |result: Result<_, LintError>| {
+            matches!(
+                result,
+                Err(LintError::ParseError(
+                    fast_yaml_core::ParseError::LimitExceeded {
+                        kind: fast_yaml_core::LimitKind::ScanAhead(_),
+                        ..
+                    }
+                ))
+            )
+        };
+        assert!(scan_ahead(linter.lint(source)));
+        assert!(scan_ahead(linter.lint_value(source, &Value::Null)));
+        assert!(linter.lint_value("a: 1\n", &Value::Null).is_ok());
     }
 
     #[test]

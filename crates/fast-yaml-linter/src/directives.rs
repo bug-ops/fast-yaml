@@ -310,7 +310,7 @@ impl Directives {
         if !may_contain_directive(source) {
             return this;
         }
-        let Ok(comments) = find_comments(source) else {
+        let Ok(comments) = find_comments(source, config.parse_limits.max_scan_ahead) else {
             return this;
         };
 

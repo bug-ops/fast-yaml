@@ -71,9 +71,14 @@ struct PendingStart {
 }
 
 /// Whether `c` is a YAML non-printable that only a double-quoted escape can represent (tab excluded),
-/// or a byte order mark, which the loader drops where it starts a document.
+/// a byte order mark, which the loader drops where it starts a document, or U+2028/U+2029, which
+/// YAML 1.1 readers take for line breaks.
 fn needs_escape(c: char) -> bool {
-    (c.is_control() && c != '\t') || matches!(c, '\u{FFFE}' | '\u{FFFF}' | '\u{FEFF}')
+    (c.is_control() && c != '\t')
+        || matches!(
+            c,
+            '\u{FFFE}' | '\u{FFFF}' | '\u{FEFF}' | '\u{2028}' | '\u{2029}'
+        )
 }
 
 /// Whether a plain scalar with this value would not be read back as itself in block context:
@@ -119,7 +124,7 @@ pub fn write_double_quoted(out: &mut String, value: &str) {
             c if c.is_control() => {
                 let _ = write!(out, "\\x{:02X}", u32::from(c));
             }
-            '\u{FFFE}' | '\u{FFFF}' | '\u{FEFF}' => {
+            '\u{FFFE}' | '\u{FFFF}' | '\u{FEFF}' | '\u{2028}' | '\u{2029}' => {
                 let _ = write!(out, "\\u{:04X}", u32::from(c));
             }
             _ => out.push(c),
@@ -127,6 +132,9 @@ pub fn write_double_quoted(out: &mut String, value: &str) {
     }
     out.push('"');
 }
+
+/// Characters YAML 1.1 readers take for line breaks (NEL, LS, PS); a block scalar cannot hold them.
+const YAML_11_BREAKS: [char; 3] = ['\u{85}', '\u{2028}', '\u{2029}'];
 
 /// Returns the style a scalar must be written in to round-trip its value.
 ///
@@ -139,6 +147,9 @@ pub fn effective_style(value: &str, style: ScalarStyle) -> ScalarStyle {
             ScalarStyle::DoubleQuoted
         }
         ScalarStyle::Plain if is_unsafe_plain(value) => ScalarStyle::SingleQuoted,
+        ScalarStyle::Literal | ScalarStyle::Folded if value.contains(YAML_11_BREAKS) => {
+            ScalarStyle::DoubleQuoted
+        }
         other => other,
     }
 }
@@ -271,6 +282,12 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     directives: DirectiveScanner<'a>,
     /// Backend providing context stack and anchor storage
     backend: B,
+}
+
+impl<B: FormatterBackend> crate::emitter::EventSink for StreamingFormatter<'_, B> {
+    fn event(&mut self, event: Event<'_>) -> EmitResult<()> {
+        self.format_event(event, Span::default())
+    }
 }
 
 impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
@@ -940,6 +957,10 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "tests drive the raw parser as the reference"
+)]
 mod tests {
     use saphyr_parser::{Event, Parser};
 

@@ -412,6 +412,7 @@ Input validation prevents denial-of-service attacks.
 | Max threads | 128 | Yes |
 | Max nesting depth | 256 | Yes (1 to 512, `--max-depth`); flow collections (`[]`, `{}`) stop at 255 levels |
 | Max alias expansion | 64 MiB | Yes (1 byte to 1 GiB, `--max-alias-bytes`) |
+| Max parser scan-ahead | 4 Mi characters | Yes (1 to 1 Gi, `--max-scan-ahead`, `fy lint` config key `max-scan-ahead`) |
 
 </details>
 
@@ -438,7 +439,7 @@ fast-yaml/
 
 | Component | Library |
 |-----------|---------|
-| YAML Parser | [saphyr](https://github.com/saphyr-rs/saphyr) |
+| YAML Parser | [saphyr-parser](https://github.com/saphyr-rs/saphyr) |
 | Python Bindings | [PyO3](https://pyo3.rs/) |
 | Node.js Bindings | [NAPI-RS](https://napi.rs/) |
 | Parallelism | [Rayon](https://github.com/rayon-rs/rayon) |

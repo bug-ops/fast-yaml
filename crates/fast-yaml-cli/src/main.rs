@@ -75,6 +75,7 @@ fn run() -> Result<ExitCode> {
 
     let common_config = CommonConfig::from_cli(&cli);
     let max_input = cli.max_input();
+    let max_scan_ahead = cli.scan_ahead();
 
     let exit_code = match cli.command {
         Some(Command::Parse {
@@ -83,8 +84,11 @@ fn run() -> Result<ExitCode> {
             limits,
         }) => {
             let input = InputSource::from_args(file, max_input)?;
-            let cmd =
-                commands::parse::ParseCommand::new(common_config, stats, limits.parse_limits());
+            let cmd = commands::parse::ParseCommand::new(
+                common_config,
+                stats,
+                limits.parse_limits(max_scan_ahead),
+            );
             cmd.execute(&input)?;
             ExitCode::Success
         }
@@ -108,7 +112,8 @@ fn run() -> Result<ExitCode> {
                 FormatterConfig::new()
                     .with_indent(indent)
                     .with_width(width)
-                    .with_max_depth(max_depth),
+                    .with_max_depth(max_depth)
+                    .with_max_scan_ahead(max_scan_ahead),
             );
 
             match Target::resolve(paths, stdin_files, &batch)? {
@@ -145,7 +150,11 @@ fn run() -> Result<ExitCode> {
             let input = InputSource::from_args(file, max_input)?;
             let output =
                 OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
-            let cmd = commands::convert::ConvertCommand::new(to, pretty, limits.parse_limits());
+            let cmd = commands::convert::ConvertCommand::new(
+                to,
+                pretty,
+                limits.parse_limits(max_scan_ahead),
+            );
             cmd.execute(&input, &output)?;
             ExitCode::Success
         }
@@ -175,7 +184,8 @@ fn run() -> Result<ExitCode> {
                 format,
                 allow_duplicate_keys,
                 max_input_bytes: cli.max_input_bytes,
-                parse_limits: limits.parse_limits(),
+                max_scan_ahead: cli.max_scan_ahead,
+                limits,
             };
 
             match target {

@@ -28,8 +28,6 @@ pub enum TokenType {
 /// A token with its location in source.
 #[derive(Debug, Clone)]
 pub struct Token {
-    /// Type of token
-    pub token_type: TokenType,
     /// Location span in source
     pub span: Span,
 }
@@ -37,8 +35,8 @@ pub struct Token {
 impl Token {
     /// Creates a new token.
     #[must_use]
-    pub const fn new(token_type: TokenType, span: Span) -> Self {
-        Self { token_type, span }
+    pub const fn new(span: Span) -> Self {
+        Self { span }
     }
 }
 
@@ -46,19 +44,6 @@ impl Token {
 ///
 /// Accurately identifies flow syntax elements while ignoring tokens
 /// inside quoted strings and comments.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_linter::{tokenizer::{FlowTokenizer, TokenType}, SourceContext};
-///
-/// let yaml = "object: {key: value}";
-/// let context = SourceContext::new(yaml);
-/// let tokenizer = FlowTokenizer::new(yaml, &context);
-///
-/// let braces = tokenizer.find_all(TokenType::BraceOpen);
-/// assert_eq!(braces.len(), 1);
-/// ```
 pub struct FlowTokenizer<'a> {
     _source: &'a str,
     context: &'a SourceContext<'a>,
@@ -222,16 +207,6 @@ impl PlainScalarScanner {
 
 impl<'a> FlowTokenizer<'a> {
     /// Creates a new flow tokenizer.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{tokenizer::FlowTokenizer, SourceContext};
-    ///
-    /// let yaml = "{key: value}";
-    /// let context = SourceContext::new(yaml);
-    /// let tokenizer = FlowTokenizer::new(yaml, &context);
-    /// ```
     #[must_use]
     pub fn new(source: &'a str, context: &'a SourceContext<'a>) -> Self {
         let scalars = collect_scalar_ranges(source, context);
@@ -249,19 +224,6 @@ impl<'a> FlowTokenizer<'a> {
     ///
     /// Ignores tokens inside quoted strings and comments; commas are only reported inside
     /// flow collections.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{tokenizer::{FlowTokenizer, TokenType}, SourceContext};
-    ///
-    /// let yaml = "list: [1, 2, 3]";
-    /// let context = SourceContext::new(yaml);
-    /// let tokenizer = FlowTokenizer::new(yaml, &context);
-    ///
-    /// let brackets = tokenizer.find_all(TokenType::BracketOpen);
-    /// assert_eq!(brackets.len(), 1);
-    /// ```
     #[must_use]
     pub fn find_all(&self, token_type: TokenType) -> Vec<Token> {
         let ch = Self::token_char(token_type);
@@ -310,84 +272,11 @@ impl<'a> FlowTokenizer<'a> {
                         continue;
                     }
 
-                    tokens.push(Self::single_char_token(
-                        token_type, line_num, char_col, offset,
-                    ));
+                    tokens.push(Self::single_char_token(line_num, char_col, offset));
                 }
             }
         }
 
-        tokens
-    }
-
-    /// Finds all tokens within a specific span.
-    ///
-    /// Single-pass implementation that scans only the span range once
-    /// to find all token types, avoiding redundant full-source scans.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{tokenizer::FlowTokenizer, SourceContext, Location, Span};
-    ///
-    /// let yaml = "a: b\nc: {d: e}";
-    /// let context = SourceContext::new(yaml);
-    /// let tokenizer = FlowTokenizer::new(yaml, &context);
-    ///
-    /// // Search only in line 2
-    /// let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
-    /// let tokens = tokenizer.find_in_span(span);
-    ///
-    /// // Should find `:`, `{`, `:`, `}`
-    /// assert_eq!(tokens.len(), 4);
-    /// ```
-    #[must_use]
-    pub fn find_in_span(&self, span: Span) -> Vec<Token> {
-        let mut tokens = Vec::new();
-
-        // Single-pass scan of only the span range
-        for line_num in span.start.line..=span.end.line {
-            if let Some(line) = self.context.get_line(line_num) {
-                let line_start = self.context.line_start(line_num);
-
-                for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
-                    let offset = line_start.add_bytes(byte_col);
-
-                    // Skip if outside span bounds
-                    if offset.get() < span.start.offset || offset.get() >= span.end.offset {
-                        continue;
-                    }
-
-                    // Skip tokens inside block scalar content
-                    if self.is_in_block_scalar(offset) {
-                        continue;
-                    }
-
-                    // Skip if inside string
-                    if self.is_masked(offset) {
-                        continue;
-                    }
-
-                    // Match all token types in single pass
-                    let token_type = match c {
-                        '{' => Some(TokenType::BraceOpen),
-                        '}' => Some(TokenType::BraceClose),
-                        '[' => Some(TokenType::BracketOpen),
-                        ']' => Some(TokenType::BracketClose),
-                        ':' => Some(TokenType::Colon),
-                        ',' => Some(TokenType::Comma),
-                        '-' if Self::is_list_item_hyphen(line, byte_col) => Some(TokenType::Hyphen),
-                        _ => None,
-                    };
-
-                    if let Some(tt) = token_type {
-                        tokens.push(Self::single_char_token(tt, line_num, char_col, offset));
-                    }
-                }
-            }
-        }
-
-        // Already sorted by scan order (left to right, top to bottom)
         tokens
     }
 
@@ -410,15 +299,10 @@ impl<'a> FlowTokenizer<'a> {
     }
 
     /// Builds a one-character token at 0-indexed `char_col` on `line`.
-    const fn single_char_token(
-        token_type: TokenType,
-        line: usize,
-        char_col: usize,
-        offset: ByteOffset,
-    ) -> Token {
+    const fn single_char_token(line: usize, char_col: usize, offset: ByteOffset) -> Token {
         let start = Location::new(line, char_col + 1, offset.get());
         let end = Location::new(line, char_col + 2, offset.get() + 1);
-        Token::new(token_type, Span::new(start, end))
+        Token::new(Span::new(start, end))
     }
 
     /// Checks if a byte offset falls inside a comment or quoted scalar.
@@ -470,6 +354,10 @@ struct ScalarRanges {
 /// On parse error, returns the ranges collected before the error and records where
 /// parsing stopped.
 fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRanges {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "source passed the guarded parse in the same lint call"
+    )]
     let mut parser = SaphyrParser::new_from_str(source);
     let mut ranges = ScalarRanges {
         block: Vec::new(),
@@ -569,7 +457,7 @@ fn opening_mode(ch: char, prev: Option<char>, guess_quotes: bool) -> Option<Mode
 
 /// Returns the byte length of the verbatim tag `!<...>` that starts `text`, if `prev` allows
 /// one to start there and its `>` comes before any whitespace or `<`.
-pub(crate) fn verbatim_tag_len(prev: Option<char>, text: &str) -> Option<usize> {
+pub fn verbatim_tag_len(prev: Option<char>, text: &str) -> Option<usize> {
     let boundary = prev.is_none_or(|p| p.is_whitespace() || "[{,".contains(p));
     let body = text.strip_prefix("!<").filter(|_| boundary)?;
     let end = body.find(|c: char| matches!(c, '>' | '<') || c.is_whitespace())?;
@@ -688,6 +576,81 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Location, Span};
+
+    impl FlowTokenizer<'_> {
+        /// Finds all tokens within a specific span.
+        ///
+        /// Single-pass implementation that scans only the span range once
+        /// to find all token types, avoiding redundant full-source scans.
+        pub fn find_in_span(&self, span: Span) -> Vec<Token> {
+            let mut tokens = Vec::new();
+
+            // Single-pass scan of only the span range
+            for line_num in span.start.line..=span.end.line {
+                if let Some(line) = self.context.get_line(line_num) {
+                    let line_start = self.context.line_start(line_num);
+
+                    for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
+                        let offset = line_start.add_bytes(byte_col);
+
+                        // Skip if outside span bounds
+                        if offset.get() < span.start.offset || offset.get() >= span.end.offset {
+                            continue;
+                        }
+
+                        // Skip tokens inside block scalar content
+                        if self.is_in_block_scalar(offset) {
+                            continue;
+                        }
+
+                        // Skip if inside string
+                        if self.is_masked(offset) {
+                            continue;
+                        }
+
+                        // Match all token types in single pass
+                        let token_type = match c {
+                            '{' => Some(TokenType::BraceOpen),
+                            '}' => Some(TokenType::BraceClose),
+                            '[' => Some(TokenType::BracketOpen),
+                            ']' => Some(TokenType::BracketClose),
+                            ':' => Some(TokenType::Colon),
+                            ',' => Some(TokenType::Comma),
+                            '-' if Self::is_list_item_hyphen(line, byte_col) => {
+                                Some(TokenType::Hyphen)
+                            }
+                            _ => None,
+                        };
+
+                        if token_type.is_some() {
+                            tokens.push(Self::single_char_token(line_num, char_col, offset));
+                        }
+                    }
+                }
+            }
+
+            // Already sorted by scan order (left to right, top to bottom)
+            tokens
+        }
+    }
+
+    #[test]
+    fn test_find_all_ignores_tokens_in_quotes_and_comments() {
+        let yaml = "list: [1, 2, 3]";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        assert_eq!(tokenizer.find_all(TokenType::BracketOpen).len(), 1);
+    }
+
+    #[test]
+    fn test_find_in_span_scans_only_the_span() {
+        let yaml = "a: b\nc: {d: e}";
+        let context = SourceContext::new(yaml);
+        let tokenizer = FlowTokenizer::new(yaml, &context);
+        let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
+        assert_eq!(tokenizer.find_in_span(span).len(), 4);
+    }
 
     #[test]
     fn test_tokenizer_simple_braces() {
@@ -992,7 +955,7 @@ mod tests {
         let commas = tokenizer
             .find_in_span(span)
             .into_iter()
-            .filter(|t| t.token_type == TokenType::Comma)
+            .filter(|t| yaml[t.span.start.offset..].starts_with(','))
             .count();
         assert_eq!(commas, 0);
     }

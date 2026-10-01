@@ -8,7 +8,7 @@ use crate::merge_check::MergeKeyValidator;
 use crate::options::{KeyDomain, LoadOptions};
 use crate::scalar::{ResolvedScalar, core_tag_suffix_raw, resolve_scalar_raw};
 use crate::value::{Mapping, Value};
-use saphyr_parser::{Event, Parser as SaphyrParser, Span};
+use saphyr_parser::{Event, Span};
 use std::collections::HashMap;
 
 /// Parser for YAML documents.
@@ -211,13 +211,12 @@ fn load_documents_with_budget(
     budget: &StreamBudget,
     options: LoadOptions,
 ) -> ParseResult<Vec<Value>> {
-    // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
-    let mut parser = SaphyrParser::new_from_str(input.as_str());
+    let mut parser = input.scanner(budget.limits().max_scan_ahead);
     let mut guard = LimitGuard::with_budget(budget.clone());
     let mut merge_keys = MergeKeyValidator::new(options);
     let mut builder = Builder::new(options.keys);
     while let Some(event) = parser.next_event() {
-        let (event, span) = event.map_err(|error| ParseError::scanner(&error, guard.document()))?;
+        let (event, span) = event?;
         guard.observe(&event, span)?;
         let role = merge_keys.observe(&event, span)?;
         builder.event(event, span, role)?;
@@ -2986,6 +2985,7 @@ m:
         }
 
         #[test]
+        #[allow(clippy::disallowed_methods, reason = "pins the raw scanner message")]
         fn scanner_flow_nesting_text_is_pinned() {
             let err = saphyr_parser::Parser::new_from_str(&"[".repeat(256))
                 .find_map(Result::err)

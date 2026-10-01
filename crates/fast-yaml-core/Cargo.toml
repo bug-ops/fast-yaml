@@ -18,13 +18,13 @@ arena = ["bumpalo"]
 bumpalo = { workspace = true, optional = true, features = ["collections"] }
 memchr = { workspace = true }
 indexmap = { workspace = true }
-saphyr = { workspace = true }
 saphyr-parser = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 indoc = { workspace = true }
+peak_alloc = { workspace = true }
 proptest = { workspace = true }
 
 [[bench]]

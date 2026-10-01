@@ -223,6 +223,11 @@ pub struct LintConfig {
     pub max_depth: Option<f64>,
     /// Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864).
     pub max_alias_bytes: Option<f64>,
+    /// Maximum characters the parser may read past the last node it reported (integer,
+    /// 1..=1073741824, default: 4194304). A flow collection at the root or in a `- ` entry, one
+    /// scalar, or a run of comments longer than this is rejected; parser memory is bounded by
+    /// about 190 times this value.
+    pub max_scan_ahead: Option<f64>,
     /// Largest source accepted for linting, in bytes (integer, 1..=1073741824, default: 104857600).
     /// Bounds linting work on oversized input; the source is already in memory when checked, so this is not a memory bound.
     pub max_input_bytes: Option<f64>,
@@ -248,7 +253,11 @@ fn checked_uint(field: &str, expected: &str, value: f64, min: u64, max: u64) -> 
 
 fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
     let mut rust = RustLintConfig::new()
-        .with_parse_limits(parse_limits(config.max_depth, config.max_alias_bytes)?)
+        .with_parse_limits(parse_limits(
+            config.max_depth,
+            config.max_alias_bytes,
+            config.max_scan_ahead,
+        )?)
         .with_max_input_bytes(max_input_bytes(config.max_input_bytes)?);
     if let Some(max) = config.max_line_length {
         let max = checked_uint(

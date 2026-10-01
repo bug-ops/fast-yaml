@@ -57,6 +57,12 @@ pub struct ParallelConfig {
     /// Maximum estimated alias-expansion bytes, shared across chunks of one call (integer,
     /// 1..=1073741824, default: 67108864).
     pub max_alias_bytes: Option<f64>,
+
+    /// Maximum characters the parser may read past the last node it reported (integer,
+    /// 1..=1073741824, default: 4194304). A flow collection at the root or in a `- ` entry, one
+    /// scalar, or a run of comments longer than this is rejected; parser memory is bounded by
+    /// about 190 times this value.
+    pub max_scan_ahead: Option<f64>,
 }
 
 /// Maps a parallel-parse failure to a JS error; the document cap is an argument error.
@@ -89,7 +95,11 @@ impl ParallelConfig {
             config = config.with_sequential_threshold(size);
         }
 
-        Ok(config.with_parse_limits(parse_limits(self.max_depth, self.max_alias_bytes)?))
+        Ok(config.with_parse_limits(parse_limits(
+            self.max_depth,
+            self.max_alias_bytes,
+            self.max_scan_ahead,
+        )?))
     }
 }
 

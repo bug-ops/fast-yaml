@@ -34,11 +34,17 @@ pub struct LoadOptions {
     /// Maximum estimated bytes produced by alias expansion per call (integer,
     /// 1..=1073741824, default: 67108864). Host objects cost several times the estimate.
     pub max_alias_bytes: Option<f64>,
+
+    /// Maximum characters the parser may read past the last node it reported (integer,
+    /// 1..=1073741824, default: 4194304). A flow collection at the root or in a `- ` entry, one
+    /// scalar, or a run of comments longer than this is rejected; parser memory is bounded by
+    /// about 190 times this value.
+    pub max_scan_ahead: Option<f64>,
 }
 
 impl LoadOptions {
     fn parse_limits(&self) -> napi::Result<fast_yaml_core::limits::ParseLimits> {
-        parse_limits(self.max_depth, self.max_alias_bytes)
+        parse_limits(self.max_depth, self.max_alias_bytes, self.max_scan_ahead)
     }
 }
 
@@ -66,7 +72,7 @@ fn throw_and_undefined<'env>(env: &'env Env, msg: &str) -> napi::Result<Unknown<
 /// # Arguments
 ///
 /// * `yaml_str` - A YAML document as a string
-/// * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
+/// * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes` and `maxScanAhead` raise or lower the resource limits
 ///
 /// # Returns
 ///
@@ -133,7 +139,7 @@ pub fn safe_load(
 /// # Arguments
 ///
 /// * `yaml_str` - A YAML string potentially containing multiple documents
-/// * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
+/// * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes` and `maxScanAhead` raise or lower the resource limits
 ///
 /// # Returns
 ///
@@ -144,7 +150,7 @@ pub fn safe_load(
 /// Throws an error if:
 /// - The YAML is invalid
 /// - Input exceeds size limit (100MB)
-/// - `maxDepth` or `maxAliasBytes` is not an integer within its range
+/// - `maxDepth`, `maxAliasBytes` or `maxScanAhead` is not an integer within its range
 ///
 /// # Security
 ///
@@ -320,6 +326,7 @@ mod tests {
         assert!(opts.allow_duplicate_keys.is_none());
         assert!(opts.max_depth.is_none());
         assert!(opts.max_alias_bytes.is_none());
+        assert!(opts.max_scan_ahead.is_none());
     }
 
     #[test]

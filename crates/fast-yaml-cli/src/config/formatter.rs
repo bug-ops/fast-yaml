@@ -1,18 +1,18 @@
 //! Formatter configuration for YAML formatting.
 
-use fast_yaml_core::{EmitterConfig, Indent, MaxDepth, Width};
+use fast_yaml_core::{EmitterConfig, Indent, MaxDepth, MaxScanAhead, ParseLimits, Width};
 
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::IndentSize;
 
 /// Configuration for YAML formatting.
 ///
-/// Controls indentation, line width and nesting depth for formatting operations.
+/// Controls indentation, line width and the parser limits for formatting operations.
 #[derive(Debug, Clone)]
 pub struct FormatterConfig {
     indent: Indent,
     width: Width,
-    max_depth: MaxDepth,
+    parse_limits: ParseLimits,
 }
 
 impl FormatterConfig {
@@ -39,7 +39,14 @@ impl FormatterConfig {
     /// Sets the maximum nesting depth.
     #[must_use]
     pub const fn with_max_depth(mut self, max_depth: MaxDepth) -> Self {
-        self.max_depth = max_depth;
+        self.parse_limits.max_depth = max_depth;
+        self
+    }
+
+    /// Sets the scan-ahead limit.
+    #[must_use]
+    pub const fn with_max_scan_ahead(mut self, max_scan_ahead: MaxScanAhead) -> Self {
+        self.parse_limits.max_scan_ahead = max_scan_ahead;
         self
     }
 
@@ -56,7 +63,7 @@ impl FormatterConfig {
         EmitterConfig::new()
             .with_indent(self.indent)
             .with_width(self.width)
-            .with_max_depth(self.max_depth)
+            .with_parse_limits(self.parse_limits)
     }
 
     /// Returns the indentation width as a linter indentation size.
@@ -72,7 +79,7 @@ impl Default for FormatterConfig {
         Self {
             indent: Indent::DEFAULT,
             width: Width::DEFAULT,
-            max_depth: MaxDepth::DEFAULT,
+            parse_limits: ParseLimits::default(),
         }
     }
 }
@@ -92,13 +99,16 @@ mod tests {
     #[test]
     fn test_to_emitter_config_carries_every_setting() {
         let depth = MaxDepth::new(7).unwrap();
+        let scan = MaxScanAhead::new(99).unwrap();
         let emitter = FormatterConfig::new()
             .with_indent(indent(4))
             .with_width(width(120))
             .with_max_depth(depth)
+            .with_max_scan_ahead(scan)
             .to_emitter_config();
         assert_eq!(emitter.indent.get(), 4);
         assert_eq!(emitter.width.get(), 120);
-        assert_eq!(emitter.max_depth, depth);
+        assert_eq!(emitter.parse_limits.max_depth, depth);
+        assert_eq!(emitter.parse_limits.max_scan_ahead, scan);
     }
 }

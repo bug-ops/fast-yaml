@@ -10,7 +10,7 @@
 use crate::conversion::value_to_python;
 use crate::limits;
 use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
-use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes};
+use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
 use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, MaxDocuments};
 use fast_yaml_parallel::{
     Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config,
@@ -52,7 +52,8 @@ impl PyParallelConfig {
         max_documents=None,
         auto_tune=true,
         max_depth=None,
-        max_alias_bytes=None
+        max_alias_bytes=None,
+        max_scan_ahead=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -64,8 +65,9 @@ impl PyParallelConfig {
         auto_tune: bool,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
+        max_scan_ahead: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
+        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
         // Validate thread_count (if specified, must be <= 128)
         if let Some(count) = thread_count
             && count > MAX_THREADS
@@ -244,6 +246,25 @@ impl PyParallelConfig {
     fn with_max_alias_bytes(&self, bytes: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = fast_yaml_core::ParseLimits {
             max_alias_bytes: limits::bounded::<AliasBytes>("max_alias_bytes", bytes)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+            ..self.clone()
+        })
+    }
+
+    /// Sets the characters the parser may read past the last node; `None` resets to the default.
+    ///
+    /// Default: 4 Mi (max: 1 Gi). A flow collection at the root or in a `- ` entry, one scalar,
+    /// or a run of comments longer than this is rejected.
+    ///
+    /// Raises:
+    ///     `ValueError`: If chars is outside 1..=1 Gi
+    ///     `TypeError`: If chars is not an int (`bool` included)
+    fn with_max_scan_ahead(&self, chars: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = fast_yaml_core::ParseLimits {
+            max_scan_ahead: limits::bounded::<ScanAhead>("max_scan_ahead", chars)?,
             ..self.inner.parse_limits()
         };
         Ok(Self {

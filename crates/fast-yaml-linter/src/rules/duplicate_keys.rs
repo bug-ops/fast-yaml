@@ -150,6 +150,10 @@ impl Collector {
 fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<DuplicateKey> {
     let mut collector = Collector::default();
     let mut roles = RoleTracker::default();
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "source passed the guarded parse in the same lint call"
+    )]
     let mut parser = SaphyrParser::new_from_str(source);
 
     while let Some(Ok((event, span))) = parser.next_event() {

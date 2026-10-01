@@ -163,6 +163,10 @@ pub enum AliasBytes {}
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InputBytes {}
 
+/// Marker for [`MaxScanAhead`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanAhead {}
+
 /// Marker for [`MaxDocuments`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Documents {}
@@ -170,6 +174,7 @@ pub enum Documents {}
 impl sealed::Sealed for Depth {}
 impl sealed::Sealed for AliasBytes {}
 impl sealed::Sealed for InputBytes {}
+impl sealed::Sealed for ScanAhead {}
 impl sealed::Sealed for Documents {}
 
 impl Bounds for Depth {
@@ -190,6 +195,12 @@ impl Bounds for InputBytes {
     const NAME: &'static str = "MaxInputBytes";
 }
 
+impl Bounds for ScanAhead {
+    const MAX: usize = 1 << 30;
+    const DEFAULT: usize = 4 * 1024 * 1024;
+    const NAME: &'static str = "MaxScanAhead";
+}
+
 impl Bounds for Documents {
     const MAX: usize = 10_000_000;
     const DEFAULT: usize = 100_000;
@@ -205,10 +216,10 @@ impl Bounds for Documents {
 ///
 /// The calling thread needs about 1 MiB of stack at the maximum depth (worst case: nested tagged
 /// block mappings, roughly 980 KiB measured in release). On 512 KiB or smaller stacks the process
-/// can abort, and a stack overflow cannot be caught. The value emitter and the formatter take
-/// their own limit from `EmitterConfig::max_depth` (256 by default), so data parsed deeper than
-/// that needs a matching `max_depth` to dump; `Emitter::emit_str_with_config` recurses through
-/// saphyr and needs about 2 MiB of stack at depth 512 (release).
+/// can abort, and a stack overflow cannot be caught. The value emitter and the formatter keep
+/// their nesting on the heap, so they need no extra stack: `EmitterConfig::max_emit_depth` (512 by
+/// default) bounds the values the emitter writes and `EmitterConfig::parse_limits` the input the
+/// formatter reads.
 ///
 /// # Examples
 ///
@@ -258,7 +269,8 @@ pub type MaxAliasBytes = Bounded<AliasBytes>;
 /// against about 24 MB for the same sequence after `---` or as a block mapping value
 /// (`a: [..]`). The expansion happens
 /// before any event is produced, so event-based limits (depth, node count, aliases)
-/// cannot bound it; size the input limit with this factor in mind. See issue #553.
+/// cannot bound it; [`MaxScanAhead`] rejects such input before the amplification exceeds about
+/// 190 times that limit. See issue #553.
 ///
 /// # Examples
 ///
@@ -272,6 +284,38 @@ pub type MaxAliasBytes = Bounded<AliasBytes>;
 /// assert!(MaxInputBytes::new(0).is_err());
 /// ```
 pub type MaxInputBytes = Bounded<InputBytes>;
+
+/// Maximum number of characters the scanner may consume beyond the end of the last parser event.
+///
+/// The saphyr scanner buffers a token per construct it has read but not yet reported, at up to
+/// about 190 bytes per two-byte token, and some constructs are tokenized whole before the first
+/// event: a stream-root `[..]`, a block-sequence entry `- [..]`, a collection nested in a flow
+/// collection (`{a: [..]}`), one scalar, or a run of comments and blank lines. The parser measures
+/// how far the scanner has read past the last emitted event and rejects the input with
+/// [`LimitKind::ScanAhead`] once that exceeds this limit, so parser memory is bounded by about
+/// 190 times the limit per open parser (per document, per rayon thread), whatever the input
+/// shape. Valid values lie between `1` and `MAX` (1 Gi characters) inclusive; the default is 4 Mi.
+///
+/// Rejected by default: a flow collection that the scanner tokenizes whole (`[..]` at the root,
+/// `- [..]`, `{a: [..]}`, `--- [[..]]`, and a value after a tab, `a:\t[..]`), a single scalar
+/// (quoted, plain or block), or a run of comments and blank lines between two nodes that is longer
+/// than the limit. That includes any JSON document longer than the limit, minified or
+/// pretty-printed. `a: [..]` (value after a space) and `--- [..]` stream and are never rejected,
+/// because the scanner cannot take their outer collection for an implicit key, while a collection
+/// nested directly in them (`--- [[..]]`) can be one and is tokenized whole. Block YAML of any
+/// size streams too. A `%TAG` prefix longer than this limit is rejected here before
+/// [`MaxTagBytes`] applies, so the effective cap on a prefix
+/// is the smaller of the two.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxScanAhead;
+///
+/// assert_eq!(MaxScanAhead::default().get(), 4 * 1024 * 1024);
+/// assert!(MaxScanAhead::new(0).is_err());
+/// ```
+pub type MaxScanAhead = Bounded<ScanAhead>;
 
 /// Maximum number of YAML documents accepted from one stream.
 ///
@@ -757,6 +801,8 @@ pub struct ParseLimits {
     pub max_alias_bytes: MaxAliasBytes,
     /// Maximum bytes of expanded `%TAG` prefixes, per stream.
     pub max_tag_bytes: MaxTagBytes,
+    /// Maximum characters the scanner may read past the last emitted event.
+    pub max_scan_ahead: MaxScanAhead,
 }
 
 /// Alias-expansion and tag-prefix budget shared by every document of one stream.
@@ -868,6 +914,11 @@ pub enum LimitKind {
     /// Tag prefix expansion would materialize more data than the budget.
     #[error("tag prefix expansion exceeds {0} bytes")]
     TagBytes(MaxTagBytes),
+    /// The scanner read more than the limit past the last node it reported.
+    #[error(
+        "parser lookahead exceeds {0} characters past the last node: one scalar, a run of comments, or a root or `- ` flow collection is longer than the limit; raise the scan-ahead limit"
+    )]
+    ScanAhead(MaxScanAhead),
     /// The YAML being dumped is, or would be, larger than the limit.
     #[error("output size exceeds {0} bytes")]
     OutputBytes(MaxOutputBytes),
@@ -970,6 +1021,10 @@ impl DocumentCursor {
             Event::DocumentEnd => self.open = false,
             _ => {}
         }
+    }
+
+    pub(crate) const fn is_open(self) -> bool {
+        self.open
     }
 
     pub(crate) const fn index(self) -> usize {

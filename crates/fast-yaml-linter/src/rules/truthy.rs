@@ -199,6 +199,10 @@ impl super::LintRule for TruthyRule {
 
         let mut diagnostics = Vec::new();
         let mut roles = RoleTracker::default();
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "source passed the guarded parse in the same lint call"
+        )]
         let mut parser = SaphyrParser::new_from_str(context.source());
 
         while let Some(Ok((event, span))) = parser.next_event() {

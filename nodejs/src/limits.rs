@@ -1,4 +1,5 @@
-//! Validation of JavaScript-supplied limits (`maxDepth`, `maxAliasBytes`, `maxInputBytes`).
+//! Validation of JavaScript-supplied limits (`maxDepth`, `maxAliasBytes`, `maxScanAhead`,
+//! `maxInputBytes`).
 //!
 //! JavaScript numbers arrive as `f64`; every value is checked here so that `NaN`,
 //! fractions, negatives, zero, and values above the core cap are rejected with the
@@ -46,16 +47,18 @@ pub(crate) fn max_documents(value: Option<f64>) -> NapiResult<MaxDocuments> {
     bounded("maxDocuments", value)
 }
 
-/// Validates the optional `maxDepth` / `maxAliasBytes` pair into [`ParseLimits`].
+/// Validates the optional `maxDepth` / `maxAliasBytes` / `maxScanAhead` values into [`ParseLimits`].
 ///
 /// Absent values keep the core defaults.
 pub(crate) fn parse_limits(
     max_depth_opt: Option<f64>,
     max_alias_bytes_opt: Option<f64>,
+    max_scan_ahead_opt: Option<f64>,
 ) -> NapiResult<ParseLimits> {
     Ok(ParseLimits {
         max_depth: bounded("maxDepth", max_depth_opt)?,
         max_alias_bytes: bounded("maxAliasBytes", max_alias_bytes_opt)?,
+        max_scan_ahead: bounded("maxScanAhead", max_scan_ahead_opt)?,
         ..ParseLimits::default()
     })
 }
@@ -63,19 +66,26 @@ pub(crate) fn parse_limits(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fast_yaml_core::limits::MaxScanAhead;
 
     #[test]
     fn defaults_when_absent() {
-        assert_eq!(parse_limits(None, None).unwrap(), ParseLimits::default());
+        assert_eq!(
+            parse_limits(None, None, None).unwrap(),
+            ParseLimits::default()
+        );
     }
 
     #[test]
     fn accepts_bounds() {
-        let l = parse_limits(Some(1.0), Some(1_073_741_824.0)).unwrap();
+        let l = parse_limits(Some(1.0), Some(1_073_741_824.0), None).unwrap();
         assert_eq!(l.max_depth.get(), 1);
         assert_eq!(l.max_alias_bytes.get(), 1 << 30);
         assert_eq!(
-            parse_limits(Some(512.0), None).unwrap().max_depth.get(),
+            parse_limits(Some(512.0), None, None)
+                .unwrap()
+                .max_depth
+                .get(),
             512
         );
     }
@@ -83,15 +93,28 @@ mod tests {
     #[test]
     fn rejects_invalid_depth() {
         for v in [0.0, -1.0, 1.5, f64::NAN, f64::INFINITY, 513.0, 1e300] {
-            assert!(parse_limits(Some(v), None).is_err(), "{v}");
+            assert!(parse_limits(Some(v), None, None).is_err(), "{v}");
         }
     }
 
     #[test]
     fn rejects_invalid_alias_bytes() {
         for v in [0.0, -1.0, 2.5, f64::NAN, 1_073_741_825.0] {
-            assert!(parse_limits(None, Some(v)).is_err(), "{v}");
+            assert!(parse_limits(None, Some(v), None).is_err(), "{v}");
         }
+    }
+
+    #[test]
+    fn scan_ahead_defaults_and_bounds() {
+        let limits = parse_limits(None, None, Some(1_073_741_824.0)).unwrap();
+        assert_eq!(limits.max_scan_ahead, MaxScanAhead::MAX);
+        for v in [0.0, -1.0, 2.5, f64::NAN, 1_073_741_825.0] {
+            assert!(parse_limits(None, None, Some(v)).is_err(), "{v}");
+        }
+        assert_eq!(
+            parse_limits(None, None, Some(0.0)).unwrap_err().reason,
+            "maxScanAhead must be between 1 and 1073741824, got 0"
+        );
     }
 
     #[test]
@@ -146,7 +169,7 @@ mod tests {
             (1.5, "1.5"),
             (-1.0, "-1"),
         ] {
-            let e = parse_limits(Some(v), None).unwrap_err();
+            let e = parse_limits(Some(v), None, None).unwrap_err();
             assert_eq!(
                 e.reason,
                 format!("maxDepth must be between 1 and 512, got {want}")
@@ -156,7 +179,7 @@ mod tests {
 
     #[test]
     fn message_matches_core_shape() {
-        let e = parse_limits(Some(0.0), None).unwrap_err();
+        let e = parse_limits(Some(0.0), None, None).unwrap_err();
         assert_eq!(e.reason, "maxDepth must be between 1 and 512, got 0");
     }
 }
