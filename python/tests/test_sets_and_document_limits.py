@@ -31,7 +31,7 @@ class TestMaxDocuments:
 
     def test_dump_parallel_enforces_limit(self):
         config = parallel.ParallelConfig(max_documents=2)
-        with pytest.raises(ValueError, match="more than the maximum of 2"):
+        with pytest.raises(ValueError, match="cannot serialize to YAML: document count exceeds 2"):
             core_parallel.dump_parallel([1, 2, 3], config)
 
     def test_safe_load_all_limit(self):

@@ -64,7 +64,7 @@ The dumper keeps a fixed depth of 256, so data parsed deeper may fail to dump.
 The alias budget is per stream, so parallel and batch runs can use up to workers x budget.
 `max_input_bytes` bounds work on oversized input; an in-memory source is already allocated when checked, so it is not a memory bound there.
 `safe_load` and `safe_load_all` reject sources over 100 MiB.
-`max_documents` caps the documents in one stream and applies even when no config is passed (`safe_load` and `load` also read the whole stream, so a source over the limit raises `ValueError`); `dump_parallel` enforces it on the input list.
+`max_documents` caps the documents in one stream and applies even when no config is passed (`safe_load` and `load` also read the whole stream, so a source over the limit raises `ValueError`); `dump_parallel` enforces it on the input list (`cannot serialize to YAML: document count exceeds N`). `safe_dump`, `safe_dump_all` and `dump_all` take no `max_documents`; they are bounded by the fixed dump limits (depth 256, output size).
 
 ## Sets
 

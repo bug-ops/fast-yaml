@@ -11,7 +11,7 @@ use crate::conversion::value_to_python;
 use crate::limits;
 use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, MaxDocuments};
+use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, LimitKind, MaxDocuments};
 use fast_yaml_parallel::{
     Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config, shared_pool,
 };
@@ -420,10 +420,7 @@ fn dump_parallel(
         cfg.inner.parse_limits().max_documents
     });
     if yaml_values.len() > max_docs.get() {
-        return Err(PyValueError::new_err(format!(
-            "input has {} documents, more than the maximum of {max_docs}",
-            yaml_values.len(),
-        )));
+        return Err(crate::limit_error(LimitKind::Documents(max_docs)));
     }
 
     // Sort keys if requested (serial, before parallel phase)

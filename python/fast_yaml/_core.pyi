@@ -687,7 +687,8 @@ class parallel:  # noqa: N801
 
         Raises:
             TypeError: If any object cannot be serialized
-            ValueError: If document count exceeds 100,000, or an int has more digits than
+            ValueError: If the document count exceeds ``config.max_documents``
+                (100,000 by default), or an int has more digits than
                 ``sys.get_int_max_str_digits()`` (CPython's limit)
 
         Example:
