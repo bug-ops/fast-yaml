@@ -7,10 +7,11 @@ use std::ops::RangeInclusive;
 use fast_yaml_core::events::{Event, EventItem, ScalarStyle};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
 use fast_yaml_core::{
-    CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, Parser, Value,
-    resolve_scalar,
+    CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, ParseError, Parser,
+    Value, resolve_scalar,
 };
 
+use crate::source::offset::{ByteOffset, ByteRange};
 use crate::{Location, SourceContext, Span, comments::Comment};
 
 /// How a document starts.
@@ -80,6 +81,8 @@ pub struct SourceScan<'a> {
     pub key_repeats: Vec<KeyRepeat>,
     /// Content lines of every literal and folded scalar, in source order.
     pub block_scalars: Vec<RangeInclusive<usize>>,
+    /// Whether the parser pass completed; when not, only `key_repeats` is filled.
+    pub complete: bool,
 }
 
 /// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
@@ -108,38 +111,56 @@ impl MappingKeys {
 }
 
 impl<'a> SourceScan<'a> {
-    /// Scans `source` with a loader pass that discards the values.
+    /// Scans `source` with a loader pass that discards the values, under `limits`.
     ///
-    /// It applies the default parse limits, and treats a repeated `<<` like `Linter::lint` does.
-    /// Empty when `source` is not its own normalized form (a BOM prefix), because the parser then
-    /// sees a different text than the context. When the parse fails only the key repeats found
-    /// before the error remain.
-    pub fn of_source(source: &'a str, context: &SourceContext<'_>) -> Self {
-        let Ok(input) = NormalizedInput::new(source) else {
-            return Self::default();
+    /// A repeated `<<` is treated like `Linter::lint` does. A BOM-prefixed `source` is parsed in
+    /// its normalized form and the positions are mapped back, so the scan agrees with the other
+    /// rules on the text of `context`. When the pass fails the scan is incomplete (see
+    /// [`SourceScan::complete`]), holds only the key repeats found before the error, and the
+    /// error is returned.
+    pub fn scan(
+        source: &'a str,
+        context: &SourceContext<'_>,
+        limits: ParseLimits,
+    ) -> (Self, Option<ParseError>) {
+        let input = match NormalizedInput::new(source) {
+            Ok(input) => input,
+            Err(error) => return (Self::default(), Some(error)),
         };
-        if input.as_str().len() != source.len() {
-            return Self::default();
-        }
         let mut collector = ScanCollector::new(&input, source, context);
         let options = LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins);
         let loaded = Parser::parse_normalized_observed(
             &input,
-            &StreamBudget::new(ParseLimits::default()),
+            &StreamBudget::new(limits),
             options,
             |item| collector.observe(item),
         );
-        if loaded.is_err() {
-            return collector.finish_failed();
+        match loaded {
+            Ok(_) => (collector.finish(), None),
+            Err(error) => (collector.finish_failed(), Some(error)),
         }
-        collector.finish()
+    }
+
+    /// Lazy form of [`scan`](Self::scan) with the default limits for a context nobody scanned.
+    ///
+    /// The result is incomplete when the source does not parse.
+    pub fn of_source(source: &'a str, context: &SourceContext<'_>) -> Self {
+        Self::scan(source, context, ParseLimits::default()).0
     }
 }
 
+/// Positions of a parsed text that differs from the context's source (document-prefix BOMs
+/// were removed), with the way back to the original bytes.
+struct Remap<'n> {
+    input: &'n NormalizedInput<'n>,
+    context: SourceContext<'n>,
+}
+
 /// Feeds parser events into the comment scanner and the document marker list.
-pub struct ScanCollector<'a, 'c> {
+pub struct ScanCollector<'a, 'c, 'n> {
     source: &'a str,
     context: &'c SourceContext<'c>,
+    remap: Option<Remap<'n>>,
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
     open: Option<(DocumentStart, usize)>,
@@ -148,16 +169,22 @@ pub struct ScanCollector<'a, 'c> {
     block_scalars: Vec<RangeInclusive<usize>>,
 }
 
-impl<'a, 'c> ScanCollector<'a, 'c> {
-    /// `input` must be the normalized text whose events will be observed, and `source` its text.
+impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
+    /// `input` must be the normalized form of `source`, whose events will be observed;
+    /// `context` is the line table of `source`.
     pub fn new(
-        input: &NormalizedInput<'_>,
+        input: &'n NormalizedInput<'n>,
         source: &'a str,
         context: &'c SourceContext<'c>,
     ) -> Self {
+        let remap = (input.as_str().len() != source.len()).then(|| Remap {
+            input,
+            context: SourceContext::new(input.as_str()),
+        });
         Self {
             source,
             context,
+            remap,
             scanner: CommentScanner::new(input),
             documents: Vec::new(),
             open: None,
@@ -167,11 +194,29 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
         }
     }
 
+    /// The byte range of an event in `source`.
+    fn byte_range(&self, item: &EventItem<'_>) -> ByteRange {
+        self.remap.as_ref().map_or_else(
+            || self.context.byte_range_between(item.at, item.end),
+            |remap| {
+                let parsed = remap.context.byte_range_between(item.at, item.end);
+                ByteRange::new(
+                    ByteOffset::new(remap.input.original_offset(parsed.start().get())),
+                    ByteOffset::new(remap.input.original_offset(parsed.end().get())),
+                )
+            },
+        )
+    }
+
+    fn span(&self, item: &EventItem<'_>) -> Span {
+        self.context.span_of_bytes(self.byte_range(item))
+    }
+
     pub fn observe(&mut self, item: &EventItem<'_>) {
         let _ = self.scanner.observe(item);
         match &item.event {
             Event::DocumentStart { explicit } => {
-                let span = self.context.span_between(item.at, item.end);
+                let span = self.span(item);
                 let first_line = match (self.documents.is_empty(), explicit) {
                     (true, _) => 1,
                     (false, true) => span.start.line + 1,
@@ -185,7 +230,7 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
                 self.open = Some((start, first_line));
             }
             Event::DocumentEnd => {
-                let range = self.context.byte_range_between(item.at, item.end);
+                let range = self.byte_range(item);
                 let explicit = self
                     .source
                     .get(range.start().get()..range.end().get())
@@ -195,7 +240,7 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
                 };
                 self.documents.push(DocumentMarkers {
                     start,
-                    end: explicit.then(|| self.context.span_between(item.at, item.end)),
+                    end: explicit.then(|| self.span(item)),
                     first_line,
                 });
             }
@@ -226,10 +271,11 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
                 };
                 let resolved = Value::from(resolve_scalar(value, *style, tag.as_ref()));
                 if let Some(first_line) = keys.record(kind, resolved, item.at.line) {
+                    let span = self.span(item);
                     self.key_repeats.push(KeyRepeat {
                         key: value.as_ref().to_owned(),
                         first_line,
-                        span: self.context.span_between(item.at, item.end),
+                        span,
                         kind,
                     });
                 }
@@ -251,13 +297,23 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
             .scanner
             .finish()
             .into_iter()
-            .filter_map(|range| Comment::from_range(self.source, self.context, range))
+            .filter_map(|range| {
+                let range = match &self.remap {
+                    None => range,
+                    Some(remap) => {
+                        remap.input.original_offset(range.start)
+                            ..remap.input.original_offset(range.end)
+                    }
+                };
+                Comment::from_range(self.source, self.context, range)
+            })
             .collect();
         SourceScan {
             comments,
             documents: self.documents,
             key_repeats: self.key_repeats,
             block_scalars: self.block_scalars,
+            complete: true,
         }
     }
 }
@@ -347,12 +403,52 @@ mod tests {
     }
 
     #[test]
-    fn invalid_or_unnormalized_source_has_no_comments() {
-        assert!(LintContext::new("a: [\n# c\n").comments().is_empty());
-        assert!(
-            LintContext::new("\u{FEFF}# c\na: 1\n")
-                .comments()
-                .is_empty()
+    fn invalid_source_has_no_comments_and_is_incomplete() {
+        let context = LintContext::new("a: [\n# c\n");
+        assert!(context.comments().is_empty());
+        assert!(!context.scan_is_complete());
+    }
+
+    #[test]
+    fn bom_prefixed_context_keeps_comments_markers_and_repeats() {
+        let source = "\u{FEFF}# c\n---\na: 1\na: 2\n";
+        let context = LintContext::new(source);
+
+        let comments = context.comments();
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, " c");
+        // Coordinates refer to the text of the context, the BOM included
+        assert_eq!(comments[0].span.start.offset, 3);
+        assert_eq!(
+            &source[comments[0].span.start.offset..comments[0].span.end.offset],
+            "# c"
+        );
+
+        let marker = context.documents()[0].start.marker().unwrap();
+        assert_eq!((marker.start.line, marker.start.offset), (2, 7));
+
+        let repeats = context.key_repeats();
+        assert_eq!(repeats.len(), 1);
+        assert_eq!(
+            &source[repeats[0].span.start.offset..repeats[0].span.end.offset],
+            "a"
+        );
+        assert_eq!(repeats[0].span.start.line, 4);
+    }
+
+    #[test]
+    fn bom_in_a_later_document_prefix_is_mapped_back() {
+        let source = "a: 1\n...\n\u{FEFF}# c\nb: 1\nb: 2\n";
+        let context = LintContext::new(source);
+        let comment = context.comments()[0];
+        assert_eq!(
+            &source[comment.span.start.offset..comment.span.end.offset],
+            "# c"
+        );
+        let repeat = &context.key_repeats()[0];
+        assert_eq!(
+            &source[repeat.span.start.offset..repeat.span.end.offset],
+            "b"
         );
     }
 }

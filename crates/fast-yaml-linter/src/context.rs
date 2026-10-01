@@ -484,14 +484,6 @@ impl<'a> SourceContext<'a> {
         Span::new(self.location_of(span.start), self.location_of(span.end))
     }
 
-    /// Converts the positions of a parser event (1-indexed line and char column) to a [`Span`].
-    pub(crate) fn span_between(&self, from: SourcePosition, to: SourcePosition) -> Span {
-        Span::new(
-            self.location_of(Self::marker_at(from)),
-            self.location_of(Self::marker_at(to)),
-        )
-    }
-
     /// Converts the positions of a parser event to a byte range.
     pub(crate) fn byte_range_between(&self, from: SourcePosition, to: SourcePosition) -> ByteRange {
         ByteRange::new(
@@ -1159,6 +1151,11 @@ impl<'a> LintContext<'a> {
             .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
     }
 
+    /// Whether the scan parsed the whole source, so its comments are complete.
+    pub(crate) fn scan_is_complete(&self) -> bool {
+        self.scan().complete
+    }
+
     /// Whether `line` is a content line of a literal or folded scalar.
     pub(crate) fn in_block_scalar(&self, line: usize) -> bool {
         let scalars = &self.scan().block_scalars;
@@ -1191,8 +1188,8 @@ impl<'a> LintContext<'a> {
     ///
     /// Comments come from the parser events, so `#` inside quoted and block scalars is never a
     /// comment. They are located on first access with one parser pass unless the linter already
-    /// did it while loading the documents. A source that does not parse, or that is not its own
-    /// normalized form (it starts a document with a BOM), has none.
+    /// did it while loading the documents. A source that does not parse has none; positions refer
+    /// to the text of this context, also when it has document-prefix BOMs.
     ///
     /// # Examples
     ///
@@ -1259,6 +1256,8 @@ impl<'a> LintContext<'a> {
     #[must_use]
     pub fn line_metadata(&self) -> &[LineMetadata] {
         self.line_metadata.get_or_init(|| {
+            // Without a complete parse the comments are unknown: fall back to the line text
+            let by_text = !self.scan_is_complete();
             let mut comment_lines = vec![false; self.lines().len()];
             for comment in self.comments().iter().filter(|c| c.is_full_line()) {
                 if let Some(flag) = comment_lines.get_mut(comment.span.start.line.wrapping_sub(1)) {
@@ -1271,7 +1270,7 @@ impl<'a> LintContext<'a> {
                 .map(|(line, is_comment)| LineMetadata {
                     indent: line.chars().take_while(|&c| c == ' ').count(),
                     is_empty: line.trim_start().is_empty(),
-                    is_comment,
+                    is_comment: is_comment || (by_text && line.trim_start().starts_with('#')),
                 })
                 .collect()
         })
@@ -1474,5 +1473,13 @@ mod lint_context_tests {
         let ctx = LintContext::new("a: \"x\n  #y\"\nb: |\n  #z\n# c\n");
         let flags: Vec<_> = ctx.line_metadata().iter().map(|m| m.is_comment).collect();
         assert_eq!(flags, [false, false, false, false, true]);
+    }
+
+    #[test]
+    fn test_line_metadata_flags_comment_lines_of_a_broken_file() {
+        let ctx = LintContext::new("# top\na: [\n  # inner\n");
+        assert!(!ctx.scan_is_complete());
+        let flags: Vec<_> = ctx.line_metadata().iter().map(|m| m.is_comment).collect();
+        assert_eq!(flags[..3], [true, false, true]);
     }
 }

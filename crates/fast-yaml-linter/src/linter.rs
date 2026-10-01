@@ -7,7 +7,7 @@ use std::str::FromStr;
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
 use crate::directives::Directives;
 use crate::rules::MarkerPresence;
-use crate::scan::ScanCollector;
+use crate::scan::{ScanCollector, SourceScan};
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser, Value};
@@ -455,16 +455,28 @@ impl Linter {
     ///
     /// Locations use the same BOM-free coordinates as [`Linter::lint`].
     ///
+    /// Comments and document markers are read from `source` itself under
+    /// [`LintConfig::parse_limits`], so `source` must load.
+    ///
     /// # Errors
     ///
     /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
-    /// and `LintError::ParseError` if `source` contains a NUL character, which the
+    /// and `LintError::ParseError` if `source` does not load (it exceeds the parse limits or is
+    /// not valid YAML) or contains a NUL character, which the
     /// tokenizer would otherwise treat as end of input.
     pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
         let context = LintContext::new(source);
+        // Comments and markers come from the source itself, under the configured limits; a source
+        // that does not load is an error here, as it is in `lint`
+        let (scan, failure) =
+            SourceScan::scan(source, context.source_context(), self.config.parse_limits);
+        if let Some(error) = failure {
+            return Err(error.into());
+        }
+        let context = context.with_scan(scan);
         let directives = Directives::from_context(&context, &self.config, &self.registry);
         let mut diagnostics = Vec::new();
 
@@ -1213,5 +1225,31 @@ mod tests {
             .map(|d| d.span.start.line)
             .collect();
         assert_eq!(lines, [3, 3]);
+    }
+
+    #[test]
+    fn test_lint_value_applies_directives_under_the_configured_limits() {
+        use fast_yaml_core::limits::{MaxDepth, ParseLimits};
+        use std::fmt::Write as _;
+
+        let mut source = String::from("# fy: disable-file\n");
+        for depth in 0..300 {
+            writeln!(source, "{}k:", " ".repeat(depth)).unwrap();
+        }
+        writeln!(source, "{}v: 1 ", " ".repeat(300)).unwrap();
+        let value = Value::Null;
+
+        let limits = |depth| ParseLimits {
+            max_depth: MaxDepth::new(depth).unwrap(),
+            ..ParseLimits::default()
+        };
+        let raised = Linter::with_config(LintConfig::new().with_parse_limits(limits(512)));
+        assert!(raised.lint_value(&source, &value).unwrap().is_empty());
+
+        let lowered = Linter::with_config(LintConfig::new().with_parse_limits(limits(8)));
+        assert!(matches!(
+            lowered.lint_value(&source, &value),
+            Err(LintError::ParseError(_))
+        ));
     }
 }
