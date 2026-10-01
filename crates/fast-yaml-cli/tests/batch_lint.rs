@@ -413,7 +413,13 @@ fn test_lint_report_formats_are_identical_for_any_worker_count_and_list_files_by
         assert_eq!(many_err.lines().count(), 20, "{format}");
 
         // Failures are reported on stderr in file order, like the classic formats
-        let name_of = |path: &str| path.rsplit('/').next().unwrap().to_owned();
+        let name_of = |path: &str| {
+            std::path::Path::new(path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
         let failure_order: Vec<String> = one_err
             .lines()
             .filter_map(|line| line.split('\'').nth(1))
@@ -431,7 +437,7 @@ fn test_lint_report_formats_are_identical_for_any_worker_count_and_list_files_by
     let (parsable, _) = report("parsable", "4", &paths);
     let listed: Vec<&str> = parsable
         .lines()
-        .map(|line| line.split(':').next().unwrap())
+        .map(|line| line.split(".yaml:").next().unwrap())
         .collect();
     assert!(listed.is_sorted(), "{parsable}");
     assert_eq!(
