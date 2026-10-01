@@ -25,7 +25,7 @@ fn document_end_forbidden_flags_marker_with_position() {
     lint(&dir, "rules:\n  document-end:\n    present: false\n")
         .write_stdin("a: 1\n...\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("document-end"))
         .stdout(predicate::str::contains(
             "document end marker '...' is forbidden",
@@ -49,7 +49,7 @@ fn document_end_required_is_unchanged() {
     lint(&dir, "rules:\n  document-end:\n    present: true\n")
         .write_stdin("a: 1\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("missing document end marker"));
 }
 
@@ -62,7 +62,7 @@ fn extra_required_regex_flags_matching_plain_scalar() {
     )
     .write_stdin("a: http://x\nb: plain\n")
     .assert()
-    .success()
+    .code(2)
     .stdout(predicate::str::contains("string should be quoted"))
     .stdout(predicate::str::contains("1:4"))
     .stdout(predicate::str::contains("2:4").not());
@@ -77,7 +77,7 @@ fn extra_allowed_regex_keeps_plain_scalar_under_only_when_needed() {
     )
     .write_stdin("a: ftp://x\nb: \"ftp://x\"\nc: \"plain\"\n")
     .assert()
-    .success()
+    .code(2)
     .stdout(predicate::str::contains("string does not need quotes"));
 }
 
@@ -150,7 +150,7 @@ fn unicode_class_pattern_is_accepted() {
     )
     .write_stdin("a: word\n")
     .assert()
-    .success()
+    .code(2)
     .stdout(predicate::str::contains("string should be quoted"));
 }
 

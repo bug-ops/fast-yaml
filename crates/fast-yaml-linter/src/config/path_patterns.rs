@@ -62,6 +62,11 @@ fn build(root: &Path, lines: &[String]) -> Result<Gitignore, InvalidPathPattern>
         })
 }
 
+/// Returns whether one line is accepted by gitignore syntax.
+pub fn is_valid_pattern(line: &str) -> bool {
+    GitignoreBuilder::new("").add_line(None, line).is_ok()
+}
+
 /// An absolute path with symlinks resolved, the only path form [`Linter::lint_file`] accepts.
 ///
 /// Per-rule `ignore` patterns are matched against it, so the same file is ignored no matter how

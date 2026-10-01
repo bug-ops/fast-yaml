@@ -13,7 +13,7 @@ use serde_norway::{Mapping, Value};
 use crate::DiagnosticCode;
 use crate::ParseSeverityError;
 use crate::Severity;
-use crate::config::ignore_source::{ignore_file_lines, ignore_file_names, ignore_lines};
+use crate::config::ignore_source::{ListError, ignore_file_lines, ignore_file_names, ignore_lines};
 use crate::config::{CanonicalPath, IgnorePatterns, InvalidPathPattern, Preset};
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::rules::NON_STANDARD_BOOLS;
@@ -350,9 +350,25 @@ impl std::borrow::Borrow<str> for CustomRuleCode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum EnableOnOverride {
-    Yes,
-    No,
+pub(super) enum ApplyMode {
+    /// A patch: whatever an entry does not mention keeps its current value.
+    Patch,
+    /// The rules of a config file without a base: entries over fast-yaml's own defaults start
+    /// at yamllint's level.
+    File,
+    /// The rules of a config file over a preset or another config file; like `File`, and a
+    /// severity or an options mapping also enables a disabled rule.
+    FileOverBase,
+}
+
+impl ApplyMode {
+    const fn enables_on_override(self) -> bool {
+        matches!(self, Self::FileOverBase)
+    }
+
+    const fn starts_from_yamllint(self) -> bool {
+        !matches!(self, Self::Patch)
+    }
 }
 
 /// Whether an entry that does not mention `enabled` still switches a preset-disabled rule on.
@@ -391,13 +407,15 @@ pub enum IgnoreBase<'a> {
 struct ApplyCtx<'a> {
     yamllint: OnceCell<RulesConfig>,
     base: IgnoreBase<'a>,
+    mode: ApplyMode,
 }
 
 impl<'a> ApplyCtx<'a> {
-    const fn new(base: IgnoreBase<'a>) -> Self {
+    const fn new(base: IgnoreBase<'a>, mode: ApplyMode) -> Self {
         Self {
             yamllint: OnceCell::new(),
             base,
+            mode,
         }
     }
 
@@ -429,6 +447,14 @@ fn apply_entry<O: RuleOptions>(
     defaults: fn(&RulesConfig) -> &RuleSettings<O>,
     entry: Value,
 ) -> Result<(), RuleConfigError> {
+    if !entry.is_null()
+        && ctx.mode.starts_from_yamllint()
+        && settings.origin == EntryOrigin::FyDefault
+        && !matches!(&entry, Value::String(text) if text.eq_ignore_ascii_case("disable"))
+    {
+        // only the level: fast-yaml's own option keys (`indent-size`) must keep working
+        settings.severity = yamllint_enabled(rule, defaults(ctx.yamllint())).severity;
+    }
     match entry {
         Value::Null => return Ok(()),
         Value::String(text) => {
@@ -604,8 +630,8 @@ fn record_ignore(
 
 /// The value of a per-rule `ignore` or `ignore-from-file` key.
 enum IgnoreSource {
-    Lines(Result<Vec<String>, String>),
-    Files(Result<Vec<String>, String>),
+    Lines(Result<Vec<String>, ListError>),
+    Files(Result<Vec<String>, ListError>),
 }
 
 impl IgnoreSource {
@@ -626,20 +652,28 @@ impl IgnoreSource {
 
     fn compile(self, rule: RuleName, dir: &Path) -> Result<RuleIgnore, RuleConfigError> {
         let key = self.key();
-        let invalid = |message: String| RuleConfigError::InvalidOption {
+        let invalid = |message: &dyn fmt::Display| RuleConfigError::InvalidOption {
             rule,
             key: key.to_owned(),
-            message,
+            message: message.to_string(),
         };
+        let from_file = matches!(self, Self::Files(_));
         let lines = match self {
-            Self::Lines(lines) => lines.map_err(invalid)?,
-            Self::Files(names) => ignore_file_lines(dir, &names.map_err(invalid)?)
-                .map_err(|error| invalid(error.to_string()))?,
+            Self::Lines(lines) => lines.map_err(|error| invalid(&error))?,
+            Self::Files(names) => ignore_file_lines(dir, &names.map_err(|error| invalid(&error))?)
+                .map_err(|error| invalid(&error))?,
         };
-        let root = dir
-            .canonicalize()
-            .map_err(|error| invalid(format!("cannot resolve '{}': {error}", dir.display())))?;
-        RuleIgnore::new(&root, lines).map_err(|error| invalid(error.to_string()))
+        let root = dir.canonicalize().map_err(|error| {
+            invalid(&format_args!("cannot resolve '{}': {error}", dir.display()))
+        })?;
+        RuleIgnore::new(&root, lines).map_err(|error| {
+            // patterns read from a file are never echoed
+            if from_file {
+                invalid(&"the listed patterns cannot be combined")
+            } else {
+                invalid(&error)
+            }
+        })
     }
 }
 
@@ -965,7 +999,7 @@ impl RulesConfig {
     ) -> Result<(), RuleConfigError> {
         self.apply_entries(
             buffer(deserializer)?,
-            EnableOnOverride::No,
+            ApplyMode::Patch,
             IgnoreBase::Unavailable,
         )
     }
@@ -1000,7 +1034,7 @@ impl RulesConfig {
     ) -> Result<(), RuleConfigError> {
         self.apply_entries(
             buffer(deserializer)?,
-            EnableOnOverride::No,
+            ApplyMode::Patch,
             IgnoreBase::Dir(base_dir),
         )
     }
@@ -1015,13 +1049,13 @@ impl RulesConfig {
         value: Value,
         base: IgnoreBase<'_>,
     ) -> Result<(), RuleConfigError> {
-        self.apply_entries(value, EnableOnOverride::Yes, base)
+        self.apply_entries(value, ApplyMode::FileOverBase, base)
     }
 
     pub(super) fn apply_entries(
         &mut self,
         value: Value,
-        enable_on_override: EnableOnOverride,
+        mode: ApplyMode,
         base: IgnoreBase<'_>,
     ) -> Result<(), RuleConfigError> {
         let entries = match value {
@@ -1037,7 +1071,7 @@ impl RulesConfig {
             }
         };
 
-        let ctx = ApplyCtx::new(base);
+        let ctx = ApplyCtx::new(base, mode);
         let mut next = self.clone();
         let mut seen = Vec::new();
         for (key, entry) in entries {
@@ -1057,7 +1091,7 @@ impl RulesConfig {
                 });
             }
             seen.push(rule);
-            let enables = enable_on_override == EnableOnOverride::Yes && enables_rule(&entry);
+            let enables = mode.enables_on_override() && enables_rule(&entry);
             next.apply_value(rule, &ctx, entry)?;
             if enables {
                 next.set_enabled(rule, true);
@@ -1095,7 +1129,11 @@ impl RulesConfig {
     ) -> Result<(), RuleConfigError> {
         let entry = buffer(deserializer)?;
         let mut next = self.clone();
-        next.apply_value(name, &ApplyCtx::new(IgnoreBase::Unavailable), entry)?;
+        next.apply_value(
+            name,
+            &ApplyCtx::new(IgnoreBase::Unavailable, ApplyMode::Patch),
+            entry,
+        )?;
         *self = next;
         Ok(())
     }
@@ -1370,7 +1408,7 @@ mod tests {
                 original
                     .apply_value(
                         name,
-                        &ApplyCtx::new(IgnoreBase::Unavailable),
+                        &ApplyCtx::new(IgnoreBase::Unavailable, ApplyMode::Patch),
                         Value::Mapping(entry),
                     )
                     .unwrap();

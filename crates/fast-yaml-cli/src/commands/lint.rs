@@ -285,9 +285,14 @@ impl LintCommand {
             Ok(source) => source,
             Err(err) => return self.report_lint_failure(input, err),
         };
-        let canonical = input
-            .file_path()
-            .and_then(|path| CanonicalPath::new(path).ok());
+        let canonical = match input.file_path().map(|path| {
+            CanonicalPath::new(path)
+                .with_context(|| format!("failed to resolve '{}'", path.display()))
+        }) {
+            Some(Ok(path)) => Some(path),
+            Some(Err(err)) => return Err(self.report_unreadable(input.file_path(), err)),
+            None => None,
+        };
         let linted = canonical.as_ref().map_or_else(
             || linter.lint_source(&source),
             |path| linter.lint_source_file(&source, path),
@@ -319,12 +324,14 @@ impl LintCommand {
             }
             LintOutput::Json => self.write_findings(&JsonFormatter::new(true), findings)?,
             LintOutput::Report(format) => {
-                write_file_report(
-                    &self.output,
-                    format,
-                    input.file_path(),
-                    &filtered_diagnostics,
-                )?;
+                let report_source = match &canonical {
+                    Some(path) => ReportSource::File(ReportPath::from_absolute(path.as_path())?),
+                    None => ReportSource::Stdin,
+                };
+                self.output.write_report(&format.render(&[FileReport {
+                    source: &report_source,
+                    diagnostics: &filtered_diagnostics,
+                }]))?;
             }
         }
 

@@ -17,15 +17,16 @@ pub use config_file::{
 };
 pub use indent::{IndentSequences, IndentSpaces};
 pub use locale::LocaleName;
+pub(crate) use path_patterns::is_valid_pattern;
 pub use path_patterns::{
     CanonicalPath, IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, YamlFiles,
 };
 pub use preset::{Preset, UnknownPresetError};
-pub(crate) use rules::default_rules;
 pub use rules::{
-    CustomRuleCode, EntryOrigin, IgnoreBase, NoOptions, OptionConflict, RuleConfigError,
-    RuleIgnore, RuleName, RuleOptions, RuleSettings, RulesConfig, UnknownRuleError,
+    CustomRuleCode, EntryOrigin, NoOptions, OptionConflict, RuleConfigError, RuleIgnore, RuleName,
+    RuleOptions, RuleSettings, RulesConfig, UnknownRuleError,
 };
+pub(crate) use rules::{IgnoreBase, default_rules};
 pub use values::{
     AlwaysTrue, EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList,
     InvalidRegexPattern, Limit, MarkerPresence, PatternList,

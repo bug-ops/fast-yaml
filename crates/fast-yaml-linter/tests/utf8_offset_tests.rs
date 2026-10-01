@@ -637,8 +637,9 @@ fn new_lines_span_starts_at_line_with_wrong_ending() {
 }
 
 #[test]
-fn empty_values_block_sequence_nulls_are_not_reported() {
-    assert_eq!(lint_code("-\n-\n", DiagnosticCode::EMPTY_VALUES), []);
+fn empty_values_block_sequence_nulls_are_reported_after_the_dash() {
+    let diags = lint_code("-\n-\n", DiagnosticCode::EMPTY_VALUES);
+    assert_eq!(diags.len(), 2);
 }
 
 #[test]

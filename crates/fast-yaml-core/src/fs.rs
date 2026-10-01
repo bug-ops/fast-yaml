@@ -9,11 +9,19 @@
 //! change under us between calls:
 //!
 //! - A FIFO or device would block `open(2)` or yield unbounded data. The path is checked before it
-//!   is opened, and on Unix the file is opened with `O_NONBLOCK`, so a path swapped for a FIFO
+//!   is opened, and on Unix the file is opened with `O_NONBLOCK | O_NOCTTY` (a terminal device
+//!   never becomes the controlling terminal), so a path swapped for a FIFO
 //!   after the check still does not block; the opened handle is then checked again.
 //! - A file larger than the limit, or one that grows while it is read, is bounded by reading at
 //!   most one byte past the limit.
 //! - Symlinks are followed: the checks apply to the target.
+//!
+//! # Known limitation
+//!
+//! `O_NONBLOCK` stays set on the handle of a regular file, because clearing it needs `fcntl`,
+//! which would take `unsafe` code or an extra dependency. It has no effect on local file systems,
+//! but a FUSE or network file system that honors it could make a read fail with `WouldBlock`,
+//! which is reported as an I/O error.
 //!
 //! The returned bytes are a snapshot; nothing observes later changes to the file.
 
@@ -78,7 +86,7 @@ fn open_non_blocking(path: &Path) -> std::io::Result<File> {
 
     OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK)
+        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(path)
 }
 

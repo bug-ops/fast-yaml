@@ -255,17 +255,22 @@ impl LintConfig {
         )
     }
 
-    /// Returns whether the rule runs for the file at `path`, or for a source without a path.
+    /// Returns whether the built-in rule runs for the file at `path`, or for a source without
+    /// a path.
     ///
     /// A rule runs when it is enabled and its own `ignore` patterns do not match `path`. With
     /// no path nothing is ignored, as in yamllint for standard input.
     #[must_use]
-    pub fn is_rule_active(&self, code: &str, path: Option<&CanonicalPath>) -> bool {
-        self.is_rule_enabled(code)
-            && path.is_none_or(|path| {
-                RuleName::from_str(code).is_err_and(|_| true)
-                    || RuleName::from_str(code).is_ok_and(|name| !self.rules.is_ignored(name, path))
-            })
+    pub fn is_active(&self, name: RuleName, path: Option<&CanonicalPath>) -> bool {
+        self.rules.is_enabled(name) && path.is_none_or(|path| !self.rules.is_ignored(name, path))
+    }
+
+    /// Like [`LintConfig::is_active`] for a registry code, which may name a custom rule.
+    fn is_code_active(&self, code: &str, path: Option<&CanonicalPath>) -> bool {
+        RuleName::from_str(code).map_or_else(
+            |_| self.is_rule_enabled(code),
+            |name| self.is_active(name, path),
+        )
     }
 
     fn custom_settings(&self, code: &str) -> Option<&RuleSettings<NoOptions>> {
@@ -538,7 +543,7 @@ impl Linter {
                 .rules()
                 .iter()
                 .map(AsRef::as_ref)
-                .filter(|rule| self.config.is_rule_active(rule.code(), path))
+                .filter(|rule| self.config.is_code_active(rule.code(), path))
                 .collect()
         };
 
@@ -586,7 +591,7 @@ impl Linter {
                 .rules()
                 .iter()
                 .map(|rule| rule.code())
-                .filter(|code| self.config.is_rule_active(code, path)),
+                .filter(|code| self.config.is_code_active(code, path)),
         )
     }
 

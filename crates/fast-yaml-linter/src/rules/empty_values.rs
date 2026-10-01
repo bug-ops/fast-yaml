@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
-use crate::nodes::{Node, TagKind};
+use crate::nodes::{Node, ScalarNode, TagKind};
 use crate::source::offset::ByteOffset;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::{ScalarStyle, Value};
@@ -77,7 +77,10 @@ impl super::LintRule for EmptyValuesRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.empty_values.options;
-        if !options.forbid_in_block_mappings && !options.forbid_in_flow_mappings {
+        if !options.forbid_in_block_mappings
+            && !options.forbid_in_flow_mappings
+            && !options.forbid_in_block_sequences
+        {
             return Vec::new();
         }
 
@@ -85,25 +88,34 @@ impl super::LintRule for EmptyValuesRule {
         let severity = config.rules.empty_values.severity_or(Severity::Warning);
         collect_empty_values(context, options)
             .into_iter()
-            .map(|EmptyValue { key, colon }| {
-                let span = source_context.span_at(colon.add_bytes(1), 0);
-                DiagnosticBuilder::new(
-                    self.code(),
-                    severity,
-                    format!("empty value for key '{}'", echo(&key, KEY_LIMIT)),
-                    span,
-                )
-                .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
-                .build()
+            .map(|EmptyValue { kind, indicator }| {
+                let span = source_context.span_at(indicator.add_bytes(1), 0);
+                let message = match kind {
+                    EmptyKind::Mapping(key) => {
+                        format!("empty value for key '{}'", echo(&key, KEY_LIMIT))
+                    }
+                    EmptyKind::BlockSequence => "empty value in block sequence".to_owned(),
+                };
+                DiagnosticBuilder::new(self.code(), severity, message, span)
+                    .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
+                    .build()
             })
             .collect()
     }
 }
 
-/// A mapping entry whose value is missing.
+/// Where a value is missing.
+enum EmptyKind {
+    /// A mapping entry with this key.
+    Mapping(String),
+    /// A `-` entry of a block sequence.
+    BlockSequence,
+}
+
+/// A missing value and the `:` or `-` indicator that introduces it.
 struct EmptyValue {
-    key: String,
-    colon: ByteOffset,
+    kind: EmptyKind,
+    indicator: ByteOffset,
 }
 
 /// Scalar key seen last, awaiting its value.
@@ -140,20 +152,29 @@ fn collect_empty_values(
                     } else {
                         options.forbid_in_block_mappings
                     };
-                    let implicit = scalar.range.start() == scalar.range.end()
-                        && scalar.style == ScalarStyle::Plain
-                        && scalar.tag == TagKind::None
-                        && !scalar.anchored;
-                    if let (true, true, Some(key)) = (forbidden, implicit, pending.take())
+                    if let (true, true, Some(key)) =
+                        (forbidden, is_implicit_null(scalar), pending.take())
                         && let Some(colon) = colon_after(source, key.end)
                     {
                         found.push(EmptyValue {
-                            key: key.text.to_owned(),
-                            colon,
+                            kind: EmptyKind::Mapping(key.text.to_owned()),
+                            indicator: colon,
                         });
                     }
                 }
-                NodeRole::SequenceItem | NodeRole::Root => {}
+                NodeRole::SequenceItem => {
+                    if options.forbid_in_block_sequences
+                        && !scalar.in_flow
+                        && is_implicit_null(scalar)
+                        && let Some(dash) = dash_before(source, scalar.range.start())
+                    {
+                        found.push(EmptyValue {
+                            kind: EmptyKind::BlockSequence,
+                            indicator: dash,
+                        });
+                    }
+                }
+                NodeRole::Root => {}
             },
             Node::Open { .. } => pending = None,
             Node::Close { .. } => {}
@@ -171,6 +192,44 @@ fn collect_empty_values(
     }
 
     found
+}
+
+fn is_implicit_null(scalar: &ScalarNode) -> bool {
+    scalar.range.start() == scalar.range.end()
+        && scalar.style == ScalarStyle::Plain
+        && scalar.tag == TagKind::None
+        && !scalar.anchored
+}
+
+/// Offset of the `-` that ends the code before `from`, skipping blanks, line breaks, comments.
+fn dash_before(source: &str, from: ByteOffset) -> Option<ByteOffset> {
+    let mut end = from.get();
+    loop {
+        let head = source.get(..end)?.trim_end_matches([' ', '\t', '\r', '\n']);
+        let line_start = head.rfind('\n').map_or(0, |at| at + 1);
+        let line = head.get(line_start..)?;
+        let comment = line
+            .char_indices()
+            .find(|&(at, c)| {
+                c == '#'
+                    && line
+                        .get(..at)
+                        .is_none_or(|before| before.ends_with([' ', '\t']))
+            })
+            .map(|(at, _)| at);
+        let code = comment
+            .map_or(line, |at| line.get(..at).unwrap_or(line))
+            .trim_end();
+        if !code.is_empty() {
+            return code
+                .ends_with('-')
+                .then(|| ByteOffset::new(line_start + code.len() - 1));
+        }
+        if line_start == 0 {
+            return None;
+        }
+        end = line_start;
+    }
 }
 
 /// Offset of the `:` that follows `from` after blanks, line breaks and comment lines, if any.
@@ -316,9 +375,11 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
-        // Block sequences with implicit nulls are allowed by default
-        // (is_in_block_sequence_with_implicit_null returns false)
-        assert_eq!(diagnostics, []);
+        let positions: Vec<_> = diagnostics
+            .iter()
+            .map(|d| (d.span.start.line, d.span.start.column))
+            .collect();
+        assert_eq!(positions, [(1, 2), (2, 2)]);
     }
 
     #[test]
@@ -519,9 +580,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        // Currently no detection due to is_in_block_sequence_with_implicit_null
-        // returning false (implementation limitation noted in code)
-        assert_eq!(diagnostics, []);
+        assert_eq!(diagnostics.len(), 2);
     }
 
     #[test]

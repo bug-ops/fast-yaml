@@ -476,7 +476,7 @@ fn quoted_strings_options_are_accepted_in_a_config_file() {
     fy(dir.path(), &[])
         .write_stdin("\"a\": \"it's\"\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("quoted-strings").count(1));
 }
 

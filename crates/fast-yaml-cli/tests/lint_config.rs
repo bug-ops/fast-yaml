@@ -23,7 +23,7 @@ fn issue_324_document_start_present_true_is_enforced() {
     lint(&fixture("valid/bool-forms.yaml"))
         .write_stdin("a: 1\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("document-start"))
         .stdout(predicate::str::contains("missing document start marker"));
 }
@@ -165,7 +165,7 @@ fn line_length_max_from_config_applies() {
     lint(&config)
         .write_stdin("key: this line is longer than twenty characters\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("line-length"));
 }
 
@@ -187,7 +187,7 @@ fn indent_size_from_config_applies() {
     lint(&config)
         .write_stdin("a:\n  b: 1\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("indentation"));
 }
 

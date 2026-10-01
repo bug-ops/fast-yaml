@@ -165,7 +165,7 @@ impl Formatter for TextFormatter {
                             let padding = start
                                 .saturating_sub(line.column_offset.saturating_add(1))
                                 .saturating_add(head.chars().count());
-                            let length = end.saturating_sub(start);
+                            let length = end.saturating_sub(start).max(1);
 
                             write!(out, "{:padding$}{:^<length$}", "", "")?;
                         }
@@ -411,6 +411,26 @@ mod streaming_tests {
         });
         let cut = Findings::cut(diagnostics, &context);
         assert_eq!(TextFormatter::new().format(Findings::Given(&cut)), lazy);
+    }
+
+    #[test]
+    fn zero_width_span_gets_a_single_caret_at_its_column() {
+        let span = Span::new(Location::new(1, 3, 2), Location::new(1, 3, 2));
+        let diagnostic =
+            DiagnosticBuilder::new(DiagnosticCode::EMPTY_VALUES, Severity::Warning, "m", span)
+                .build();
+        let context = SourceContext::new("a: \n");
+        let output = TextFormatter::new().format(Findings::FromSource {
+            diagnostics: &[diagnostic],
+            source: &context,
+        });
+        let source_row = output.lines().find(|l| l.starts_with("   1 |")).unwrap();
+        let caret_row = output.lines().find(|l| l.contains('^')).unwrap();
+        assert_eq!(caret_row.matches('^').count(), 1);
+        assert_eq!(
+            caret_row.chars().position(|c| c == '^'),
+            source_row.chars().position(|c| c == ':').map(|p| p + 1)
+        );
     }
 
     #[test]

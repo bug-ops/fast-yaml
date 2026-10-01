@@ -11,10 +11,10 @@ use fast_yaml_core::{DecodeError, ParseError, Parser};
 use serde_norway::Value;
 
 use crate::config::ignore_source::{
-    TextReadError, ignore_file_lines, ignore_file_names, ignore_lines, read_config_text,
-    string_items,
+    IgnoreFileCause, TextReadError, ignore_file_lines, ignore_file_names, ignore_lines,
+    read_config_text, string_items,
 };
-use crate::config::rules::{EnableOnOverride, value_kind};
+use crate::config::rules::{ApplyMode, value_kind};
 use crate::config::{
     IgnoreBase, IgnorePatterns, IndentSize, LocaleName, Preset, RuleConfigError, RuleName,
     RulesConfig, YamlFiles,
@@ -370,8 +370,14 @@ fn read_text(path: &Path) -> Result<String, ConfigFileError> {
 
 /// Lines of the `ignore-from-file` files, named relative to the config file's directory.
 fn ignore_files(path: &Path, names: &[String]) -> Result<Vec<String>, ConfigFileError> {
-    ignore_file_lines(config_dir(path), names)
-        .map_err(|error| ConfigFileError::from_read(&error.path, error.cause))
+    ignore_file_lines(config_dir(path), names).map_err(|error| match error.cause {
+        IgnoreFileCause::Text(cause) => ConfigFileError::from_read(&error.path, cause),
+        _ => ConfigFileError::InvalidKey {
+            path: path.to_owned(),
+            key: TopLevelKey::IgnoreFromFile,
+            message: error.to_string(),
+        },
+    })
 }
 
 /// Canonical directory of the config file, the anchor of `ignore` patterns.
@@ -526,7 +532,7 @@ impl ConfigFile {
             None => {
                 let mut rules = RulesConfig::default();
                 rules
-                    .apply_entries(top.rules, EnableOnOverride::No, ignore_base)
+                    .apply_entries(top.rules, ApplyMode::File, ignore_base)
                     .map_err(invalid_rules)?;
                 (rules, None)
             }
@@ -535,7 +541,12 @@ impl ConfigFile {
             |key, error: crate::config::InvalidPathPattern| ConfigFileError::InvalidKey {
                 path: path.to_owned(),
                 key,
-                message: error.to_string(),
+                // patterns read from a file are never echoed
+                message: if key == TopLevelKey::IgnoreFromFile {
+                    "the listed patterns cannot be combined".to_owned()
+                } else {
+                    error.to_string()
+                },
             };
         let ignore = match (top.ignore, top.ignore_from_file) {
             (Some(_), Some(_)) => {
@@ -596,13 +607,18 @@ impl ConfigFile {
             match known {
                 TopLevelKey::Rules => top.rules = value,
                 TopLevelKey::Extends => top.extends = Some(extends_of(&value).map_err(invalid)?),
-                TopLevelKey::Ignore => top.ignore = Some(ignore_lines(value).map_err(invalid)?),
+                TopLevelKey::Ignore => {
+                    top.ignore = Some(ignore_lines(value).map_err(|e| invalid(e.to_string()))?);
+                }
                 TopLevelKey::IgnoreFromFile => {
-                    top.ignore_from_file = Some(ignore_file_names(value).map_err(invalid)?);
+                    top.ignore_from_file =
+                        Some(ignore_file_names(value).map_err(|e| invalid(e.to_string()))?);
                 }
                 TopLevelKey::YamlFiles => {
-                    top.yaml_files =
-                        Some(string_items(value, "file name patterns").map_err(invalid)?);
+                    top.yaml_files = Some(
+                        string_items(value, "file name patterns")
+                            .map_err(|e| invalid(e.to_string()))?,
+                    );
                 }
                 TopLevelKey::MaxInputBytes => {
                     top.max_input_bytes = Some(parse_limit(path, known, &value)?);
