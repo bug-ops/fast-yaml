@@ -7,7 +7,7 @@ use std::str::FromStr;
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
 use crate::directives::Directives;
 use crate::rules::MarkerPresence;
-use crate::scan::{ScanCollector, SourceScan, lint_load_options};
+use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{NormalizedInput, Parser, Value};
@@ -399,7 +399,12 @@ impl Linter {
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
         let context = LintContext::new(source);
-        let mut collector = ScanCollector::new(&normalized, source, context.source_context());
+        let mut collector = ScanCollector::new(
+            &normalized,
+            source,
+            context.source_context(),
+            self.scan_needs(),
+        );
         let docs = Parser::parse_normalized_observed(
             &normalized,
             &StreamBudget::new(self.config.parse_limits),
@@ -433,6 +438,17 @@ impl Linter {
         }
 
         Ok(finish(diagnostics, directives))
+    }
+
+    /// The scan products the enabled rules read.
+    fn scan_needs(&self) -> ScanNeeds {
+        ScanNeeds::of_rules(
+            self.registry
+                .rules()
+                .iter()
+                .map(|rule| rule.code())
+                .filter(|code| self.config.is_rule_enabled(code)),
+        )
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -471,8 +487,12 @@ impl Linter {
         let context = LintContext::new(source);
         // Comments and markers come from the source itself, under the configured limits; a source
         // that does not load is an error here, as it is in `lint`
-        let (scan, failure) =
-            SourceScan::scan(source, context.source_context(), self.config.parse_limits);
+        let (scan, failure) = SourceScan::scan(
+            source,
+            context.source_context(),
+            self.config.parse_limits,
+            self.scan_needs(),
+        );
         if let Some(error) = failure {
             return Err(error.into());
         }

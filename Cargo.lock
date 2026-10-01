@@ -482,6 +482,7 @@ dependencies = [
  "ignore",
  "indoc",
  "jsonschema",
+ "peak_alloc",
  "regex",
  "saphyr-parser",
  "serde",

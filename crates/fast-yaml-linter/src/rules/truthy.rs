@@ -6,11 +6,11 @@ use std::fmt;
 
 use crate::echo::{KEY_LIMIT, echo};
 
-use super::node_roles::{NodeRole, RoleTracker};
+use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
+use crate::nodes::{Node, TagKind};
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
-use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
+use fast_yaml_core::{ScalarStyle, Value};
 
 /// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
 ///
@@ -199,47 +199,27 @@ impl super::LintRule for TruthyRule {
         let allowed: Vec<&str> = options.allowed_values.iter().map(|v| v.as_str()).collect();
         let severity = config.rules.truthy.severity_or(self.default_severity());
         let source_context = context.source_context();
+        let index = context.nodes();
 
         let mut diagnostics = Vec::new();
-        let mut roles = RoleTracker::default();
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "source passed the guarded parse in the same lint call"
-        )]
-        let mut parser = SaphyrParser::new_from_str(context.source());
-
-        while let Some(Ok((event, span))) = parser.next_event() {
-            match event {
-                Event::Scalar(text, style, _, tag) => {
-                    let slot = match roles.node() {
-                        NodeRole::MappingKey if options.check_keys => Slot::Key,
-                        NodeRole::MappingValue | NodeRole::SequenceItem | NodeRole::Root => {
-                            Slot::Value
-                        }
-                        NodeRole::MappingKey => continue,
-                    };
-                    if style != ScalarStyle::Plain || tag.is_some() {
-                        continue;
-                    }
-                    if let Some(msg) = message(slot, &text, &allowed) {
-                        let span = source_context.span_of_bytes(source_context.byte_range_of(span));
-                        diagnostics.push(
-                            DiagnosticBuilder::new(self.code(), severity, msg, span)
-                                .build_with_context(source_context),
-                        );
-                    }
-                }
-                Event::MappingStart(..) => {
-                    roles.start_mapping(context.source(), source_context.byte_range_of(span));
-                }
-                Event::SequenceStart(..) => {
-                    roles.start_sequence(context.source(), source_context.byte_range_of(span));
-                }
-                Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-                Event::Alias(..) => {
-                    roles.node();
-                }
-                _ => {}
+        for node in index.nodes() {
+            let Node::Scalar(scalar) = node else {
+                continue;
+            };
+            let slot = match scalar.role {
+                NodeRole::MappingKey if options.check_keys => Slot::Key,
+                NodeRole::MappingValue | NodeRole::SequenceItem | NodeRole::Root => Slot::Value,
+                NodeRole::MappingKey => continue,
+            };
+            if scalar.style != ScalarStyle::Plain || scalar.tag != TagKind::None {
+                continue;
+            }
+            if let Some(msg) = message(slot, index.text(scalar), &allowed) {
+                let span = source_context.span_of_bytes(scalar.range);
+                diagnostics.push(
+                    DiagnosticBuilder::new(self.code(), severity, msg, span)
+                        .build_with_context(source_context),
+                );
             }
         }
 

@@ -34,7 +34,9 @@ mod directives;
 mod echo;
 mod linter;
 mod location;
+mod nodes;
 mod scan;
+mod set_members;
 mod severity;
 
 pub mod config;

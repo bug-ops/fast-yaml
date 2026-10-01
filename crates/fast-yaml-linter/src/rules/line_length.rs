@@ -8,8 +8,9 @@ use crate::config::RuleOptions;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
-use fast_yaml_core::Value;
-use saphyr_parser::{Event, Parser as SaphyrParser};
+use fast_yaml_core::events::{Event, EventStream};
+use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::{NormalizedInput, Value};
 
 use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 
@@ -86,18 +87,20 @@ impl LineLengthOptions {
 ///
 /// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
 fn is_inline_mapping_of_one_word(line: &str) -> bool {
+    let Ok(input) = NormalizedInput::new(line) else {
+        return false;
+    };
+    let line = input.as_str();
     let context = SourceContext::new(line);
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "a line of a source that passed the guarded parse in the same lint call"
-    )]
-    let mut parser = SaphyrParser::new_from_str(line);
     let mut roles = RoleTracker::default();
     let mut seen_mapping = false;
-    while let Some(Ok((event, span))) = parser.next_event() {
-        let range = context.byte_range_of(span);
-        match event {
-            Event::MappingStart(..) => {
+    for item in EventStream::new(&input, ParseLimits::default()) {
+        let Ok(item) = item else {
+            break;
+        };
+        let range = context.byte_range_between(item.at, item.end);
+        match item.event {
+            Event::MappingStart { .. } => {
                 if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
                 {
                     return false;
@@ -105,22 +108,29 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
                 seen_mapping = true;
                 roles.start_mapping(line, range);
             }
-            Event::SequenceStart(..) => {
+            Event::SequenceStart { .. } => {
                 roles.start_sequence(line, range);
             }
             Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-            Event::Alias(..) => {
+            Event::Alias(_) => {
                 roles.node();
             }
-            Event::Scalar(_, _, anchor, tag) => {
+            Event::Scalar { anchor, tag, .. } => {
                 let role = roles.node();
-                if role == NodeRole::MappingValue && seen_mapping && anchor == 0 && tag.is_none() {
+                if role == NodeRole::MappingValue
+                    && seen_mapping
+                    && anchor.is_none()
+                    && tag.is_none()
+                {
                     return line
                         .get(range.start().get()..)
                         .is_some_and(|rest| !rest.contains(' '));
                 }
             }
-            _ => {}
+            Event::StreamStart
+            | Event::StreamEnd
+            | Event::DocumentStart { .. }
+            | Event::DocumentEnd => {}
         }
     }
     false

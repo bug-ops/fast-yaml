@@ -2,17 +2,21 @@
 
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
-use std::ops::RangeInclusive;
 
-use fast_yaml_core::events::{AnchorId, Event, EventItem, ScalarStyle};
+use fast_yaml_core::events::{AnchorId, Event, EventItem};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
+use fast_yaml_core::scalar::core_tag_suffix;
 use fast_yaml_core::{
     CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, ParseError, Parser,
     SetValues, Value, resolve_scalar,
 };
 
+use crate::nodes::{NodeIndex, ScalarNode, TagKind};
+use crate::rules::node_roles::RoleTracker;
+use crate::set_members::{SetMember, SetMembers, may_contain_set};
 use crate::source::offset::{ByteOffset, ByteRange};
-use crate::{Location, SourceContext, Span, comments::Comment};
+use crate::tokenizer::ScalarRanges;
+use crate::{DiagnosticCode, Location, SourceContext, Span, comments::Comment};
 
 /// How the linter loads a document: a repeated `<<` and a `!!set` member with a value load, so
 /// the `duplicate-key` and `set-values` rules can report them instead of the load failing.
@@ -84,16 +88,75 @@ pub struct KeyRepeat {
     pub kind: RepeatedKey,
 }
 
+/// The optional products of a scan; comments and document markers are always collected.
+///
+/// Collecting only what the enabled rules read keeps the single loader pass cheap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ScanNeeds(u8);
+
+impl ScanNeeds {
+    pub(crate) const NONE: Self = Self(0);
+    /// Resolved mapping keys, for repeated-key detection.
+    pub(crate) const KEYS: Self = Self(1);
+    /// The node index of the value rules.
+    pub(crate) const NODES: Self = Self(1 << 1);
+    /// `!!set` members that carry a value.
+    pub(crate) const SETS: Self = Self(1 << 2);
+    /// Byte ranges of block scalars, quoted scalars and flow collections.
+    pub(crate) const FLOW: Self = Self(1 << 3);
+    pub(crate) const ALL: Self = Self(Self::KEYS.0 | Self::NODES.0 | Self::SETS.0 | Self::FLOW.0);
+
+    /// What the rules with these codes read.
+    pub(crate) fn of_rules<'c>(codes: impl IntoIterator<Item = &'c str>) -> Self {
+        codes.into_iter().fold(Self::NONE, |needs, code| {
+            needs.union(match code {
+                DiagnosticCode::DUPLICATE_KEY => Self::KEYS,
+                DiagnosticCode::TRUTHY
+                | DiagnosticCode::QUOTED_STRINGS
+                | DiagnosticCode::FLOAT_VALUES
+                | DiagnosticCode::EMPTY_VALUES => Self::NODES,
+                DiagnosticCode::SET_VALUES => Self::SETS,
+                DiagnosticCode::BRACES
+                | DiagnosticCode::BRACKETS
+                | DiagnosticCode::COLONS
+                | DiagnosticCode::COMMAS
+                | DiagnosticCode::HYPHENS
+                | DiagnosticCode::COMMENTS_INDENTATION => Self::FLOW,
+                _ => Self::NONE,
+            })
+        })
+    }
+
+    const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Whether everything in `other` is collected by `self`.
+    pub(crate) const fn covers(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// Whether any product needs the byte range of every event.
+    const fn wants_ranges(self) -> bool {
+        self.0 & (Self::NODES.0 | Self::SETS.0 | Self::FLOW.0) != 0
+    }
+}
+
 /// Everything the rules need from the parser events of one source.
 #[derive(Debug, Default)]
 pub struct SourceScan<'a> {
-    pub comments: Vec<Comment<'a>>,
-    pub documents: Vec<DocumentMarkers>,
-    pub key_repeats: Vec<KeyRepeat>,
-    /// Content lines of every literal and folded scalar, in source order.
-    pub block_scalars: Vec<RangeInclusive<usize>>,
-    /// Whether the parser pass completed; when not, only `key_repeats` is filled.
-    pub complete: bool,
+    pub(crate) comments: Vec<Comment<'a>>,
+    pub(crate) documents: Vec<DocumentMarkers>,
+    pub(crate) key_repeats: Vec<KeyRepeat>,
+    /// Byte ranges of block and quoted scalars and of flow collections.
+    pub(crate) scalars: ScalarRanges,
+    pub(crate) nodes: NodeIndex<'a>,
+    pub(crate) set_members: Vec<SetMember>,
+    /// The optional products this scan collected.
+    pub(crate) gathered: ScanNeeds,
+    /// Whether the parser pass completed; when not, the products cover only the events before
+    /// the error and the comments are missing.
+    pub(crate) complete: bool,
 }
 
 /// What a mapping key stands for when two keys of one mapping are compared.
@@ -144,17 +207,18 @@ impl<'a> SourceScan<'a> {
     /// its normalized form and the positions are mapped back, so the scan agrees with the other
     /// rules on the text of `context`. When the pass fails the scan is incomplete (see
     /// [`SourceScan::complete`]), holds only the key repeats found before the error, and the
-    /// error is returned.
+    /// error is returned. Only the products named by `needs` are collected.
     pub fn scan(
         source: &'a str,
         context: &SourceContext<'_>,
         limits: ParseLimits,
+        needs: ScanNeeds,
     ) -> (Self, Option<ParseError>) {
         let input = match NormalizedInput::new(source) {
             Ok(input) => input,
             Err(error) => return (Self::default(), Some(error)),
         };
-        let mut collector = ScanCollector::new(&input, source, context);
+        let mut collector = ScanCollector::new(&input, source, context, needs);
         let loaded = Parser::parse_normalized_observed(
             &input,
             &StreamBudget::new(limits),
@@ -167,11 +231,12 @@ impl<'a> SourceScan<'a> {
         }
     }
 
-    /// Lazy form of [`scan`](Self::scan) with the default limits for a context nobody scanned.
+    /// Lazy form of [`scan`](Self::scan) with the default limits and every product, for a
+    /// context nobody scanned.
     ///
     /// The result is incomplete when the source does not parse.
     pub fn of_source(source: &'a str, context: &SourceContext<'_>) -> Self {
-        Self::scan(source, context, ParseLimits::default()).0
+        Self::scan(source, context, ParseLimits::default(), ScanNeeds::ALL).0
     }
 }
 
@@ -190,19 +255,24 @@ pub struct ScanCollector<'a, 'c, 'n> {
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
     open: Option<(DocumentStart, usize)>,
+    needs: ScanNeeds,
     mappings: Vec<MappingKeys>,
     anchors: HashMap<AnchorId, AnchoredKey>,
     key_repeats: Vec<KeyRepeat>,
-    block_scalars: Vec<RangeInclusive<usize>>,
+    roles: RoleTracker,
+    nodes: NodeIndex<'a>,
+    scalars: ScalarRanges,
+    sets: Option<SetMembers>,
 }
 
 impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
     /// `input` must be the normalized form of `source`, whose events will be observed;
-    /// `context` is the line table of `source`.
+    /// `context` is the line table of `source`; only the products named by `needs` are collected.
     pub fn new(
         input: &'n NormalizedInput<'n>,
         source: &'a str,
         context: &'c SourceContext<'c>,
+        needs: ScanNeeds,
     ) -> Self {
         let remap = (input.as_str().len() != source.len()).then(|| Remap {
             input,
@@ -215,10 +285,15 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
             scanner: CommentScanner::new(input),
             documents: Vec::new(),
             open: None,
+            needs,
             mappings: Vec::new(),
             anchors: HashMap::new(),
             key_repeats: Vec::new(),
-            block_scalars: Vec::new(),
+            roles: RoleTracker::default(),
+            nodes: NodeIndex::new(source),
+            scalars: ScalarRanges::default(),
+            sets: (needs.covers(ScanNeeds::SETS) && may_contain_set(source))
+                .then(SetMembers::default),
         }
     }
 
@@ -242,6 +317,18 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
 
     pub fn observe(&mut self, item: &EventItem<'_>) {
         let _ = self.scanner.observe(item);
+        if self.needs.wants_ranges() {
+            let range = self.byte_range(item);
+            if self.needs.covers(ScanNeeds::FLOW) {
+                self.scalars.observe(self.source, &item.event, range);
+            }
+            if let Some(sets) = &mut self.sets {
+                sets.observe(item, range);
+            }
+            if self.needs.covers(ScanNeeds::NODES) {
+                self.observe_nodes(item, range);
+            }
+        }
         match &item.event {
             Event::DocumentStart { explicit } => {
                 self.anchors.clear();
@@ -273,12 +360,49 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                     first_line,
                 });
             }
-            _ => self.observe_node(item),
+            _ if self.needs.covers(ScanNeeds::KEYS) => self.observe_keys(item),
+            _ => {}
+        }
+    }
+
+    /// Adds the node of `item`, which covers `range`, to the index.
+    fn observe_nodes(&mut self, item: &EventItem<'_>, range: ByteRange) {
+        match &item.event {
+            Event::MappingStart { .. } => {
+                self.roles.start_mapping(self.source, range);
+                self.nodes.push_open();
+            }
+            Event::SequenceStart { .. } => {
+                self.roles.start_sequence(self.source, range);
+                self.nodes.push_open();
+            }
+            Event::MappingEnd | Event::SequenceEnd => self.roles.leave(),
+            Event::Alias(_) => {
+                let role = self.roles.node();
+                self.nodes.push_alias(range, role);
+            }
+            Event::Scalar {
+                value, style, tag, ..
+            } => {
+                let in_flow = self.roles.in_flow();
+                let role = self.roles.node();
+                let tag = match tag {
+                    None => TagKind::None,
+                    Some(tag) if core_tag_suffix(tag).is_some() => TagKind::Core,
+                    Some(_) => TagKind::Other,
+                };
+                let scalar = ScalarNode::new(range, *style, role, in_flow, tag);
+                self.nodes.push_scalar(scalar, value);
+            }
+            Event::StreamStart
+            | Event::StreamEnd
+            | Event::DocumentStart { .. }
+            | Event::DocumentEnd => {}
         }
     }
 
     /// Tracks mappings, anchors and keys.
-    fn observe_node(&mut self, item: &EventItem<'_>) {
+    fn observe_keys(&mut self, item: &EventItem<'_>) {
         match &item.event {
             Event::MappingStart { anchor, .. } | Event::SequenceStart { anchor, .. } => {
                 if let Some(id) = anchor {
@@ -323,13 +447,6 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 anchor,
                 tag,
             } => {
-                if matches!(style, ScalarStyle::Literal | ScalarStyle::Folded) {
-                    // The token starts at its content and ends on the line that stopped it
-                    let last = item.end.line.saturating_sub(1);
-                    if last >= item.at.line {
-                        self.block_scalars.push(item.at.line..=last);
-                    }
-                }
                 let key_kind = match item.role {
                     Some(NodeRole::Key) => Some(RepeatedKey::Ordinary),
                     Some(NodeRole::MergeKey) => Some(RepeatedKey::Merge),
@@ -380,9 +497,16 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
     }
 
     /// The scan of a source whose parse failed: only the key repeats seen before the error.
-    pub fn finish_failed(self) -> SourceScan<'a> {
+    pub fn finish_failed(mut self) -> SourceScan<'a> {
+        if self.needs.covers(ScanNeeds::FLOW) {
+            self.scalars.fail(self.source.len());
+        }
         SourceScan {
             key_repeats: self.key_repeats,
+            scalars: self.scalars,
+            nodes: self.nodes,
+            set_members: self.sets.map(SetMembers::into_members).unwrap_or_default(),
+            gathered: self.needs,
             ..SourceScan::default()
         }
     }
@@ -407,7 +531,10 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
             comments,
             documents: self.documents,
             key_repeats: self.key_repeats,
-            block_scalars: self.block_scalars,
+            scalars: self.scalars,
+            nodes: self.nodes,
+            set_members: self.sets.map(SetMembers::into_members).unwrap_or_default(),
+            gathered: self.needs,
             complete: true,
         }
     }
@@ -415,6 +542,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use crate::{CommentKind, LintContext};
 
     fn markers(source: &str) -> Vec<(Option<usize>, Option<usize>, usize)> {
@@ -545,5 +673,74 @@ mod tests {
             &source[repeat.span.start.offset..repeat.span.end.offset],
             "b"
         );
+    }
+
+    fn scan_with(source: &str, needs: ScanNeeds) -> (SourceScan<'_>, Option<ParseError>) {
+        SourceScan::scan(
+            source,
+            &SourceContext::new(source),
+            ParseLimits::default(),
+            needs,
+        )
+    }
+
+    #[test]
+    fn rules_name_the_products_they_read() {
+        let needs = |codes: &[&'static str]| ScanNeeds::of_rules(codes.iter().copied());
+        assert_eq!(needs(&[DiagnosticCode::LINE_LENGTH]), ScanNeeds::NONE);
+        assert_eq!(needs(&[DiagnosticCode::DUPLICATE_KEY]), ScanNeeds::KEYS);
+        assert_eq!(needs(&[DiagnosticCode::TRUTHY]), ScanNeeds::NODES);
+        assert_eq!(needs(&[DiagnosticCode::SET_VALUES]), ScanNeeds::SETS);
+        assert_eq!(needs(&[DiagnosticCode::COMMAS]), ScanNeeds::FLOW);
+        let all = needs(&[
+            DiagnosticCode::DUPLICATE_KEY,
+            DiagnosticCode::EMPTY_VALUES,
+            DiagnosticCode::SET_VALUES,
+            DiagnosticCode::BRACES,
+        ]);
+        assert_eq!(all, ScanNeeds::ALL);
+        assert!(all.covers(ScanNeeds::NODES));
+        assert!(!ScanNeeds::NODES.covers(ScanNeeds::FLOW));
+    }
+
+    #[test]
+    fn scan_collects_only_what_was_asked_for() {
+        let source = "a: [x, 'y']\nb: |\n  z\nc: !!set {m: 1}\n";
+        let (none, _) = scan_with(source, ScanNeeds::NONE);
+        assert_eq!(none.nodes.nodes().count(), 0);
+        assert_eq!(none.scalars.block.len(), 0);
+        assert_eq!(none.set_members.len(), 0);
+        assert!(none.complete);
+
+        let (nodes, _) = scan_with(source, ScanNeeds::NODES);
+        assert!(nodes.nodes.nodes().count() > 0);
+        assert_eq!(nodes.scalars.block.len(), 0);
+
+        let (flow, _) = scan_with(source, ScanNeeds::FLOW);
+        assert_eq!(flow.scalars.block.len(), 1);
+        assert_eq!(flow.nodes.nodes().count(), 0);
+
+        let (sets, _) = scan_with(source, ScanNeeds::SETS);
+        assert_eq!(sets.set_members.len(), 1);
+    }
+
+    #[test]
+    fn context_falls_back_to_a_full_scan_for_what_the_lint_scan_skipped() {
+        let source = "a: yes\nb: |\n  {x}\n";
+        let context = LintContext::new(source);
+        let (none, _) = scan_with(source, ScanNeeds::NONE);
+        let context = context.with_scan(none);
+        assert!(context.nodes().nodes().count() > 0);
+        assert!(context.in_block_scalar(3));
+    }
+
+    #[test]
+    fn failed_scan_keeps_the_products_before_the_error() {
+        let source = "a: yes\nb: [1, 2\nc: 'x\n";
+        let (scan, error) = scan_with(source, ScanNeeds::ALL);
+        assert!(error.is_some());
+        assert!(!scan.complete);
+        assert!(scan.nodes.nodes().count() >= 3);
+        assert_eq!(scan.comments.len(), 0);
     }
 }

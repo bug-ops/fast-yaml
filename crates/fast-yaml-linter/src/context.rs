@@ -4,13 +4,17 @@ use crate::{
     Location, Span,
     comments::Comment,
     diagnostic::{ContextLine, DiagnosticContext},
-    scan::{DocumentMarkers, IMPLICIT_DOCUMENT, KeyRepeat, SourceScan},
+    nodes::NodeIndex,
+    scan::{DocumentMarkers, IMPLICIT_DOCUMENT, KeyRepeat, ScanNeeds, SourceScan},
+    set_members::SetMember,
     source::offset::{ByteOffset, ByteRange},
     tokenizer::{FlowIndex, FlowTokenizer},
 };
 use fast_yaml_core::SourcePosition;
+#[cfg(test)]
 use saphyr_parser::{Marker, Span as SaphyrSpan};
 use std::collections::HashMap;
+use std::ops::RangeInclusive;
 use std::sync::OnceLock;
 
 /// Extracts source code context for diagnostics.
@@ -217,6 +221,11 @@ impl<'a> SourceContext<'a> {
             line_ends,
             line_index,
         }
+    }
+
+    /// The text this context indexes.
+    pub(crate) const fn source(&self) -> &'a str {
+        self.source
     }
 
     /// Char-start table of the 0-indexed line, built on first use; `None` for ASCII lines
@@ -451,35 +460,41 @@ impl<'a> SourceContext<'a> {
         ByteOffset::new(self.get_line_offset(line_num))
     }
 
-    /// Converts a saphyr marker (char-based column) to a byte offset.
+    /// Converts a 1-indexed `line` and a 0-indexed char `column` to a byte offset.
     ///
-    /// This is the only place that reads `Marker::col`; a marker past the end maps to the
-    /// end of its line, or of the source when the line does not exist.
-    #[expect(clippy::disallowed_methods)]
-    pub(crate) fn byte_offset_of(&self, marker: Marker) -> ByteOffset {
-        let Some(line) = self.get_line(marker.line()) else {
+    /// A column past the end maps to the end of its line, or of the source when the line does
+    /// not exist.
+    pub(crate) fn byte_offset_at(&self, line: usize, column: usize) -> ByteOffset {
+        let Some(text) = self.get_line(line) else {
             return ByteOffset::new(self.source.len());
         };
-        let byte_col = marker
-            .line()
+        let byte_col = line
             .checked_sub(1)
             .and_then(|idx| self.char_starts(idx))
             .map_or_else(
-                || marker.col().min(line.len()),
-                |table| table.byte_of(marker.col(), line.len()),
+                || column.min(text.len()),
+                |table| table.byte_of(column, text.len()),
             );
-        self.line_start(marker.line()).add_bytes(byte_col)
+        self.line_start(line).add_bytes(byte_col)
+    }
+
+    /// Converts a saphyr marker (char-based column) to a byte offset.
+    #[cfg(test)]
+    #[expect(clippy::disallowed_methods)]
+    pub(crate) fn byte_offset_of(&self, marker: Marker) -> ByteOffset {
+        self.byte_offset_at(marker.line(), marker.col())
     }
 
     /// Converts a saphyr marker to a [`Location`] with a 1-indexed char column.
+    #[cfg(test)]
+    #[expect(clippy::disallowed_methods)]
     pub(crate) fn location_of(&self, marker: Marker) -> Location {
         let offset = self.byte_offset_of(marker);
-        #[expect(clippy::disallowed_methods)]
-        let column = marker.col() + 1;
-        Location::new(marker.line(), column, offset.get())
+        Location::new(marker.line(), marker.col() + 1, offset.get())
     }
 
     /// Converts a saphyr span to a [`Span`].
+    #[cfg(test)]
     pub(crate) fn span_of(&self, span: SaphyrSpan) -> Span {
         Span::new(self.location_of(span.start), self.location_of(span.end))
     }
@@ -487,13 +502,9 @@ impl<'a> SourceContext<'a> {
     /// Converts the positions of a parser event to a byte range.
     pub(crate) fn byte_range_between(&self, from: SourcePosition, to: SourcePosition) -> ByteRange {
         ByteRange::new(
-            self.byte_offset_of(Self::marker_at(from)),
-            self.byte_offset_of(Self::marker_at(to)),
+            self.byte_offset_at(from.line, from.column.saturating_sub(1)),
+            self.byte_offset_at(to.line, to.column.saturating_sub(1)),
         )
-    }
-
-    fn marker_at(position: SourcePosition) -> Marker {
-        Marker::new(0, position.line, position.column.saturating_sub(1))
     }
 
     /// Converts a byte range to a [`Span`] with line and char-column locations.
@@ -507,14 +518,6 @@ impl<'a> SourceContext<'a> {
     /// Builds a [`Span`] covering `len` bytes starting at `start`.
     pub(crate) fn span_at(&self, start: ByteOffset, len: usize) -> Span {
         self.span_of_bytes(ByteRange::new(start, start.add_bytes(len)))
-    }
-
-    /// Converts a saphyr span to a byte range.
-    pub(crate) fn byte_range_of(&self, span: SaphyrSpan) -> ByteRange {
-        ByteRange::new(
-            self.byte_offset_of(span.start),
-            self.byte_offset_of(span.end),
-        )
     }
 }
 
@@ -1035,10 +1038,13 @@ pub struct LintContext<'a> {
     source: &'a str,
     source_context: SourceContext<'a>,
     scan: OnceLock<SourceScan<'a>>,
+    /// Scan with every product, for what the lint scan did not collect.
+    full_scan: OnceLock<SourceScan<'a>>,
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
     key_index: OnceLock<KeyIndex<'a>>,
     flow_index: OnceLock<FlowIndex>,
+    block_lines: OnceLock<Vec<RangeInclusive<usize>>>,
     /// 1-based line number where the current document starts within `source`.
     doc_start_line: usize,
 }
@@ -1049,9 +1055,11 @@ impl<'a> LintContext<'a> {
     /// The context immediately builds line offset indexes but defers
     /// parsing comments and computing line metadata until first access.
     ///
-    /// The rules parse `source` themselves, so it must have passed
-    /// `fast_yaml_core::NormalizedInput::check_scan_ahead` (see [`LintRule::check`](crate::rules::LintRule::check));
-    /// [`Linter`](crate::Linter) does this before it builds a context.
+    /// What the rules read from the source (comments, document markers, nodes) comes from one
+    /// guarded loader pass: the one [`Linter`](crate::Linter) runs while it loads the documents,
+    /// or, for a context built here, a lazy pass under the default
+    /// [`ParseLimits`](fast_yaml_core::limits::ParseLimits) (see
+    /// [`LintRule::check`](crate::rules::LintRule::check)).
     ///
     /// # Examples
     ///
@@ -1067,10 +1075,12 @@ impl<'a> LintContext<'a> {
             source,
             source_context: SourceContext::new(source),
             scan: OnceLock::new(),
+            full_scan: OnceLock::new(),
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
             key_index: OnceLock::new(),
             flow_index: OnceLock::new(),
+            block_lines: OnceLock::new(),
             doc_start_line: 1,
         }
     }
@@ -1161,9 +1171,33 @@ impl<'a> LintContext<'a> {
         self.scan().complete
     }
 
+    /// The scan that holds `needs`: the lint scan, or a full one when that collected less.
+    fn scan_with(&self, needs: ScanNeeds) -> &SourceScan<'a> {
+        let scan = self.scan();
+        if scan.gathered.covers(needs) {
+            scan
+        } else {
+            self.full_scan
+                .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
+        }
+    }
+
     /// Whether `line` is a content line of a literal or folded scalar.
     pub(crate) fn in_block_scalar(&self, line: usize) -> bool {
-        let scalars = &self.scan().block_scalars;
+        let scalars = self.block_lines.get_or_init(|| {
+            let context = &self.source_context;
+            self.scan_with(ScanNeeds::FLOW)
+                .scalars
+                .block
+                .iter()
+                .filter_map(|range| {
+                    // The token starts at its content and ends on the line that stopped it
+                    let first = context.location_at(range.start()).line;
+                    let last = context.location_at(range.end()).line.saturating_sub(1);
+                    (last >= first).then_some(first..=last)
+                })
+                .collect()
+        });
         let after = scalars.partition_point(|range| *range.end() < line);
         scalars
             .get(after)
@@ -1172,7 +1206,17 @@ impl<'a> LintContext<'a> {
 
     /// Returns the keys that repeat an earlier key of their mapping.
     pub(crate) fn key_repeats(&self) -> &[KeyRepeat] {
-        &self.scan().key_repeats
+        &self.scan_with(ScanNeeds::KEYS).key_repeats
+    }
+
+    /// Returns the scalars, aliases and collection starts of the source.
+    pub(crate) fn nodes(&self) -> &NodeIndex<'a> {
+        &self.scan_with(ScanNeeds::NODES).nodes
+    }
+
+    /// Returns the `!!set` members that carry a value.
+    pub(crate) fn set_members(&self) -> &[SetMember] {
+        &self.scan_with(ScanNeeds::SETS).set_members
     }
 
     /// Returns the explicit markers and first line of every parsed document.
@@ -1289,7 +1333,7 @@ impl<'a> LintContext<'a> {
     pub(crate) fn flow_tokenizer(&self) -> FlowTokenizer<'_> {
         let index = self
             .flow_index
-            .get_or_init(|| FlowIndex::new(self.source, &self.source_context));
+            .get_or_init(|| FlowIndex::from_scan(self.scan_with(ScanNeeds::FLOW), self.source));
         FlowTokenizer::new(index, &self.source_context)
     }
 

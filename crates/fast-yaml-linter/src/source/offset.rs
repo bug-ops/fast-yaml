@@ -4,7 +4,7 @@
 //! mixed up with char indices or columns. Conversion happens only in `SourceContext`.
 
 /// A byte offset into the source text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ByteOffset(usize);
 
 impl ByteOffset {
