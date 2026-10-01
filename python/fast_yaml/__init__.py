@@ -113,7 +113,8 @@ def safe_load(
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
             A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
             longer than this raises ``ValueError``.
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Returns:
         The parsed YAML document as Python objects (dict, list, str, int, float, bool, None).
@@ -173,7 +174,8 @@ def safe_load_all(
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
             A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
             longer than this raises ``ValueError``.
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Yields:
         Parsed YAML documents.
@@ -413,7 +415,8 @@ def load(
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
             A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
             longer than this raises ``ValueError``.
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Returns:
         The parsed YAML document as Python objects.
@@ -486,7 +489,8 @@ def load_all(
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
             A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
             longer than this raises ``ValueError``.
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Yields:
         Parsed YAML documents.

@@ -143,7 +143,8 @@ def safe_load(
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Returns:
         The parsed YAML document as Python objects
@@ -173,7 +174,8 @@ def safe_load_all(
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Returns:
         A list of parsed YAML documents
@@ -313,7 +315,8 @@ def load(
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Returns:
         The parsed YAML document as Python objects
@@ -346,7 +349,8 @@ def load_all(
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
         max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
-        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ``ValueError``.
+        max_documents: Maximum documents in the stream, 1..=10M (default: 100 000);
+            more raises ``ValueError``.
 
     Returns:
         A list of parsed YAML documents
@@ -754,7 +758,8 @@ class batch:  # noqa: N801
         """Configuration for batch file processing.
 
         ``max_depth`` applies to ``process_files`` and ``format_files``;
-        ``max_scan_ahead`` and ``max_documents`` to both; ``max_alias_bytes`` to ``process_files`` only.
+        ``max_scan_ahead`` and ``max_documents`` to both; ``max_alias_bytes`` to
+        ``process_files`` only.
         ``indent`` must be in 1..=9 and ``width`` in 20..=1000.
         Non-integer values raise ``TypeError``, out-of-range values ``ValueError``.
         """
