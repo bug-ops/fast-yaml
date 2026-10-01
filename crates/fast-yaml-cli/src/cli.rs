@@ -120,7 +120,7 @@ impl Cli {
 /// Discovery and parallelism flags shared by every batch-capable subcommand.
 #[derive(Args, Debug)]
 pub struct BatchArgs {
-    /// Include files matching glob pattern, case-insensitive (can be repeated; default: *.yaml, *.yml)
+    /// Include files matching glob pattern, case-insensitive (can be repeated; default: *.yaml, *.yml, .yamllint)
     #[arg(long)]
     pub include: Vec<String>,
 

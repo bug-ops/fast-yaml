@@ -61,7 +61,7 @@ pub enum PathError {
 
     /// An explicitly named file is rejected by the include patterns
     #[error(
-        "not matched by the include patterns (default: *.yaml, *.yml; see --include): '{path}'"
+        "not matched by the include patterns (default: *.yaml, *.yml, .yamllint; see --include): '{path}'"
     )]
     NotIncluded {
         /// The rejected path

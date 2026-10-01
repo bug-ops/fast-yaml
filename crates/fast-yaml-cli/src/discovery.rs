@@ -20,13 +20,16 @@ const MAX_LINE_LENGTH: usize = 4096;
 /// Maximum number of glob matches to prevent memory exhaustion.
 const MAX_GLOB_MATCHES: usize = 100_000;
 
+/// Name of the yamllint config file, a hidden file that yamllint lints by default.
+const YAMLLINT_FILE_NAME: &str = ".yamllint";
+
 /// Glob patterns that select files by name, and whether the user gave them.
 ///
 /// The provenance matters because a lint config's `yaml-files` replaces the default patterns
 /// but never an explicit `--include`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IncludePatterns {
-    /// Built-in `*.yaml` and `*.yml`
+    /// Built-in `*.yaml`, `*.yml` and `.yamllint`, the yamllint default
     Default,
     /// Patterns from `--include`
     User(Vec<String>),
@@ -37,7 +40,7 @@ impl IncludePatterns {
     #[must_use]
     pub fn patterns(&self) -> Vec<String> {
         match self {
-            Self::Default => vec!["*.yaml".into(), "*.yml".into()],
+            Self::Default => vec!["*.yaml".into(), "*.yml".into(), YAMLLINT_FILE_NAME.into()],
             Self::User(patterns) => patterns.clone(),
         }
     }
@@ -48,7 +51,7 @@ impl IncludePatterns {
 /// Include and exclude patterns are matched case-insensitively.
 #[derive(Debug, Clone)]
 pub struct DiscoveryConfig {
-    /// Glob patterns for files to include (default: "*.yaml", "*.yml")
+    /// Glob patterns for files to include (default: "*.yaml", "*.yml", ".yamllint")
     pub include: IncludePatterns,
     /// Glob patterns for files/directories to exclude (e.g., "**/vendor/**")
     pub exclude_patterns: Vec<String>,
@@ -481,7 +484,7 @@ impl FileDiscovery {
     fn discover_directory(&self, dir: &Path, found: &mut Found) {
         let mut builder = ignore::WalkBuilder::new(dir);
         builder
-            .hidden(!self.config.include_hidden)
+            .hidden(false)
             .git_ignore(self.config.respect_gitignore)
             .git_global(self.config.respect_gitignore)
             .git_exclude(self.config.respect_gitignore)
@@ -492,26 +495,34 @@ impl FileDiscovery {
         }
 
         let dropped_dir = Arc::new(AtomicBool::new(false));
-        if self.config.file_filter.has_ignore()
-            && let Ok(root) = dir.canonicalize()
-        {
-            let filter = self.config.file_filter.clone();
-            let prune = filter.can_prune();
-            let dir = dir.to_owned();
-            let dropped_dir = Arc::clone(&dropped_dir);
-            builder.filter_entry(move |entry| {
-                let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
-                let ignored = is_dir
-                    && entry
-                        .path()
-                        .strip_prefix(&dir)
-                        .is_ok_and(|relative| filter.is_ignored(&root.join(relative), true));
-                if ignored {
-                    dropped_dir.store(true, Ordering::Relaxed);
-                }
-                !(ignored && prune)
-            });
-        }
+        let skip_hidden = !self.config.include_hidden;
+        let config_ignore = if self.config.file_filter.has_ignore() {
+            dir.canonicalize()
+                .ok()
+                .map(|root| (self.config.file_filter.clone(), root))
+        } else {
+            None
+        };
+        let walk_root = dir.to_owned();
+        let dropped = Arc::clone(&dropped_dir);
+        builder.filter_entry(move |entry| {
+            let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
+            if skip_hidden && entry.depth() > 0 && is_hidden_and_not_config(entry, is_dir) {
+                return false;
+            }
+            let Some((filter, root)) = &config_ignore else {
+                return true;
+            };
+            let ignored = is_dir
+                && entry
+                    .path()
+                    .strip_prefix(&walk_root)
+                    .is_ok_and(|relative| filter.is_ignored(&root.join(relative), true));
+            if ignored {
+                dropped.store(true, Ordering::Relaxed);
+            }
+            !(ignored && filter.can_prune())
+        });
 
         for entry in builder.build() {
             let entry = match entry {
@@ -570,6 +581,14 @@ impl FileDiscovery {
         }
         Ok(())
     }
+}
+
+/// Whether a walk entry is a hidden file or directory that the walk skips by default.
+///
+/// The yamllint config file `.yamllint` is hidden but a default lint target, so it stays.
+fn is_hidden_and_not_config(entry: &ignore::DirEntry, is_dir: bool) -> bool {
+    let name = entry.file_name();
+    name.to_string_lossy().starts_with('.') && (is_dir || name != YAMLLINT_FILE_NAME)
 }
 
 fn build_globset(patterns: &[String]) -> Result<GlobSet, DiscoveryError> {
@@ -788,6 +807,38 @@ mod tests {
 
         assert_eq!(files.len(), 1);
         assert!(files[0].path.ends_with("visible.yaml"));
+    }
+
+    #[test]
+    fn test_yamllint_file_is_a_default_target_but_other_hidden_entries_are_not() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join(".yamllint"), "rules: {}").unwrap();
+        fs::write(temp.path().join(".other"), "a: 1").unwrap();
+        fs::create_dir(temp.path().join(".hidden")).unwrap();
+        fs::write(temp.path().join(".hidden").join(".yamllint"), "rules: {}").unwrap();
+        fs::write(temp.path().join(".hidden").join("a.yaml"), "a: 1").unwrap();
+
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+        let files = discovery.discover(&[input(temp.path())]).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.ends_with(".yamllint"));
+    }
+
+    #[test]
+    fn test_yamllint_file_is_not_selected_by_a_user_include() {
+        let temp = TempDir::new().unwrap();
+        fs::write(temp.path().join(".yamllint"), "rules: {}").unwrap();
+        fs::write(temp.path().join("a.yml"), "a: 1").unwrap();
+
+        let config = default_config().with_include_patterns(vec!["*.yml".to_string()]);
+        let files = FileDiscovery::new(config)
+            .unwrap()
+            .discover(&[input(temp.path())])
+            .unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].path.ends_with("a.yml"));
     }
 
     #[test]
