@@ -17,7 +17,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: crate `fast-yaml-cli`, binary `fy`, cross-command behaviour (flags, input and output conventions, exit codes, channels, feature flags). Per-command semantics live in the parse, format, convert and lint specs; batch discovery lives in [[005-batch-parallel/spec|005]].
-> **Baseline**: v0.6.6 on `main` (e5e6cfb), verified with `target/debug/fy`.
+> **Baseline**: v0.6.6 on `main` (e5e6cfb), verified with `target/debug/fy`, plus the fixes #569/#575 (`lint -o`, closed pipes), #571 (`.yamllint`), #574 (`--max-documents`) and #581 (`-j`).
 
 ## 1. Purpose and value
 
@@ -140,7 +140,7 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | Flag | parse | format | convert | lint |
 |------|-------|--------|---------|------|
 | `-i/--in-place` | ignored | rewrite (needs a file; atomic) | rewrite file | error: not supported (exit 1) |
-| `-o/--output FILE` | ignored | single input or stdin: write there; conflicts with `-n` | write there | ignored |
+| `-o/--output FILE` | ignored | single input or stdin: write there; conflicts with `-n` | write there | write the report there, atomically; refused when FILE is an input |
 | `-q` | no output on success | hides summary unless a file failed | no effect | only error-severity diagnostics shown |
 | `-v` | timing line on stderr | no effect | no effect | `File:` and `Lint time:` on stderr (not with `--format json`) |
 | `--no-color` | yes | yes | yes | yes |
@@ -174,14 +174,15 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 |----|-------------|----------|
 | FR-020 | THE SYSTEM SHALL use exit codes exactly as the table above states. | must |
 | FR-021 | WHEN a batch contains failures and would-change files, THE SYSTEM SHALL prefer 1 over 5. | must |
-| FR-022 | THE SYSTEM SHALL emit errors as `error: <message>` followed by `  caused by[i] <cause>` lines and, when the failing limit can be raised, `  hint: raise with <flag>`. Hints exist for `--max-depth`, `--max-alias-bytes`, `--max-input-bytes` (or config key) and `--max-scan-ahead` (or config key). | must |
+| FR-022 | THE SYSTEM SHALL emit errors as `error: <message>` followed by `  caused by[i] <cause>` lines and, when the failing limit can be raised, `  hint: raise with <flag>`. Hints exist for `--max-depth`, `--max-alias-bytes`, `--max-documents`, `--max-input-bytes` (or config key) and `--max-scan-ahead` (or config key). | must |
+| FR-023 | WHEN stdout or stderr is closed by the reader THE SYSTEM SHALL NOT panic: `fy lint` stops writing silently and keeps the exit code of its diagnostics, and the final error printer ignores a closed stderr (exit 1 stays). | must |
 
 ### 3.5 Limit flags
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | FR-030 | THE SYSTEM SHALL parse `--max-input-bytes` (1 to 1 GiB, default 100 MiB) and `--max-scan-ahead` (1 to 1 GiB, default 4 MiB) as `<digits>[KiB|MiB|GiB]` (case-sensitive suffix, integers only) into typed newtypes (`MaxInputBytes`, `MaxScanAhead`); out-of-range, fractional, negative or overflowing values SHALL be usage errors (exit 2). | must |
-| FR-031 | THE SYSTEM SHALL also expose `--max-depth` (1 to 512, default 256) on parse, format, convert and lint, and `--max-alias-bytes` (1 to 1 GiB, default 64 MiB) on parse, convert and lint. | must |
+| FR-031 | THE SYSTEM SHALL also expose `--max-depth` (1 to 512, default 256) on parse, format, convert and lint, `--max-alias-bytes` (1 to 1 GiB, default 64 MiB) on parse, convert and lint, and `--max-documents` (1 to 10 000 000, default 100 000, plain integer) on parse, format, convert and lint. | must |
 | FR-032 | WHEN a limit flag and a lint config key both set a limit, THE SYSTEM SHALL let the flag win. | must |
 
 ### 3.6 Cargo features
@@ -211,7 +212,10 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | `fy parse -` | `-` is a file name, not stdin: `failed to read '-': No such file or directory`, exit 1. |
 | `fy parse -i ok.yaml` | Flag ignored, validation succeeds, exit 0. |
 | `fy parse -o out.txt ok.yaml` | `-o` ignored: no file is created. |
-| `fy lint -o out.txt w.yaml` | Report on stdout, no file created. |
+| `fy lint -o out.txt w.yaml` | Report written to `out.txt` (atomically), nothing on stdout (verified). |
+| `fy lint -o w.yaml w.yaml` | `error: --output 'w.yaml' is also an input file; refusing to overwrite it`, exit 1, file untouched (verified). |
+| `fy parse --max-documents 2 three.yaml` (3 documents) | `YAML resource limit exceeded at line 4, column 1: document count exceeds 2 (document 3)` + `hint: raise with --max-documents`, exit 1 (verified; same for format, convert, lint). |
+| `fy lint DIR 2>&1 \| head -1` | No panic; exit code of the diagnostics. |
 | `fy format -n -o x f.yaml` | Usage error: `--dry-run` cannot be used with `--output`, exit 2. |
 | `fy format -i -n m.yaml` | `-n` wins; nothing written. |
 | `fy convert json -i f.yaml` | Replaces `f.yaml` with JSON under the same name; `-i` silently beats `-o`. |
@@ -255,17 +259,18 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | 1 | Lint syntax-error exit code (P1, GAP-CLI-017) | Single file/stdin: exit 1. The same file in a batch: exit 2. | [NEEDS CLARIFICATION] One code for all lint syntax errors (2, matching findings) or a separate code? **Proposed:** distinct codes for findings, syntax error and usage/IO, applied uniformly, one integration test per code. |
 | 2 | Unused codes 3 and 4 (P2, GAP-CLI-018) | `IoError` and `InvalidArgs` exist in the enum but no path emits them; 2 is shared by usage errors and lint findings. | [NEEDS CLARIFICATION] Implement a distinct usage/IO code or delete 3/4 from enum and docs? **Proposed:** distinct codes for findings, syntax error and usage/IO, applied uniformly, one integration test per code. |
 | 3 | Top-level `-f/--format` is dead (P2, GAP-CLI-001) | Accepted, never read; not global. | Remove (pre-1.0, allowed) or implement JSON output for `parse`? |
-| 4 | `-o` ignored by `parse` and `lint`, `-i` ignored by `parse` (P2, GAP-CLI-005) | No error, no file. `-i` beats `-o` in convert; `-n` beats `-i` in format (GAP-CLI-007). | [NEEDS CLARIFICATION] Reject with usage errors, or implement `-o` for lint (SARIF to file)? **Proposed:** reject unsupported flags per command with a usage error. |
+| 4 | `-o` and `-i` ignored by `parse` (P2, GAP-CLI-005) | No error, no file (`lint -o` now writes the report). `-i` beats `-o` in convert; `-n` beats `-i` in format (GAP-CLI-007). | [NEEDS CLARIFICATION] Reject unsupported flags per command with a usage error? **Proposed:** reject unsupported flags per command with a usage error. |
 | 5 | `-` is not stdin (P3, GAP-CLI-008) | `fy parse -` fails with ENOENT although `-o -` means stdout. | Accept `-` as stdin? |
 | 6 | `--format json` lint hides syntax failures (P2, GAP-CLI-011) | Failure is stderr-only; stdout empty or `[]`. | Emit a diagnostic object like SARIF does? |
 | 7 | `using config file:` always on stderr (P3, GAP-CLI-020) | Printed even with `-q` and machine formats. | Print only with `-v`? |
 | 8 | Single-file text lint labels location `input:L:C` (P3, GAP-CLI-015) | Batch prints `<path>:` header; single file does not show the path. | Show the file name in single mode? **Proposed:** paths as given on the command line; file name in every format. |
 | 9 | `-v` has no effect on `format`, README says it lists files (P3, GAP-CLI-004) | Verified: only the standard summary. | Implement per-file lines or fix docs. |
-| 10 | Broken pipe (P3, GAP-CLI-013) | `fy format big \| head -1` prints `error: Failed to write to stdout`, exit 1. | Treat EPIPE as quiet success? |
+| 10 | Broken pipe (P3, GAP-CLI-013) | `fy lint` is quiet on a closed stdout or stderr; `fy format big \| head -1` still prints `error: Failed to write to stdout`, exit 1. | Treat EPIPE as quiet success for format and convert too? |
 | 11 | Cause chain repeats text (P4, GAP-CLI-014) | `caused by[0]` and `[1]` are identical for I/O errors. | Dedupe in `format_error`. |
 | 12 | Doc drift (P3, GAP-CLI-002/003/006/021) | Crate README synopsis, `skills/fast-yaml-cli/SKILL.md` (key sorting, `--indent` range, `convert -i` renaming, lint formats) disagree with behaviour. | Refresh docs from this spec. |
 | 13 | Single explicit non-YAML file accepted (P4, GAP-CLI-026) | `fy format -n a.txt` works; in a batch it errors on include patterns. | Make consistent? |
 | 14 | `--width` | Validated by `fy format` but never applied; help promises wrapping | [NEEDS CLARIFICATION: implement or remove] **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
+| 15 | `.yamllint` target (P4) | `.yamllint` is a default target of `fy lint` only (also for hidden-file skipping); `fy format` skips it. It is linted as YAML, never read as configuration. | accept |
 
 ## 9. See also
 

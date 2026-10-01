@@ -19,7 +19,7 @@ related:
 > [!info] Metadata
 > **Package**: npm `fastyaml-rs` (napi-rs, Node >= 22, version 0.6.6), typings in `nodejs/index.d.ts` and `nodejs/lint-rules.d.ts`
 > **Sources of truth**: `nodejs/src/*.rs`, `nodejs/index.d.ts`, `nodejs/__test__/*.spec.ts`
-> **Verified**: examples were run against a binary built from HEAD (`e5e6cfb`) in a scratch target dir. The checked-in `nodejs/*.node` is stale; rebuild before testing. JSDoc examples that import `@fast-yaml/core` are wrong; the package name is `fastyaml-rs`.
+> **Verified**: examples were run against a binary built from HEAD (`e5e6cfb`, plus the fixes #574, #557, #566, #567, #531/#532) in a scratch target dir. The checked-in `nodejs/*.node` is stale; rebuild before testing. JSDoc examples that import `@fast-yaml/core` are wrong; the package name is `fastyaml-rs`.
 
 ## 1. Purpose and value
 
@@ -97,7 +97,10 @@ WHEN   parseParallel(src)  or  await parseParallelAsync(src)
 THEN   [{a:1},{b:2}]  (document order preserved; async runs off the event-loop thread)
 
 GIVEN  parseParallel(src, { maxDocuments: 1 }) with 2 documents
-THEN   throws (InvalidArg) "input has at least 2 documents, more than the maximum of 1"
+THEN   throws (InvalidArg) "... document count exceeds 1 ..."
+
+GIVEN  safeLoadAll("---\n".repeat(100001))
+THEN   throws "document count exceeds 100000"      (every loader has a default cap; safeLoadAll(src, { maxDocuments: 3 }) names "(document 4)")
 ```
 
 ### US-006 (P2): Batch files
@@ -124,18 +127,21 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | FR-002 | `load*` SHALL behave as `safeLoad*`; `LoadOptions.schema` SHALL NOT enable unsafe types (all schemas are safe). | must |
 | FR-003 | WHEN YAML contains a `!!set`, THE SYSTEM SHALL return an object with `null` values; WHEN it contains a complex key, SHALL throw. | must |
 | FR-004 | WHEN YAML contains unknown tags, THE SYSTEM SHALL NOT execute or construct anything; the node loads as its underlying scalar. | must |
-| FR-005 | Limit options (`maxDepth` 1..=512 default 256; `maxAliasBytes` 1..=1 GiB default 64 MiB; `maxScanAhead` 1..=1 GiB default 4 MiB; `maxInputBytes` 1..=1 GiB default 100 MiB where offered) SHALL throw on out-of-range or non-integer values. | must |
+| FR-005 | Limit options (`maxDepth` 1..=512 default 256; `maxAliasBytes` 1..=1 GiB default 64 MiB; `maxScanAhead` 1..=1 GiB default 4 MiB; `maxDocuments` 1..=10 000 000 default 100 000; `maxInputBytes` 1..=1 GiB default 100 MiB where offered) SHALL throw on out-of-range or non-integer values. `maxDocuments` is accepted by `LoadOptions` (`safeLoad*`, `load*`), `LintConfig`, `ParallelConfig` and `BatchConfig`; a stream over the limit throws `document count exceeds N` (plus ` (document K)`); `safeDump*` take none. | must |
 | FR-006 | `safeDump*` SHALL accept `sortKeys`, `allowUnicode`, `indent` (1..=9, default 2), `width` (20..=1000), `defaultFlowStyle`, `explicitStart`; invalid values throw `InvalidArg`. | must |
 | FR-007 | WHEN dumping strings that resolve to non-strings under YAML 1.1/1.2 (`yes`, `null`, `1`, `a: b`), THE SYSTEM SHALL quote them. | must |
 | FR-008 | WHEN a value cannot be represented (function, `Buffer`/typed array, circular reference, depth over 256), THE SYSTEM SHALL throw rather than emit lossy YAML. | must |
 | FR-009 | `lint`/`Linter.lint` SHALL accept `LintConfig` (`maxLineLength`, `indentSize`, `requireDocumentStart/End`, `allowDuplicateKeys`, `disabledRules`, `rules`, limits) and return `Diagnostic[]` sorted by location; unknown rule names or rule options in `rules` SHALL throw. | must |
 | FR-010 | `Linter.withAllRules()` SHALL create a linter with the full default rule set. | should |
-| FR-011 | `parseParallel`/`parseParallelAsync` SHALL preserve document order, honor `ParallelConfig` (`threadCount`, `minChunkSize`, `maxInputBytes`, `maxDocuments`, limits) and fall back to sequential parsing for single documents. | must |
-| FR-012 | `processFiles`/`formatFiles`/`formatFilesInPlace` SHALL never throw for a per-file failure; they SHALL report it in `errors` / per-file `error`. `formatFilesInPlace` SHALL write atomically. | must |
+| FR-011 | `parseParallel`/`parseParallelAsync` SHALL preserve document order, run on the shared per-process pool, honor `ParallelConfig` (`threadCount`, `minChunkSize`, `maxInputBytes`, `maxDocuments`, limits) and fall back to sequential parsing for single documents. | must |
+| FR-012 | `processFiles`/`formatFiles`/`formatFilesInPlace` SHALL never throw for a per-file failure (including `document count exceeds N`); they SHALL report it in `errors` / per-file `error`. `formatFilesInPlace` SHALL write atomically. Files are read into memory; `BatchConfig.mmapThreshold` no longer exists. An explicit `maxScanAhead` is final (no scaling, no retry). | must |
 | FR-013 | `BatchConfig`/`ParallelConfig` renamed option `maxInputSize` SHALL throw with a message pointing to `maxInputBytes`. | must |
 | FR-014 | `version()` SHALL return the package version string (`"0.6.6"`). | must |
 | FR-015 | The shipped `index.d.ts` SHALL describe the runtime: every option name, nullability, and return element type. | should |
 | FR-016 | The package SHALL load a prebuilt platform binary and fail with a clear error where none exists. | must |
+| FR-017 | `safeDump*` SHALL dump a `BigInt` as a YAML integer (`5n` is `5`, `2n ** 70n` is `1180591620717411303424`), `-0` as `-0.0`, a `Set` as `!!set` with null members and a `Map` as a mapping; a `Set` or `Map` subclass SHALL be recognized by its built-in brand (also across realms), not by an overridden `Symbol.toStringTag`; an object that only claims the tag SHALL fail with `incompatible receiver`. | must |
+| FR-018 | `safeLoad*` SHALL name a float mapping key like `String(number)` (`1e21` is `"1e+21"`, `.inf` is `"Infinity"`, `-0.0` is `"0"`), and key-collision errors SHALL spell it the same way. | must |
+| FR-019 | `safeDump*` SHALL escape U+0085, U+2028 and U+2029 in double-quoted output, write a flow-style key longer than 1024 characters as `? key` and quote a scalar containing `?` in flow context, and the output SHALL load back to the same data. | must |
 
 ## 4. Key entities
 
@@ -157,13 +163,16 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | `safeLoad('9007199254740993')` | `9007199254740992` (precision loss); see open questions |
 | `safeLoad('9223372036854775808')` | string `'9223372036854775808'` |
 | `.inf`, `.nan`, `-.inf` | load as `Infinity`, `NaN`, `-Infinity` (JSON.stringify shows `null`) |
-| `safeDump([Infinity, NaN, -0, undefined])` | `- .inf\n- .nan\n- 0\n- ~\n` |
+| `safeDump([Infinity, NaN, -0, undefined])` | `- .inf\n- .nan\n- -0.0\n- ~\n` |
+| `safeDump(5n)`, `safeDump(2n ** 70n)` | `5\n`, `1180591620717411303424\n` |
+| `safeDump(new (class extends Set { get [Symbol.toStringTag]() { return 'X' } })(['a']))` | `!!set\na: ~\n` (brand, not tag) |
+| `safeLoad('# only a comment')`, `safeLoad('')` | `null`; `safeLoadAll('')` is `[]` |
 | `safeDump(new Date(0))` | `{}\n` (no timestamp support) |
 | `safeDump(Buffer.from('x'))` | throws "cannot serialize JavaScript value of type Function" |
 | UTF-8 BOM prefix | stripped |
 | Options object with unknown keys | ignored (see open questions) |
 | `null` for numeric options (`workers`, `width`) | throws `NumberExpected`; omit the key instead |
-| 100,001 documents via `safeLoadAll` | loads (no document cap there) |
+| 100,001 documents via `safeLoadAll` | throws `document count exceeds 100000`; 100,000 load |
 | `a:\t1` | rejected by the core scanner |
 
 ## 6. Success criteria
@@ -209,7 +218,7 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | Error `code` and marks (GAP-NODE-005/008) | Loader/limit errors have no `code`; dump/lint use `GenericFailure`/`InvalidArg`; `Mark` is never attached to errors | Define an error contract (class, `code`, `line`, `column`) **Proposed:** raise typed exceptions with marks; one error-code table for Node. |
 | `safeDumpAll` leading marker (GAP-NODE-004) | No leading `---` (`'a: 1\n---\nb: 2\n'`); JSDoc/README show one | Fix docs or output |
 | `load`/`dump` aliases (GAP-NODE-013) | README mentions `dump`/`dumpAll` and `SAFE_SCHEMA`; neither exists | Add aliases or fix README |
-| Uneven limits (GAP-NODE-017) | `safeLoad*` has no `maxInputBytes`/`maxDocuments`; `parseParallel` caps documents at 100,000 | Enforce in core (OQ-05) **Proposed:** enforce in core so every surface inherits it. |
+| Uneven limits (GAP-NODE-017) | `safeLoad*` has no `maxInputBytes`; `safeDump*` have no `maxDocuments` | Add the missing keywords |
 | Unknown option keys (GAP-NODE-007) | Silently ignored on `LintConfig`, `BatchConfig`, `ParallelConfig` | Reject like `rules` entries? |
 | Sync batch API (GAP-NODE-021) | `processFiles`/`formatFiles*` block the event loop | Provide `*Async` variants? |
 | Typings drift (GAP-NODE-009/019/020) | `lint-rules.d.ts` lacks `lint-directive`; `parseParallelAsync` typed `Promise<unknown>`; `const enum` exports | Generate typings from the registry, fix types |
@@ -223,7 +232,7 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | Capability | CLI | Core | Node |
 |------------|-----|------|------|
 | Parse, YAML 1.2.2, dup-key rule | `fy parse` | yes | `safeLoad*` yes (integers: double) |
-| Limits | flags + config | `ParseLimits` | options on every entry except `safeLoad*` input cap |
+| Limits | flags + config (`--max-documents` is a flag only) | `ParseLimits` | options on every entry except `safeLoad*` input cap |
 | Format | `fy format`, refuses comments by default | emitter | `safeDump` (data), `formatFiles*` (strips comments) |
 | Lint output | text, json, github, sarif, parsable | n/a | structured `Diagnostic[]` only (no formatter) |
 | Lint config | `.fast-yaml.yaml` file | `LintConfig` | object, no discovery |

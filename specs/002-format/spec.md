@@ -18,7 +18,7 @@ related:
 # Feature: Format
 
 > [!info] Metadata
-> **Product version**: fast-yaml 0.6.6 (main, e5e6cfb). **Surfaces**: `fy format`, `fast_yaml_core::Emitter::format*`, `streaming::format_streaming*`, bindings' format APIs.
+> **Product version**: fast-yaml 0.6.6 (main, e5e6cfb) plus the fixes #581 (`-j`), #574 (`--max-documents`), #580 (anchors after a non-ASCII directive) and #531/#366 (file read and write). **Surfaces**: `fy format`, `fast_yaml_core::Emitter::format*`, `streaming::format_streaming*`, bindings' format APIs.
 > **Method**: requirements reverse-specified from code and confirmed by real `fy` runs.
 
 ## 1. Purpose and value
@@ -149,8 +149,8 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | FR-004 | WHEN the input contains a comment (outside quoted/block scalars, keys, anchors, tags) and `--strip-comments` is absent THE SYSTEM SHALL fail with the comment error and exit 1 without writing; WITH the flag it SHALL drop all comments. | MUST |
 | FR-005 | WHEN a scalar is written THE SYSTEM SHALL keep its source spelling and quoting (`yes`, `0x1F`, `01`, `1e3`, `.inf`, `~`, `'plain'`, `"it's"`, `"007"`). | MUST |
 | FR-006 | WHEN a value is omitted (`a:`) or a document is empty THE SYSTEM SHALL write `null`; an explicit `~` or `null` keeps its spelling. | MUST |
-| FR-007 | WHEN the input has several documents THE SYSTEM SHALL separate them with `---`, keep `%YAML`/`%TAG` directives and a leading `---` that follows a directive, and drop the trailing `...`. | MUST |
-| FR-008 | WHEN a node has an anchor, alias or tag THE SYSTEM SHALL preserve them (`x: &a` followed by an indented body; `y: *a`; `!!str 5`). | MUST |
+| FR-007 | WHEN the input has several documents THE SYSTEM SHALL separate them with `---`, keep `%YAML`/`%TAG` directives and a leading `---` that follows a directive, and drop the trailing `...`. Reserved directives (any other `%NAME`) are dropped (see section 9). | MUST |
+| FR-008 | WHEN a node has an anchor, alias or tag THE SYSTEM SHALL preserve them (`x: &a` followed by an indented body; `y: *a`; `!!str 5`), also in a document that follows a directive with a non-ASCII name. | MUST |
 | FR-009 | WHEN a flow collection appears THE SYSTEM SHALL rewrite it as block style; empty collections stay `[]` / `{}`. | MUST |
 | FR-010 | WHEN a sequence or mapping is a mapping key THE SYSTEM SHALL use the explicit `?` form. | MUST |
 | FR-011 | WHEN a plain or quoted scalar spans several lines THE SYSTEM SHALL write it as one double-quoted scalar with escapes (`a: "foo bar\nbaz"`); literal `\|` and folded `>` block scalars stay block scalars with normalized indentation. | MUST |
@@ -158,12 +158,12 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | FR-013 | WHEN the input starts with a BOM THE SYSTEM SHALL keep the BOM through `fy format`; CRLF input SHALL produce LF output. | SHOULD |
 | FR-014 | WHEN `--dry-run` is given THE SYSTEM SHALL never write any file or `--output` target, print a one-line-per-category summary, and exit 5 if any file would change, 1 if any failed, else 0. | MUST |
 | FR-015 | WHEN `-i` is given without a file path THE SYSTEM SHALL fail with a usage-level error; WHEN no path is given THE SYSTEM SHALL read stdin and write stdout. | MUST |
-| FR-016 | WHEN several files are formatted THE SYSTEM SHALL process them in parallel (`-j`, 0 = auto), isolate failures per file, and report an aggregate summary; successful files are still written. | MUST |
+| FR-016 | WHEN several files are formatted THE SYSTEM SHALL process them in parallel on the shared pool (`-j N` = N threads, 0 = auto), isolate failures per file, and report an aggregate summary with the real elapsed time (also for `--dry-run`); successful files are still written. | MUST |
 | FR-017 | WHEN an in-place file is already canonical THE SYSTEM SHALL leave it untouched (no rewrite) and count it as `unchanged`. | MUST |
-| FR-018 | WHEN a limit is exceeded (`--max-depth` 1..=512 default 256, `--max-input-bytes`, `--max-scan-ahead`) THE SYSTEM SHALL return a typed error with the location and a hint naming the flag, never panic or exhaust the stack. | MUST |
+| FR-018 | WHEN a limit is exceeded (`--max-depth` 1..=512 default 256, `--max-documents` default 100 000, `--max-input-bytes`, `--max-scan-ahead`) THE SYSTEM SHALL return a typed error with the location and a hint naming the flag, never panic or exhaust the stack. | MUST |
 | FR-019 | WHEN the input is syntactically invalid THE SYSTEM SHALL fail with "Failed to format YAML" plus the parser message and position, exit 1, writing nothing. | MUST |
 | FR-020 | WHEN an alias references an unknown anchor THE SYSTEM SHALL fail instead of emitting a dangling alias. | MUST |
-| FR-021 | WHEN a file is rewritten in place THE SYSTEM SHALL write it atomically (temporary file then rename via `write_atomic`), so a failure never leaves a half-written file. | MUST |
+| FR-021 | WHEN a file is rewritten in place THE SYSTEM SHALL write it atomically (temporary file, `fsync`, owner and mode kept, then rename via `write_atomic`), so a failure never leaves a half-written file; a hard-linked file the caller owns is written in place so all links see the result ([[005-batch-parallel/spec]] FR-008). | MUST |
 | FR-022 | WHEN the input is empty THE SYSTEM SHALL succeed with empty output. | SHOULD |
 
 ## 4. Key entities and types
@@ -245,8 +245,9 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | 5 | Silent normalizations not mentioned in help/README: blank lines dropped, multi-line plain/quoted scalars folded into one double-quoted line, flow to block. (GAP-CORE-EMIT-016) | document in `fy format --help` |
 | 6 | `a:\t1` (tab after mapping colon) is rejected by parse and format although YAML 1.2.2 allows a tab there; likely inherited from the parser. (GAP-CORE-EMIT-007, OQ-07) | [NEEDS CLARIFICATION: accepted limitation or parser bug] **Proposed:** document as a known limitation and track upstream. |
 | 7 | Bindings' file formatters strip comments silently, unlike the CLI. (GAP-NODE-011, GAP-PY-014, OQ-03) | [NEEDS CLARIFICATION: mirror `CommentPolicy`]. See Python/Node specs **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
-| 8 | `format -j N` is ignored by file batches in some paths; `-i` silently overrides `-o`. (GAP-PARALLEL-001, GAP-CLI-007) | see batch and CLI specs |
+| 8 | `-i` silently overrides `-o`. (GAP-CLI-007) | see CLI spec |
 | 9 | Default depth differs: emit 512, format/parse 256. (GAP-CORE-EMIT-004) | [NEEDS CLARIFICATION: converge or document] |
+| 10 | Reserved directives are dropped. A document that starts with `%FOO bar` and `---` formats without the `%FOO` line (verified); `%YAML` and `%TAG` are kept (the parser emits no directive events, so the formatter re-reads them from the source). | [NEEDS CLARIFICATION: keep reserved directives?] |
 
 ## 10. See also
 

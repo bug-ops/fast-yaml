@@ -18,7 +18,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: `fast-yaml-core` load API (`Parser`, `Value`, scalar resolution, merge keys, sets, key domains, input decoding) and the `fy parse` command.
-> **Baseline**: v0.6.6, commit e5e6cfb. Behavior below was confirmed by running `fy` and reading the code.
+> **Baseline**: v0.6.6, commit e5e6cfb, plus the fixes #574 (document limit in core), #580 (anchors after a non-ASCII directive) and #567 (float key text). Behavior below was confirmed by running `fy` and reading the code.
 
 ## 1. Purpose and value
 
@@ -160,7 +160,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | FR-011 | WHEN the input is empty THE SYSTEM SHALL return no documents (`parse_all` -> `[]`, `parse_str` -> `None`) and `fy parse` SHALL report valid. | must |
 | FR-012 | WHEN a syntax error occurs THE SYSTEM SHALL report `ParseError::Syntax` with 1-based line and column and, for document index >= 2, the index. | must |
 | FR-013 | WHEN an alias refers to an undefined anchor THE SYSTEM SHALL fail with a syntax error at the alias. | must |
-| FR-014 | THE SYSTEM SHALL support `%TAG` and `%YAML` directives syntactically; `%TAG` handles bound to `tag:yaml.org,2002:` SHALL behave like `!!`. | must |
+| FR-014 | THE SYSTEM SHALL support `%TAG` and `%YAML` directives syntactically; `%TAG` handles bound to `tag:yaml.org,2002:` SHALL behave like `!!`. Anchor names SHALL be recovered correctly after a directive whose name is non-ASCII (the position map works by line and column). | must |
 | FR-015 | WHEN `fy parse` finishes THE SYSTEM SHALL exit 0 on valid input and 1 on any parse, decode, I/O or limit failure; usage errors (unknown flag, out-of-range limit) SHALL exit 2. | must |
 
 ### 3.3 Scalar resolution (single implementation, `resolve_scalar`)
@@ -199,7 +199,9 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | FR-041 | THE SYSTEM SHALL expose a public event stream (`events::EventStream`) so linter and chunked parsing consume the same events as the loader. | must |
 | FR-042 | THE SYSTEM SHALL expose `merge_into<T: MergeTarget>` so bindings with their own mapping type get identical merge order. | should |
 | FR-043 | `ParseError` SHALL be `#[non_exhaustive]` with variants `Syntax`, `LimitExceeded`, `Merge`, `SetValue`, `Key`, each carrying line, column and document index, and SHALL expose `position()`, `reason()`, `document_index()`. | must |
-| FR-044 | `fy parse` SHALL honor `--max-depth`, `--max-alias-bytes`, `--max-input-bytes`, `--max-scan-ahead`, `--stats`, `-q`, `-v`, `--no-color` and read stdin when FILE is omitted. | must |
+| FR-044 | `fy parse` SHALL honor `--max-depth`, `--max-alias-bytes`, `--max-documents`, `--max-input-bytes`, `--max-scan-ahead`, `--stats`, `-q`, `-v`, `--no-color` and read stdin when FILE is omitted. | must |
+| FR-045 | WHEN a stream holds more documents than `ParseLimits::max_documents` (default 100 000) THE SYSTEM SHALL fail every entry point that loads documents (`parse_all*`, `parse_str*`, events, formatter, parallel chunks sharing a `StreamBudget`) with `ParseError::LimitExceeded{Documents}` at the start of the first rejected document, including empty and comment-only documents ([[009-limits-security/spec]] FR-017). | must |
+| FR-046 | WHEN a float is used as a mapping key THE SYSTEM SHALL spell it for key collision and `StringKeys` conversion like ECMAScript `Number` toString (`1e21` is `1e+21`, `100.0` is `100`, `.inf` is `Infinity`, `-.inf` is `-Infinity`, `.nan` is `NaN`, `-0.0` is `0`). | must |
 
 ## 4. Key entities
 
@@ -227,7 +229,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | `1e400` | `+inf` float; `fy convert json` then fails ("JSON does not support infinity/NaN") |
 | `!!int 1e30` | String `"1e30"`, no diagnostic |
 | `\r` alone or `\r\n` line breaks | Accepted as line breaks |
-| 150 000 empty documents (`---` lines) | Accepted by `fy parse` (no document cap in core; see Open questions) |
+| 150 000 empty documents (`---` lines) | Rejected by `fy parse` with `document count exceeds 100000 (document 100001)`; exactly 100 000 pass |
 
 ## 6. Success criteria
 
@@ -261,7 +263,6 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 |---|-------|----------|----------|
 | 1 | Duplicate keys | `a: 1\na: 2` loads, `fy parse` says valid; only the linter reports them (GAP-core-parse-004) | [NEEDS CLARIFICATION: should core offer an opt-in strict mode, and should `fy parse` warn?] **Proposed:** opt-in strict loader; keep lint as the default reporter. |
 | 2 | `%YAML` versions | `%YAML 2.0` and `%YAML 1.3` accepted silently; `%YAML 1.1` still gets 1.2 typing (-005) | [NEEDS CLARIFICATION: reject major > 1 and warn on minor > 2?] **Proposed:** reject major > 1 and warn on minor > 2 in the same opt-in strict loader. |
-| 3 | `MaxDocuments` | Not enforced by core parse or `fy parse` (-002); see limits spec | [NEEDS CLARIFICATION: enforce in core?] **Proposed:** enforce in core so every surface inherits it. |
 | 4 | Tab after colon | `a:\t1` rejected on all surfaces; likely `saphyr-parser` limitation although YAML 1.2.2 allows tab separation | [NEEDS CLARIFICATION: accepted limitation?] **Proposed:** document as a known limitation and track upstream. |
 | 5 | Integer grammar | Signed hex/octal and `0O`/`0X` accepted, beyond the 1.2.2 Core Schema; absent from README (-007) | [NEEDS CLARIFICATION: permanent extensions?] |
 | 6 | Silent tag loss | Unsupported/custom tags dropped; out-of-range `!!int` becomes a string without diagnostic (-019) | [NEEDS CLARIFICATION: warn, or document as designed?] |
@@ -272,6 +273,8 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | 11 | `parse_str` cost | Builds every document and returns the first (-018) | Document or add a lazy API |
 | 12 | Stale docs | Core README (`0.3`, `parse_all_str`), SKILL.md `fy parse -f json` example (-015, -016) | Fix docs; there is no `fy validate` command |
 | 13 | Performance claims | README speed claims have no reproducible benchmark in the repo | [NEEDS CLARIFICATION: which claims are contractual?] **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
+
+Resolved in this batch and removed: item 3 (`MaxDocuments` is a `ParseLimits` field enforced in core, #574).
 
 ## 9. See also
 

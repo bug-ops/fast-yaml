@@ -15,7 +15,7 @@ related:
 # Technical Plan: Format
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation as it exists at 0.6.6.
+> **Spec**: [[spec]]. This plan describes the implementation as it exists at 0.6.6 plus #581, #574, #580.
 
 ## 1. Architecture
 
@@ -46,7 +46,7 @@ graph TD
 | Indent | `Indent` newtype 1..=9 | Illegal values unrepresentable | `usize` + runtime check |
 | Depth | Heap stack + `LimitGuard`; 256 default, 512 max | No stack overflow | Recursion |
 | Multi-line scalars | Normalize to one double-quoted line | Idempotent and simple | Preserve original folding |
-| Batch | `fast-yaml-parallel` with per-file isolation | Throughput; one bad file never aborts the run | Sequential |
+| Batch | `fast-yaml-parallel` with per-file isolation on the shared pool; `-j N` = N threads; scan-ahead scaled per worker with a full-limit retry lane | Throughput; one bad file never aborts the run; bounded look-ahead memory | Sequential |
 | Dry-run | Exit 5 when changes pending | CI friendliness | Exit 1 (conflates with failure) |
 | `width` | Typed and range-checked but unused | PyYAML-compat surface | Implement folding |
 
@@ -125,6 +125,7 @@ Already shipped. Any change to default output is a breaking change before 1.0 an
 | Type safety | Compliant | `Indent`, `Width`, `MaxDepth` newtypes; `EmitError` enum |
 | Limits | Compliant | all inputs bounded; output size unbounded in core emit (see spec section 9) |
 | Surface parity | Partial | bindings strip comments silently |
+| Safe Rust | Compliant | file reads and writes in `fast-yaml-parallel` use no `unsafe` |
 
 ## 11. Risks and mitigations
 

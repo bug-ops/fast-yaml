@@ -16,7 +16,7 @@ related:
 # Technical Plan: Parse and validate YAML 1.2.2
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation that exists at v0.6.6; it is the reference for changes, not a to-do list.
+> **Spec**: [[spec]]. This plan describes the implementation that exists at v0.6.6 plus the document limit (#574); it is the reference for changes, not a to-do list.
 
 ## 1. Architecture
 
@@ -44,6 +44,7 @@ flowchart LR
 | Typing | One `resolve_scalar` for loader and bindings | Cross-surface parity | Per-binding resolution |
 | Input type | `NormalizedInput` is the only way to feed the parser; `clippy.toml` bans `saphyr_parser::Parser::new*` | Validation and BOM handling cannot be skipped | Validate at each call site |
 | Limit enforcement point | Event stream, before building | Rejects amplification early | Post-build size check |
+| Document limit | `ParseLimits.max_documents`, charged by `LimitGuard` on every `DocumentStart` through the shared `StreamBudget` counter (like alias bytes), so parallel chunks count per stream | One source of truth for every surface; the chunker pre-check reads the same field | A parallel-crate-only `Config` field (previous) |
 | Scan-ahead | `Input` wrapper around the scanner | Scanner tokenizes a whole flow collection before its first event (about 190x amplification); events cannot see it | None viable |
 | Builder | Iterative, heap stack; drop-safe depth | No stack overflow at depth 512 | Recursive |
 | Merge validation | On events, shared by loader, formatter, bindings | Invalid `<<` hidden by a later duplicate key must still fail | Validate on the tree |
@@ -133,7 +134,7 @@ Not applicable (shipped). Breaking changes are allowed before 1.0 and are record
 | Principle | Status | Notes |
 |-----------|--------|-------|
 | Type safety | Compliant | Sealed `Bounded<K>` limits, `#[non_exhaustive]` policy enums, `NormalizedInput` |
-| Limits | Partial | `MaxDocuments` not enforced in core; `MaxTagBytes` unvalidated |
+| Limits | Partial | `MaxTagBytes` unvalidated; `max_documents` enforced in core |
 | Surface parity | Compliant for typing; see spec section 8 for `fy parse` flag gaps | |
 
 ## 11. Risks and mitigations
