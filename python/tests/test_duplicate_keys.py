@@ -1,15 +1,12 @@
 """Duplicate mapping keys keep the first position and the last value (#522)."""
 
 import json
-import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
 import fast_yaml
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from _fy_support import fy_binary
 
 MAPPINGS = [
     pytest.param(
@@ -46,19 +43,10 @@ def test_omap_keeps_every_pair_in_order():
     assert fast_yaml.safe_load("!!omap [a: 1, b: 2, a: 3]\n") == [{"a": 1}, {"b": 2}, {"a": 3}]
 
 
-def _fy_binary() -> str:
-    if env := os.environ.get("FY_BIN"):
-        return env
-    built = REPO_ROOT / "target" / "debug" / "fy"
-    if not built.exists():
-        pytest.skip("fy binary not built; run cargo build --bin fy")
-    return str(built)
-
-
 @pytest.mark.parametrize(("doc", "expected"), MAPPINGS)
 def test_matches_cli_key_order(doc, expected):
     result = subprocess.run(
-        [_fy_binary(), "convert", "json", "--pretty", "false"],
+        [fy_binary(), "convert", "json", "--pretty", "false"],
         input=doc,
         capture_output=True,
         text=True,

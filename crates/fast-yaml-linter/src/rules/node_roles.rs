@@ -77,16 +77,20 @@ impl RoleTracker {
         }
     }
 
-    /// Handles a mapping start event: assigns its role, then opens it with the style read from `range`.
-    pub fn start_mapping(&mut self, source: &str, range: ByteRange) {
-        self.node();
+    /// Handles a mapping start event: assigns its role, then opens it with the style read from
+    /// `range`. Returns the role of the mapping itself.
+    pub fn start_mapping(&mut self, source: &str, range: ByteRange) -> NodeRole {
+        let role = self.node();
         self.enter_mapping(CollectionStyle::of_start(source, range));
+        role
     }
 
-    /// Handles a sequence start event: assigns its role, then opens it with the style read from `range`.
-    pub fn start_sequence(&mut self, source: &str, range: ByteRange) {
-        self.node();
+    /// Handles a sequence start event: assigns its role, then opens it with the style read from
+    /// `range`. Returns the role of the sequence itself.
+    pub fn start_sequence(&mut self, source: &str, range: ByteRange) -> NodeRole {
+        let role = self.node();
         self.enter_sequence(CollectionStyle::of_start(source, range));
+        role
     }
 
     /// Opens a mapping; it is a flow mapping whenever it sits inside a flow collection.

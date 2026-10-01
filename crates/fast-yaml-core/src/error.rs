@@ -35,6 +35,9 @@ impl SourcePosition {
     }
 }
 
+/// Why a `!!set` member with a value is rejected.
+const SET_VALUE_REASON: &str = "!!set member has a non-null value, but a set holds members only (write `key:` without a value)";
+
 /// Renders " (document N)" for every document after the first, nothing for the first.
 struct InDocument(usize);
 
@@ -221,7 +224,7 @@ pub enum ParseError {
     /// assert!(matches!(err, ParseError::SetValue { line: 1, column: 8, document: 0 }));
     /// assert!(Parser::parse_str("!!set {a: , b: null}").is_ok());
     /// ```
-    #[error("!!set member has a non-null value, but a set holds members only (write `key:` without a value) at line {line}, column {column}{}", InDocument(*.document))]
+    #[error("{} at line {line}, column {column}{}", SET_VALUE_REASON, InDocument(*.document))]
     SetValue {
         /// Line number of the member (1-indexed).
         line: usize,
@@ -349,6 +352,32 @@ impl ParseError {
                 line: *line,
                 column: *column,
             },
+        }
+    }
+
+    /// What went wrong, without the position or the document index.
+    ///
+    /// For callers that report the position separately.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Parser;
+    ///
+    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
+    /// assert!(!err.reason().contains("line"));
+    /// assert!(err.to_string().contains("line 2"));
+    /// ```
+    #[must_use]
+    pub fn reason(&self) -> String {
+        match self {
+            Self::Syntax(e) => format!("YAML syntax error: {}", e.reason),
+            Self::LimitExceeded { kind, .. } => {
+                format!("YAML resource limit exceeded: {kind}")
+            }
+            Self::Merge { error, .. } => error.to_string(),
+            Self::SetValue { .. } => SET_VALUE_REASON.to_owned(),
+            Self::Key { error, .. } => error.to_string(),
         }
     }
 

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **CLI/Python/Node.js**: `fy lint` on a `!!set` member with a value exits 2 with a `set-values` diagnostic instead of exiting 1 with a parse error, and Python/Node.js `lint` no longer raise on set values (#565) (#PR)
+- **Core**: `LoadOptions` has a new public `set_values` field (#565) (#PR)
+- **Linter**: `SarifFormatter` is removed in favor of `formatter::ReportFormat::Sarif`, a typed SARIF 2.1.0 report that names files by absolute `file:` URI (#314) (#PR)
 - **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
 - **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)
 - **Python**: `saphyr-parser` is no longer a dependency of the bindings (#542) (#562)
@@ -99,6 +102,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: `set-values` rule (default error) reports every `!!set` member that has a value, so linting continues (#565) (#PR)
+- **Core**: `ParseError::reason` returns the error text without its position (#314) (#PR)
+- **Core**: `SetValues` load policy, `LoadOptions::with_set_values`, and public `merge::is_merge_key_scalar` / `merge::is_set_tag` (#565) (#PR)
+- **CLI/Linter**: `fy lint --format github|sarif|parsable` CI reports with absolute file paths, a `syntax` diagnostic for unparsable or unreadable input, and path-sorted batch output; adds `formatter::{ReportFormat, ReportPath, ReportSource, FileReport}` (#314) (#PR)
+- **CI**: Python and Node.js jobs build `fy` and set `FY_BIN`, and the `fy lint --config` parity tests fail instead of skipping when `CI` is set (#422) (#PR)
 - **Core**: new `events` module with `EventStream`, `Event`, `ScalarStyle`, `Tag` and `AnchorId`, and a root `ScalarStyle` re-export (#542) (#562)
 - **Core**: `MaxInputBytes` documents the flow-collection memory amplification of saphyr-parser (#553) (#562)
 - **Node.js**: `safeDump` writes a `Set` as a `!!set` and a `Map` as a mapping, including ones from another realm, instead of dropping their contents (#547) (#541) (#564)
@@ -164,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `duplicate-key` detects a repeated `<<` written through an alias and a repeated alias key to a collection; a duplicate `<<` reads `duplicate merge key '<<'` and plain and quoted `<<` no longer collide (#565) (#PR)
 - **Parallel**: `parse_parallel` agrees with `parse_all` on a root block scalar followed by `---`, and parse errors report the document index (#552) (#562)
 - **Core/CLI**: flow nesting beyond 255 levels is a `FlowNesting` limit error that `--max-depth` cannot raise (#556) (#564)
 - **Core**: a repeated mapping key keeps its first position with the last value for every key form, as Python `safe_load` does (#522) (#530)

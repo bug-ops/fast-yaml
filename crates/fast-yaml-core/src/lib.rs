@@ -85,7 +85,7 @@ pub use limits::{
     StreamBudget, Width,
 };
 pub use merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
-pub use options::{DuplicateMergeKeys, KeyDomain, LoadOptions};
+pub use options::{DuplicateMergeKeys, KeyDomain, LoadOptions, SetValues};
 pub use parser::{Parser, strip_bom};
 pub use scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
 pub use value::{BigInt, Float, Mapping, Set, Value};

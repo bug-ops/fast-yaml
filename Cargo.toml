@@ -61,6 +61,7 @@ thiserror = { version = "2.0" }
 assert_cmd = { version = "2.2" }
 criterion = { version = "0.8" }
 indoc = { version = "2.0" }
+jsonschema = { version = "0.58.3", default-features = false }
 predicates = { version = "3.1" }
 proptest = { version = "1.11" }
 tempfile = { version = "3.27" }

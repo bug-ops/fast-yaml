@@ -16,6 +16,7 @@
 
 use std::collections::HashSet;
 
+use crate::events::{ScalarStyle as EventScalarStyle, Tag as EventTag};
 use saphyr_parser::{Event, ScalarStyle, Tag};
 use thiserror::Error;
 
@@ -29,12 +30,66 @@ pub(crate) fn is_core_set_tag(tag: &Tag) -> bool {
 
 /// Whether `event` is a scalar that makes the key it stands for a merge key: the plain,
 /// untagged `<<`, or any scalar tagged `!!merge`.
-fn is_merge_key_scalar(event: &Event<'_>) -> bool {
+fn is_merge_key_event(event: &Event<'_>) -> bool {
     match event {
-        Event::Scalar(_, _, _, Some(tag)) => core_tag_suffix_raw(tag) == Some("merge"),
-        Event::Scalar(text, ScalarStyle::Plain, _, None) => text == "<<",
+        Event::Scalar(text, style, _, tag) => {
+            is_merge_key_raw(text, *style == ScalarStyle::Plain, tag.as_deref())
+        }
         _ => false,
     }
+}
+
+fn is_merge_key_raw(text: &str, plain: bool, tag: Option<&Tag>) -> bool {
+    tag.map_or_else(
+        || plain && text == "<<",
+        |tag| core_tag_suffix_raw(tag) == Some("merge"),
+    )
+}
+
+/// Whether a scalar makes the key it stands for a merge key: the plain, untagged `<<`, or any
+/// scalar tagged `!!merge`.
+///
+/// This is the single definition of a merge key; the loader and the linter both use it.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::ScalarStyle;
+/// use fast_yaml_core::events::Tag;
+/// use fast_yaml_core::merge::is_merge_key_scalar;
+///
+/// assert!(is_merge_key_scalar("<<", ScalarStyle::Plain, None));
+/// assert!(!is_merge_key_scalar("<<", ScalarStyle::DoubleQuoted, None));
+/// let merge = Tag::new("tag:yaml.org,2002:", "merge");
+/// assert!(is_merge_key_scalar("x", ScalarStyle::Plain, Some(&merge)));
+/// ```
+#[must_use]
+pub fn is_merge_key_scalar(
+    value: &str,
+    style: EventScalarStyle,
+    tag: Option<&EventTag<'_>>,
+) -> bool {
+    is_merge_key_raw(
+        value,
+        style == EventScalarStyle::Plain,
+        tag.map(|tag| &*tag.0),
+    )
+}
+
+/// Whether `tag` is the core-schema `!!set` tag, in any spelling.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::events::Tag;
+/// use fast_yaml_core::merge::is_set_tag;
+///
+/// assert!(is_set_tag(&Tag::new("tag:yaml.org,2002:", "set")));
+/// assert!(!is_set_tag(&Tag::new("!", "set")));
+/// ```
+#[must_use]
+pub fn is_set_tag(tag: &EventTag<'_>) -> bool {
+    is_core_set_tag(&tag.0)
 }
 
 /// Structural role of a node within its parent, as reported by
@@ -89,7 +144,7 @@ impl MergeKeyTracker {
             _ => None,
         };
         match event {
-            Event::Scalar(_, _, anchor @ 1.., _) if is_merge_key_scalar(event) => {
+            Event::Scalar(_, _, anchor @ 1.., _) if is_merge_key_event(event) => {
                 self.merge_anchors.insert(*anchor);
             }
             Event::MappingStart(_, tag) => {
@@ -125,7 +180,7 @@ impl MergeKeyTracker {
             (FrameKind::Mapping, true) => {
                 let merge_key = match event {
                     Event::Alias(id) => self.merge_anchors.contains(id),
-                    other => is_merge_key_scalar(other),
+                    other => is_merge_key_event(other),
                 };
                 if merge_key {
                     NodeRole::MergeKey

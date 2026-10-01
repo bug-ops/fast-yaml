@@ -1,5 +1,9 @@
 //! Diagnostic output formatters.
 
+mod github;
+mod parsable;
+mod report;
+mod syntax;
 mod text;
 
 #[cfg(feature = "json-output")]
@@ -8,13 +12,12 @@ mod json;
 #[cfg(feature = "sarif-output")]
 mod sarif;
 
+pub use report::{FileReport, NotAbsolute, ReportFormat, ReportPath, ReportSource};
+pub use syntax::{input_error_diagnostic, syntax_diagnostic};
 pub use text::TextFormatter;
 
 #[cfg(feature = "json-output")]
 pub use json::JsonFormatter;
-
-#[cfg(feature = "sarif-output")]
-pub use sarif::SarifFormatter;
 
 use crate::Diagnostic;
 
