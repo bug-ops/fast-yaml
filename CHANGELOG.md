@@ -131,24 +131,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `FlowIndex` is built from the loader pass and `SourceScan::of_source` takes `ParseLimits` (#573) (#578) (#595)
 - **CLI**: `fy lint -o` refuses to overwrite an input and writes atomically, and a closed stdout or stderr keeps the diagnostic exit code (#569) (#575) (#595)
 - **CLI**: `fy lint` visits `.yamllint` by default, `fy format` does not (#571) (#595)
-- **Linter**: `Diagnostic.context` becomes `excerpt: Excerpt` (not serialized), `message` is `Cow<'static, str>`, `DiagnosticBuilder::build()` takes no source and `build_with_context`/`build_without_context` are replaced by `build_without_excerpt` (#PR)
-- **Linter**: `Formatter::format(&[Diagnostic], &str)` becomes `Formatter::write(&mut dyn io::Write, Findings)` plus a provided `format(Findings)`; `Findings`, `LintSource`, `Linter::source` and `Linter::lint_source` are added (#PR)
-- **Linter**: `KeyIndex` and `context::line_key` are removed, and `DiagnosticCode: From<&str>` resolves built-in codes without a list scan (#PR)
-- **Linter**: `RuleSettings` gains the public fields `ignore` and `origin` (struct literals need `..Default::default()`), `RulesConfig::apply_at` is added, and `RuleIgnore`, `EntryOrigin`, `CanonicalPath` and `LocaleName` are new types (#PR)
-- **Linter**: `IndentationOptions.indent_size` becomes `Option<IndentSize>` (read it through `indent_size()`) and the options gain `spaces: Option<IndentSpaces>`, `indent_sequences: IndentSequences` and `check_multi_line_strings` (#PR)
-- **Linter**: `UnknownRuleError.yamllint_alias` and `ConfigFileError::UnsupportedKey` are removed, `ConfigFileError::UnsupportedLocale` and `TopLevelKey::Locale` are added, and `ConfigFile` gains `locale` (#PR)
-- **Linter**: `Linter::lint_file`, `Linter::lint_source_file` and `LintConfig::is_active(RuleName, Option<&CanonicalPath>)` apply per-rule `ignore` (#PR)
-- **Python/Node.js**: `lint`/`Linter.lint` take an optional `path` argument for per-rule `ignore` (#PR)
-- **Linter**: `quoted-strings` `only-when-needed` follows yamllint's check (PyYAML YAML 1.1 resolvers, plain-scalar rules in block context): it flags quotes around URLs, `?`, `*`, `\u00e9`, `1e3` and `NaN`, and no longer checks root scalars (#PR)
-- **Linter**: `key-ordering` checks nested flow mappings, explicit `?` keys and `null`/`~`/`<<` keys, skips anchored and tagged keys, and spans a quoted key from its opening quote (#PR)
-- **Linter**: `empty-values` reports right after the colon (columns +1) with a zero-width span, reports empty block-sequence items (`forbid-in-block-sequences` is now implemented) and skips anchored empty values (#PR)
-- **Linter**: `indentation` is a port of yamllint's rule: levels must have the exact width (message `wrong indentation: expected N but found M`), an unset width is `consistent` (`default` preset: `spaces: consistent`), and sequences under a key must be indented unless `indent-sequences` says otherwise (#PR)
-- **Linter/CLI**: a mapping or severity entry in a config file starts from yamllint's defaults (severity `error`) instead of fast-yaml's, so rules such as `line-length: {max: 60}` now exit 2 where they reported `info` (#PR)
-- **Linter**: `rules: {x: enable}` resets options and severity over a disabled, absent or fast-yaml-default entry, as in yamllint (#PR)
-- **CLI**: `fy lint --format json` prints a one-element `syntax` array on stdout for a missing, unreadable or invalid input (exit code unchanged), and batch JSON lists every failing file (#PR)
-- **Core/CLI**: `fy format` keeps reserved `%NAME` directives instead of dropping them (#PR)
-- **CLI**: `fy format` and `fy convert` exit quietly with the result's code when stdout is closed (was `error: Failed to write to stdout`, exit 1) (#PR)
-- **Linter**: lint is 10-35% slower in wall time on flow-heavy input (positioned node index, indentation port) with 26-48% lower RSS from lazy excerpts (#PR)
+- **Linter**: `Diagnostic.context` becomes `excerpt: Excerpt` (not serialized), `message` is `Cow<'static, str>`, `DiagnosticBuilder::build()` takes no source and `build_with_context`/`build_without_context` are replaced by `build_without_excerpt` (#605)
+- **Linter**: `Formatter::format(&[Diagnostic], &str)` becomes `Formatter::write(&mut dyn io::Write, Findings)` plus a provided `format(Findings)`; `Findings`, `LintSource`, `Linter::source` and `Linter::lint_source` are added (#605)
+- **Linter**: `KeyIndex` and `context::line_key` are removed, and `DiagnosticCode: From<&str>` resolves built-in codes without a list scan (#605)
+- **Linter**: `RuleSettings` gains the public fields `ignore` and `origin` (struct literals need `..Default::default()`), `RulesConfig::apply_at` is added, and `RuleIgnore`, `EntryOrigin`, `CanonicalPath` and `LocaleName` are new types (#605)
+- **Linter**: `IndentationOptions.indent_size` becomes `Option<IndentSize>` (read it through `indent_size()`) and the options gain `spaces: Option<IndentSpaces>`, `indent_sequences: IndentSequences` and `check_multi_line_strings` (#605)
+- **Linter**: `UnknownRuleError.yamllint_alias` and `ConfigFileError::UnsupportedKey` are removed, `ConfigFileError::UnsupportedLocale` and `TopLevelKey::Locale` are added, and `ConfigFile` gains `locale` (#605)
+- **Linter**: `Linter::lint_file`, `Linter::lint_source_file` and `LintConfig::is_active(RuleName, Option<&CanonicalPath>)` apply per-rule `ignore` (#605)
+- **Python/Node.js**: `lint`/`Linter.lint` take an optional `path` argument for per-rule `ignore` (#605)
+- **Linter**: `quoted-strings` `only-when-needed` follows yamllint's check (PyYAML YAML 1.1 resolvers, plain-scalar rules in block context): it flags quotes around URLs, `?`, `*`, `\u00e9`, `1e3` and `NaN`, and no longer checks root scalars (#605)
+- **Linter**: `key-ordering` checks nested flow mappings, explicit `?` keys and `null`/`~`/`<<` keys, skips anchored and tagged keys, and spans a quoted key from its opening quote (#605)
+- **Linter**: `empty-values` reports right after the colon (columns +1) with a zero-width span, reports empty block-sequence items (`forbid-in-block-sequences` is now implemented) and skips anchored empty values (#605)
+- **Linter**: `indentation` is a port of yamllint's rule: levels must have the exact width (message `wrong indentation: expected N but found M`), an unset width is `consistent` (`default` preset: `spaces: consistent`), and sequences under a key must be indented unless `indent-sequences` says otherwise (#605)
+- **Linter/CLI**: a mapping or severity entry in a config file starts from yamllint's defaults (severity `error`) instead of fast-yaml's, so rules such as `line-length: {max: 60}` now exit 2 where they reported `info` (#605)
+- **Linter**: `rules: {x: enable}` resets options and severity over a disabled, absent or fast-yaml-default entry, as in yamllint (#605)
+- **CLI**: `fy lint --format json` prints a one-element `syntax` array on stdout for a missing, unreadable or invalid input (exit code unchanged), and batch JSON lists every failing file (#605)
+- **Core/CLI**: `fy format` keeps reserved `%NAME` directives instead of dropping them (#605)
+- **CLI**: `fy format` and `fy convert` exit quietly with the result's code when stdout is closed (was `error: Failed to write to stdout`, exit 1) (#605)
+- **Linter**: lint is 10-35% slower in wall time on flow-heavy input (positioned node index, indentation port) with 26-48% lower RSS from lazy excerpts (#605)
 
 ### Added
 
@@ -182,11 +182,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Testing**: `cargo-fuzz` targets (`parse`, `format`, `lint`) under `fuzz/`, `format` round-trip proptests in `fast-yaml-core`, and `clippy::string_slice`/`indexing_slicing` warnings in `fast-yaml-linter` (#432)
 - `--max-depth` and `--max-alias-bytes` on `fy parse`/`convert`/`lint`, plus `max_depth`/`max_alias_bytes` (`maxDepth`/`maxAliasBytes`) options in `fast-yaml-parallel`, the linter, and the Python and Node.js loaders, `ParallelConfig`, `LintConfig` and `BatchConfig` (#433)
 - **Linter**: inline suppression directives `# fy: disable|enable|disable-line|disable-file` (and `# yamllint ...`) with a `lint-directive` diagnostic for invalid ones; `fast-yaml-core` adds `find_comments`; `DiagnosticCode` is now `Ord` (#437)
-- **Linter**: per-rule `ignore` and `ignore-from-file` in config rule entries, anchored at the declaring file and inherited through `extends` (#PR)
-- **Linter**: yamllint rule names (`trailing-spaces`, `key-duplicates`, `anchors`) are accepted in config `rules`, bindings `rules` and `disabled_rules` (#PR)
-- **Linter**: top-level `locale` (C, POSIX, C.UTF-8; other values are an error only while `key-ordering` is enabled) (#PR)
-- **Linter**: `indentation` options `spaces` (number or `consistent`), `indent-sequences` (`true`/`false`/`whatever`/`consistent`) and `check-multi-line-strings` (#PR)
-- **Core**: `fs::read_regular_file`, a bounded reader that never blocks on a FIFO, shared by config, ignore and input reads (#PR)
+- **Linter**: per-rule `ignore` and `ignore-from-file` in config rule entries, anchored at the declaring file and inherited through `extends` (#605)
+- **Linter**: yamllint rule names (`trailing-spaces`, `key-duplicates`, `anchors`) are accepted in config `rules`, bindings `rules` and `disabled_rules` (#605)
+- **Linter**: top-level `locale` (C, POSIX, C.UTF-8; other values are an error only while `key-ordering` is enabled) (#605)
+- **Linter**: `indentation` options `spaces` (number or `consistent`), `indent-sequences` (`true`/`false`/`whatever`/`consistent`) and `check-multi-line-strings` (#605)
+- **Core**: `fs::read_regular_file`, a bounded reader that never blocks on a FIFO, shared by config, ignore and input reads (#605)
 
 ### Changed
 
@@ -230,9 +230,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** `fy -i` without a subcommand now fails with exit code 1, matching `fy format -i` (#401)
 - `fy format`/`fy lint` treat an existing file named with glob characters (e.g. `a[1].yaml`) as a single file instead of a glob pattern (#401)
 - **CI**: bump `astral-sh/setup-uv` to v10.2.0, `pnpm/action-setup` to v6.1.0 and `taiki-e/install-action` to v2.87.22 (#535)
-- **Linter/CLI/Python/Node.js**: diagnostic excerpts are cut lazily and single-file text and JSON reports are streamed, cutting lint RSS about 2x on diagnostic-heavy input (#PR)
-- **Linter**: the text format prints a one-column caret under zero-width spans (#PR)
-- **CLI**: `fy lint` formatter indent applies as a fixed `indentation` width only when the config sets neither `spaces` nor `indent-size` (#PR)
+- **Linter/CLI/Python/Node.js**: diagnostic excerpts are cut lazily and single-file text and JSON reports are streamed, cutting lint RSS about 2x on diagnostic-heavy input (#605)
+- **Linter**: the text format prints a one-column caret under zero-width spans (#605)
+- **CLI**: `fy lint` formatter indent applies as a fixed `indentation` width only when the config sets neither `spaces` nor `indent-size` (#605)
 
 ### Security
 
@@ -244,8 +244,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking:** cap `%TAG` prefix expansion (64 MiB per stream) in parse, lint, convert and `fy format`; adds `LimitKind::TagBytes`, `EmitError::TagLimitExceeded`, `MaxTagBytes` and `ParseLimits::max_tag_bytes` (#389)
 - `fy format` now rejects a cross-document alias (`--- &a [x]` then `--- *a`) as an unknown anchor, matching `fy parse` (#389)
 - `parse_parallel` shares one alias-expansion and `%TAG` budget across all chunks (new public `StreamBudget` and `Parser::parse_all_with_budget`), closing an alias-bomb bypass (#387) (#405)
-- **Parallel**: `write_atomic` preserves extended attributes on Unix, skipping unsupported ones and denied `com.apple.*`/`security.selinux`; ACLs are not preserved (#PR)
-- **Core/Linter**: file reads open with `O_NONBLOCK` after a regular-file check, and `ignore-from-file` is capped at 32 files and 1024 lines and does not echo file content in errors (#PR)
+- **Parallel**: `write_atomic` preserves extended attributes on Unix, skipping unsupported ones and denied `com.apple.*`/`security.selinux`; ACLs are not preserved (#605)
+- **Core/Linter**: file reads open with `O_NONBLOCK` after a regular-file check, and `ignore-from-file` is capped at 32 files and 1024 lines and does not echo file content in errors (#605)
 
 ### Fixed
 
