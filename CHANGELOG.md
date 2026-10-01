@@ -9,13 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Linter**: `truthy` no longer reports `y`/`n`/`Y`/`N` (also in the fast-yaml default), and they are no longer accepted in `allowed-values` (#536)
-- **Linter**: `quoted-strings` skips mapping keys unless `check-keys: true` and scalars with a `!!` core tag (#536)
-- **Linter**: `line-length` accepts a long line that is one word (`allow-non-breakable-words`, default true) (#536)
-- **Linter**: `document-start` and `document-end` check every document of the stream, not only the first marker and the last `...` (#536)
-- **Linter**: `RuleOptions::YAMLLINT_UNSUPPORTED` no longer lists `allow-non-breakable-*`, `allow-quoted-quotes`, `check-keys` and `forbid-duplicated-merge-keys`, and `QuotedStringsOptions`, `LineLengthOptions` and `DuplicateKeysOptions` gain fields (#536)
+- **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#536)
+- **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#536)
+- **Linter**: `line-length` lets a one-word line through by default (#536)
+- **Linter**: `document-start`/`document-end` check every document (#536)
+- **Linter**: `QuotedStringsOptions`, `LineLengthOptions` and `DuplicateKeysOptions` gain fields (#536)
 - **Core**: `events::EventItem` gains `end`, the position where the event's token ends (#438)
-- **Linter**: the `comment_parser` module is removed; `Comment` is `Comment<'a> { text, span, kind }` with a `CommentKind` enum instead of `content`/`is_inline`/`is_shebang`, and comments come from parser events (#438)
+- **Linter**: `duplicate-key` now compares resolved values (`99`/`+99` collide, `"1"`/`1` do not), where yamllint compares text (#545)
+- **Linter**: `duplicate-key` gains `forbid-duplicated-merge-keys`, on by default (the yamllint presets turn it off), so a repeated `<<` stays reported (#545) (#536)
+- **Linter**: `Linter::lint_value` returns `LintError::ParseError` when `source` does not load under the configured limits (#438)
+- **Linter**: `comment_parser` is removed and `Comment<'a> { text, span, kind: CommentKind }` replaces `content`/`is_inline`/`is_shebang` (#438)
 - **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
 - **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331; map an offset back with `NormalizedInput::original_offset` (#550)
 - **Linter**: `FlowTokenizer::new` takes a prebuilt `&FlowIndex` instead of the source text (#386)
@@ -137,7 +140,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#539)
-- **Linter**: `duplicate-key` compares resolved key values like the loaders (`99`/`+99`, `0x10`/`16` collide, `"1"`/`1` and `<<`/`"<<"` do not), which deliberately differs from yamllint's key-text comparison (#545)
 - **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#438)
 - **Core**: faster `NormalizedInput` scan and no per-float allocation in `Float::parse` and `to_saphyr` (#558) (#562)
 - **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
