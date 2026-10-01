@@ -33,6 +33,15 @@ impl SourcePosition {
             column: span.start.col() + 1,
         }
     }
+
+    // Same convention as `from_span`, for the end of the span.
+    #[allow(clippy::disallowed_methods)]
+    pub(crate) fn end_of(span: Span) -> Self {
+        Self {
+            line: span.end.line(),
+            column: span.end.col() + 1,
+        }
+    }
 }
 
 /// Renders " (document N)" for every document after the first, nothing for the first.

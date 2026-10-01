@@ -76,6 +76,7 @@ impl<'input> EventLoader<'input> {
             None => Ok(EventItem {
                 event: Event::StreamEnd,
                 at: self.last,
+                end: self.last,
                 role: None,
             }),
         }
@@ -103,7 +104,9 @@ impl<'input> EventLoader<'input> {
     fn load_document(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let mut stack: Vec<OpenNode> = Vec::new();
         loop {
-            let EventItem { event, at, role } = self.next()?;
+            let EventItem {
+                event, at, role, ..
+            } = self.next()?;
             let merge_key = role == Some(NodeRole::MergeKey);
             let finished = match event {
                 Event::Scalar {

@@ -1,18 +1,10 @@
 //! Rule to check comment indentation.
 
-use crate::context::lines_of;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::context::LineMetadata;
+use crate::{
+    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+};
 use fast_yaml_core::Value;
-
-/// Metadata about a line for efficient indentation checking.
-struct LineInfo {
-    /// Number of leading spaces
-    indent: usize,
-    /// true if line is empty or only whitespace
-    is_empty: bool,
-    /// true if line is a comment
-    is_comment: bool,
-}
 
 /// Linting rule for comment indentation.
 ///
@@ -54,28 +46,14 @@ impl super::LintRule for CommentsIndentationRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let comments = context.comments();
 
         let mut diagnostics = Vec::new();
 
-        let lines: Vec<&str> = lines_of(source).collect();
-
-        // Pre-compute line metadata to avoid O(n²) complexity
-        let line_info: Vec<LineInfo> = lines
-            .iter()
-            .map(|line| {
-                let trimmed = line.trim_start();
-                LineInfo {
-                    indent: get_line_indentation(line),
-                    is_empty: trimmed.is_empty(),
-                    is_comment: trimmed.starts_with('#'),
-                }
-            })
-            .collect();
+        let line_info = context.line_metadata();
 
         let content_indent =
-            |info: &LineInfo| (!info.is_empty && !info.is_comment).then_some(info.indent);
+            |info: &LineMetadata| (!info.is_empty && !info.is_comment).then_some(info.indent);
 
         // next_content[i] / prev_content[i]: indent of the nearest content line strictly after / before i
         let mut next_content: Vec<Option<usize>> = line_info
@@ -99,12 +77,12 @@ impl super::LintRule for CommentsIndentationRule {
 
         for comment in comments {
             // Skip inline comments (they follow content indentation)
-            if comment.is_inline {
+            if comment.kind == CommentKind::Inline {
                 continue;
             }
 
             let comment_line = comment.span.start.line;
-            if comment_line == 0 || comment_line > lines.len() {
+            if comment_line == 0 || comment_line > line_info.len() {
                 continue;
             }
 
@@ -153,11 +131,6 @@ impl super::LintRule for CommentsIndentationRule {
 
         diagnostics
     }
-}
-
-/// Gets the indentation level of a line (number of leading spaces).
-fn get_line_indentation(line: &str) -> usize {
-    line.chars().take_while(|&c| c == ' ').count()
 }
 
 #[cfg(test)]
@@ -339,14 +312,6 @@ mod tests {
     }
 
     #[test]
-    fn test_get_line_indentation() {
-        assert_eq!(get_line_indentation("no indent"), 0);
-        assert_eq!(get_line_indentation("  two spaces"), 2);
-        assert_eq!(get_line_indentation("    four spaces"), 4);
-        assert_eq!(get_line_indentation(""), 0);
-    }
-
-    #[test]
     fn test_comments_indentation_list() {
         let yaml = "items:\n  - one\n  # Comment\n  - two";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
@@ -444,5 +409,23 @@ mod tests {
             !diagnostics.is_empty(),
             "incorrectly indented nested comment should produce diagnostics"
         );
+    }
+
+    #[test]
+    fn test_hash_inside_multiline_scalars_is_not_a_comment() {
+        for yaml in [
+            "a:\n  b: \"one\n      #two\n    three\"\n  c: 1\n",
+            "a:\n  b: |\n    three\n      #two\n    more\n  c: 1\n",
+        ] {
+            assert_eq!(diag_count(yaml), 0, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_hash_line_inside_scalar_counts_as_content() {
+        let yaml = "a:\n  b: |\n    #x\n  # real\n  c: 1\n";
+        assert_eq!(diag_count(yaml), 0);
+        let yaml = "a:\n  b: \"p\n      #x\"\n# misplaced\n  c: 1\n";
+        assert_eq!(diag_count(yaml), 1);
     }
 }

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core**: `events::EventItem` gains `end`, the position where the event's token ends (#438)
+- **Linter**: the `comment_parser` module is removed; `Comment` is `Comment<'a> { text, span, kind }` with a `CommentKind` enum instead of `content`/`is_inline`/`is_shebang`, and comments come from parser events (#438)
 - **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
 - **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331 (#550)
 - **Linter**: `FlowTokenizer::new` takes a prebuilt `FlowIndex` and `LintContext::flow_tokenizer` is added (#386)
@@ -102,6 +104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#438)
 - **Core**: new `events` module with `EventStream`, `Event`, `ScalarStyle`, `Tag` and `AnchorId`, and a root `ScalarStyle` re-export (#542) (#562)
 - **Core**: `MaxInputBytes` documents the flow-collection memory amplification of saphyr-parser (#553) (#562)
 - **Node.js**: `safeDump` writes a `Set` as a `!!set` and a `Map` as a mapping, including ones from another realm, instead of dropping their contents (#547) (#541) (#564)
@@ -125,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#438)
 - **Linter**: the flow rules share one `FlowIndex` per lint run instead of one tokenizer index each (#386)
 - **Core**: faster `NormalizedInput` scan and no per-float allocation in `Float::parse` and `to_saphyr` (#558) (#562)
 - **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
@@ -168,6 +172,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `comments`, `comments-indentation` and inline directives no longer treat a `#` inside a multi-line quoted or block scalar as a comment, and document start lines are read from parser events instead of `---` lines (#438)
 - **Parallel**: `parse_parallel` agrees with `parse_all` on a root block scalar followed by `---`, and parse errors report the document index (#552) (#562)
 - **Core/CLI**: flow nesting beyond 255 levels is a `FlowNesting` limit error that `--max-depth` cannot raise (#556) (#564)
 - **Core**: a repeated mapping key keeps its first position with the last value for every key form, as Python `safe_load` does (#522) (#530)

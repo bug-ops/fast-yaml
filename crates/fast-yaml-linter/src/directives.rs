@@ -9,14 +9,14 @@
 
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Range;
-
-use fast_yaml_core::find_comments;
 
 use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::rules::RuleRegistry;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, Severity, SourceContext};
+use crate::{
+    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+    SourceContext, Span,
+};
 
 /// yamllint rule names that do not match a fast-yaml code 1:1.
 const ALIASES: &[(&str, &[&str])] = &[
@@ -60,13 +60,6 @@ enum DirectiveKind {
     Enable(RuleSelector),
     DisableLine(RuleSelector),
     DisableFile,
-}
-
-/// Where a directive comment sits on its line; decides the `disable-line` target.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Placement {
-    Inline,
-    FullLine,
 }
 
 /// Block state closed under `disable` / `enable`.
@@ -302,56 +295,51 @@ pub struct Directives {
 }
 
 impl Directives {
-    /// Collects directives from `source` (already BOM-stripped, as the rules see it).
+    /// Collects directives from the comments of `context` (BOM-stripped, as the rules see it).
     ///
     /// A source whose comments cannot be located has no directives.
-    pub fn from_source(source: &str, config: &LintConfig, registry: &RuleRegistry) -> Self {
+    pub fn from_context(
+        context: &LintContext<'_>,
+        config: &LintConfig,
+        registry: &RuleRegistry,
+    ) -> Self {
+        let source = context.source();
         let mut this = Self::default();
         if !may_contain_directive(source) {
             return this;
         }
-        let Ok(comments) = find_comments(source) else {
-            return this;
-        };
 
-        let ctx = SourceContext::new(source);
+        let ctx = context.source_context();
         let is_known = |name: &str| is_known_code(name) || registry.get(name).is_some();
         let mut state = DisabledRules::default();
-        let mut problems: Vec<(Range<usize>, String)> = Vec::new();
+        let mut problems: Vec<(Span, String)> = Vec::new();
         let mut content_line = None;
 
-        for range in comments {
-            let Some(comment) = source.get(range.clone()) else {
+        for comment in context.comments() {
+            let full_line = comment.is_full_line();
+            let Some(text) = source.get(comment.span.start.offset..comment.span.end.offset) else {
                 continue;
             };
-            let (kind, mut problem) = match parse(comment, is_known) {
+            let (kind, mut problem) = match parse(text, is_known) {
                 Parsed::NotDirective => continue,
                 Parsed::Invalid(problem) => {
-                    problems.push((range, problem));
+                    problems.push((comment.span, problem));
                     continue;
                 }
                 Parsed::Directive { kind, problem } => (kind, problem),
             };
-
-            let line = ctx.offset_to_location(range.start).line;
-            let full_line = source
-                .get(ctx.get_line_offset(line)..range.start)
-                .is_some_and(|before| before.trim().is_empty());
-            let placement = if full_line {
-                Placement::FullLine
-            } else {
-                Placement::Inline
-            };
+            let line = comment.span.start.line;
 
             let misplaced = match kind {
                 DirectiveKind::Disable(_) | DirectiveKind::Enable(_)
-                    if placement == Placement::Inline =>
+                    if comment.kind == CommentKind::Inline =>
                 {
                     Some("`disable` and `enable` must be on their own line")
                 }
                 DirectiveKind::DisableFile => {
-                    let content = *content_line.get_or_insert_with(|| first_content_line(&ctx));
-                    (placement == Placement::Inline || line >= content)
+                    let first_content =
+                        *content_line.get_or_insert_with(|| first_content_line(ctx));
+                    (comment.kind == CommentKind::Inline || line >= first_content)
                         .then_some("`disable-file` must be a comment before any YAML content")
                 }
                 _ => None,
@@ -372,10 +360,7 @@ impl Directives {
                         this.blocks.push((line, state.clone()));
                     }
                     DirectiveKind::DisableLine(selector) => {
-                        let target = match placement {
-                            Placement::Inline => line,
-                            Placement::FullLine => line + 1,
-                        };
+                        let target = if full_line { line + 1 } else { line };
                         match this.lines.entry(target) {
                             Entry::Occupied(mut entry) => entry.get_mut().merge(selector),
                             Entry::Vacant(entry) => {
@@ -387,7 +372,7 @@ impl Directives {
                 }
             }
             if let Some(problem) = problem {
-                problems.push((range, problem));
+                problems.push((comment.span, problem));
             }
         }
 
@@ -398,13 +383,9 @@ impl Directives {
                 .unwrap_or(Severity::Warning);
             this.warnings = problems
                 .into_iter()
-                .map(|(range, message)| {
-                    let span = crate::Span::new(
-                        ctx.offset_to_location(range.start),
-                        ctx.offset_to_location(range.end),
-                    );
+                .map(|(span, message)| {
                     DiagnosticBuilder::new(DiagnosticCode::LINT_DIRECTIVE, severity, message, span)
-                        .build_with_context(&ctx)
+                        .build_with_context(ctx)
                 })
                 .collect();
         }
@@ -894,5 +875,11 @@ mod tests {
             &source[3 + warning.span.start.offset..3 + warning.span.end.offset],
             "# fy: disable bogus"
         );
+    }
+
+    #[test]
+    fn directive_text_inside_a_multiline_scalar_is_not_a_directive() {
+        let diagnostics = lint("a: \"x\n  # fy: disable bogus\n  y\"\n");
+        assert!(!codes_of(&diagnostics).contains(&"lint-directive"));
     }
 }

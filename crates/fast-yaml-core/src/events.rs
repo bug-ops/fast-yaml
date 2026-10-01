@@ -178,13 +178,17 @@ pub enum Event<'a> {
     MappingEnd,
 }
 
-/// An event with the position of its start and, for an event that starts a node, its role.
+/// An event with the position of its start and end and, for an event that starts a node, its role.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventItem<'a> {
     /// The event.
     pub event: Event<'a>,
     /// Where the event starts in the source.
     pub at: SourcePosition,
+    /// Where the event's token ends: the closing quote of a quoted scalar, the end of a plain or
+    /// block scalar, the end of a `---` or `...` marker. Equal to `at` for events without text
+    /// (a block collection start, most ends).
+    pub end: SourcePosition,
     /// Role of the node the event starts, `None` for events that start no node.
     pub role: Option<NodeRole>,
 }
@@ -293,11 +297,56 @@ impl<'a> EventStream<'a> {
                 return Ok(Some(EventItem {
                     event,
                     at: SourcePosition::from_span(span),
+                    end: SourcePosition::end_of(span),
                     role,
                 }));
             }
         }
     }
+}
+
+/// Builds the public item for a raw event the loader is about to consume, borrowing its text.
+pub(crate) fn item_of<'r>(
+    raw: &'r saphyr_parser::Event<'_>,
+    span: Span,
+    role: Option<NodeRole>,
+) -> Option<EventItem<'r>> {
+    use saphyr_parser::Event as Raw;
+    let tag = |tag: &'r Option<Cow<'_, saphyr_parser::Tag>>| {
+        tag.as_deref().map(|tag| Tag(Cow::Borrowed(tag)))
+    };
+    let event = match raw {
+        Raw::Nothing | Raw::Alias(0) => return None,
+        Raw::Alias(id) => Event::Alias(AnchorId::new(*id)?),
+        Raw::StreamStart => Event::StreamStart,
+        Raw::StreamEnd => Event::StreamEnd,
+        Raw::DocumentStart(explicit) => Event::DocumentStart {
+            explicit: *explicit,
+        },
+        Raw::DocumentEnd => Event::DocumentEnd,
+        Raw::Scalar(value, style, anchor, tag_) => Event::Scalar {
+            value: Cow::Borrowed(value.as_ref()),
+            style: ScalarStyle::from_saphyr(*style),
+            anchor: AnchorId::new(*anchor),
+            tag: tag(tag_),
+        },
+        Raw::SequenceStart(anchor, tag_) => Event::SequenceStart {
+            anchor: AnchorId::new(*anchor),
+            tag: tag(tag_),
+        },
+        Raw::SequenceEnd => Event::SequenceEnd,
+        Raw::MappingStart(anchor, tag_) => Event::MappingStart {
+            anchor: AnchorId::new(*anchor),
+            tag: tag(tag_),
+        },
+        Raw::MappingEnd => Event::MappingEnd,
+    };
+    Some(EventItem {
+        event,
+        at: SourcePosition::from_span(span),
+        end: SourcePosition::end_of(span),
+        role,
+    })
 }
 
 impl fmt::Debug for EventStream<'_> {

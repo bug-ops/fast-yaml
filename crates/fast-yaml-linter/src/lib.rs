@@ -27,21 +27,23 @@
 //! println!("{}", output);
 //! ```
 
+mod comments;
 mod context;
 mod diagnostic;
 mod directives;
 mod echo;
 mod linter;
 mod location;
+mod scan;
 mod severity;
 
-pub mod comment_parser;
 pub mod config;
 pub mod formatter;
 pub mod rules;
 pub mod source;
 pub mod tokenizer;
 
+pub use comments::{Comment, CommentKind};
 pub use config::{ConfigFile, ConfigFileError};
 pub use context::{LineMetadata, LintContext, MAX_CONTEXT_COLUMNS, SourceContext};
 pub use diagnostic::{

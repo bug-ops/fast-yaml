@@ -317,3 +317,15 @@ describe('BOM coordinates', () => {
     expect(spans('a: 1\n...\n\uFEFFb: 2   \n')).toEqual(plain);
   });
 });
+
+describe('comments inside scalars', () => {
+  it('hash in a multi-line quoted scalar is not a comment', () => {
+    const result = lint('a: "one\n  #two\n  three"\n');
+    expect(result.filter((d) => d.code === 'comments')).toHaveLength(0);
+  });
+
+  it('a real comment is still checked', () => {
+    const result = lint('a: 1 #bad\n');
+    expect(result.some((d) => d.code === 'comments')).toBe(true);
+  });
+});

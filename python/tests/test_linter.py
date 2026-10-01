@@ -624,3 +624,15 @@ class TestBomCoordinates:
         plain = self._spans("a: 1\n...\nb: 2   \n")
         assert plain
         assert self._spans("a: 1\n...\n\ufeffb: 2   \n") == plain
+
+
+class TestCommentsInScalars:
+    """A `#` inside a multi-line quoted or block scalar is not a comment (#438)."""
+
+    def test_hash_in_multiline_quoted_scalar_is_not_a_comment(self):
+        diagnostics = lint.lint('a: "one\n  #two\n  three"\n')
+        assert [d.code for d in diagnostics if d.code == "comments"] == []
+
+    def test_real_comment_is_still_checked(self):
+        diagnostics = lint.lint("a: 1 #bad\n")
+        assert any(d.code == "comments" for d in diagnostics)

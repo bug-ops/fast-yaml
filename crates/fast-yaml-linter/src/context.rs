@@ -2,11 +2,13 @@
 
 use crate::{
     Location, Span,
-    comment_parser::{Comment, CommentParser},
+    comments::Comment,
     diagnostic::{ContextLine, DiagnosticContext},
+    scan::{DocumentMarkers, SourceScan},
     source::offset::{ByteOffset, ByteRange},
     tokenizer::{FlowIndex, FlowTokenizer},
 };
+use fast_yaml_core::SourcePosition;
 use saphyr_parser::{Marker, Span as SaphyrSpan};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -480,6 +482,26 @@ impl<'a> SourceContext<'a> {
     /// Converts a saphyr span to a [`Span`].
     pub(crate) fn span_of(&self, span: SaphyrSpan) -> Span {
         Span::new(self.location_of(span.start), self.location_of(span.end))
+    }
+
+    /// Converts the positions of a parser event (1-indexed line and char column) to a [`Span`].
+    pub(crate) fn span_between(&self, from: SourcePosition, to: SourcePosition) -> Span {
+        Span::new(
+            self.location_of(Self::marker_at(from)),
+            self.location_of(Self::marker_at(to)),
+        )
+    }
+
+    /// Converts the positions of a parser event to a byte range.
+    pub(crate) fn byte_range_between(&self, from: SourcePosition, to: SourcePosition) -> ByteRange {
+        ByteRange::new(
+            self.byte_offset_of(Self::marker_at(from)),
+            self.byte_offset_of(Self::marker_at(to)),
+        )
+    }
+
+    fn marker_at(position: SourcePosition) -> Marker {
+        Marker::new(0, position.line, position.column.saturating_sub(1))
     }
 
     /// Converts a byte range to a [`Span`] with line and char-column locations.
@@ -1019,7 +1041,7 @@ pub struct LineMetadata {
 pub struct LintContext<'a> {
     source: &'a str,
     source_context: SourceContext<'a>,
-    comments: OnceLock<Vec<Comment>>,
+    scan: OnceLock<SourceScan<'a>>,
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
     key_index: OnceLock<KeyIndex<'a>>,
@@ -1047,7 +1069,7 @@ impl<'a> LintContext<'a> {
         Self {
             source,
             source_context: SourceContext::new(source),
-            comments: OnceLock::new(),
+            scan: OnceLock::new(),
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
             key_index: OnceLock::new(),
@@ -1122,10 +1144,32 @@ impl<'a> LintContext<'a> {
         &self.source_context
     }
 
-    /// Returns all comments found in the source.
+    /// Returns a copy of this context whose comments and document markers are `scan`.
     ///
-    /// Comments are parsed and cached on first access. Subsequent calls
-    /// return the same cached reference with no additional parsing.
+    /// `Linter::lint` fills them from the same parser pass that loads the documents.
+    #[must_use]
+    pub(crate) fn with_scan(self, scan: SourceScan<'a>) -> Self {
+        // A fresh context has an empty cell
+        let _ = self.scan.set(scan);
+        self
+    }
+
+    fn scan(&self) -> &SourceScan<'a> {
+        self.scan
+            .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
+    }
+
+    /// Returns the explicit markers and first line of every parsed document.
+    pub(crate) fn documents(&self) -> &[DocumentMarkers] {
+        &self.scan().documents
+    }
+
+    /// Returns all comments found in the source, in source order.
+    ///
+    /// Comments come from the parser events, so `#` inside quoted and block scalars is never a
+    /// comment. They are located on first access with one parser pass unless the linter already
+    /// did it while loading the documents. A source that does not parse, or that is not its own
+    /// normalized form (it starts a document with a BOM), has none.
     ///
     /// # Examples
     ///
@@ -1136,14 +1180,11 @@ impl<'a> LintContext<'a> {
     /// let context = LintContext::new(source);
     /// let comments = context.comments();
     /// assert_eq!(comments.len(), 1);
-    /// assert_eq!(comments[0].content, " comment");
+    /// assert_eq!(comments[0].text, " comment");
     /// ```
     #[must_use]
-    pub fn comments(&self) -> &[Comment] {
-        self.comments.get_or_init(|| {
-            let parser = CommentParser::new(self.source, &self.source_context);
-            parser.find_all().to_vec()
-        })
+    pub fn comments(&self) -> &[Comment<'a>] {
+        &self.scan().comments
     }
 
     /// Returns all lines in the source as a slice of string slices.
@@ -1195,15 +1236,19 @@ impl<'a> LintContext<'a> {
     #[must_use]
     pub fn line_metadata(&self) -> &[LineMetadata] {
         self.line_metadata.get_or_init(|| {
+            let mut comment_lines = vec![false; self.lines().len()];
+            for comment in self.comments().iter().filter(|c| c.is_full_line()) {
+                if let Some(flag) = comment_lines.get_mut(comment.span.start.line.wrapping_sub(1)) {
+                    *flag = true;
+                }
+            }
             self.lines()
                 .iter()
-                .map(|line| {
-                    let trimmed = line.trim_start();
-                    LineMetadata {
-                        indent: line.chars().take_while(|&c| c == ' ').count(),
-                        is_empty: trimmed.is_empty(),
-                        is_comment: trimmed.starts_with('#'),
-                    }
+                .zip(comment_lines)
+                .map(|(line, is_comment)| LineMetadata {
+                    indent: line.chars().take_while(|&c| c == ' ').count(),
+                    is_empty: line.trim_start().is_empty(),
+                    is_comment,
                 })
                 .collect()
         })
@@ -1354,9 +1399,9 @@ mod lint_context_tests {
 
         let comments = ctx.comments();
         assert_eq!(comments.len(), 3);
-        assert_eq!(comments[0].content, " Comment 1");
-        assert_eq!(comments[1].content, " Comment 2");
-        assert_eq!(comments[2].content, " Comment 3");
+        assert_eq!(comments[0].text, " Comment 1");
+        assert_eq!(comments[1].text, " Comment 2");
+        assert_eq!(comments[2].text, " Comment 3");
     }
 
     #[test]
@@ -1399,5 +1444,12 @@ mod lint_context_tests {
         let first = ctx.flow_tokenizer();
         let second = ctx.flow_tokenizer();
         assert!(std::ptr::eq(first.index, second.index));
+    }
+
+    #[test]
+    fn test_line_metadata_ignores_hash_lines_inside_scalars() {
+        let ctx = LintContext::new("a: \"x\n  #y\"\nb: |\n  #z\n# c\n");
+        let flags: Vec<_> = ctx.line_metadata().iter().map(|m| m.is_comment).collect();
+        assert_eq!(flags, [false, false, false, false, true]);
     }
 }

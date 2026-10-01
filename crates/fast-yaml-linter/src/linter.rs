@@ -5,9 +5,9 @@ use std::num::NonZeroUsize;
 use std::str::FromStr;
 
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
-use crate::context::lines_of;
 use crate::directives::Directives;
 use crate::rules::MarkerPresence;
+use crate::scan::ScanCollector;
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser, Value};
@@ -399,14 +399,17 @@ impl Linter {
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
         let options = LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins);
-        let docs = Parser::parse_normalized(
+        let context = LintContext::new(source);
+        let mut collector = ScanCollector::new(&normalized, source, context.source_context());
+        let docs = Parser::parse_normalized_observed(
             &normalized,
             &StreamBudget::new(self.config.parse_limits),
             options,
+            |item| collector.observe(item),
         )?;
-        let doc_start_lines = compute_doc_start_lines(source, docs.len());
-        let directives = Directives::from_source(source, &self.config, &self.registry);
-        let mut context = LintContext::new(source);
+        let scan = collector.finish();
+        let mut context = context.with_scan(scan);
+        let directives = Directives::from_context(&context, &self.config, &self.registry);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
@@ -419,7 +422,7 @@ impl Linter {
 
             if rule.needs_value() {
                 for (idx, doc) in docs.iter().enumerate() {
-                    let start_line = doc_start_lines.get(idx).copied().unwrap_or(1);
+                    let start_line = context.documents().get(idx).map_or(1, |d| d.first_line);
                     context.set_doc_start_line(start_line);
                     diagnostics.extend(rule.check(&context, doc, &self.config));
                 }
@@ -461,8 +464,8 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let directives = Directives::from_source(source, &self.config, &self.registry);
         let context = LintContext::new(source);
+        let directives = Directives::from_context(&context, &self.config, &self.registry);
         let mut diagnostics = Vec::new();
 
         for rule in self.registry.rules() {
@@ -530,29 +533,6 @@ pub enum LintError {
     /// Source exceeds the configured input size limit.
     #[error(transparent)]
     InputTooLarge(#[from] InputTooLarge),
-}
-
-/// Returns a `Vec` where `result[i]` is the 1-based line number at which
-/// document `i` begins in `source`.
-///
-/// Document boundaries are detected by scanning for lines that consist solely
-/// of `---` (the YAML directive-end marker). The first document always starts
-/// at line 1. Each `---` line introduces the *next* document, which begins on
-/// the following line.
-fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
-    let mut starts = Vec::with_capacity(doc_count);
-    starts.push(1usize);
-
-    for (idx, line) in lines_of(source).enumerate() {
-        if line == "---" {
-            starts.push(idx + 2); // line after `---` (1-based)
-            if starts.len() == doc_count {
-                break;
-            }
-        }
-    }
-
-    starts
 }
 
 /// Applies inline directives and sorts.
@@ -1214,5 +1194,24 @@ mod tests {
             .lint("x: {<<: 1}\nx: 2\n")
             .unwrap_err();
         assert!(err.to_string().contains("line 1, column 5"), "{err}");
+    }
+
+    #[test]
+    fn test_comment_only_source_lints_without_documents() {
+        let diagnostics = Linter::with_all_rules().lint("# only a comment\n").unwrap();
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+    }
+
+    #[test]
+    fn test_lint_scans_comments_in_the_loader_pass() {
+        let diagnostics = Linter::with_all_rules()
+            .lint("a: 1\n---\nb: 2 #x\n")
+            .unwrap();
+        let lines: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == "comments")
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(lines, [3, 3]);
     }
 }
