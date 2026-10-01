@@ -1,5 +1,7 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
@@ -58,8 +60,8 @@ impl Default for DuplicateKeysOptions {
 impl RuleOptions for DuplicateKeysOptions {}
 
 impl super::LintRule for DuplicateKeysRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::DUPLICATE_KEY
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::DuplicateKey)
     }
 
     fn name(&self) -> &'static str {

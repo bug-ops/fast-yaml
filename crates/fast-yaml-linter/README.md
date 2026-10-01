@@ -354,7 +354,7 @@ rules:
 
 Custom rules added with `Linter::add_rule` are configured with
 `LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through
-`LintConfig::severity_for`.
+`LintConfig::severity_for(RuleId, default)`.
 
 ### Python
 

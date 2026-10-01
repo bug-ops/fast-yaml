@@ -977,7 +977,7 @@ mod tests {
             .unwrap()
             .into_parts()
             .0;
-        assert!(!lint_config.is_rule_enabled("key-ordering"));
+        assert!(!lint_config.is_rule_enabled(crate::rules::RuleId::BuiltIn(RuleName::KeyOrdering)));
     }
 
     #[test]

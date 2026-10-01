@@ -5,6 +5,8 @@
 //! yamllint's stack of enclosing structures over it. Findings, columns and messages match
 //! yamllint 1.38 for every document both parsers accept.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::{IndentSequences, IndentSize, IndentSpaces, RuleOptions};
@@ -102,8 +104,8 @@ impl IndentationOptions {
 impl RuleOptions for IndentationOptions {}
 
 impl super::LintRule for IndentationRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::INDENTATION
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Indentation)
     }
 
     fn name(&self) -> &'static str {

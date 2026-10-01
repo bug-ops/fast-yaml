@@ -1,5 +1,7 @@
 //! Rule to check line ending type.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
@@ -58,8 +60,8 @@ pub struct NewLinesOptions {
 impl RuleOptions for NewLinesOptions {}
 
 impl super::LintRule for NewLinesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::NEW_LINES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::NewLines)
     }
 
     fn name(&self) -> &'static str {
@@ -122,7 +124,7 @@ impl super::LintRule for NewLinesRule {
 
                     diagnostics.push(
                         DiagnosticBuilder::new(
-                            self.code(),
+                            DiagnosticCode::NEW_LINES,
                             severity,
                             format!(
                                 "wrong line ending (expected {expected_str}, found {actual_str})"

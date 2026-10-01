@@ -1,5 +1,7 @@
 //! Rule to check flow sequence brackets `[]` formatting.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::{
     Diagnostic, DiagnosticCode, LintConfig, LintContext, Severity,
     rules::flow_common::{FlowCollection, check_flow_collection},
@@ -35,8 +37,8 @@ use fast_yaml_core::Value;
 pub struct BracketsRule;
 
 impl super::LintRule for BracketsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::BRACKETS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Brackets)
     }
 
     fn name(&self) -> &'static str {

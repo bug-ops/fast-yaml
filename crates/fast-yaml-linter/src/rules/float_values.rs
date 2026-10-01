@@ -1,5 +1,7 @@
 //! Rule to check float value representations.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use super::node_roles::NodeRole;
@@ -65,8 +67,8 @@ impl Default for FloatValuesOptions {
 impl RuleOptions for FloatValuesOptions {}
 
 impl super::LintRule for FloatValuesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::FLOAT_VALUES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::FloatValues)
     }
 
     fn name(&self) -> &'static str {
@@ -108,7 +110,10 @@ impl super::LintRule for FloatValuesRule {
             };
             let span = source_context.span_of_bytes(scalar.range);
             for msg in messages(text, float, options) {
-                diagnostics.push(DiagnosticBuilder::new(self.code(), severity, msg, span).build());
+                diagnostics.push(
+                    DiagnosticBuilder::new(DiagnosticCode::FLOAT_VALUES, severity, msg, span)
+                        .build(),
+                );
             }
         }
 

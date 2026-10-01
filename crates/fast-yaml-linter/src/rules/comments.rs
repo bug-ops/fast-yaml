@@ -1,5 +1,7 @@
 //! Rule to check comment formatting.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
@@ -63,8 +65,8 @@ impl Default for CommentsOptions {
 impl RuleOptions for CommentsOptions {}
 
 impl super::LintRule for CommentsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::COMMENTS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Comments)
     }
 
     fn name(&self) -> &'static str {
@@ -102,7 +104,7 @@ impl super::LintRule for CommentsRule {
 
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::COMMENTS,
                         severity,
                         "comment should start with a space after '#'",
                         comment.span,
@@ -136,7 +138,7 @@ impl super::LintRule for CommentsRule {
 
                         diagnostics.push(
                             DiagnosticBuilder::new(
-                                self.code(),
+                                DiagnosticCode::COMMENTS,
                                 severity,
                                 format!(
                                     "too few spaces before comment (expected at least {min_spaces_from_content}, found {spaces_before})"

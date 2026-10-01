@@ -1,5 +1,7 @@
 //! Rule to check for document end marker (...).
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{MarkerPresence, RuleOptions};
@@ -49,8 +51,8 @@ pub struct DocumentEndOptions {
 impl RuleOptions for DocumentEndOptions {}
 
 impl super::LintRule for DocumentEndRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::DOCUMENT_END
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::DocumentEnd)
     }
 
     fn name(&self) -> &'static str {
@@ -68,8 +70,12 @@ impl super::LintRule for DocumentEndRule {
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         match config.rules.document_end.options.present {
             MarkerPresence::Allowed => Vec::new(),
-            MarkerPresence::Required => check_required(context, config, self.code()),
-            MarkerPresence::Forbidden => check_forbidden(context.source(), config, self.code()),
+            MarkerPresence::Required => {
+                check_required(context, config, DiagnosticCode::DOCUMENT_END)
+            }
+            MarkerPresence::Forbidden => {
+                check_forbidden(context.source(), config, DiagnosticCode::DOCUMENT_END)
+            }
         }
     }
 }

@@ -1151,7 +1151,11 @@ mod tests {
     #[test]
     fn registry_and_rule_names_are_a_bijection() {
         let registry = RuleRegistry::with_default_rules();
-        let codes: Vec<&str> = registry.rules().iter().map(|rule| rule.code()).collect();
+        let codes: Vec<&str> = registry
+            .rules()
+            .iter()
+            .map(|rule| rule.id().as_str())
+            .collect();
         let names: Vec<&str> = RuleName::ALL.iter().map(|name| name.as_str()).collect();
         assert_eq!(codes, names);
         assert_eq!(RuleName::ALL.len(), 25);
@@ -1484,14 +1488,15 @@ mod tests {
     #[test]
     fn severity_for_resolves_builtin_rules() {
         use crate::LintConfig;
+        use crate::rules::RuleId;
         let mut config = LintConfig::default();
         apply(&mut config.rules, "braces: error").unwrap();
         assert_eq!(
-            config.severity_for("braces", Severity::Hint),
+            config.severity_for(RuleId::BuiltIn(RuleName::Braces), Severity::Hint),
             Severity::Error
         );
         assert_eq!(
-            config.severity_for("colons", Severity::Hint),
+            config.severity_for(RuleId::BuiltIn(RuleName::Colons), Severity::Hint),
             Severity::Hint
         );
     }

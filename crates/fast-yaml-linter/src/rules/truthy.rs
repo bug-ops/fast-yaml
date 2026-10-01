@@ -1,5 +1,7 @@
 //! Rule to check truthy value representations.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
@@ -181,8 +183,8 @@ impl Default for TruthyOptions {
 impl RuleOptions for TruthyOptions {}
 
 impl super::LintRule for TruthyRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::TRUTHY
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Truthy)
     }
 
     fn name(&self) -> &'static str {
@@ -230,7 +232,9 @@ impl super::LintRule for TruthyRule {
             }
             if let Some(msg) = message(slot, schema, index.text(scalar), &allowed) {
                 let span = source_context.span_of_bytes(scalar.range);
-                diagnostics.push(DiagnosticBuilder::new(self.code(), severity, msg, span).build());
+                diagnostics.push(
+                    DiagnosticBuilder::new(DiagnosticCode::TRUTHY, severity, msg, span).build(),
+                );
             }
         }
 

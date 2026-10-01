@@ -1,5 +1,7 @@
 //! Rule to check for empty (implicit null) values.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use super::node_roles::NodeRole;
@@ -59,8 +61,8 @@ impl Default for EmptyValuesOptions {
 impl RuleOptions for EmptyValuesOptions {}
 
 impl super::LintRule for EmptyValuesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::EMPTY_VALUES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::EmptyValues)
     }
 
     fn name(&self) -> &'static str {
@@ -96,7 +98,7 @@ impl super::LintRule for EmptyValuesRule {
                     }
                     EmptyKind::BlockSequence => "empty value in block sequence".to_owned(),
                 };
-                DiagnosticBuilder::new(self.code(), severity, message, span)
+                DiagnosticBuilder::new(DiagnosticCode::EMPTY_VALUES, severity, message, span)
                     .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
                     .build()
             })

@@ -1,5 +1,7 @@
 //! Rule to check octal value representations.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
@@ -77,8 +79,8 @@ impl Default for OctalValuesOptions {
 impl RuleOptions for OctalValuesOptions {}
 
 impl super::LintRule for OctalValuesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::OCTAL_VALUES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::OctalValues)
     }
 
     fn name(&self) -> &'static str {
@@ -182,7 +184,7 @@ impl OctalValuesRule {
                 );
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::OCTAL_VALUES,
                         severity,
                         format!(
                             "found explicit octal value '{value_token}' (use quoted string to avoid ambiguity)"
@@ -211,7 +213,7 @@ impl OctalValuesRule {
                 );
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::OCTAL_VALUES,
                         severity,
                         format!(
                             "found implicit octal value '{value_token}' (use quoted string or explicit '0o' prefix)"

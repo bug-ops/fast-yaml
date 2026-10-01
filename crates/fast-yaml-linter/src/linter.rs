@@ -2,13 +2,12 @@
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::str::FromStr;
 
 use crate::config::{
     CanonicalPath, CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig,
 };
 use crate::directives::Directives;
-use crate::rules::{LintRule, MarkerPresence};
+use crate::rules::{LintRule, MarkerPresence, RuleId};
 use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
 use crate::{Diagnostic, DiagnosticCode, LintContext, LintSource, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
@@ -176,10 +175,11 @@ impl LintConfig {
     /// ```
     /// use fast_yaml_linter::LintConfig;
     /// use fast_yaml_linter::config::RuleName;
+    /// use fast_yaml_linter::rules::RuleId;
     ///
     /// let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
-    /// assert!(!config.is_rule_enabled("line-length"));
-    /// assert!(config.is_rule_enabled("duplicate-key"));
+    /// assert!(!config.is_rule_enabled(RuleId::BuiltIn(RuleName::LineLength)));
+    /// assert!(config.is_rule_enabled(RuleId::BuiltIn(RuleName::DuplicateKey)));
     /// ```
     #[must_use]
     pub const fn with_disabled_rule(mut self, rule: RuleName) -> Self {
@@ -194,16 +194,17 @@ impl LintConfig {
     /// ```
     /// use fast_yaml_linter::{LintConfig, Severity};
     /// use fast_yaml_linter::config::{CustomRuleCode, NoOptions, RuleSettings};
+    /// use fast_yaml_linter::rules::RuleId;
     ///
     /// let settings = RuleSettings::<NoOptions> {
     ///     enabled: false,
     ///     severity: Some(Severity::Error),
     ///     ..RuleSettings::default()
     /// };
-    /// let config = LintConfig::new()
-    ///     .with_custom_rule(CustomRuleCode::new("my-rule").unwrap(), settings);
-    /// assert!(!config.is_rule_enabled("my-rule"));
-    /// assert_eq!(config.severity_for("my-rule", Severity::Hint), Severity::Error);
+    /// let code = CustomRuleCode::new("my-rule").unwrap();
+    /// let config = LintConfig::new().with_custom_rule(code.clone(), settings);
+    /// assert!(!config.is_rule_enabled(RuleId::Custom(&code)));
+    /// assert_eq!(config.severity_for(RuleId::Custom(&code), Severity::Hint), Severity::Error);
     /// ```
     #[must_use]
     pub fn with_custom_rule(
@@ -215,44 +216,59 @@ impl LintConfig {
         self
     }
 
-    /// Returns whether the rule with this code is enabled.
+    /// Returns whether the rule is enabled.
     ///
-    /// Built-in rules are looked up by [`RuleName`], then custom rules; unknown codes are
-    /// enabled.
+    /// Built-in rules are looked up by [`RuleName`], custom rules by their code; a custom rule
+    /// without settings is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::config::RuleName;
+    /// use fast_yaml_linter::rules::RuleId;
+    ///
+    /// let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
+    /// assert!(!config.is_rule_enabled(RuleId::BuiltIn(RuleName::LineLength)));
+    /// assert!(config.is_rule_enabled(RuleId::BuiltIn(RuleName::DuplicateKey)));
+    /// ```
     #[must_use]
-    pub fn is_rule_enabled(&self, code: &str) -> bool {
-        RuleName::from_str(code).map_or_else(
-            |_| {
-                self.custom_settings(code)
-                    .is_none_or(|settings| settings.enabled)
-            },
-            |name| self.rules.is_enabled(name),
-        )
+    pub fn is_rule_enabled(&self, id: RuleId<'_>) -> bool {
+        match id {
+            RuleId::BuiltIn(name) => self.rules.is_enabled(name),
+            RuleId::Custom(code) => self
+                .custom_rules
+                .get(code)
+                .is_none_or(|settings| settings.enabled),
+        }
     }
 
     /// Returns the configured severity of a rule, or `default` when none is set.
     ///
     /// Built-in rules are resolved through [`RulesConfig`], custom rules through
-    /// [`LintConfig::custom_rules`]. Custom [`LintRule`](crate::rules::LintRule) implementations call this with their own
-    /// code; built-in rules read their typed settings directly.
+    /// [`LintConfig::custom_rules`]. Custom [`LintRule`](crate::rules::LintRule) implementations
+    /// call this with their own id; built-in rules read their typed settings directly.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_linter::{LintConfig, Severity};
+    /// use fast_yaml_linter::config::CustomRuleCode;
+    /// use fast_yaml_linter::rules::RuleId;
     ///
     /// let config = LintConfig::new();
-    /// assert_eq!(config.severity_for("my-rule", Severity::Info), Severity::Info);
+    /// let code = CustomRuleCode::new("my-rule").unwrap();
+    /// assert_eq!(config.severity_for(RuleId::Custom(&code), Severity::Info), Severity::Info);
     /// ```
     #[must_use]
-    pub fn severity_for(&self, code: &str, default: Severity) -> Severity {
-        RuleName::from_str(code).map_or_else(
-            |_| {
-                self.custom_settings(code)
-                    .map_or(default, |settings| settings.severity_or(default))
-            },
-            |name| self.rules.severity(name).unwrap_or(default),
-        )
+    pub fn severity_for(&self, id: RuleId<'_>, default: Severity) -> Severity {
+        match id {
+            RuleId::BuiltIn(name) => self.rules.severity(name).unwrap_or(default),
+            RuleId::Custom(code) => self
+                .custom_rules
+                .get(code)
+                .map_or(default, |settings| settings.severity_or(default)),
+        }
     }
 
     /// Returns whether the built-in rule runs for the file at `path`, or for a source without
@@ -265,16 +281,12 @@ impl LintConfig {
         self.rules.is_enabled(name) && path.is_none_or(|path| !self.rules.is_ignored(name, path))
     }
 
-    /// Like [`LintConfig::is_active`] for a registry code, which may name a custom rule.
-    fn is_code_active(&self, code: &str, path: Option<&CanonicalPath>) -> bool {
-        RuleName::from_str(code).map_or_else(
-            |_| self.is_rule_enabled(code),
-            |name| self.is_active(name, path),
-        )
-    }
-
-    fn custom_settings(&self, code: &str) -> Option<&RuleSettings<NoOptions>> {
-        self.custom_rules.get(code)
+    /// Like [`LintConfig::is_active`] for a registered rule, which may be a custom one.
+    fn is_rule_active(&self, id: RuleId<'_>, path: Option<&CanonicalPath>) -> bool {
+        match id {
+            RuleId::BuiltIn(name) => self.is_active(name, path),
+            RuleId::Custom(_) => self.is_rule_enabled(id),
+        }
     }
 }
 
@@ -543,7 +555,7 @@ impl Linter {
                 .rules()
                 .iter()
                 .map(AsRef::as_ref)
-                .filter(|rule| self.config.is_code_active(rule.code(), path))
+                .filter(|rule| self.config.is_rule_active(rule.id(), path))
                 .collect()
         };
 
@@ -590,8 +602,12 @@ impl Linter {
             self.registry
                 .rules()
                 .iter()
-                .map(|rule| rule.code())
-                .filter(|code| self.config.is_code_active(code, path)),
+                .map(|rule| rule.id())
+                .filter(|id| self.config.is_rule_active(*id, path))
+                .filter_map(|id| match id {
+                    RuleId::BuiltIn(name) => Some(name),
+                    RuleId::Custom(_) => None,
+                }),
         )
     }
 
@@ -648,7 +664,7 @@ impl Linter {
             if directives.disables_file() {
                 break;
             }
-            if !self.config.is_rule_enabled(rule.code()) {
+            if !self.config.is_rule_enabled(rule.id()) {
                 continue;
             }
 
@@ -728,11 +744,17 @@ mod tests {
         IndentSize::try_from(size).unwrap()
     }
 
-    struct AlwaysFlags;
+    struct AlwaysFlags(CustomRuleCode);
+
+    impl AlwaysFlags {
+        fn new() -> Self {
+            Self(CustomRuleCode::new("always-flags").unwrap())
+        }
+    }
 
     impl LintRule for AlwaysFlags {
-        fn code(&self) -> &'static str {
-            "always-flags"
+        fn id(&self) -> RuleId<'_> {
+            RuleId::Custom(&self.0)
         }
 
         fn name(&self) -> &'static str {
@@ -758,8 +780,8 @@ mod tests {
                 .span_at(context.source_context().line_start(1), 1);
             vec![
                 crate::DiagnosticBuilder::new(
-                    self.code(),
-                    config.severity_for(self.code(), self.default_severity()),
+                    self.0.as_str(),
+                    config.severity_for(self.id(), self.default_severity()),
                     "flagged",
                     span,
                 )
@@ -771,7 +793,7 @@ mod tests {
     #[test]
     fn test_custom_rule_runs_with_default_severity() {
         let mut linter = Linter::with_config(LintConfig::new());
-        linter.add_rule(Box::new(AlwaysFlags));
+        linter.add_rule(Box::new(AlwaysFlags::new()));
         let diagnostics = linter.lint("a: 1\n").unwrap();
         let flagged: Vec<_> = diagnostics
             .iter()
@@ -790,7 +812,7 @@ mod tests {
         };
         let mut linter =
             Linter::with_config(LintConfig::new().with_custom_rule(code.clone(), overridden));
-        linter.add_rule(Box::new(AlwaysFlags));
+        linter.add_rule(Box::new(AlwaysFlags::new()));
         let diagnostics = linter.lint("a: 1\n").unwrap();
         let flagged = diagnostics
             .iter()
@@ -803,7 +825,7 @@ mod tests {
             ..RuleSettings::default()
         };
         let mut linter = Linter::with_config(LintConfig::new().with_custom_rule(code, disabled));
-        linter.add_rule(Box::new(AlwaysFlags));
+        linter.add_rule(Box::new(AlwaysFlags::new()));
         let diagnostics = linter.lint("a: 1\n").unwrap();
         assert!(
             !diagnostics
@@ -1024,8 +1046,8 @@ mod tests {
     fn test_config_disabled_rules() {
         let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
 
-        assert!(!config.is_rule_enabled("line-length"));
-        assert!(config.is_rule_enabled("duplicate-key"));
+        assert!(!config.is_rule_enabled(RuleId::BuiltIn(RuleName::LineLength)));
+        assert!(config.is_rule_enabled(RuleId::BuiltIn(RuleName::DuplicateKey)));
     }
 
     #[test]

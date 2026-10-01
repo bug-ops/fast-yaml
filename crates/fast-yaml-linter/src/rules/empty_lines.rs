@@ -1,5 +1,7 @@
 //! Rule to check empty lines.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
@@ -62,8 +64,8 @@ impl Default for EmptyLinesOptions {
 impl RuleOptions for EmptyLinesOptions {}
 
 impl super::LintRule for EmptyLinesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::EMPTY_LINES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::EmptyLines)
     }
 
     fn name(&self) -> &'static str {
@@ -130,7 +132,7 @@ impl super::LintRule for EmptyLinesRule {
 
                         diagnostics.push(
                             DiagnosticBuilder::new(
-                                self.code(),
+                                DiagnosticCode::EMPTY_LINES,
                                 severity,
                                 format!(
                                     "too many consecutive empty lines {position} (expected at most {limit}, found {empty_count})"
@@ -158,7 +160,7 @@ impl super::LintRule for EmptyLinesRule {
 
             diagnostics.push(
                 DiagnosticBuilder::new(
-                    self.code(),
+                    DiagnosticCode::EMPTY_LINES,
                     severity,
                     format!(
                         "too many consecutive empty lines at document end (expected at most {max_end}, found {empty_count})"

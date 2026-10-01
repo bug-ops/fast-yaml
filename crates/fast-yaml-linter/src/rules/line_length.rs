@@ -1,5 +1,7 @@
 //! Rule to check line length limits.
 
+use super::RuleId;
+use crate::config::RuleName;
 use std::num::NonZeroUsize;
 
 use serde::{Deserialize, Serialize};
@@ -129,8 +131,8 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
 }
 
 impl super::LintRule for LineLengthRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::LINE_LENGTH
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::LineLength)
     }
 
     fn name(&self) -> &'static str {

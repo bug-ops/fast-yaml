@@ -1,5 +1,7 @@
 //! Rule to detect duplicate and unused anchor definitions in YAML documents.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AlwaysTrue, RuleOptions};
@@ -57,8 +59,8 @@ impl Default for InvalidAnchorsOptions {
 impl RuleOptions for InvalidAnchorsOptions {}
 
 impl super::LintRule for InvalidAnchorsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::INVALID_ANCHOR
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::InvalidAnchor)
     }
 
     fn name(&self) -> &'static str {

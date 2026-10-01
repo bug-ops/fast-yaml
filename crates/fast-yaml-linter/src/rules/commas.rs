@@ -1,5 +1,7 @@
 //! Rule to check spacing around commas in flow collections.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
@@ -60,8 +62,8 @@ impl Default for CommasOptions {
 impl RuleOptions for CommasOptions {}
 
 impl super::LintRule for CommasRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::COMMAS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Commas)
     }
 
     fn name(&self) -> &'static str {
@@ -96,7 +98,7 @@ impl super::LintRule for CommasRule {
                 source_context,
                 comma.span.start.offset,
                 max_spaces_before,
-                self.code(),
+                DiagnosticCode::COMMAS,
                 config,
             ) {
                 diagnostics.push(diag);
@@ -109,7 +111,7 @@ impl super::LintRule for CommasRule {
                 comma.span.start.offset,
                 min_spaces_after,
                 max_spaces_after,
-                self.code(),
+                DiagnosticCode::COMMAS,
                 config,
             ) {
                 diagnostics.push(diag);

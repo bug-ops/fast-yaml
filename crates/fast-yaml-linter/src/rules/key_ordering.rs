@@ -1,5 +1,7 @@
 //! Rule to check key ordering in mappings.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use super::node_roles::NodeRole;
@@ -78,8 +80,8 @@ fn compare(key: &str, earlier: &str, case_sensitive: bool) -> std::cmp::Ordering
 }
 
 impl super::LintRule for KeyOrderingRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::KEY_ORDERING
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::KeyOrdering)
     }
 
     fn name(&self) -> &'static str {

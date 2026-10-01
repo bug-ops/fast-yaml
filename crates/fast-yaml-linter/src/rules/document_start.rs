@@ -1,5 +1,7 @@
 //! Rule to check for document start marker (---).
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{MarkerPresence, RuleOptions};
@@ -47,8 +49,8 @@ pub struct DocumentStartOptions {
 impl RuleOptions for DocumentStartOptions {}
 
 impl super::LintRule for DocumentStartRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::DOCUMENT_START
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::DocumentStart)
     }
 
     fn name(&self) -> &'static str {

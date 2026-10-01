@@ -11,12 +11,13 @@ use fast_yaml_core::{
     SetValues, Value, resolve_scalar,
 };
 
+use crate::config::RuleName;
 use crate::nodes::{CollectionKind, NodeIndex, ScalarNode, TagKind};
 use crate::rules::node_roles::RoleTracker;
 use crate::set_members::{SetMember, SetMembers, may_contain_set};
 use crate::source::offset::{ByteOffset, ByteRange};
 use crate::tokenizer::ScalarRanges;
-use crate::{DiagnosticCode, Location, SourceContext, Span, comments::Comment};
+use crate::{Location, SourceContext, Span, comments::Comment};
 
 /// How the linter loads a document: a repeated `<<` and a `!!set` member with a value load, so
 /// the `duplicate-key` and `set-values` rules can report them instead of the load failing.
@@ -138,25 +139,35 @@ impl ScanNeeds {
     pub(crate) const FLOW: Self = Self(1 << 3);
     pub(crate) const ALL: Self = Self(Self::KEYS.0 | Self::NODES.0 | Self::SETS.0 | Self::FLOW.0);
 
-    /// What the rules with these codes read.
-    pub(crate) fn of_rules<'c>(codes: impl IntoIterator<Item = &'c str>) -> Self {
-        codes.into_iter().fold(Self::NONE, |needs, code| {
-            needs.union(match code {
-                DiagnosticCode::DUPLICATE_KEY => Self::KEYS,
-                DiagnosticCode::TRUTHY
-                | DiagnosticCode::QUOTED_STRINGS
-                | DiagnosticCode::FLOAT_VALUES
-                | DiagnosticCode::EMPTY_VALUES
-                | DiagnosticCode::KEY_ORDERING
-                | DiagnosticCode::INDENTATION
-                | DiagnosticCode::HYPHENS => Self::NODES,
-                DiagnosticCode::SET_VALUES => Self::SETS,
-                DiagnosticCode::BRACES
-                | DiagnosticCode::BRACKETS
-                | DiagnosticCode::COLONS
-                | DiagnosticCode::COMMAS
-                | DiagnosticCode::COMMENTS_INDENTATION => Self::FLOW,
-                _ => Self::NONE,
+    /// What the built-in rules in `names` read.
+    pub(crate) fn of_rules(names: impl IntoIterator<Item = RuleName>) -> Self {
+        names.into_iter().fold(Self::NONE, |needs, name| {
+            needs.union(match name {
+                RuleName::DuplicateKey => Self::KEYS,
+                RuleName::Truthy
+                | RuleName::QuotedStrings
+                | RuleName::FloatValues
+                | RuleName::EmptyValues
+                | RuleName::KeyOrdering
+                | RuleName::Indentation
+                | RuleName::Hyphens => Self::NODES,
+                RuleName::SetValues => Self::SETS,
+                RuleName::Braces
+                | RuleName::Brackets
+                | RuleName::Colons
+                | RuleName::Commas
+                | RuleName::CommentsIndentation => Self::FLOW,
+                RuleName::LineLength
+                | RuleName::TrailingWhitespace
+                | RuleName::DocumentStart
+                | RuleName::DocumentEnd
+                | RuleName::NewLineAtEndOfFile
+                | RuleName::Comments
+                | RuleName::EmptyLines
+                | RuleName::NewLines
+                | RuleName::OctalValues
+                | RuleName::InvalidAnchor
+                | RuleName::LintDirective => Self::NONE,
             })
         })
     }
@@ -744,17 +755,18 @@ mod tests {
 
     #[test]
     fn rules_name_the_products_they_read() {
-        let needs = |codes: &[&'static str]| ScanNeeds::of_rules(codes.iter().copied());
-        assert_eq!(needs(&[DiagnosticCode::LINE_LENGTH]), ScanNeeds::NONE);
-        assert_eq!(needs(&[DiagnosticCode::DUPLICATE_KEY]), ScanNeeds::KEYS);
-        assert_eq!(needs(&[DiagnosticCode::TRUTHY]), ScanNeeds::NODES);
-        assert_eq!(needs(&[DiagnosticCode::SET_VALUES]), ScanNeeds::SETS);
-        assert_eq!(needs(&[DiagnosticCode::COMMAS]), ScanNeeds::FLOW);
+        let needs = |names: &[RuleName]| ScanNeeds::of_rules(names.iter().copied());
+        assert_eq!(needs(&[RuleName::LineLength]), ScanNeeds::NONE);
+        assert_eq!(needs(&[RuleName::DuplicateKey]), ScanNeeds::KEYS);
+        assert_eq!(needs(&[RuleName::Truthy]), ScanNeeds::NODES);
+        assert_eq!(needs(&[RuleName::Hyphens]), ScanNeeds::NODES);
+        assert_eq!(needs(&[RuleName::SetValues]), ScanNeeds::SETS);
+        assert_eq!(needs(&[RuleName::Commas]), ScanNeeds::FLOW);
         let all = needs(&[
-            DiagnosticCode::DUPLICATE_KEY,
-            DiagnosticCode::EMPTY_VALUES,
-            DiagnosticCode::SET_VALUES,
-            DiagnosticCode::BRACES,
+            RuleName::DuplicateKey,
+            RuleName::EmptyValues,
+            RuleName::SetValues,
+            RuleName::Braces,
         ]);
         assert_eq!(all, ScanNeeds::ALL);
         assert!(all.covers(ScanNeeds::NODES));

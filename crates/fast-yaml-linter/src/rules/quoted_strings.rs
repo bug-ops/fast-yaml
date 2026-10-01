@@ -1,5 +1,7 @@
 //! Rule to check quoted string style.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
@@ -171,8 +173,8 @@ impl RuleOptions for QuotedStringsOptions {
 }
 
 impl super::LintRule for QuotedStringsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::QUOTED_STRINGS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::QuotedStrings)
     }
 
     fn name(&self) -> &'static str {
@@ -286,8 +288,15 @@ impl QuotedStringsRule {
             .quoted_strings
             .severity_or(self.default_severity());
         let mut report = |message: &'static str| {
-            diagnostics
-                .push(DiagnosticBuilder::new(self.code(), severity, message, scalar_span).build());
+            diagnostics.push(
+                DiagnosticBuilder::new(
+                    DiagnosticCode::QUOTED_STRINGS,
+                    severity,
+                    message,
+                    scalar_span,
+                )
+                .build(),
+            );
         };
 
         match style {

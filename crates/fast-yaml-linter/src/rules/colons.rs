@@ -1,5 +1,7 @@
 //! Rule to check spacing around colons.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
@@ -60,8 +62,8 @@ impl Default for ColonsOptions {
 impl RuleOptions for ColonsOptions {}
 
 impl super::LintRule for ColonsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::COLONS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Colons)
     }
 
     fn name(&self) -> &'static str {
@@ -100,7 +102,7 @@ impl super::LintRule for ColonsRule {
                 source_context,
                 colon.span.start.offset,
                 max_spaces_before,
-                self.code(),
+                DiagnosticCode::COLONS,
                 config,
             ) {
                 diagnostics.push(diag);
@@ -112,7 +114,7 @@ impl super::LintRule for ColonsRule {
                 source_context,
                 colon.span.start.offset,
                 max_spaces_after,
-                self.code(),
+                DiagnosticCode::COLONS,
                 config,
             ) {
                 diagnostics.push(diag);

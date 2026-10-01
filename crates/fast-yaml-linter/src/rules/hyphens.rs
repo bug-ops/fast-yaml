@@ -1,5 +1,7 @@
 //! Rule to check spacing after list item hyphens.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
@@ -57,8 +59,8 @@ impl Default for HyphensOptions {
 impl RuleOptions for HyphensOptions {}
 
 impl super::LintRule for HyphensRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::HYPHENS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Hyphens)
     }
 
     fn name(&self) -> &'static str {

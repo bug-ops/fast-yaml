@@ -1,5 +1,7 @@
 //! Rule to detect `!!set` members that carry a value.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::set_members::SetMember;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
@@ -22,8 +24,8 @@ use fast_yaml_core::Value;
 pub struct SetValuesRule;
 
 impl super::LintRule for SetValuesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::SET_VALUES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::SetValues)
     }
 
     fn name(&self) -> &'static str {

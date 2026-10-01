@@ -1,5 +1,7 @@
 //! Rule to check for newline at end of file.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
 };
@@ -27,8 +29,8 @@ use fast_yaml_core::Value;
 pub struct NewLineAtEndOfFileRule;
 
 impl super::LintRule for NewLineAtEndOfFileRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::NEW_LINE_AT_END_OF_FILE
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::NewLineAtEndOfFile)
     }
 
     fn name(&self) -> &'static str {
@@ -60,7 +62,7 @@ impl super::LintRule for NewLineAtEndOfFileRule {
 
             vec![
                 DiagnosticBuilder::new(
-                    self.code(),
+                    DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
                     severity,
                     "no newline at end of file",
                     Span::new(eof, eof),

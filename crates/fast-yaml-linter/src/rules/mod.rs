@@ -1,5 +1,8 @@
 //! Lint rules and rule registry.
 
+use std::fmt;
+
+use crate::config::{CustomRuleCode, RuleName};
 use crate::{Diagnostic, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
@@ -61,6 +64,46 @@ pub use trailing_whitespace::TrailingWhitespaceRule;
 pub(crate) use truthy::NON_STANDARD_BOOLS;
 pub use truthy::{TruthyOptions, TruthyRule, TruthySpelling, UnknownTruthySpelling};
 
+/// Identity of a lint rule: a built-in rule or a custom rule with a validated code.
+///
+/// Typed so that settings lookups never parse a string, and a built-in rule cannot be mistaken
+/// for a custom one.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::{CustomRuleCode, RuleName};
+/// use fast_yaml_linter::rules::RuleId;
+///
+/// let custom = CustomRuleCode::new("my-rule").unwrap();
+/// assert_eq!(RuleId::BuiltIn(RuleName::Braces).as_str(), "braces");
+/// assert_eq!(RuleId::Custom(&custom).as_str(), "my-rule");
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleId<'a> {
+    /// One of the built-in rules.
+    BuiltIn(RuleName),
+    /// A rule added with [`Linter::add_rule`](crate::Linter::add_rule).
+    Custom(&'a CustomRuleCode),
+}
+
+impl<'a> RuleId<'a> {
+    /// The kebab-case code that diagnostics and configuration use for the rule.
+    #[must_use]
+    pub fn as_str(self) -> &'a str {
+        match self {
+            Self::BuiltIn(name) => name.as_str(),
+            Self::Custom(code) => code.as_str(),
+        }
+    }
+}
+
+impl fmt::Display for RuleId<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str((*self).as_str())
+    }
+}
+
 /// Trait for implementing lint rules.
 ///
 /// All lint rules must implement this trait to be used with the linter.
@@ -69,15 +112,16 @@ pub use truthy::{TruthyOptions, TruthyRule, TruthySpelling, UnknownTruthySpellin
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity, DiagnosticCode};
-/// use fast_yaml_linter::rules::LintRule;
+/// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity};
+/// use fast_yaml_linter::config::CustomRuleCode;
+/// use fast_yaml_linter::rules::{LintRule, RuleId};
 /// use fast_yaml_core::Value;
 ///
-/// struct ExampleRule;
+/// struct ExampleRule(CustomRuleCode);
 ///
 /// impl LintRule for ExampleRule {
-///     fn code(&self) -> &str {
-///         "example-rule"
+///     fn id(&self) -> RuleId<'_> {
+///         RuleId::Custom(&self.0)
 ///     }
 ///
 ///     fn name(&self) -> &str {
@@ -98,10 +142,11 @@ pub use truthy::{TruthyOptions, TruthyRule, TruthySpelling, UnknownTruthySpellin
 /// }
 /// ```
 pub trait LintRule: Send + Sync {
-    /// Unique code for this rule.
+    /// Identity of this rule.
     ///
-    /// Should be kebab-case, e.g., "duplicate-key", "line-length".
-    fn code(&self) -> &str;
+    /// A custom rule returns [`RuleId::Custom`] with a [`CustomRuleCode`], which cannot name a
+    /// built-in rule. Returning a [`RuleId::BuiltIn`] makes the rule share that rule's settings.
+    fn id(&self) -> RuleId<'_>;
 
     /// Human-readable name.
     ///
@@ -264,7 +309,10 @@ impl RuleRegistry {
     /// ```
     #[must_use]
     pub fn get(&self, code: &str) -> Option<&dyn LintRule> {
-        self.rules.iter().find(|r| r.code() == code).map(|b| &**b)
+        self.rules
+            .iter()
+            .find(|r| r.id().as_str() == code)
+            .map(|b| &**b)
     }
 }
 
@@ -302,7 +350,7 @@ mod tests {
         let registry = RuleRegistry::with_default_rules();
         let rule = registry.get("duplicate-key");
         assert!(rule.is_some());
-        assert_eq!(rule.unwrap().code(), "duplicate-key");
+        assert_eq!(rule.unwrap().id().as_str(), "duplicate-key");
     }
 
     #[test]

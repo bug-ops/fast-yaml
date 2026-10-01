@@ -149,6 +149,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/CLI**: `fy format` keeps reserved `%NAME` directives instead of dropping them (#605)
 - **CLI**: `fy format` and `fy convert` exit quietly with the result's code when stdout is closed (was `error: Failed to write to stdout`, exit 1) (#605)
 - **Linter**: lint is 10-35% slower in wall time on flow-heavy input (positioned node index, indentation port) with 26-48% lower RSS from lazy excerpts (#605)
+- **Linter**: `LintRule::code()` is replaced by `id() -> RuleId` (`RuleId::BuiltIn(RuleName) | Custom(&CustomRuleCode)`), and `LintConfig::is_rule_enabled`/`severity_for` take a `RuleId` instead of a string (#609) (#PR)
 
 ### Added
 

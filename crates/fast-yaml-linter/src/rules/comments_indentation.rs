@@ -1,5 +1,7 @@
 //! Rule to check comment indentation.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::context::LineMetadata;
 use crate::{
     CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
@@ -34,8 +36,8 @@ use fast_yaml_core::Value;
 pub struct CommentsIndentationRule;
 
 impl super::LintRule for CommentsIndentationRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::COMMENTS_INDENTATION
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::CommentsIndentation)
     }
 
     fn name(&self) -> &'static str {
@@ -123,7 +125,7 @@ impl super::LintRule for CommentsIndentationRule {
 
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::COMMENTS_INDENTATION,
                         severity,
                         format!(
                             "comment indentation does not match surrounding content (expected {expected} spaces, found {comment_indent})"

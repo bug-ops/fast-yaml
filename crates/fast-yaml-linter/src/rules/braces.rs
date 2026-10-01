@@ -1,5 +1,7 @@
 //! Rule to check flow mapping braces `{}` formatting.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::{
     Diagnostic, DiagnosticCode, LintConfig, LintContext, Severity,
     rules::flow_common::{FlowCollection, check_flow_collection},
@@ -35,8 +37,8 @@ use fast_yaml_core::Value;
 pub struct BracesRule;
 
 impl super::LintRule for BracesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::BRACES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Braces)
     }
 
     fn name(&self) -> &'static str {

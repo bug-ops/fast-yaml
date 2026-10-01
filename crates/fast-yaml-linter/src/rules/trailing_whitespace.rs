@@ -1,5 +1,7 @@
 //! Rule to detect trailing whitespace.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
@@ -7,8 +9,8 @@ use fast_yaml_core::Value;
 pub struct TrailingWhitespaceRule;
 
 impl super::LintRule for TrailingWhitespaceRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::TRAILING_WHITESPACE
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::TrailingWhitespace)
     }
 
     fn name(&self) -> &'static str {

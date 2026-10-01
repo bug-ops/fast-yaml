@@ -1,6 +1,8 @@
 //! Registration of the `lint-directive` rule.
 
-use crate::{Diagnostic, DiagnosticCode, LintConfig, LintContext, Severity};
+use super::RuleId;
+use crate::config::RuleName;
+use crate::{Diagnostic, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 /// Settings holder for problems in inline lint directives.
@@ -11,8 +13,8 @@ use fast_yaml_core::Value;
 pub struct LintDirectiveRule;
 
 impl super::LintRule for LintDirectiveRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::LINT_DIRECTIVE
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::LintDirective)
     }
 
     fn name(&self) -> &'static str {
