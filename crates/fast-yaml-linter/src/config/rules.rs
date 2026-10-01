@@ -351,12 +351,11 @@ impl std::borrow::Borrow<str> for CustomRuleCode {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum ApplyMode {
-    /// A patch: whatever an entry does not mention keeps its current value.
+    /// A patch or the rules of a config file without a base: whatever an entry does not mention
+    /// keeps its current value, except that an entry over fast-yaml's own defaults starts at
+    /// yamllint's level.
     Patch,
-    /// The rules of a config file without a base: entries over fast-yaml's own defaults start
-    /// at yamllint's level.
-    File,
-    /// The rules of a config file over a preset or another config file; like `File`, and a
+    /// The rules of a config file over a preset or another config file; like `Patch`, and a
     /// severity or an options mapping also enables a disabled rule.
     FileOverBase,
 }
@@ -364,10 +363,6 @@ pub(super) enum ApplyMode {
 impl ApplyMode {
     const fn enables_on_override(self) -> bool {
         matches!(self, Self::FileOverBase)
-    }
-
-    const fn starts_from_yamllint(self) -> bool {
-        !matches!(self, Self::Patch)
     }
 }
 
@@ -407,15 +402,13 @@ pub enum IgnoreBase<'a> {
 struct ApplyCtx<'a> {
     yamllint: OnceCell<RulesConfig>,
     base: IgnoreBase<'a>,
-    mode: ApplyMode,
 }
 
 impl<'a> ApplyCtx<'a> {
-    const fn new(base: IgnoreBase<'a>, mode: ApplyMode) -> Self {
+    const fn new(base: IgnoreBase<'a>) -> Self {
         Self {
             yamllint: OnceCell::new(),
             base,
-            mode,
         }
     }
 
@@ -448,7 +441,6 @@ fn apply_entry<O: RuleOptions>(
     entry: Value,
 ) -> Result<(), RuleConfigError> {
     if !entry.is_null()
-        && ctx.mode.starts_from_yamllint()
         && settings.origin == EntryOrigin::FyDefault
         && !matches!(&entry, Value::String(text) if text.eq_ignore_ascii_case("disable"))
     {
@@ -1071,7 +1063,7 @@ impl RulesConfig {
             }
         };
 
-        let ctx = ApplyCtx::new(base, mode);
+        let ctx = ApplyCtx::new(base);
         let mut next = self.clone();
         let mut seen = Vec::new();
         for (key, entry) in entries {
@@ -1129,11 +1121,7 @@ impl RulesConfig {
     ) -> Result<(), RuleConfigError> {
         let entry = buffer(deserializer)?;
         let mut next = self.clone();
-        next.apply_value(
-            name,
-            &ApplyCtx::new(IgnoreBase::Unavailable, ApplyMode::Patch),
-            entry,
-        )?;
+        next.apply_value(name, &ApplyCtx::new(IgnoreBase::Unavailable), entry)?;
         *self = next;
         Ok(())
     }
@@ -1408,7 +1396,7 @@ mod tests {
                 original
                     .apply_value(
                         name,
-                        &ApplyCtx::new(IgnoreBase::Unavailable, ApplyMode::Patch),
+                        &ApplyCtx::new(IgnoreBase::Unavailable),
                         Value::Mapping(entry),
                     )
                     .unwrap();

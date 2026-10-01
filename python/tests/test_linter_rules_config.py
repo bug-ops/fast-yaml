@@ -394,3 +394,9 @@ class TestYamllintParityOptions:
             if d.code == "document-end"
         ]
         assert lines == [2]
+
+
+def test_entry_over_default_reports_at_yamllint_level():
+    config = lint.LintConfig(rules={"line-length": {"max": 5}, "comments": "warning"})
+    found = {d.code: str(d.severity) for d in lint.lint("key: value  # c\n", config)}
+    assert found["line-length"] == "error"

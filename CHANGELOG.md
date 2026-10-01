@@ -143,7 +143,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `key-ordering` checks nested flow mappings, explicit `?` keys and `null`/`~`/`<<` keys, skips anchored and tagged keys, and spans a quoted key from its opening quote (#605)
 - **Linter**: `empty-values` reports right after the colon (columns +1) with a zero-width span, reports empty block-sequence items (`forbid-in-block-sequences` is now implemented) and skips anchored empty values (#605)
 - **Linter**: `indentation` is a port of yamllint's rule: levels must have the exact width (message `wrong indentation: expected N but found M`), an unset width is `consistent` (`default` preset: `spaces: consistent`), and sequences under a key must be indented unless `indent-sequences` says otherwise (#605)
-- **Linter/CLI**: a mapping or severity entry in a config file starts from yamllint's defaults (severity `error`) instead of fast-yaml's, so rules such as `line-length: {max: 60}` now exit 2 where they reported `info` (#605)
+- **Linter/CLI/bindings**: a mapping or severity entry in a config file or a binding `rules` patch starts from yamllint's defaults (severity `error`) instead of fast-yaml's, so rules such as `line-length: {max: 60}` now exit 2 where they reported `info` (#605)
 - **Linter**: `rules: {x: enable}` resets options and severity over a disabled, absent or fast-yaml-default entry, as in yamllint (#605)
 - **CLI**: `fy lint --format json` prints a one-element `syntax` array on stdout for a missing, unreadable or invalid input (exit code unchanged), and batch JSON lists every failing file (#605)
 - **Core/CLI**: `fy format` keeps reserved `%NAME` directives instead of dropping them (#605)

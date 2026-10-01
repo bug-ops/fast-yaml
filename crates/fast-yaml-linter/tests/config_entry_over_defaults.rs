@@ -1,5 +1,5 @@
-//! A rule entry in a config file starts from yamllint's rule defaults, not from fast-yaml's
-//! (critic M1), while a binding patch keeps the current values.
+//! A rule entry starts from yamllint's rule defaults, not from fast-yaml's (critic M1), in a
+//! config file and in a binding patch alike, while options an entry does not mention are kept.
 
 use std::fs;
 
@@ -55,12 +55,27 @@ fn an_entry_over_a_parent_without_an_entry_starts_from_yamllint_too() {
 }
 
 #[test]
-fn a_binding_patch_keeps_the_current_values() {
+fn a_binding_patch_starts_from_yamllint_like_a_config_file() {
     let mut rules = RulesConfig::default();
     rules
         .apply(serde_norway::Deserializer::from_str(
-            "line-length: {max: 60}",
+            "line-length: {max: 60}\ncomments: warning\nbraces: {max-spaces-inside: 1}",
         ))
         .unwrap();
-    assert_eq!(rules.line_length.severity, None);
+    assert_eq!(rules.line_length.severity, Some(Severity::Error));
+    assert_eq!(rules.comments.severity, Some(Severity::Warning));
+    assert_eq!(rules.braces.severity, Some(Severity::Error));
+}
+
+#[test]
+fn a_second_patch_keeps_the_severity_of_the_first() {
+    let mut rules = RulesConfig::default();
+    let apply = |rules: &mut RulesConfig, yaml| {
+        rules
+            .apply(serde_norway::Deserializer::from_str(yaml))
+            .unwrap();
+    };
+    apply(&mut rules, "line-length: warning");
+    apply(&mut rules, "line-length: {max: 60}");
+    assert_eq!(rules.line_length.severity, Some(Severity::Warning));
 }

@@ -532,7 +532,7 @@ impl ConfigFile {
             None => {
                 let mut rules = RulesConfig::default();
                 rules
-                    .apply_entries(top.rules, ApplyMode::File, ignore_base)
+                    .apply_entries(top.rules, ApplyMode::Patch, ignore_base)
                     .map_err(invalid_rules)?;
                 (rules, None)
             }
