@@ -1,6 +1,15 @@
 name: Fuzz
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "fuzz/**"
+      - "scripts/fuzz-seed-corpus.sh"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz.yml"
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
@@ -14,7 +23,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -54,6 +63,13 @@ jobs:
           ref: 6e6c296ae9c9d2d5c4134b4b64d01b29ac19ff6f # data-2022-01-17
           path: yaml-test-suite
           persist-credentials: false
+
+      - name: Restore fuzz corpus
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
 
       - name: Seed corpus
         env:
