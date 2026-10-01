@@ -173,7 +173,6 @@ impl OutputWriter {
         })
     }
 
-    #[cfg(feature = "linter")]
     /// Refuses to overwrite `input` with the output.
     ///
     /// # Errors
@@ -183,7 +182,6 @@ impl OutputWriter {
         self.ensure_not_inputs([input])
     }
 
-    #[cfg(feature = "linter")]
     /// Refuses to overwrite any of `inputs` with the output, resolving the destination once.
     ///
     /// # Errors
@@ -210,7 +208,6 @@ impl OutputWriter {
     }
 }
 
-#[cfg(feature = "linter")]
 /// What names a destination file, resolved once: its canonical path and, on Unix, its inode.
 struct FileIdentity {
     canonical: Option<PathBuf>,
@@ -218,7 +215,6 @@ struct FileIdentity {
     inode: Option<(u64, u64)>,
 }
 
-#[cfg(feature = "linter")]
 impl FileIdentity {
     fn of(path: &Path) -> Self {
         Self {
@@ -254,7 +250,7 @@ impl FileIdentity {
     }
 }
 
-#[cfg(all(unix, feature = "linter"))]
+#[cfg(unix)]
 fn inode_of(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
@@ -458,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(all(unix, feature = "linter"))]
+    #[cfg(unix)]
     fn test_ensure_not_input_refuses_a_hard_link_to_the_input() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");

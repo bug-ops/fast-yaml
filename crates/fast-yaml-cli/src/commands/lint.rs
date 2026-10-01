@@ -246,9 +246,8 @@ impl LintCommand {
                 discovered
             }
         };
-        ConfigFile::load(&path).with_context(|| {
-            format!("failed to load config file '{}'", DisplayPath::new(&path))
-        })
+        ConfigFile::load(&path)
+            .with_context(|| format!("failed to load config file '{}'", DisplayPath::new(&path)))
     }
 
     /// Returns whether the config file's `ignore` drops the file at `path`.
