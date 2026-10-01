@@ -187,7 +187,7 @@ impl LintCommand {
     ///
     /// Returns error if an explicit `--config` path cannot be read or parsed.
     pub fn build(config: CommonConfig, args: LintArgs, origin: &InputOrigin) -> Result<Self> {
-        let file = Self::load_config_file(args.config, origin)?;
+        let file = Self::load_config_file(args.config, origin, config.output.is_verbose())?;
         let max_diagnostics = args.max_diagnostics.or(file.max_diagnostics);
         let max_input_bytes = args
             .max_input_bytes
@@ -217,7 +217,11 @@ impl LintCommand {
     }
 
     /// Load the config file (explicit path, auto-discovered, or default).
-    fn load_config_file(source: ConfigSource, origin: &InputOrigin) -> Result<ConfigFile> {
+    fn load_config_file(
+        source: ConfigSource,
+        origin: &InputOrigin,
+        verbose: bool,
+    ) -> Result<ConfigFile> {
         let path = match source {
             ConfigSource::Disabled => return Ok(ConfigFile::default()),
             ConfigSource::Explicit(path) => path,
@@ -232,10 +236,13 @@ impl LintCommand {
                 let Some(discovered) = ConfigFile::discover(&start_dir) else {
                     return Ok(ConfigFile::default());
                 };
-                error::stderr_line(format_args!(
-                    "using config file: {}",
-                    DisplayPath::new(&discovered)
-                ));
+                tracing::debug!("discovered config file: {}", DisplayPath::new(&discovered));
+                if verbose {
+                    error::stderr_line(format_args!(
+                        "using config file: {}",
+                        DisplayPath::new(&discovered)
+                    ));
+                }
                 discovered
             }
         };

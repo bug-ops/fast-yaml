@@ -11,6 +11,7 @@ use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::trace::debug_event;
 use crate::workers::WorkerCount;
 
 static POOL: Mutex<Option<(WorkerCount, Arc<ThreadPool>)>> = Mutex::new(None);
@@ -57,8 +58,10 @@ fn build_in(
     if let Some((count, pool)) = slot.as_ref()
         && *count == workers
     {
+        debug_event!("reusing the shared pool of {workers} threads");
         return Ok(Arc::clone(pool));
     }
+    debug_event!("building a shared pool of {workers} threads");
     let pool = ThreadPoolBuilder::new()
         .num_threads(workers.get())
         .build()

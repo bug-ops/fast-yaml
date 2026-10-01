@@ -81,6 +81,7 @@ mod io;
 mod pool;
 mod result;
 mod scan_ahead;
+mod trace;
 mod workers;
 
 // Core public API

@@ -20,7 +20,7 @@ clap = { workspace = true, features = ["derive", "cargo", "env", "wrap_help"] }
 colored = { workspace = true, optional = true }
 fast-yaml-core = { workspace = true }
 fast-yaml-linter = { workspace = true, optional = true, features = ["json-output", "sarif-output"] }
-fast-yaml-parallel = { workspace = true }
+fast-yaml-parallel = { workspace = true, features = ["tracing"] }
 glob = { workspace = true }
 globset = { workspace = true }
 ignore = { workspace = true }
@@ -28,6 +28,8 @@ rayon = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
 thiserror = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }

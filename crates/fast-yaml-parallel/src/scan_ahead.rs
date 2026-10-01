@@ -10,6 +10,7 @@ use std::sync::{Mutex, PoisonError};
 
 use fast_yaml_core::limits::MaxScanAhead;
 
+use crate::trace::debug_event;
 use crate::workers::WorkerCount;
 
 /// How a batch bounds the scanner look-ahead of its workers.
@@ -139,6 +140,11 @@ impl ScanAheadLane {
         match attempt(self.first) {
             Err(error) if self.first.get() < self.full.get() && exceeded(&error) => {
                 let _lane = self.retries.lock().unwrap_or_else(PoisonError::into_inner);
+                debug_event!(
+                    "scan-ahead limit {} exceeded, retrying under {}",
+                    self.first.get(),
+                    self.full.get()
+                );
                 attempt(self.full)
             }
             result => result,

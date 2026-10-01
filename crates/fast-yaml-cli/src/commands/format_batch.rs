@@ -40,6 +40,11 @@ pub fn execute_batch(
     let files = discovery
         .discover_source(&target.source)
         .context("Failed to discover files")?;
+    tracing::debug!(
+        files = files.len(),
+        workers = target.workers.threads().get(),
+        "discovered files for a format batch"
+    );
 
     // Only an empty --stdin-files list gets here
     if files.is_empty() {

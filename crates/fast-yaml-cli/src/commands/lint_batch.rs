@@ -277,6 +277,11 @@ pub fn execute_lint_batch(
         .context("Failed to discover files")?;
 
     let workers = target.workers.threads();
+    tracing::debug!(
+        files = files.len(),
+        workers = workers.get(),
+        "discovered files for a lint batch"
+    );
     let pool = shared_pool(workers).context("Failed to build thread pool")?;
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();

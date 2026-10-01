@@ -26,7 +26,7 @@ related:
 ### Out of scope (non-goals)
 
 - Interactive prompts, a TUI, shell completion generation, a daemon or LSP mode.
-- Environment-variable configuration other than `NO_COLOR` (no `FY_*`, no `RUST_LOG`).
+- Environment-variable configuration other than `NO_COLOR` and `RUST_LOG` (no `FY_*`).
 - A `validate` subcommand (the validation command is `parse`).
 - Auto-fix in `lint` (`-i` is rejected).
 
@@ -158,7 +158,8 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | FR-011 | WHEN `-o` is `-`, `/dev/stdout` or `/dev/fd/1`, THE SYSTEM SHALL write to stdout; `/dev/stderr` or `/dev/fd/2` to stderr; any other value SHALL be written atomically via `write_atomic`. | must |
 | FR-012 | WHEN `-i` is given without a single file argument (stdin input), THE SYSTEM SHALL fail with `--in-place (-i) requires a file argument` (exit 1). | must |
 | FR-013 | WHEN `format -i` produces content identical to the file, THE SYSTEM SHALL NOT rewrite the file. | must |
-| FR-014 | THE SYSTEM SHALL write command results (formatted YAML/JSON, `✓ YAML is valid`, `--stats`, lint reports) to stdout and errors, summaries, timing, discovery warnings and the `using config file:` notice to stderr. | must |
+| FR-014 | THE SYSTEM SHALL write command results (formatted YAML/JSON, `✓ YAML is valid`, `--stats`, lint reports) to stdout and errors, summaries, timing, discovery warnings and the `using config file:` notice (with `-v` only) to stderr. | must |
+| FR-017 | WHEN `RUST_LOG` holds a valid `tracing` filter, THE SYSTEM SHALL print debug events (discovery skips, config file chosen, worker count, pool building, scan-ahead retry, sequential-vs-parallel choice) to stderr; WITHOUT `RUST_LOG` it SHALL print none, and an invalid filter SHALL print one warning and log nothing. Stdout is never affected. | should |
 | FR-015 | WHEN `fy convert` runs, THE SYSTEM SHALL require `<TO>` = `yaml` or `json` (missing: exit 2) and SHALL accept `--pretty=false` for compact JSON; YAML input with several documents SHALL become a JSON array. | must |
 | FR-016 | WHEN color is enabled (stderr is a TTY, `NO_COLOR` is unset, `--no-color` absent, feature `colors` on), THE SYSTEM SHALL color errors and lint output; the `NO_COLOR` variable with any value (even empty) SHALL disable it. | must |
 
@@ -232,7 +233,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | `fy lint bad.yaml` (syntax error, single file) | `error: Failed to lint YAML ...`, exit 1; nothing on stdout, even with `--format json`. |
 | Empty input, `~`, comment-only | `parse` succeeds. |
 | Config `ignore` matches the single linted file | File is not read, empty report, exit 0. |
-| Discovered `.fast-yaml.yaml` | `using config file: <path>` printed to stderr on every lint run, even with `-q`. |
+| Discovered `.fast-yaml.yaml` | `using config file: <path>` printed to stderr only with `-v`; a `discovered config file` debug event under `RUST_LOG`. |
 
 ## 6. Success criteria
 
@@ -269,7 +270,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | 4 | `-o` and `-i` ignored by `parse` (P2, GAP-CLI-005) | Resolved: write flags exist only on the subcommands that write; `-n` still beats `-i` in `format`. | closed |
 | 5 | `-` is not stdin (P3, GAP-CLI-008) | `fy parse -` fails with ENOENT although `-o -` means stdout. | Accept `-` as stdin? |
 | 6 | `--format json` lint hides syntax failures (P2, GAP-CLI-011) | Failure is stderr-only; stdout empty or `[]`. | Emit a diagnostic object like SARIF does? |
-| 7 | `using config file:` always on stderr (P3, GAP-CLI-020) | Printed even with `-q` and machine formats. | Print only with `-v`? |
+| 7 | `using config file:` always on stderr (P3, GAP-CLI-020) | Resolved: only with `-v`. | closed |
 | 8 | Single-file text lint labels location `input:L:C` (P3, GAP-CLI-015) | Batch prints `<path>:` header; single file does not show the path. | Show the file name in single mode? **Proposed:** paths as given on the command line; file name in every format. |
 | 9 | `-v` has no effect on `format`, README says it lists files (P3, GAP-CLI-004) | Verified: only the standard summary. | Implement per-file lines or fix docs. |
 | 10 | Broken pipe (GAP-CLI-013, resolved by #591) | `fy lint`, `format`, `convert` and `parse` are quiet on a closed stdout or stderr (piped to `head -1`, or `>&-`) and keep the exit code the result implies (lint 2, `format --dry-run` 5); a real write error such as `-o /nonexistent/x` still exits 1. | closed |

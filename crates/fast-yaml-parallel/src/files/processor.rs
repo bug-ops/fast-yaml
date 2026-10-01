@@ -15,6 +15,7 @@ use crate::io::read_file;
 use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
 use crate::scan_ahead::ScanAheadLane;
+use crate::trace::debug_event;
 use crate::workers::Workers;
 
 /// Whether formatting may discard YAML comments, which the emitter cannot preserve.
@@ -430,6 +431,7 @@ impl FileProcessor {
         let file_count = paths.len();
 
         if self.config.workers() == Workers::Sequential || file_count < 4 {
+            debug_event!("running {file_count} files sequentially");
             return true;
         }
 
@@ -439,7 +441,16 @@ impl FileProcessor {
             .map(|m| m.len())
             .sum();
 
-        total_size < 1_000_000 && file_count < 10
+        let sequential = total_size < 1_000_000 && file_count < 10;
+        debug_event!(
+            "{file_count} files, {total_size} bytes: running {}",
+            if sequential {
+                "sequentially"
+            } else {
+                "in parallel"
+            }
+        );
+        sequential
     }
 }
 

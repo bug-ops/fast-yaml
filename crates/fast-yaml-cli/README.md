@@ -258,6 +258,15 @@ cargo build --release --no-default-features
 > [!NOTE]
 > The `linter` feature adds the `lint` command. Without it, only `parse`, `format`, and `convert` are available.
 
+## Debug Logging
+
+`RUST_LOG` turns on debug events on stderr (stdout is unaffected): files skipped by discovery and why, the config file chosen, the worker count, pool building, scan-ahead retries and the sequential-vs-parallel choice. Without it nothing extra is printed.
+
+```bash
+RUST_LOG=debug fy lint --format json -j 4 configs/ 2> debug.log
+RUST_LOG=fast_yaml_parallel=debug fy format -n configs/
+```
+
 ## Exit Codes
 
 | Code | Meaning |

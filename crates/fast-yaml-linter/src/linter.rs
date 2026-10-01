@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::path::Path;
-use std::str::FromStr;
 
 use crate::config::{
     CanonicalPath, CustomRuleCode, IndentSize, IndentSpaces, NoOptions, RuleName, RuleSettings,

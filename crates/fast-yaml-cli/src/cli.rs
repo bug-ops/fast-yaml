@@ -8,6 +8,7 @@ use fast_yaml_core::limits::{
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::{IndentSize, MaxDiagnostics};
 use fast_yaml_parallel::Workers;
+#[cfg(feature = "linter")]
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -344,6 +345,108 @@ fn parse_max_input_bytes(raw: &str) -> Result<MaxInputBytes, String> {
     MaxInputBytes::new(parse_byte_size(raw)?).map_err(range_error)
 }
 
+/// Arguments of `fy format`.
+#[derive(Args, Debug)]
+pub struct FormatArgs {
+    /// Input paths (files, directories, or glob patterns).
+    /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
+    /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
+    /// If empty and no --stdin-files, reads from stdin
+    #[arg(value_name = "PATHS")]
+    pub paths: Vec<PathBuf>,
+
+    /// Indentation width (1-9 spaces)
+    #[arg(long, value_name = "N", value_parser = parse_indent, default_value_t = Indent::DEFAULT)]
+    pub indent: Indent,
+
+    /// Maximum line width (min: 20, max: 1000)
+    #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
+    pub width: Width,
+
+    /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
+    #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
+    pub max_depth: MaxDepth,
+
+    /// Maximum documents per input stream (min: 1, max: 10000000)
+    #[arg(long, value_name = "N", value_parser = parse_max_documents, default_value_t = MaxDocuments::DEFAULT)]
+    pub max_documents: MaxDocuments,
+
+    /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
+    /// file or a line over 4096 bytes is an error, so filter git output:
+    /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy format --stdin-files`
+    #[arg(long, conflicts_with = "paths")]
+    pub stdin_files: bool,
+
+    #[command(flatten)]
+    pub batch: BatchArgs,
+
+    /// Never write any file; only print a summary of what would change.
+    /// Works for stdin too. Exits with code 5 if any file would change,
+    /// 1 if any file failed (takes precedence), 0 otherwise
+    #[arg(short = 'n', long, conflicts_with = "output")]
+    pub dry_run: bool,
+
+    #[command(flatten)]
+    pub write: WriteArgs,
+
+    /// Suppress the error when YAML comments are detected.
+    /// Comments are not preserved by the formatter and will be stripped.
+    /// Without this flag, formatting a file that contains comments exits with an error.
+    #[arg(long)]
+    pub strip_comments: bool,
+}
+
+#[cfg(feature = "linter")]
+/// Arguments of `fy lint`.
+#[derive(Args, Debug)]
+pub struct LintFlags {
+    /// Input paths (files, directories, or glob patterns).
+    /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
+    /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
+    /// If empty and no --stdin-files, reads from stdin.
+    #[arg(value_name = "PATHS")]
+    pub paths: Vec<PathBuf>,
+
+    /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
+    /// file or a line over 4096 bytes is an error, so filter git output:
+    /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files`
+    #[arg(long, conflicts_with = "paths")]
+    pub stdin_files: bool,
+
+    #[command(flatten)]
+    pub config: ConfigArgs,
+
+    /// Maximum line length (overrides config file)
+    #[arg(long)]
+    pub max_line_length: Option<NonZeroUsize>,
+
+    /// Indentation size (overrides config file)
+    #[arg(long)]
+    pub indent_size: Option<IndentSize>,
+
+    /// Lint output format
+    #[arg(long, value_enum, default_value = "text")]
+    pub format: LintFormat,
+
+    /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    pub allow_duplicate_keys: Option<bool>,
+
+    /// Show at most N diagnostics per file, then one summary line; output only, the exit
+    /// code is unaffected (overrides the `max-diagnostics` config key)
+    #[arg(long, value_name = "N")]
+    pub max_diagnostics: Option<MaxDiagnostics>,
+
+    #[command(flatten)]
+    pub batch: BatchArgs,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    #[command(flatten)]
+    pub limits: ParseLimitArgs,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Parse and validate YAML
@@ -360,54 +463,7 @@ pub enum Command {
     },
 
     /// Format YAML with consistent style
-    Format {
-        /// Input paths (files, directories, or glob patterns).
-        /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
-        /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
-        /// If empty and no --stdin-files, reads from stdin
-        #[arg(value_name = "PATHS")]
-        paths: Vec<PathBuf>,
-
-        /// Indentation width (1-9 spaces)
-        #[arg(long, value_name = "N", value_parser = parse_indent, default_value_t = Indent::DEFAULT)]
-        indent: Indent,
-
-        /// Maximum line width (min: 20, max: 1000)
-        #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
-        width: Width,
-
-        /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
-        #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
-        max_depth: MaxDepth,
-
-        /// Maximum documents per input stream (min: 1, max: 10000000)
-        #[arg(long, value_name = "N", value_parser = parse_max_documents, default_value_t = MaxDocuments::DEFAULT)]
-        max_documents: MaxDocuments,
-
-        /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
-        /// file or a line over 4096 bytes is an error, so filter git output:
-        /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy format --stdin-files`
-        #[arg(long, conflicts_with = "paths")]
-        stdin_files: bool,
-
-        #[command(flatten)]
-        batch: BatchArgs,
-
-        /// Never write any file; only print a summary of what would change.
-        /// Works for stdin too. Exits with code 5 if any file would change,
-        /// 1 if any file failed (takes precedence), 0 otherwise
-        #[arg(short = 'n', long, conflicts_with = "output")]
-        dry_run: bool,
-
-        #[command(flatten)]
-        write: WriteArgs,
-
-        /// Suppress the error when YAML comments are detected.
-        /// Comments are not preserved by the formatter and will be stripped.
-        /// Without this flag, formatting a file that contains comments exits with an error.
-        #[arg(long)]
-        strip_comments: bool,
-    },
+    Format(FormatArgs),
 
     /// Convert between YAML and JSON
     #[command(
@@ -438,53 +494,7 @@ pub enum Command {
     ///
     /// Diagnostics can be suppressed inline with `# fy: disable [rules]`, `# fy: enable [rules]`,
     /// `# fy: disable-line [rules]` and `# fy: disable-file` (`# yamllint ...` is also accepted).
-    Lint {
-        /// Input paths (files, directories, or glob patterns).
-        /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
-        /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
-        /// If empty and no --stdin-files, reads from stdin.
-        #[arg(value_name = "PATHS")]
-        paths: Vec<PathBuf>,
-
-        /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
-        /// file or a line over 4096 bytes is an error, so filter git output:
-        /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files`
-        #[arg(long, conflicts_with = "paths")]
-        stdin_files: bool,
-
-        #[command(flatten)]
-        config: ConfigArgs,
-
-        /// Maximum line length (overrides config file)
-        #[arg(long)]
-        max_line_length: Option<NonZeroUsize>,
-
-        /// Indentation size (overrides config file)
-        #[arg(long)]
-        indent_size: Option<IndentSize>,
-
-        /// Lint output format
-        #[arg(long, value_enum, default_value = "text")]
-        format: LintFormat,
-
-        /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
-        #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
-        allow_duplicate_keys: Option<bool>,
-
-        /// Show at most N diagnostics per file, then one summary line; output only, the exit
-        /// code is unaffected (overrides the `max-diagnostics` config key)
-        #[arg(long, value_name = "N")]
-        max_diagnostics: Option<MaxDiagnostics>,
-
-        #[command(flatten)]
-        batch: BatchArgs,
-
-        #[command(flatten)]
-        output: OutputArgs,
-
-        #[command(flatten)]
-        limits: ParseLimitArgs,
-    },
+    Lint(LintFlags),
 }
 
 #[derive(ValueEnum, Clone, Debug)]

@@ -77,7 +77,7 @@ AS A project owner I WANT a `.fast-yaml.yaml` file SO THAT the team shares one r
 GIVEN .fast-yaml.yaml = "extends: default\nrules:\n  line-length: {max: 20}\n  document-start: disable\n  truthy: {level: warning}\n"
 AND   c.yaml = "key: a very long line that goes over twenty chars\nflag: yes\n"
 WHEN  fy lint c.yaml            (run in that directory)
-THEN  stderr: "using config file: <abs>/.fast-yaml.yaml"
+THEN  stderr is empty (`fy lint -v c.yaml` adds "using config file: <abs>/.fast-yaml.yaml")
 AND   stdout: error[line-length] "line exceeds maximum length of 20 characters (current: 49)" and
       warning[truthy] "found non-standard truthy value 'yes' (use true or false)"
 AND   exit code 2
@@ -193,7 +193,7 @@ THEN  a file without --- is reported at the preset's level (warning), as in yaml
 | FR-015b | `locale` other than `C`, `POSIX` or `C.UTF-8` (case-insensitive) SHALL fail the load only while `key-ordering` is enabled in the final configuration (after CLI overrides); otherwise it is accepted and inert. `key-ordering` compares by code point. | should |
 | FR-016 | WITHOUT a config file all 25 rules SHALL be enabled with fast-yaml option defaults (6.1), which differ from the `default` preset: with no config, `document-start`, `document-end` accept either presence and `truthy` does not check keys. | must |
 | FR-017 | CLI flags `--max-line-length N`, `--indent-size N` (1-16), `--allow-duplicate-keys` (`true` disables `duplicate-key`) SHALL override the config file (`--indent-size` sets a fixed `indentation` width; the formatter indent of `fy lint` applies only when the config sets neither `spaces` nor `indent-size` and differs from 2); `--max-input-bytes` and `--max-scan-ahead` SHALL override the same-named keys. | must |
-| FR-018 | WHEN a config file is auto-discovered THE SYSTEM SHALL print `using config file: <path>` to stderr. | should |
+| FR-018 | WHEN a config file is auto-discovered THE SYSTEM SHALL print `using config file: <path>` to stderr only with `-v`, and log a `discovered config file` debug event (see `RUST_LOG`). | should |
 | FR-019 | THE SYSTEM SHALL read every config file, `extends` target and `ignore-from-file` file through one reader that refuses a path that is not a regular file before opening it (a FIFO or device is never opened), re-checks the opened file, and reads at most 1 MiB (larger fails with `TooLarge`). WHEN an `extends` target fails to load THE SYSTEM SHALL name the target file and SHALL NOT quote its content: errors that could echo text become a generic "malformed" error naming the path. | must |
 
 ### 3.3 Inline directives
@@ -433,7 +433,7 @@ Code `undefined-alias` is a recognised name in directives but is not emitted (an
 | D-10 | `--allow-duplicate-keys=false` | Only `true` acts; `false` does not re-enable a rule disabled in config. | minor; clarify flag semantics |
 | D-11 | `braces`/`brackets` on empty collection | `a: {  }` reports twice (`1:4` and `1:7`) with "inside braces"; yamllint reports once, "inside empty braces". | minor |
 | D-12 | Zero-width spans | GitHub `endColumn` equals `col` for a zero-width span (`colons`, `empty-values`); text output prints a one-column caret. | minor |
-| D-13 | `using config file` message | Printed on stderr for every auto-discovery, also with `-q` and non-text formats. | [NEEDS CLARIFICATION: only with `--verbose`?] |
+| D-13 | `using config file` message | Resolved: printed only with `-v`; a debug event is logged under `RUST_LOG`. | closed |
 | D-14 | Config discovery root | Starts at CWD, not at the linted file's directory (matches yamllint). | confirm intended |
 | D-15 | `undefined-alias` | Public constant and directive alias, never emitted. | remove or implement |
 | D-16 | Binding formats | Python and Node.js `lint` expose text/json only; no github/sarif/parsable. | cross-surface decision |

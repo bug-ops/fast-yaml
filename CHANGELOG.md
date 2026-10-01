@@ -9,10 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Python/Node.js/Linter**: a dedicated option (`indent_size`/`indentSize`, `max_line_length`/`maxLineLength`, `require_document_*`, `allow_duplicate_keys`) now wins over the same setting in the `rules` patch, `LintConfig::with_indent_size` replaces `spaces`, and Python `max_line_length`/`indent_size` default to unset (`None` still removes the line limit) (#601) (#PR)
+- **CLI**: `using config file: <path>` is printed only with `-v` (it was always on stderr, even with `-q`) (#614) (#PR)
+- **Python/Node.js/Linter**: dedicated options now win over the `rules` patch on every surface (#601) (#PR)
 - **Parallel**: `Config::with_workers` takes `Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)`), `Config::workers()` returns it, and `shared_pool` and `ScanAheadLane::for_policy` take `WorkerCount` (1..=128) instead of `Option<usize>`/`NonZeroUsize` (#610) (#PR)
 - **CLI/Python/Node.js**: `-j`, `workers` and `thread_count` above 128 are rejected on every surface (the CLI `lint` previously spawned an uncapped pool, and the library silently capped), with one message shape (#610) (#PR)
-- **CLI**: top-level `-f/--format` is removed, and `-o`/`-i` exist only on the subcommands that write (`format`, `convert`; `lint` has `-o` only), so `fy -o x lint`, bare `fy -o x`, `fy parse -o|-i`, `fy lint -i` and `fy convert -i -o` exit 2 (#611) (#PR)
+- **CLI**: `-f/--format` is removed and `-o`/`-i` exist only on the subcommands that write (#611) (#PR)
 - **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#576)
 - **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#576)
 - **Linter**: `line-length` lets a one-word line through by default (#576)
@@ -160,6 +161,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#PR)
 - **Linter/Python/Node.js**: `RulesConfig::apply_rule_at`, `has_ignore` and `LintConfig::matching_path`; Python `with_rule_config` accepts per-rule `ignore`, and `lint` `path` no longer touches the file system unless a rule has `ignore` (#619) (#PR)
 - **Linter**: config `extends` and `ignore-from-file`, `key-ordering` `ignored-keys` and `invalid-anchor` duplicate/unused/undeclared options (#571) (#572) (#595)
 - **Parallel**: `shared_pool`, `read_file`, `AtomicFile` and `ScanAheadPolicy` (#532) (#531) (#366) (#577) (#595)

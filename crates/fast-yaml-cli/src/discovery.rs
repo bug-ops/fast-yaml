@@ -426,6 +426,7 @@ impl FileDiscovery {
         found: &mut Found,
     ) -> Result<(), PathError> {
         if self.is_excluded(path) {
+            tracing::debug!("skipped: matches --exclude: {}", path.display());
             return Ok(());
         }
         let explicit = matches!(
@@ -445,6 +446,9 @@ impl FileDiscovery {
         let canonicalize = || path.canonicalize().map_err(|e| classify_io_error(path, e));
         let mut ignored_by_config = |canonical: &Path| {
             let ignored = self.config.file_filter.is_ignored(canonical, false);
+            if ignored {
+                tracing::debug!("skipped: dropped by config ignore: {}", canonical.display());
+            }
             found.dropped_by_config |= ignored;
             ignored
         };
@@ -459,6 +463,10 @@ impl FileDiscovery {
             return Ok(());
         }
         if !self.matches_include(path, explicit) {
+            tracing::debug!(
+                "skipped: does not match the include patterns: {}",
+                path.display()
+            );
             return if explicit {
                 Err(PathError::NotIncluded {
                     path: path.to_path_buf(),
@@ -527,6 +535,7 @@ impl FileDiscovery {
         builder.filter_entry(move |entry| {
             let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
             if skip_hidden && entry.depth() > 0 && is_skipped_hidden(entry, is_dir, keep_yamllint) {
+                tracing::debug!("skipped: hidden entry: {}", entry.path().display());
                 return false;
             }
             let Some((filter, root)) = &config_ignore else {
@@ -540,7 +549,14 @@ impl FileDiscovery {
             if ignored {
                 dropped.store(true, Ordering::Relaxed);
             }
-            !(ignored && filter.can_prune())
+            let pruned = ignored && filter.can_prune();
+            if pruned {
+                tracing::debug!(
+                    "skipped: directory dropped by config ignore: {}",
+                    entry.path().display()
+                );
+            }
+            !pruned
         });
 
         for entry in builder.build() {
