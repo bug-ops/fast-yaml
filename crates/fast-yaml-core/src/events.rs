@@ -9,13 +9,14 @@ use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroUsize;
 
-use saphyr_parser::{Parser as SaphyrParser, ScanError, Span, StrInput};
+use saphyr_parser::{ScanError, Span};
 
 use crate::error::{ParseError, ParseResult, SourcePosition};
 use crate::input::NormalizedInput;
 use crate::limits::{LimitGuard, ParseLimits};
 use crate::merge::NodeRole;
 use crate::merge_check::MergeKeyValidator;
+use crate::scan_guard::GuardedParser;
 
 /// How a scalar was written in the source.
 ///
@@ -200,6 +201,8 @@ pub struct EventItem<'a> {
 ///
 /// Limits are enforced as events are produced, so a loader that builds values from the stream
 /// never recurses deeper than [`ParseLimits::max_depth`] or expands more than the alias budget.
+/// The scanner may not read more than [`ParseLimits::max_scan_ahead`] characters past the end of
+/// the last event; beyond that the stream yields [`LimitKind::ScanAhead`](crate::LimitKind::ScanAhead) and stops.
 ///
 /// # Examples
 ///
@@ -214,7 +217,7 @@ pub struct EventItem<'a> {
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub struct EventStream<'a> {
-    parser: SaphyrParser<'a, StrInput<'a>>,
+    parser: GuardedParser<'a>,
     guard: LimitGuard,
     merge_keys: MergeKeyValidator,
     done: bool,
@@ -225,7 +228,7 @@ impl<'a> EventStream<'a> {
     #[must_use]
     pub fn new(input: &'a NormalizedInput, limits: ParseLimits) -> Self {
         Self {
-            parser: SaphyrParser::new_from_str(input.as_str()),
+            parser: input.scanner(limits.max_scan_ahead),
             guard: LimitGuard::new(limits),
             merge_keys: MergeKeyValidator::default(),
             done: false,
@@ -288,8 +291,7 @@ impl<'a> EventStream<'a> {
             let Some(next) = self.parser.next_event() else {
                 return Ok(None);
             };
-            let (raw, span) =
-                next.map_err(|error| ParseError::scanner(&error, self.guard.document()))?;
+            let (raw, span) = next?;
             self.guard.observe(&raw, span)?;
             let role = self.merge_keys.observe(&raw, span)?;
             if matches!(raw, saphyr_parser::Event::Alias(0)) {
@@ -521,6 +523,24 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn scan_ahead_limit_rejects_a_root_flow_collection() {
+        let limits = ParseLimits {
+            max_scan_ahead: crate::MaxScanAhead::new(8).unwrap(),
+            ..ParseLimits::default()
+        };
+        let input = NormalizedInput::new("[1, 2, 3, 4, 5, 6, 7, 8, 9]").unwrap();
+        assert!(matches!(
+            events(&input, limits),
+            Err(ParseError::LimitExceeded {
+                kind: LimitKind::ScanAhead(_),
+                ..
+            })
+        ));
+        let input = NormalizedInput::new("a: [1, 2, 3, 4, 5, 6, 7, 8, 9]").unwrap();
+        assert!(events(&input, limits).is_ok());
     }
 
     #[test]

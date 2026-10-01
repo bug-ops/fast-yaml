@@ -21,10 +21,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `comment_parser` is removed and `Comment<'a> { text, span, kind: CommentKind }` replaces `content`/`is_inline`/`is_shebang` (#576)
 - **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#576)
 - **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331; map an offset back with `NormalizedInput::original_offset` (#576)
-- **Linter**: `FlowTokenizer::new` takes a prebuilt `&FlowIndex` instead of the source text (#576)
 - **CLI/Python/Node.js**: `fy lint` on a `!!set` member with a value exits 2 with a `set-values` diagnostic instead of exiting 1 with a parse error, and Python/Node.js `lint` no longer raise on set values (#565) (#570)
 - **Core**: `LoadOptions` has a new public `set_values` field (#565) (#570)
 - **Linter**: `SarifFormatter` is removed in favor of `formatter::ReportFormat::Sarif`, a typed SARIF 2.1.0 report that names files by absolute `file:` URI (#314) (#570)
+- **Core**: the emitter is iterative and event-driven, so deep values no longer overflow the stack, and `saphyr` is dropped as a dependency (#546) (#582)
+- **Core**: `EmitterConfig::compact`/`with_compact` are removed, and `max_emit_depth` defaults to 512 (`MaxDepth::MAX`) (#546) (#582)
+- **Core/Python/Node.js**: emitted text changes in flow null keys, collection keys, root literal blocks and extra quoting of YAML 1.1 lookalikes (#546) (#582)
+- **Core/Python/Node.js**: `multiline_strings` uses literal blocks at any indent (#560), and U+0085/U+2028/U+2029 strings are double-quoted by emit and `format` (#546) (#582)
+- **Core/CLI/Python/Node.js**: flow collections read whole, single scalars and comment runs over 4 Mi characters (including JSON documents) are rejected; raise `max_scan_ahead` (#563) (#582)
+- **Core**: `ParseLimits` gains the public field `max_scan_ahead` and `LimitKind` gains `ScanAhead`, which break struct literals and exhaustive matches (#563) (#582)
+- **Core**: `has_comments`, `has_comments_normalized` and `find_comments` take a `MaxScanAhead`, and `NormalizedInput::check_scan_ahead` is added (#563) (#582)
+- **Core**: `EmitterConfig::max_depth` becomes the emit-only `max_emit_depth`, and `parse_limits` bounds what `Emitter::format*` parses (#563) (#582)
+- **Core**: `Mapping` and `Set` equality and hashing ignore entry order, so `Value` keys that differ only in order are equal (#551) (#582)
+- **Core**: `Value` hashes are keyed per process, so they differ between runs and must not be persisted (#551) (#582)
+- **Linter**: the `tokenizer` module is private, `Linter::lint_value` enforces `max_scan_ahead`, config files accept `max-scan-ahead`, and `MaxInputBytes*` config errors become `LimitNotPositive`/`LimitOutOfRange` (#563) (#582)
 - **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
 - **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)
 - **Python**: `saphyr-parser` is no longer a dependency of the bindings (#542) (#562)
@@ -115,7 +125,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Linter**: public `FlowIndex` and `LintContext::flow_tokenizer`, so the flow rules share one tokenizer index per lint run (#576)
 - **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#576)
 - **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#576)
 - **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#576)
@@ -147,6 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Linter**: the flow rules share one `FlowIndex` per lint run instead of building a tokenizer index each (#576)
 - **Linter/CLI**: the `syntax` diagnostic of the CI report formats uses BOM-free line, column and offset like every other span, and `fy lint` batch lists report formats through the same ordered pipeline (#576)
 - **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#576)
 - **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#576)

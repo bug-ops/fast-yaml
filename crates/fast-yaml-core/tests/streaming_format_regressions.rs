@@ -7,7 +7,8 @@ use std::fmt::Write;
 
 use fast_yaml_core::streaming::format_streaming;
 use fast_yaml_core::{
-    EmitError, Emitter, EmitterConfig, Indent, LimitKind, MaxDepth, ParseError, Parser, Value,
+    EmitError, Emitter, EmitterConfig, Indent, LimitKind, MaxDepth, ParseError, ParseLimits,
+    Parser, Value,
 };
 
 fn fmt(input: &str, indent: usize) -> String {
@@ -411,7 +412,10 @@ fn max_depth_bounds_the_formatter_and_defaults_to_256() {
     assert_eq!(kind, LimitKind::Depth(MaxDepth::DEFAULT));
     assert_eq!(line, 1);
 
-    let shallow = EmitterConfig::new().with_max_depth(MaxDepth::new(2).unwrap());
+    let shallow = EmitterConfig::new().with_parse_limits(ParseLimits {
+        max_depth: MaxDepth::new(2).unwrap(),
+        ..ParseLimits::default()
+    });
     assert!(format_streaming(&nested(2), &shallow).is_ok());
     assert!(format_streaming(&nested(3), &shallow).is_err());
 }
@@ -419,7 +423,10 @@ fn max_depth_bounds_the_formatter_and_defaults_to_256() {
 #[test]
 fn formatter_at_max_depth_fits_a_2_mib_stack() {
     on_stack(2, || {
-        let config = EmitterConfig::new().with_max_depth(MaxDepth::MAX);
+        let config = EmitterConfig::new().with_parse_limits(ParseLimits {
+            max_depth: MaxDepth::MAX,
+            ..ParseLimits::default()
+        });
         let seqs = format!("{}v\n", "- ".repeat(512));
         let out = format_streaming(&seqs, &config).unwrap();
         assert_eq!(format_streaming(&out, &config).unwrap(), out);
@@ -442,7 +449,7 @@ fn emitting_at_max_depth_fits_a_small_stack() {
         for _ in 0..512 {
             doc = Value::Sequence(vec![doc]);
         }
-        let block = EmitterConfig::new().with_max_depth(MaxDepth::MAX);
+        let block = EmitterConfig::new().with_max_emit_depth(MaxDepth::MAX);
         let flow = block.clone().with_default_flow_style(Some(true));
         for config in [&block, &flow] {
             let out = Emitter::emit_str_with_config(&doc, config).unwrap();

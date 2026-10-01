@@ -41,7 +41,7 @@ pub mod config;
 pub mod formatter;
 pub mod rules;
 pub mod source;
-pub mod tokenizer;
+mod tokenizer;
 
 pub use comments::{Comment, CommentKind};
 pub use config::{ConfigFile, ConfigFileError};

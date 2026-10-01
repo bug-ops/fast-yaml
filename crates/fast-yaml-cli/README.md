@@ -162,7 +162,7 @@ fy lint --format parsable .    # path:line:col: [level] message (code)
 `--max-alias-bytes` (1 to 1GiB, default 64MiB; suffixes `KiB`, `MiB`, `GiB`). Out-of-range values
 are rejected. The alias budget is per file, so batch runs can use up to workers x `--max-alias-bytes` of
 memory. For `fy convert`, the flags apply to YAML input only. `fy format` accepts `--max-depth`
-only (formatting never expands aliases); `--indent` is 1 to 9 and `--width` 20 to 1000.
+and `--max-scan-ahead` (formatting never expands aliases); `--indent` is 1 to 9 and `--width` 20 to 1000.
 
 ```bash
 # Allow a large alias expansion
@@ -170,6 +170,21 @@ fy parse --max-alias-bytes 512MiB big.yaml
 
 # Reject deeper nesting than 64 levels
 fy lint --max-depth 64 config.yaml
+```
+
+### Scan-ahead limit
+
+Every `fy` command accepts `--max-scan-ahead` (characters, 1 to 1GiB, default 4MiB; suffixes `KiB`, `MiB`,
+`GiB`), which bounds how far the parser reads past the last node it reported and so bounds parser memory
+(about 190 times the value per input). A flow collection that the parser reads whole (at the document root, in a `- ` entry,
+nested in another flow collection, or after a tab), so any JSON document longer than the limit, minified or
+pretty-printed, one scalar, or a run of comments longer than the limit is rejected with a hint to raise it;
+block YAML, `key: [..]` and `--- [..]` are never affected. For `fy lint` the `max-scan-ahead` key of
+`.fast-yaml.yaml` sets the limit when the flag is absent. `fy format` applies it to stdin, a single file and
+batch runs.
+
+```bash
+fy parse --max-scan-ahead 64MiB big.json
 ```
 
 ### Input size limit

@@ -96,6 +96,7 @@ def safe_load(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> Any:
     """
     Parse a YAML document and return a Python object.
@@ -108,6 +109,9 @@ def safe_load(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
+            A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
+            longer than this raises ``ValueError``.
 
     Returns:
         The parsed YAML document as Python objects (dict, list, str, int, float, bool, None).
@@ -136,7 +140,12 @@ def safe_load(
     else:
         content = stream
 
-    return _safe_load(content, max_depth=max_depth, max_alias_bytes=max_alias_bytes)
+    return _safe_load(
+        content,
+        max_depth=max_depth,
+        max_alias_bytes=max_alias_bytes,
+        max_scan_ahead=max_scan_ahead,
+    )
 
 
 def safe_load_all(
@@ -144,6 +153,7 @@ def safe_load_all(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> Iterator[Any]:
     """
     Parse all YAML documents in a stream and return an iterator.
@@ -156,6 +166,9 @@ def safe_load_all(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
+            A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
+            longer than this raises ``ValueError``.
 
     Yields:
         Parsed YAML documents.
@@ -182,7 +195,14 @@ def safe_load_all(
         content = stream
 
     # _safe_load_all returns a list, convert to iterator
-    return iter(_safe_load_all(content, max_depth=max_depth, max_alias_bytes=max_alias_bytes))
+    return iter(
+        _safe_load_all(
+            content,
+            max_depth=max_depth,
+            max_alias_bytes=max_alias_bytes,
+            max_scan_ahead=max_scan_ahead,
+        )
+    )
 
 
 def safe_dump(
@@ -367,6 +387,7 @@ def load(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> Any:
     """
     Parse a YAML document with an optional Loader.
@@ -382,6 +403,9 @@ def load(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
+            A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
+            longer than this raises ``ValueError``.
 
     Returns:
         The parsed YAML document as Python objects.
@@ -418,7 +442,13 @@ def load(
     else:
         # It's already an instance
         loader_instance = Loader
-    return _load(content, loader_instance, max_depth=max_depth, max_alias_bytes=max_alias_bytes)
+    return _load(
+        content,
+        loader_instance,
+        max_depth=max_depth,
+        max_alias_bytes=max_alias_bytes,
+        max_scan_ahead=max_scan_ahead,
+    )
 
 
 def load_all(
@@ -427,6 +457,7 @@ def load_all(
     *,
     max_depth: int | None = None,
     max_alias_bytes: int | None = None,
+    max_scan_ahead: int | None = None,
 ) -> Iterator[Any]:
     """
     Parse all YAML documents in a stream with an optional Loader.
@@ -442,6 +473,9 @@ def load_all(
             about 1 MiB of thread stack and can abort on stacks of 512 KiB or less; 256 is safe.
             The dumper keeps a fixed depth of 256, so deeper data may fail to dump.
         max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB).
+        max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi).
+            A flow collection at the root or in a ``- `` entry, one scalar, or a run of comments
+            longer than this raises ``ValueError``.
 
     Yields:
         Parsed YAML documents.
@@ -476,7 +510,13 @@ def load_all(
         # It's already an instance
         loader_instance = Loader
     return iter(
-        _load_all(content, loader_instance, max_depth=max_depth, max_alias_bytes=max_alias_bytes)
+        _load_all(
+            content,
+            loader_instance,
+            max_depth=max_depth,
+            max_alias_bytes=max_alias_bytes,
+            max_scan_ahead=max_scan_ahead,
+        )
     )
 
 

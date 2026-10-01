@@ -224,7 +224,7 @@ impl FileProcessor {
             })?;
 
         if comments == CommentPolicy::Reject
-            && has_comments_normalized(&normalized)
+            && has_comments_normalized(&normalized, emitter_config.parse_limits.max_scan_ahead)
                 .map_err(|source| Error::CommentScan { source })?
         {
             return Err(Error::CommentsWouldBeStripped);

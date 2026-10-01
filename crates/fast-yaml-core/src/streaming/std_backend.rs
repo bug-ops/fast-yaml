@@ -5,13 +5,11 @@
 
 use std::fmt::Write as FmtWrite;
 
-use saphyr_parser::Parser;
-
 use super::Context;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
-use crate::error::{EmitResult, ParseError};
+use crate::error::EmitResult;
 use crate::input::NormalizedInput;
 
 /// Standard heap allocation backend.
@@ -154,8 +152,8 @@ pub fn format_normalized(
     input: &NormalizedInput<'_>,
     config: &EmitterConfig,
 ) -> EmitResult<String> {
+    let parser = input.scanner(config.parse_limits.max_scan_ahead);
     let input = input.as_str();
-    let parser = Parser::new_from_str(input);
 
     // Output is typically 10-20% larger than input due to formatting
     let output_capacity = input.len() + (input.len() / 5);
@@ -169,11 +167,10 @@ pub fn format_normalized(
     let backend = StdBackend::new(context_capacity, anchor_capacity.max(1));
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend, input);
 
-    let mut guard = super::format_guard(config.max_depth);
+    let mut guard = super::format_guard(config.parse_limits);
     let mut merge_keys = crate::merge_check::MergeKeyValidator::default();
     for result in parser {
-        let (event, span) =
-            result.map_err(|error| ParseError::scanner(&error, guard.document()))?;
+        let (event, span) = result?;
         guard
             .observe(&event, span)
             .map_err(super::tag_budget_error)?;

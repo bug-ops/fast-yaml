@@ -140,12 +140,13 @@ impl FormatCommand {
 
     fn format(&self, input: &InputSource) -> Result<(String, FormatStatus)> {
         let normalized = NormalizedInput::new(input.as_str()).context("Failed to format YAML")?;
-        let formatted =
-            Emitter::format_normalized(&normalized, &self.config.formatter.to_emitter_config())
-                .context("Failed to format YAML")?;
+        let emitter_config = self.config.formatter.to_emitter_config();
+        let formatted = Emitter::format_normalized(&normalized, &emitter_config)
+            .context("Failed to format YAML")?;
 
         if self.comments == CommentPolicy::Reject
-            && has_comments_normalized(&normalized).context("Failed to scan YAML for comments")?
+            && has_comments_normalized(&normalized, emitter_config.parse_limits.max_scan_ahead)
+                .context("Failed to scan YAML for comments")?
         {
             anyhow::bail!(error_message(&ParallelError::CommentsWouldBeStripped));
         }

@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
+use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead};
 use fast_yaml_linter::formatter::{
     FileReport, ReportFormat, ReportPath, ReportSource, input_error_diagnostic, syntax_diagnostic,
 };
@@ -10,7 +10,7 @@ use fast_yaml_linter::{
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{LintFormat, LintOutput};
+use crate::cli::{LintFormat, LintOutput, ParseLimitArgs};
 use crate::config::CommonConfig;
 use crate::error::ExitCode;
 use crate::file_filter::FileFilter;
@@ -32,7 +32,10 @@ pub struct LintArgs {
     pub allow_duplicate_keys: Option<bool>,
     /// Input size limit override (from `--max-input-bytes`).
     pub max_input_bytes: Option<MaxInputBytes>,
-    pub parse_limits: ParseLimits,
+    /// Scan-ahead limit override (from `--max-scan-ahead`).
+    pub max_scan_ahead: Option<MaxScanAhead>,
+    /// Depth and alias limits from the flags.
+    pub limits: ParseLimitArgs,
 }
 
 /// Lint command implementation
@@ -102,6 +105,10 @@ impl LintCommand {
             .max_input_bytes
             .or(file.max_input_bytes)
             .unwrap_or(MaxInputBytes::DEFAULT);
+        let max_scan_ahead = args
+            .max_scan_ahead
+            .or(file.max_scan_ahead)
+            .unwrap_or_default();
         let (file_lint_config, file_filter) = split_config(file);
         let lint_config = ConfigFile::merge_cli_overrides(
             file_lint_config,
@@ -109,7 +116,7 @@ impl LintCommand {
             args.indent_size,
             args.allow_duplicate_keys,
         )
-        .with_parse_limits(args.parse_limits)
+        .with_parse_limits(args.limits.parse_limits(max_scan_ahead))
         .with_max_input_bytes(max_input_bytes);
         Ok(Self {
             config,
@@ -312,7 +319,8 @@ mod tests {
                 format,
                 allow_duplicate_keys,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             input,
         )
@@ -347,7 +355,8 @@ mod tests {
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
                 max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         )
@@ -498,7 +507,8 @@ mod tests {
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         )
@@ -520,7 +530,8 @@ mod tests {
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         );
@@ -543,7 +554,8 @@ mod tests {
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         )
@@ -572,7 +584,8 @@ mod tests {
                 format: LintFormat::Json,
                 allow_duplicate_keys: None,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         )
@@ -597,7 +610,8 @@ mod tests {
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         )
@@ -624,7 +638,8 @@ mod tests {
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
                 max_input_bytes: None,
-                parse_limits: ParseLimits::default(),
+                max_scan_ahead: None,
+                limits: ParseLimitArgs::default(),
             },
             &stdin_input(""),
         )

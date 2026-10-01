@@ -198,6 +198,11 @@ impl super::LintRule for QuotedStringsRule {
             source_ctx: context.source_context(),
             config,
         };
+
+        #[allow(
+            clippy::disallowed_methods,
+            reason = "source passed the guarded parse in the same lint call"
+        )]
         let mut parser = SaphyrParser::new_from_str(source);
 
         while let Some(Ok((event, span))) = parser.next_event() {

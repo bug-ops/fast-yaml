@@ -49,7 +49,6 @@ num_cpus = { version = "1.17" }
 pyo3 = { version = "0.29" }
 rayon = { version = "1.12" }
 regex = { version = "1.13" }
-saphyr = { version = "0.1.0" }
 saphyr-parser = { version = "0.1.0" }
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }
@@ -62,6 +61,7 @@ assert_cmd = { version = "2.2" }
 criterion = { version = "0.8" }
 indoc = { version = "2.0" }
 jsonschema = { version = "0.58.3", default-features = false }
+peak_alloc = { version = "0.3" }
 predicates = { version = "3.1" }
 proptest = { version = "1.11" }
 tempfile = { version = "3.27" }

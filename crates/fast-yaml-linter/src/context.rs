@@ -947,6 +947,7 @@ mod tests {
 
     fn scalar_spans(source: &str) -> Vec<SaphyrSpan> {
         use saphyr_parser::{Event, Parser};
+        #[allow(clippy::disallowed_methods, reason = "test helper over a literal")]
         let mut parser = Parser::new_from_str(source);
         let mut spans = Vec::new();
         while let Some(Ok((event, span))) = parser.next_event() {
@@ -1047,6 +1048,10 @@ impl<'a> LintContext<'a> {
     ///
     /// The context immediately builds line offset indexes but defers
     /// parsing comments and computing line metadata until first access.
+    ///
+    /// The rules parse `source` themselves, so it must have passed
+    /// `fast_yaml_core::NormalizedInput::check_scan_ahead` (see [`LintRule::check`](crate::rules::LintRule::check));
+    /// [`Linter`](crate::Linter) does this before it builds a context.
     ///
     /// # Examples
     ///
@@ -1280,18 +1285,8 @@ impl<'a> LintContext<'a> {
     ///
     /// The [`FlowIndex`] behind it is built on first use and shared by every flow rule and
     /// every document of the run.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{tokenizer::TokenType, LintContext};
-    ///
-    /// let context = LintContext::new("object: {key: value}");
-    /// let braces = context.flow_tokenizer().find_all(TokenType::BraceOpen);
-    /// assert_eq!(braces.len(), 1);
-    /// ```
     #[must_use]
-    pub fn flow_tokenizer(&self) -> FlowTokenizer<'_> {
+    pub(crate) fn flow_tokenizer(&self) -> FlowTokenizer<'_> {
         let index = self
             .flow_index
             .get_or_init(|| FlowIndex::new(self.source, &self.source_context));

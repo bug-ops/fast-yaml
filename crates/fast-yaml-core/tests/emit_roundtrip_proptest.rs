@@ -6,6 +6,8 @@
 use fast_yaml_core::{Emitter, EmitterConfig, Float, Indent, Mapping, Parser, Set, Value};
 use proptest::prelude::*;
 
+mod common;
+
 fn text() -> impl Strategy<Value = String> {
     prop_oneof![
         "[a-z][a-z0-9_]{0,6}",
@@ -48,6 +50,18 @@ fn text() -> impl Strategy<Value = String> {
         Just("\u{85}nel".to_owned()),
         Just("\u{2028}ls".to_owned()),
         Just("tab\there".to_owned()),
+        Just("\u{2029}x".to_owned()),
+        Just("yes".to_owned()),
+        Just("1_000".to_owned()),
+        Just("2001-12-14".to_owned()),
+        Just("nan".to_owned()),
+        Just("-foo".to_owned()),
+        Just("?x".to_owned()),
+        Just("0x1F".to_owned()),
+        Just("0b1010".to_owned()),
+        Just("a -".to_owned()),
+        Just("a\u{85}- x".to_owned()),
+        Just("line\nb\u{85}evil: 1".to_owned()),
         "[а-яé日本]{1,4}",
     ]
 }
@@ -84,24 +98,36 @@ fn tree() -> impl Strategy<Value = Value> {
     })
 }
 
-fn check(doc: &Value, indent: usize, multiline: bool) -> Result<(), TestCaseError> {
-    let config = EmitterConfig::new()
-        .with_indent(Indent::new(indent).unwrap())
-        .with_multiline_strings(multiline);
-    let yaml = Emitter::emit_str_with_config(doc, &config)
+/// Like [`tree`], without collection keys and set members, which flow style cannot write.
+fn flow_tree() -> impl Strategy<Value = Value> {
+    scalar().prop_recursive(4, 32, 4, |inner| {
+        prop_oneof![
+            prop::collection::vec(inner.clone(), 0..4).prop_map(Value::Sequence),
+            prop::collection::vec((scalar(), inner), 0..4)
+                .prop_map(|pairs| Value::Mapping(pairs.into_iter().collect::<Mapping>())),
+            prop::collection::vec(scalar(), 0..4)
+                .prop_map(|members| Value::Set(members.into_iter().collect::<Set>())),
+        ]
+    })
+}
+
+fn check(doc: &Value, config: &EmitterConfig) -> Result<(), TestCaseError> {
+    let yaml = Emitter::emit_str_with_config(doc, config)
         .map_err(|e| TestCaseError::fail(format!("emit failed: {e}")))?;
     let back = Parser::parse_str(&yaml)
         .map_err(|e| TestCaseError::fail(format!("reparse failed: {e}\n{yaml}")))?
         .unwrap_or(Value::Null);
-    prop_assert_eq!(
-        &back,
-        doc,
-        "indent {} multiline {}:\n{}",
-        indent,
-        multiline,
-        yaml
+    prop_assert!(
+        common::same_order(&back, doc),
+        "{config:?}:\n{yaml}\nback: {back:?}\ndoc: {doc:?}"
     );
     Ok(())
+}
+
+fn block_config(indent: usize, multiline: bool) -> EmitterConfig {
+    EmitterConfig::new()
+        .with_indent(Indent::new(indent).unwrap())
+        .with_multiline_strings(multiline)
 }
 
 proptest! {
@@ -109,11 +135,16 @@ proptest! {
 
     #[test]
     fn block_emit_round_trips_at_every_indent(doc in tree(), indent in 1usize..=9) {
-        check(&doc, indent, false)?;
+        check(&doc, &block_config(indent, false))?;
     }
 
     #[test]
     fn multiline_block_emit_round_trips_at_every_indent(doc in tree(), indent in 1usize..=9) {
-        check(&doc, indent, true)?;
+        check(&doc, &block_config(indent, true))?;
+    }
+
+    #[test]
+    fn flow_emit_round_trips(doc in flow_tree()) {
+        check(&doc, &EmitterConfig::new().with_default_flow_style(Some(true)))?;
     }
 }

@@ -227,25 +227,6 @@ pub(crate) fn check_flow_collection(
 ///
 /// Both slices must be sorted by offset (as returned by `FlowTokenizer::find_all`).
 /// Unmatched openers and closers are skipped. Pairs are returned in opener order.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_linter::{
-///     rules::flow_common::pair_delimiters,
-///     tokenizer::TokenType,
-///     LintContext,
-/// };
-///
-/// let ctx = LintContext::new("{a: {b: c}}");
-/// let tokenizer = ctx.flow_tokenizer();
-/// let opens = tokenizer.find_all(TokenType::BraceOpen);
-/// let closes = tokenizer.find_all(TokenType::BraceClose);
-///
-/// let pairs = pair_delimiters(&opens, &closes);
-/// assert_eq!(pairs.len(), 2);
-/// assert_eq!(pairs[0].1.span.start.offset, 10);
-/// ```
 #[must_use]
 pub fn pair_delimiters<'t>(opens: &'t [Token], closes: &'t [Token]) -> Vec<(&'t Token, &'t Token)> {
     let mut stack: Vec<usize> = Vec::new();
@@ -396,6 +377,20 @@ mod tests {
 
     fn dummy_span() -> Span {
         Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1))
+    }
+
+    #[test]
+    fn test_pair_delimiters_pairs_nested_braces_in_opener_order() {
+        use crate::tokenizer::TokenType;
+        let yaml = "{a: {b: c}}";
+        let ctx = LintContext::new(yaml);
+        let tokenizer = ctx.flow_tokenizer();
+        let opens = tokenizer.find_all(TokenType::BraceOpen);
+        let closes = tokenizer.find_all(TokenType::BraceClose);
+
+        let pairs = pair_delimiters(&opens, &closes);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].1.span.start.offset, 10);
     }
 
     #[test]

@@ -172,6 +172,8 @@ pub enum RaiseHint {
     MaxAliasBytes,
     /// `--max-input-bytes`
     MaxInputBytes,
+    /// `--max-scan-ahead`
+    MaxScanAhead,
 }
 
 impl std::fmt::Display for RaiseHint {
@@ -180,6 +182,7 @@ impl std::fmt::Display for RaiseHint {
             Self::MaxDepth => "raise with --max-depth",
             Self::MaxAliasBytes => "raise with --max-alias-bytes",
             Self::MaxInputBytes => "raise with --max-input-bytes or the max-input-bytes config key",
+            Self::MaxScanAhead => "raise with --max-scan-ahead or the max-scan-ahead config key",
         })
     }
 }
@@ -201,7 +204,9 @@ impl RaiseHint {
     }
 
     fn of_link(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
-        use fast_yaml_core::limits::{InputTooLarge, MaxAliasBytes, MaxDepth, MaxInputBytes};
+        use fast_yaml_core::limits::{
+            InputTooLarge, MaxAliasBytes, MaxDepth, MaxInputBytes, MaxScanAhead,
+        };
         use fast_yaml_core::{LimitKind, ParseError};
         let input_limit = |e: &InputTooLarge| {
             (e.limit.get() < MaxInputBytes::MAX.get()).then_some(Self::MaxInputBytes)
@@ -215,6 +220,10 @@ impl RaiseHint {
                 kind: LimitKind::AliasBytes(limit) | LimitKind::AnchorCopies(limit),
                 ..
             } if limit.get() < MaxAliasBytes::MAX.get() => Some(Self::MaxAliasBytes),
+            ParseError::LimitExceeded {
+                kind: LimitKind::ScanAhead(limit),
+                ..
+            } if limit.get() < MaxScanAhead::MAX.get() => Some(Self::MaxScanAhead),
             _ => None,
         };
         if let Some(e) = err.downcast_ref::<ParseError>() {
@@ -317,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_raise_hint_for_depth_and_alias_only() {
-        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth, MaxTagBytes};
+        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth, MaxScanAhead, MaxTagBytes};
         use fast_yaml_core::{LimitKind, ParseError};
         let limit = |kind| ParseError::LimitExceeded {
             kind,
@@ -340,6 +349,14 @@ mod tests {
         );
         assert_eq!(
             RaiseHint::of(&limit(LimitKind::TagBytes(MaxTagBytes::DEFAULT))),
+            None
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::ScanAhead(MaxScanAhead::DEFAULT))),
+            Some(RaiseHint::MaxScanAhead)
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::ScanAhead(MaxScanAhead::MAX))),
             None
         );
     }

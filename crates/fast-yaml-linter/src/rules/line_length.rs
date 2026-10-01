@@ -87,6 +87,10 @@ impl LineLengthOptions {
 /// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
 fn is_inline_mapping_of_one_word(line: &str) -> bool {
     let context = SourceContext::new(line);
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "a line of a source that passed the guarded parse in the same lint call"
+    )]
     let mut parser = SaphyrParser::new_from_str(line);
     let mut roles = RoleTracker::default();
     let mut seen_mapping = false;

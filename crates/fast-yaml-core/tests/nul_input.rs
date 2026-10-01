@@ -1,7 +1,9 @@
 //! Regression tests for #417: a NUL character must be rejected, not treated as end of input.
 
 use fast_yaml_core::streaming::format_streaming;
-use fast_yaml_core::{Emitter, EmitterConfig, ParseError, Parser, find_comments, has_comments};
+use fast_yaml_core::{
+    Emitter, EmitterConfig, MaxScanAhead, ParseError, Parser, find_comments, has_comments,
+};
 
 const INPUTS: [&str; 8] = [
     "\0",
@@ -60,8 +62,14 @@ fn format_rejects_nul() {
 #[test]
 fn comment_scan_rejects_nul() {
     for input in INPUTS {
-        assert!(find_comments(input).is_err(), "{input:?}");
-        assert!(has_comments(input).is_err(), "{input:?}");
+        assert!(
+            find_comments(input, MaxScanAhead::DEFAULT).is_err(),
+            "{input:?}"
+        );
+        assert!(
+            has_comments(input, MaxScanAhead::DEFAULT).is_err(),
+            "{input:?}"
+        );
     }
 }
 

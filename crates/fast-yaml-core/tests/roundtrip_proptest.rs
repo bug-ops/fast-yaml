@@ -8,6 +8,8 @@ use std::fmt::Write as _;
 use fast_yaml_core::{Emitter, Parser};
 use proptest::prelude::*;
 
+mod common;
+
 type Comment = Option<String>;
 
 #[derive(Debug, Clone)]
@@ -226,7 +228,10 @@ proptest! {
         let before = Parser::parse_all(&yaml).expect("generated YAML must parse");
         let formatted = Emitter::format(&yaml).expect("generated YAML must format");
         let after = Parser::parse_all(&formatted).expect("formatted YAML must parse");
-        prop_assert_eq!(before, after, "input:\n{}\nformatted:\n{}", yaml, formatted);
+        prop_assert!(
+            common::same_order_all(&before, &after),
+            "input:\n{yaml}\nformatted:\n{formatted}\nbefore: {before:?}\nafter: {after:?}"
+        );
     }
 
     #[test]

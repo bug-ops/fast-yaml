@@ -196,6 +196,13 @@ export interface BatchConfig {
    * default: 67108864); applies to `processFiles` only; peak memory can reach workers x this budget
    */
   maxAliasBytes?: number
+  /**
+   * Maximum characters the parser may read past the last node it reported (integer,
+   * 1..=1073741824, default: 4194304); applies to `processFiles` and `formatFiles`. A flow
+   * collection at the root or in a `- ` entry, one scalar, or a run of comments longer than
+   * this is rejected; parser memory is bounded by about 190 times this value.
+   */
+  maxScanAhead?: number
 }
 
 /** Error entry for batch result. */
@@ -430,6 +437,13 @@ export interface LintConfig {
   /** Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864). */
   maxAliasBytes?: number
   /**
+   * Maximum characters the parser may read past the last node it reported (integer,
+   * 1..=1073741824, default: 4194304). A flow collection at the root or in a `- ` entry, one
+   * scalar, or a run of comments longer than this is rejected; parser memory is bounded by
+   * about 190 times this value.
+   */
+  maxScanAhead?: number
+  /**
    * Largest source accepted for linting, in bytes (integer, 1..=1073741824, default: 104857600).
    * Bounds linting work on oversized input; the source is already in memory when checked, so this is not a memory bound.
    */
@@ -527,6 +541,13 @@ export interface LoadOptions {
    * 1..=1073741824, default: 67108864). Host objects cost several times the estimate.
    */
   maxAliasBytes?: number
+  /**
+   * Maximum characters the parser may read past the last node it reported (integer,
+   * 1..=1073741824, default: 4194304). A flow collection at the root or in a `- ` entry, one
+   * scalar, or a run of comments longer than this is rejected; parser memory is bounded by
+   * about 190 times this value.
+   */
+  maxScanAhead?: number
 }
 
 /** A position in the source file. */
@@ -577,6 +598,13 @@ export interface ParallelConfig {
    * 1..=1073741824, default: 67108864).
    */
   maxAliasBytes?: number
+  /**
+   * Maximum characters the parser may read past the last node it reported (integer,
+   * 1..=1073741824, default: 4194304). A flow collection at the root or in a `- ` entry, one
+   * scalar, or a run of comments longer than this is rejected; parser memory is bounded by
+   * about 190 times this value.
+   */
+  maxScanAhead?: number
 }
 
 /**
@@ -759,7 +787,7 @@ export declare function safeDumpAll(documents: Array<unknown>, options?: DumpOpt
  * # Arguments
  *
  * * `yaml_str` - A YAML document as a string
- * * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
+ * * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes` and `maxScanAhead` raise or lower the resource limits
  *
  * # Returns
  *
@@ -798,7 +826,7 @@ export declare function safeLoad(yamlStr: string, options?: LoadOptions | undefi
  * # Arguments
  *
  * * `yaml_str` - A YAML string potentially containing multiple documents
- * * `options` - Optional parsing options; `maxDepth` and `maxAliasBytes` raise or lower the resource limits
+ * * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes` and `maxScanAhead` raise or lower the resource limits
  *
  * # Returns
  *
@@ -809,7 +837,7 @@ export declare function safeLoad(yamlStr: string, options?: LoadOptions | undefi
  * Throws an error if:
  * - The YAML is invalid
  * - Input exceeds size limit (100MB)
- * - `maxDepth` or `maxAliasBytes` is not an integer within its range
+ * - `maxDepth`, `maxAliasBytes` or `maxScanAhead` is not an integer within its range
  *
  * # Security
  *
