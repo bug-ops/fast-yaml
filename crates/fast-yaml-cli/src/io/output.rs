@@ -145,8 +145,7 @@ impl OutputWriter {
     /// Returns an error if the destination file is the same file as `input`.
     pub fn ensure_not_input(&self, input: &Path) -> Result<()> {
         if let OutputDestination::File(destination) = &self.destination
-            && let (Ok(out), Ok(inp)) = (destination.canonicalize(), input.canonicalize())
-            && out == inp
+            && same_file(destination, input)
         {
             anyhow::bail!(
                 "--output '{}' is also an input file; refusing to overwrite it",
@@ -161,6 +160,22 @@ impl OutputWriter {
         fast_yaml_parallel::write_atomic(path, content.as_bytes())
             .with_context(|| format!("Failed to write file: {}", path.display()))
     }
+}
+
+/// Whether both paths name the same file: the same canonical path, or on Unix the same inode
+/// (a hard link).
+fn same_file(a: &Path, b: &Path) -> bool {
+    if let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize())
+        && a == b
+    {
+        return true;
+    }
+    #[cfg(unix)]
+    if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+        use std::os::unix::fs::MetadataExt;
+        return (a.dev(), a.ino()) == (b.dev(), b.ino());
+    }
+    false
 }
 
 /// A stderr writer that, like [`OutputWriter::sink`], goes quiet once the pipe is closed.
@@ -361,6 +376,18 @@ mod tests {
         drop(sink);
         assert_eq!(fs::read_to_string(&path).unwrap(), "old");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_not_input_refuses_a_hard_link_to_the_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        let alias = dir.path().join("alias.yaml");
+        fs::write(&path, "a: 1").unwrap();
+        fs::hard_link(&path, &alias).unwrap();
+        let writer = OutputWriter::from_args(Some(alias), false, None).unwrap();
+        assert!(writer.ensure_not_input(&path).is_err());
     }
 
     #[test]

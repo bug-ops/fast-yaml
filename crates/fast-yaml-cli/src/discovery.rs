@@ -505,9 +505,18 @@ impl FileDiscovery {
         let skip_hidden = !self.config.include_hidden;
         let keep_yamllint = self.config.include == IncludePatterns::DefaultWithYamllint;
         let config_ignore = if self.config.file_filter.has_ignore() {
-            dir.canonicalize()
-                .ok()
-                .map(|root| (self.config.file_filter.clone(), root))
+            match dir.canonicalize() {
+                Ok(root) => Some((self.config.file_filter.clone(), root)),
+                Err(error) => {
+                    // Only the early pruning of ignored directories is lost; every file is
+                    // still matched against `ignore` by its own canonical path
+                    crate::error::stderr_line(format_args!(
+                        "Warning: cannot resolve '{}' to prune ignored directories: {error}",
+                        dir.display()
+                    ));
+                    None
+                }
+            }
         } else {
             None
         };
