@@ -272,9 +272,8 @@ def _cli_diagnostics(config_yaml: str, source: str, tmp_path: Path) -> list[tupl
     config_path.write_text(config_yaml)
     result = subprocess.run(
         [fy_binary(), "lint", "--format", "json", "--config", str(config_path)],
-        input=source,
+        input=source.encode(),
         capture_output=True,
-        text=True,
         check=False,
     )
     assert result.returncode in (0, 2), result.stderr

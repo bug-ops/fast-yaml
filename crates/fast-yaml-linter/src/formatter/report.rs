@@ -22,13 +22,18 @@ pub struct NotAbsolute(PathBuf);
 /// # Examples
 ///
 /// ```
+/// # #[cfg(unix)]
+/// # fn main() -> Result<(), fast_yaml_linter::formatter::NotAbsolute> {
 /// use std::path::Path;
 /// use fast_yaml_linter::formatter::ReportPath;
 ///
 /// let path = ReportPath::from_absolute(Path::new("/work/a b.yaml"))?;
 /// assert_eq!(path.file_uri(), "file:///work/a%20b.yaml");
 /// assert!(ReportPath::from_absolute(Path::new("a.yaml")).is_err());
-/// # Ok::<(), fast_yaml_linter::formatter::NotAbsolute>(())
+/// # Ok(())
+/// # }
+/// # #[cfg(not(unix))]
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReportPath(PathBuf);
@@ -60,12 +65,17 @@ impl ReportPath {
     /// # Examples
     ///
     /// ```
+    /// # #[cfg(unix)]
+    /// # fn main() -> Result<(), fast_yaml_linter::formatter::NotAbsolute> {
     /// use std::path::Path;
     /// use fast_yaml_linter::formatter::ReportPath;
     ///
     /// let path = ReportPath::from_absolute(Path::new("/srv/ci/50%#.yaml"))?;
     /// assert_eq!(path.file_uri(), "file:///srv/ci/50%25%23.yaml");
-    /// # Ok::<(), fast_yaml_linter::formatter::NotAbsolute>(())
+    /// # Ok(())
+    /// # }
+    /// # #[cfg(not(unix))]
+    /// # fn main() {}
     /// ```
     #[must_use]
     pub fn file_uri(&self) -> String {
@@ -173,6 +183,8 @@ pub struct FileReport<'a> {
 /// # Examples
 ///
 /// ```
+/// # #[cfg(unix)]
+/// # fn main() -> Result<(), fast_yaml_linter::formatter::NotAbsolute> {
 /// use std::path::Path;
 /// use fast_yaml_linter::formatter::{FileReport, ReportFormat, ReportPath, ReportSource};
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Location, Severity, Span};
@@ -186,7 +198,10 @@ pub struct FileReport<'a> {
 ///
 /// let out = ReportFormat::Parsable.render(&[report]);
 /// assert_eq!(out, "/w/a.yaml:3:5: [warning] truthy value (truthy)\n");
-/// # Ok::<(), fast_yaml_linter::formatter::NotAbsolute>(())
+/// # Ok(())
+/// # }
+/// # #[cfg(not(unix))]
+/// # fn main() {}
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

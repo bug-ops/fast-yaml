@@ -25,8 +25,10 @@ fn lint(source: &str) -> Vec<Diagnostic> {
     Linter::with_all_rules().lint(source).unwrap()
 }
 
-fn file(path: &str) -> ReportSource {
-    ReportSource::File(ReportPath::from_absolute(Path::new(path)).unwrap())
+fn file(name: &str) -> ReportSource {
+    let root = if cfg!(windows) { r"C:\work" } else { "/work" };
+    let path = Path::new(root).join(name);
+    ReportSource::File(ReportPath::from_absolute(&path).unwrap())
 }
 
 #[test]
@@ -39,7 +41,7 @@ fn lint_findings_are_valid() {
     let source = "key: 1\nkey: 2\n";
     let diagnostics = lint(source);
     assert!(!diagnostics.is_empty());
-    let first = file("/work/dir/a b.yaml");
+    let first = file("a b.yaml");
     let second = ReportSource::Stdin;
     let out = ReportFormat::Sarif.render(&[
         FileReport {
@@ -62,7 +64,7 @@ fn syntax_and_input_errors_are_valid() {
         syntax_diagnostic(&err, source),
         input_error_diagnostic("bad"),
     ];
-    let path = file("/work/broken.yaml");
+    let path = file("broken.yaml");
     let out = ReportFormat::Sarif.render(&[FileReport {
         source: &path,
         diagnostics: &diagnostics,

@@ -47,6 +47,7 @@ mod tests {
     use super::*;
     use crate::{DiagnosticBuilder, Location, Severity, Span};
 
+    #[cfg(unix)]
     #[test]
     fn newline_in_path_cannot_start_a_new_line() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));

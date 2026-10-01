@@ -60,6 +60,7 @@ mod tests {
     use crate::formatter::ReportPath;
     use crate::{DiagnosticBuilder, Location, Span};
 
+    #[cfg(unix)]
     #[test]
     fn escapes_properties_and_data() {
         let span = Span::new(Location::new(1, 2, 1), Location::new(1, 5, 4));

@@ -192,6 +192,7 @@ mod tests {
         assert!(out.contains("\"results\": []"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn result_has_uri_level_and_clamped_region() {
         let inverted = Span::new(Loc::new(3, 9, 30), Loc::new(3, 2, 23));
