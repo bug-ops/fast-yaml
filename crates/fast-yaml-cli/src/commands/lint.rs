@@ -238,6 +238,9 @@ impl LintCommand {
     /// Returns error if linting fails (e.g., invalid YAML syntax)
     pub fn execute(&self, input: &InputSource) -> Result<ExitCode> {
         let start_time = std::time::Instant::now();
+        if let Some(path) = input.file_path() {
+            self.output.ensure_not_input(path)?;
+        }
 
         // Apply indent from CommonConfig formatter only when linter config is at default
         let effective_indent = self.config.formatter.lint_indent_size();

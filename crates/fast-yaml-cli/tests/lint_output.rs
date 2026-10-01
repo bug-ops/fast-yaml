@@ -231,3 +231,27 @@ fn closed_stderr_does_not_panic_when_reporting_an_error() {
         Some(1)
     );
 }
+
+#[test]
+fn output_flag_never_overwrites_an_input_file() {
+    let dir = TempDir::new().unwrap();
+    let input = fixture(&dir, "a.yaml", DUPLICATE_KEY);
+    let other = fixture(&dir, "b.yaml", "k: 1\n");
+    let path = path_arg(&input);
+    for args in [
+        vec!["-o", path, "lint", path],
+        vec!["-o", path, "lint", path, path],
+        vec!["-o", path, "lint", path, path_arg(&other)],
+        vec!["-o", path, "lint", path_arg(dir.path())],
+    ] {
+        let output = fy(&args).output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{args:?}");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("also an input file"), "{args:?}: {stderr}");
+        assert_eq!(
+            fs::read_to_string(&input).unwrap(),
+            DUPLICATE_KEY,
+            "{args:?}"
+        );
+    }
+}

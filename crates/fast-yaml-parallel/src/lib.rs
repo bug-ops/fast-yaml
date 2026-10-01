@@ -83,7 +83,7 @@ mod result;
 mod scan_ahead;
 
 // Core public API
-pub use atomic::write_atomic;
+pub use atomic::{AtomicFile, write_atomic};
 pub use config::Config;
 pub use error::{Error, Result};
 pub use fast_yaml_core::Value;

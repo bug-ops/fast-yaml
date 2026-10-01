@@ -53,45 +53,120 @@ use std::path::{Path, PathBuf};
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
-    let (target, existing) = resolve_target(path)?;
+    let mut file = AtomicFile::create(path)?;
+    #[cfg(unix)]
+    if let Some(old) = file.existing.as_ref().filter(|old| old.hardlinked())
+        && old.owned_by(&file.temp.as_file().metadata()?)
+    {
+        return write_in_place(&file.target, content, old);
+    }
+    file.write_all(content)?;
+    file.commit()
+}
 
-    let dir = match target.parent() {
+/// A file written piece by piece that replaces its target atomically on [`commit`].
+///
+/// The data goes to an unpredictably named temporary file in the target's directory, so
+/// memory use does not grow with the output. It follows the same rules as [`write_atomic`],
+/// except that a target with several hard links is replaced by rename (the other links keep
+/// the old content). Dropping the file without committing removes the temporary file and
+/// leaves the target untouched.
+///
+/// [`commit`]: AtomicFile::commit
+///
+/// # Examples
+///
+/// ```
+/// use std::io::Write;
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("report.txt");
+///
+/// let mut file = fast_yaml_parallel::AtomicFile::create(&path)?;
+/// file.write_all(b"line 1\n")?;
+/// file.write_all(b"line 2\n")?;
+/// file.commit()?;
+/// assert_eq!(std::fs::read_to_string(&path)?, "line 1\nline 2\n");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug)]
+pub struct AtomicFile {
+    temp: tempfile::NamedTempFile,
+    target: PathBuf,
+    existing: Option<Existing>,
+}
+
+impl AtomicFile {
+    /// Starts replacing `path`, which is resolved like in [`write_atomic`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the target cannot be resolved, is not a regular file, or the
+    /// temporary file cannot be created.
+    pub fn create(path: &Path) -> io::Result<Self> {
+        let (target, existing) = resolve_target(path)?;
+        let dir = parent_dir(&target);
+        let temp = create_temp(dir, existing.is_none()).map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!("cannot create temporary file in {}: {e}", dir.display()),
+            )
+        })?;
+        Ok(Self {
+            temp,
+            target,
+            existing,
+        })
+    }
+
+    /// Flushes the data to disk and renames the temporary file over the target.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the owner, permissions or data cannot be set, or the rename
+    /// fails. The temporary file is removed on failure.
+    pub fn commit(self) -> io::Result<()> {
+        let Self {
+            temp,
+            target,
+            existing,
+        } = self;
+        let read_only = existing
+            .as_ref()
+            .is_some_and(|old| old.permissions.readonly());
+        if let Some(old) = &existing {
+            // Before chmod: changing the owner can clear mode bits
+            #[cfg(unix)]
+            let permissions = restore_owner(temp.as_file(), old)?;
+            #[cfg(not(unix))]
+            let permissions = old.permissions.clone();
+            temp.as_file().set_permissions(permissions)?;
+        }
+        temp.as_file().sync_all()?;
+        // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
+        let temp_path = temp.into_temp_path();
+        replace(&temp_path, &target, read_only)?;
+        let _ = temp_path.keep();
+        sync_dir(parent_dir(&target));
+        Ok(())
+    }
+}
+
+impl Write for AtomicFile {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.temp.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.temp.flush()
+    }
+}
+
+fn parent_dir(target: &Path) -> &Path {
+    match target.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
-    };
-
-    let mut temp = create_temp(dir, existing.is_none()).map_err(|e| {
-        io::Error::new(
-            e.kind(),
-            format!("cannot create temporary file in {}: {e}", dir.display()),
-        )
-    })?;
-    #[cfg(unix)]
-    if let Some(old) = existing.as_ref().filter(|old| old.hardlinked())
-        && old.owned_by(&temp.as_file().metadata()?)
-    {
-        drop(temp);
-        return write_in_place(&target, content, old);
     }
-    temp.write_all(content)?;
-    let read_only = existing
-        .as_ref()
-        .is_some_and(|old| old.permissions.readonly());
-    if let Some(old) = &existing {
-        // Before chmod: changing the owner can clear mode bits
-        #[cfg(unix)]
-        let permissions = restore_owner(temp.as_file(), old)?;
-        #[cfg(not(unix))]
-        let permissions = old.permissions.clone();
-        temp.as_file().set_permissions(permissions)?;
-    }
-    temp.as_file().sync_all()?;
-    // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
-    let temp_path = temp.into_temp_path();
-    replace(&temp_path, &target, read_only)?;
-    let _ = temp_path.keep();
-    sync_dir(dir);
-    Ok(())
 }
 
 /// Renames `from` over `to`; on Windows a read-only `to` is made writable first and restored.
@@ -187,6 +262,7 @@ fn create_temp(dir: &Path, new_target: bool) -> io::Result<tempfile::NamedTempFi
 }
 
 /// What an existing target has that its replacement must keep.
+#[derive(Debug)]
 struct Existing {
     permissions: Permissions,
     /// `(uid, gid)`
