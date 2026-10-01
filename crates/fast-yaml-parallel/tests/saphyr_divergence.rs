@@ -6,7 +6,7 @@
 //! fixes. Column-0 `---` inside an unindented top-level block scalar is scalar content in both
 //! engines (#552). Update deliberately.
 
-use fast_yaml_core::limits::MaxDocuments;
+use fast_yaml_core::limits::{MaxDocuments, ParseLimits};
 use fast_yaml_core::{Parser, Value};
 use fast_yaml_parallel::{Config, Error, parse_parallel, parse_parallel_with_config};
 
@@ -269,7 +269,10 @@ fn empty_block_scalar_followed_by_blank_line_keeps_one_newline_when_kept() {
 fn max_documents_counts_documents_of_a_merged_chunk() {
     let input = "--- |\nx\n---\nb\n---\nc\n";
     assert_eq!(Parser::parse_all(input).unwrap().len(), 1);
-    let config = Config::new().with_max_documents(MaxDocuments::new(1).unwrap());
+    let config = Config::new().with_parse_limits(ParseLimits {
+        max_documents: MaxDocuments::new(1).unwrap(),
+        ..ParseLimits::default()
+    });
     assert_eq!(parse_parallel_with_config(input, &config).unwrap().len(), 1);
 }
 

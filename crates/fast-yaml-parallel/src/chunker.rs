@@ -2,8 +2,8 @@
 
 #![allow(clippy::redundant_pub_crate)]
 
-use fast_yaml_core::NormalizedInput;
 use fast_yaml_core::limits::MaxDocuments;
+use fast_yaml_core::{LimitKind, NormalizedInput, ParseError};
 
 use crate::error::{Error, Result};
 
@@ -121,8 +121,8 @@ impl RootNode {
 ///
 /// # Errors
 ///
-/// Returns [`Error::TooManyDocuments`] as soon as the chunk count would pass `max`, so an
-/// input of millions of empty documents is never fully materialized.
+/// Returns [`Error::Parse`] carrying `LimitKind::Documents` as soon as the chunk count would
+/// pass `max`, so an input of millions of empty documents is never fully materialized.
 pub(crate) fn chunk_documents<'a>(
     whole: &'a NormalizedInput<'_>,
     max: Option<MaxDocuments>,
@@ -131,10 +131,15 @@ pub(crate) fn chunk_documents<'a>(
     if input.is_empty() {
         return Ok(Vec::new());
     }
-    let admit = |count: usize| match max {
-        Some(limit) if count >= limit.get() => Err(Error::TooManyDocuments {
-            count: count + 1,
-            limit,
+    let admit = |count: usize, line: usize| match max {
+        Some(limit) if count >= limit.get() => Err(Error::Parse {
+            index: count,
+            source: ParseError::LimitExceeded {
+                kind: LimitKind::Documents(limit),
+                line: line + 1,
+                column: 1,
+                document: count,
+            },
         }),
         _ => Ok(()),
     };
@@ -193,7 +198,7 @@ pub(crate) fn chunk_documents<'a>(
 
         if let Some(boundary) = boundary {
             if has_doc {
-                admit(chunks.len())?;
+                admit(chunks.len(), boundary.origin.line)?;
                 chunks.push(Chunk {
                     input: part(start.byte..boundary.byte),
                     origin: start.origin,
@@ -212,7 +217,7 @@ pub(crate) fn chunk_documents<'a>(
         here.origin.line += 1;
     }
 
-    admit(chunks.len())?;
+    admit(chunks.len(), start.origin.line)?;
     chunks.push(Chunk {
         input: part(start.byte..input.len()),
         origin: start.origin,
@@ -474,7 +479,17 @@ mod tests {
         let limit = |n| Some(MaxDocuments::new(n).unwrap());
         let err = chunk_documents(&input, limit(3)).unwrap_err();
         assert!(
-            matches!(err, Error::TooManyDocuments { count: 4, .. }),
+            matches!(
+                err,
+                Error::Parse {
+                    index: 3,
+                    source: ParseError::LimitExceeded {
+                        kind: LimitKind::Documents(_),
+                        document: 3,
+                        ..
+                    }
+                }
+            ),
             "{err:?}"
         );
         assert_eq!(

@@ -103,8 +103,9 @@ pub use result::{BatchResult, FileOutcome, FileResult};
 /// The error includes the document index for debugging.
 ///
 /// Returns `Error::InputTooLarge` if the input exceeds [`Config::max_input_bytes`] (default
-/// 100 MiB) and `Error::TooManyDocuments` if it holds more than [`Config::max_documents`]
-/// (default 100 000) documents; the latter is checked before any document is parsed.
+/// 100 MiB) and `Error::Parse` with `LimitKind::Documents` if it holds more documents than
+/// `ParseLimits::max_documents` (default 100 000); the latter is checked before any document
+/// is parsed.
 ///
 /// # Known differences
 ///

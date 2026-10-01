@@ -97,6 +97,7 @@ fn run() -> Result<ExitCode> {
             indent,
             width,
             max_depth,
+            max_documents,
             stdin_files,
             batch,
             dry_run,
@@ -113,6 +114,7 @@ fn run() -> Result<ExitCode> {
                     .with_indent(indent)
                     .with_width(width)
                     .with_max_depth(max_depth)
+                    .with_max_documents(max_documents)
                     .with_max_scan_ahead(max_scan_ahead),
             );
 

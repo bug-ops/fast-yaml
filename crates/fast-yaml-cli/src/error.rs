@@ -174,6 +174,8 @@ pub enum RaiseHint {
     MaxInputBytes,
     /// `--max-scan-ahead`
     MaxScanAhead,
+    /// `--max-documents`
+    MaxDocuments,
 }
 
 impl std::fmt::Display for RaiseHint {
@@ -183,6 +185,7 @@ impl std::fmt::Display for RaiseHint {
             Self::MaxAliasBytes => "raise with --max-alias-bytes",
             Self::MaxInputBytes => "raise with --max-input-bytes or the max-input-bytes config key",
             Self::MaxScanAhead => "raise with --max-scan-ahead or the max-scan-ahead config key",
+            Self::MaxDocuments => "raise with --max-documents",
         })
     }
 }
@@ -205,7 +208,7 @@ impl RaiseHint {
 
     fn of_link(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
         use fast_yaml_core::limits::{
-            InputTooLarge, MaxAliasBytes, MaxDepth, MaxInputBytes, MaxScanAhead,
+            InputTooLarge, MaxAliasBytes, MaxDepth, MaxDocuments, MaxInputBytes, MaxScanAhead,
         };
         use fast_yaml_core::{LimitKind, ParseError};
         let input_limit = |e: &InputTooLarge| {
@@ -224,6 +227,10 @@ impl RaiseHint {
                 kind: LimitKind::ScanAhead(limit),
                 ..
             } if limit.get() < MaxScanAhead::MAX.get() => Some(Self::MaxScanAhead),
+            ParseError::LimitExceeded {
+                kind: LimitKind::Documents(limit),
+                ..
+            } if limit.get() < MaxDocuments::MAX.get() => Some(Self::MaxDocuments),
             _ => None,
         };
         if let Some(e) = err.downcast_ref::<ParseError>() {
@@ -326,7 +333,9 @@ mod tests {
 
     #[test]
     fn test_raise_hint_for_depth_and_alias_only() {
-        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth, MaxScanAhead, MaxTagBytes};
+        use fast_yaml_core::limits::{
+            MaxAliasBytes, MaxDepth, MaxDocuments, MaxScanAhead, MaxTagBytes,
+        };
         use fast_yaml_core::{LimitKind, ParseError};
         let limit = |kind| ParseError::LimitExceeded {
             kind,
@@ -357,6 +366,14 @@ mod tests {
         );
         assert_eq!(
             RaiseHint::of(&limit(LimitKind::ScanAhead(MaxScanAhead::MAX))),
+            None
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::Documents(MaxDocuments::DEFAULT))),
+            Some(RaiseHint::MaxDocuments)
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::Documents(MaxDocuments::MAX))),
             None
         );
     }

@@ -1,6 +1,6 @@
 //! Stress tests for parallel processing with large inputs and high concurrency.
 
-use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
+use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes, ParseLimits};
 use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 
@@ -249,13 +249,16 @@ fn test_document_count_validation_custom_limit() {
         let _ = writeln!(yaml, "---\nid: {i}");
     }
 
-    let config = Config::new().with_max_documents(MaxDocuments::new(100).unwrap());
+    let config = Config::new().with_parse_limits(ParseLimits {
+        max_documents: MaxDocuments::new(100).unwrap(),
+        ..ParseLimits::default()
+    });
     let result = parse_parallel_with_config(&yaml, &config);
 
     let error_msg = result.unwrap_err().to_string();
     assert_eq!(
         error_msg,
-        "input has at least 101 documents, more than the maximum of 100"
+        "failed to parse YAML: YAML resource limit exceeded at line 201, column 1: document count exceeds 100 (document 101)"
     );
 }
 
@@ -265,7 +268,7 @@ fn test_document_count_limit_applies_without_config() {
 
     let error_msg = parse_parallel(&yaml).unwrap_err().to_string();
     assert!(
-        error_msg.contains("more than the maximum of 100000"),
+        error_msg.contains("document count exceeds 100000"),
         "{error_msg}"
     );
 }
