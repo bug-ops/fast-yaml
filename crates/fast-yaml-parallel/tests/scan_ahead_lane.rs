@@ -53,21 +53,20 @@ fn scaled_batch_matches_single_file_for_every_worker_count() {
 }
 
 #[test]
-fn a_file_over_the_full_limit_is_rejected_under_both_policies() {
-    let mut emitter = EmitterConfig::new();
-    emitter.parse_limits.max_scan_ahead = MaxScanAhead::new(1 << 20).unwrap();
-    for policy in [ScanAheadPolicy::Fixed, ScanAheadPolicy::Scaled] {
-        let outcome = formatted_ok(8, policy, &emitter);
-        assert!(!outcome[0], "{policy:?}: the file is over the full limit");
-        assert!(outcome[1..].iter().all(|ok| *ok), "{policy:?}");
-    }
+fn a_fixed_limit_is_final_and_the_scaled_default_is_not() {
+    let emitter = EmitterConfig::new();
+    let fixed = ScanAheadPolicy::Fixed(MaxScanAhead::new(1 << 20).unwrap());
+    let outcome = formatted_ok(8, fixed, &emitter);
+    assert!(!outcome[0], "the file is over the fixed limit");
+    assert!(outcome[1..].iter().all(|ok| *ok));
+    assert!(formatted_ok(8, ScanAheadPolicy::Scaled, &emitter)[0]);
 }
 
 #[test]
 fn a_file_between_the_limits_is_rejected_first_and_accepted_through_the_lane() {
     let text = between_limits();
-    let lane = ScanAheadLane::scaled(
-        MaxScanAhead::DEFAULT,
+    let lane = ScanAheadLane::for_policy(
+        ScanAheadPolicy::Scaled,
         std::num::NonZeroUsize::new(8).unwrap(),
     );
     assert!(lane.first_limit().get() < MaxScanAhead::DEFAULT.get());

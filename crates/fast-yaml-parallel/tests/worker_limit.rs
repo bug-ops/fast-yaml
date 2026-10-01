@@ -88,10 +88,8 @@ fn parse_parallel_runs_inside_the_configured_pool() {
 }
 
 #[test]
-fn shared_pool_is_one_per_process() {
+fn shared_pool_has_the_requested_size() {
     let two = std::num::NonZeroUsize::new(2).unwrap();
-    let a = shared_pool(two).unwrap();
-    let b = shared_pool(two).unwrap();
-    assert!(std::sync::Arc::ptr_eq(&a, &b));
-    assert_eq!(a.install(rayon::current_num_threads), 2);
+    let pool = shared_pool(two).unwrap();
+    assert_eq!(pool.install(rayon::current_num_threads), 2);
 }

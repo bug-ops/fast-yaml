@@ -23,7 +23,6 @@ use std::path::{Path, PathBuf};
 /// - On Unix, a read-only (`0o444`) target is still replaced when its directory is writable,
 ///   and stays read-only afterwards; on Windows the read-only attribute is cleared for the
 ///   rename and set again.
-///
 /// - If the owner or group cannot be restored, the replacement never becomes more readable
 ///   than the original: without the group, the group and other permission bits are dropped.
 ///

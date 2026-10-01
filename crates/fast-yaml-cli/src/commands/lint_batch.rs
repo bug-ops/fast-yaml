@@ -148,11 +148,10 @@ struct Linters {
 
 impl Linters {
     fn new(config: &LintConfig, policy: ScanAheadPolicy, workers: NonZeroUsize) -> Self {
-        let full_limits = config.parse_limits;
-        let lane = ScanAheadLane::for_policy(policy, full_limits.max_scan_ahead, workers);
+        let lane = ScanAheadLane::for_policy(policy, workers);
         let first_limits = ParseLimits {
             max_scan_ahead: lane.first_limit(),
-            ..full_limits
+            ..config.parse_limits
         };
         Self {
             first: Linter::with_config(config.clone().with_parse_limits(first_limits)),

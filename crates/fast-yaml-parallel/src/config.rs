@@ -1,12 +1,22 @@
 //! Configuration for parallel processing behavior.
 
+use std::num::NonZeroUsize;
+
 use fast_yaml_core::KeyDomain;
-use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
+use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead, ParseLimits};
 
 use crate::scan_ahead::ScanAheadPolicy;
 
 /// Maximum number of threads allowed (security limit).
 const MAX_THREADS: usize = 128;
+
+/// [`MAX_THREADS`] as a non-zero count.
+const MAX_POOL_THREADS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(MAX_THREADS - 1);
+
+/// `n`, or one when `n` is zero.
+const fn at_least_one(n: usize) -> NonZeroUsize {
+    NonZeroUsize::MIN.saturating_add(n.saturating_sub(1))
+}
 
 /// Configuration for parallel processing behavior.
 ///
@@ -114,7 +124,8 @@ impl Config {
     }
 
     /// Sets how [`FileProcessor`](crate::FileProcessor) formatting bounds the scanner
-    /// look-ahead of its workers. Default: [`ScanAheadPolicy::Fixed`]
+    /// look-ahead of its workers. Default: [`ScanAheadPolicy::Fixed`] at the default limit; the
+    /// limit of the emitter configuration is not consulted
     ///
     /// # Examples
     ///
@@ -242,21 +253,30 @@ impl Default for Config {
             max_input_bytes: MaxInputBytes::DEFAULT,
             sequential_threshold: 4096, // 4KB
             parse_limits: ParseLimits::default(),
-            scan_ahead: ScanAheadPolicy::Fixed,
+            scan_ahead: ScanAheadPolicy::Fixed(MaxScanAhead::DEFAULT),
             key_domain: KeyDomain::Yaml,
         }
     }
 }
 
 impl Config {
-    /// Returns the effective worker count, capped at security limit.
-    ///
-    /// # Security
-    ///
-    /// Worker count is capped at 128 to prevent resource exhaustion.
-    pub(crate) fn effective_workers(&self) -> usize {
-        let count = self.workers.unwrap_or_else(num_cpus::get);
-        count.min(MAX_THREADS)
+    /// The worker count a dedicated pool needs: `Some(n)` with `n > 0`, capped; `None` for
+    /// auto and sequential settings, which run without one.
+    pub(crate) fn pool_workers(&self) -> Option<NonZeroUsize> {
+        self.workers
+            .and_then(NonZeroUsize::new)
+            .map(|workers| workers.min(MAX_POOL_THREADS))
+    }
+
+    /// How many threads run a batch: the dedicated pool, the global pool, or one when
+    /// sequential.
+    pub(crate) fn worker_count(&self) -> NonZeroUsize {
+        self.pool_workers().unwrap_or_else(|| {
+            at_least_one(match self.workers {
+                Some(_) => 0,
+                None => rayon::current_num_threads(),
+            })
+        })
     }
 }
 
@@ -291,22 +311,22 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_workers_capping() {
-        // Normal case
-        let config = Config::new().with_workers(Some(4));
-        assert_eq!(config.effective_workers(), 4);
+    fn test_pool_workers_capping() {
+        let pool = |workers| Config::new().with_workers(workers).pool_workers();
+        assert_eq!(pool(Some(4)).map(NonZeroUsize::get), Some(4));
+        assert_eq!(pool(Some(10_000)).map(NonZeroUsize::get), Some(MAX_THREADS));
+        assert_eq!(pool(Some(0)), None);
+        assert_eq!(pool(None), None);
+    }
 
-        // Excessive worker count (should be capped)
-        let config = Config::new().with_workers(Some(10_000));
-        assert_eq!(config.effective_workers(), MAX_THREADS);
-
-        // Auto-detect (should be capped if CPU count > MAX_THREADS)
-        let config = Config::new();
-        assert!(config.effective_workers() <= MAX_THREADS);
-
-        // Sequential mode
-        let config = Config::new().with_workers(Some(0));
-        assert_eq!(config.effective_workers(), 0);
+    #[test]
+    fn test_worker_count_is_never_zero() {
+        let count = |workers| Config::new().with_workers(workers).worker_count().get();
+        assert_eq!(count(Some(4)), 4);
+        assert_eq!(count(Some(0)), 1);
+        assert!(count(None) >= 1);
+        assert_eq!(at_least_one(0).get(), 1);
+        assert_eq!(at_least_one(7).get(), 7);
     }
 
     #[test]

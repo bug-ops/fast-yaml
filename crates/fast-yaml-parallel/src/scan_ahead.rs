@@ -16,23 +16,26 @@ use fast_yaml_core::limits::MaxScanAhead;
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_core::limits::MaxScanAhead;
 /// use fast_yaml_parallel::{Config, ScanAheadPolicy};
 ///
-/// assert_eq!(Config::new().scan_ahead_policy(), ScanAheadPolicy::Fixed);
+/// assert_eq!(
+///     Config::new().scan_ahead_policy(),
+///     ScanAheadPolicy::Fixed(MaxScanAhead::DEFAULT)
+/// );
 /// let scaled = Config::new().with_scan_ahead_policy(ScanAheadPolicy::Scaled);
 /// assert_eq!(scaled.scan_ahead_policy(), ScanAheadPolicy::Scaled);
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScanAheadPolicy {
-    /// Every worker parses at the configured limit.
-    #[default]
-    Fixed,
-    /// Workers parse at the configured limit divided by their number (never below 1 MiB);
-    /// a file the smaller limit rejects is retried at the configured limit, one file at a
+    /// Every worker parses at this limit, which a caller chose explicitly.
+    Fixed(MaxScanAhead),
+    /// Workers parse at the default limit divided by their number (never below 1 MiB);
+    /// a file the smaller limit rejects is retried at the default limit, one file at a
     /// time. Use it only when the limit was not chosen explicitly.
     ///
     /// The memory bound depends on the worker count: with at most four workers the first
-    /// attempts together stay within the configured limit, above that the 1 MiB floor makes
+    /// attempts together stay within the default limit, above that the 1 MiB floor makes
     /// the aggregate `workers` x 1 MiB (128 MiB of look-ahead for 128 workers), plus one
     /// full-limit retry at a time. The lane is per batch run, so two concurrent runs can each
     /// hold a retry.
@@ -46,9 +49,9 @@ pub enum ScanAheadPolicy {
 /// ```
 /// use std::num::NonZeroUsize;
 /// use fast_yaml_core::limits::MaxScanAhead;
-/// use fast_yaml_parallel::ScanAheadLane;
+/// use fast_yaml_parallel::{ScanAheadLane, ScanAheadPolicy};
 ///
-/// let lane = ScanAheadLane::scaled(MaxScanAhead::DEFAULT, NonZeroUsize::new(16).unwrap());
+/// let lane = ScanAheadLane::for_policy(ScanAheadPolicy::Scaled, NonZeroUsize::new(16).unwrap());
 /// assert_eq!(lane.first_limit().get(), 1 << 20);
 ///
 /// let first_try = |limit: MaxScanAhead| {
@@ -63,13 +66,30 @@ pub struct ScanAheadLane {
     retries: Mutex<()>,
 }
 
-impl ScanAheadLane {
-    /// Smallest limit a scaled lane starts with: 1 MiB of characters.
-    pub const MIN_SCALED: usize = 1 << 20;
+/// Smallest limit a scaled lane starts with: 1 MiB of characters.
+const MIN_SCALED: usize = 1 << 20;
 
-    /// A lane where every attempt uses `full` and nothing is retried.
+impl From<Option<MaxScanAhead>> for ScanAheadPolicy {
+    /// An explicit limit is final; without one the default is scaled.
+    fn from(explicit: Option<MaxScanAhead>) -> Self {
+        explicit.map_or(Self::Scaled, Self::Fixed)
+    }
+}
+
+impl ScanAheadPolicy {
+    /// The limit a file is finally parsed under: the fixed limit, or the default.
     #[must_use]
-    pub const fn fixed(full: MaxScanAhead) -> Self {
+    pub const fn full_limit(self) -> MaxScanAhead {
+        match self {
+            Self::Fixed(limit) => limit,
+            Self::Scaled => MaxScanAhead::DEFAULT,
+        }
+    }
+}
+
+impl ScanAheadLane {
+    /// A lane where every attempt uses `full` and nothing is retried.
+    const fn fixed(full: MaxScanAhead) -> Self {
         Self {
             first: full,
             full,
@@ -77,10 +97,9 @@ impl ScanAheadLane {
         }
     }
 
-    /// A lane starting at `full / workers` (at least [`Self::MIN_SCALED`], at most `full`).
-    #[must_use]
-    pub fn scaled(full: MaxScanAhead, workers: NonZeroUsize) -> Self {
-        let share = (full.get() / workers.get()).max(Self::MIN_SCALED);
+    /// A lane starting at `full / workers` (at least 1 MiB, at most `full`).
+    fn scaled(full: MaxScanAhead, workers: NonZeroUsize) -> Self {
+        let share = (full.get() / workers.get()).max(MIN_SCALED);
         let first = MaxScanAhead::new(share.min(full.get())).unwrap_or(full);
         Self {
             first,
@@ -89,12 +108,12 @@ impl ScanAheadLane {
         }
     }
 
-    /// A lane for `policy`, the configured `full` limit and the number of `workers`.
+    /// A lane for `policy` and the number of `workers`.
     #[must_use]
-    pub fn for_policy(policy: ScanAheadPolicy, full: MaxScanAhead, workers: NonZeroUsize) -> Self {
+    pub fn for_policy(policy: ScanAheadPolicy, workers: NonZeroUsize) -> Self {
         match policy {
-            ScanAheadPolicy::Fixed => Self::fixed(full),
-            ScanAheadPolicy::Scaled => Self::scaled(full, workers),
+            ScanAheadPolicy::Fixed(limit) => Self::fixed(limit),
+            ScanAheadPolicy::Scaled => Self::scaled(MaxScanAhead::DEFAULT, workers),
         }
     }
 

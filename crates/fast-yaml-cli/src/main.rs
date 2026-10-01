@@ -140,11 +140,7 @@ fn run() -> Result<ExitCode> {
                             "use -i to format files in-place or --dry-run to preview changes"
                         ),
                     };
-                    let scan_ahead = if cli.max_scan_ahead.is_some() {
-                        ScanAheadPolicy::Fixed
-                    } else {
-                        ScanAheadPolicy::Scaled
-                    };
+                    let scan_ahead = ScanAheadPolicy::from(cli.max_scan_ahead);
                     commands::format_batch::execute_batch(
                         &common, &target, write, comments, max_input, scan_ahead,
                     )?

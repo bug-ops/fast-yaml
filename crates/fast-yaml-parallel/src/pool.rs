@@ -22,6 +22,9 @@ static POOL: Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>> = Mutex::new(None);
 /// alternates between two counts rebuilds the pool each time. The cached pool keeps its
 /// `workers` threads resident until it is replaced or the process exits.
 ///
+/// The pool is a `rayon::ThreadPool`, so callers need the same `rayon` major version as this
+/// crate; a rayon upgrade is a breaking change of this function.
+///
 /// # Errors
 ///
 /// Returns [`Error::ThreadPool`] when the operating system refuses to spawn the threads.
@@ -45,7 +48,14 @@ pub fn shared_pool(workers: NonZeroUsize) -> Result<Arc<ThreadPool>> {
 pub(crate) type BuildError = Arc<ThreadPoolBuildError>;
 
 fn build(workers: NonZeroUsize) -> std::result::Result<Arc<ThreadPool>, BuildError> {
-    let mut slot = POOL.lock().unwrap_or_else(PoisonError::into_inner);
+    build_in(&POOL, workers)
+}
+
+fn build_in(
+    slot: &Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>>,
+    workers: NonZeroUsize,
+) -> std::result::Result<Arc<ThreadPool>, BuildError> {
+    let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((count, pool)) = slot.as_ref()
         && *count == workers
     {
@@ -68,14 +78,10 @@ fn build(workers: NonZeroUsize) -> std::result::Result<Arc<ThreadPool>, BuildErr
 pub(crate) fn for_config(
     config: &Config,
 ) -> std::result::Result<Option<Arc<ThreadPool>>, BuildError> {
-    if config.workers().is_none_or(|workers| workers == 0) {
-        return Ok(None);
+    match config.pool_workers() {
+        Some(workers) if workers.get() != rayon::current_num_threads() => build(workers).map(Some),
+        _ => Ok(None),
     }
-    let capped = config.effective_workers();
-    if capped == rayon::current_num_threads() {
-        return Ok(None);
-    }
-    build(NonZeroUsize::new(capped).unwrap_or(NonZeroUsize::MIN)).map(Some)
 }
 
 #[cfg(test)]
@@ -86,18 +92,24 @@ mod tests {
         NonZeroUsize::new(n).unwrap()
     }
 
+    fn fresh() -> Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>> {
+        Mutex::new(None)
+    }
+
     #[test]
     fn test_pool_is_reused_for_the_same_worker_count() {
-        let first = shared_pool(count(3)).unwrap();
-        let second = shared_pool(count(3)).unwrap();
+        let slot = fresh();
+        let first = build_in(&slot, count(3)).unwrap();
+        let second = build_in(&slot, count(3)).unwrap();
         assert!(Arc::ptr_eq(&first, &second));
         assert_eq!(first.install(rayon::current_num_threads), 3);
     }
 
     #[test]
     fn test_pool_is_replaced_when_the_worker_count_changes() {
-        let three = shared_pool(count(3)).unwrap();
-        let five = shared_pool(count(5)).unwrap();
+        let slot = fresh();
+        let three = build_in(&slot, count(3)).unwrap();
+        let five = build_in(&slot, count(5)).unwrap();
         assert!(!Arc::ptr_eq(&three, &five));
         assert_eq!(five.install(rayon::current_num_threads), 5);
         assert_eq!(three.install(rayon::current_num_threads), 3);

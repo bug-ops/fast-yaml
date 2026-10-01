@@ -132,12 +132,8 @@ impl LintCommand {
             .or(file.max_input_bytes)
             .unwrap_or(MaxInputBytes::DEFAULT);
         let explicit_scan_ahead = args.max_scan_ahead.or(file.max_scan_ahead);
-        let scan_ahead = if explicit_scan_ahead.is_some() {
-            ScanAheadPolicy::Fixed
-        } else {
-            ScanAheadPolicy::Scaled
-        };
-        let max_scan_ahead = explicit_scan_ahead.unwrap_or_default();
+        let scan_ahead = ScanAheadPolicy::from(explicit_scan_ahead);
+        let max_scan_ahead = scan_ahead.full_limit();
         let (file_lint_config, file_filter) = split_config(file);
         let lint_config = ConfigFile::merge_cli_overrides(
             file_lint_config,

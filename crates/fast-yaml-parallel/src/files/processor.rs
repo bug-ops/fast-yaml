@@ -1,6 +1,5 @@
 //! Parallel file processor for batch YAML operations.
 
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -154,7 +153,7 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> Vec<(PathBuf, Result<FormatOutput>)> {
-        let lane = self.lane(emitter_config);
+        let lane = self.lane();
         let process_file = |path: &Path| self.format_content(path, emitter_config, comments, &lane);
 
         if self.should_use_sequential(paths) {
@@ -197,7 +196,7 @@ impl FileProcessor {
             return BatchResult::new();
         }
 
-        let lane = self.lane(emitter_config);
+        let lane = self.lane();
         let results = if self.should_use_sequential(paths) {
             paths
                 .iter()
@@ -225,17 +224,9 @@ impl FileProcessor {
         batch
     }
 
-    /// The scan-ahead lane of one format run, from the limit `emitter_config` carries.
-    fn lane(&self, emitter_config: &EmitterConfig) -> ScanAheadLane {
-        let workers = match self.config.workers() {
-            Some(_) => NonZeroUsize::new(self.config.effective_workers()),
-            None => NonZeroUsize::new(rayon::current_num_threads()),
-        };
-        ScanAheadLane::for_policy(
-            self.config.scan_ahead_policy(),
-            emitter_config.parse_limits.max_scan_ahead,
-            workers.unwrap_or(NonZeroUsize::MIN),
-        )
+    /// The scan-ahead lane of one format run.
+    fn lane(&self) -> ScanAheadLane {
+        ScanAheadLane::for_policy(self.config.scan_ahead_policy(), self.config.worker_count())
     }
 
     /// Reads `path` once, enforces the size limit and comment policy, and formats it.
@@ -1005,17 +996,19 @@ mod tests {
         use crate::scan_ahead::ScanAheadPolicy;
         use fast_yaml_core::limits::MaxScanAhead;
 
-        let emitter = EmitterConfig::new();
         let lane = |policy| {
             FileProcessor::with_config(
                 Config::new()
                     .with_workers(Some(8))
                     .with_scan_ahead_policy(policy),
             )
-            .lane(&emitter)
+            .lane()
             .first_limit()
         };
-        assert_eq!(lane(ScanAheadPolicy::Fixed), MaxScanAhead::DEFAULT);
+        assert_eq!(
+            lane(ScanAheadPolicy::Fixed(MaxScanAhead::DEFAULT)),
+            MaxScanAhead::DEFAULT
+        );
         assert!(lane(ScanAheadPolicy::Scaled).get() < MaxScanAhead::DEFAULT.get());
     }
 }
