@@ -4,7 +4,7 @@ use fast_yaml_core::ScalarStyle;
 
 /// A position in the source; `line` and `column` count from 0, `column` in chars.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(super) struct Mark {
+pub struct Mark {
     pub index: usize,
     pub pointer: usize,
     pub line: usize,
@@ -13,7 +13,7 @@ pub(super) struct Mark {
 
 /// What a token is, with the details the indentation check reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Kind {
+pub enum Kind {
     StreamStart,
     StreamEnd,
     DocumentStart,
@@ -38,7 +38,7 @@ pub(super) enum Kind {
 
 /// A token with the marks of its first and last character.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct Token {
+pub struct Token {
     pub kind: Kind,
     pub start: Mark,
     pub end: Mark,
@@ -47,7 +47,7 @@ pub(super) struct Token {
 }
 
 impl Token {
-    pub(super) const fn new(kind: Kind, start: Mark, end: Mark) -> Self {
+    pub const fn new(kind: Kind, start: Mark, end: Mark) -> Self {
         Self {
             kind,
             start,
@@ -56,7 +56,7 @@ impl Token {
         }
     }
 
-    pub(super) const fn is_visible(&self) -> bool {
+    pub const fn is_visible(&self) -> bool {
         !matches!(
             self.kind,
             Kind::StreamStart | Kind::StreamEnd | Kind::BlockEnd | Kind::Scalar { empty: true, .. }
@@ -65,7 +65,7 @@ impl Token {
 }
 
 /// Walks the source forward and tells the mark of any later byte offset.
-pub(super) struct Cursor<'a> {
+pub struct Cursor<'a> {
     source: &'a str,
     mark: Mark,
 }
@@ -75,7 +75,7 @@ const fn is_break(c: char) -> bool {
 }
 
 impl<'a> Cursor<'a> {
-    pub(super) fn new(source: &'a str) -> Self {
+    pub fn new(source: &'a str) -> Self {
         Self {
             source,
             mark: Mark::default(),
@@ -83,7 +83,7 @@ impl<'a> Cursor<'a> {
     }
 
     /// The mark at byte offset `pointer`, which must not lie before an earlier one.
-    pub(super) fn mark_at(&mut self, pointer: usize) -> Mark {
+    pub fn mark_at(&mut self, pointer: usize) -> Mark {
         let Some(span) = self.source.get(self.mark.pointer..pointer) else {
             return self.mark;
         };
@@ -103,7 +103,7 @@ impl<'a> Cursor<'a> {
 }
 
 /// The line a scalar really ends on: the line of its last non-blank char.
-pub(super) fn real_end_line(source: &str, start: Mark, end: Mark) -> usize {
+pub fn real_end_line(source: &str, start: Mark, end: Mark) -> usize {
     let bytes = source.as_bytes();
     let mut line = end.line + 1;
     let mut pos = end.pointer;

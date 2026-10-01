@@ -1,6 +1,6 @@
 //! Rule to check indentation, ported from yamllint's token-based `indentation` rule.
 //!
-//! The parser's events carry no indicators or implicit tokens, so the `scanner` module rebuilds the token
+//! The parser's events carry no indicators or implicit tokens, so the `token_stream` module rebuilds the token
 //! stream of `PyYAML` from the node index and the text between nodes, and the `machine` module runs
 //! yamllint's stack of enclosing structures over it. Findings, columns and messages match
 //! yamllint 1.38 for every document both parsers accept.
@@ -15,9 +15,8 @@ use crate::{
 use fast_yaml_core::Value;
 
 mod machine;
-mod scanner;
-mod tokens;
 
+use super::token_stream::scanner;
 use machine::Machine;
 
 /// Rule to check that each line is indented as the structure it belongs to requires.

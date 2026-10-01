@@ -68,3 +68,12 @@ fn colons_ignore_spaces_before_a_trailing_comment_of_an_empty_value() {
         [6]
     );
 }
+
+#[test]
+fn hyphens_follow_block_sequence_entries_only() {
+    let source = "---\nrun: security import \"x\"\n  -k \"y\"\n  -t cert\nd: [a,\n  -1]\ne:\n  -  1\n  - -   2\n  -  # c\n";
+    assert_eq!(
+        lines(source, "  hyphens: {max-spaces-after: 1}\n", "hyphens"),
+        [8, 9]
+    );
+}

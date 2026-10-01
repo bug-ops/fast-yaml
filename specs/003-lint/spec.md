@@ -255,6 +255,7 @@ THEN  a file without --- is reported at the preset's level (warning), as in yaml
 | FR-070 | `empty-values` SHALL report at the column right after the colon (or hyphen) with a zero-width span, SHALL NOT report an empty value that carries an anchor, and SHALL implement `forbid-in-block-sequences` (`- a\n-\n- b` reports `2:2` "empty value in block sequence"); the `Add explicit 'null'` suggestion is an insertion at the span. The text format SHALL print a one-column caret under a zero-width span. | must |
 | FR-071 | `braces` and `brackets` SHALL measure only spaces between an opening delimiter and the next token, and between the previous token and a closing delimiter, on the same line; indentation of a closing delimiter that starts its own line, and trailing space after an opening delimiter, SHALL NOT be reported. | must |
 | FR-072 | `colons` SHALL NOT report spaces after a colon that is followed by end of line or by a comment (`push:  # c`). | must |
+| FR-073 | `hyphens` SHALL check only the hyphen of a block sequence entry, found in the rebuilt token stream (`indentation` shares it), against the token that follows on the same line; `-item`, a continuation line of a plain scalar and a flow item starting with `-` are not entries. | must |
 
 ## 4. Key entities and types
 
@@ -424,7 +425,7 @@ Code `undefined-alias` is a recognised name in directives but is not emitted (an
 | D-5 | CI paths | `github` and `sarif` print absolute paths, which may not attach to PR files on runners. | [NEEDS CLARIFICATION: repo-relative paths when under CWD or git root?] **Proposed:** paths as given on the command line; file name in every format. |
 | D-6 | No-config rule set | With no config all 25 rules run with fast-yaml defaults (e.g. `key-ordering`, `quoted-strings`, `octal-values`), unlike the yamllint `default` preset. | [NEEDS CLARIFICATION: is this the intended default, or should no-config equal `extends: default`?] **Proposed:** default preset closer to yamllint. |
 | D-7 | `Linter::new()` / `Default` | Empty registry: `lint` always returns no diagnostics; `with_all_rules()` is the working constructor (`with_config` equals `with_all_rules_and_config`). | [NEEDS CLARIFICATION: make `new()` load rules or remove `Default`] **Proposed:** `new()` registers all rules. |
-| D-9 | Text-scan rules vs yamllint | `hyphens` flags `-e: 1` ("missing space after hyphen"), `octal-values` flags `0755` inside a block scalar, `indentation` flags block-scalar content (`a: \|\n   text`), `empty-lines` counts whitespace-only lines. | [NEEDS CLARIFICATION: move to event-based parity, or document as accepted] |
+| D-9 | Text-scan rules vs yamllint | `octal-values` flags `0755` inside a block scalar, `indentation` flags block-scalar content (`a: \|\n   text`), `empty-lines` counts whitespace-only lines. | [NEEDS CLARIFICATION: move to event-based parity, or document as accepted] |
 | D-10 | `--allow-duplicate-keys=false` | Only `true` acts; `false` does not re-enable a rule disabled in config. | minor; clarify flag semantics |
 | D-11 | `braces`/`brackets` on empty collection | `a: {  }` reports twice (`1:4` and `1:7`) with "inside braces"; yamllint reports once, "inside empty braces". | minor |
 | D-12 | Zero-width spans | GitHub `endColumn` equals `col` for a zero-width span (`colons`, `empty-values`); text output prints a one-column caret. | minor |
@@ -447,7 +448,7 @@ Code `undefined-alias` is a recognised name in directives but is not emitted (an
 | D-33 | Minor yamllint differences | `colons` "too many spaces after colon" reports column 3 where yamllint reports 5; `[a: ]` is flagged by `empty-values` and `{b, a}` by `key-ordering` where yamllint is silent; a single-file JSON array ends without a trailing newline. | follow-up issue |
 | D-34 | Lint wall time | Release lint is 10-35% slower on flow-heavy input (minified 2.4 MB: +24% text, +35% JSON) and flat on block input, in exchange for 26-48% lower RSS. | accept; profile |
 
-Resolved and removed: D-2 (`fy lint -o` writes the report, FR-050), the `## ok` item of D-9, and with #588 D-8 (`forbid-in-block-sequences` is implemented, FR-070), D-19 (`key-ordering` covers nested flow and explicit keys, FR-069), D-20 (`empty-values` columns match yamllint, FR-070) D-24 (the `Preset` rustdoc divergence list was refreshed) and D-22 (yamllint rule names are accepted in `rules:`, FR-014). #374 is out of scope; #540 (merge-key validation cost) did not reproduce, so the core change was reverted.
+Resolved and removed: D-2 (`fy lint -o` writes the report, FR-050), the `## ok` and `hyphens` items of D-9 (FR-073), and with #588 D-8 (`forbid-in-block-sequences` is implemented, FR-070), D-19 (`key-ordering` covers nested flow and explicit keys, FR-069), D-20 (`empty-values` columns match yamllint, FR-070) D-24 (the `Preset` rustdoc divergence list was refreshed) and D-22 (yamllint rule names are accepted in `rules:`, FR-014). #374 is out of scope; #540 (merge-key validation cost) did not reproduce, so the core change was reverted.
 
 ## 12. See also
 

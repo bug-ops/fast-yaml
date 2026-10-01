@@ -28,6 +28,7 @@ pub(crate) mod node_roles;
 mod octal_values;
 mod quoted_strings;
 mod set_values;
+mod token_stream;
 mod trailing_whitespace;
 mod truthy;
 

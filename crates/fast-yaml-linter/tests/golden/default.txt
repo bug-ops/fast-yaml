@@ -140,7 +140,6 @@ invalid/empty_values.yaml:15:1: [warning] key 'database' should be ordered befor
 invalid/empty_values.yaml:17:10: [warning] empty value for key 'host' (empty-values)
 invalid/empty_values.yaml:23:1: [warning] key 'features' should be ordered before 'name' (line 4) (key-ordering)
 invalid/empty_values.yaml:25:4: [warning] empty value in block sequence (empty-values)
-invalid/empty_values.yaml:25:4: [warning] too many spaces after hyphen (expected at most 1, found 2) (hyphens)
 invalid/float_values.yaml:4:9: [warning] float value '.5' should have a numeral before the decimal point (e.g., '0.5') (float-values)
 invalid/float_values.yaml:5:9: [warning] float value '.123' should have a numeral before the decimal point (e.g., '0.123') (float-values)
 invalid/float_values.yaml:6:9: [warning] float value '-.75' should have a numeral before the decimal point (e.g., '-0.75') (float-values)

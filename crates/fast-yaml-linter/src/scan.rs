@@ -116,13 +116,13 @@ impl ScanNeeds {
                 | DiagnosticCode::FLOAT_VALUES
                 | DiagnosticCode::EMPTY_VALUES
                 | DiagnosticCode::KEY_ORDERING
-                | DiagnosticCode::INDENTATION => Self::NODES,
+                | DiagnosticCode::INDENTATION
+                | DiagnosticCode::HYPHENS => Self::NODES,
                 DiagnosticCode::SET_VALUES => Self::SETS,
                 DiagnosticCode::BRACES
                 | DiagnosticCode::BRACKETS
                 | DiagnosticCode::COLONS
                 | DiagnosticCode::COMMAS
-                | DiagnosticCode::HYPHENS
                 | DiagnosticCode::COMMENTS_INDENTATION => Self::FLOW,
                 _ => Self::NONE,
             })

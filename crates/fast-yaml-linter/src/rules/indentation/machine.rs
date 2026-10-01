@@ -1,11 +1,11 @@
-//! The indentation check of yamllint, run over the tokens of [`super::scanner`].
+//! The indentation check of yamllint, run over the tokens of [`super::super::token_stream::scanner`].
 
 use std::collections::VecDeque;
 
 use fast_yaml_core::ScalarStyle;
 
-use super::tokens::{Kind, Token};
 use crate::config::IndentSequences;
+use crate::rules::token_stream::tokens::{Kind, Token};
 
 /// A finding of the machine, with a 1-based line and column and a byte offset.
 #[derive(Debug, Clone, PartialEq, Eq)]

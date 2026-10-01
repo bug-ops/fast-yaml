@@ -528,12 +528,7 @@ impl<'a> Synth<'a> {
 /// Stops where `PyYAML`'s scanner would report an error. When the parser stopped early
 /// (`complete` is false) the text after its last node is not read, since where it failed is
 /// unknown.
-pub(super) fn scan(
-    source: &str,
-    nodes: &NodeIndex<'_>,
-    complete: bool,
-    mut out: impl FnMut(Token),
-) {
+pub fn scan(source: &str, nodes: &NodeIndex<'_>, complete: bool, mut out: impl FnMut(Token)) {
     let mut synth = Synth::new(source);
     synth.release(&mut out);
     lex(source, nodes, complete, &mut synth, &mut out);
