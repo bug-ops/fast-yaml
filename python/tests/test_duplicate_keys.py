@@ -4,9 +4,9 @@ import json
 import subprocess
 
 import pytest
+from _fy_support import fy_binary
 
 import fast_yaml
-from _fy_support import fy_binary
 
 MAPPINGS = [
     pytest.param(

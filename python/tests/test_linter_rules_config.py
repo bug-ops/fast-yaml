@@ -7,8 +7,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
 from _fy_support import fy_binary
+
 from fast_yaml._core import lint
 
 
