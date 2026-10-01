@@ -97,14 +97,14 @@ pub trait DocumentRule: LintRule {
     fn check(&self, ctx: &LintContext, doc: LintDocument<'_>, cfg: &LintConfig) -> Vec<Diagnostic>; }
 ```
 
-Config file grammar: `extends`, `rules`, `ignore`, `ignore-from-file`, `yaml-files`, `max-input-bytes`, `max-scan-ahead` (see spec FR-012..FR-015). Without `extends` rules start from `RulesConfig::default()` (all on); with a preset, from `Preset::rules()`; with a file path, from the extended file's resolved rules (`apply_over_preset`). `ConfigFile::load` walks the chain with a visited list (`MAX_EXTENDS_DEPTH` = 8) and reads each file through `read_bounded` (`MAX_CONFIG_FILE_BYTES` = 1 MiB).
+Config file grammar: `extends`, `rules`, `ignore`, `ignore-from-file`, `yaml-files`, `max-input-bytes`, `max-scan-ahead`, `max-diagnostics` (see spec FR-012..FR-015). Without `extends` rules start from `RulesConfig::default()` (all on); with a preset, from `Preset::rules()`; with a file path, from the extended file's resolved rules (`apply_over_preset`). `ConfigFile::load` walks the chain with a visited list (`MAX_EXTENDS_DEPTH` = 8) and reads each file through `read_bounded` (`MAX_CONFIG_FILE_BYTES` = 1 MiB).
 
 ## 4. API design
 
 | Surface | Entry points |
 |---------|--------------|
 | Rust | `Linter::with_all_rules()`, `with_config(LintConfig)`, `lint(&str)`, `add_rule(Rule)`; `ConfigFile::{discover, load, into_parts, merge_cli_overrides}`; `formatter::{TextFormatter, JsonFormatter, ReportFormat::render}`, `syntax_diagnostic`, `input_error_diagnostic` |
-| CLI | `fy lint [PATHS] [--config F | --no-config] [--format text|json|github|sarif|parsable] [--max-line-length N] [--indent-size N] [--allow-duplicate-keys] [--stdin-files] [--include/--exclude/--no-recursive/-j] [--max-input-bytes] [--max-scan-ahead] [--max-depth] [--max-alias-bytes]` |
+| CLI | `fy lint [PATHS] [--config F | --no-config] [--format text|json|github|sarif|parsable] [--max-line-length N] [--indent-size N] [--allow-duplicate-keys] [--max-diagnostics N] [--stdin-files] [--include/--exclude/--no-recursive/-j] [--max-input-bytes] [--max-scan-ahead] [--max-depth] [--max-alias-bytes]` |
 | Python / Node.js | `Linter`, `LintConfig`, `lint`; Python also `format_diagnostics` (text, json only); rule inputs typed in `rule_input.rs` |
 
 ## 5. Security

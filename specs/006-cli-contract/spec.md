@@ -193,6 +193,7 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | FR-041 | THE SYSTEM SHALL compile with `--no-default-features` (a `parse`/`format`/`convert`-only binary). | should |
 | FR-042 | THE SYSTEM SHALL render every file name it prints in human-readable output (text, `parsable` and `github` reports, batch error lines, `format` failure lines, `--verbose` headers and path errors) through `DisplayPath`, which escapes control characters (`\u{1b}`) without truncating, so a hostile file name cannot move the cursor, retitle the window or forge lines; JSON and SARIF keep the real name, which they escape as JSON strings and percent-encoded URIs. | must |
 | FR-043 | WHEN `-o FILE` names the same file as an input (by canonical path, hard link or symlink) and `-i` is not set, THE SYSTEM SHALL refuse with `--output '...' is also an input file` and exit 1 for `lint`, `format` and `convert`, leaving the file intact; `-i` rewrites the input on purpose. | must |
+| FR-044 | THE SYSTEM SHALL accept `fy lint --max-diagnostics N` (positive integer; `0` and non-integers are a usage error) to cap the diagnostics shown per file, as [[003-lint/spec]] FR-076 defines; the help text says it is output only and the exit code is unaffected. | should |
 
 ## 4. Key entities and types
 

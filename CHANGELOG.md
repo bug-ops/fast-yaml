@@ -152,6 +152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `LintRule::code()` is replaced by `id() -> RuleId` (`RuleId::BuiltIn(RuleName) | Custom(&CustomRuleCode)`), and `LintConfig::is_rule_enabled`/`severity_for` take a `RuleId` instead of a string (#609) (#PR)
 - **Linter**: `LintRule` is metadata-only and rules implement `SourceRule` or `DocumentRule`, registered as `Rule`; `RuleRegistry::add` and `Linter::add_rule` take a `Rule` and reject a duplicate id, and `needs_value` is removed (#609) (#PR)
 - **Linter**: `Linter::lint_value` and the `LintContext` doc-start-line API are removed; a `DocumentRule` gets `LintDocument { value, first_line }` instead (#609) (#PR)
+- **Linter**: `syntax` and `diagnostic-limit` are no longer accepted as custom rule codes (#603) (#PR)
 
 ### Added
 
@@ -191,6 +192,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `indentation` options `spaces` (number or `consistent`), `indent-sequences` (`true`/`false`/`whatever`/`consistent`) and `check-multi-line-strings` (#605)
 - **Core**: `fs::read_regular_file`, a bounded reader that never blocks on a FIFO, shared by config, ignore and input reads (#605)
 - **Core**: `Parser::validate_normalized_observed` checks and observes events without building the documents (#609) (#PR)
+- **CLI/Linter**: `fy lint --max-diagnostics N` and the `max-diagnostics` config key cap the diagnostics shown per file with one `diagnostic-limit` summary, off by default and never changing the exit code (#603) (#PR)
 
 ### Changed
 

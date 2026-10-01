@@ -28,8 +28,8 @@ pub use rules::{
 };
 pub(crate) use rules::{IgnoreBase, default_rules};
 pub use values::{
-    AlwaysTrue, EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList,
-    InvalidRegexPattern, Limit, MarkerPresence, PatternList,
+    AlwaysTrue, EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidMaxDiagnostics,
+    InvalidPatternList, InvalidRegexPattern, Limit, MarkerPresence, MaxDiagnostics, PatternList,
 };
 pub(crate) use values::{BoolOrName, deserialize_bool_or_name};
 

@@ -2,6 +2,7 @@
 
 use std::borrow::Cow;
 
+use crate::config::MaxDiagnostics;
 use crate::{Severity, Span};
 
 #[cfg(feature = "json-output")]
@@ -109,6 +110,63 @@ macro_rules! predefined_codes {
     };
 }
 
+impl MaxDiagnostics {
+    /// Keeps the first diagnostics, in the order given, and replaces the rest with one summary.
+    ///
+    /// Nothing changes while `diagnostics` fits in the cap. Otherwise the summary has the code
+    /// [`DiagnosticCode::DIAGNOSTIC_LIMIT`], the highest severity among the omitted diagnostics
+    /// (so an omitted error still shows as an error in every output format), the span of the first
+    /// omitted one and no excerpt. Callers decide whether the run failed before truncating, since
+    /// the omitted diagnostics no longer count.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::MaxDiagnostics;
+    /// use fast_yaml_linter::{DiagnosticBuilder, Location, Severity, Span};
+    ///
+    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+    /// let make = |severity| DiagnosticBuilder::new("r", severity, "m", span).build();
+    /// let mut found = vec![make(Severity::Warning), make(Severity::Warning), make(Severity::Error)];
+    ///
+    /// "1".parse::<MaxDiagnostics>().unwrap().truncate(&mut found);
+    /// assert_eq!(found.len(), 2);
+    /// assert_eq!(found[1].severity, Severity::Error);
+    /// assert_eq!(
+    ///     found[1].message,
+    ///     "2 more diagnostics not shown (1 errors, 1 warnings); limit is 1 per file"
+    /// );
+    /// ```
+    pub fn truncate(self, diagnostics: &mut Vec<Diagnostic>) {
+        let limit = self.get();
+        if diagnostics.len() <= limit {
+            return;
+        }
+        let omitted = diagnostics.split_off(limit);
+        let Some(first) = omitted.first() else {
+            return;
+        };
+        let count = |severity| omitted.iter().filter(|d| d.severity == severity).count();
+        let summary = DiagnosticBuilder::new(
+            DiagnosticCode::DIAGNOSTIC_LIMIT,
+            omitted
+                .iter()
+                .map(|d| d.severity)
+                .max()
+                .unwrap_or(first.severity),
+            format!(
+                "{} more diagnostics not shown ({} errors, {} warnings); limit is {limit} per file",
+                omitted.len(),
+                count(Severity::Error),
+                count(Severity::Warning),
+            ),
+            first.span,
+        )
+        .build_without_excerpt();
+        diagnostics.push(summary);
+    }
+}
+
 impl DiagnosticCode {
     predefined_codes! {
         /// Predefined code for duplicate keys.
@@ -165,6 +223,9 @@ impl DiagnosticCode {
         SYNTAX = "syntax";
         /// Predefined code for problems in inline lint directives (config-only, never suppressible).
         LINT_DIRECTIVE = "lint-directive";
+        /// Predefined code for the summary of diagnostics left out by `--max-diagnostics` (not a
+        /// rule, never configurable).
+        DIAGNOSTIC_LIMIT = "diagnostic-limit";
     }
 
     /// Creates a new diagnostic code.
@@ -463,6 +524,58 @@ impl DiagnosticBuilder {
 mod tests {
     use super::*;
     use crate::Location;
+
+    fn finding(severity: Severity, line: usize) -> Diagnostic {
+        let span = Span::new(
+            Location::new(line, 1, line),
+            Location::new(line, 2, line + 1),
+        );
+        DiagnosticBuilder::new("r", severity, format!("m{line}"), span).build()
+    }
+
+    fn cap(limit: usize) -> MaxDiagnostics {
+        limit.to_string().parse().unwrap()
+    }
+
+    #[test]
+    fn truncate_keeps_the_first_in_order_and_summarizes_the_rest() {
+        let mut found: Vec<_> = (1..=5)
+            .map(|line| finding(Severity::Warning, line))
+            .collect();
+        cap(2).truncate(&mut found);
+        let lines: Vec<_> = found.iter().map(|d| d.span.start.line).collect();
+        assert_eq!(lines, [1, 2, 3]);
+        let summary = &found[2];
+        assert_eq!(summary.code.as_str(), DiagnosticCode::DIAGNOSTIC_LIMIT);
+        assert_eq!(summary.severity, Severity::Warning);
+        assert_eq!(summary.excerpt, Excerpt::Omitted);
+        assert_eq!(
+            summary.message,
+            "3 more diagnostics not shown (0 errors, 3 warnings); limit is 2 per file"
+        );
+    }
+
+    #[test]
+    fn truncate_leaves_a_list_within_the_cap_alone() {
+        let mut found = vec![finding(Severity::Error, 1), finding(Severity::Info, 2)];
+        let before = found.clone();
+        cap(2).truncate(&mut found);
+        assert_eq!(found, before);
+        cap(100).truncate(&mut found);
+        assert_eq!(found, before);
+    }
+
+    #[test]
+    fn the_summary_takes_the_highest_omitted_severity() {
+        let mut found: Vec<_> = (1..=4).map(|line| finding(Severity::Info, line)).collect();
+        found.push(finding(Severity::Error, 5));
+        cap(1).truncate(&mut found);
+        assert_eq!(found.last().unwrap().severity, Severity::Error);
+
+        let mut found = vec![finding(Severity::Error, 1), finding(Severity::Hint, 2)];
+        cap(1).truncate(&mut found);
+        assert_eq!(found.last().unwrap().severity, Severity::Hint);
+    }
 
     #[test]
     fn test_diagnostic_code_new() {

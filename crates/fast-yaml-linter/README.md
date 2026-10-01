@@ -346,7 +346,7 @@ rules:
   against the directory of the file that names it (yamllint: against the working directory).
   That file is loaded first and may extend another one, up to 8 files deep; a cycle is an
   error. The extending file's rules apply over it like over a preset, and `max-input-bytes`,
-  `max-scan-ahead` and `ignore` are inherited unless set again (`yaml-files` is not, as in
+  `max-scan-ahead`, `max-diagnostics` and `ignore` are inherited unless set again (`yaml-files` is not, as in
   yamllint).
 - Under `extends`, a rule the preset disables is enabled again by `enable`, a severity name or a
   mapping without `enabled`, and reports `error` unless a severity is given.

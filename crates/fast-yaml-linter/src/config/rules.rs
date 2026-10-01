@@ -325,13 +325,16 @@ impl CustomRuleCode {
     ///
     /// # Errors
     ///
-    /// Returns an error when the code is empty or equals a built-in rule name.
+    /// Returns an error when the code is empty, equals a built-in rule name or is one of the
+    /// codes the linter reserves for its own diagnostics (`syntax`, `diagnostic-limit`).
     pub fn new(code: impl Into<String>) -> Result<Self, RuleConfigError> {
         let code = code.into();
         if code.is_empty() {
             return Err(RuleConfigError::EmptyRuleCode);
         }
-        if RuleName::from_str(&code).is_ok() {
+        if RuleName::from_str(&code).is_ok()
+            || [DiagnosticCode::SYNTAX, DiagnosticCode::DIAGNOSTIC_LIMIT].contains(&code.as_str())
+        {
             return Err(RuleConfigError::ReservedRuleCode { code });
         }
         Ok(Self(code))
@@ -1516,6 +1519,12 @@ mod tests {
             Err(RuleConfigError::ReservedRuleCode { .. })
         ));
         assert_eq!(CustomRuleCode::new("mine").unwrap().as_str(), "mine");
+        for reserved in ["syntax", "diagnostic-limit"] {
+            assert!(matches!(
+                CustomRuleCode::new(reserved),
+                Err(RuleConfigError::ReservedRuleCode { .. })
+            ));
+        }
     }
 
     #[test]

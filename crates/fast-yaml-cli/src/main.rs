@@ -196,6 +196,7 @@ fn run() -> Result<ExitCode> {
             indent_size,
             format,
             allow_duplicate_keys,
+            max_diagnostics,
             batch,
             limits,
         }) => {
@@ -214,6 +215,7 @@ fn run() -> Result<ExitCode> {
                 indent_size,
                 format,
                 allow_duplicate_keys,
+                max_diagnostics,
                 max_input_bytes: cli.max_input_bytes,
                 max_scan_ahead: cli.max_scan_ahead,
                 limits,
@@ -262,6 +264,7 @@ fn run() -> Result<ExitCode> {
                         format,
                         cmd.scan_ahead,
                         &cmd.output,
+                        cmd.max_diagnostics,
                     )?
                 }
             }
