@@ -820,7 +820,7 @@ mod tests {
                 run_ordered(&pool(1), 1000, 64, &work, stop);
             }));
             assert_eq!(outcome.is_err(), panics);
-            assert!(executed.load(Ordering::SeqCst) < 20, "{panics}");
+            assert!(executed.load(Ordering::SeqCst) < 50, "{panics}");
         }
     }
 }

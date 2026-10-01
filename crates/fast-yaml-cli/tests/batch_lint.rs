@@ -279,10 +279,25 @@ fn shuffled_files(temp: &TempDir, prefix: &str, count: usize, content: &str) -> 
     paths
 }
 
+/// Where each file is first named in `output`.
+///
+/// The files are found by name behind a path separator, not by their full path: fy may spell the
+/// directory differently from the test (canonical form, short names, separators on Windows).
 fn positions_in(output: &str, paths: &[String]) -> Vec<usize> {
     paths
         .iter()
-        .map(|p| output.find(p.as_str()).unwrap())
+        .map(|path| {
+            let name = std::path::Path::new(path)
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap();
+            ['/', '\\']
+                .iter()
+                .filter_map(|separator| output.find(&format!("{separator}{name}")))
+                .min()
+                .unwrap_or_else(|| panic!("{name} is not named in {output}"))
+        })
         .collect()
 }
 

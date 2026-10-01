@@ -18,7 +18,9 @@ fn lines(fixture: &str, rules: &str, code: &str) -> Vec<usize> {
         "{}/tests/fixtures/yamllint/{fixture}",
         env!("CARGO_MANIFEST_DIR")
     ))
-    .unwrap();
+    .unwrap()
+    // A Windows checkout may have converted the fixture to CRLF
+    .replace("\r\n", "\n");
     let mut found: Vec<usize> = Linter::with_config(config)
         .lint(&source)
         .unwrap()
