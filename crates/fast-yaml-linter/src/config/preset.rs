@@ -4,7 +4,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::Severity;
-use crate::config::{Limit, MarkerPresence, NoOptions, RuleSettings, RulesConfig};
+use crate::config::{EntryOrigin, Limit, MarkerPresence, NoOptions, RuleSettings, RulesConfig};
 use crate::echo::{KEY_LIMIT, echo};
 use crate::rules::{
     DocumentEndOptions, DocumentStartOptions, DuplicateKeysOptions, QuoteRequirement,
@@ -123,6 +123,8 @@ const fn on<O>(severity: Severity, options: O) -> RuleSettings<O> {
         enabled: true,
         severity: Some(severity),
         options,
+        ignore: None,
+        origin: EntryOrigin::FyDefault,
     }
 }
 

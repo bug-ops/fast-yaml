@@ -196,7 +196,7 @@ impl LintConfig {
     /// let settings = RuleSettings::<NoOptions> {
     ///     enabled: false,
     ///     severity: Some(Severity::Error),
-    ///     options: NoOptions::default(),
+    ///     ..RuleSettings::default()
     /// };
     /// let config = LintConfig::new()
     ///     .with_custom_rule(CustomRuleCode::new("my-rule").unwrap(), settings);

@@ -16,8 +16,8 @@ pub use path_patterns::{IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, Y
 pub use preset::{Preset, UnknownPresetError};
 pub(crate) use rules::default_rules;
 pub use rules::{
-    CustomRuleCode, NoOptions, OptionConflict, RuleConfigError, RuleName, RuleOptions,
-    RuleSettings, RulesConfig, UnknownRuleError,
+    CustomRuleCode, EntryOrigin, NoOptions, OptionConflict, RuleConfigError, RuleIgnore, RuleName,
+    RuleOptions, RuleSettings, RulesConfig, UnknownRuleError,
 };
 pub use values::{
     AlwaysTrue, EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList,

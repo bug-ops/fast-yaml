@@ -100,6 +100,47 @@ pub struct RuleSettings<O> {
     pub severity: Option<Severity>,
     /// Rule-specific options.
     pub options: O,
+    /// Paths the rule skips, in addition to the global ignore.
+    pub ignore: Option<RuleIgnore>,
+    /// Whether the entry is fast-yaml's own default or was written by a config file.
+    pub origin: EntryOrigin,
+}
+
+/// Gitignore-style patterns of one rule, anchored at the directory of the file that declared them.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use fast_yaml_linter::config::RuleIgnore;
+///
+/// let ignore = RuleIgnore { root: PathBuf::from("/repo"), patterns: vec!["vendor/".to_owned()] };
+/// assert_eq!(ignore.patterns.len(), 1);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleIgnore {
+    /// Directory the patterns are relative to.
+    pub root: std::path::PathBuf,
+    /// Pattern lines, as written in the config file.
+    pub patterns: Vec<String>,
+}
+
+/// Where a rule entry comes from, so `enable` can tell a configured entry from a default one.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::{EntryOrigin, NoOptions, RuleSettings};
+///
+/// assert_eq!(RuleSettings::<NoOptions>::default().origin, EntryOrigin::FyDefault);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EntryOrigin {
+    /// Set by fast-yaml's built-in defaults or preset.
+    #[default]
+    FyDefault,
+    /// Written by a config file.
+    Configured,
 }
 
 impl<O: Default> Default for RuleSettings<O> {
@@ -108,6 +149,8 @@ impl<O: Default> Default for RuleSettings<O> {
             enabled: true,
             severity: None,
             options: O::default(),
+            ignore: None,
+            origin: EntryOrigin::default(),
         }
     }
 }
