@@ -1,7 +1,6 @@
 //! `fy convert` keeps mapping keys in document order in both directions (#557).
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
 use assert_cmd::Command;
 

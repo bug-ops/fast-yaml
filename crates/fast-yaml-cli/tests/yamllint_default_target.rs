@@ -1,7 +1,6 @@
 //! `.yamllint` is a default target of `fy lint` only (#571).
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
 use assert_cmd::Command;
 use std::fs;

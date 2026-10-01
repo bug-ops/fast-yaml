@@ -1,7 +1,6 @@
 //! `fy lint` output destination, input-error reports and closed pipes (#569, #575).
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // cargo_bin is deprecated but still works
 
 use assert_cmd::Command;
 use std::fs;
@@ -13,7 +12,7 @@ const DUPLICATE_KEY: &str = "a: 1\na: 2\n";
 const FORMATS: [&str; 5] = ["text", "json", "github", "sarif", "parsable"];
 
 fn fy(args: &[&str]) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = assert_cmd::cargo_bin_cmd!("fy");
     cmd.args(args);
     cmd
 }
@@ -124,7 +123,7 @@ fn missing_path_report_goes_to_the_output_file() {
 
 /// Runs `fy` with stdout already closed on the reader side and returns its exit code and stderr.
 fn run_with_closed_stdout(args: &[&str]) -> (Option<i32>, String) {
-    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("fy"))
+    let mut child = std::process::Command::new(assert_cmd::cargo_bin!("fy"))
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -171,7 +170,7 @@ fn closed_stdout_is_silent_in_batch_runs() {
 
 /// Runs `fy` with the chosen output streams closed on the reader side; returns the exit code.
 fn run_closed(args: &[&str], close_stdout: bool, close_stderr: bool) -> Option<i32> {
-    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("fy"))
+    let mut child = std::process::Command::new(assert_cmd::cargo_bin!("fy"))
         .args(args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
