@@ -1011,4 +1011,68 @@ mod tests {
         );
         assert!(lane(ScanAheadPolicy::Scaled).get() < MaxScanAhead::DEFAULT.get());
     }
+
+    fn flow_file(dir: &TempDir) -> PathBuf {
+        create_test_file(dir, "flow.yaml", &format!("[{}1]\n", "1, ".repeat(100)))
+    }
+
+    fn limited(chars: usize) -> Config {
+        use fast_yaml_core::limits::{MaxScanAhead, ParseLimits};
+        Config::new().with_parse_limits(ParseLimits {
+            max_scan_ahead: MaxScanAhead::new(chars).unwrap(),
+            ..ParseLimits::default()
+        })
+    }
+
+    fn is_scan_ahead_rejection(error: &Error) -> bool {
+        exceeds_scan_ahead(error) && error.to_string().contains("lookahead exceeds 64")
+    }
+
+    #[test]
+    fn test_explicit_scan_ahead_limit_applies_to_format_files() {
+        let dir = TempDir::new().unwrap();
+        let path = flow_file(&dir);
+        let emitter = EmitterConfig::new();
+
+        let strict = FileProcessor::with_config(limited(64));
+        let results =
+            strict.format_files(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
+        assert!(
+            matches!(&results[0].1, Err(e) if is_scan_ahead_rejection(e)),
+            "{results:?}"
+        );
+
+        let default = FileProcessor::new();
+        let results = default.format_files(&[path], &emitter, CommentPolicy::Reject);
+        assert!(results[0].1.is_ok(), "{results:?}");
+    }
+
+    #[test]
+    fn test_explicit_scan_ahead_limit_applies_to_format_in_place() {
+        let dir = TempDir::new().unwrap();
+        let path = flow_file(&dir);
+        let emitter = EmitterConfig::new();
+
+        let strict = FileProcessor::with_config(limited(64));
+        let batch =
+            strict.format_in_place(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
+        assert_eq!(batch.failed, 1);
+        assert!(batch.errors.iter().all(|(_, e)| is_scan_ahead_rejection(e)));
+
+        let batch = FileProcessor::new().format_in_place(&[path], &emitter, CommentPolicy::Reject);
+        assert_eq!(batch.failed, 0);
+    }
+
+    #[test]
+    fn test_scaled_policy_after_parse_limits_wins_and_parse_files_keep_their_limit() {
+        use crate::scan_ahead::ScanAheadPolicy;
+        let config = limited(64).with_scan_ahead_policy(ScanAheadPolicy::Scaled);
+        assert_eq!(config.scan_ahead_policy(), ScanAheadPolicy::Scaled);
+
+        let dir = TempDir::new().unwrap();
+        let path = flow_file(&dir);
+        let strict = FileProcessor::with_config(limited(64));
+        assert!(!strict.parse_files(std::slice::from_ref(&path)).is_success());
+        assert!(FileProcessor::new().parse_files(&[path]).is_success());
+    }
 }

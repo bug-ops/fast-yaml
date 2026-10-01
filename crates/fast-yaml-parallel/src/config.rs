@@ -124,8 +124,11 @@ impl Config {
     }
 
     /// Sets how [`FileProcessor`](crate::FileProcessor) formatting bounds the scanner
-    /// look-ahead of its workers. Default: [`ScanAheadPolicy::Fixed`] at the default limit; the
-    /// limit of the emitter configuration is not consulted
+    /// look-ahead of its workers. Default: [`ScanAheadPolicy::Fixed`] at the default limit, or
+    /// the limit of [`with_parse_limits`](Config::with_parse_limits). The scan-ahead limit of
+    /// the `EmitterConfig` passed to the format methods is not consulted, so this `Config` is
+    /// the one place that sets it. Calling [`with_parse_limits`](Config::with_parse_limits)
+    /// after this resets the policy to `Fixed`
     ///
     /// # Examples
     ///
@@ -168,7 +171,10 @@ impl Config {
     ///
     /// Only parsing honors these limits: the format paths
     /// ([`FileProcessor::format_files`](crate::FileProcessor::format_files)) ignore them, because
-    /// the streaming formatter has its own fixed depth limit of 256 (see #427).
+    /// the streaming formatter has its own fixed depth limit of 256 (see #427). The exception
+    /// is `max_scan_ahead`: this call also sets the scan-ahead policy to
+    /// [`ScanAheadPolicy::Fixed`] at that limit, which the format paths honor. Call
+    /// [`with_scan_ahead_policy`](Config::with_scan_ahead_policy) afterwards to scale instead.
     ///
     /// # Examples
     ///
@@ -183,6 +189,7 @@ impl Config {
     #[must_use]
     pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
         self.parse_limits = limits;
+        self.scan_ahead = ScanAheadPolicy::Fixed(limits.max_scan_ahead);
         self
     }
 
