@@ -254,6 +254,7 @@ THEN  a file without --- is reported at the preset's level (warning), as in yaml
 | FR-069 | `key-ordering` SHALL run over the positioned node index and check keys of every mapping (block, flow, nested, explicit `?`), including `null`, `~` and `<<` keys; it SHALL skip anchored, tagged, empty, alias and collection keys (not recorded either), compare by code point, restart in every collection and document, and span a quoted key from its opening quote. | must |
 | FR-070 | `empty-values` SHALL report at the column right after the colon (or hyphen) with a zero-width span, SHALL NOT report an empty value that carries an anchor, and SHALL implement `forbid-in-block-sequences` (`- a\n-\n- b` reports `2:2` "empty value in block sequence"); the `Add explicit 'null'` suggestion is an insertion at the span. The text format SHALL print a one-column caret under a zero-width span. | must |
 | FR-071 | `braces` and `brackets` SHALL measure only spaces between an opening delimiter and the next token, and between the previous token and a closing delimiter, on the same line; indentation of a closing delimiter that starts its own line, and trailing space after an opening delimiter, SHALL NOT be reported. | must |
+| FR-072 | `colons` SHALL NOT report spaces after a colon that is followed by end of line or by a comment (`push:  # c`). | must |
 
 ## 4. Key entities and types
 

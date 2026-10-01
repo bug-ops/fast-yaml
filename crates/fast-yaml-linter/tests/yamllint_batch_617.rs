@@ -59,3 +59,12 @@ fn flow_collections_still_flag_same_line_spaces() {
         [3, 3]
     );
 }
+
+#[test]
+fn colons_ignore_spaces_before_a_trailing_comment_of_an_empty_value() {
+    let source = "---\non:\n  push:  # c\n  pull:   # c\n  x: 1  # c\n  y:   2\n";
+    assert_eq!(
+        lines(source, "  colons: {max-spaces-after: 1}\n", "colons"),
+        [6]
+    );
+}

@@ -364,6 +364,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fy format` no longer adds blank lines to `|+` keep-chomp block scalars on each run (#354)
 - `fy format` emits collection and block-scalar mapping keys with valid `? ` explicit-key syntax (#354)
 - **Linter**: `braces` and `brackets` ignore the indentation before a closing bracket on its own line and trailing space after an opening one (#615) (#PR)
+- **Linter**: `colons` ignores spaces between a key colon and a trailing comment when the value is empty (#616) (#PR)
 
 ### Security
 

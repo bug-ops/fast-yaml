@@ -223,12 +223,10 @@ fn check_spaces_after_colon(
         }
     }
 
-    // If there is no non-whitespace character on this line after the colon
-    // (i.e. the colon is at end-of-line or end-of-file), the trailing spaces
-    // are not "spaces after colon" in a mapping sense — they are just trailing
-    // whitespace on a key-only line. Skip the check to avoid false positives.
+    // No token follows on this line (end of line, end of file or a comment), so yamllint
+    // measures nothing.
     let next_is_eol_or_eof =
-        offset >= bytes.len() || matches!(bytes.get(offset), Some(b'\n' | b'\r'));
+        offset >= bytes.len() || matches!(bytes.get(offset), Some(b'\n' | b'\r' | b'#'));
     if next_is_eol_or_eof {
         return None;
     }
