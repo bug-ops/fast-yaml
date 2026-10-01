@@ -262,11 +262,11 @@ impl Parser {
     ///
     /// let budget = StreamBudget::new(ParseLimits::default());
     /// let input = NormalizedInput::new("a: 1\nb: [2, 3]\n")?;
-    /// let mut scalars = 0;
+    /// let mut events = 0;
     /// Parser::validate_normalized_observed(&input, &budget, LoadOptions::default(), |_| {
-    ///     scalars += 1;
+    ///     events += 1;
     /// })?;
-    /// assert!(scalars > 0);
+    /// assert!(events > 0);
     ///
     /// let broken = NormalizedInput::new("a: [1\n")?;
     /// let budget = StreamBudget::new(ParseLimits::default());

@@ -149,8 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/CLI**: `fy format` keeps reserved `%NAME` directives instead of dropping them (#605)
 - **CLI**: `fy format` and `fy convert` exit quietly with the result's code when stdout is closed (was `error: Failed to write to stdout`, exit 1) (#605)
 - **Linter**: lint is 10-35% slower in wall time on flow-heavy input (positioned node index, indentation port) with 26-48% lower RSS from lazy excerpts (#605)
-- **Linter**: `LintRule::code()` is replaced by `id() -> RuleId` (`RuleId::BuiltIn(RuleName) | Custom(&CustomRuleCode)`), and `LintConfig::is_rule_enabled`/`severity_for` take a `RuleId` instead of a string (#609) (#PR)
-- **Linter**: `LintRule` is metadata-only and rules implement `SourceRule` or `DocumentRule`, registered as `Rule`; `RuleRegistry::add` and `Linter::add_rule` take a `Rule` and reject a duplicate id, and `needs_value` is removed (#609) (#PR)
+- **Linter**: `LintRule::code()` is replaced by `id() -> RuleId`, and `is_rule_enabled`/`severity_for` take a `RuleId` (#609) (#PR)
+- **Linter**: `LintRule` is metadata-only, rules implement `SourceRule` or `DocumentRule` as a `Rule`, `add_rule` rejects a duplicate id, and `RuleRegistry::get`/`rules` take a `RuleId` and return `Rule` (#609) (#PR)
 - **Linter**: `Linter::lint_value` and the `LintContext` doc-start-line API are removed; a `DocumentRule` gets `LintDocument { value, first_line }` instead (#609) (#PR)
 - **Linter**: `syntax` and `diagnostic-limit` are no longer accepted as custom rule codes (#603) (#PR)
 
@@ -252,7 +252,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `parse_parallel` shares one alias-expansion and `%TAG` budget across all chunks (new public `StreamBudget` and `Parser::parse_all_with_budget`), closing an alias-bomb bypass (#387) (#405)
 - **Parallel**: `write_atomic` preserves extended attributes on Unix, skipping unsupported ones and denied `com.apple.*`/`security.selinux`; ACLs are not preserved (#605)
 - **Core/Linter**: file reads open with `O_NONBLOCK` after a regular-file check, and `ignore-from-file` is capped at 32 files and 1024 lines and does not echo file content in errors (#605)
-- **CLI/Linter/Parallel**: file names are escaped (`\u{1b}`) in text, parsable and github output, batch error lines, verbose headers and path errors, so a hostile name cannot inject terminal sequences (#607) (#PR)
+- **CLI/Linter/Parallel**: file names are escaped (`\u{1b}`, bidi overrides, U+2028/2029) in text, parsable and github output, batch error lines, verbose headers and path errors, and `echo()` now escapes bidi overrides and U+2028/2029 in messages too (#607) (#PR)
 
 ### Fixed
 

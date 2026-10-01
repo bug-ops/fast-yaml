@@ -192,10 +192,7 @@ impl Formatter for TextFormatter {
         let count = |severity| {
             findings
                 .diagnostics()
-                .filter(|d| {
-                    d.severity == severity
-                        && d.code.as_str() != crate::DiagnosticCode::DIAGNOSTIC_LIMIT
-                })
+                .filter(|d| d.severity == severity && !d.is_limit_summary())
                 .count()
         };
         let (error_count, warning_count) = (count(Severity::Error), count(Severity::Warning));

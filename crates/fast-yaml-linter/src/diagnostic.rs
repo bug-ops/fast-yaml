@@ -110,6 +110,14 @@ macro_rules! predefined_codes {
     };
 }
 
+impl Diagnostic {
+    /// Whether this is the summary [`MaxDiagnostics::truncate`] adds, not a finding of a rule.
+    #[must_use]
+    pub fn is_limit_summary(&self) -> bool {
+        self.code.as_str() == DiagnosticCode::DIAGNOSTIC_LIMIT
+    }
+}
+
 impl MaxDiagnostics {
     /// Keeps the first diagnostics, in the order given, and replaces the rest with one summary.
     ///
@@ -163,8 +171,7 @@ impl MaxDiagnostics {
             omitted
                 .iter()
                 .map(|d| d.severity)
-                .max()
-                .unwrap_or(first.severity),
+                .fold(first.severity, Ord::max),
             format!(
                 "output truncated: {} more diagnostic{} not shown ({}); limit is {limit} per file",
                 omitted.len(),

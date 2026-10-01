@@ -779,7 +779,8 @@ mod tests {
 /// The most diagnostics `fy lint` prints for one file before it summarizes the rest.
 ///
 /// The cap bounds output volume only: the linter still builds the full list, and the exit code is
-/// computed before the list is cut. It is a CLI setting and is never part of a
+/// computed before the list is cut. It is read from the `--max-diagnostics` flag or the
+/// `max-diagnostics` config key by the CLI and is never part of a
 /// [`LintConfig`](crate::LintConfig). Absence means no cap, so the type has no "unlimited" value.
 ///
 /// # Examples

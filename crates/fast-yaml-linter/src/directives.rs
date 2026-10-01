@@ -310,7 +310,7 @@ impl Directives {
         }
 
         let ctx = context.source_context();
-        let is_known = |name: &str| is_known_code(name) || registry.get(name).is_some();
+        let is_known = |name: &str| is_known_code(name) || registry.find_by_code(name).is_some();
         let mut state = DisabledRules::default();
         let mut problems: Vec<(Span, String)> = Vec::new();
         let mut content_line = None;
@@ -689,7 +689,7 @@ mod tests {
                 assert!(is_known_code(target), "{target}");
                 // Undefined aliases are parse errors, so no registered rule emits that code.
                 if *target != DiagnosticCode::UNDEFINED_ALIAS {
-                    assert!(registry.get(target).is_some(), "{target}");
+                    assert!(registry.find_by_code(target).is_some(), "{target}");
                 }
             }
         }

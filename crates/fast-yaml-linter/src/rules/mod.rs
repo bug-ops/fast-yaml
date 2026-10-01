@@ -98,6 +98,54 @@ impl<'a> RuleId<'a> {
     }
 }
 
+impl RuleId<'_> {
+    /// Copies the id so it can outlive the rule it came from.
+    #[must_use]
+    pub fn to_owned_id(self) -> OwnedRuleId {
+        match self {
+            Self::BuiltIn(name) => OwnedRuleId::BuiltIn(name),
+            Self::Custom(code) => OwnedRuleId::Custom(code.clone()),
+        }
+    }
+}
+
+/// A [`RuleId`] that owns its custom code.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::RuleName;
+/// use fast_yaml_linter::rules::{OwnedRuleId, RuleId};
+///
+/// let id = RuleId::BuiltIn(RuleName::Braces).to_owned_id();
+/// assert_eq!(id, OwnedRuleId::BuiltIn(RuleName::Braces));
+/// assert_eq!(id.as_id(), RuleId::BuiltIn(RuleName::Braces));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OwnedRuleId {
+    /// One of the built-in rules.
+    BuiltIn(RuleName),
+    /// A rule added with [`Linter::add_rule`](crate::Linter::add_rule).
+    Custom(CustomRuleCode),
+}
+
+impl OwnedRuleId {
+    /// Borrows the id.
+    #[must_use]
+    pub const fn as_id(&self) -> RuleId<'_> {
+        match self {
+            Self::BuiltIn(name) => RuleId::BuiltIn(*name),
+            Self::Custom(code) => RuleId::Custom(code),
+        }
+    }
+}
+
+impl fmt::Display for OwnedRuleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.as_id().fmt(f)
+    }
+}
+
 impl fmt::Display for RuleId<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str((*self).as_str())
@@ -157,7 +205,11 @@ pub trait LintRule: Send + Sync {
     /// Identity of this rule.
     ///
     /// A custom rule returns [`RuleId::Custom`] with a [`CustomRuleCode`], which cannot name a
-    /// built-in rule. Returning a [`RuleId::BuiltIn`] makes the rule share that rule's settings.
+    /// built-in rule. Returning a [`RuleId::BuiltIn`] makes the rule share that rule's settings;
+    /// the trait allows it on purpose, so that an embedder can register a replacement for a
+    /// built-in rule in an empty [`Linter`](crate::Linter), and the registry rejects the id when
+    /// the built-in is already registered. Splitting the trait to forbid it would double every
+    /// registry type for one corner case.
     fn id(&self) -> RuleId<'_>;
 
     /// Human-readable name.
@@ -231,9 +283,9 @@ pub struct LintDocument<'a> {
 ///
 /// ```
 /// use fast_yaml_core::Value;
-/// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity};
+/// use fast_yaml_linter::{Diagnostic, DiagnosticBuilder, LintConfig, LintContext, Linter, Location, Severity, Span};
 /// use fast_yaml_linter::config::CustomRuleCode;
-/// use fast_yaml_linter::rules::{DocumentRule, LintDocument, LintRule, RuleId};
+/// use fast_yaml_linter::rules::{DocumentRule, LintDocument, LintRule, Rule, RuleId};
 ///
 /// struct NoNull(CustomRuleCode);
 ///
@@ -255,14 +307,26 @@ pub struct LintDocument<'a> {
 /// impl DocumentRule for NoNull {
 ///     fn check(
 ///         &self,
-///         _context: &LintContext,
+///         context: &LintContext,
 ///         document: LintDocument<'_>,
 ///         _config: &LintConfig,
 ///     ) -> Vec<Diagnostic> {
-///         assert!(document.first_line >= 1);
-///         Vec::new()
+///         if *document.value != Value::Null {
+///             return Vec::new();
+///         }
+///         let line = document.first_line;
+///         let offset = context.source_context().get_line_offset(line);
+///         let span = Span::new(Location::new(line, 1, offset), Location::new(line, 2, offset + 1));
+///         vec![DiagnosticBuilder::new(self.0.as_str(), Severity::Warning, "null document", span).build()]
 ///     }
 /// }
+///
+/// let mut linter = Linter::new();
+/// let code = CustomRuleCode::new("no-null").unwrap();
+/// linter.add_rule(Rule::Document(Box::new(NoNull(code)))).unwrap();
+/// let found = linter.lint("a: 1\n---\n~\n").unwrap();
+/// assert_eq!(found.len(), 1);
+/// assert_eq!(found[0].span.start.line, 3);
 /// ```
 pub trait DocumentRule: LintRule {
     /// Checks one document and returns the diagnostics found, empty if there are none.
@@ -312,13 +376,13 @@ impl Rule {
 /// let mut registry = RuleRegistry::new();
 /// registry.add(Rule::Source(Box::new(DuplicateKeysRule))).unwrap();
 /// let error = registry.add(Rule::Source(Box::new(DuplicateKeysRule))).err().unwrap();
-/// assert_eq!(error.code, "duplicate-key");
+/// assert_eq!(error.id.to_string(), "duplicate-key");
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("a rule with the code '{code}' is already registered")]
+#[error("a rule with the id '{id}' is already registered")]
 pub struct DuplicateRule {
-    /// The code of the rule that is registered twice.
-    pub code: String,
+    /// The id of the rule that is registered twice.
+    pub id: OwnedRuleId,
 }
 
 /// Registry of all available lint rules.
@@ -414,7 +478,7 @@ impl RuleRegistry {
         let id = rule.info().id();
         if self.rules.iter().any(|known| known.info().id() == id) {
             return Err(DuplicateRule {
-                code: id.as_str().to_owned(),
+                id: id.to_owned_id(),
             });
         }
         self.rules.push(rule);
@@ -436,20 +500,35 @@ impl RuleRegistry {
         &self.rules
     }
 
-    /// Gets a rule by code.
+    /// Gets a rule by id.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::RuleName;
+    /// use fast_yaml_linter::rules::{RuleId, RuleRegistry};
+    ///
+    /// let registry = RuleRegistry::with_default_rules();
+    /// assert!(registry.get(RuleId::BuiltIn(RuleName::DuplicateKey)).is_some());
+    /// ```
+    #[must_use]
+    pub fn get(&self, id: RuleId<'_>) -> Option<&Rule> {
+        self.rules.iter().find(|r| r.info().id() == id)
+    }
+
+    /// Gets a rule by the code written in untrusted text, such as an inline directive.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_linter::rules::RuleRegistry;
-    /// use fast_yaml_linter::DiagnosticCode;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// let rule = registry.get(DiagnosticCode::DUPLICATE_KEY);
-    /// assert!(rule.is_some());
+    /// assert!(registry.find_by_code("duplicate-key").is_some());
+    /// assert!(registry.find_by_code("nonexistent").is_none());
     /// ```
     #[must_use]
-    pub fn get(&self, code: &str) -> Option<&Rule> {
+    pub fn find_by_code(&self, code: &str) -> Option<&Rule> {
         self.rules.iter().find(|r| r.info().id().as_str() == code)
     }
 }
@@ -492,14 +571,14 @@ mod tests {
             .add(Rule::Source(Box::new(DuplicateKeysRule)))
             .err()
             .unwrap();
-        assert_eq!(error.code, "duplicate-key");
+        assert_eq!(error.id, OwnedRuleId::BuiltIn(RuleName::DuplicateKey));
         assert_eq!(registry.rules().len(), 25);
     }
 
     #[test]
     fn test_registry_get() {
         let registry = RuleRegistry::with_default_rules();
-        let rule = registry.get("duplicate-key");
+        let rule = registry.get(RuleId::BuiltIn(RuleName::DuplicateKey));
         assert!(rule.is_some());
         assert_eq!(rule.unwrap().info().id().as_str(), "duplicate-key");
     }
@@ -507,7 +586,7 @@ mod tests {
     #[test]
     fn test_registry_get_missing() {
         let registry = RuleRegistry::with_default_rules();
-        assert!(registry.get("nonexistent").is_none());
+        assert!(registry.find_by_code("nonexistent").is_none());
     }
 
     #[test]
