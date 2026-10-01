@@ -354,7 +354,7 @@ mod tests {
         sink.flush().unwrap();
         let streamed: u64 = fs::read_dir(dir.path())
             .unwrap()
-            .map(|entry| entry.unwrap().metadata().unwrap().len())
+            .map(|entry| fs::metadata(entry.unwrap().path()).unwrap().len())
             .max()
             .unwrap();
         assert_eq!(streamed, "new report".len() as u64);
