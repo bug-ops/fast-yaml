@@ -41,9 +41,13 @@ fn detect_special_device(path: &Path) -> Option<OutputDestination> {
 impl OutputWriter {
     /// Create writer from CLI arguments.
     ///
+    /// Unless `in_place` is set, a destination that is the same file as `input_file` is refused,
+    /// since an explicit `--output` must never overwrite the input it was read from.
+    ///
     /// # Errors
     ///
-    /// Returns an error if `in_place` is `true` and `input_file` is `None`.
+    /// Returns an error if `in_place` is `true` and `input_file` is `None`, or if `--output` is
+    /// the same file as `input_file` and `in_place` is `false`.
     pub fn from_args(
         output: Option<PathBuf>,
         in_place: bool,
@@ -61,7 +65,11 @@ impl OutputWriter {
             OutputDestination::Stdout
         };
 
-        Ok(Self { destination })
+        let writer = Self { destination };
+        if let (false, Some(input)) = (in_place, input_file) {
+            writer.ensure_not_input(input)?;
+        }
+        Ok(writer)
     }
 
     /// Create stdout writer for tests

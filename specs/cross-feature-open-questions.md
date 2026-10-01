@@ -15,7 +15,6 @@ Items that span several capabilities and are not owned by one spec. A feature sp
 | # | Topic | Surfaces | State | Decision needed |
 |---|-------|----------|-------|-----------------|
 | X-1 | Option precedence between a formatter-style flag and a rule option | CLI, Python, Node.js | CLI `--indent-size` overrides `rules.indentation.spaces`; in the bindings the `rules` patch is applied last and wins over `indent_size`/`indentSize` ([[003-lint/spec]] D-30). | One winner on every surface. |
-| X-2 | `-o FILE` equal to an input | `lint`, `format`, `convert` | `fy lint` refuses it ([[003-lint/spec]] FR-050); `format -o X X` and `convert -o X X` overwrite the input ([[003-lint/spec]] D-31). | Apply the lint guard to every subcommand that writes `-o`. |
 | X-3 | Machine-format error reporting | `lint`, `format`, `convert`, `parse` | `lint` prints a `syntax` diagnostic in `json`, `github`, `sarif`, `parsable`; text stays stderr-only ([[003-lint/spec]] D-3). | Whether `text` and the other subcommands get a machine-readable error form. |
 | X-4 | ACLs and large extended attributes in atomic writes | `format -i`, `convert -o`, `lint -o` | Xattrs are copied on Unix; ACLs are not and a very large attribute is read whole ([[005-batch-parallel/spec]] item 15, [[009-limits-security/spec]] item 13). | Copy ACLs where the platform exposes them, or cap attribute size. |
 | X-5 | Lint exit codes by failure class | CLI | A single syntax error exits 1, batch exits 2 ([[003-lint/spec]] D-1). | One code per class on every path. |
