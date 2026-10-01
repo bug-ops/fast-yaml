@@ -108,7 +108,7 @@ impl super::LintRule for DuplicateKeysRule {
                         *span,
                     )
                     .with_suggestion("remove this duplicate key or rename it", *span, None)
-                    .build_with_context(context.source_context())
+                    .build()
                 },
             )
             .collect()

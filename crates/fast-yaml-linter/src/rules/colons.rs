@@ -189,7 +189,7 @@ fn check_spaces_before_colon(
                 ),
                 span,
             )
-            .build_with_context(source_context),
+            .build(),
         );
     }
 
@@ -247,7 +247,7 @@ fn check_spaces_after_colon(
                 ),
                 span,
             )
-            .build_with_context(source_context),
+            .build(),
         );
     }
 

@@ -7,7 +7,7 @@ use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    SourceContext, Span,
+    Span,
 };
 use fast_yaml_core::Value;
 
@@ -69,12 +69,7 @@ impl super::LintRule for DocumentEndRule {
         match config.rules.document_end.options.present {
             MarkerPresence::Allowed => Vec::new(),
             MarkerPresence::Required => check_required(context, config, self.code()),
-            MarkerPresence::Forbidden => check_forbidden(
-                context.source(),
-                context.source_context(),
-                config,
-                self.code(),
-            ),
+            MarkerPresence::Forbidden => check_forbidden(context.source(), config, self.code()),
         }
     }
 }
@@ -120,18 +115,13 @@ fn check_required(context: &LintContext, config: &LintConfig, code: &str) -> Vec
                     span,
                     Some(replacement.to_owned()),
                 )
-                .build_with_context(source_context)
+                .build()
         })
         .collect()
 }
 
 /// Flags every `...` at column 0; YAML makes such a line end the document even inside scalars.
-fn check_forbidden(
-    source: &str,
-    source_context: &SourceContext<'_>,
-    config: &LintConfig,
-    code: &str,
-) -> Vec<Diagnostic> {
+fn check_forbidden(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
     let severity = config.rules.document_end.severity_or(Severity::Warning);
     source_lines(source)
         .enumerate()
@@ -151,7 +141,7 @@ fn check_forbidden(
                 span,
             )
             .with_suggestion("Remove '...'", span, None)
-            .build_with_context(source_context)
+            .build()
         })
         .collect()
 }

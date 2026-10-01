@@ -102,7 +102,7 @@ impl super::LintRule for IndentationRule {
                     "mixed tabs and spaces in indentation".to_string(),
                     span,
                 )
-                .build_with_context(context.source_context());
+                .build();
                 diagnostics.push(diagnostic);
                 continue;
             }
@@ -126,7 +126,7 @@ impl super::LintRule for IndentationRule {
                     ),
                     span,
                 )
-                .build_with_context(context.source_context());
+                .build();
                 diagnostics.push(diagnostic);
             }
         }

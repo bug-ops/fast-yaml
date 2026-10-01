@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead};
 use fast_yaml_linter::formatter::{
-    FileReport, ReportFormat, ReportPath, ReportSource, input_error_diagnostic, syntax_diagnostic,
+    FileReport, Findings, ReportFormat, ReportPath, ReportSource, input_error_diagnostic,
+    syntax_diagnostic,
 };
 use fast_yaml_linter::{
-    ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
-    config::IndentSize,
+    ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, LintError, Linter, Severity,
+    TextFormatter, config::IndentSize,
 };
 use fast_yaml_parallel::ScanAheadPolicy;
+use std::io::{BufWriter, Write as _};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -209,11 +211,30 @@ impl LintCommand {
         match self.format.output() {
             LintOutput::Json => self
                 .output
-                .write_report(&JsonFormatter::new(true).format(&[], ""))?,
+                .write_report(&JsonFormatter::new(true).format(Findings::EMPTY))?,
             LintOutput::Text => {}
             LintOutput::Report(format) => self.output.write_report(&format.render(&[]))?,
         }
         Ok(ExitCode::Success)
+    }
+
+    fn write_findings(&self, formatter: &dyn Formatter, findings: Findings<'_>) -> Result<()> {
+        let mut sink = self.output.sink()?;
+        let mut writer = BufWriter::new(&mut sink);
+        formatter
+            .write(&mut writer, findings)
+            .and_then(|()| writer.flush())
+            .context("Failed to write lint output")?;
+        drop(writer);
+        sink.finish()
+    }
+
+    fn report_lint_failure(&self, input: &InputSource, err: LintError) -> Result<ExitCode> {
+        if let Some(format) = self.format.report() {
+            let diagnostic = syntax_diagnostic(&err, input.as_str());
+            write_report_or_warn(&self.output, format, input.file_path(), diagnostic);
+        }
+        Err(err).context("Failed to lint YAML")
     }
 
     /// Reports an input that could not be read, so report formats never print nothing.
@@ -250,15 +271,13 @@ impl LintCommand {
         };
 
         let linter = Linter::with_config(lint_config);
-        let diagnostics = match linter.lint(input.as_str()) {
+        let source = match linter.source(input.as_str()) {
+            Ok(source) => source,
+            Err(err) => return self.report_lint_failure(input, err),
+        };
+        let diagnostics = match linter.lint_source(&source) {
             Ok(diagnostics) => diagnostics,
-            Err(err) => {
-                if let Some(format) = self.format.report() {
-                    let diagnostic = syntax_diagnostic(&err, input.as_str());
-                    write_report_or_warn(&self.output, format, input.file_path(), diagnostic);
-                }
-                return Err(err).context("Failed to lint YAML");
-            }
+            Err(err) => return self.report_lint_failure(input, err),
         };
 
         let filtered_diagnostics: Vec<_> = if self.config.output.is_quiet() {
@@ -270,18 +289,18 @@ impl LintCommand {
             diagnostics
         };
 
+        let source_context = source.context();
+        let findings = Findings::FromSource {
+            diagnostics: &filtered_diagnostics,
+            source: &source_context,
+        };
         match self.format.output() {
             LintOutput::Text => {
                 let mut formatter = TextFormatter::new();
                 formatter.use_color = self.config.output.use_color();
-                self.output
-                    .write_report(&formatter.format(&filtered_diagnostics, input.as_str()))?;
+                self.write_findings(&formatter, findings)?;
             }
-            LintOutput::Json => {
-                let formatter = JsonFormatter::new(true);
-                self.output
-                    .write_report(&formatter.format(&filtered_diagnostics, input.as_str()))?;
-            }
+            LintOutput::Json => self.write_findings(&JsonFormatter::new(true), findings)?,
             LintOutput::Report(format) => {
                 write_file_report(
                     &self.output,

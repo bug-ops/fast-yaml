@@ -216,10 +216,7 @@ impl super::LintRule for TruthyRule {
             }
             if let Some(msg) = message(slot, index.text(scalar), &allowed) {
                 let span = source_context.span_of_bytes(scalar.range);
-                diagnostics.push(
-                    DiagnosticBuilder::new(self.code(), severity, msg, span)
-                        .build_with_context(source_context),
-                );
+                diagnostics.push(DiagnosticBuilder::new(self.code(), severity, msg, span).build());
             }
         }
 
@@ -392,7 +389,7 @@ mod tests {
         let yaml = "a: true\nb: yes\nc: False\n";
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes]}");
         let diagnostics = TruthyRule.check(&LintContext::new(yaml), &Value::Null, &config);
-        let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+        let messages: Vec<&str> = diagnostics.iter().map(|d| &*d.message).collect();
         assert_eq!(
             messages,
             [

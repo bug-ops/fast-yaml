@@ -262,7 +262,7 @@ impl OrderingWalk<'_, '_> {
                     ),
                     span,
                 )
-                .build_with_context(context.source_context()),
+                .build(),
             );
         }
     }

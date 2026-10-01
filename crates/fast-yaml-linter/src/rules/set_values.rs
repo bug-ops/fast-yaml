@@ -51,8 +51,7 @@ impl super::LintRule for SetValuesRule {
                     .map_or_else(String::new, |key| format!(" '{}'", echo(key, KEY_LIMIT)));
                 let message =
                     format!("!!set member{member} has a value; set members are keys only");
-                DiagnosticBuilder::new(DiagnosticCode::SET_VALUES, severity, message, span)
-                    .build_with_context(source_context)
+                DiagnosticBuilder::new(DiagnosticCode::SET_VALUES, severity, message, span).build()
             })
             .collect()
     }

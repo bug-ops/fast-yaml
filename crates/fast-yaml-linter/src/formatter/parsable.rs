@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn newline_in_path_cannot_start_a_new_line() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
-        let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_context();
+        let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
         let path = std::path::Path::new("/w/a\n::error::x.yaml");
         let source = ReportSource::File(crate::formatter::ReportPath::from_absolute(path).unwrap());
         let report = FileReport {
@@ -65,7 +65,7 @@ mod tests {
     fn info_and_hint_print_as_warning() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let diagnostics = [Severity::Info, Severity::Hint]
-            .map(|s| DiagnosticBuilder::new("r", s, "m", span).build_without_context());
+            .map(|s| DiagnosticBuilder::new("r", s, "m", span).build_without_excerpt());
         let report = FileReport {
             source: &ReportSource::Stdin,
             diagnostics: &diagnostics,
@@ -80,7 +80,7 @@ mod tests {
     fn stdin_and_multiline_message() {
         let span = Span::new(Location::new(2, 3, 5), Location::new(2, 4, 6));
         let d =
-            DiagnosticBuilder::new("rule", Severity::Error, "a\nb", span).build_without_context();
+            DiagnosticBuilder::new("rule", Severity::Error, "a\nb", span).build_without_excerpt();
         let report = FileReport {
             source: &ReportSource::Stdin,
             diagnostics: &[d],

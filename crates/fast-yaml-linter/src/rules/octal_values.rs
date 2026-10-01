@@ -189,7 +189,7 @@ impl OctalValuesRule {
                         ),
                         span,
                     )
-                    .build_with_context(context.source_context()),
+                    .build(),
                 );
             }
 
@@ -218,7 +218,7 @@ impl OctalValuesRule {
                         ),
                         span,
                     )
-                    .build_with_context(context.source_context()),
+                    .build(),
                 );
             }
         }

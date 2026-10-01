@@ -66,7 +66,7 @@ impl super::LintRule for NewLineAtEndOfFileRule {
                     Span::new(eof, eof),
                 )
                 .with_suggestion("Add newline", Span::new(eof, eof), Some("\n".to_string()))
-                .build_with_context(context.source_context()),
+                .build(),
             ]
         }
     }

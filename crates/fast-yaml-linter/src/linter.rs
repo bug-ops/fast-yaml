@@ -8,7 +8,7 @@ use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSetting
 use crate::directives::Directives;
 use crate::rules::{LintRule, MarkerPresence};
 use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
-use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
+use crate::{Diagnostic, LintContext, LintSource, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{NormalizedInput, Parser, Value};
 
@@ -395,18 +395,61 @@ impl Linter {
     /// let diagnostics = linter.lint(yaml).unwrap();
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
-        self.config.max_input_bytes.check(source.len())?;
-        let normalized = NormalizedInput::new(source)?;
+        self.lint_source(&self.source(source)?)
+    }
+
+    /// Validates `raw` for linting: checks [`LintConfig::max_input_bytes`] first, then strips
+    /// prefix byte order marks.
+    ///
+    /// # Errors
+    ///
+    /// Returns `LintError::InputTooLarge` if `raw` exceeds the configured limit, and
+    /// `LintError::ParseError` if it contains a character YAML does not allow.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::Linter;
+    ///
+    /// let linter = Linter::with_all_rules();
+    /// let source = linter.source("a: 1\n").unwrap();
+    /// assert!(linter.lint_source(&source).is_ok());
+    /// ```
+    pub fn source<'a>(&self, raw: &'a str) -> Result<LintSource<'a>, LintError> {
+        self.config.max_input_bytes.check(raw.len())?;
+        LintSource::new(raw)
+    }
+
+    /// Lints source text that is already validated.
+    ///
+    /// Use this with [`LintSource`] when the caller also prints excerpts of the text, so the
+    /// input is validated and stripped of byte order marks once.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Linter::lint`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{LintSource, Linter};
+    ///
+    /// let source = LintSource::new("name: John\n").unwrap();
+    /// let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
+    /// ```
+    pub fn lint_source(&self, input: &LintSource<'_>) -> Result<Vec<Diagnostic>, LintError> {
+        self.config.max_input_bytes.check(input.original_len())?;
+        let normalized = input.normalized();
         let source = normalized.as_str();
         let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
         let mut collector = ScanCollector::new(
-            &normalized,
+            normalized,
             source,
             context.source_context(),
             self.scan_needs(),
         );
         let docs = Parser::parse_normalized_observed(
-            &normalized,
+            normalized,
             &StreamBudget::new(self.config.parse_limits),
             lint_load_options(),
             |item| collector.observe(item),
@@ -637,7 +680,7 @@ mod tests {
                     "flagged",
                     span,
                 )
-                .build_with_context(context.source_context()),
+                .build(),
             ]
         }
     }

@@ -41,7 +41,7 @@ fn messages(rule: RuleName, entry: &str, yaml: &str) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter(|d| d.code.as_str() == rule.as_str())
-        .map(|d| d.message)
+        .map(|d| d.message.into_owned())
         .collect()
 }
 

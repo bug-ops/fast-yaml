@@ -35,6 +35,7 @@ use std::sync::OnceLock;
 /// assert_eq!(ctx.get_line(1), Some("line 1"));
 /// assert_eq!(ctx.get_line(2), Some("line 2"));
 /// ```
+#[derive(Debug)]
 pub struct SourceContext<'a> {
     source: &'a str,
     line_starts: Vec<usize>,
@@ -43,6 +44,7 @@ pub struct SourceContext<'a> {
 }
 
 /// Per-line char/byte column mapping strategy.
+#[derive(Debug)]
 enum LineIndex {
     /// All bytes are ASCII: char columns equal byte columns.
     Ascii,
@@ -51,6 +53,7 @@ enum LineIndex {
 }
 
 /// Byte offset of every char in a line, giving O(1) char column to byte and O(log n) back.
+#[derive(Debug)]
 pub struct CharStarts(Box<[usize]>);
 
 impl CharStarts {
@@ -290,7 +293,9 @@ impl<'a> SourceContext<'a> {
         let end_line = span.end.line;
 
         let first_line = start_line.saturating_sub(context_lines).max(1);
-        let last_line = (end_line + context_lines).min(self.line_starts.len());
+        let last_line = end_line
+            .saturating_add(context_lines)
+            .min(self.line_starts.len());
 
         let mut lines = Vec::with_capacity((last_line + 1).saturating_sub(first_line));
 

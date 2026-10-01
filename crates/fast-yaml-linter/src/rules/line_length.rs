@@ -200,7 +200,7 @@ impl super::LintRule for LineLengthRule {
                         ),
                         span,
                     )
-                    .build_with_context(context.source_context());
+                    .build();
 
                     diagnostics.push(diagnostic);
                 }

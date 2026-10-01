@@ -6,10 +6,11 @@
 use crate::limits::{max_input_bytes, parse_limits};
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
-    DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig, Linter as RustLinter,
-    Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
-    Suggestion as RustSuggestion,
+    DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig,
+    LintError as RustLintError, Linter as RustLinter, Location as RustLocation,
+    Severity as RustSeverity, Span as RustSpan, Suggestion as RustSuggestion,
     config::{IndentSize, RuleConfigError, RuleName},
+    formatter::Findings,
     rules::MarkerPresence,
 };
 use napi_derive::napi;
@@ -177,14 +178,14 @@ pub struct Diagnostic {
     pub suggestions: Vec<Suggestion>,
 }
 
-impl From<RustDiagnostic> for Diagnostic {
-    fn from(d: RustDiagnostic) -> Self {
+impl From<(RustDiagnostic, Option<RustDiagnosticContext>)> for Diagnostic {
+    fn from((d, context): (RustDiagnostic, Option<RustDiagnosticContext>)) -> Self {
         Self {
             code: d.code.as_str().to_string(),
             severity: d.severity.into(),
-            message: d.message,
+            message: d.message.into_owned(),
             span: d.span.into(),
-            context: d.context.map(Into::into),
+            context: context.map(Into::into),
             suggestions: d.suggestions.into_iter().map(Into::into).collect(),
         }
     }
@@ -301,8 +302,15 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
     Ok(rust)
 }
 
-fn convert_diagnostics(diagnostics: Vec<RustDiagnostic>) -> Vec<Diagnostic> {
-    diagnostics.into_iter().map(Into::into).collect()
+fn lint_diagnostics(linter: &RustLinter, source: &str) -> napi::Result<Vec<Diagnostic>> {
+    let lint = || {
+        let input = linter.source(source)?;
+        let diagnostics = linter.lint_source(&input)?;
+        Ok::<_, RustLintError>(Findings::cut(diagnostics, &input.context()))
+    };
+    lint()
+        .map(|found| found.into_iter().map(Into::into).collect())
+        .map_err(|e| napi::Error::from_reason(format!("Linting failed: {e}")))
 }
 
 /// YAML linter with configurable rules.
@@ -352,10 +360,7 @@ impl Linter {
     #[napi(catch_unwind)]
     #[allow(clippy::needless_pass_by_value)]
     pub fn lint(&self, source: String) -> napi::Result<Vec<Diagnostic>> {
-        self.inner
-            .lint(&source)
-            .map(convert_diagnostics)
-            .map_err(|e| napi::Error::from_reason(format!("Linting failed: {e}")))
+        lint_diagnostics(&self.inner, &source)
     }
 }
 
@@ -381,8 +386,5 @@ pub fn lint(source: String, config: Option<LintConfig>) -> napi::Result<Vec<Diag
         Some(cfg) => RustLinter::with_all_rules_and_config(to_rust_lint_config(&cfg)?),
         None => RustLinter::with_all_rules(),
     };
-    linter
-        .lint(&source)
-        .map(convert_diagnostics)
-        .map_err(|e| napi::Error::from_reason(format!("Linting failed: {e}")))
+    lint_diagnostics(&linter, &source)
 }

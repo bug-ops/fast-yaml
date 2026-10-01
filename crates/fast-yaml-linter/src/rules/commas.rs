@@ -161,7 +161,7 @@ fn check_spaces_before_comma(
                 ),
                 span,
             )
-            .build_with_context(source_context),
+            .build(),
         );
     }
 
@@ -215,7 +215,7 @@ fn check_spaces_after_comma(
                 ),
                 span,
             )
-            .build_with_context(source_context),
+            .build(),
         );
     }
 
@@ -233,7 +233,7 @@ fn check_spaces_after_comma(
                 ),
                 span,
             )
-            .build_with_context(source_context),
+            .build(),
         );
     }
 

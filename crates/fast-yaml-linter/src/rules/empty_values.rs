@@ -94,7 +94,7 @@ impl super::LintRule for EmptyValuesRule {
                     span,
                 )
                 .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
-                .build_with_context(source_context)
+                .build()
             })
             .collect()
     }

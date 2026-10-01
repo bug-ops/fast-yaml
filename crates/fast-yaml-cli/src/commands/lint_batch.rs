@@ -19,10 +19,12 @@ use anyhow::{Context, Result};
 use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
 use fast_yaml_core::{LimitKind, ParseError};
 use fast_yaml_linter::formatter::{
-    FileReport as ReportedFile, ReportFormat, input_error_diagnostic, syntax_diagnostic,
+    FileReport as ReportedFile, Findings, JsonDiagnostic, ReportFormat, input_error_diagnostic,
+    syntax_diagnostic,
 };
 use fast_yaml_linter::{
-    Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
+    Diagnostic, DiagnosticContext, Formatter, LintConfig, LintError, LintSource, Linter, Severity,
+    TextFormatter,
 };
 use fast_yaml_parallel::{
     Error as ParallelError, ScanAheadLane, ScanAheadPolicy, read_file, shared_pool,
@@ -109,7 +111,7 @@ trait OutputFormat: Sync {
     type Salvage: Send;
 
     /// Reduces the diagnostics of a file with this `content` to what the emitter needs.
-    fn payload(&self, diagnostics: Vec<Diagnostic>, content: &str) -> Self::Payload;
+    fn payload(&self, diagnostics: Vec<Diagnostic>, source: &LintSource<'_>) -> Self::Payload;
 
     /// Reduces a failure to what the emitter needs; `content` is known when linting failed
     /// after reading.
@@ -164,7 +166,11 @@ impl Linters {
         self.full.config().max_input_bytes
     }
 
-    fn lint(&self, content: &str) -> Result<Vec<Diagnostic>, LintError> {
+    fn source<'a>(&self, content: &'a str) -> Result<LintSource<'a>, LintError> {
+        self.full.source(content)
+    }
+
+    fn lint(&self, source: &LintSource<'_>) -> Result<Vec<Diagnostic>, LintError> {
         let first = self.lane.first_limit();
         self.lane.run(
             |limit| {
@@ -173,7 +179,7 @@ impl Linters {
                 } else {
                     &self.full
                 };
-                linter.lint(content)
+                linter.lint_source(source)
             },
             |error| {
                 matches!(
@@ -220,7 +226,7 @@ fn lint_content<F: OutputFormat>(
         )
     })?;
 
-    let mut diagnostics = linter.lint(&content).map_err(|source| {
+    let lint_failed = |source: LintError| {
         failed(
             FileFailure::Lint {
                 path: path.to_path_buf(),
@@ -228,13 +234,15 @@ fn lint_content<F: OutputFormat>(
             },
             Some(&content),
         )
-    })?;
+    };
+    let source = linter.source(&content).map_err(lint_failed)?;
+    let mut diagnostics = linter.lint(&source).map_err(lint_failed)?;
     if is_quiet {
         diagnostics.retain(|d| d.severity == Severity::Error);
     }
     Ok(Linted {
         has_errors: diagnostics.iter().any(|d| d.severity == Severity::Error),
-        payload: format.payload(diagnostics, &content),
+        payload: format.payload(diagnostics, &source),
     })
 }
 
@@ -439,13 +447,17 @@ impl OutputFormat for TextOutput {
 
     fn salvage(&self, _failure: &FileFailure, _content: Option<&str>) {}
 
-    fn payload(&self, diagnostics: Vec<Diagnostic>, content: &str) -> String {
+    fn payload(&self, diagnostics: Vec<Diagnostic>, source: &LintSource<'_>) -> String {
         if diagnostics.is_empty() {
             return String::new();
         }
         let mut formatter = TextFormatter::new();
         formatter.use_color = self.use_color;
-        formatter.format(&diagnostics, content)
+        let context = source.context();
+        formatter.format(Findings::FromSource {
+            diagnostics: &diagnostics,
+            source: &context,
+        })
     }
 
     fn emit<W: Write, E: Write>(
@@ -484,7 +496,7 @@ impl OutputFormat for ReportOutput {
     /// The `syntax` or input-error diagnostic that stands for the file in the report.
     type Salvage = Diagnostic;
 
-    fn payload(&self, diagnostics: Vec<Diagnostic>, _content: &str) -> Vec<Diagnostic> {
+    fn payload(&self, diagnostics: Vec<Diagnostic>, _source: &LintSource<'_>) -> Vec<Diagnostic> {
         diagnostics
     }
 
@@ -548,13 +560,13 @@ impl OutputFormat for ReportOutput {
 }
 
 impl OutputFormat for JsonOutput {
-    type Payload = Vec<Diagnostic>;
+    type Payload = Vec<(Diagnostic, Option<DiagnosticContext>)>;
     type Salvage = ();
 
     fn salvage(&self, _failure: &FileFailure, _content: Option<&str>) {}
 
-    fn payload(&self, diagnostics: Vec<Diagnostic>, _content: &str) -> Vec<Diagnostic> {
-        diagnostics
+    fn payload(&self, diagnostics: Vec<Diagnostic>, source: &LintSource<'_>) -> Self::Payload {
+        Findings::cut(diagnostics, &source.context())
     }
 
     /// Streams the array in the layout of `serde_json::to_string_pretty` (`[]` when there are
@@ -563,7 +575,7 @@ impl OutputFormat for JsonOutput {
         &self,
         out: W,
         mut err: E,
-        reports: impl Iterator<Item = FileReport<Vec<Diagnostic>>>,
+        reports: impl Iterator<Item = FileReport<Vec<(Diagnostic, Option<DiagnosticContext>)>>>,
     ) -> Result<bool> {
         let mut serializer = serde_json::Serializer::with_formatter(out, PrettyFormatter::new());
         let mut array = (&mut serializer)
@@ -583,14 +595,9 @@ impl OutputFormat for JsonOutput {
                 }) => {
                     any_errors |= has_errors;
                     let file = path.display().to_string();
-                    for diagnostic in &diagnostics {
-                        let mut value = serde_json::to_value(diagnostic)
-                            .context("Failed to serialize a diagnostic")?;
-                        if let serde_json::Value::Object(map) = &mut value {
-                            map.insert("file".to_owned(), serde_json::Value::String(file.clone()));
-                        }
+                    for finding in Findings::Given(&diagnostics).iter() {
                         array
-                            .serialize_element(&value)
+                            .serialize_element(&JsonDiagnostic::new(&finding, Some(&file)))
                             .context("Failed to write lint output")?;
                     }
                 }
@@ -617,7 +624,7 @@ mod tests {
         let span = Span::new(Location::new(line, 1, 0), Location::new(line, 2, 1));
         DiagnosticBuilder::new("test-rule", severity, "message", span)
             .with_suggestion("fix", span, Some("x".to_owned()))
-            .build("a: 1\n")
+            .build()
     }
 
     fn linted<P>(path: &str, payload: P, has_errors: bool) -> FileReport<P> {
@@ -630,9 +637,12 @@ mod tests {
         }
     }
 
-    fn json_report(path: &str, diagnostics: Vec<Diagnostic>) -> FileReport<Vec<Diagnostic>> {
+    type JsonPayload = Vec<(Diagnostic, Option<DiagnosticContext>)>;
+
+    fn json_report(path: &str, diagnostics: Vec<Diagnostic>) -> FileReport<JsonPayload> {
         let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
-        linted(path, diagnostics, has_errors)
+        let pairs = diagnostics.into_iter().map(|d| (d, None)).collect();
+        linted(path, pairs, has_errors)
     }
 
     fn failed<P>(path: &str) -> FileReport<P> {
@@ -648,7 +658,7 @@ mod tests {
         }
     }
 
-    fn json_of(reports: Vec<FileReport<Vec<Diagnostic>>>) -> (String, String, bool) {
+    fn json_of(reports: Vec<FileReport<JsonPayload>>) -> (String, String, bool) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let any = JsonOutput
             .emit(&mut out, &mut err, reports.into_iter())
@@ -886,5 +896,19 @@ mod tests {
             assert_eq!(outcome.is_err(), panics);
             assert!(executed.load(Ordering::SeqCst) < 50, "{panics}");
         }
+    }
+
+    #[test]
+    fn json_places_context_after_span_and_file_last() {
+        let source = LintSource::new("a:   1\n").unwrap();
+        let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
+        let payload = JsonOutput.payload(diagnostics, &source);
+        assert!(payload.iter().all(|(_, context)| context.is_some()));
+
+        let (out, _, _) = json_of(vec![linted("a.yaml", payload, false)]);
+        let at = |key: &str| out.find(key).unwrap();
+        assert!(at("\"span\"") < at("\"context\""));
+        assert!(at("\"context\"") < at("\"file\""));
+        assert!(out.contains("\"file\": \"a.yaml\""), "{out}");
     }
 }

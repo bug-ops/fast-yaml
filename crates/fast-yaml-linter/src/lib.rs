@@ -12,7 +12,8 @@
 //! # Examples
 //!
 //! ```
-//! use fast_yaml_linter::{Linter, TextFormatter, Formatter};
+//! use fast_yaml_linter::formatter::Findings;
+//! use fast_yaml_linter::{Formatter, Linter, TextFormatter};
 //!
 //! let yaml = r#"
 //! name: John
@@ -20,10 +21,15 @@
 //! "#;
 //!
 //! let linter = Linter::with_all_rules();
-//! let diagnostics = linter.lint(yaml).unwrap();
+//! let source = linter.source(yaml).unwrap();
+//! let diagnostics = linter.lint_source(&source).unwrap();
 //!
+//! let context = source.context();
 //! let formatter = TextFormatter::new();
-//! let output = formatter.format(&diagnostics, yaml);
+//! let output = formatter.format(Findings::FromSource {
+//!     diagnostics: &diagnostics,
+//!     source: &context,
+//! });
 //! println!("{}", output);
 //! ```
 
@@ -32,6 +38,7 @@ mod context;
 mod diagnostic;
 mod directives;
 mod echo;
+mod lint_source;
 mod linter;
 mod location;
 mod nodes;
@@ -49,9 +56,11 @@ pub use comments::{Comment, CommentKind};
 pub use config::{ConfigFile, ConfigFileError};
 pub use context::{LineMetadata, LintContext, MAX_CONTEXT_COLUMNS, SourceContext};
 pub use diagnostic::{
-    ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Suggestion,
+    ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Excerpt,
+    Suggestion,
 };
 pub use formatter::{Formatter, TextFormatter};
+pub use lint_source::LintSource;
 pub use linter::{LintConfig, LintError, Linter};
 pub use location::{Location, Span};
 pub use severity::{ParseSeverityError, Severity};

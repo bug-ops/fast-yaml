@@ -1,16 +1,19 @@
 //! Diagnostic types for representing linting errors and warnings.
 
 use std::borrow::Cow;
+use std::convert::Infallible;
+use std::str::FromStr;
 
-use crate::{Severity, SourceContext, Span};
+use crate::{Severity, Span};
 
 #[cfg(feature = "json-output")]
 use serde::{Deserialize, Serialize};
 
 /// A diagnostic message with location and context.
 ///
-/// Represents a single linting issue with severity, location,
-/// message, source context, and optional suggestions for fixes.
+/// Represents a single linting issue with severity, location, message, an [`Excerpt`] policy
+/// and optional suggestions for fixes. The excerpt lines are not stored: formatters cut them
+/// from the source when they print.
 ///
 /// # Examples
 ///
@@ -23,7 +26,7 @@ use serde::{Deserialize, Serialize};
 ///     Severity::Error,
 ///     "duplicate key 'name' found",
 ///     span
-/// ).build("name: John\nage: 30\nname: Jane");
+/// ).build();
 ///
 /// assert_eq!(diagnostic.severity, Severity::Error);
 /// ```
@@ -35,21 +38,42 @@ pub struct Diagnostic {
     /// Severity level.
     pub severity: Severity,
     /// Primary error message.
-    pub message: String,
+    pub message: Cow<'static, str>,
     /// Location span where the error occurred.
     pub span: Span,
-    /// Additional context for display.
-    #[cfg_attr(
-        feature = "json-output",
-        serde(skip_serializing_if = "Option::is_none")
-    )]
-    pub context: Option<DiagnosticContext>,
+    /// Whether formatters show source lines for this diagnostic.
+    #[cfg_attr(feature = "json-output", serde(skip))]
+    pub excerpt: Excerpt,
     /// Suggested fixes.
     #[cfg_attr(
         feature = "json-output",
         serde(default, skip_serializing_if = "Vec::is_empty")
     )]
     pub suggestions: Vec<Suggestion>,
+}
+
+/// Whether a diagnostic is shown with the source lines around its span.
+///
+/// The lines are cut from the source when a diagnostic is printed, so a run that finds a million
+/// diagnostics does not hold a million copies of source text. Serialization skips the policy;
+/// serialize through [`JsonFormatter`](crate::JsonFormatter) to include the lines.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Location, Severity, Span};
+///
+/// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+/// let builder = DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span);
+/// assert_eq!(builder.build().excerpt, Excerpt::SourceLines);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Excerpt {
+    /// Show the source lines around the span.
+    SourceLines,
+    /// Show no source lines (input and syntax errors, diagnostics built without a source).
+    #[default]
+    Omitted,
 }
 
 /// Unique identifier for a diagnostic.
@@ -158,53 +182,69 @@ impl DiagnosticCode {
     }
 }
 
-/// Every predefined code, so a code made from its text borrows the constant instead of
-/// allocating (a lint run holds one code per diagnostic).
-const PREDEFINED: [&str; 27] = [
-    DiagnosticCode::DUPLICATE_KEY,
-    DiagnosticCode::INVALID_ANCHOR,
-    DiagnosticCode::UNDEFINED_ALIAS,
-    DiagnosticCode::INDENTATION,
-    DiagnosticCode::LINE_LENGTH,
-    DiagnosticCode::TRAILING_WHITESPACE,
-    DiagnosticCode::DOCUMENT_START,
-    DiagnosticCode::DOCUMENT_END,
-    DiagnosticCode::EMPTY_VALUES,
-    DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
-    DiagnosticCode::BRACES,
-    DiagnosticCode::BRACKETS,
-    DiagnosticCode::COLONS,
-    DiagnosticCode::COMMAS,
-    DiagnosticCode::HYPHENS,
-    DiagnosticCode::COMMENTS,
-    DiagnosticCode::COMMENTS_INDENTATION,
-    DiagnosticCode::EMPTY_LINES,
-    DiagnosticCode::NEW_LINES,
-    DiagnosticCode::OCTAL_VALUES,
-    DiagnosticCode::TRUTHY,
-    DiagnosticCode::QUOTED_STRINGS,
-    DiagnosticCode::KEY_ORDERING,
-    DiagnosticCode::FLOAT_VALUES,
-    DiagnosticCode::SET_VALUES,
-    DiagnosticCode::SYNTAX,
-    DiagnosticCode::LINT_DIRECTIVE,
-];
+impl DiagnosticCode {
+    /// The predefined constant equal to `text`, so a known code borrows instead of allocating.
+    fn predefined(text: &str) -> Option<&'static str> {
+        Some(match text {
+            Self::DUPLICATE_KEY => Self::DUPLICATE_KEY,
+            Self::INVALID_ANCHOR => Self::INVALID_ANCHOR,
+            Self::UNDEFINED_ALIAS => Self::UNDEFINED_ALIAS,
+            Self::INDENTATION => Self::INDENTATION,
+            Self::LINE_LENGTH => Self::LINE_LENGTH,
+            Self::TRAILING_WHITESPACE => Self::TRAILING_WHITESPACE,
+            Self::DOCUMENT_START => Self::DOCUMENT_START,
+            Self::DOCUMENT_END => Self::DOCUMENT_END,
+            Self::EMPTY_VALUES => Self::EMPTY_VALUES,
+            Self::NEW_LINE_AT_END_OF_FILE => Self::NEW_LINE_AT_END_OF_FILE,
+            Self::BRACES => Self::BRACES,
+            Self::BRACKETS => Self::BRACKETS,
+            Self::COLONS => Self::COLONS,
+            Self::COMMAS => Self::COMMAS,
+            Self::HYPHENS => Self::HYPHENS,
+            Self::COMMENTS => Self::COMMENTS,
+            Self::COMMENTS_INDENTATION => Self::COMMENTS_INDENTATION,
+            Self::EMPTY_LINES => Self::EMPTY_LINES,
+            Self::NEW_LINES => Self::NEW_LINES,
+            Self::OCTAL_VALUES => Self::OCTAL_VALUES,
+            Self::TRUTHY => Self::TRUTHY,
+            Self::QUOTED_STRINGS => Self::QUOTED_STRINGS,
+            Self::KEY_ORDERING => Self::KEY_ORDERING,
+            Self::FLOAT_VALUES => Self::FLOAT_VALUES,
+            Self::SET_VALUES => Self::SET_VALUES,
+            Self::SYNTAX => Self::SYNTAX,
+            Self::LINT_DIRECTIVE => Self::LINT_DIRECTIVE,
+            _ => return None,
+        })
+    }
+}
 
 impl From<&str> for DiagnosticCode {
     fn from(s: &str) -> Self {
-        Self(
-            PREDEFINED
-                .iter()
-                .find(|known| **known == s)
-                .map_or_else(|| Cow::Owned(s.to_owned()), |known| Cow::Borrowed(*known)),
-        )
+        Self(Self::predefined(s).map_or_else(|| Cow::Owned(s.to_owned()), Cow::Borrowed))
     }
 }
 
 impl From<String> for DiagnosticCode {
     fn from(s: String) -> Self {
-        let known = PREDEFINED.iter().copied().find(|known| *known == s);
-        Self(known.map_or(Cow::Owned(s), Cow::Borrowed))
+        Self(Self::predefined(&s).map_or(Cow::Owned(s), Cow::Borrowed))
+    }
+}
+
+impl FromStr for DiagnosticCode {
+    type Err = Infallible;
+
+    /// Makes a code from any text; a predefined code borrows its constant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::DiagnosticCode;
+    ///
+    /// let code: DiagnosticCode = "truthy".parse().unwrap();
+    /// assert_eq!(code.as_str(), DiagnosticCode::TRUTHY);
+    /// ```
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self::from(s))
     }
 }
 
@@ -308,8 +348,7 @@ pub struct Suggestion {
 
 /// Builder for creating diagnostics.
 ///
-/// Provides an ergonomic API for constructing diagnostics
-/// with optional suggestions and automatic context extraction.
+/// Provides an ergonomic API for constructing diagnostics with optional suggestions.
 ///
 /// # Examples
 ///
@@ -317,27 +356,28 @@ pub struct Suggestion {
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
 ///
 /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
-/// let source = "key: value";
 ///
 /// let diagnostic = DiagnosticBuilder::new(
 ///     DiagnosticCode::LINE_LENGTH,
 ///     Severity::Info,
 ///     "line too long",
 ///     span
-/// ).build(source);
+/// ).build();
 ///
 /// assert_eq!(diagnostic.message, "line too long");
 /// ```
 pub struct DiagnosticBuilder {
     code: DiagnosticCode,
     severity: Severity,
-    message: String,
+    message: Cow<'static, str>,
     span: Span,
     suggestions: Vec<Suggestion>,
 }
 
 impl DiagnosticBuilder {
     /// Creates a new diagnostic builder.
+    ///
+    /// A `&'static str` message is borrowed, so a fixed message costs no allocation.
     ///
     /// # Examples
     ///
@@ -355,16 +395,13 @@ impl DiagnosticBuilder {
     pub fn new(
         code: impl Into<DiagnosticCode>,
         severity: Severity,
-        message: impl Into<String>,
+        message: impl Into<Cow<'static, str>>,
         span: Span,
     ) -> Self {
-        let mut message = message.into();
-        // A formatted message carries growth slack, and a run can hold a million of them
-        message.shrink_to_fit();
         Self {
             code: code.into(),
             severity,
-            message,
+            message: message.into(),
             span,
             suggestions: Vec::new(),
         }
@@ -400,19 +437,13 @@ impl DiagnosticBuilder {
         self
     }
 
-    /// Builds the diagnostic using a pre-built [`SourceContext`].
-    ///
-    /// Prefer this over [`build`](Self::build) when a `SourceContext` is already available
-    /// (e.g. from [`crate::LintContext::source_context`]) to avoid rebuilding the line index on
-    /// every diagnostic.
+    /// Builds the diagnostic; formatters show the source lines around its span.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, LintContext, Severity, Location, Span};
+    /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Severity, Location, Span};
     ///
-    /// let source = "name: John\nage: 30";
-    /// let ctx = LintContext::new(source);
     /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
     ///
     /// let diagnostic = DiagnosticBuilder::new(
@@ -420,37 +451,24 @@ impl DiagnosticBuilder {
     ///     Severity::Info,
     ///     "example",
     ///     span
-    /// ).build_with_context(ctx.source_context());
+    /// ).build();
     ///
-    /// assert!(diagnostic.context.is_some());
+    /// assert_eq!(diagnostic.excerpt, Excerpt::SourceLines);
     /// ```
     #[must_use]
-    pub fn build_with_context(self, source_ctx: &SourceContext<'_>) -> Diagnostic {
-        let context = source_ctx.extract_context(self.span, 2);
-
-        Diagnostic {
-            code: self.code,
-            severity: self.severity,
-            message: self.message,
-            span: self.span,
-            context: Some(context),
-            suggestions: self.suggestions,
-        }
+    pub fn build(self) -> Diagnostic {
+        self.finish(Excerpt::SourceLines)
     }
 
-    /// Builds the diagnostic with source context.
+    /// Builds the diagnostic so that formatters show no source lines for it.
     ///
-    /// Extracts context lines from the source around the diagnostic span.
-    ///
-    /// Consider using [`build_with_context`](Self::build_with_context) instead when a
-    /// [`SourceContext`] is already available to avoid redundant line index construction.
+    /// Use this when the span does not refer to a source that is available at print time.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
+    /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Severity, Location, Span};
     ///
-    /// let source = "name: John\nage: 30";
     /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
     ///
     /// let diagnostic = DiagnosticBuilder::new(
@@ -458,52 +476,22 @@ impl DiagnosticBuilder {
     ///     Severity::Info,
     ///     "example",
     ///     span
-    /// ).build(source);
+    /// ).build_without_excerpt();
     ///
-    /// assert!(diagnostic.context.is_some());
+    /// assert_eq!(diagnostic.excerpt, Excerpt::Omitted);
     /// ```
     #[must_use]
-    pub fn build(self, source: &str) -> Diagnostic {
-        let context = SourceContext::new(source).extract_context(self.span, 2);
-
-        Diagnostic {
-            code: self.code,
-            severity: self.severity,
-            message: self.message,
-            span: self.span,
-            context: Some(context),
-            suggestions: self.suggestions,
-        }
+    pub fn build_without_excerpt(self) -> Diagnostic {
+        self.finish(Excerpt::Omitted)
     }
 
-    /// Builds the diagnostic without source context.
-    ///
-    /// Use this when source context is not available or not needed.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
-    ///
-    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
-    ///
-    /// let diagnostic = DiagnosticBuilder::new(
-    ///     DiagnosticCode::LINE_LENGTH,
-    ///     Severity::Info,
-    ///     "example",
-    ///     span
-    /// ).build_without_context();
-    ///
-    /// assert!(diagnostic.context.is_none());
-    /// ```
-    #[must_use]
-    pub fn build_without_context(self) -> Diagnostic {
+    fn finish(self, excerpt: Excerpt) -> Diagnostic {
         Diagnostic {
             code: self.code,
             severity: self.severity,
             message: self.message,
             span: self.span,
-            context: None,
+            excerpt,
             suggestions: self.suggestions,
         }
     }
@@ -538,29 +526,25 @@ mod tests {
     #[test]
     fn test_diagnostic_builder() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
-        let source = "name: value";
-
         let diagnostic = DiagnosticBuilder::new(
             DiagnosticCode::DUPLICATE_KEY,
             Severity::Error,
             "test message",
             span,
         )
-        .build(source);
+        .build();
 
         assert_eq!(diagnostic.code.as_str(), DiagnosticCode::DUPLICATE_KEY);
         assert_eq!(diagnostic.severity, Severity::Error);
         assert_eq!(diagnostic.message, "test message");
         assert_eq!(diagnostic.span, span);
-        assert!(diagnostic.context.is_some());
+        assert_eq!(diagnostic.excerpt, Excerpt::SourceLines);
         assert_eq!(diagnostic.suggestions, []);
     }
 
     #[test]
     fn test_diagnostic_builder_with_suggestion() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
-        let source = "name: value";
-
         let diagnostic = DiagnosticBuilder::new(
             DiagnosticCode::DUPLICATE_KEY,
             Severity::Error,
@@ -568,7 +552,7 @@ mod tests {
             span,
         )
         .with_suggestion("Remove duplicate", span, None)
-        .build(source);
+        .build();
 
         assert_eq!(diagnostic.suggestions.len(), 1);
         assert_eq!(diagnostic.suggestions[0].message, "Remove duplicate");
@@ -580,9 +564,9 @@ mod tests {
 
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)
-                .build_without_context();
+                .build_without_excerpt();
 
-        assert!(diagnostic.context.is_none());
+        assert_eq!(diagnostic.excerpt, Excerpt::Omitted);
     }
 
     #[test]
@@ -622,12 +606,50 @@ mod tests {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::DUPLICATE_KEY, Severity::Error, "test", span)
-                .build_without_context();
+                .build_without_excerpt();
 
         let json = serde_json::to_string(&diagnostic).unwrap();
         let deserialized: Diagnostic = serde_json::from_str(&json).unwrap();
 
         assert_eq!(deserialized.code, diagnostic.code);
         assert_eq!(deserialized.severity, diagnostic.severity);
+    }
+}
+
+#[cfg(test)]
+mod code_tests {
+    use super::*;
+
+    #[test]
+    fn predefined_codes_borrow_their_constant() {
+        for text in [
+            DiagnosticCode::DUPLICATE_KEY,
+            DiagnosticCode::LINT_DIRECTIVE,
+            DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
+        ] {
+            assert!(matches!(DiagnosticCode::from(text).0, Cow::Borrowed(_)));
+            assert!(matches!(
+                DiagnosticCode::from(text.to_owned()).0,
+                Cow::Borrowed(_)
+            ));
+            assert!(matches!(
+                text.parse::<DiagnosticCode>().unwrap().0,
+                Cow::Borrowed(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn custom_codes_are_owned_and_equal_by_text() {
+        let code: DiagnosticCode = "always-flags".parse().unwrap();
+        assert!(matches!(code.0, Cow::Owned(_)));
+        assert_eq!(code, DiagnosticCode::new("always-flags"));
+    }
+
+    #[test]
+    fn a_static_message_is_not_copied() {
+        let span = Span::new(crate::Location::new(1, 1, 0), crate::Location::new(1, 1, 0));
+        let diagnostic = DiagnosticBuilder::new("r", Severity::Info, "fixed", span).build();
+        assert!(matches!(diagnostic.message, Cow::Borrowed("fixed")));
     }
 }

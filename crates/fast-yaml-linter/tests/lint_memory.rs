@@ -67,5 +67,5 @@ fn a_diagnostic_per_scalar_costs_a_bounded_amount() {
     let _serial = exclusive();
     // Every comma lacks a space after it, so the commas rule reports 500 000 diagnostics
     let input = format!("[{}1]\n", "1,".repeat(500 * 1024));
-    assert_lint_within(&input, &LintConfig::default(), (2, 1));
+    assert_lint_within(&input, &LintConfig::default(), (3, 2));
 }

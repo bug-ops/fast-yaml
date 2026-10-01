@@ -260,11 +260,7 @@ impl QuotedStringsRule {
         event: &ScalarEvent<'_>,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        let ScalarCheck {
-            source,
-            source_ctx,
-            config,
-        } = *check;
+        let ScalarCheck { source, config, .. } = *check;
         let ScalarEvent {
             value,
             style,
@@ -281,11 +277,9 @@ impl QuotedStringsRule {
             .rules
             .quoted_strings
             .severity_or(self.default_severity());
-        let mut report = |message: &str| {
-            diagnostics.push(
-                DiagnosticBuilder::new(self.code(), severity, message, scalar_span)
-                    .build_with_context(source_ctx),
-            );
+        let mut report = |message: &'static str| {
+            diagnostics
+                .push(DiagnosticBuilder::new(self.code(), severity, message, scalar_span).build());
         };
 
         match style {
@@ -1009,7 +1003,7 @@ mod tests {
         QuotedStringsRule
             .check(&LintContext::new(yaml), &value, &config)
             .into_iter()
-            .map(|d| d.message)
+            .map(|d| d.message.into_owned())
             .collect()
     }
 
