@@ -55,7 +55,7 @@ impl super::LintRule for BracesRule {
         check_flow_collection(
             context,
             &config.rules.braces,
-            self.code(),
+            DiagnosticCode::BRACES,
             self.default_severity(),
             FlowCollection::Mapping,
         )

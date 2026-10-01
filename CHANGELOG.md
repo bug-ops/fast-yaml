@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
 - **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
 - **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)
 - **Python**: `saphyr-parser` is no longer a dependency of the bindings (#542) (#562)

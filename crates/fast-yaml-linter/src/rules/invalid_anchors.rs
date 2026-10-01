@@ -112,20 +112,24 @@ fn scan_duplicate_anchors(
     source_context: &SourceContext<'_>,
     severity: Severity,
 ) -> Vec<Diagnostic> {
-    // Mapping from anchor name → 1-indexed line of first def.
-    let mut seen: HashMap<String, usize> = HashMap::new();
-    let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    let mut state = ScanState::new();
+    let mut scan = AnchorScan {
+        source_context,
+        severity,
+        state: ScanState::new(),
+        seen: HashMap::new(),
+        diagnostics: Vec::new(),
+    };
 
     for (line_idx, (line_start_offset, line)) in source_lines(source).enumerate() {
         let line_number = line_idx + 1; // 1-indexed
+        let state = &mut scan.state;
 
         // ── Document boundary: reset anchor map ──────────────────────────
         if state.quote == QuoteState::None
             && state.block_scalar.is_none()
             && is_document_start(line)
         {
-            seen.clear();
+            scan.seen.clear();
             continue;
         }
 
@@ -163,130 +167,122 @@ fn scan_duplicate_anchors(
         }
 
         // ── Scan the line for `&name` occurrences ─────────────────────────
-        scan_line_for_anchors(
-            line,
-            line_number,
-            line_start_offset,
-            source,
-            source_context,
-            &mut state,
-            &mut seen,
-            &mut diagnostics,
-            severity,
-        );
+        scan.scan_line(line, line_number, line_start_offset);
     }
 
-    diagnostics
+    scan.diagnostics
 }
 
 // ── Line-level anchor scanner ──────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
-fn scan_line_for_anchors(
-    line: &str,
-    line_number: usize,
-    line_start_offset: usize,
-    _source: &str,
-    source_context: &SourceContext<'_>,
-    state: &mut ScanState,
-    seen: &mut HashMap<String, usize>,
-    diagnostics: &mut Vec<Diagnostic>,
+/// Line scanner that accumulates anchor definitions and duplicate diagnostics.
+struct AnchorScan<'a> {
+    source_context: &'a SourceContext<'a>,
     severity: Severity,
-) {
-    let bytes = line.as_bytes();
-    let mut i = 0;
+    state: ScanState,
+    /// Anchor name to the 1-indexed line of its first definition.
+    seen: HashMap<String, usize>,
+    diagnostics: Vec<Diagnostic>,
+}
 
-    while let Some(&b) = bytes.get(i) {
-        match state.quote {
-            QuoteState::Single => {
-                if b == b'\'' {
-                    // Check for escaped single quote `''`
-                    if bytes.get(i + 1) == Some(&b'\'') {
-                        i += 2;
+impl AnchorScan<'_> {
+    fn scan_line(&mut self, line: &str, line_number: usize, line_start_offset: usize) {
+        let bytes = line.as_bytes();
+        let mut i = 0;
+
+        while let Some(&b) = bytes.get(i) {
+            match self.state.quote {
+                QuoteState::Single => {
+                    if b == b'\'' {
+                        // Check for escaped single quote `''`
+                        if bytes.get(i + 1) == Some(&b'\'') {
+                            i += 2;
+                        } else {
+                            self.state.quote = QuoteState::None;
+                            i += 1;
+                        }
                     } else {
-                        state.quote = QuoteState::None;
                         i += 1;
                     }
-                } else {
-                    i += 1;
+                    continue;
                 }
-                continue;
-            }
 
-            QuoteState::Double => {
-                if b == b'\\' {
-                    i += 2; // skip escaped character
-                } else if b == b'"' {
-                    state.quote = QuoteState::None;
-                    i += 1;
-                } else {
-                    i += 1;
-                }
-                continue;
-            }
-
-            QuoteState::None => {}
-        }
-
-        // Outside quotes:
-        match b {
-            b'\'' => {
-                state.quote = QuoteState::Single;
-                i += 1;
-            }
-            b'"' => {
-                state.quote = QuoteState::Double;
-                i += 1;
-            }
-            b'#' => {
-                // Inline comment — stop scanning this line.
-                // (A `#` that starts an inline comment must be preceded by
-                // whitespace per the YAML spec, but skipping everything after
-                // any bare `#` outside quotes is safe enough for anchor detection.)
-                break;
-            }
-            b'&' => {
-                // Potential anchor definition.
-                let name_start = i + 1;
-                let name_end = find_anchor_name_end(bytes, name_start);
-                if name_end > name_start {
-                    let name = line.get(name_start..name_end).unwrap_or_default();
-
-                    if let Some(&first_line) = seen.get(name) {
-                        let span = source_context
-                            .span_at(ByteOffset::new(line_start_offset + i), name.len() + 1);
-                        diagnostics.push(
-                            DiagnosticBuilder::new(
-                                DiagnosticCode::INVALID_ANCHOR,
-                                severity,
-                                format!(
-                                    "anchor '&{name}' is defined multiple times; \
-                                     the earlier definition is shadowed \
-                                     (first defined at line {first_line})"
-                                ),
-                                span,
-                            )
-                            .with_suggestion("rename this anchor to be unique", span, None)
-                            .build_with_context(source_context),
-                        );
+                QuoteState::Double => {
+                    if b == b'\\' {
+                        i += 2; // skip escaped character
+                    } else if b == b'"' {
+                        self.state.quote = QuoteState::None;
+                        i += 1;
                     } else {
-                        seen.insert(name.to_owned(), line_number);
+                        i += 1;
                     }
+                    continue;
+                }
 
-                    i = name_end;
-                } else {
+                QuoteState::None => {}
+            }
+
+            // Outside quotes:
+            match b {
+                b'\'' => {
+                    self.state.quote = QuoteState::Single;
+                    i += 1;
+                }
+                b'"' => {
+                    self.state.quote = QuoteState::Double;
+                    i += 1;
+                }
+                b'#' => {
+                    // Inline comment — stop scanning this line.
+                    // (A `#` that starts an inline comment must be preceded by
+                    // whitespace per the YAML spec, but skipping everything after
+                    // any bare `#` outside quotes is safe enough for anchor detection.)
+                    break;
+                }
+                b'&' => {
+                    // Potential anchor definition.
+                    let name_start = i + 1;
+                    let name_end = find_anchor_name_end(bytes, name_start);
+                    if name_end > name_start {
+                        let name = line.get(name_start..name_end).unwrap_or_default();
+
+                        if let Some(&first_line) = self.seen.get(name) {
+                            let span = self
+                                .source_context
+                                .span_at(ByteOffset::new(line_start_offset + i), name.len() + 1);
+                            self.diagnostics.push(
+                                DiagnosticBuilder::new(
+                                    DiagnosticCode::INVALID_ANCHOR,
+                                    self.severity,
+                                    format!(
+                                        "anchor '&{name}' is defined multiple times; \
+                                         the earlier definition is shadowed \
+                                         (first defined at line {first_line})"
+                                    ),
+                                    span,
+                                )
+                                .with_suggestion("rename this anchor to be unique", span, None)
+                                .build_with_context(self.source_context),
+                            );
+                        } else {
+                            self.seen.insert(name.to_owned(), line_number);
+                        }
+
+                        i = name_end;
+                    } else {
+                        i += 1;
+                    }
+                }
+                _ => {
                     i += 1;
                 }
             }
-            _ => {
-                i += 1;
-            }
         }
-    }
 
-    // If we exited the loop while still inside a quote that was opened on
-    // this line, the quote continues to the next line (multi-line string).
-    // `state.quote` already reflects this.
+        // If we exited the loop while still inside a quote that was opened on
+        // this line, the quote continues to the next line (multi-line string).
+        // `self.state.quote` already reflects this.
+    }
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

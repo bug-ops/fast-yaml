@@ -55,7 +55,7 @@ impl super::LintRule for BracketsRule {
         check_flow_collection(
             context,
             &config.rules.brackets,
-            self.code(),
+            DiagnosticCode::BRACKETS,
             self.default_severity(),
             FlowCollection::Sequence,
         )

@@ -1,5 +1,7 @@
 //! Common utilities for flow collection rules (braces, brackets).
 
+use std::ops::Range;
+
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -147,7 +149,7 @@ impl RuleOptions for FlowCollectionOptions {}
 pub(crate) fn check_flow_collection(
     context: &LintContext,
     settings: &RuleSettings<FlowCollectionOptions>,
-    code: &str,
+    code: &'static str,
     default_severity: Severity,
     kind: FlowCollection,
 ) -> Vec<Diagnostic> {
@@ -204,30 +206,18 @@ pub(crate) fn check_flow_collection(
             (options.min_spaces_inside, options.max_spaces_inside)
         };
 
-        diagnostics.extend(check_spaces_after_opening(
+        let spacing = FlowSpacing {
             source,
-            source_context,
-            open.span.end.offset,
-            close.span.start.offset,
-            min_spaces,
-            max_spaces,
+            source_ctx: source_context,
+            inner: open.span.end.offset..close.span.start.offset,
+            min: min_spaces,
+            max: max_spaces,
             code,
             severity,
-            kind.name(),
-            open.span,
-        ));
-        diagnostics.extend(check_spaces_before_closing(
-            source,
-            source_context,
-            open.span.end.offset,
-            close.span.start.offset,
-            min_spaces,
-            max_spaces,
-            code,
-            severity,
-            kind.name(),
-            close.span,
-        ));
+            kind,
+        };
+        diagnostics.extend(spacing.after_opening(open.span));
+        diagnostics.extend(spacing.before_closing(close.span));
     }
 
     diagnostics
@@ -311,143 +301,71 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
         .is_none_or(|s| s.trim().is_empty())
 }
 
-/// Checks spacing after an opening delimiter (brace or bracket).
-///
-/// # Arguments
-///
-/// * `source` - The full YAML source
-/// * `source_ctx` - Pre-built source context for diagnostic extraction
-/// * `start_offset` - Byte offset after opening delimiter
-/// * `end_offset` - Byte offset of closing delimiter or next content
-/// * `min_spaces` - Minimum required spaces
-/// * `max_spaces` - Maximum allowed spaces
-/// * `code` - Rule code for diagnostics
-/// * `severity` - Severity of the returned diagnostic
-/// * `collection_name` - Name of collection type (e.g., "braces", "brackets")
-///
-/// Returns a diagnostic if spacing constraints are violated.
-#[allow(clippy::too_many_arguments)]
-pub fn check_spaces_after_opening(
-    source: &str,
-    source_ctx: &SourceContext<'_>,
-    start_offset: usize,
-    end_offset: usize,
-    min_spaces: Limit,
-    max_spaces: Limit,
-    code: &str,
-    severity: Severity,
-    collection_name: &str,
-    opening_span: Span,
-) -> Option<Diagnostic> {
-    let end = end_offset.min(source.len());
-    if start_offset > end {
-        return None;
-    }
-
-    let content = source.get(start_offset..end)?;
-    let spaces = content.chars().take_while(|c| *c == ' ').count();
-
-    if min_spaces.unmet_by(spaces) {
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too few spaces inside {collection_name} (expected at least {min_spaces}, found {spaces})"
-                ),
-                opening_span,
-            )
-            .build_with_context(source_ctx),
-        );
-    }
-
-    if max_spaces.exceeded_by(spaces) {
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces inside {collection_name} (expected at most {max_spaces}, found {spaces})"
-                ),
-                opening_span,
-            )
-            .build_with_context(source_ctx),
-        );
-    }
-
-    None
+/// Spacing limits for the interior of one flow collection.
+pub(crate) struct FlowSpacing<'a> {
+    pub(crate) source: &'a str,
+    pub(crate) source_ctx: &'a SourceContext<'a>,
+    /// Byte range between the opening and the closing delimiter.
+    pub(crate) inner: Range<usize>,
+    pub(crate) min: Limit,
+    pub(crate) max: Limit,
+    pub(crate) code: &'static str,
+    pub(crate) severity: Severity,
+    pub(crate) kind: FlowCollection,
 }
 
-/// Checks spacing before a closing delimiter (brace or bracket).
-///
-/// # Arguments
-///
-/// * `source` - The full YAML source
-/// * `source_ctx` - Pre-built source context for diagnostic extraction
-/// * `start_offset` - Byte offset after opening delimiter or last content
-/// * `end_offset` - Byte offset of closing delimiter
-/// * `min_spaces` - Minimum required spaces
-/// * `max_spaces` - Maximum allowed spaces
-/// * `code` - Rule code for diagnostics
-/// * `severity` - Severity of the returned diagnostic
-/// * `collection_name` - Name of collection type (e.g., "braces", "brackets")
-///
-/// Returns a diagnostic if spacing constraints are violated.
-#[allow(clippy::too_many_arguments)]
-pub fn check_spaces_before_closing(
-    source: &str,
-    source_ctx: &SourceContext<'_>,
-    start_offset: usize,
-    end_offset: usize,
-    min_spaces: Limit,
-    max_spaces: Limit,
-    code: &str,
-    severity: Severity,
-    collection_name: &str,
-    closing_span: Span,
-) -> Option<Diagnostic> {
-    let end = end_offset.min(source.len());
-    if start_offset >= end {
-        return None;
+impl FlowSpacing<'_> {
+    /// Checks the spaces right after the opening delimiter.
+    pub(crate) fn after_opening(&self, opening_span: Span) -> Option<Diagnostic> {
+        let end = self.inner.end.min(self.source.len());
+        if self.inner.start > end {
+            return None;
+        }
+
+        let content = self.source.get(self.inner.start..end)?;
+        let spaces = content.chars().take_while(|c| *c == ' ').count();
+        self.violation(spaces, opening_span)
     }
 
-    let content = source.get(start_offset..end)?;
-    let spaces = content.chars().rev().take_while(|c| *c == ' ').count();
+    /// Checks the spaces right before the closing delimiter.
+    pub(crate) fn before_closing(&self, closing_span: Span) -> Option<Diagnostic> {
+        let end = self.inner.end.min(self.source.len());
+        if self.inner.start >= end {
+            return None;
+        }
 
-    if min_spaces.unmet_by(spaces) {
-        return Some(
+        let content = self.source.get(self.inner.start..end)?;
+        let spaces = content.chars().rev().take_while(|c| *c == ' ').count();
+        self.violation(spaces, closing_span)
+    }
+
+    fn violation(&self, spaces: usize, span: Span) -> Option<Diagnostic> {
+        let (problem, bound, limit) = if self.min.unmet_by(spaces) {
+            ("few", "least", self.min)
+        } else if self.max.exceeded_by(spaces) {
+            ("many", "most", self.max)
+        } else {
+            return None;
+        };
+        let name = self.kind.name();
+        Some(
             DiagnosticBuilder::new(
-                code,
-                severity,
+                self.code,
+                self.severity,
                 format!(
-                    "too few spaces inside {collection_name} (expected at least {min_spaces}, found {spaces})"
+                    "too {problem} spaces inside {name} (expected at {bound} {limit}, found {spaces})"
                 ),
-                closing_span,
+                span,
             )
-            .build_with_context(source_ctx),
-        );
+            .build_with_context(self.source_ctx),
+        )
     }
-
-    if max_spaces.exceeded_by(spaces) {
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces inside {collection_name} (expected at most {max_spaces}, found {spaces})"
-                ),
-                closing_span,
-            )
-            .build_with_context(source_ctx),
-        );
-    }
-
-    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Location;
 
     #[test]
     fn test_is_empty_collection() {
@@ -458,163 +376,84 @@ mod tests {
         assert!(!is_empty_collection("{ key: value }", 1, 13));
     }
 
+    fn spacing<'a>(
+        source: &'a str,
+        ctx: &'a SourceContext<'a>,
+        inner: Range<usize>,
+        min: Limit,
+        max: Limit,
+    ) -> FlowSpacing<'a> {
+        FlowSpacing {
+            source,
+            source_ctx: ctx,
+            inner,
+            min,
+            max,
+            code: "test",
+            severity: Severity::Warning,
+            kind: FlowCollection::Mapping,
+        }
+    }
+
+    fn dummy_span() -> Span {
+        Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1))
+    }
+
     #[test]
     fn test_check_spaces_after_opening() {
-        use crate::{Location, SourceContext, Span};
-        let dummy_span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{ key: value}";
-        let source_ctx = SourceContext::new(source);
+        let ctx = SourceContext::new(source);
+        let ok = spacing(source, &ctx, 1..13, Limit::Max(0), Limit::Max(1));
+        assert!(ok.after_opening(dummy_span()).is_none());
 
-        // Should pass with 1 space
-        let result = check_spaces_after_opening(
-            source,
-            &source_ctx,
-            1,
-            13,
-            Limit::Max(0),
-            Limit::Max(1),
-            "test",
-            Severity::Warning,
-            "braces",
-            dummy_span,
-        );
-        assert!(result.is_none());
-
-        // Should fail with too many spaces
         let source2 = "{  key: value}";
-        let source_ctx2 = SourceContext::new(source2);
-        let result2 = check_spaces_after_opening(
-            source2,
-            &source_ctx2,
-            1,
-            14,
-            Limit::Max(0),
-            Limit::Max(1),
-            "test",
-            Severity::Warning,
-            "braces",
-            dummy_span,
+        let ctx2 = SourceContext::new(source2);
+        let bad = spacing(source2, &ctx2, 1..14, Limit::Max(0), Limit::Max(1));
+        let diag = bad.after_opening(dummy_span()).unwrap();
+        assert_eq!(
+            diag.message,
+            "too many spaces inside braces (expected at most 1, found 2)"
         );
-        assert!(result2.is_some());
     }
 
     #[test]
     fn test_check_spaces_before_closing() {
-        use crate::{Location, SourceContext, Span};
-        let dummy_span = Span::new(Location::new(1, 13, 12), Location::new(1, 14, 13));
         let source = "{key: value }";
-        let source_ctx = SourceContext::new(source);
+        let ctx = SourceContext::new(source);
+        let ok = spacing(source, &ctx, 1..12, Limit::Max(0), Limit::Max(1));
+        assert!(ok.before_closing(dummy_span()).is_none());
 
-        // Should pass with 1 space
-        let result = check_spaces_before_closing(
-            source,
-            &source_ctx,
-            1,
-            12,
-            Limit::Max(0),
-            Limit::Max(1),
-            "test",
-            Severity::Warning,
-            "braces",
-            dummy_span,
-        );
-        assert!(result.is_none());
-
-        // Should fail with too many spaces
         let source2 = "{key: value  }";
-        let source_ctx2 = SourceContext::new(source2);
-        let result2 = check_spaces_before_closing(
-            source2,
-            &source_ctx2,
-            1,
-            13,
-            Limit::Max(0),
-            Limit::Max(1),
-            "test",
-            Severity::Warning,
-            "braces",
-            dummy_span,
-        );
-        assert!(result2.is_some());
+        let ctx2 = SourceContext::new(source2);
+        let bad = spacing(source2, &ctx2, 1..13, Limit::Max(0), Limit::Max(1));
+        assert!(bad.before_closing(dummy_span()).is_some());
     }
 
     #[test]
     fn test_reversed_or_invalid_ranges_do_not_panic() {
-        use crate::{Location, SourceContext, Span};
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{ é }";
         let ctx = SourceContext::new(source);
 
         assert!(is_empty_collection(source, 5, 2));
         for (start, end) in [(5, 2), (3, 4), (4, 3)] {
-            assert!(
-                check_spaces_after_opening(
-                    source,
-                    &ctx,
-                    start,
-                    end,
-                    Limit::Max(0),
-                    Limit::Max(0),
-                    "t",
-                    Severity::Warning,
-                    "b",
-                    span
-                )
-                .is_none()
-            );
-            assert!(
-                check_spaces_before_closing(
-                    source,
-                    &ctx,
-                    start,
-                    end,
-                    Limit::Max(0),
-                    Limit::Max(0),
-                    "t",
-                    Severity::Warning,
-                    "b",
-                    span
-                )
-                .is_none()
-            );
+            let s = spacing(source, &ctx, start..end, Limit::Max(0), Limit::Max(0));
+            assert!(s.after_opening(dummy_span()).is_none());
+            assert!(s.before_closing(dummy_span()).is_none());
         }
     }
 
     #[test]
     fn test_empty_range_reports_min_spaces_after_opening() {
-        use crate::{Location, SourceContext, Span};
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
         let source = "{}";
         let ctx = SourceContext::new(source);
+        let s = spacing(source, &ctx, 1..1, Limit::Max(1), Limit::Disabled);
 
-        let diag = check_spaces_after_opening(
-            source,
-            &ctx,
-            1,
-            1,
-            Limit::Max(1),
-            Limit::Disabled,
-            "t",
-            Severity::Warning,
-            "braces",
-            span,
+        let diag = s.after_opening(dummy_span()).unwrap();
+        assert_eq!(
+            diag.message,
+            "too few spaces inside braces (expected at least 1, found 0)"
         );
-        assert!(diag.is_some());
-        assert!(
-            check_spaces_before_closing(
-                source,
-                &ctx,
-                1,
-                1,
-                Limit::Max(1),
-                Limit::Disabled,
-                "t",
-                Severity::Warning,
-                "braces",
-                span
-            )
-            .is_none()
-        );
+        assert!(s.before_closing(dummy_span()).is_none());
     }
 
     #[test]

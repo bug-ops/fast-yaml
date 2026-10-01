@@ -185,6 +185,11 @@ impl super::LintRule for QuotedStringsRule {
         let mut diagnostics = Vec::new();
         let mut roles = RoleTracker::default();
 
+        let check = ScalarCheck {
+            source,
+            source_ctx: context.source_context(),
+            config,
+        };
         let mut parser = SaphyrParser::new_from_str(source);
 
         while let Some(Ok((event, span))) = parser.next_event() {
@@ -201,17 +206,17 @@ impl super::LintRule for QuotedStringsRule {
                 }
                 Event::Scalar(ref value, style, ..) => {
                     let in_flow = roles.in_flow();
-                    let is_key = roles.node() == NodeRole::MappingKey;
+                    let role = roles.node();
                     self.check_scalar(
-                        source,
-                        context.source_context(),
-                        config,
+                        &check,
+                        &ScalarEvent {
+                            value,
+                            style,
+                            role,
+                            in_flow,
+                            span: context.source_context().span_of(span),
+                        },
                         &mut diagnostics,
-                        value,
-                        style,
-                        is_key,
-                        in_flow,
-                        context.source_context().span_of(span),
                     );
                 }
 
@@ -223,21 +228,43 @@ impl super::LintRule for QuotedStringsRule {
     }
 }
 
+/// Source and configuration shared by every scalar check of one lint run.
+struct ScalarCheck<'a> {
+    source: &'a str,
+    source_ctx: &'a SourceContext<'a>,
+    config: &'a LintConfig,
+}
+
+/// One scalar event with the context the rule needs to judge it.
+struct ScalarEvent<'a> {
+    value: &'a str,
+    style: ScalarStyle,
+    role: NodeRole,
+    in_flow: bool,
+    span: Span,
+}
+
 impl QuotedStringsRule {
     /// Checks a single scalar event and appends diagnostics as needed.
-    #[allow(clippy::too_many_arguments)]
     fn check_scalar(
         &self,
-        source: &str,
-        source_ctx: &SourceContext<'_>,
-        config: &LintConfig,
+        check: &ScalarCheck<'_>,
+        event: &ScalarEvent<'_>,
         diagnostics: &mut Vec<Diagnostic>,
-        value: &str,
-        style: ScalarStyle,
-        is_key: bool,
-        in_flow: bool,
-        scalar_span: Span,
     ) {
+        let ScalarCheck {
+            source,
+            source_ctx,
+            config,
+        } = *check;
+        let ScalarEvent {
+            value,
+            style,
+            role,
+            in_flow,
+            span: scalar_span,
+        } = *event;
+        let is_key = role == NodeRole::MappingKey;
         let options = &config.rules.quoted_strings.options;
         let severity = config
             .rules
