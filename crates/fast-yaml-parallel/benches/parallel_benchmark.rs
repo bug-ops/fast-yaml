@@ -113,7 +113,7 @@ fn bench_thread_pool_strategies(c: &mut Criterion) {
 
     group.bench_function("custom_pool_same_size", |b| {
         // Forces custom pool creation (but same thread count)
-        let config = Config::new().with_workers(Some(num_cpus::get()));
+        let config = Config::new().with_workers(Some(rayon::current_num_threads()));
         b.iter(|| parse_parallel_with_config(black_box(&yaml), black_box(&config)));
     });
 

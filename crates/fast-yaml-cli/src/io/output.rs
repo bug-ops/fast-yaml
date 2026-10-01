@@ -106,6 +106,7 @@ impl OutputWriter {
         }
     }
 
+    #[cfg(feature = "linter")]
     /// Write a finished report; a closed stdout or stderr ends the output silently.
     ///
     /// # Errors
@@ -144,6 +145,7 @@ impl OutputWriter {
         })
     }
 
+    #[cfg(feature = "linter")]
     /// Refuses to overwrite `input` with the output.
     ///
     /// # Errors
@@ -153,6 +155,7 @@ impl OutputWriter {
         self.ensure_not_inputs([input])
     }
 
+    #[cfg(feature = "linter")]
     /// Refuses to overwrite any of `inputs` with the output, resolving the destination once.
     ///
     /// # Errors
@@ -179,6 +182,7 @@ impl OutputWriter {
     }
 }
 
+#[cfg(feature = "linter")]
 /// What names a destination file, resolved once: its canonical path and, on Unix, its inode.
 struct FileIdentity {
     canonical: Option<PathBuf>,
@@ -186,6 +190,7 @@ struct FileIdentity {
     inode: Option<(u64, u64)>,
 }
 
+#[cfg(feature = "linter")]
 impl FileIdentity {
     fn of(path: &Path) -> Self {
         Self {
@@ -221,12 +226,13 @@ impl FileIdentity {
     }
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "linter"))]
 fn inode_of(path: &Path) -> Option<(u64, u64)> {
     use std::os::unix::fs::MetadataExt;
     std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
+#[cfg(feature = "linter")]
 /// A stderr writer that, like [`OutputWriter::sink`], goes quiet once the pipe is closed.
 pub const fn stderr_sink() -> OutputSink {
     OutputSink {
@@ -428,7 +434,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(all(unix, feature = "linter"))]
     fn test_ensure_not_input_refuses_a_hard_link_to_the_input() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");
@@ -440,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "linter")]
     fn test_ensure_not_input_refuses_the_same_file_through_another_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");

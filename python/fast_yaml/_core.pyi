@@ -365,58 +365,6 @@ def load_all(
     """
     ...
 
-def dump(
-    data: Any,
-    dumper: type | None = None,
-    *,
-    allow_unicode: bool = True,
-    sort_keys: bool = False,
-    indent: int = 2,
-    width: int = 80,
-    explicit_start: bool = False,
-) -> str:
-    """Serialize a Python object to YAML with an optional Dumper (PyYAML compatible).
-
-    Args:
-        data: A Python object to serialize
-        dumper: Optional dumper class (SafeDumper or Dumper)
-
-    Returns:
-        A YAML string representation of the object
-
-    Raises:
-        TypeError: If the object cannot be serialized
-        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
-            limit; ``sys.set_int_max_str_digits()`` raises it)
-    """
-    ...
-
-def dump_all(
-    documents: list[Any],
-    dumper: type | None = None,
-    *,
-    allow_unicode: bool = True,
-    sort_keys: bool = False,
-    indent: int = 2,
-    width: int = 80,
-    explicit_start: bool = False,
-) -> str:
-    """Serialize multiple Python objects to YAML (PyYAML compatible).
-
-    Args:
-        documents: A list of Python objects to serialize
-        dumper: Optional dumper class (SafeDumper or Dumper)
-
-    Returns:
-        A YAML string with multiple documents separated by '---'
-
-    Raises:
-        TypeError: If any object cannot be serialized
-        ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
-            limit; ``sys.set_int_max_str_digits()`` raises it)
-    """
-    ...
-
 # Lint submodule (PyO3 submodule, not a class - noqa: N801)
 class lint:  # noqa: N801
     """YAML linting submodule."""

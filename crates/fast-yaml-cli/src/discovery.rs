@@ -103,6 +103,7 @@ impl DiscoveryConfig {
 
     /// Set the config-file file selection (builder pattern).
     #[must_use]
+    #[cfg_attr(not(feature = "linter"), expect(clippy::missing_const_for_fn))]
     pub fn with_file_filter(mut self, filter: FileFilter) -> Self {
         self.file_filter = filter;
         self

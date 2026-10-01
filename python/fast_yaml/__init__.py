@@ -44,8 +44,6 @@ from ._core import (
     ScannerError,
     YAMLError,
 )
-from ._core import dump as _dump
-from ._core import dump_all as _dump_all
 from ._core import load as _load
 from ._core import load_all as _load_all
 from ._core import safe_dump as _safe_dump
@@ -580,18 +578,8 @@ def dump(
         >>> fast_yaml.dump({'name': 'test'}, Dumper=fast_yaml.SafeDumper)
         'name: test\\n'
     """
-    # Handle Dumper parameter - can be None, a class, or an instance
-    if Dumper is None:
-        dumper_instance = None
-    elif isinstance(Dumper, type):
-        dumper_instance = Dumper()
-    else:
-        dumper_instance = Dumper
-
-    # Call the underlying _dump function with explicit parameters
-    result: str = _dump(
+    result: str = _safe_dump(
         data,
-        dumper_instance,
         allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent if indent is not None else 2,
@@ -646,18 +634,8 @@ def dump_all(
         >>> fast_yaml.dump_all([{'a': 1}, {'b': 2}])
         '---\\na: 1\\n---\\nb: 2\\n'
     """
-    # Handle Dumper parameter - can be None, a class, or an instance
-    if Dumper is None:
-        dumper_instance = None
-    elif isinstance(Dumper, type):
-        dumper_instance = Dumper()
-    else:
-        dumper_instance = Dumper
-
-    # Call the underlying _dump_all function with explicit parameters
-    result: str = _dump_all(
+    result: str = _safe_dump_all(
         list(documents),
-        dumper_instance,
         allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent if indent is not None else 2,

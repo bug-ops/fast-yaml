@@ -1,5 +1,6 @@
 //! Regression test for #454: diagnostic context must not copy the whole source line per diagnostic.
 
+#![cfg(feature = "linter")]
 #![allow(clippy::missing_docs_in_private_items)]
 
 use assert_cmd::cargo_bin_cmd;

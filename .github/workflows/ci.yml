@@ -163,7 +163,7 @@ jobs:
       - name: Install SARIF tools
         uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2.87.22
         with:
-          tool: clippy-sarif,sarif-fmt
+          tool: clippy-sarif,sarif-fmt,cargo-hack
 
       # Single clippy run with SARIF output
       - name: Run Clippy with SARIF
@@ -174,6 +174,9 @@ jobs:
 
       - name: Verify Clippy passes
         run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy feature powerset
+        run: cargo hack clippy --feature-powerset --all-targets -p fast-yaml-cli -p fast-yaml-linter -p fast-yaml-core -p fast-yaml-parallel -- -D warnings
 
       - name: Upload SARIF to GitHub
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
