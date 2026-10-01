@@ -55,7 +55,30 @@ use error::{ExitCode, format_error};
 use invocation::Target;
 use io::{InputSource, OutputWriter};
 
+/// Stack size of the command thread; deep values recurse per level (larger frames with
+/// `preserve_order`) and would overflow the 1 MiB Windows main-thread stack.
+const COMMAND_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+/// Exit status of a panicked command thread, matching the Rust default panic exit.
+const PANIC_EXIT_STATUS: i32 = 101;
+
 fn main() {
+    let status = match std::thread::Builder::new()
+        .name("fy-main".into())
+        .stack_size(COMMAND_STACK_SIZE)
+        .spawn(run_reporting_errors)
+    {
+        Ok(handle) => handle.join().unwrap_or(PANIC_EXIT_STATUS),
+        Err(err) => {
+            error::stderr_line(format_args!("error: failed to start command thread: {err}"));
+            ExitCode::ParseError.as_i32()
+        }
+    };
+
+    std::process::exit(status);
+}
+
+fn run_reporting_errors() -> i32 {
     let exit_code = match run() {
         Ok(code) => code,
         Err(err) => {
@@ -69,8 +92,7 @@ fn main() {
             ExitCode::ParseError
         }
     };
-
-    std::process::exit(exit_code.as_i32());
+    exit_code.as_i32()
 }
 
 fn run() -> Result<ExitCode> {
