@@ -2,15 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
-use fast_yaml_core::Value;
+use fast_yaml_core::{MergeKeyValidator, NodeRole, Value, resolve_scalar};
 use saphyr_parser::{Event, Parser as SaphyrParser};
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 /// Rule to detect duplicate keys in YAML mappings.
 ///
@@ -20,6 +20,13 @@ use std::collections::HashMap;
 ///
 /// Duplicate keys cause silent data loss — most parsers keep the last value, silently
 /// discarding earlier ones. This rule detects them per-mapping-scope at all depths.
+///
+/// Keys are compared by their resolved value, the way the loaders see them, not by spelling:
+/// `99` and `+99`, `0x10` and `16`, `~` and `null` are the same key, while `"1"` and `1` are
+/// not. This is a deliberate divergence from yamllint, which compares the key text (it flags
+/// `"1"` next to `1`, and misses `+99` next to `99` or `true` next to `True`). A plain `<<`
+/// (or `!!merge`) merge key never equals a quoted `"<<"` key. Collection and alias keys are
+/// not compared.
 pub struct DuplicateKeysRule;
 
 /// Options of the duplicate-key rule (none).
@@ -64,49 +71,64 @@ struct DuplicateKey {
     span: Span,
 }
 
+/// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
+#[derive(Default)]
+struct MappingKeys {
+    values: HashMap<Value, usize>,
+    merge_first_line: Option<usize>,
+}
+
+impl MappingKeys {
+    /// Records `key` and returns the first line it was seen on if it repeats.
+    fn record(&mut self, role: NodeRole, key: Value, line: usize) -> Option<usize> {
+        if role == NodeRole::MergeKey {
+            let first = self.merge_first_line;
+            self.merge_first_line.get_or_insert(line);
+            return first;
+        }
+        match self.values.entry(key) {
+            Entry::Occupied(first) => Some(*first.get()),
+            Entry::Vacant(slot) => {
+                slot.insert(line);
+                None
+            }
+        }
+    }
+}
+
 /// Parses raw YAML events and collects duplicate key occurrences.
+///
+/// Stops at the first invalid merge value, which `lint` already rejects.
 fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<DuplicateKey> {
     let mut duplicates = Vec::new();
-    let mut roles = RoleTracker::default();
-    // Keys seen so far (key -> 1-indexed line of first occurrence), one map per open mapping.
-    let mut seen: Vec<HashMap<String, usize>> = Vec::new();
+    let mut validator = MergeKeyValidator::default();
+    let mut open: Vec<MappingKeys> = Vec::new();
 
     let mut parser = SaphyrParser::new_from_str(source);
 
     while let Some(Ok((event, span))) = parser.next_event() {
+        let Ok(role) = validator.observe(&event, span) else {
+            break;
+        };
         match event {
-            Event::MappingStart(..) => {
-                roles.start_mapping(source, source_context.byte_range_of(span));
-                seen.push(HashMap::new());
-            }
-            Event::SequenceStart(..) => {
-                roles.start_sequence(source, source_context.byte_range_of(span));
-            }
+            Event::MappingStart(..) => open.push(MappingKeys::default()),
             Event::MappingEnd => {
-                roles.leave();
-                seen.pop();
+                open.pop();
             }
-            Event::SequenceEnd => roles.leave(),
-            Event::Scalar(ref value, ..) => {
-                if roles.node() != NodeRole::MappingKey {
-                    continue;
-                }
-                let Some(keys) = seen.last_mut() else {
+            Event::Scalar(ref text, style, _, ref tag) => {
+                let (Some(role @ (NodeRole::Key | NodeRole::MergeKey)), Some(keys)) =
+                    (role, open.last_mut())
+                else {
                     continue;
                 };
-                let key = value.as_ref().to_owned();
-                if let Some(&first_line) = keys.get(&key) {
+                let key = Value::from(resolve_scalar(text, style, tag.as_deref()));
+                if let Some(first_line) = keys.record(role, key, span.start.line()) {
                     duplicates.push(DuplicateKey {
-                        key,
+                        key: text.as_ref().to_owned(),
                         first_line,
                         span: source_context.span_of(span),
                     });
-                } else {
-                    keys.insert(key, span.start.line());
                 }
-            }
-            Event::Alias(..) => {
-                roles.node();
             }
             _ => {}
         }
@@ -335,5 +357,87 @@ mod tests {
         let diags = run("? {x: 1}\n: v\nk: 1\nk: 2\n");
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].span.start.line, 4);
+    }
+
+    #[test]
+    fn test_spelling_variants_of_one_value_are_duplicates() {
+        for yaml in [
+            "99: a\n+99: b\n",
+            "0x10: a\n16: b\n",
+            "~: a\nnull: b\n",
+            "1.0: a\n1.00: b\n",
+        ] {
+            assert_eq!(run(yaml).len(), 1, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_keys_of_different_types_are_not_duplicates() {
+        for yaml in [
+            "\"1\": a\n1: b\n",
+            "!!str 1: a\n1: b\n",
+            "'null': a\nnull: b\n",
+        ] {
+            assert!(run(yaml).is_empty(), "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_message_keeps_the_source_spelling() {
+        let diags = run("99: a\n+99: b\n");
+        assert!(diags[0].message.contains("duplicate key '+99'"));
+        assert!(diags[0].message.contains("first defined at line 1"));
+    }
+
+    #[test]
+    fn test_loaders_agree_with_the_rule() {
+        for (yaml, duplicated) in [
+            ("99: a\n+99: b\n", true),
+            ("0x10: a\n16: b\n", true),
+            ("\"1\": a\n1: b\n", false),
+        ] {
+            let Some(Value::Mapping(map)) = Parser::parse_str(yaml).unwrap() else {
+                panic!("not a mapping: {yaml:?}");
+            };
+            assert_eq!(map.len() == 1, duplicated, "{yaml:?}");
+            assert_eq!(!run(yaml).is_empty(), duplicated, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_plain_merge_key_is_not_the_quoted_one() {
+        let yaml = "base: &a\n  x: 1\nchild:\n  <<: *a\n  \"<<\": 1\n";
+        assert!(run(yaml).is_empty());
+    }
+
+    #[test]
+    fn test_repeated_quoted_merge_key_is_a_duplicate() {
+        let diags = run("\"<<\": 1\n\"<<\": 2\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key '<<'"));
+    }
+
+    #[test]
+    fn test_repeated_merge_key_is_a_duplicate() {
+        let yaml = "a: &a\n  x: 1\nb: &b\n  y: 2\nc:\n  <<: *a\n  <<: *b\n";
+        assert_eq!(run(yaml).len(), 1);
+        assert_eq!(run("{<<: {a: 1}, <<: {b: 2}}").len(), 1);
+    }
+
+    #[test]
+    fn test_tagged_merge_key_counts_as_merge_key() {
+        let yaml = "a: &a\n  x: 1\nc:\n  <<: *a\n  !!merge \"<<\": *a\n";
+        assert_eq!(run(yaml).len(), 1);
+    }
+
+    #[test]
+    fn test_invalid_merge_value_stops_the_scan_without_panicking() {
+        let yaml = "a: 1\na: 2\nb: {<<: 1}\nc: 1\nc: 2\n";
+        let diags = DuplicateKeysRule.check(
+            &LintContext::new(yaml),
+            &Value::Null,
+            &LintConfig::default(),
+        );
+        assert_eq!(diags.len(), 1);
     }
 }

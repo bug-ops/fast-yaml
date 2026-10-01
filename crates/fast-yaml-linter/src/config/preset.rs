@@ -35,6 +35,10 @@ pub struct UnknownPresetError {
 ///
 /// Rules that only fast-yaml has (`lint-directive`) keep their fast-yaml defaults.
 ///
+/// `key-duplicates` deliberately differs from yamllint in what makes two keys equal: it
+/// compares resolved values, so `99` and `+99` collide and `"1"` and `1` do not, where yamllint
+/// compares the key text.
+///
 /// # Examples
 ///
 /// ```

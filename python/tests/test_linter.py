@@ -636,3 +636,18 @@ class TestCommentsInScalars:
     def test_real_comment_is_still_checked(self):
         diagnostics = lint.lint("a: 1 #bad\n")
         assert any(d.code == "comments" for d in diagnostics)
+
+
+class TestDuplicateKeysByValue:
+    """Keys are compared by resolved value, not spelling (#545)."""
+
+    @staticmethod
+    def _duplicates(source: str):
+        return [d for d in lint.lint(source) if d.code == "duplicate-key"]
+
+    def test_equal_values_with_different_spelling_are_duplicates(self):
+        assert len(self._duplicates("99: a\n+99: b\n")) == 1
+        assert len(self._duplicates("0x10: a\n16: b\n")) == 1
+
+    def test_different_types_are_not_duplicates(self):
+        assert self._duplicates('"1": a\n1: b\n') == []

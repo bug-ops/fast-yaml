@@ -329,3 +329,16 @@ describe('comments inside scalars', () => {
     expect(result.some((d) => d.code === 'comments')).toBe(true);
   });
 });
+
+describe('duplicate keys by value', () => {
+  const duplicates = (source: string) => lint(source).filter((d) => d.code === 'duplicate-key');
+
+  it('equal values with different spelling are duplicates', () => {
+    expect(duplicates('99: a\n+99: b\n')).toHaveLength(1);
+    expect(duplicates('0x10: a\n16: b\n')).toHaveLength(1);
+  });
+
+  it('different types are not duplicates', () => {
+    expect(duplicates('"1": a\n1: b\n')).toHaveLength(0);
+  });
+});
