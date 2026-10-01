@@ -198,7 +198,7 @@ pub(crate) fn chunk_documents<'a>(
 
         if let Some(boundary) = boundary {
             if has_doc {
-                admit(chunks.len(), boundary.origin.line)?;
+                admit(chunks.len(), start.origin.line)?;
                 chunks.push(Chunk {
                     input: part(start.byte..boundary.byte),
                     origin: start.origin,
@@ -499,5 +499,25 @@ mod tests {
         let two = normalized("a\n---\nb\n");
         assert_eq!(chunk_documents(&two, limit(2)).unwrap().len(), 2);
         assert!(chunk_documents(&two, limit(1)).is_err());
+    }
+
+    #[test]
+    fn test_document_limit_error_points_at_the_rejected_document() {
+        let rejected = |text: &str| {
+            let err = chunk_documents(&normalized(text), Some(MaxDocuments::new(2).unwrap()))
+                .unwrap_err();
+            match err {
+                Error::Parse {
+                    index,
+                    source: ParseError::LimitExceeded { line, document, .. },
+                } => (index, document, line),
+                other => panic!("unexpected {other:?}"),
+            }
+        };
+        // The third document starts at line 4 whether or not more documents follow
+        let tail = "a: 1\n---\nb: 2\n---\nc: 3\n";
+        let mid_stream = "a: 1\n---\nb: 2\n---\nc: 3\n---\nd: 4\n---\ne: 5\n";
+        assert_eq!(rejected(tail), (2, 2, 4));
+        assert_eq!(rejected(mid_stream), (2, 2, 4));
     }
 }
