@@ -18,6 +18,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
 use fast_yaml_core::{LimitKind, ParseError};
+use fast_yaml_linter::config::CanonicalPath;
 use fast_yaml_linter::formatter::{
     FileReport as ReportedFile, Findings, JsonDiagnostic, ReportFormat, input_error_diagnostic,
     syntax_diagnostic,
@@ -170,7 +171,11 @@ impl Linters {
         self.full.source(content)
     }
 
-    fn lint(&self, source: &LintSource<'_>) -> Result<Vec<Diagnostic>, LintError> {
+    fn lint(
+        &self,
+        source: &LintSource<'_>,
+        path: &CanonicalPath,
+    ) -> Result<Vec<Diagnostic>, LintError> {
         let first = self.lane.first_limit();
         self.lane.run(
             |limit| {
@@ -179,7 +184,7 @@ impl Linters {
                 } else {
                     &self.full
                 };
-                linter.lint_source(source)
+                linter.lint_source_file(source, path)
             },
             |error| {
                 matches!(
@@ -236,7 +241,9 @@ fn lint_content<F: OutputFormat>(
         )
     };
     let source = linter.source(&content).map_err(lint_failed)?;
-    let mut diagnostics = linter.lint(&source).map_err(lint_failed)?;
+    // discovery yields canonical paths
+    let canonical = CanonicalPath::assume_canonical(path.to_path_buf());
+    let mut diagnostics = linter.lint(&source, &canonical).map_err(lint_failed)?;
     if is_quiet {
         diagnostics.retain(|d| d.severity == Severity::Error);
     }

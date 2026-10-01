@@ -1,20 +1,18 @@
 //! Bounded reading of YAML files into memory.
 
-use std::fs::File;
-use std::io::Read;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use fast_yaml_core::decode_input_owned;
+use fast_yaml_core::fs::{ReadFileError, read_regular_file};
 use fast_yaml_core::limits::MaxInputBytes;
 
 use crate::error::{Error, Result};
 
 /// Reads a YAML file into an owned string, decoding it and enforcing `max`.
 ///
-/// The file is opened once and its size is checked against `max` before any content is read.
-/// The read is additionally capped at `max + 1` bytes, so a file that grows after the size
-/// check is still rejected. The bytes are a snapshot: nothing observes later changes to the
-/// file.
+/// Reading is done by [`read_regular_file`], which checks the size against `max` before any
+/// content is read and never blocks on a FIFO or device; see its threat model.
 ///
 /// # Errors
 ///
@@ -48,39 +46,18 @@ pub fn read_file(path: &Path, max: MaxInputBytes) -> Result<String> {
         path: path.to_path_buf(),
         source,
     };
-    // Checked before opening: opening a FIFO blocks and opening a directory fails on Windows
-    ensure_regular_file(&std::fs::metadata(path).map_err(io_error)?).map_err(io_error)?;
-    let file = File::open(path).map_err(io_error)?;
-    let metadata = file.metadata().map_err(io_error)?;
-    ensure_regular_file(&metadata).map_err(io_error)?;
-
-    let size = metadata.len();
-    max.check_file_len(size)?;
-
-    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or_default());
-    file.take(max.get() as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io_error)?;
-    max.check(bytes.len())?;
+    let bytes = read_regular_file(path, max).map_err(|error| match error {
+        ReadFileError::Io(source) => io_error(source),
+        ReadFileError::NotRegular(kind) => {
+            io_error(std::io::Error::new(ErrorKind::InvalidInput, kind.message()))
+        }
+        ReadFileError::TooLarge(too_large) => Error::InputTooLarge(too_large),
+        other => io_error(std::io::Error::other(other)),
+    })?;
     decode_input_owned(bytes).map_err(|source| Error::Decode {
         path: path.to_path_buf(),
         source,
     })
-}
-
-/// Rejects directories, FIFOs and devices, whose length says nothing about how much they yield.
-fn ensure_regular_file(metadata: &std::fs::Metadata) -> std::io::Result<()> {
-    let message = if metadata.is_dir() {
-        "path is a directory, not a file"
-    } else if !metadata.is_file() {
-        "path is not a regular file"
-    } else {
-        return Ok(());
-    };
-    Err(std::io::Error::new(
-        std::io::ErrorKind::InvalidInput,
-        message,
-    ))
 }
 
 #[cfg(test)]

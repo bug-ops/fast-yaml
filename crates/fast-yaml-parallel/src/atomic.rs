@@ -33,7 +33,10 @@ use std::path::{Path, PathBuf};
 ///   mid-write can leave it truncated or partial, and a read-only hard-linked file is refused.
 ///   A hard-linked target owned by someone else is replaced through the rename instead, which
 ///   breaks the link rather than writing into a file the caller may not control.
-/// - Extended attributes and ACLs of the old file are not preserved.
+/// - On Unix, the extended attributes of the old file are copied to the replacement after the
+///   owner is restored; file systems without xattr support and attributes the process may not
+///   set (for example `security.*` or `com.apple.*` ones) are skipped. POSIX ACLs and
+///   Windows ACLs are not preserved beyond what xattrs carry.
 ///
 /// # Errors
 ///
@@ -136,7 +139,11 @@ impl AtomicFile {
         if let Some(old) = &existing {
             // Before chmod: changing the owner can clear mode bits
             #[cfg(unix)]
-            let permissions = restore_owner(temp.as_file(), old)?;
+            let permissions = {
+                let permissions = restore_owner(temp.as_file(), old)?;
+                copy_xattrs(&target, temp.path())?;
+                permissions
+            };
             #[cfg(not(unix))]
             let permissions = old.permissions.clone();
             temp.as_file().set_permissions(permissions)?;
@@ -244,6 +251,36 @@ fn restore_owner(file: &fs::File, old: &Existing) -> io::Result<Permissions> {
         permissions.set_mode(permissions.mode() & 0o700);
     }
     Ok(permissions)
+}
+
+/// Copies every extended attribute of `from` to `to`, skipping what the file system or the
+/// process cannot carry over.
+#[cfg(unix)]
+fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
+    let skippable = |e: &io::Error| {
+        matches!(
+            e.kind(),
+            io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied | io::ErrorKind::NotFound
+        ) || e.raw_os_error() == Some(libc::ENOTSUP)
+    };
+    let names = match xattr::list(from) {
+        Ok(names) => names,
+        Err(e) if skippable(&e) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for name in names {
+        let value = match xattr::get(from, &name) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(e) if skippable(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        match xattr::set(to, &name, &value) {
+            Err(e) if !skippable(&e) => return Err(e),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 /// Creates the temporary file; new targets get umask-filtered `0o666` instead of `0o600`.
@@ -372,6 +409,46 @@ mod tests {
 
         fn mode(path: &Path) -> u32 {
             fs::metadata(path).unwrap().permissions().mode() & 0o777
+        }
+
+        const XATTR: &str = if cfg!(target_os = "linux") {
+            "user.fy.test"
+        } else {
+            "com.fy.test"
+        };
+
+        #[test]
+        fn xattrs_survive_replacement() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("x.yaml");
+            fs::write(&path, "a: 1\n").unwrap();
+            if xattr::set(&path, XATTR, b"kept").is_err() {
+                return;
+            }
+            let inode = fs::metadata(&path).unwrap().ino();
+            write_atomic(&path, b"a: 2\n").unwrap();
+            assert_ne!(fs::metadata(&path).unwrap().ino(), inode);
+            assert_eq!(
+                xattr::get(&path, XATTR).unwrap().as_deref(),
+                Some(&b"kept"[..])
+            );
+        }
+
+        #[test]
+        fn xattrs_survive_read_only_replacement() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ro.yaml");
+            fs::write(&path, "a: 1\n").unwrap();
+            if xattr::set(&path, XATTR, b"kept").is_err() {
+                return;
+            }
+            fs::set_permissions(&path, Permissions::from_mode(0o444)).unwrap();
+            write_atomic(&path, b"a: 2\n").unwrap();
+            assert_eq!(mode(&path), 0o444);
+            assert_eq!(
+                xattr::get(&path, XATTR).unwrap().as_deref(),
+                Some(&b"kept"[..])
+            );
         }
 
         #[test]

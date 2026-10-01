@@ -36,36 +36,36 @@ fn assert_single_span(yaml: &str, code: &str, line: usize, column: usize, snippe
 #[test]
 fn empty_value_cyrillic_key() {
     let yaml = include_str!("fixtures/edge_cases/empty_value_cyrillic_key.yaml");
-    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 2, 5, ":");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 2, 6, "");
 }
 
 #[test]
 fn empty_value_cjk_key() {
     let yaml = include_str!("fixtures/edge_cases/empty_value_cjk_key.yaml");
-    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 3, ":");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 4, "");
 }
 
 #[test]
 fn empty_value_emoji_key() {
     let yaml = include_str!("fixtures/edge_cases/empty_value_emoji_key.yaml");
-    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 2, ":");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 3, "");
 }
 
 #[test]
 fn empty_value_u2028_key() {
     let yaml = include_str!("fixtures/edge_cases/empty_value_u2028_key.yaml");
-    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 4, ":");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 5, "");
 }
 
 #[test]
 fn empty_value_flow_non_ascii_key() {
     let yaml = include_str!("fixtures/edge_cases/empty_value_flow_non_ascii.yaml");
-    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 13, ":");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 1, 14, "");
 }
 
 #[test]
 fn empty_value_minimal_crlf_does_not_panic() {
-    assert_single_span("é:\r\n", DiagnosticCode::EMPTY_VALUES, 1, 2, ":");
+    assert_single_span("é:\r\n", DiagnosticCode::EMPTY_VALUES, 1, 3, "");
 }
 
 #[test]
@@ -74,8 +74,8 @@ fn empty_value_crlf_second_line() {
         "name: x\r\nпорт:\r\nk: 1\r\n",
         DiagnosticCode::EMPTY_VALUES,
         2,
-        5,
-        ":",
+        6,
+        "",
     );
 }
 
@@ -85,9 +85,9 @@ fn empty_value_lone_cr_line_endings() {
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1, "{diags:?}");
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 5));
-    assert_eq!(span.start.offset, "name: x\rпорт".len());
-    assert_eq!(SourceContext::new(yaml).get_snippet(span), ":");
+    assert_eq!((span.start.line, span.start.column), (2, 6));
+    assert_eq!(span.start.offset, "name: x\rпорт:".len());
+    assert_eq!(SourceContext::new(yaml).get_snippet(span), "");
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn truthy_cyrillic_key_fixture() {
 #[test]
 fn empty_value_repeated_key_reports_the_empty_one() {
     let yaml = include_str!("fixtures/edge_cases/empty_value_repeated_key.yaml");
-    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 4, 4, ":");
+    assert_single_span(yaml, DiagnosticCode::EMPTY_VALUES, 4, 5, "");
 }
 
 #[test]
@@ -252,9 +252,9 @@ fn empty_value_flow_multiple_non_ascii_keys() {
     let yaml = "{ключ: , b: 1, é: }\n";
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
     let cols: Vec<_> = diags.iter().map(|d| d.span.start.column).collect();
-    assert_eq!(cols, [6, 17]);
+    assert_eq!(cols, [7, 18]);
     for d in &diags {
-        assert_eq!(SourceContext::new(yaml).get_snippet(d.span), ":");
+        assert_eq!(SourceContext::new(yaml).get_snippet(d.span), "");
     }
 
     let yaml = "{é: , ю: }\n";
@@ -262,14 +262,14 @@ fn empty_value_flow_multiple_non_ascii_keys() {
         .iter()
         .map(|d| d.span.start.column)
         .collect();
-    assert_eq!(cols, [3, 8]);
+    assert_eq!(cols, [4, 9]);
 }
 
 #[test]
 fn empty_value_combining_mark_and_zwj_keys() {
-    assert_single_span("e\u{301}:\nk: 1\n", DiagnosticCode::EMPTY_VALUES, 1, 3, ":");
+    assert_single_span("e\u{301}:\nk: 1\n", DiagnosticCode::EMPTY_VALUES, 1, 4, "");
     let zwj = "👨\u{200d}👩:\nk: 1\n";
-    assert_single_span(zwj, DiagnosticCode::EMPTY_VALUES, 1, 4, ":");
+    assert_single_span(zwj, DiagnosticCode::EMPTY_VALUES, 1, 5, "");
 }
 
 #[test]
@@ -280,18 +280,18 @@ fn empty_value_with_bom() {
     let span = diags[0].span;
     assert_eq!(
         (span.start.line, span.start.column, span.start.offset),
-        (1, 5, 8)
+        (1, 6, 9)
     );
-    assert_eq!(SourceContext::new("ключ:\nk: 1\n").get_snippet(span), ":");
+    assert_eq!(SourceContext::new("ключ:\nk: 1\n").get_snippet(span), "");
 
     let yaml = "\u{feff}a: 1\r\nключ:\r\nk: 1\r\n";
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1);
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 5));
+    assert_eq!((span.start.line, span.start.column), (2, 6));
     assert_eq!(
         SourceContext::new("a: 1\r\nключ:\r\nk: 1\r\n").get_snippet(span),
-        ":"
+        ""
     );
 }
 
@@ -651,7 +651,7 @@ fn empty_values_non_ascii_crlf_with_markers_required() {
     assert_eq!(diags.len(), 1);
     assert_eq!(
         (diags[0].span.start.line, diags[0].span.start.column),
-        (1, 5)
+        (1, 6)
     );
 }
 

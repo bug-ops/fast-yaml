@@ -174,11 +174,13 @@ fn every_options_type_round_trips_with_non_default_values() {
         indent_size: Some(IndentSize::try_from(8u64).unwrap()),
         spaces: Some(IndentSpaces::Fixed(IndentSize::try_from(8u64).unwrap())),
         indent_sequences: IndentSequences::Consistent,
+        check_multi_line_strings: true,
     });
     round_trip(&IndentationOptions {
         indent_size: None,
         spaces: Some(IndentSpaces::Consistent),
         indent_sequences: IndentSequences::NotIndented,
+        check_multi_line_strings: false,
     });
     round_trip(&NoOptions::default());
     round_trip(&DuplicateKeysOptions::default());
@@ -524,6 +526,27 @@ fn indentation_indent_size_is_applied() {
     assert_eq!(
         messages(RuleName::Indentation, "{indent-size: 4}", "a:\n    b: 1\n"),
         [] as [String; 0]
+    );
+}
+
+#[test]
+fn indentation_spaces_and_indent_sequences_are_applied() {
+    let none = [] as [String; 0];
+    assert_eq!(
+        messages(RuleName::Indentation, "{spaces: consistent}", "a:\n   b: 1\n   c: 2\n"),
+        none
+    );
+    assert_ne!(
+        messages(RuleName::Indentation, "{spaces: 2}", "a:\n   b: 1\n"),
+        none
+    );
+    assert_ne!(
+        messages(RuleName::Indentation, "{indent-sequences: false}", "a:\n  - 1\n"),
+        none
+    );
+    assert_eq!(
+        messages(RuleName::Indentation, "{indent-sequences: whatever}", "a:\n- 1\nb:\n  - 2\n"),
+        none
     );
 }
 

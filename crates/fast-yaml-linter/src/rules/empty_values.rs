@@ -86,7 +86,7 @@ impl super::LintRule for EmptyValuesRule {
         collect_empty_values(context, options)
             .into_iter()
             .map(|EmptyValue { key, colon }| {
-                let span = source_context.span_at(colon, 1);
+                let span = source_context.span_at(colon.add_bytes(1), 0);
                 DiagnosticBuilder::new(
                     self.code(),
                     severity,
@@ -142,7 +142,8 @@ fn collect_empty_values(
                     };
                     let implicit = scalar.range.start() == scalar.range.end()
                         && scalar.style == ScalarStyle::Plain
-                        && scalar.tag == TagKind::None;
+                        && scalar.tag == TagKind::None
+                        && !scalar.anchored;
                     if let (true, true, Some(key)) = (forbidden, implicit, pending.take())
                         && let Some(colon) = colon_after(source, key.end)
                     {
@@ -382,8 +383,8 @@ mod tests {
             "diagnostic must be on line 2"
         );
         assert_eq!(
-            diagnostics[0].span.start.column, 4,
-            "diagnostic must point to the colon"
+            diagnostics[0].span.start.column, 5,
+            "diagnostic must point right after the colon"
         );
     }
 
@@ -415,18 +416,18 @@ mod tests {
 
     #[test]
     fn test_empty_key_reported_at_its_own_line() {
-        assert_eq!(empty_positions("a:\n  b:\nc:\n  b: 1\n"), [(2, 4)]);
-        assert_eq!(empty_positions("a:\n  b: 1\nc:\n  b:\n"), [(4, 4)]);
+        assert_eq!(empty_positions("a:\n  b:\nc:\n  b: 1\n"), [(2, 5)]);
+        assert_eq!(empty_positions("a:\n  b: 1\nc:\n  b:\n"), [(4, 5)]);
         assert_eq!(
             empty_positions("a:\n  b: 1\nc:\n  b: 2\nd: {b: 1}\ne:\n  b:\n"),
-            [(7, 4)]
+            [(7, 5)]
         );
     }
 
     #[test]
     fn test_quoted_key_with_colon() {
-        assert_eq!(empty_positions("\"a:b\":\nc: 1\n"), [(1, 6)]);
-        assert_eq!(empty_positions("'a b':\n"), [(1, 6)]);
+        assert_eq!(empty_positions("\"a:b\":\nc: 1\n"), [(1, 7)]);
+        assert_eq!(empty_positions("'a b':\n"), [(1, 7)]);
     }
 
     #[test]
@@ -436,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_flow_empty_values() {
-        assert_eq!(empty_positions("m: {a: 1, b:, c: 2}\n"), [(1, 12)]);
+        assert_eq!(empty_positions("m: {a: 1, b:, c: 2}\n"), [(1, 13)]);
     }
 
     #[test]
@@ -447,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_flow_pair_in_flow_sequence_is_flow() {
-        assert_eq!(empty_positions("k: [a: ]\n"), [(1, 6)]);
+        assert_eq!(empty_positions("k: [a: ]\n"), [(1, 7)]);
         let only_block =
             config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
         let yaml = "k: [a: ]\nm:\n";
@@ -458,8 +459,8 @@ mod tests {
     }
 
     #[test]
-    fn test_anchored_empty_value_is_reported() {
-        assert_eq!(empty_positions("k: &x\n"), [(1, 2)]);
+    fn test_anchored_empty_value_is_not_reported() {
+        assert_eq!(empty_positions("k: &x\n"), []);
     }
 
     #[test]
@@ -469,14 +470,14 @@ mod tests {
 
     #[test]
     fn test_explicit_key_with_empty_value_is_reported_at_colon() {
-        assert_eq!(empty_positions("? a\n:\n"), [(2, 1)]);
-        assert_eq!(empty_positions("? a\n# note\n: \n? b\n"), [(3, 1)]);
-        assert_eq!(empty_positions("k:\n  ? a\n  :\n"), [(3, 3)]);
+        assert_eq!(empty_positions("? a\n:\n"), [(2, 2)]);
+        assert_eq!(empty_positions("? a\n# note\n: \n? b\n"), [(3, 2)]);
+        assert_eq!(empty_positions("k:\n  ? a\n  :\n"), [(3, 4)]);
     }
 
     #[test]
     fn test_alias_key_with_empty_value_is_reported() {
-        assert_eq!(empty_positions("x: &v k\n*v :\n"), [(2, 4)]);
+        assert_eq!(empty_positions("x: &v k\n*v :\n"), [(2, 5)]);
     }
 
     #[test]
@@ -488,7 +489,7 @@ mod tests {
     fn test_crlf_and_multibyte_keys() {
         assert_eq!(
             empty_positions("ключ:\r\nдва: 1\r\nтри:\r\n"),
-            [(1, 5), (3, 4)]
+            [(1, 6), (3, 5)]
         );
     }
 
@@ -530,10 +531,10 @@ mod tests {
 
     #[test]
     fn test_explicit_key_layout_variants() {
-        assert_eq!(empty_positions("? a\n: # c\n"), [(2, 1)]);
-        assert_eq!(empty_positions("? a\n\n\n\n:\n"), [(5, 1)]);
-        assert_eq!(empty_positions("? a\r\n:\r\n"), [(2, 1)]);
+        assert_eq!(empty_positions("? a\n: # c\n"), [(2, 2)]);
+        assert_eq!(empty_positions("? a\n\n\n\n:\n"), [(5, 2)]);
+        assert_eq!(empty_positions("? a\r\n:\r\n"), [(2, 2)]);
         assert_eq!(empty_positions("? a\n# : x\n: v\n"), []);
-        assert_eq!(empty_positions("? a\n# : x\n:\n"), [(3, 1)]);
+        assert_eq!(empty_positions("? a\n# : x\n:\n"), [(3, 2)]);
     }
 }

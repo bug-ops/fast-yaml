@@ -1,7 +1,10 @@
 //! Typed configuration for every built-in rule, generated from one rule table.
 
+use std::cell::OnceCell;
 use std::fmt;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -10,6 +13,8 @@ use serde_norway::{Mapping, Value};
 use crate::DiagnosticCode;
 use crate::ParseSeverityError;
 use crate::Severity;
+use crate::config::ignore_source::{ignore_file_lines, ignore_file_names, ignore_lines};
+use crate::config::{CanonicalPath, IgnorePatterns, InvalidPathPattern, Preset};
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::rules::NON_STANDARD_BOOLS;
 use crate::rules::{
@@ -111,19 +116,63 @@ pub struct RuleSettings<O> {
 /// # Examples
 ///
 /// ```
-/// use std::path::PathBuf;
-/// use fast_yaml_linter::config::RuleIgnore;
+/// use std::path::Path;
+/// use fast_yaml_linter::config::{CanonicalPath, RuleIgnore};
 ///
-/// let ignore = RuleIgnore { root: PathBuf::from("/repo"), patterns: vec!["vendor/".to_owned()] };
-/// assert_eq!(ignore.patterns.len(), 1);
+/// let ignore = RuleIgnore::new(Path::new("/repo"), vec!["vendor/".to_owned()]).unwrap();
+/// let inside = CanonicalPath::assume_canonical("/repo/vendor/a.yaml".into());
+/// let outside = CanonicalPath::assume_canonical("/repo/src/a.yaml".into());
+/// assert!(ignore.matches(&inside));
+/// assert!(!ignore.matches(&outside));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct RuleIgnore {
-    /// Directory the patterns are relative to.
-    pub root: std::path::PathBuf,
-    /// Pattern lines, as written in the config file.
-    pub patterns: Vec<String>,
+    root: PathBuf,
+    lines: Vec<String>,
+    matcher: Arc<IgnorePatterns>,
 }
+
+impl RuleIgnore {
+    /// Compiles `lines` as gitignore patterns anchored at `root`, which should be canonical.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`InvalidPathPattern`] when a line is not valid gitignore syntax or there are
+    /// too many lines.
+    pub fn new(root: &Path, lines: Vec<String>) -> Result<Self, InvalidPathPattern> {
+        Ok(Self {
+            root: root.to_owned(),
+            matcher: Arc::new(IgnorePatterns::new(root, &lines)?),
+            lines,
+        })
+    }
+
+    /// Returns the directory the patterns are relative to.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// Returns the pattern lines, as written in the config file.
+    #[must_use]
+    pub fn patterns(&self) -> &[String] {
+        &self.lines
+    }
+
+    /// Returns whether the rule skips `path`.
+    #[must_use]
+    pub fn matches(&self, path: &CanonicalPath) -> bool {
+        self.matcher.matches(path.as_path(), false)
+    }
+}
+
+impl PartialEq for RuleIgnore {
+    fn eq(&self, other: &Self) -> bool {
+        self.root == other.root && self.lines == other.lines
+    }
+}
+
+impl Eq for RuleIgnore {}
 
 /// Where a rule entry comes from, so `enable` can tell a configured entry from a default one.
 ///
@@ -164,27 +213,16 @@ impl<O> RuleSettings<O> {
 }
 
 /// Error returned when a string is not the code of a built-in rule.
-///
-/// When the name is one of the few yamllint rule names that fast-yaml spells differently,
-/// the message points at the fast-yaml name. This is a hint only; the yamllint name is not
-/// accepted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UnknownRuleError {
     /// The rejected rule name.
     pub name: String,
-    /// The fast-yaml rule that yamllint knows under the rejected name.
-    pub yamllint_alias: Option<RuleName>,
 }
 
 impl fmt::Display for UnknownRuleError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = echo(&self.name, KEY_LIMIT);
-        write!(f, "unknown rule '{name}'")?;
-        if let Some(alias) = self.yamllint_alias {
-            write!(f, "; yamllint's '{name}' is '{alias}' in fast-yaml")?;
-        }
-        Ok(())
+        write!(f, "unknown rule '{}'", echo(&self.name, KEY_LIMIT))
     }
 }
 
@@ -312,7 +350,7 @@ impl std::borrow::Borrow<str> for CustomRuleCode {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum EnableOnOverride {
+pub(super) enum EnableOnOverride {
     Yes,
     No,
 }
@@ -340,16 +378,67 @@ pub(super) const fn value_kind(value: &Value) -> &'static str {
     }
 }
 
+/// Where relative paths of per-rule `ignore` and `ignore-from-file` start.
+#[derive(Debug, Clone, Copy)]
+pub enum IgnoreBase<'a> {
+    /// There is no directory to anchor patterns at, so per-rule ignore is rejected.
+    Unavailable,
+    /// Patterns are anchored at, and ignore files are read relative to, this directory.
+    Dir(&'a Path),
+}
+
+/// What entries are applied against: yamllint's own settings, for `enable`, and the ignore base.
+struct ApplyCtx<'a> {
+    yamllint: OnceCell<RulesConfig>,
+    base: IgnoreBase<'a>,
+}
+
+impl<'a> ApplyCtx<'a> {
+    const fn new(base: IgnoreBase<'a>) -> Self {
+        Self {
+            yamllint: OnceCell::new(),
+            base,
+        }
+    }
+
+    fn yamllint(&self) -> &RulesConfig {
+        self.yamllint.get_or_init(|| Preset::Default.rules())
+    }
+}
+
+/// Settings that `enable` gives a rule yamllint has no entry for: its option defaults at `error`.
+fn yamllint_enabled<O: Clone>(rule: RuleName, defaults: &RuleSettings<O>) -> RuleSettings<O> {
+    RuleSettings {
+        enabled: true,
+        // lint-directive is fast-yaml's own rule and keeps its own severity
+        severity: if rule == RuleName::LintDirective {
+            defaults.severity
+        } else {
+            Some(Severity::Error)
+        },
+        options: defaults.options.clone(),
+        ignore: None,
+        origin: EntryOrigin::Configured,
+    }
+}
+
 fn apply_entry<O: RuleOptions>(
     rule: RuleName,
     settings: &mut RuleSettings<O>,
+    ctx: &ApplyCtx<'_>,
+    defaults: fn(&RulesConfig) -> &RuleSettings<O>,
     entry: Value,
 ) -> Result<(), RuleConfigError> {
     match entry {
-        Value::Null => Ok(()),
+        Value::Null => return Ok(()),
         Value::String(text) => {
             if text.eq_ignore_ascii_case("enable") {
-                settings.enabled = true;
+                // yamllint merges `enable` into an enabled base entry and replaces any other
+                if settings.enabled && settings.origin == EntryOrigin::Configured {
+                    settings.enabled = true;
+                } else {
+                    *settings = yamllint_enabled(rule, defaults(ctx.yamllint()));
+                }
             } else if text.eq_ignore_ascii_case("disable") {
                 settings.enabled = false;
             } else {
@@ -358,17 +447,20 @@ fn apply_entry<O: RuleOptions>(
                         .map_err(|cause| RuleConfigError::InvalidSeverity { rule, cause })?,
                 );
             }
-            Ok(())
         }
-        Value::Mapping(map) => apply_mapping(rule, settings, map),
-        other => Err(RuleConfigError::InvalidEntry {
-            rule,
-            message: format!(
-                "expected a severity, 'enable', 'disable' or a mapping, got {}",
-                value_kind(&other)
-            ),
-        }),
+        Value::Mapping(map) => apply_mapping(rule, settings, ctx.base, map)?,
+        other => {
+            return Err(RuleConfigError::InvalidEntry {
+                rule,
+                message: format!(
+                    "expected a severity, 'enable', 'disable' or a mapping, got {}",
+                    value_kind(&other)
+                ),
+            });
+        }
     }
+    settings.origin = EntryOrigin::Configured;
+    Ok(())
 }
 
 /// The two spellings of a rule's severity key.
@@ -391,11 +483,13 @@ impl SeveritySpelling {
 fn apply_mapping<O: RuleOptions>(
     rule: RuleName,
     settings: &mut RuleSettings<O>,
+    base: IgnoreBase<'_>,
     map: Mapping,
 ) -> Result<(), RuleConfigError> {
     let mut overlay = Mapping::new();
     let mut bool_word_keys = Vec::new();
     let mut severity_key: Option<SeveritySpelling> = None;
+    let mut ignore_source: Option<IgnoreSource> = None;
     for (key, value) in map {
         let Value::String(key) = key else {
             return Err(RuleConfigError::InvalidEntry {
@@ -450,11 +544,23 @@ fn apply_mapping<O: RuleOptions>(
                 }
             },
             "ignore" | "ignore-from-file" => {
-                return Err(RuleConfigError::UnsupportedOption {
-                    rule,
-                    key,
-                    hint: Some("use the top-level 'ignore' key to skip files for every rule"),
-                });
+                if matches!(base, IgnoreBase::Unavailable) {
+                    return Err(RuleConfigError::UnsupportedOption {
+                        rule,
+                        key,
+                        hint: Some(
+                            "per-rule ignore needs a config file; use the top-level 'ignore' key \
+                             to skip files for every rule",
+                        ),
+                    });
+                }
+                if let Some(first) = ignore_source.replace(IgnoreSource::parse(&key, value)) {
+                    return Err(RuleConfigError::InvalidOption {
+                        rule,
+                        key,
+                        message: format!("cannot be used together with '{}'", first.key()),
+                    });
+                }
             }
             _ => {
                 if O::YAMLLINT_UNSUPPORTED.contains(&key.as_str()) {
@@ -479,7 +585,51 @@ fn apply_mapping<O: RuleOptions>(
         }
     }
 
+    if let (Some(source), IgnoreBase::Dir(dir)) = (ignore_source, base) {
+        settings.ignore = Some(source.compile(rule, dir)?);
+    }
     overlay_options(rule, settings, overlay, &bool_word_keys)
+}
+
+/// The value of a per-rule `ignore` or `ignore-from-file` key.
+enum IgnoreSource {
+    Lines(Result<Vec<String>, String>),
+    Files(Result<Vec<String>, String>),
+}
+
+impl IgnoreSource {
+    fn parse(key: &str, value: Value) -> Self {
+        if key == "ignore" {
+            Self::Lines(ignore_lines(value))
+        } else {
+            Self::Files(ignore_file_names(value))
+        }
+    }
+
+    const fn key(&self) -> &'static str {
+        match self {
+            Self::Lines(_) => "ignore",
+            Self::Files(_) => "ignore-from-file",
+        }
+    }
+
+    fn compile(self, rule: RuleName, dir: &Path) -> Result<RuleIgnore, RuleConfigError> {
+        let key = self.key();
+        let invalid = |message: String| RuleConfigError::InvalidOption {
+            rule,
+            key: key.to_owned(),
+            message,
+        };
+        let lines = match self {
+            Self::Lines(lines) => lines.map_err(&invalid)?,
+            Self::Files(names) => ignore_file_lines(dir, &names.map_err(&invalid)?)
+                .map_err(|error| invalid(error.to_string()))?,
+        };
+        let root = dir
+            .canonicalize()
+            .map_err(|error| invalid(format!("cannot resolve '{}': {error}", dir.display())))?;
+        RuleIgnore::new(&root, lines).map_err(|error| invalid(error.to_string()))
+    }
 }
 
 fn overlay_options<O: RuleOptions>(
@@ -653,9 +803,35 @@ macro_rules! builtin_rules {
                 }
             }
 
-            fn apply_value(&mut self, name: RuleName, entry: Value) -> Result<(), RuleConfigError> {
+            fn apply_value(
+                &mut self,
+                name: RuleName,
+                ctx: &ApplyCtx<'_>,
+                entry: Value,
+            ) -> Result<(), RuleConfigError> {
                 match name {
-                    $(RuleName::$variant => apply_entry(name, &mut self.$field, entry),)+
+                    $(RuleName::$variant => {
+                        apply_entry(name, &mut self.$field, ctx, |rules| &rules.$field, entry)
+                    })+
+                }
+            }
+
+            /// Marks every entry that yamllint also has as configured, so that `enable` keeps it.
+            pub(super) fn mark_yamllint_entries(&mut self) {
+                $(
+                    if !RuleName::$variant.is_fy_only() {
+                        self.$field.origin = EntryOrigin::Configured;
+                    }
+                )+
+            }
+
+            /// Returns whether the rule's own `ignore` patterns skip `path`.
+            #[must_use]
+            pub fn is_ignored(&self, name: RuleName, path: &CanonicalPath) -> bool {
+                match name {
+                    $(RuleName::$variant => {
+                        self.$field.ignore.as_ref().is_some_and(|ignore| ignore.matches(path))
+                    })+
                 }
             }
         }
@@ -718,14 +894,16 @@ impl FromStr for RuleName {
         Self::ALL
             .into_iter()
             .find(|name| name.as_str() == s)
-            .ok_or_else(|| UnknownRuleError {
-                name: s.to_owned(),
-                yamllint_alias: Self::from_yamllint_name(s),
-            })
+            .ok_or_else(|| UnknownRuleError { name: s.to_owned() })
     }
 }
 
 impl RuleName {
+    /// Rules that yamllint does not have.
+    const fn is_fy_only(self) -> bool {
+        matches!(self, Self::SetValues | Self::LintDirective)
+    }
+
     /// Rules whose yamllint name differs from the fast-yaml name.
     const YAMLLINT_NAMES: [(&'static str, Self); 3] = [
         ("key-duplicates", Self::DuplicateKey),
@@ -733,10 +911,29 @@ impl RuleName {
         ("anchors", Self::InvalidAnchor),
     ];
 
-    fn from_yamllint_name(name: &str) -> Option<Self> {
+    /// Parses a rule name as written in a configuration: a fast-yaml code or the name yamllint
+    /// uses for the same rule (`key-duplicates`, `trailing-spaces`, `anchors`).
+    ///
+    /// Diagnostics always carry the fast-yaml code, which is what [`FromStr`] accepts.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`UnknownRuleError`] when the name is neither.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::RuleName;
+    ///
+    /// assert_eq!(RuleName::from_config_key("trailing-spaces"), Ok(RuleName::TrailingWhitespace));
+    /// assert_eq!(RuleName::from_config_key("braces"), Ok(RuleName::Braces));
+    /// assert!("trailing-spaces".parse::<RuleName>().is_err());
+    /// ```
+    pub fn from_config_key(name: &str) -> Result<Self, UnknownRuleError> {
         Self::YAMLLINT_NAMES
             .into_iter()
             .find_map(|(yamllint, rule)| (yamllint == name).then_some(rule))
+            .map_or_else(|| name.parse(), Ok)
     }
 }
 
@@ -769,22 +966,66 @@ impl RulesConfig {
         &mut self,
         deserializer: D,
     ) -> Result<(), RuleConfigError> {
-        self.apply_entries(buffer(deserializer)?, EnableOnOverride::No)
+        self.apply_entries(
+            buffer(deserializer)?,
+            EnableOnOverride::No,
+            IgnoreBase::Unavailable,
+        )
+    }
+
+    /// Like [`RulesConfig::apply`], but accepts per-rule `ignore` and `ignore-from-file`.
+    ///
+    /// Patterns are anchored at `base_dir`, and ignore files are read relative to it. A rule
+    /// skips the files its patterns match when the source is linted with
+    /// [`Linter::lint_file`](crate::Linter::lint_file).
+    ///
+    /// # Errors
+    ///
+    /// As [`RulesConfig::apply`], and when `base_dir` cannot be resolved, an ignore file cannot
+    /// be read, or a pattern is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use fast_yaml_linter::config::RulesConfig;
+    ///
+    /// let mut rules = RulesConfig::default();
+    /// let yaml = "line-length: {ignore: 'vendor/'}";
+    /// let base = std::env::temp_dir();
+    /// rules.apply_at(serde_norway::Deserializer::from_str(yaml), &base).unwrap();
+    /// assert!(rules.line_length.ignore.is_some());
+    /// ```
+    pub fn apply_at<'de, D: Deserializer<'de>>(
+        &mut self,
+        deserializer: D,
+        base_dir: &Path,
+    ) -> Result<(), RuleConfigError> {
+        self.apply_entries(
+            buffer(deserializer)?,
+            EnableOnOverride::No,
+            IgnoreBase::Dir(base_dir),
+        )
     }
 
     /// Applies the `rules:` section of a config that extends a preset.
     ///
-    /// Like [`RulesConfig::apply`], except that a severity name or a mapping without an
+    /// Like [`RulesConfig::apply_at`], except that a severity name or a mapping without an
     /// `enabled` key also turns a rule on, as in yamllint where such an entry replaces the
     /// preset's disabled rule.
-    pub(crate) fn apply_over_preset(&mut self, value: Value) -> Result<(), RuleConfigError> {
-        self.apply_entries(value, EnableOnOverride::Yes)
+    pub(super) fn apply_over_preset(
+        &mut self,
+        value: Value,
+        base: IgnoreBase<'_>,
+    ) -> Result<(), RuleConfigError> {
+        self.apply_entries(value, EnableOnOverride::Yes, base)
     }
 
-    fn apply_entries(
+    pub(super) fn apply_entries(
         &mut self,
         value: Value,
         enable_on_override: EnableOnOverride,
+        base: IgnoreBase<'_>,
     ) -> Result<(), RuleConfigError> {
         let entries = match value {
             Value::Null => return Ok(()),
@@ -799,16 +1040,28 @@ impl RulesConfig {
             }
         };
 
+        let ctx = ApplyCtx::new(base);
         let mut next = self.clone();
+        let mut seen = Vec::new();
         for (key, entry) in entries {
             let Value::String(name) = key else {
                 return Err(RuleConfigError::Malformed {
                     message: format!("rule names must be strings, got {}", value_kind(&key)),
                 });
             };
-            let rule = RuleName::from_str(&name).map_err(RuleConfigError::UnknownRule)?;
+            let rule = RuleName::from_config_key(&name).map_err(RuleConfigError::UnknownRule)?;
+            if seen.contains(&rule) {
+                return Err(RuleConfigError::InvalidEntry {
+                    rule,
+                    message: format!(
+                        "'{}' names the same rule as an earlier entry",
+                        echo(&name, KEY_LIMIT)
+                    ),
+                });
+            }
+            seen.push(rule);
             let enables = enable_on_override == EnableOnOverride::Yes && enables_rule(&entry);
-            next.apply_value(rule, entry)?;
+            next.apply_value(rule, &ctx, entry)?;
             if enables {
                 next.set_enabled(rule, true);
             }
@@ -845,7 +1098,7 @@ impl RulesConfig {
     ) -> Result<(), RuleConfigError> {
         let entry = buffer(deserializer)?;
         let mut next = self.clone();
-        next.apply_value(name, entry)?;
+        next.apply_value(name, &ApplyCtx::new(IgnoreBase::Unavailable), entry)?;
         *self = next;
         Ok(())
     }
@@ -1120,7 +1373,13 @@ mod tests {
                 Value::Bool(name.as_str().len() % 2 == 0),
             );
             if original.severity(name).is_none() {
-                original.apply_value(name, Value::Mapping(entry)).unwrap();
+                original
+                    .apply_value(
+                        name,
+                        &ApplyCtx::new(IgnoreBase::Unavailable),
+                        Value::Mapping(entry),
+                    )
+                    .unwrap();
             }
         }
         let mut restored = RulesConfig::default();
@@ -1231,21 +1490,11 @@ mod tests {
     }
 
     #[test]
-    fn renamed_yamllint_rules_get_a_hint() {
-        for (yamllint, ours) in [
-            ("key-duplicates", "duplicate-key"),
-            ("trailing-spaces", "trailing-whitespace"),
-            ("anchors", "invalid-anchor"),
-        ] {
-            let message = error_of(&format!("{yamllint}: enable"));
-            assert_eq!(
-                message,
-                format!(
-                    "unknown rule '{yamllint}'; yamllint's '{yamllint}' is '{ours}' in fast-yaml"
-                )
-            );
-        }
-        assert!(!error_of("no-such-rule: enable").contains("yamllint"));
+    fn unknown_rule_names_no_yamllint_alias() {
+        assert_eq!(
+            error_of("key-duplicate: enable"),
+            "unknown rule 'key-duplicate'"
+        );
     }
 
     #[test]
@@ -1263,7 +1512,9 @@ mod tests {
 
     fn over_preset(rules: &mut RulesConfig, yaml: &str) {
         let value = serde_norway::from_str(yaml).unwrap();
-        rules.apply_over_preset(value).unwrap();
+        rules
+            .apply_over_preset(value, IgnoreBase::Unavailable)
+            .unwrap();
     }
 
     #[test]
@@ -1302,7 +1553,11 @@ mod tests {
         rules.set_enabled(RuleName::Braces, false);
         let before = rules.clone();
         let value = serde_norway::from_str("braces: {max-spaces-inside: 1}\ncolons: loud").unwrap();
-        assert!(rules.apply_over_preset(value).is_err());
+        assert!(
+            rules
+                .apply_over_preset(value, IgnoreBase::Unavailable)
+                .is_err()
+        );
         assert_eq!(rules, before);
     }
 

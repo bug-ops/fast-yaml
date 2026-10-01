@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize};
 use fast_yaml_linter::formatter::{
     FileReport, Findings, ReportFormat, ReportPath, ReportSource, input_error_diagnostic,
     syntax_diagnostic,
 };
 use fast_yaml_linter::{
     ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, LintError, Linter, Severity,
-    TextFormatter, config::IndentSize,
+    TextFormatter,
 };
 use fast_yaml_parallel::ScanAheadPolicy;
 use std::io::{BufWriter, Write as _};
@@ -88,13 +89,21 @@ fn write_file_report(
 }
 
 /// Writes a one-diagnostic report; a failure only warns so the caller's own error survives.
+///
+/// Text output stays on stderr only, where the caller's error already goes.
 fn write_report_or_warn(
     output: &OutputWriter,
-    format: ReportFormat,
+    kind: LintOutput,
     path: Option<&Path>,
     diagnostic: Diagnostic,
 ) {
-    if let Err(err) = write_file_report(output, format, path, &[diagnostic]) {
+    let written = match kind {
+        LintOutput::Text => return,
+        LintOutput::Json => output
+            .write_report(&JsonFormatter::new(true).format(Findings::Given(&[(diagnostic, None)]))),
+        LintOutput::Report(format) => write_file_report(output, format, path, &[diagnostic]),
+    };
+    if let Err(err) = written {
         error::stderr_line(format_args!("error: {err:#}"));
     }
 }
@@ -107,11 +116,12 @@ pub fn report_unresolved(
     output: Option<PathBuf>,
     err: DiscoveryError,
 ) -> anyhow::Error {
-    if let (Some(format), Some(path)) = (format.report(), err.path())
+    if !matches!(format.output(), LintOutput::Text)
+        && let Some(path) = err.path()
         && let Ok(output) = OutputWriter::from_args(output, false, None)
     {
         let diagnostic = input_error_diagnostic(err.to_string());
-        write_report_or_warn(&output, format, Some(path), diagnostic);
+        write_report_or_warn(&output, format.output(), Some(path), diagnostic);
     }
     err.into()
 }
@@ -230,10 +240,13 @@ impl LintCommand {
     }
 
     fn report_lint_failure(&self, input: &InputSource, err: LintError) -> Result<ExitCode> {
-        if let Some(format) = self.format.report() {
-            let diagnostic = syntax_diagnostic(&err, input.as_str());
-            write_report_or_warn(&self.output, format, input.file_path(), diagnostic);
-        }
+        let diagnostic = syntax_diagnostic(&err, input.as_str());
+        write_report_or_warn(
+            &self.output,
+            self.format.output(),
+            input.file_path(),
+            diagnostic,
+        );
         Err(err).context("Failed to lint YAML")
     }
 
@@ -241,10 +254,8 @@ impl LintCommand {
     ///
     /// Returns `err` unchanged for the caller to propagate.
     pub fn report_unreadable(&self, path: Option<&Path>, err: anyhow::Error) -> anyhow::Error {
-        if let Some(format) = self.format.report() {
-            let diagnostic = input_error_diagnostic(format!("{err:#}"));
-            write_report_or_warn(&self.output, format, path, diagnostic);
-        }
+        let diagnostic = input_error_diagnostic(format!("{err:#}"));
+        write_report_or_warn(&self.output, self.format.output(), path, diagnostic);
         err
     }
 
@@ -273,7 +284,14 @@ impl LintCommand {
             Ok(source) => source,
             Err(err) => return self.report_lint_failure(input, err),
         };
-        let diagnostics = match linter.lint_source(&source) {
+        let canonical = input
+            .file_path()
+            .and_then(|path| CanonicalPath::new(path).ok());
+        let linted = match &canonical {
+            Some(path) => linter.lint_source_file(&source, path),
+            None => linter.lint_source(&source),
+        };
+        let diagnostics = match linted {
             Ok(diagnostics) => diagnostics,
             Err(err) => return self.report_lint_failure(input, err),
         };

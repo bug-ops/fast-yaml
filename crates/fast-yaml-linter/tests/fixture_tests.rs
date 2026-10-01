@@ -230,10 +230,10 @@ mod edge_case_fixtures {
             );
         }
         assert!(
-            !diagnostics.iter().any(
+            diagnostics.iter().any(
                 |d| d.span.start.line == 7 && d.code.as_str() == DiagnosticCode::QUOTED_STRINGS
             ),
-            "\\u escape must not be flagged: {diagnostics:?}"
+            "a quoted \\u escape of a plain-safe text is redundantly quoted: {diagnostics:?}"
         );
     }
 
@@ -496,27 +496,11 @@ mod config_fixtures {
     }
 
     #[test]
-    fn yamllint_rule_name_and_per_rule_ignore_are_explained() {
-        for (file, needles) in [
-            (
-                "yamllint-rule-name.yaml",
-                &["key-duplicates", "duplicate-key"][..],
-            ),
-            (
-                "per-rule-ignore.yaml",
-                &["braces", "ignore", "top-level"][..],
-            ),
-        ] {
-            let ConfigFileError::InvalidRules { source, .. } =
-                load(&format!("invalid/{file}")).unwrap_err()
-            else {
-                panic!("{file}: expected InvalidRules");
-            };
-            let message = source.to_string();
-            for needle in needles {
-                assert!(message.contains(needle), "{file}: {message}");
-            }
-        }
+    fn yamllint_rule_names_and_per_rule_ignore_load() {
+        let rules = load("valid/yamllint-rule-name.yaml").unwrap().rules;
+        assert!(rules.duplicate_key.enabled);
+        let rules = load("valid/per-rule-ignore.yaml").unwrap().rules;
+        assert!(rules.braces.ignore.is_some());
     }
 
     #[test]

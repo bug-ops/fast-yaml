@@ -57,10 +57,22 @@ fn strip_comments_keeps_hash_inside_directive_token() {
 }
 
 #[test]
-fn reserved_directive_is_dropped_but_yaml_kept() {
-    assert_stable(
-        "a\n...\n%FOO x\n%YAML 1.1\n---\nb\n",
-        "a\n...\n%YAML 1.1\n---\nb\n",
+fn reserved_directive_is_kept_with_yaml() {
+    let yaml = "a\n...\n%FOO x\n%YAML 1.1\n---\nb\n";
+    assert_stable(yaml, yaml);
+}
+
+#[test]
+fn reserved_directive_before_first_document_is_kept() {
+    let yaml = "%FOO bar baz\n%YAML 1.2\n---\na: 1\n";
+    assert_stable(yaml, yaml);
+}
+
+#[test]
+fn reserved_directive_comment_is_cut_with_strip_comments() {
+    assert_eq!(
+        format("%FOO x # c\n---\na: 1\n", &["--strip-comments"]),
+        "%FOO x\n---\na: 1\n"
     );
 }
 

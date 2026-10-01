@@ -4,12 +4,15 @@ use std::fmt;
 use std::str::FromStr;
 
 use crate::Severity;
-use crate::config::{EntryOrigin, Limit, MarkerPresence, NoOptions, RuleSettings, RulesConfig};
+use crate::config::{
+    EntryOrigin, IndentSequences, IndentSpaces, Limit, MarkerPresence, NoOptions, RuleSettings,
+    RulesConfig,
+};
 use crate::echo::{KEY_LIMIT, echo};
 use crate::rules::{
     DocumentEndOptions, DocumentStartOptions, DuplicateKeysOptions, QuoteRequirement,
 };
-use crate::rules::{FloatValuesOptions, QuotedStringsOptions, TruthyOptions};
+use crate::rules::{FloatValuesOptions, IndentationOptions, QuotedStringsOptions, TruthyOptions};
 
 /// Error returned when a string is not a preset name.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -27,8 +30,6 @@ pub struct UnknownPresetError {
 /// This is not full yamllint parity. Options that fast-yaml does not implement are rejected with
 /// an error:
 ///
-/// - `indentation.spaces` (the fast-yaml `indent-size` stays), `indent-sequences` and
-///   `check-multi-line-strings`, which need a token-based rewrite of the indentation rule;
 /// - `anchors.forbid-undeclared-aliases: false`, because an undeclared alias is always a parse
 ///   error (`true` is accepted);
 /// - per-rule `ignore` and `ignore-from-file`, and the top-level `locale`.
@@ -54,6 +55,9 @@ pub struct UnknownPresetError {
 /// - `comments-indentation` takes a multi-line quoted or plain scalar before a comment with the
 ///   indent of its last line, where yamllint uses the line where the scalar starts;
 /// - `empty-values` reports some columns one off from yamllint;
+/// - `indentation` rebuilds the `PyYAML` token stream from the parser's nodes and the source text,
+///   so a document the parser rejects but `PyYAML` scans (a quoted scalar or flow collection
+///   continued at a lower indent than its key) gets a syntax error and no indentation findings;
 /// - `fy format` does not visit `.yamllint` by default (`fy lint` does).
 ///
 /// Rules that only fast-yaml has (`lint-directive`) keep their fast-yaml defaults.
@@ -201,7 +205,13 @@ fn default_rules() -> RulesConfig {
             ..FloatValuesOptions::default()
         }),
         invalid_anchor: error(),
-        indentation: error(),
+        indentation: on(
+            Severity::Error,
+            IndentationOptions {
+                spaces: Some(IndentSpaces::Consistent),
+                ..IndentationOptions::default()
+            },
+        ),
         set_values: error(),
         lint_directive: RuleSettings::<NoOptions>::default(),
     }
@@ -218,6 +228,7 @@ fn relaxed_rules() -> RulesConfig {
     rules.empty_lines.severity = Some(Severity::Warning);
     rules.hyphens.severity = Some(Severity::Warning);
     rules.indentation.severity = Some(Severity::Warning);
+    rules.indentation.options.indent_sequences = IndentSequences::Consistent;
     rules.line_length.severity = Some(Severity::Warning);
     rules
         .line_length
@@ -308,6 +319,23 @@ mod tests {
             Limit::Max(2)
         );
         assert_eq!(rules.empty_lines.options.max, Limit::Max(2));
+    }
+
+    #[test]
+    fn indentation_follows_yamllint_presets() {
+        let default = Preset::Default.rules();
+        assert_eq!(
+            default.indentation.options.spaces,
+            Some(IndentSpaces::Consistent)
+        );
+        assert_eq!(
+            default.indentation.options.indent_sequences,
+            IndentSequences::Indented
+        );
+        assert_eq!(
+            Preset::Relaxed.rules().indentation.options.indent_sequences,
+            IndentSequences::Consistent
+        );
     }
 
     #[test]

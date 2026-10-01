@@ -114,7 +114,9 @@ impl ScanNeeds {
                 DiagnosticCode::TRUTHY
                 | DiagnosticCode::QUOTED_STRINGS
                 | DiagnosticCode::FLOAT_VALUES
-                | DiagnosticCode::EMPTY_VALUES => Self::NODES,
+                | DiagnosticCode::EMPTY_VALUES
+                | DiagnosticCode::KEY_ORDERING
+                | DiagnosticCode::INDENTATION => Self::NODES,
                 DiagnosticCode::SET_VALUES => Self::SETS,
                 DiagnosticCode::BRACES
                 | DiagnosticCode::BRACKETS

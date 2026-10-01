@@ -4,11 +4,13 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 
-use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
+use crate::config::{
+    CanonicalPath, CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig,
+};
 use crate::directives::Directives;
 use crate::rules::{LintRule, MarkerPresence};
 use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
-use crate::{Diagnostic, LintContext, LintSource, Severity, rules::RuleRegistry};
+use crate::{Diagnostic, DiagnosticCode, LintContext, LintSource, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{NormalizedInput, Parser, Value};
 
@@ -253,6 +255,19 @@ impl LintConfig {
         )
     }
 
+    /// Returns whether the rule runs for the file at `path`, or for a source without a path.
+    ///
+    /// A rule runs when it is enabled and its own `ignore` patterns do not match `path`. With
+    /// no path nothing is ignored, as in yamllint for standard input.
+    #[must_use]
+    pub fn is_rule_active(&self, code: &str, path: Option<&CanonicalPath>) -> bool {
+        self.is_rule_enabled(code)
+            && path.is_none_or(|path| {
+                RuleName::from_str(code).is_err_and(|_| true)
+                    || RuleName::from_str(code).is_ok_and(|name| !self.rules.is_ignored(name, path))
+            })
+    }
+
     fn custom_settings(&self, code: &str) -> Option<&RuleSettings<NoOptions>> {
         self.custom_rules.get(code)
     }
@@ -398,6 +413,42 @@ impl Linter {
         self.lint_source(&self.source(source)?)
     }
 
+    /// Lints the source of the file at `path`, skipping the rules whose own `ignore` patterns
+    /// match it.
+    ///
+    /// Otherwise like [`Linter::lint`]. Per-rule `ignore` and `ignore-from-file` come from the
+    /// config file, or from [`RulesConfig::apply_at`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Linter::lint`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::{CanonicalPath, RulesConfig};
+    /// use fast_yaml_linter::{LintConfig, Linter};
+    ///
+    /// let dir = std::env::temp_dir().canonicalize().unwrap();
+    /// let mut rules = RulesConfig::default();
+    /// let yaml = "trailing-whitespace: {ignore: 'generated/'}";
+    /// rules.apply_at(serde_norway::Deserializer::from_str(yaml), &dir).unwrap();
+    /// let linter = Linter::with_config(LintConfig { rules, ..LintConfig::default() });
+    ///
+    /// let source = "a: 1 \n";
+    /// let kept = CanonicalPath::assume_canonical(dir.join("src/a.yaml"));
+    /// let skipped = CanonicalPath::assume_canonical(dir.join("generated/a.yaml"));
+    /// assert!(linter.lint_file(source, &kept).unwrap().iter().any(|d| d.code.as_str() == "trailing-whitespace"));
+    /// assert!(linter.lint_file(source, &skipped).unwrap().iter().all(|d| d.code.as_str() != "trailing-whitespace"));
+    /// ```
+    pub fn lint_file(
+        &self,
+        source: &str,
+        path: &CanonicalPath,
+    ) -> Result<Vec<Diagnostic>, LintError> {
+        self.lint_source_file(&self.source(source)?, path)
+    }
+
     /// Validates `raw` for linting: checks [`LintConfig::max_input_bytes`] first, then strips
     /// prefix byte order marks.
     ///
@@ -438,6 +489,29 @@ impl Linter {
     /// let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
     /// ```
     pub fn lint_source(&self, input: &LintSource<'_>) -> Result<Vec<Diagnostic>, LintError> {
+        self.run(input, None)
+    }
+
+    /// Lints source text that is already validated, as the file at `path`.
+    ///
+    /// The [`LintSource`] counterpart of [`Linter::lint_file`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Linter::lint`].
+    pub fn lint_source_file(
+        &self,
+        input: &LintSource<'_>,
+        path: &CanonicalPath,
+    ) -> Result<Vec<Diagnostic>, LintError> {
+        self.run(input, Some(path))
+    }
+
+    fn run(
+        &self,
+        input: &LintSource<'_>,
+        path: Option<&CanonicalPath>,
+    ) -> Result<Vec<Diagnostic>, LintError> {
         self.config.max_input_bytes.check(input.original_len())?;
         let normalized = input.normalized();
         let source = normalized.as_str();
@@ -446,7 +520,7 @@ impl Linter {
             normalized,
             source,
             context.source_context(),
-            self.scan_needs(),
+            self.scan_needs(path),
         );
         let docs = Parser::parse_normalized_observed(
             normalized,
@@ -464,7 +538,7 @@ impl Linter {
                 .rules()
                 .iter()
                 .map(AsRef::as_ref)
-                .filter(|rule| self.config.is_rule_enabled(rule.code()))
+                .filter(|rule| self.config.is_rule_active(rule.code(), path))
                 .collect()
         };
 
@@ -498,17 +572,21 @@ impl Linter {
             }
         }
 
-        Ok(finish(diagnostics, directives))
+        let mut diagnostics = finish(diagnostics, directives);
+        if path.is_some_and(|path| self.config.rules.is_ignored(RuleName::LintDirective, path)) {
+            diagnostics.retain(|d| d.code.as_str() != DiagnosticCode::LINT_DIRECTIVE);
+        }
+        Ok(diagnostics)
     }
 
-    /// The scan products the enabled rules read.
-    fn scan_needs(&self) -> ScanNeeds {
+    /// The scan products the active rules read.
+    fn scan_needs(&self, path: Option<&CanonicalPath>) -> ScanNeeds {
         ScanNeeds::of_rules(
             self.registry
                 .rules()
                 .iter()
                 .map(|rule| rule.code())
-                .filter(|code| self.config.is_rule_enabled(code)),
+                .filter(|code| self.config.is_rule_active(code, path)),
         )
     }
 
@@ -552,7 +630,7 @@ impl Linter {
             source,
             context.source_context(),
             self.config.parse_limits,
-            self.scan_needs(),
+            self.scan_needs(None),
         );
         if let Some(error) = failure {
             return Err(error.into());

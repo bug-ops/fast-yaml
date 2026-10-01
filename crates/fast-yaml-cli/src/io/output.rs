@@ -78,26 +78,23 @@ impl OutputWriter {
 
     /// Write output to destination.
     ///
+    /// A closed stdout or stderr (`EPIPE`) ends the output silently so the caller keeps its
+    /// own exit status.
+    ///
     /// # Errors
     ///
-    /// Returns an error on I/O failure for any destination variant (file write, stdout, or stderr).
+    /// Returns an error on I/O failure for any destination variant, except a closed pipe.
     pub fn write(&self, content: &str) -> Result<()> {
         match &self.destination {
-            OutputDestination::File(path) => {
-                Self::write_file(path, content)?;
-            }
-            OutputDestination::Stdout => {
-                io::stdout()
-                    .write_all(content.as_bytes())
-                    .context("Failed to write to stdout")?;
-            }
-            OutputDestination::Stderr => {
-                io::stderr()
-                    .write_all(content.as_bytes())
-                    .context("Failed to write to stderr")?;
+            OutputDestination::File(path) => Self::write_file(path, content),
+            OutputDestination::Stdout | OutputDestination::Stderr => {
+                let mut sink = self.sink()?;
+                sink.write_all(content.as_bytes())
+                    .and_then(|()| sink.flush())
+                    .context("Failed to write output")?;
+                sink.finish()
             }
         }
-        Ok(())
     }
 
     /// Write a finished report; a closed stdout or stderr ends the output silently.
@@ -144,9 +141,20 @@ impl OutputWriter {
     ///
     /// Returns an error if the destination file is the same file as `input`.
     pub fn ensure_not_input(&self, input: &Path) -> Result<()> {
-        if let OutputDestination::File(destination) = &self.destination
-            && same_file(destination, input)
-        {
+        self.ensure_not_inputs([input])
+    }
+
+    /// Refuses to overwrite any of `inputs` with the output, resolving the destination once.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the destination file is the same file as one of `inputs`.
+    pub fn ensure_not_inputs<'a>(&self, inputs: impl IntoIterator<Item = &'a Path>) -> Result<()> {
+        let OutputDestination::File(destination) = &self.destination else {
+            return Ok(());
+        };
+        let identity = FileIdentity::of(destination);
+        if inputs.into_iter().any(|input| identity.is(input)) {
             anyhow::bail!(
                 "--output '{}' is also an input file; refusing to overwrite it",
                 destination.display()
@@ -162,20 +170,52 @@ impl OutputWriter {
     }
 }
 
-/// Whether both paths name the same file: the same canonical path, or on Unix the same inode
-/// (a hard link).
-fn same_file(a: &Path, b: &Path) -> bool {
-    if let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize())
-        && a == b
-    {
-        return true;
-    }
+/// What names a destination file, resolved once: its canonical path and, on Unix, its inode.
+struct FileIdentity {
+    canonical: Option<PathBuf>,
     #[cfg(unix)]
-    if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
-        use std::os::unix::fs::MetadataExt;
-        return (a.dev(), a.ino()) == (b.dev(), b.ino());
+    inode: Option<(u64, u64)>,
+}
+
+impl FileIdentity {
+    fn of(path: &Path) -> Self {
+        Self {
+            canonical: path.canonicalize().ok(),
+            #[cfg(unix)]
+            inode: inode_of(path),
+        }
     }
-    false
+
+    #[cfg(unix)]
+    const fn resolves_to(_: &Path, _: &Path) -> bool {
+        false
+    }
+
+    #[cfg(not(unix))]
+    fn resolves_to(other: &Path, canonical: &Path) -> bool {
+        other.canonicalize().is_ok_and(|o| o == canonical)
+    }
+
+    /// Whether `other` is the same file: the same canonical path, or on Unix the same inode
+    /// (a hard link).
+    fn is(&self, other: &Path) -> bool {
+        if let Some(canonical) = &self.canonical
+            && (canonical == other || Self::resolves_to(other, canonical))
+        {
+            return true;
+        }
+        #[cfg(unix)]
+        if let (Some(a), Some(b)) = (self.inode, inode_of(other)) {
+            return a == b;
+        }
+        false
+    }
+}
+
+#[cfg(unix)]
+fn inode_of(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
 /// A stderr writer that, like [`OutputWriter::sink`], goes quiet once the pipe is closed.
