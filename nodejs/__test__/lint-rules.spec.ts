@@ -239,9 +239,9 @@ describe('yamllint forms and shorthands', () => {
     expect(() =>
       lint('a: 1\n', bad({ indentation: { 'check-multi-line-strings': true } }))
     ).not.toThrow();
-    expect(() =>
-      lint('a: 1\n', bad({ indentation: { 'check-multi-line-string': true } }))
-    ).toThrow(/check-multi-line-string/);
+    expect(() => lint('a: 1\n', bad({ indentation: { 'check-multi-line-string': true } }))).toThrow(
+      /check-multi-line-string/
+    );
   });
 });
 

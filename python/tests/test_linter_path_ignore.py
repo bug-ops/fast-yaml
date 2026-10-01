@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from fast_yaml.lint import Linter, LintConfig, lint
+from fast_yaml.lint import LintConfig, Linter, lint
 
 SOURCE = "a: 1 \nb: 2\nb: 3\n"
 

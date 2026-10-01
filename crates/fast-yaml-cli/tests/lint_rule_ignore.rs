@@ -30,11 +30,15 @@ fn fy(dir: &Path, args: &[&str]) -> Command {
     cmd
 }
 
+fn normalize(text: &str) -> String {
+    text.replace('\\', "/").replace("//?/", "")
+}
+
 fn lines(stdout: &[u8], root: &Path) -> Vec<String> {
-    let root = format!("{}/", root.canonicalize().unwrap().display());
-    String::from_utf8_lossy(stdout)
+    let root = normalize(&format!("{}/", root.canonicalize().unwrap().display()));
+    normalize(&String::from_utf8_lossy(stdout))
         .lines()
-        .map(|line| line.replace(&root, ""))
+        .map(|line| line.replace(&root, "").trim_start_matches("./").to_owned())
         .collect()
 }
 

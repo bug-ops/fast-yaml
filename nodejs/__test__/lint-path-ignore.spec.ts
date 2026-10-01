@@ -30,7 +30,7 @@ describe('per-rule ignore and path', () => {
 
   it('skips the rule for a matching path only', () => {
     expect(codes(lint(SOURCE, config, join(dir, 'src', 'a.yaml')))).toContain(
-      'trailing-whitespace',
+      'trailing-whitespace'
     );
     const skipped = codes(lint(SOURCE, config, join(dir, 'generated', 'a.yaml')));
     expect(skipped).not.toContain('trailing-whitespace');
@@ -58,7 +58,7 @@ describe('per-rule ignore and path', () => {
 
   it('rejects ignore combined with ignore-from-file', () => {
     expect(() =>
-      lint(SOURCE, { rules: { braces: { ignore: ['x/'], 'ignore-from-file': 'ignores' } } }),
+      lint(SOURCE, { rules: { braces: { ignore: ['x/'], 'ignore-from-file': 'ignores' } } })
     ).toThrow(/cannot be used together/);
   });
 
@@ -81,7 +81,7 @@ describe('yamllint rule names and enable', () => {
 
   it('enable resets to the yamllint defaults', () => {
     expect(codes(lint('a: 1\n', { rules: { 'document-start': 'enable' } }))).toContain(
-      'document-start',
+      'document-start'
     );
   });
 });
