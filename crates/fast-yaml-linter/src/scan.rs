@@ -11,8 +11,8 @@ use fast_yaml_core::{
     SetValues, Value, resolve_scalar,
 };
 
-use crate::nodes::{NodeIndex, ScalarNode, TagKind};
-use crate::rules::node_roles::RoleTracker;
+use crate::nodes::{CollectionKind, NodeIndex, ScalarNode, TagKind};
+use crate::rules::node_roles::{CollectionStyle, RoleTracker};
 use crate::set_members::{SetMember, SetMembers, may_contain_set};
 use crate::source::offset::{ByteOffset, ByteRange};
 use crate::tokenizer::ScalarRanges;
@@ -365,18 +365,30 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
         }
     }
 
+    fn push_open(&mut self, kind: CollectionKind, range: ByteRange) {
+        let style = if self.roles.in_flow() {
+            CollectionStyle::Flow
+        } else {
+            CollectionStyle::Block
+        };
+        self.nodes.push_open(kind, style, range.start());
+    }
+
     /// Adds the node of `item`, which covers `range`, to the index.
     fn observe_nodes(&mut self, item: &EventItem<'_>, range: ByteRange) {
         match &item.event {
             Event::MappingStart { .. } => {
                 self.roles.start_mapping(self.source, range);
-                self.nodes.push_open();
+                self.push_open(CollectionKind::Mapping, range);
             }
             Event::SequenceStart { .. } => {
                 self.roles.start_sequence(self.source, range);
-                self.nodes.push_open();
+                self.push_open(CollectionKind::Sequence, range);
             }
-            Event::MappingEnd | Event::SequenceEnd => self.roles.leave(),
+            Event::MappingEnd | Event::SequenceEnd => {
+                self.roles.leave();
+                self.nodes.push_close(range.start());
+            }
             Event::Alias(_) => {
                 let role = self.roles.node();
                 self.nodes.push_alias(range, role);
@@ -769,5 +781,60 @@ mod tests {
         assert!(!scan.complete);
         assert!(scan.nodes.nodes().count() >= 3);
         assert_eq!(scan.comments.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod collection_position_tests {
+    use crate::LintContext;
+    use crate::nodes::Node;
+
+    fn brackets(source: &str) -> Vec<String> {
+        LintContext::new(source)
+            .nodes()
+            .nodes()
+            .filter_map(|node| match node {
+                Node::Open { kind, style, at } => {
+                    Some(format!("open {kind:?} {style:?} {}", at.get()))
+                }
+                Node::Close { at } => Some(format!("close {}", at.get())),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn flow_collections_carry_their_bracket_offsets() {
+        assert_eq!(
+            brackets("[1, [2]]\n"),
+            [
+                "open Sequence Flow 0",
+                "open Sequence Flow 4",
+                "close 6",
+                "close 7"
+            ]
+        );
+        assert_eq!(
+            brackets("{a: [1]}\n"),
+            [
+                "open Mapping Flow 0",
+                "open Sequence Flow 4",
+                "close 6",
+                "close 7"
+            ]
+        );
+    }
+
+    #[test]
+    fn block_collections_start_at_their_first_node_and_end_with_the_text() {
+        assert_eq!(
+            brackets("a:\n  - x\n"),
+            [
+                "open Mapping Block 0",
+                "open Sequence Block 5",
+                "close 9",
+                "close 9"
+            ]
+        );
     }
 }

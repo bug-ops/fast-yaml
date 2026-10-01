@@ -154,7 +154,8 @@ fn collect_empty_values(
                 }
                 NodeRole::SequenceItem | NodeRole::Root => {}
             },
-            Node::Open => pending = None,
+            Node::Open { .. } => pending = None,
+            Node::Close { .. } => {}
             Node::Alias { range, role } => {
                 pending = (*role == NodeRole::MappingKey)
                     .then(|| {
