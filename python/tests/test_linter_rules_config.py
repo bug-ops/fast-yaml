@@ -356,7 +356,7 @@ class TestYamllintParityOptions:
         skip = lint.LintConfig(rules={"quoted-strings": {"required": True}})
         assert "quoted-strings" not in codes(lint.lint('"a": "b"\n', skip))
         keys = lint.LintConfig(rules={"quoted-strings": {"required": True, "check-keys": True}})
-        assert "quoted-strings" in codes(lint.lint("a: \"b\"\n", keys))
+        assert "quoted-strings" in codes(lint.lint('a: "b"\n', keys))
         quotes = lint.LintConfig(
             rules={
                 "quoted-strings": {
@@ -372,9 +372,7 @@ class TestYamllintParityOptions:
     def test_forbid_duplicated_merge_keys(self):
         source = "a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n"
         assert "duplicate-key" in codes(lint.lint(source))
-        allowed = lint.LintConfig(
-            rules={"duplicate-key": {"forbid-duplicated-merge-keys": False}}
-        )
+        allowed = lint.LintConfig(rules={"duplicate-key": {"forbid-duplicated-merge-keys": False}})
         assert "duplicate-key" not in codes(lint.lint(source, allowed))
 
     def test_line_length_non_breakable_options(self):
@@ -397,9 +395,15 @@ class TestYamllintParityOptions:
         required = lint.LintConfig(rules={"document-start": {"present": True}})
         diagnostics = lint.lint("---\na: 1\n...\n---\nb: 2\n", required)
         assert "document-start" not in codes(diagnostics)
-        assert [d.span.start.line for d in lint.lint("a: 1\n---\nb: 2\n", required)
-                if d.code == "document-start"] == [1]
+        assert [
+            d.span.start.line
+            for d in lint.lint("a: 1\n---\nb: 2\n", required)
+            if d.code == "document-start"
+        ] == [1]
         end = lint.LintConfig(rules={"document-end": {"present": True}})
-        lines = [d.span.start.line for d in lint.lint("a: 1\n---\nb: 2\n...\n", end)
-                 if d.code == "document-end"]
+        lines = [
+            d.span.start.line
+            for d in lint.lint("a: 1\n---\nb: 2\n...\n", end)
+            if d.code == "document-end"
+        ]
         assert lines == [2]

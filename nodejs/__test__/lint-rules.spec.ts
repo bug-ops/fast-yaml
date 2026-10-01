@@ -369,11 +369,11 @@ describe('yamllint parity options (#536)', () => {
   it('level is an alias of severity', () => {
     const result = lint(
       `key: ${'x'.repeat(20)}\n`,
-      bad({ 'line-length': { max: 10, level: 'warning' } }),
+      bad({ 'line-length': { max: 10, level: 'warning' } })
     );
     expect(result.find((d) => d.code === 'line-length')?.severity).toBe('Warning');
     expect(() =>
-      lint('a: 1\n', bad({ 'line-length': { level: 'warning', severity: 'error' } })),
+      lint('a: 1\n', bad({ 'line-length': { level: 'warning', severity: 'error' } }))
     ).toThrow(/aliases/);
   });
 
@@ -385,10 +385,10 @@ describe('yamllint parity options (#536)', () => {
 
   it('quoted-strings check-keys and allow-quoted-quotes', () => {
     expect(codesOf('"a": "b"\n', { 'quoted-strings': { required: true } })).not.toContain(
-      'quoted-strings',
+      'quoted-strings'
     );
     expect(
-      codesOf('a: "b"\n', { 'quoted-strings': { required: true, 'check-keys': true } }),
+      codesOf('a: "b"\n', { 'quoted-strings': { required: true, 'check-keys': true } })
     ).toContain('quoted-strings');
     const quotes = {
       'quoted-strings': { 'quote-type': 'single', required: false, 'allow-quoted-quotes': true },
@@ -401,7 +401,7 @@ describe('yamllint parity options (#536)', () => {
     const source = 'a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n';
     expect(codesOf(source, {})).toContain('duplicate-key');
     expect(
-      codesOf(source, { 'duplicate-key': { 'forbid-duplicated-merge-keys': false } }),
+      codesOf(source, { 'duplicate-key': { 'forbid-duplicated-merge-keys': false } })
     ).not.toContain('duplicate-key');
   });
 
@@ -409,12 +409,12 @@ describe('yamllint parity options (#536)', () => {
     const url = 'http://localhost/very/very/very/very/very/very/very/very/long/url';
     expect(codesOf(`- ${url}\n`, { 'line-length': { max: 20 } })).not.toContain('line-length');
     expect(
-      codesOf(`- ${url}\n`, { 'line-length': { max: 20, 'allow-non-breakable-words': false } }),
+      codesOf(`- ${url}\n`, { 'line-length': { max: 20, 'allow-non-breakable-words': false } })
     ).toContain('line-length');
     expect(
       codesOf(`key: ${url}\n`, {
         'line-length': { max: 20, 'allow-non-breakable-inline-mappings': true },
-      }),
+      })
     ).not.toContain('line-length');
   });
 
