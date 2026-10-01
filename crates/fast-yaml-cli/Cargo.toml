@@ -27,7 +27,7 @@ ignore = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true, features = ["arbitrary_precision"] }
+serde_json = { workspace = true, features = ["arbitrary_precision", "preserve_order"] }
 thiserror = { workspace = true }
 
 [dev-dependencies]
