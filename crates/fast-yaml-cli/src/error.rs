@@ -1,6 +1,14 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Writes one line to stderr and ignores a failure such as a closed pipe.
+///
+/// `eprintln!` panics when stderr is closed, which would replace the exit code of the run.
+pub fn stderr_line(args: std::fmt::Arguments<'_>) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr().lock(), "{args}");
+}
+
 /// Exit codes for CLI application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {

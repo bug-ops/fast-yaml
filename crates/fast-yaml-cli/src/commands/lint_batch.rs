@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::Write;
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
@@ -38,7 +38,7 @@ use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
 use crate::io::OutputWriter;
-use crate::io::output::OutputSink;
+use crate::io::output::{OutputSink, stderr_sink};
 
 /// Files that may be started but not yet reported, per worker. Finished files hold only their
 /// diagnostics, so the window can be wide enough to keep workers busy behind one slow file.
@@ -323,7 +323,7 @@ fn run_batch<F: OutputFormat>(
     let lint_nth = |index: usize| lint_one(&file_paths[index], linter, format, is_quiet);
 
     run_ordered(pool, file_paths.len(), window, &lint_nth, |reports| {
-        format.emit(sink, io::stderr().lock(), reports)
+        format.emit(sink, stderr_sink(), reports)
     })
 }
 
@@ -608,6 +608,7 @@ impl OutputFormat for JsonOutput {
 mod tests {
     use super::*;
     use fast_yaml_linter::{DiagnosticBuilder, Location, Span};
+    use std::io;
     use std::sync::atomic::AtomicUsize;
 
     fn diagnostic(line: usize, severity: Severity) -> Diagnostic {

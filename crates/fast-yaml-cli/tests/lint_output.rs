@@ -168,3 +168,66 @@ fn closed_stdout_is_silent_in_batch_runs() {
         assert!(stderr.is_empty(), "{format}: {stderr}");
     }
 }
+
+/// Runs `fy` with the chosen output streams closed on the reader side; returns the exit code.
+fn run_closed(args: &[&str], close_stdout: bool, close_stderr: bool) -> Option<i32> {
+    let mut child = std::process::Command::new(assert_cmd::cargo::cargo_bin("fy"))
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    if close_stdout {
+        drop(child.stdout.take());
+    }
+    if close_stderr {
+        drop(child.stderr.take());
+    }
+    child.wait_with_output().unwrap().status.code()
+}
+
+#[test]
+fn closed_stderr_never_panics_and_keeps_the_exit_code() {
+    let dir = TempDir::new().unwrap();
+    let dup = fixture(&dir, "dup.yaml", DUPLICATE_KEY);
+    fixture(&dir, "broken.yaml", "a: [\n");
+    for format in FORMATS {
+        for (close_stdout, close_stderr) in [(false, true), (true, true)] {
+            let single = run_closed(
+                &["-v", "lint", "--format", format, path_arg(&dup)],
+                close_stdout,
+                close_stderr,
+            );
+            assert_eq!(
+                single,
+                Some(2),
+                "single {format} {close_stdout} {close_stderr}"
+            );
+
+            let batch = run_closed(
+                &["lint", "--format", format, path_arg(dir.path())],
+                close_stdout,
+                close_stderr,
+            );
+            assert_eq!(
+                batch,
+                Some(2),
+                "batch {format} {close_stdout} {close_stderr}"
+            );
+        }
+    }
+}
+
+#[test]
+fn closed_stderr_does_not_panic_when_reporting_an_error() {
+    let dir = TempDir::new().unwrap();
+    let missing = dir.path().join("missing.yaml");
+    assert_eq!(
+        run_closed(&["lint", path_arg(&missing)], false, true),
+        Some(1)
+    );
+    assert_eq!(
+        run_closed(&["format", path_arg(&missing)], true, true),
+        Some(1)
+    );
+}

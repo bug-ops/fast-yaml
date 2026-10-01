@@ -529,7 +529,7 @@ impl FileDiscovery {
                 Ok(e) => e,
                 Err(e) => {
                     // Log warning but continue processing
-                    eprintln!("Warning: failed to read entry: {e}");
+                    crate::error::stderr_line(format_args!("Warning: failed to read entry: {e}"));
                     continue;
                 }
             };
@@ -555,9 +555,9 @@ impl FileDiscovery {
                 match_count += 1;
             }
             if match_count > MAX_GLOB_MATCHES {
-                eprintln!(
+                crate::error::stderr_line(format_args!(
                     "Warning: glob pattern '{pattern}' exceeded {MAX_GLOB_MATCHES} matches, stopping"
-                );
+                ));
                 break;
             }
 
@@ -569,7 +569,7 @@ impl FileDiscovery {
                     }
                 }
                 Err(e) => {
-                    eprintln!("Warning: glob error: {e}");
+                    crate::error::stderr_line(format_args!("Warning: glob error: {e}"));
                 }
             }
         }

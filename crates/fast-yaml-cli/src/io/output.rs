@@ -131,6 +131,16 @@ impl OutputWriter {
     }
 }
 
+/// A stderr writer that, like [`OutputWriter::sink`], goes quiet once the pipe is closed.
+pub const fn stderr_sink() -> OutputSink<'static> {
+    static STDERR: OutputDestination = OutputDestination::Stderr;
+    OutputSink {
+        destination: &STDERR,
+        buffer: Vec::new(),
+        reader_gone: false,
+    }
+}
+
 /// Streaming writer over an [`OutputWriter`] destination that survives a closed pipe.
 ///
 /// Once the reader of stdout or stderr is gone (`EPIPE`), every later write succeeds without

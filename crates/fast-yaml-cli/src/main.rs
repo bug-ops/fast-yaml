@@ -62,7 +62,10 @@ fn main() {
             // Use OutputConfig to determine color usage
             let cli = Cli::parse_validated();
             let output_config = config::OutputConfig::from_cli(cli.verbosity, cli.no_color);
-            eprintln!("{}", format_error(&err, output_config.use_color()));
+            error::stderr_line(format_args!(
+                "{}",
+                format_error(&err, output_config.use_color())
+            ));
             ExitCode::ParseError
         }
     };

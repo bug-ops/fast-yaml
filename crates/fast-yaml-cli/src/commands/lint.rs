@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::{LintFormat, LintOutput, ParseLimitArgs};
 use crate::config::CommonConfig;
-use crate::error::{DiscoveryError, ExitCode};
+use crate::error::{self, DiscoveryError, ExitCode};
 use crate::file_filter::FileFilter;
 use crate::io::{InputSource, OutputWriter};
 
@@ -93,7 +93,7 @@ fn write_report_or_warn(
     diagnostic: Diagnostic,
 ) {
     if let Err(err) = write_file_report(output, format, path, &[diagnostic]) {
-        eprintln!("error: {err:#}");
+        error::stderr_line(format_args!("error: {err:#}"));
     }
 }
 
@@ -183,7 +183,7 @@ impl LintCommand {
         });
 
         if let Some(discovered) = ConfigFile::discover(&start_dir) {
-            eprintln!("using config file: {}", discovered.display());
+            error::stderr_line(format_args!("using config file: {}", discovered.display()));
             let cfg = ConfigFile::load(&discovered).with_context(|| {
                 format!("failed to load config file '{}'", discovered.display())
             })?;
@@ -296,9 +296,12 @@ impl LintCommand {
         if self.config.output.is_verbose() && !matches!(self.format.output(), LintOutput::Json) {
             let elapsed = start_time.elapsed();
             if let Some(path) = input.file_path() {
-                eprintln!("\nFile: {}", path.display());
+                error::stderr_line(format_args!("\nFile: {}", path.display()));
             }
-            eprintln!("Lint time: {:.2}ms", elapsed.as_secs_f64() * 1000.0);
+            error::stderr_line(format_args!(
+                "Lint time: {:.2}ms",
+                elapsed.as_secs_f64() * 1000.0
+            ));
         }
 
         let has_errors = filtered_diagnostics
