@@ -77,3 +77,17 @@ fn hyphens_follow_block_sequence_entries_only() {
         [8, 9]
     );
 }
+
+const INLINE_MAPPINGS: &str = "  line-length: {max: 40, allow-non-breakable-words: true, allow-non-breakable-inline-mappings: true}\n";
+
+#[test]
+fn line_length_exempts_only_a_value_scalar_without_spaces_after_it() {
+    let source = "---\nrun: |\n  Download the appropriate binary for your platform:\n  echo \"::error::build-github-action-image produced an invalid digest: x\"\n";
+    assert_eq!(lines(source, INLINE_MAPPINGS, "line-length"), [3]);
+}
+
+#[test]
+fn line_length_inline_mapping_skips_anchors_tags_and_follows_flow_values() {
+    let source = "---\nk: &x ffffffffffffffffffffffffffffffffffffffffffffffffffff\nk: !!str hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\nk: {b: cccccccccccccccccccccccccccccccccccccccccccccccc}\nk: [b, cccccccccccccccccccccccccccccccccccccccccccccccc]\n";
+    assert_eq!(lines(source, INLINE_MAPPINGS, "line-length"), [2, 3, 5]);
+}

@@ -5,14 +5,13 @@ use std::num::NonZeroUsize;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
+use crate::rules::token_stream::{scanner, tokens::Kind};
+use crate::scan::{ScanNeeds, SourceScan};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
-use fast_yaml_core::events::{Event, EventStream};
+use fast_yaml_core::Value;
 use fast_yaml_core::limits::ParseLimits;
-use fast_yaml_core::{NormalizedInput, Value};
-
-use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 
 /// Rule to check line length limits.
 ///
@@ -98,63 +97,32 @@ fn is_whole_flow_collection(line: &str) -> bool {
         || (content.starts_with('{') && content.ends_with('}'))
 }
 
-/// Whether `line` holds a block mapping whose first plain or quoted value, without anchor or tag,
-/// has no space from its start to the end of the line (yamllint's inline mapping check).
+/// Whether `line` is exempt as an inline mapping, as in yamllint's `check_inline_mapping`: after
+/// the first block mapping start, the first `:` that is followed by a scalar token has no space
+/// from the start of that scalar to the end of the line.
 ///
-/// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
+/// Tokens are those of the line scanned on its own; a `:` followed by an anchor, a tag or a
+/// collection start is skipped, and a line that does not scan far enough has no such pair.
 fn is_inline_mapping_of_one_word(line: &str) -> bool {
     if is_whole_flow_collection(line) {
         return false;
     }
-    let Ok(input) = NormalizedInput::new(line) else {
-        return false;
-    };
-    let line = input.as_str();
     let context = SourceContext::new(line);
-    let mut roles = RoleTracker::default();
-    let mut seen_mapping = false;
-    for item in EventStream::new(&input, ParseLimits::default()) {
-        let Ok(item) = item else {
-            break;
-        };
-        let range = context.byte_range_between(item.at, item.end);
-        match item.event {
-            Event::MappingStart { .. } => {
-                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
-                {
-                    return false;
-                }
-                seen_mapping = true;
-                roles.start_mapping(line, range);
-            }
-            Event::SequenceStart { .. } => {
-                // Whatever a root flow sequence holds is flow too, so no block mapping follows
-                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
-                {
-                    return false;
-                }
-                roles.start_sequence(line, range);
-            }
-            Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-            Event::Alias(_) => {
-                roles.node();
-            }
-            Event::Scalar { anchor, tag, .. } => {
-                let role = roles.node();
-                if role == NodeRole::MappingValue
-                    && seen_mapping
-                    && anchor.is_none()
-                    && tag.is_none()
-                {
-                    return line
-                        .get(range.start().get()..)
-                        .is_some_and(|rest| !rest.contains(' '));
-                }
-            }
-            Event::StreamStart
-            | Event::StreamEnd
-            | Event::DocumentStart { .. }
-            | Event::DocumentEnd => {}
+    let (scan, _) = SourceScan::scan(line, &context, ParseLimits::default(), ScanNeeds::NODES);
+    let mut tokens = Vec::new();
+    scanner::scan(line, &scan.nodes, scan.complete, |token| tokens.push(token));
+    let mut rest = tokens
+        .into_iter()
+        .skip_while(|token| token.kind != Kind::BlockMappingStart)
+        .skip(1);
+    while let Some(token) = rest.next() {
+        if token.kind == Kind::Value
+            && let Some(value) = rest.next()
+            && matches!(value.kind, Kind::Scalar { .. })
+        {
+            return line
+                .get(value.start.pointer..)
+                .is_some_and(|text| !text.contains(' '));
         }
     }
     false

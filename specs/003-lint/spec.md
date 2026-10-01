@@ -256,6 +256,7 @@ THEN  a file without --- is reported at the preset's level (warning), as in yaml
 | FR-071 | `braces` and `brackets` SHALL measure only spaces between an opening delimiter and the next token, and between the previous token and a closing delimiter, on the same line; indentation of a closing delimiter that starts its own line, and trailing space after an opening delimiter, SHALL NOT be reported. | must |
 | FR-072 | `colons` SHALL NOT report spaces after a colon that is followed by end of line or by a comment (`push:  # c`). | must |
 | FR-073 | `hyphens` SHALL check only the hyphen of a block sequence entry, found in the rebuilt token stream (`indentation` shares it), against the token that follows on the same line; `-item`, a continuation line of a plain scalar and a flow item starting with `-` are not entries. | must |
+| FR-074 | `line-length` with `allow-non-breakable-inline-mappings` SHALL exempt a line only when, after the first block mapping start of the line scanned alone, a `:` is followed by a scalar token that has no space from its start to the end of the line (yamllint 1.38 `check_inline_mapping`): a `:` with no value, an anchored or tagged value and a flow value are judged by the next `:` and scalar. | must |
 
 ## 4. Key entities and types
 
