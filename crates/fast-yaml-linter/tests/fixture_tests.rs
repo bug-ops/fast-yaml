@@ -322,7 +322,7 @@ mod config_fixtures {
 
     use fast_yaml_linter::{
         ConfigFile, ConfigFileError, Linter, Severity,
-        config::{Limit, RuleConfigError, TopLevelKey},
+        config::{Limit, RuleConfigError},
         rules::{Forbid, MarkerPresence, QuoteRequirement, QuoteType},
     };
     use std::num::NonZeroUsize;
@@ -454,29 +454,18 @@ mod config_fixtures {
             load("invalid/top-level-typo.yaml"),
             Err(ConfigFileError::UnknownKey { .. })
         ));
-        for (file, key, needle) in [
-            (
-                "yamllint-extends.yaml",
-                TopLevelKey::Extends,
-                "extending a config file is not implemented",
-            ),
-            (
-                "extends-unknown-preset.yaml",
-                TopLevelKey::Extends,
-                "'default' or 'relaxed'",
-            ),
+        for (file, missing) in [
+            ("yamllint-extends.yaml", "base.yaml"),
+            ("extends-unknown-preset.yaml", "strict"),
         ] {
             let error = load(&format!("invalid/{file}")).unwrap_err();
-            let ConfigFileError::InvalidKey {
-                key: found,
-                message,
-                ..
-            } = error
-            else {
-                panic!("{file}: expected InvalidKey, got {error:?}");
+            let ConfigFileError::Extended { source, .. } = error else {
+                panic!("{file}: expected Extended, got {error:?}");
             };
-            assert_eq!(found, key, "{file}");
-            assert!(message.contains(needle), "{file}: {message}");
+            assert!(
+                matches!(*source, ConfigFileError::Io { ref path, .. } if path.ends_with(missing)),
+                "{file}: {source:?}"
+            );
         }
     }
 

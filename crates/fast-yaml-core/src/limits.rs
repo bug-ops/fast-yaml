@@ -803,9 +803,11 @@ pub struct ParseLimits {
     pub max_tag_bytes: MaxTagBytes,
     /// Maximum characters the scanner may read past the last emitted event.
     pub max_scan_ahead: MaxScanAhead,
+    /// Maximum documents in one stream, counted across every chunk that shares a [`StreamBudget`].
+    pub max_documents: MaxDocuments,
 }
 
-/// Alias-expansion and tag-prefix budget shared by every document of one stream.
+/// Alias-expansion, tag-prefix and document-count budget shared by every document of one stream.
 ///
 /// Cloning yields a handle to the same counter, not a copy: clones share one limit, so
 /// chunks parsed on different threads draw from a single budget. A budget therefore belongs
@@ -841,6 +843,19 @@ pub struct ParseLimits {
 /// assert!(Parser::parse_all_with_budget(doc, &budget).is_ok());
 /// assert!(Parser::parse_all_with_budget(doc, &budget).is_err());
 /// ```
+///
+/// Documents are counted per stream, so clones used for separate chunks share one count:
+///
+/// ```
+/// use fast_yaml_core::{LimitKind, ParseError, Parser};
+/// use fast_yaml_core::limits::{MaxDocuments, ParseLimits, StreamBudget};
+///
+/// let limits = ParseLimits { max_documents: MaxDocuments::new(3).unwrap(), ..ParseLimits::default() };
+/// let budget = StreamBudget::new(limits);
+/// assert!(Parser::parse_all_with_budget("a: 1\n---\nb: 2\n", &budget).is_ok());
+/// let err = Parser::parse_all_with_budget("---\nc: 3\n---\nd: 4\n", &budget.clone()).unwrap_err();
+/// assert!(matches!(err, ParseError::LimitExceeded { kind: LimitKind::Documents(_), .. }));
+/// ```
 #[derive(Debug, Clone)]
 pub struct StreamBudget {
     limits: ParseLimits,
@@ -851,6 +866,7 @@ pub struct StreamBudget {
 struct StreamUsage {
     alias_bytes: AtomicUsize,
     tag_prefix_bytes: AtomicUsize,
+    documents: AtomicUsize,
 }
 
 fn charge(counter: &AtomicUsize, bytes: usize, max: usize) -> bool {
@@ -889,6 +905,13 @@ impl StreamBudget {
             .ok_or(LimitKind::AliasBytes(max))
     }
 
+    fn charge_document(&self) -> Result<(), LimitKind> {
+        let max = self.limits.max_documents;
+        charge(&self.used.documents, 1, max.get())
+            .then_some(())
+            .ok_or(LimitKind::Documents(max))
+    }
+
     fn charge_tag_prefix(&self, bytes: usize) -> Result<(), LimitKind> {
         let max = self.limits.max_tag_bytes;
         charge(&self.used.tag_prefix_bytes, bytes, max.get())
@@ -914,6 +937,9 @@ pub enum LimitKind {
     /// Tag prefix expansion would materialize more data than the budget.
     #[error("tag prefix expansion exceeds {0} bytes")]
     TagBytes(MaxTagBytes),
+    /// The stream holds more documents than the limit.
+    #[error("document count exceeds {0}")]
+    Documents(MaxDocuments),
     /// The scanner read more than the limit past the last node it reported.
     #[error(
         "parser lookahead exceeds {0} characters past the last node: one scalar, a run of comments, or a root or `- ` flow collection is longer than the limit; raise the scan-ahead limit"
@@ -1086,6 +1112,9 @@ impl LimitGuard {
         self.cursor.observe(event);
         match event {
             Event::DocumentStart(_) => {
+                self.budget
+                    .charge_document()
+                    .map_err(|kind| self.exceeded(kind, span))?;
                 self.completed.clear();
                 self.doc_anchor_floor = self.max_anchor_seen + 1;
                 self.doc_start = source_end(span);
@@ -1387,6 +1416,59 @@ mod tests {
         assert!(budget.charge_tag_prefix(6).is_ok());
         assert!(other.charge_tag_prefix(6).is_err());
         assert!(other.charge_tag_prefix(4).is_ok());
+    }
+
+    fn documents_limit(max: usize) -> ParseLimits {
+        ParseLimits {
+            max_documents: MaxDocuments::new(max).unwrap(),
+            ..ParseLimits::default()
+        }
+    }
+
+    #[test]
+    fn document_budget_is_shared_between_clones() {
+        let budget = StreamBudget::new(documents_limit(2));
+        let other = budget.clone();
+        assert!(budget.charge_document().is_ok());
+        assert!(other.charge_document().is_ok());
+        assert_eq!(
+            budget.charge_document(),
+            Err(LimitKind::Documents(MaxDocuments::new(2).unwrap()))
+        );
+    }
+
+    #[test]
+    fn guard_rejects_the_document_past_the_limit_at_its_start() {
+        let mut guard = LimitGuard::new(documents_limit(2));
+        for _ in 0..2 {
+            guard.observe(&Event::DocumentStart(true), span()).unwrap();
+            guard.observe(&Event::DocumentEnd, span()).unwrap();
+        }
+        assert!(matches!(
+            guard.observe(&Event::DocumentStart(true), span()),
+            Err(ParseError::LimitExceeded {
+                kind: LimitKind::Documents(_),
+                document: 2,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn default_limit_rejects_more_than_100k_documents() {
+        let yaml = "---\n".repeat(MaxDocuments::DEFAULT.get() + 1);
+        assert!(matches!(
+            crate::Parser::parse_all(&yaml),
+            Err(ParseError::LimitExceeded {
+                kind: LimitKind::Documents(_),
+                ..
+            })
+        ));
+        let at_limit = "---\n".repeat(MaxDocuments::DEFAULT.get());
+        assert_eq!(
+            crate::Parser::parse_all(&at_limit).unwrap().len(),
+            MaxDocuments::DEFAULT.get()
+        );
     }
 
     #[test]

@@ -1772,6 +1772,97 @@ mod tests {
     }
 
     #[test]
+    fn flow_keys_over_1024_chars_use_the_explicit_form() {
+        for (len, explicit) in [(1022, false), (1024, false), (1025, true), (3000, true)] {
+            let key = "k".repeat(len);
+            let out = flow_with_key(string_key(&key));
+            assert_eq!(out.starts_with("{? "), explicit, "{len}");
+            let Some(Value::Mapping(back)) = crate::Parser::parse_str(&out).unwrap() else {
+                panic!("mapping expected for {len}");
+            };
+            assert_eq!(back.get(&string_key(&key)), Some(&Value::Int(1)), "{len}");
+        }
+        let quoted = "k\u{85}".repeat(600);
+        let out = flow_with_key(string_key(&quoted));
+        assert!(out.starts_with("{? \""), "{out:.20}");
+        let Some(Value::Mapping(back)) = crate::Parser::parse_str(&out).unwrap() else {
+            panic!("mapping expected");
+        };
+        assert!(back.contains_key(&string_key(&quoted)));
+    }
+
+    #[test]
+    fn flow_scalars_with_question_marks_are_quoted() {
+        for text in ["a?b", "?", "x ?", "? x", "a ? b"] {
+            let doc = Value::Sequence(vec![string_key(text)]);
+            let config = EmitterConfig::new().with_default_flow_style(Some(true));
+            let out = Emitter::emit_str_with_config(&doc, &config).unwrap();
+            assert_eq!(out, format!("[\"{text}\"]\n"));
+            assert_eq!(crate::Parser::parse_str(&out).unwrap().unwrap(), doc);
+        }
+        assert_eq!(
+            Emitter::emit_str(&Value::Sequence(vec![string_key("a?b")])).unwrap(),
+            "- a?b\n"
+        );
+    }
+
+    #[test]
+    fn yaml_11_line_breaks_are_escaped_in_every_dump_position() {
+        for text in ["\u{85}", "a\u{2028}b", "\u{2029}x\nz", "p\u{85}"] {
+            let mut map = Mapping::new();
+            map.insert(string_key(text), string_key(text));
+            let docs = [
+                string_key(text),
+                Value::Sequence(vec![string_key(text)]),
+                Value::Mapping(map),
+            ];
+            for doc in &docs {
+                for flow in [Some(true), Some(false), None] {
+                    for multiline in [false, true] {
+                        let config = EmitterConfig::new()
+                            .with_default_flow_style(flow)
+                            .with_multiline_strings(multiline);
+                        let out = Emitter::emit_str_with_config(doc, &config).unwrap();
+                        assert!(
+                            !out.contains(['\u{85}', '\u{2028}', '\u{2029}']),
+                            "{doc:?} {flow:?}: {out:?}"
+                        );
+                        assert_eq!(&crate::Parser::parse_str(&out).unwrap().unwrap(), doc);
+                    }
+                }
+            }
+            let sets = Value::Set(std::iter::once(string_key(text)).collect::<crate::value::Set>());
+            for flow in [Some(true), Some(false)] {
+                let config = EmitterConfig::new().with_default_flow_style(flow);
+                let out = Emitter::emit_str_with_config(&sets, &config).unwrap();
+                assert!(!out.contains(['\u{85}', '\u{2028}', '\u{2029}']), "{out:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn format_escapes_yaml_11_line_breaks_in_every_style() {
+        for input in [
+            "a: \"x\u{85}y\"\n",
+            "a: 'x\u{2028}y'\n",
+            "a: x\u{2029}y\n",
+            "\"k\u{85}\": v\n",
+            "[\"x\u{85}\"]\n",
+        ] {
+            let out = Emitter::format(input).unwrap();
+            assert!(
+                !out.contains(['\u{85}', '\u{2028}', '\u{2029}']),
+                "{input:?} -> {out:?}"
+            );
+            assert_eq!(
+                crate::Parser::parse_all(&out).unwrap(),
+                crate::Parser::parse_all(input).unwrap(),
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
     fn flow_merge_lookalike_key_is_quoted() {
         assert_eq!(flow_with_key(string_key("<<")), "{\"<<\": 1}\n");
     }

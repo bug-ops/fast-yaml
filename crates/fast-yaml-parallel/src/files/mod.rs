@@ -6,7 +6,7 @@
 //! # Features
 //!
 //! - **Parallel processing**: Automatic parallelism for large batches
-//! - **Smart reading**: Integrates with [`SmartReader`](crate::SmartReader) for optimal I/O
+//! - **Bounded reading**: Files are size-checked, then read whole with [`read_file`](crate::read_file)
 //! - **Batch results**: Detailed success/failure/changed tracking
 //! - **Security**: `DoS` protection via file size limits
 //!

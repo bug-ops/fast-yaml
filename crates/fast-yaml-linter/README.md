@@ -268,28 +268,28 @@ an entry does not mention keep their current values. A limit of `-1` disables th
 | `commas` | `max-spaces-before` (0), `min-spaces-after` (1), `max-spaces-after` (1) |
 | `hyphens` | `max-spaces-after` (1) |
 | `comments` | `require-starting-space` (true), `ignore-shebangs` (true), `min-spaces-from-content` (2) |
-| `document-start` | `present` (allowed; `true`/`required` flags every document without `---`, `false`/`forbidden` flags every `---` except one after a `%` directive, `allowed`) |
+| `document-start` | `present` (allowed; `true`/`required` flags every document without `---`, `false`/`forbidden` flags every `---`, also one after a `%` directive, `allowed`; a source with no document reports nothing) |
 | `document-end` | `present` (allowed; `true`/`required` flags every document not closed by `...`, `false`/`forbidden` flags every `...` at column 0) |
 | `empty-lines` | `max` (2), `max-start` (0), `max-end` (0) |
 | `empty-values` | `forbid-in-block-mappings` (true), `forbid-in-flow-mappings` (true), `forbid-in-block-sequences` (true) |
 | `float-values` | `require-numeral-before-decimal` (true), `forbid-scientific-notation` (false), `forbid-nan` (false), `forbid-inf` (false) |
 | `indentation` | `indent-size` (2, 1 to 16) |
-| `key-ordering` | `case-sensitive` (true) |
+| `key-ordering` | `case-sensitive` (true), `ignored-keys` ([] regexes, `re.search` semantics; matching keys are skipped) |
 | `line-length` | `max` (80, `null` for no limit), `allow-non-breakable-words` (true), `allow-non-breakable-inline-mappings` (false; implies the previous one) |
 | `new-lines` | `type` (unix; unix, dos or platform) |
 | `octal-values` | `forbid-implicit-octal` (true), `forbid-explicit-octal` (true) |
 | `quoted-strings` | `quote-type` (any), `required` (only-when-needed), `extra-required` ([] regexes; not with `always` or `never`), `extra-allowed` ([] regexes; only with `only-when-needed`), `allow-quoted-quotes` (false), `check-keys` (false: keys are skipped); scalars with a `!!` core tag are skipped; see "Regular expressions" below |
 | `truthy` | `allowed-values` (['true', 'false'], quoted; `y`/`n` are not truthy spellings), `check-keys` (false) |
 | `duplicate-key` | `forbid-duplicated-merge-keys` (true; the yamllint presets set false). Keys are equal when their resolved values are, so `99` and `+99` collide and `"1"` and `1` do not (yamllint compares the text) |
-| `set-values`, `invalid-anchor`, `trailing-whitespace`, `new-line-at-end-of-file`, `comments-indentation` | none |
+| `invalid-anchor` | `forbid-duplicated-anchors` (true; yamllint's default is false), `forbid-unused-anchors` (false), `forbid-undeclared-aliases` (only `true`: an undeclared alias is always a parse error) |
+| `set-values`, `trailing-whitespace`, `new-line-at-end-of-file`, `comments-indentation` | none |
 
 `min-spaces-inside-empty` and `max-spaces-inside-empty` override the non-empty limits for empty
 collections independently of each other. A minimum above the maximum is not rejected; as in
 yamllint it flags every collection.
 
 Options that yamllint has but fast-yaml does not implement (for example
-`indentation.spaces`, `key-ordering.ignored-keys`, `anchors.forbid-*`) are rejected explicitly
-instead of being ignored.
+`indentation.spaces`) are rejected explicitly instead of being ignored.
 
 #### Regular expressions
 
@@ -321,26 +321,33 @@ rules:
 
 - `extends` starts from the yamllint `default` or `relaxed` preset, with yamllint's option
   defaults and `error` severity (`warning` where the preset says so). Without `extends` the
-  fast-yaml defaults apply. `extends: <file>` is not implemented.
+  fast-yaml defaults apply. Any other `extends` value is the path of a config file, resolved
+  against the directory of the file that names it (yamllint: against the working directory).
+  That file is loaded first and may extend another one, up to 8 files deep; a cycle is an
+  error. The extending file's rules apply over it like over a preset, and `max-input-bytes`,
+  `max-scan-ahead` and `ignore` are inherited unless set again (`yaml-files` is not, as in
+  yamllint).
 - Under `extends`, a rule the preset disables is enabled again by `enable`, a severity name or a
   mapping without `enabled`, and reports `error` unless a severity is given.
 - `extends` is not full yamllint parity: it reproduces the preset's rule set, severities and
   the options fast-yaml has, but not options fast-yaml lacks (`indentation.spaces: consistent`,
-  `indentation.indent-sequences`, `indentation.check-multi-line-strings`,
-  `key-ordering.ignored-keys`, `anchors.forbid-*`), so rules that depend on them behave
+  `indentation.indent-sequences`, `indentation.check-multi-line-strings`), so rules that depend on them behave
   differently. Rule semantics also differ from yamllint in places, which the `Preset` rustdoc
   lists (duplicate key equality, YAML 1.2 scalar resolution in `quoted-strings`, the last
   `document-end` position, `.yamllint` outside the default `yaml-files`).
 - `ignore` patterns are anchored at the directory of the config file, are case-sensitive, and
   apply to directory walks and explicit paths. `!` re-includes a file. `fy lint` exits 0 when
   `ignore` drops every input.
+- `ignore-from-file` takes a file name or a list of file names, relative to the config file's
+  directory; their lines are ignore patterns, read when the config is loaded and anchored at
+  the config file's directory like `ignore`. It cannot be combined with `ignore`.
 - `yaml-files` matches the file name only (`sub/*.j2` matches nothing) and replaces the default
   `*.yaml`/`*.yml` for directory walks and globs. An explicit path is linted when it matches
   the default patterns or `yaml-files` (and is not dropped by `ignore`), and `--include`
   overrides `yaml-files`. `ignore` and `yaml-files` each take at most 1024 lines.
 - yamllint rule names that differ are hinted, not accepted: `key-duplicates` is
   `duplicate-key`, `trailing-spaces` is `trailing-whitespace`, `anchors` is `invalid-anchor`.
-  `ignore-from-file`, `locale` and per-rule `ignore` are rejected explicitly.
+  `locale` and per-rule `ignore` are rejected explicitly.
 
 Custom rules added with `Linter::add_rule` are configured with
 `LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through

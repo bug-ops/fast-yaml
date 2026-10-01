@@ -9,7 +9,6 @@ mod colons;
 mod commas;
 mod comments;
 mod comments_indentation;
-mod core_schema;
 mod document_end;
 mod document_start;
 mod duplicate_keys;
@@ -25,7 +24,7 @@ mod line_length;
 mod lint_directive;
 mod new_line_at_end_of_file;
 mod new_lines;
-mod node_roles;
+pub(crate) mod node_roles;
 mod octal_values;
 mod quoted_strings;
 mod set_values;
@@ -137,10 +136,10 @@ pub trait LintRule: Send + Sync {
     ///
     /// # Contract
     ///
-    /// Built-in rules re-parse `context.source()` with the raw parser. Callers outside
-    /// [`Linter`](crate::Linter) must first run `fast_yaml_core::NormalizedInput::check_scan_ahead`
-    /// on the source, as `Linter::lint` and `Linter::lint_value` do, or hostile input can make the
-    /// parser buffer far more memory than the input size suggests (#563).
+    /// Built-in rules read what `context` collected from the loader pass of the source. A context
+    /// that [`Linter`](crate::Linter) did not scan loads the source on first use under the default
+    /// [`ParseLimits`](fast_yaml_core::limits::ParseLimits), so no rule can drive an unguarded
+    /// parser (#563).
     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic>;
 }
 

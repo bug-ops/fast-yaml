@@ -8,7 +8,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::Write;
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
@@ -16,13 +16,17 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
+use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
+use fast_yaml_core::{LimitKind, ParseError};
 use fast_yaml_linter::formatter::{
     FileReport as ReportedFile, ReportFormat, input_error_diagnostic, syntax_diagnostic,
 };
 use fast_yaml_linter::{
     Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
 };
-use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader};
+use fast_yaml_parallel::{
+    Error as ParallelError, ScanAheadLane, ScanAheadPolicy, read_file, shared_pool,
+};
 use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
@@ -33,6 +37,8 @@ use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
+use crate::io::OutputWriter;
+use crate::io::output::{OutputSink, stderr_sink};
 
 /// Files that may be started but not yet reported, per worker. Finished files hold only their
 /// diagnostics, so the window can be wide enough to keep workers busy behind one slow file.
@@ -132,23 +138,71 @@ struct ReportOutput {
     format: ReportFormat,
 }
 
+/// The linters of one batch: workers start under the lane's first limit and a file it
+/// rejects for scan-ahead is linted again, one at a time, under the full limit.
+struct Linters {
+    lane: ScanAheadLane,
+    first: Linter,
+    full: Linter,
+}
+
+impl Linters {
+    fn new(config: &LintConfig, policy: ScanAheadPolicy, workers: NonZeroUsize) -> Self {
+        let lane = ScanAheadLane::for_policy(policy, workers);
+        let first_limits = ParseLimits {
+            max_scan_ahead: lane.first_limit(),
+            ..config.parse_limits
+        };
+        Self {
+            first: Linter::with_config(config.clone().with_parse_limits(first_limits)),
+            full: Linter::with_config(config.clone()),
+            lane,
+        }
+    }
+
+    const fn max_input_bytes(&self) -> MaxInputBytes {
+        self.full.config().max_input_bytes
+    }
+
+    fn lint(&self, content: &str) -> Result<Vec<Diagnostic>, LintError> {
+        let first = self.lane.first_limit();
+        self.lane.run(
+            |limit| {
+                let linter = if limit == first {
+                    &self.first
+                } else {
+                    &self.full
+                };
+                linter.lint(content)
+            },
+            |error| {
+                matches!(
+                    error,
+                    LintError::ParseError(ParseError::LimitExceeded {
+                        kind: LimitKind::ScanAhead(_),
+                        ..
+                    })
+                )
+            },
+        )
+    }
+}
+
 fn lint_one<F: OutputFormat>(
     path: &Path,
-    reader: &SmartReader,
-    linter: &Linter,
+    linter: &Linters,
     format: &F,
     is_quiet: bool,
 ) -> FileReport<F::Payload, F::Salvage> {
     FileReport {
         path: path.to_path_buf(),
-        outcome: lint_content(path, reader, linter, format, is_quiet),
+        outcome: lint_content(path, linter, format, is_quiet),
     }
 }
 
 fn lint_content<F: OutputFormat>(
     path: &Path,
-    reader: &SmartReader,
-    linter: &Linter,
+    linter: &Linters,
     format: &F,
     is_quiet: bool,
 ) -> Result<Linted<F::Payload>, Failed<F::Salvage>> {
@@ -156,18 +210,15 @@ fn lint_content<F: OutputFormat>(
         salvage: format.salvage(&failure, content),
         failure,
     };
-    let content = reader
-        .read(path, linter.config().max_input_bytes)
-        .and_then(FileContent::into_string)
-        .map_err(|source| {
-            failed(
-                FileFailure::Read {
-                    path: path.to_path_buf(),
-                    source,
-                },
-                None,
-            )
-        })?;
+    let content = read_file(path, linter.max_input_bytes()).map_err(|source| {
+        failed(
+            FileFailure::Read {
+                path: path.to_path_buf(),
+                source,
+            },
+            None,
+        )
+    })?;
 
     let mut diagnostics = linter.lint(&content).map_err(|source| {
         failed(
@@ -197,6 +248,8 @@ pub fn execute_lint_batch(
     target: &BatchTarget,
     lint_config: &LintConfig,
     format: LintFormat,
+    scan_ahead: ScanAheadPolicy,
+    output: &OutputWriter,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -205,18 +258,18 @@ pub fn execute_lint_batch(
         .discover_source(&target.source)
         .context("Failed to discover files")?;
 
-    let workers = target
-        .workers
-        .map_or_else(rayon::current_num_threads, NonZeroUsize::get);
-
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(workers)
-        .build()
-        .context("Failed to build thread pool")?;
+    let workers = target.workers.unwrap_or_else(|| {
+        NonZeroUsize::new(rayon::current_num_threads()).unwrap_or(NonZeroUsize::MIN)
+    });
+    let pool = shared_pool(workers).context("Failed to build thread pool")?;
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-    let linter = Linter::with_config(lint_config.clone());
+    for path in &file_paths {
+        output.ensure_not_input(path)?;
+    }
+    let linter = Linters::new(lint_config, scan_ahead, workers);
     let is_quiet = common.output.is_quiet();
+    let mut sink = output.sink()?;
 
     let any_errors = match format.output() {
         LintOutput::Text => run_batch(
@@ -227,16 +280,26 @@ pub fn execute_lint_batch(
                 use_color: common.output.use_color(),
             },
             is_quiet,
+            &mut sink,
         ),
-        LintOutput::Json => run_batch(&pool, &file_paths, &linter, &JsonOutput, is_quiet),
+        LintOutput::Json => run_batch(
+            &pool,
+            &file_paths,
+            &linter,
+            &JsonOutput,
+            is_quiet,
+            &mut sink,
+        ),
         LintOutput::Report(format) => run_batch(
             &pool,
             &file_paths,
             &linter,
             &ReportOutput { format },
             is_quiet,
+            &mut sink,
         ),
     }?;
+    sink.finish()?;
 
     if any_errors {
         Ok(ExitCode::LintErrors)
@@ -245,24 +308,24 @@ pub fn execute_lint_batch(
     }
 }
 
-/// Lints `file_paths` on the pool and writes the reports of `format` to stdout and stderr.
+/// Lints `file_paths` on the pool, writing the reports of `format` to `sink` and failures to
+/// stderr.
 fn run_batch<F: OutputFormat>(
     pool: &ThreadPool,
     file_paths: &[PathBuf],
-    linter: &Linter,
+    linter: &Linters,
     format: &F,
     is_quiet: bool,
+    sink: &mut OutputSink,
 ) -> Result<bool> {
-    let reader = SmartReader::with_threshold(u64::MAX);
     let window = pool
         .current_num_threads()
         .saturating_mul(WINDOW_PER_WORKER)
         .max(1);
-    let lint_nth = |index: usize| lint_one(&file_paths[index], &reader, linter, format, is_quiet);
+    let lint_nth = |index: usize| lint_one(&file_paths[index], linter, format, is_quiet);
 
-    let stdout = io::stdout();
     run_ordered(pool, file_paths.len(), window, &lint_nth, |reports| {
-        format.emit(stdout.lock(), io::stderr().lock(), reports)
+        format.emit(sink, stderr_sink(), reports)
     })
 }
 
@@ -547,6 +610,7 @@ impl OutputFormat for JsonOutput {
 mod tests {
     use super::*;
     use fast_yaml_linter::{DiagnosticBuilder, Location, Span};
+    use std::io;
     use std::sync::atomic::AtomicUsize;
 
     fn diagnostic(line: usize, severity: Severity) -> Diagnostic {

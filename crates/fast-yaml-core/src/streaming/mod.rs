@@ -94,7 +94,7 @@ fn tag_budget_error(err: ParseError) -> EmitError {
 const MAX_ANCHOR_ID: usize = 4096;
 
 /// Longest implicit mapping key in characters (YAML 1.2 spec limit); longer keys use `? `.
-const MAX_IMPLICIT_KEY_CHARS: usize = 1024;
+pub(crate) const MAX_IMPLICIT_KEY_CHARS: usize = 1024;
 
 /// Static 64-space string for fast indent generation via slicing.
 /// Avoids allocation for nesting depths up to 32 levels with 2-space indent.

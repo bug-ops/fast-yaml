@@ -66,6 +66,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod atomic;
@@ -77,10 +78,12 @@ mod processor;
 // New modules
 mod files;
 mod io;
+mod pool;
 mod result;
+mod scan_ahead;
 
 // Core public API
-pub use atomic::write_atomic;
+pub use atomic::{AtomicFile, write_atomic};
 pub use config::Config;
 pub use error::{Error, Result};
 pub use fast_yaml_core::Value;
@@ -88,8 +91,10 @@ pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 
 // File-level parallelism
 pub use files::{CommentPolicy, FileProcessor, FormatOutput};
-pub use io::{FileContent, SmartReader};
+pub use io::read_file;
+pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};
+pub use scan_ahead::{ScanAheadLane, ScanAheadPolicy};
 
 /// Parse multi-document YAML stream in parallel.
 ///
@@ -103,8 +108,9 @@ pub use result::{BatchResult, FileOutcome, FileResult};
 /// The error includes the document index for debugging.
 ///
 /// Returns `Error::InputTooLarge` if the input exceeds [`Config::max_input_bytes`] (default
-/// 100 MiB) and `Error::TooManyDocuments` if it holds more than [`Config::max_documents`]
-/// (default 100 000) documents; the latter is checked before any document is parsed.
+/// 100 MiB) and `Error::Parse` with `LimitKind::Documents` if it holds more documents than
+/// `ParseLimits::max_documents` (default 100 000); the latter is checked before any document
+/// is parsed.
 ///
 /// # Known differences
 ///

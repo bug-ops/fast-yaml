@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::decode_input_owned;
 use fast_yaml_core::limits::MaxInputBytes;
-use fast_yaml_parallel::{FileContent, SmartReader};
+use fast_yaml_parallel::read_file;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
@@ -31,9 +31,7 @@ impl InputSource {
 
     /// Read from file; the read never buffers more than `max` bytes plus one
     pub fn from_file(path: &Path, max: MaxInputBytes) -> Result<Self> {
-        let content = SmartReader::with_threshold(u64::MAX)
-            .read(path, max)
-            .and_then(FileContent::into_string)
+        let content = read_file(path, max)
             .with_context(|| format!("Failed to read file: {}", path.display()))?;
 
         Ok(Self {

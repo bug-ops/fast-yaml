@@ -1,6 +1,8 @@
 //! Formatter configuration for YAML formatting.
 
-use fast_yaml_core::{EmitterConfig, Indent, MaxDepth, MaxScanAhead, ParseLimits, Width};
+use fast_yaml_core::{
+    EmitterConfig, Indent, MaxDepth, MaxDocuments, MaxScanAhead, ParseLimits, Width,
+};
 
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::IndentSize;
@@ -40,6 +42,13 @@ impl FormatterConfig {
     #[must_use]
     pub const fn with_max_depth(mut self, max_depth: MaxDepth) -> Self {
         self.parse_limits.max_depth = max_depth;
+        self
+    }
+
+    /// Sets the maximum document count per stream.
+    #[must_use]
+    pub const fn with_max_documents(mut self, max_documents: MaxDocuments) -> Self {
+        self.parse_limits.max_documents = max_documents;
         self
     }
 

@@ -13,7 +13,7 @@ status: reverse-specified
 # fast-yaml: constitution and overview
 
 > [!abstract]
-> fast-yaml is a YAML 1.2.2 toolkit with a Rust core: one parser, one resolver, one emitter and one linter, exposed through the `fy` CLI, Rust crates, a Python package and a Node.js package. This document states what the product is for, the principles every feature obeys, the architecture on one page, and the map of feature specs. Behavior described in the specs is what the code at v0.6.6 (main, commit e5e6cfb) does or is intended to do; where the two differ, the spec says so in its "Open questions / Known deviations" section.
+> fast-yaml is a YAML 1.2.2 toolkit with a Rust core: one parser, one resolver, one emitter and one linter, exposed through the `fy` CLI, Rust crates, a Python package and a Node.js package. This document states what the product is for, the principles every feature obeys, the architecture on one page, and the map of feature specs. Behavior described in the specs is what the code at v0.6.6 (main, commit e5e6cfb) plus the batch of fixes #531, #532, #557, #566-#569, #571-#581 and #366 does or is intended to do; where the two differ, the spec says so in its "Open questions / Known deviations" section.
 
 ## 1. Purpose
 
@@ -32,11 +32,11 @@ Value proposition: correct YAML 1.2.2 semantics, bounded resource use on hostile
 1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Width`, ...), lint config uses typed enums, diagnostics carry typed spans. No stringly-typed options inside the core.
 2. **One implementation, many surfaces.** Parsing, scalar resolution, merge keys, limits and linting live in the Rust crates. Bindings and the CLI are thin adapters; they must not re-implement semantics.
 3. **Surface parity.** The same input gives the same result on every surface unless a spec lists the difference as a deliberate deviation. Parity gaps are bugs, not features.
-4. **Bounded by default.** Every untrusted input passes the same size, NUL/BOM, depth, scan-ahead and expansion checks. Limits have documented defaults and validated ranges. See [[009-limits-security/spec]].
+4. **Bounded by default.** Every untrusted input passes the same size, NUL/BOM, depth, scan-ahead, document-count and expansion checks, whichever surface or rule reads it; config files are bounded too. Limits have documented defaults and validated ranges. See [[009-limits-security/spec]].
 5. **No silent data loss.** Operations that can drop information (comment stripping, key reordering, precision loss) must be explicit or refused, never implicit.
 6. **Deterministic output.** Batch and parallel runs produce the same ordered output as a sequential run.
-7. **Atomic writes.** File rewrites go through temp file plus rename; a failed run leaves originals intact.
-8. **Safe Rust.** `unsafe_code = deny` workspace-wide; local `allow` only at FFI and mmap boundaries, each justified.
+7. **Atomic writes.** File rewrites and `-o` outputs go through a temp file plus rename (`write_atomic`, `AtomicFile`); a failed run leaves originals intact. The one exception is a hard-linked target owned by the caller, written in place (see [[005-batch-parallel/spec]] FR-008).
+8. **Safe Rust.** `unsafe_code = deny` workspace-wide; `fast-yaml-core`, `fast-yaml-linter` and `fast-yaml-parallel` set `forbid(unsafe_code)`; local `allow` only at FFI boundaries, each justified. There is no memory mapping.
 9. **Quality gate.** `cargo +nightly fmt --check`, `clippy -D warnings` (pedantic and nursery), `cargo nextest`, rustdoc without broken links. Every public item is documented.
 10. **Pre-1.0 policy.** Breaking changes are allowed and recorded in `CHANGELOG.md`; no deprecation shims.
 
@@ -64,9 +64,9 @@ graph TD
 
 | Layer | Responsibility |
 |-------|----------------|
-| `fast-yaml-core` | `NormalizedInput` (BOM-free text plus offset map), bounded scanner, events API (saphyr types are hidden), resolved `Value`, YAML 1.2 core-schema scalar resolution, merge keys, `ParseLimits`, emitter and streaming comment-aware formatter |
-| `fast-yaml-linter` | rule engine (25 rules), config and presets (yamllint-compatible subset), inline directives, text/json/github/sarif/parsable formatters |
-| `fast-yaml-parallel` | document-level parallel parse via a chunker, file-level batch processing, ordered results, atomic in-place writes |
+| `fast-yaml-core` | `NormalizedInput` (BOM-free text plus offset map), bounded scanner, events API (saphyr types are hidden), resolved `Value`, YAML 1.2 core-schema scalar resolution, merge keys, `ParseLimits` (depth, alias, tag, scan-ahead, documents), emitter and streaming comment-aware formatter |
+| `fast-yaml-linter` | rule engine (25 rules) over one guarded loader pass, config and presets (yamllint-compatible subset, `extends`, `ignore-from-file`), inline directives, text/json/github/sarif/parsable formatters |
+| `fast-yaml-parallel` | document-level parallel parse via a chunker, file-level batch processing, bounded file reads, one shared rayon pool, scan-ahead scaling with a retry lane, ordered results, atomic writes (`write_atomic`, `AtomicFile`) |
 | `fast-yaml-cli` (`fy`) | argument parsing, file discovery, stdin/stdout, exit codes, output channels |
 | `python/`, `nodejs/` | FFI adapters; PyYAML-style and js-yaml-style APIs on top of the same core |
 

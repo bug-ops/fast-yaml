@@ -59,7 +59,7 @@ fn present_string(s: &str, position: Position, multiline: bool) -> Presented<'_>
     let in_flow = matches!(position, Position::Flow | Position::FlowKey);
     let style = if literal {
         ScalarStyle::Literal
-    } else if needs_quotes(s) || (in_flow && s.ends_with(" -")) {
+    } else if needs_quotes(s) || (in_flow && (s.ends_with(" -") || s.contains('?'))) {
         ScalarStyle::DoubleQuoted
     } else {
         ScalarStyle::Plain
@@ -252,6 +252,17 @@ mod tests {
         }
         for position in [Position::Block, Position::Key] {
             assert_eq!(style("a -", position, false), ScalarStyle::Plain);
+        }
+    }
+
+    #[test]
+    fn question_marks_are_quoted_in_flow_only() {
+        for position in [Position::Flow, Position::FlowKey] {
+            assert_eq!(style("a?b", position, false), ScalarStyle::DoubleQuoted);
+            assert_eq!(style("what ?", position, false), ScalarStyle::DoubleQuoted);
+        }
+        for position in [Position::Block, Position::Key] {
+            assert_eq!(style("a?b", position, false), ScalarStyle::Plain);
         }
     }
 

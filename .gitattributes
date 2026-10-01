@@ -1,0 +1,2 @@
+crates/fast-yaml-linter/tests/fixtures/** -text
+crates/fast-yaml-linter/tests/golden/** -text

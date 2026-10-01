@@ -231,6 +231,8 @@ pub struct LintConfig {
     /// Largest source accepted for linting, in bytes (integer, 1..=1073741824, default: 104857600).
     /// Bounds linting work on oversized input; the source is already in memory when checked, so this is not a memory bound.
     pub max_input_bytes: Option<f64>,
+    /// Maximum number of documents in the stream (integer, 1..=10000000, default: 100000).
+    pub max_documents: Option<f64>,
 }
 
 fn config_error(error: impl std::fmt::Display) -> napi::Error {
@@ -257,6 +259,7 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
             config.max_depth,
             config.max_alias_bytes,
             config.max_scan_ahead,
+            config.max_documents,
         )?)
         .with_max_input_bytes(max_input_bytes(config.max_input_bytes)?);
     if let Some(max) = config.max_line_length {

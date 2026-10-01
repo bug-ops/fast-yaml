@@ -52,6 +52,7 @@ pub mod input;
 mod keys;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
 pub mod limits;
+mod marker;
 /// YAML 1.1 merge key (`<<`) resolution shared by the core loader and bindings.
 pub mod merge;
 mod merge_check;

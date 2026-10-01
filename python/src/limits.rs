@@ -2,7 +2,7 @@
 
 use std::fmt::Display;
 
-use fast_yaml_core::limits::{AliasBytes, Bounded, Bounds, Depth, ScanAhead};
+use fast_yaml_core::limits::{AliasBytes, Bounded, Bounds, Depth, Documents, ScanAhead};
 use fast_yaml_core::{Indent, ParseLimits, Width};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -55,11 +55,13 @@ pub fn parse_limits(
     max_depth_arg: Option<&Bound<'_, PyAny>>,
     max_alias_bytes_arg: Option<&Bound<'_, PyAny>>,
     max_scan_ahead_arg: Option<&Bound<'_, PyAny>>,
+    max_documents_arg: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<ParseLimits> {
     Ok(ParseLimits {
         max_depth: bounded::<Depth>("max_depth", max_depth_arg)?,
         max_alias_bytes: bounded::<AliasBytes>("max_alias_bytes", max_alias_bytes_arg)?,
         max_scan_ahead: bounded::<ScanAhead>("max_scan_ahead", max_scan_ahead_arg)?,
+        max_documents: bounded::<Documents>("max_documents", max_documents_arg)?,
         ..ParseLimits::default()
     })
 }

@@ -8,8 +8,7 @@
 // The module is private, but explicit crate visibility documents that nothing here is public API.
 #![allow(clippy::redundant_pub_crate)]
 
-use std::fmt;
-
+use fast_yaml_core::{KeyError, KeyKind};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PySet};
 
@@ -44,64 +43,24 @@ impl NumericKind {
     }
 }
 
-impl fmt::Display for NumericKind {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Bool => "bool",
-            Self::Int => "int",
-            Self::Float => "float",
-        })
-    }
-}
-
-/// A key spelled as YAML spells it (`true`), for error messages.
-#[derive(Debug)]
-pub(crate) struct KeyText(String);
-
-impl fmt::Display for KeyText {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-/// A key that equals an earlier key of another kind under Python equality.
-#[derive(Debug)]
-pub(crate) struct KeyClash {
-    kept: NumericKind,
-    incoming: NumericKind,
-    key: KeyText,
-    merged: bool,
-}
-
-impl KeyClash {
-    /// Marks the clash as involving a key absorbed from a `<<` source.
-    pub(crate) const fn through_merge(mut self) -> Self {
-        self.merged = true;
-        self
-    }
-}
-
-impl fmt::Display for KeyClash {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} key {} is distinct in YAML but equal as a Python dict key to a key of type {}",
-            self.incoming, self.key, self.kept
-        )?;
-        if self.merged {
-            f.write_str(" (through merge key `<<`)")?;
+impl From<NumericKind> for KeyKind {
+    fn from(kind: NumericKind) -> Self {
+        match kind {
+            NumericKind::Bool => Self::Bool,
+            NumericKind::Int => Self::Int,
+            NumericKind::Float => Self::Float,
         }
-        Ok(())
     }
 }
 
 /// The key as YAML spells it for booleans (`true`); numbers keep their Python spelling.
-fn yaml_text(kind: NumericKind, key: &Bound<'_, PyAny>) -> PyResult<KeyText> {
-    Ok(KeyText(match kind {
+fn yaml_text(kind: NumericKind, key: &Bound<'_, PyAny>) -> PyResult<Box<str>> {
+    Ok(match kind {
         NumericKind::Bool => key.is_truthy()?.to_string(),
         NumericKind::Int => key.str()?.to_string(),
         NumericKind::Float => key.repr()?.to_string(),
-    }))
+    }
+    .into())
 }
 
 /// Numeric keys seen so far in one mapping or set, grouped by kind.
@@ -131,11 +90,11 @@ impl<'py> NumericKeys<'py> {
         }
     }
 
-    /// Records `key`; returns the clash when it equals an earlier key of another kind.
+    /// Records `key`; returns the collision when it equals an earlier key of another kind.
     ///
     /// Keys that are not exactly `bool`, `int` or `float` are not tracked. A repeated key of the
     /// same kind is fine: it is the ordinary duplicate-key case.
-    pub(crate) fn record(&mut self, key: &Bound<'py, PyAny>) -> PyResult<Option<KeyClash>> {
+    pub(crate) fn record(&mut self, key: &Bound<'py, PyAny>) -> PyResult<Option<KeyError>> {
         let Some(kind) = NumericKind::of(key) else {
             return Ok(None);
         };
@@ -143,9 +102,9 @@ impl<'py> NumericKeys<'py> {
             if let Some(seen) = self.slot(other)
                 && seen.contains(key)?
             {
-                return Ok(Some(KeyClash {
-                    kept: other,
-                    incoming: kind,
+                return Ok(Some(KeyError::PythonCollision {
+                    incoming: kind.into(),
+                    kept: other.into(),
                     key: yaml_text(kind, key)?,
                     merged: false,
                 }));
@@ -160,16 +119,16 @@ impl<'py> NumericKeys<'py> {
     }
 }
 
-/// Builds a Python `set` from `members`, or reports the index and clash of the first member
+/// Builds a Python `set` from `members`, or reports the index and collision of the first member
 /// that equals an earlier member of another numeric kind.
 pub(crate) fn build_set<'py>(
     py: Python<'py>,
     members: &[Bound<'py, PyAny>],
-) -> PyResult<Result<Bound<'py, PySet>, (usize, KeyClash)>> {
+) -> PyResult<Result<Bound<'py, PySet>, (usize, KeyError)>> {
     let mut numeric = NumericKeys::new(py);
     for (index, member) in members.iter().enumerate() {
-        if let Some(clash) = numeric.record(member)? {
-            return Ok(Err((index, clash)));
+        if let Some(error) = numeric.record(member)? {
+            return Ok(Err((index, error)));
         }
     }
     Ok(Ok(PySet::new(py, members)?))

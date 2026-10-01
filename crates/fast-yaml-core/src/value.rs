@@ -57,14 +57,17 @@ pub enum Value {
 impl Value {
     /// Returns the text of a scalar used as a mapping key in string-keyed formats (JSON, JS objects).
     ///
-    /// Null, booleans, integers and floats use their canonical text (floats as `f64` `Display`,
-    /// so `1` and `1.0` share a key); a big integer uses its canonical decimal form.
-    /// Returns `None` for sequences and mappings.
+    /// Null, booleans, integers and floats use their canonical text (floats as ECMAScript
+    /// `Number::toString`, so `1` and `1.0` share a key, `-0.0` is `0`, `1e21` stays `1e+21` and
+    /// infinities and NaN read `Infinity`, `-Infinity` and `NaN`); a big integer uses its
+    /// canonical decimal form. Returns `None` for sequences and mappings.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{Parser, Value};
+    /// use fast_yaml_core::{Float, Parser, Value};
+    ///
+    /// assert_eq!(Value::Float(Float::new(1e21)).key_text().as_deref(), Some("1e+21"));
     ///
     /// let Some(Value::Mapping(map)) = Parser::parse_str("+0x8000000000000000: x")? else {
     ///     unreachable!()
@@ -80,11 +83,51 @@ impl Value {
             Self::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
             Self::Int(i) => Cow::Owned(i.to_string()),
             Self::BigInt(big) => Cow::Borrowed(big.canonical()),
-            Self::Float(f) => Cow::Owned(f.get().to_string()),
+            Self::Float(f) => Cow::Owned(ecmascript_number(f.get())),
             Self::String(s) => Cow::Borrowed(s),
             Self::Sequence(_) | Self::Mapping(_) | Self::Set(_) => return None,
         })
     }
+}
+
+/// ECMAScript `Number::toString(10)`: shortest round-trip digits, positional notation for
+/// exponents in `-7 < e < 21`, `Infinity`/`NaN` spelled out and `-0` as `0`.
+fn ecmascript_number(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value == 0.0 {
+        return "0".to_owned();
+    }
+    let sign = if value < 0.0 { "-" } else { "" };
+    if value.is_infinite() {
+        return format!("{sign}Infinity");
+    }
+    let scientific = format!("{:e}", value.abs());
+    let (mantissa, exponent) = scientific
+        .split_once('e')
+        .unwrap_or((scientific.as_str(), "0"));
+    let exponent: i32 = exponent.parse().unwrap_or(0);
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let count = i32::try_from(digits.len()).unwrap_or(i32::MAX);
+    let point = exponent + 1;
+    let body = if count <= point && point <= 21 {
+        format!(
+            "{digits}{}",
+            "0".repeat((point - count).unsigned_abs() as usize)
+        )
+    } else if 0 < point && point <= 21 {
+        let (int, frac) = digits.split_at(point.unsigned_abs() as usize);
+        format!("{int}.{frac}")
+    } else if -6 < point && point <= 0 {
+        format!("0.{}{digits}", "0".repeat(point.unsigned_abs() as usize))
+    } else {
+        let exp_sign = if exponent < 0 { '-' } else { '+' };
+        let (head, tail) = digits.split_at(1);
+        let dot = if tail.is_empty() { "" } else { "." };
+        format!("{head}{dot}{tail}e{exp_sign}{}", exponent.unsigned_abs())
+    };
+    format!("{sign}{body}")
 }
 
 /// Longest key prefix, in characters, that [`quote_key`] shows.
@@ -1099,6 +1142,37 @@ mod tests {
         assert_eq!(text("s").key_text().as_deref(), Some("s"));
         assert!(Value::Sequence(Vec::new()).key_text().is_none());
         assert!(Value::Mapping(Mapping::new()).key_text().is_none());
+    }
+
+    #[test]
+    fn key_text_of_float_follows_ecmascript() {
+        for (value, expected) in [
+            (1.0, "1"),
+            (-0.0, "0"),
+            (0.1, "0.1"),
+            (123.456, "123.456"),
+            (-1.5, "-1.5"),
+            (1e20, "100000000000000000000"),
+            (1e21, "1e+21"),
+            (1.5e300, "1.5e+300"),
+            (1.2345e25, "1.2345e+25"),
+            (0.000_001, "0.000001"),
+            (1e-7, "1e-7"),
+            (1.5e-7, "1.5e-7"),
+            (-2.5e-10, "-2.5e-10"),
+            (f64::MAX, "1.7976931348623157e+308"),
+            (f64::MIN_POSITIVE, "2.2250738585072014e-308"),
+            (5e-324, "5e-324"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+            (f64::NAN, "NaN"),
+        ] {
+            assert_eq!(
+                Value::Float(Float::new(value)).key_text().as_deref(),
+                Some(expected),
+                "{value:?}"
+            );
+        }
     }
 
     #[test]

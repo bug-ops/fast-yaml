@@ -31,3 +31,33 @@ describe.each(loaders)('duplicate keys via %s', (_name, loader) => {
     expect(Object.keys(result)).toEqual(order);
   });
 });
+
+describe('float key text follows ECMAScript Number toString (#567)', () => {
+  const spellings: [string, number][] = [
+    ['1e21', 1e21],
+    ['1e20', 1e20],
+    ['1e-7', 1e-7],
+    ['1e-6', 1e-6],
+    ['100.0', 100],
+    ['-0.0', -0],
+    ['.inf', Number.POSITIVE_INFINITY],
+    ['-.inf', Number.NEGATIVE_INFINITY],
+    ['.nan', Number.NaN],
+    ['1.0e+300', 1e300],
+    ['2.5e-10', 2.5e-10],
+  ];
+
+  it.each(spellings)('key %s loads as String(Number)', (text, value) => {
+    for (const [, load] of loaders) {
+      expect(Object.keys(load(`${text}: v\n`) as object)).toEqual([String(value)]);
+    }
+  });
+
+  it.each(spellings)(
+    'string key "%s" collides with the float key in the error text',
+    (text, value) => {
+      const clash = `${text}: a\n"${String(value)}": b\n`;
+      expect(() => safeLoad(clash)).toThrow(`string key "${String(value)}" is distinct`);
+    }
+  );
+});

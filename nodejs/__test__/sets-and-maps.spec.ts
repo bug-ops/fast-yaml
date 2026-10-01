@@ -58,10 +58,49 @@ describe('safeDump of Set and Map', () => {
       /incompatible receiver/
     );
     expect(() => safeDump(new Map([[1, 2]]), {})).not.toThrow();
+  });
+
+  it('reads a Set or Map by its built-in brand, not by an overridden toStringTag (#566)', () => {
+    class TaggedSet<T> extends Set<T> {
+      get [Symbol.toStringTag]() {
+        return 'TaggedSet';
+      }
+    }
+    class TaggedMap<K, V> extends Map<K, V> {
+      get [Symbol.toStringTag]() {
+        return 'TaggedMap';
+      }
+    }
+    expect(safeDump(new TaggedSet(['a', 'b']))).toBe('!!set\na: ~\nb: ~\n');
+    expect(safeDump(new TaggedMap([['k', 1]]))).toBe('k: 1\n');
+    expect(safeDump({ s: new TaggedSet([1]) })).toBe('s: !!set\n  1: ~\n');
+
+    const untagged = Object.defineProperty(new Set([1]), Symbol.toStringTag, { value: undefined });
+    expect(safeDump(untagged)).toBe('!!set\n1: ~\n');
     const mapClaimingSet = Object.defineProperty(new Map([[1, 2]]), Symbol.toStringTag, {
       value: 'Set',
     });
-    expect(() => safeDump(mapClaimingSet)).toThrow(/incompatible receiver/);
+    expect(safeDump(mapClaimingSet)).toBe('1: 2\n');
+  });
+
+  it('keeps plain and class instances without a built-in brand as mappings', () => {
+    class Point {
+      x = 1;
+    }
+    expect(safeDump(new Point())).toBe('x: 1\n');
+    class FakeSet {
+      get [Symbol.toStringTag]() {
+        return 'Set';
+      }
+    }
+    expect(() => safeDump(new FakeSet())).toThrow(/incompatible receiver/);
+  });
+
+  it('reads a subclass from another realm', () => {
+    const foreign = runInNewContext(
+      'class S extends Set { get [Symbol.toStringTag]() { return "X"; } }; new S(["a"])'
+    );
+    expect(safeDump(foreign)).toBe('!!set\na: ~\n');
   });
 
   it('never runs a hostile size getter, length or iterator of a tagged object', () => {

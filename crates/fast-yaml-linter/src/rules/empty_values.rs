@@ -2,15 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::node_roles::{NodeRole, RoleTracker};
+use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
+use crate::nodes::{Node, TagKind};
 use crate::source::offset::ByteOffset;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
-};
-use fast_yaml_core::Value;
-use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use fast_yaml_core::{ScalarStyle, Value};
 
 /// Linting rule for empty values.
 ///
@@ -85,7 +83,7 @@ impl super::LintRule for EmptyValuesRule {
 
         let source_context = context.source_context();
         let severity = config.rules.empty_values.severity_or(Severity::Warning);
-        collect_empty_values(context.source(), source_context, options)
+        collect_empty_values(context, options)
             .into_iter()
             .map(|EmptyValue { key, colon }| {
                 let span = source_context.span_at(colon, 1);
@@ -109,80 +107,64 @@ struct EmptyValue {
 }
 
 /// Scalar key seen last, awaiting its value.
-struct PendingKey {
-    text: String,
+struct PendingKey<'i> {
+    text: &'i str,
     end: ByteOffset,
 }
 
-/// Walks parser events and collects entries with an implicit null value.
+/// Walks the node index and collects entries with an implicit null value.
 ///
 /// An implicit null is a zero-width plain scalar without a tag (an anchor is allowed); an
 /// explicit `null`, `~` or `!!null` occupies source text.
 fn collect_empty_values(
-    source: &str,
-    source_context: &SourceContext<'_>,
+    context: &LintContext<'_>,
     options: &EmptyValuesOptions,
 ) -> Vec<EmptyValue> {
+    let index = context.nodes();
+    let source = context.source();
     let mut found = Vec::new();
-    let mut roles = RoleTracker::default();
-    let mut pending: Option<PendingKey> = None;
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "source passed the guarded parse in the same lint call"
-    )]
-    let mut parser = SaphyrParser::new_from_str(source);
+    let mut pending: Option<PendingKey<'_>> = None;
 
-    while let Some(Ok((event, span))) = parser.next_event() {
-        let range = source_context.byte_range_of(span);
-        match event {
-            Event::Scalar(text, style, _, tag) => match roles.node() {
+    for node in index.nodes() {
+        match node {
+            Node::Scalar(scalar) => match scalar.role {
                 NodeRole::MappingKey => {
                     pending = Some(PendingKey {
-                        text: text.into_owned(),
-                        end: range.end(),
+                        text: index.text(scalar),
+                        end: scalar.range.end(),
                     });
                 }
                 NodeRole::MappingValue => {
-                    let forbidden = if roles.in_flow() {
+                    let forbidden = if scalar.in_flow {
                         options.forbid_in_flow_mappings
                     } else {
                         options.forbid_in_block_mappings
                     };
-                    let implicit = range.start() == range.end()
-                        && style == ScalarStyle::Plain
-                        && tag.is_none();
+                    let implicit = scalar.range.start() == scalar.range.end()
+                        && scalar.style == ScalarStyle::Plain
+                        && scalar.tag == TagKind::None;
                     if let (true, true, Some(key)) = (forbidden, implicit, pending.take())
                         && let Some(colon) = colon_after(source, key.end)
                     {
                         found.push(EmptyValue {
-                            key: key.text,
+                            key: key.text.to_owned(),
                             colon,
                         });
                     }
                 }
                 NodeRole::SequenceItem | NodeRole::Root => {}
             },
-            Event::MappingStart(..) => {
-                pending = None;
-                roles.start_mapping(source, range);
-            }
-            Event::SequenceStart(..) => {
-                pending = None;
-                roles.start_sequence(source, range);
-            }
-            Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-            Event::Alias(..) => {
-                pending = None;
-                if roles.node() == NodeRole::MappingKey {
-                    pending = source
-                        .get(range.start().get()..range.end().get())
-                        .map(|text| PendingKey {
-                            text: text.to_owned(),
+            Node::Open => pending = None,
+            Node::Alias { range, role } => {
+                pending = (*role == NodeRole::MappingKey)
+                    .then(|| {
+                        index.source_text(*range).map(|text| PendingKey {
+                            text,
                             end: range.end(),
-                        });
-                }
+                        })
+                    })
+                    .flatten();
             }
-            _ => {}
         }
     }
 

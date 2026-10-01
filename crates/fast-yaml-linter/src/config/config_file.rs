@@ -1,5 +1,6 @@
 //! Config file loading, discovery, and merging into `LintConfig`.
 
+use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -19,11 +20,28 @@ use crate::linter::LintConfig;
 /// Depth limit for config file discovery walk-up.
 const MAX_DISCOVERY_DEPTH: usize = 20;
 
+/// Longest chain of config files linked by `extends`, the extending file included.
+pub const MAX_EXTENDS_DEPTH: usize = 8;
+
+/// Largest config file, `extends` target or `ignore-from-file` file, in bytes.
+pub const MAX_CONFIG_FILE_BYTES: usize = 1 << 20;
+
 /// Top-level structure of a `.fast-yaml.yaml` config file.
 ///
 /// With `extends: default` or `extends: relaxed` the rules start from the matching yamllint
-/// preset (see [`Preset`]); without `extends` they start from the fast-yaml defaults. `ignore`
-/// and `yaml-files` select the files `fy lint` visits and follow yamllint's semantics.
+/// preset (see [`Preset`]); without `extends` they start from the fast-yaml defaults. Any other
+/// `extends` value is the path of another config file, resolved against the directory of the
+/// file that names it (yamllint resolves it against the working directory). The extended file is
+/// loaded first, recursively (at most [`MAX_EXTENDS_DEPTH`] files deep, cycles are rejected), and
+/// the rules of the extending file are applied over it like over a preset. `max-input-bytes`,
+/// `max-scan-ahead` and `ignore` are inherited when the extending file does not set them;
+/// `yaml-files` is not inherited, as in yamllint.
+///
+/// `ignore` and `yaml-files` select the files `fy lint` visits and follow yamllint's semantics.
+/// `ignore-from-file` names one file or a list of files (relative to the config file's
+/// directory) whose lines are ignore patterns; it replaces `ignore`, and the two cannot be used
+/// together. The patterns are read when the config is loaded, so they end up in
+/// [`FileSelection::ignore`], anchored at the config file's directory.
 ///
 /// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
 /// suffixes) that caps the input the linter accepts. The `max-scan-ahead` key is likewise an
@@ -69,6 +87,8 @@ pub enum TopLevelKey {
     Extends,
     /// `ignore`
     Ignore,
+    /// `ignore-from-file`
+    IgnoreFromFile,
     /// `yaml-files`
     YamlFiles,
     /// `max-input-bytes`
@@ -85,6 +105,7 @@ impl TopLevelKey {
             Self::Rules => "rules",
             Self::Extends => "extends",
             Self::Ignore => "ignore",
+            Self::IgnoreFromFile => "ignore-from-file",
             Self::YamlFiles => "yaml-files",
             Self::MaxInputBytes => "max-input-bytes",
             Self::MaxScanAhead => "max-scan-ahead",
@@ -96,6 +117,7 @@ impl TopLevelKey {
             Self::Rules,
             Self::Extends,
             Self::Ignore,
+            Self::IgnoreFromFile,
             Self::YamlFiles,
             Self::MaxInputBytes,
             Self::MaxScanAhead,
@@ -112,7 +134,7 @@ impl std::fmt::Display for TopLevelKey {
 }
 
 /// Top-level keys yamllint accepts that fast-yaml does not implement.
-const YAMLLINT_TOP_LEVEL_KEYS: [&str; 2] = ["ignore-from-file", "locale"];
+const YAMLLINT_TOP_LEVEL_KEYS: [&str; 1] = ["locale"];
 
 /// Errors from config file loading.
 #[derive(Debug, thiserror::Error)]
@@ -212,7 +234,7 @@ pub enum ConfigFileError {
 
     /// A top-level key is not recognized.
     #[error(
-        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'yaml-files', 'max-input-bytes' or 'max-scan-ahead'",
+        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'ignore-from-file', 'yaml-files', 'max-input-bytes' or 'max-scan-ahead'",
         .path.display(),
         echo(.key, KEY_LIMIT)
     )]
@@ -223,7 +245,52 @@ pub enum ConfigFileError {
         key: String,
     },
 
-    /// The value of `extends`, `ignore` or `yaml-files` is invalid.
+    /// A config, `extends` or `ignore-from-file` path is not a regular file (a directory, a pipe
+    /// or a device), so it is not opened.
+    #[error("'{}' is not a regular file", .path.display())]
+    NotRegularFile {
+        /// The rejected path.
+        path: PathBuf,
+    },
+
+    /// A config, `extends` or `ignore-from-file` file is larger than [`MAX_CONFIG_FILE_BYTES`].
+    #[error("'{}' is larger than {MAX_CONFIG_FILE_BYTES} bytes", .path.display())]
+    TooLarge {
+        /// The oversized file.
+        path: PathBuf,
+    },
+
+    /// A file named by `extends` is not a valid config file; its content is not echoed.
+    #[error("'{}' is not a valid config file (its content is not shown)", .path.display())]
+    Malformed {
+        /// The extended file.
+        path: PathBuf,
+    },
+
+    /// The file named by `extends` could not be loaded.
+    #[error("config file '{}': failed to load the file named by 'extends'", .path.display())]
+    Extended {
+        /// The extending config file.
+        path: PathBuf,
+        /// Why the extended file failed.
+        source: Box<Self>,
+    },
+
+    /// A config file is its own ancestor through `extends`.
+    #[error("config file '{}': 'extends' leads back to this file", .path.display())]
+    ExtendsCycle {
+        /// The file met twice.
+        path: PathBuf,
+    },
+
+    /// The `extends` chain is longer than [`MAX_EXTENDS_DEPTH`] files.
+    #[error("config file '{}': 'extends' is nested more than {MAX_EXTENDS_DEPTH} files deep", .path.display())]
+    ExtendsTooDeep {
+        /// The first file beyond the limit.
+        path: PathBuf,
+    },
+
+    /// The value of `extends`, `ignore`, `ignore-from-file` or `yaml-files` is invalid.
     #[error(
         "config file '{}': invalid '{key}': {}",
         .path.display(),
@@ -243,11 +310,19 @@ pub enum ConfigFileError {
 #[derive(Default)]
 struct TopLevel {
     rules: Value,
-    extends: Option<Preset>,
+    extends: Option<Extends>,
     ignore: Option<Vec<String>>,
+    ignore_from_file: Option<Vec<String>>,
     yaml_files: Option<Vec<String>>,
     max_input_bytes: Option<MaxInputBytes>,
     max_scan_ahead: Option<MaxScanAhead>,
+}
+
+/// What `extends` names.
+enum Extends {
+    Preset(Preset),
+    /// A config file, as written.
+    File(PathBuf),
 }
 
 fn string_items(value: Value, what: &str) -> Result<Vec<String>, String> {
@@ -271,24 +346,113 @@ fn ignore_lines(value: Value) -> Result<Vec<String>, String> {
     }
 }
 
-fn preset_of(value: &Value) -> Result<Preset, String> {
-    let Value::String(name) = value else {
-        return Err("expected 'default' or 'relaxed'".to_owned());
+fn extends_of(value: &Value) -> Result<Extends, String> {
+    match value {
+        Value::String(name) if name.is_empty() => Err("the path is empty".to_owned()),
+        Value::String(name) => Ok(name
+            .parse::<Preset>()
+            .map_or_else(|_| Extends::File(PathBuf::from(name)), Extends::Preset)),
+        _ => Err("expected 'default', 'relaxed' or the path of a config file".to_owned()),
+    }
+}
+
+fn ignore_file_names(value: Value) -> Result<Vec<String>, String> {
+    match value {
+        Value::String(name) => Ok(vec![name]),
+        other => string_items(other, "file names or one file name"),
+    }
+}
+
+/// Directory of the config file, where relative paths in it start.
+fn config_dir(path: &Path) -> &Path {
+    path.parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+}
+
+/// Reads a regular file of at most [`MAX_CONFIG_FILE_BYTES`], the only way config files are read.
+///
+/// The path is checked before it is opened, so a pipe is never opened (opening one would block),
+/// and the opened file is checked again. At most one byte over the cap is read, so an endless
+/// file cannot exhaust memory.
+fn read_bounded(path: &Path) -> Result<Vec<u8>, ConfigFileError> {
+    let io = |source: std::io::Error| ConfigFileError::Io {
+        path: path.to_owned(),
+        source,
     };
-    name.parse::<Preset>()
-        .map_err(|error| format!("{error}; extending a config file is not implemented"))
+    let not_regular = || ConfigFileError::NotRegularFile {
+        path: path.to_owned(),
+    };
+    if !std::fs::metadata(path).map_err(io)?.is_file() {
+        return Err(not_regular());
+    }
+    let file = std::fs::File::open(path).map_err(io)?;
+    if !file.metadata().map_err(io)?.is_file() {
+        return Err(not_regular());
+    }
+    let mut bytes = Vec::new();
+    file.take(MAX_CONFIG_FILE_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(io)?;
+    if bytes.len() > MAX_CONFIG_FILE_BYTES {
+        return Err(ConfigFileError::TooLarge {
+            path: path.to_owned(),
+        });
+    }
+    Ok(bytes)
+}
+
+/// Lines of the `ignore-from-file` files.
+fn ignore_file_lines(path: &Path, names: &[String]) -> Result<Vec<String>, ConfigFileError> {
+    let mut lines = Vec::new();
+    for name in names {
+        let file_path = config_dir(path).join(name);
+        let text = decode_input_owned(read_bounded(&file_path)?).map_err(|source| {
+            ConfigFileError::Decode {
+                path: file_path.clone(),
+                source,
+            }
+        })?;
+        lines.extend(text.lines().map(str::to_owned));
+    }
+    Ok(lines)
 }
 
 /// Canonical directory of the config file, the anchor of `ignore` patterns.
 fn config_root(path: &Path) -> Result<PathBuf, ConfigFileError> {
-    let dir = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    dir.canonicalize().map_err(|source| ConfigFileError::Io {
-        path: path.to_owned(),
-        source,
-    })
+    config_dir(path)
+        .canonicalize()
+        .map_err(|source| ConfigFileError::Io {
+            path: path.to_owned(),
+            source,
+        })
+}
+
+impl ConfigFileError {
+    /// Replaces errors that may quote the file's text by [`ConfigFileError::Malformed`], for a
+    /// file that the user's config merely points at. Every variant is classified, so a new one
+    /// does not compile until it is.
+    fn without_content(self) -> Self {
+        match self {
+            Self::Decode { path, .. }
+            | Self::Parse { path, .. }
+            | Self::Rejected { path, .. }
+            | Self::InvalidRules { path, .. }
+            | Self::UnsupportedKey { path, .. }
+            | Self::LimitNotPositive { path, .. }
+            | Self::LimitOutOfRange { path, .. }
+            | Self::UnknownKey { path, .. }
+            | Self::InvalidKey { path, .. } => Self::Malformed { path },
+            Self::Io { .. }
+            | Self::NotAMapping { .. }
+            | Self::NotRegularFile { .. }
+            | Self::TooLarge { .. }
+            | Self::Malformed { .. }
+            | Self::Extended { .. }
+            | Self::ExtendsCycle { .. }
+            | Self::ExtendsTooDeep { .. } => self,
+        }
+    }
 }
 
 impl ConfigFile {
@@ -304,14 +468,37 @@ impl ConfigFile {
     /// flow collection's continuation line is rejected, and the error names its line and column.
     /// Indent with spaces.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
-        let bytes = std::fs::read(path).map_err(|source| ConfigFileError::Io {
+        Self::load_chain(path, &mut Vec::new())
+    }
+
+    /// Loads `path`, with `chain` holding the canonical paths of the files it is extending from.
+    fn load_chain(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
+        let canonical = path.canonicalize().map_err(|source| ConfigFileError::Io {
             path: path.to_owned(),
             source,
         })?;
-        let content = decode_input_owned(bytes).map_err(|source| ConfigFileError::Decode {
-            path: path.to_owned(),
-            source,
-        })?;
+        if chain.contains(&canonical) {
+            return Err(ConfigFileError::ExtendsCycle {
+                path: path.to_owned(),
+            });
+        }
+        if chain.len() >= MAX_EXTENDS_DEPTH {
+            return Err(ConfigFileError::ExtendsTooDeep {
+                path: path.to_owned(),
+            });
+        }
+        chain.push(canonical);
+        let loaded = Self::load_file(path, chain);
+        chain.pop();
+        loaded
+    }
+
+    fn load_file(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
+        let content =
+            decode_input_owned(read_bounded(path)?).map_err(|source| ConfigFileError::Decode {
+                path: path.to_owned(),
+                source,
+            })?;
         // serde_norway has no depth or alias limits, so the core parser vets the text first.
         if let Err(source) = Parser::parse_all(&content) {
             return Err(ConfigFileError::Rejected {
@@ -337,14 +524,29 @@ impl ConfigFile {
             path: path.to_owned(),
             source,
         };
-        let rules = if let Some(preset) = top.extends {
-            let mut rules = preset.rules();
-            rules.apply_over_preset(top.rules).map_err(invalid_rules)?;
-            rules
-        } else {
-            let mut rules = RulesConfig::default();
-            rules.apply(top.rules).map_err(invalid_rules)?;
-            rules
+        let (rules, base) = match top.extends {
+            Some(Extends::Preset(preset)) => {
+                let mut rules = preset.rules();
+                rules.apply_over_preset(top.rules).map_err(invalid_rules)?;
+                (rules, None)
+            }
+            Some(Extends::File(name)) => {
+                let base =
+                    Self::load_chain(&config_dir(path).join(name), chain).map_err(|source| {
+                        ConfigFileError::Extended {
+                            path: path.to_owned(),
+                            source: Box::new(source.without_content()),
+                        }
+                    })?;
+                let mut rules = base.rules.clone();
+                rules.apply_over_preset(top.rules).map_err(invalid_rules)?;
+                (rules, Some(base))
+            }
+            None => {
+                let mut rules = RulesConfig::default();
+                rules.apply(top.rules).map_err(invalid_rules)?;
+                (rules, None)
+            }
         };
         let invalid_key =
             |key, error: crate::config::InvalidPathPattern| ConfigFileError::InvalidKey {
@@ -352,24 +554,41 @@ impl ConfigFile {
                 key,
                 message: error.to_string(),
             };
-        let ignore = top
-            .ignore
-            .map(|lines| {
-                IgnorePatterns::new(&config_root(path)?, &lines)
-                    .map_err(|error| invalid_key(TopLevelKey::Ignore, error))
-            })
-            .transpose()?;
+        let ignore = match (top.ignore, top.ignore_from_file) {
+            (Some(_), Some(_)) => {
+                return Err(ConfigFileError::InvalidKey {
+                    path: path.to_owned(),
+                    key: TopLevelKey::IgnoreFromFile,
+                    message: "cannot be used together with 'ignore'".to_owned(),
+                });
+            }
+            (Some(lines), None) => Some((TopLevelKey::Ignore, lines)),
+            (None, Some(names)) => Some((
+                TopLevelKey::IgnoreFromFile,
+                ignore_file_lines(path, &names)?,
+            )),
+            (None, None) => None,
+        }
+        .map(|(key, lines)| {
+            IgnorePatterns::new(&config_root(path)?, &lines)
+                .map_err(|error| invalid_key(key, error))
+        })
+        .transpose()?;
         let yaml_files = top
             .yaml_files
             .map(|lines| {
                 YamlFiles::new(&lines).map_err(|error| invalid_key(TopLevelKey::YamlFiles, error))
             })
             .transpose()?;
+        let inherited = base.unwrap_or_default();
         Ok(Self {
             rules,
-            max_input_bytes: top.max_input_bytes,
-            max_scan_ahead: top.max_scan_ahead,
-            selection: FileSelection { ignore, yaml_files },
+            max_input_bytes: top.max_input_bytes.or(inherited.max_input_bytes),
+            max_scan_ahead: top.max_scan_ahead.or(inherited.max_scan_ahead),
+            selection: FileSelection {
+                ignore: ignore.or(inherited.selection.ignore),
+                yaml_files,
+            },
         })
     }
 
@@ -403,8 +622,11 @@ impl ConfigFile {
             };
             match known {
                 TopLevelKey::Rules => top.rules = value,
-                TopLevelKey::Extends => top.extends = Some(preset_of(&value).map_err(invalid)?),
+                TopLevelKey::Extends => top.extends = Some(extends_of(&value).map_err(invalid)?),
                 TopLevelKey::Ignore => top.ignore = Some(ignore_lines(value).map_err(invalid)?),
+                TopLevelKey::IgnoreFromFile => {
+                    top.ignore_from_file = Some(ignore_file_names(value).map_err(invalid)?);
+                }
                 TopLevelKey::YamlFiles => {
                     top.yaml_files =
                         Some(string_items(value, "file name patterns").map_err(invalid)?);
@@ -697,18 +919,16 @@ mod tests {
 
     #[test]
     fn test_yamllint_top_level_keys_are_unsupported() {
-        for key in ["ignore-from-file", "locale"] {
-            let err = load_str(&format!("{key}: default\nrules: {{}}\n")).unwrap_err();
-            assert!(
-                matches!(err, ConfigFileError::UnsupportedKey { .. }),
-                "{key}: {err:?}"
-            );
-            let message = err.to_string();
-            assert!(
-                message.contains(key) && message.contains("yamllint"),
-                "{message}"
-            );
-        }
+        let err = load_str("locale: en_US.UTF-8\nrules: {}\n").unwrap_err();
+        assert!(
+            matches!(err, ConfigFileError::UnsupportedKey { .. }),
+            "{err:?}"
+        );
+        let message = err.to_string();
+        assert!(
+            message.contains("locale") && message.contains("yamllint"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -958,17 +1178,341 @@ mod tests {
     #[test]
     fn invalid_extends_is_reported() {
         for (content, needle) in [
-            (
-                "extends: ./base.yaml\n",
-                "extending a config file is not implemented",
-            ),
-            ("extends: strict\n", "'default' or 'relaxed'"),
-            ("extends: [default]\n", "expected 'default' or 'relaxed'"),
+            ("extends: ''\n", "the path is empty"),
+            ("extends: [default]\n", "or the path of a config file"),
+            ("extends: 5\n", "or the path of a config file"),
         ] {
             let (key, message) = invalid_key(load_str(content).unwrap_err());
             assert_eq!(key, TopLevelKey::Extends);
             assert!(message.contains(needle), "{content}: {message}");
         }
+    }
+
+    fn write_file(dir: &tempfile::TempDir, name: &str, content: &str) -> PathBuf {
+        let path = dir.path().join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, content).unwrap();
+        path
+    }
+
+    #[test]
+    fn extends_a_file_applies_its_rules_first() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            &dir,
+            "base.yaml",
+            "rules:\n  line-length: {max: 100}\n  key-ordering: {enabled: true}\n  colons: disable\n",
+        );
+        let path = write_file(
+            &dir,
+            "main.yaml",
+            "extends: base.yaml\nrules:\n  line-length: {allow-non-breakable-words: false}\n  colons: enable\n",
+        );
+        let cfg = ConfigFile::load(&path).unwrap();
+        assert_eq!(cfg.rules.line_length.options.max, NonZeroUsize::new(100));
+        assert!(!cfg.rules.line_length.options.allow_non_breakable_words);
+        assert!(cfg.rules.key_ordering.enabled);
+        assert!(cfg.rules.colons.enabled);
+    }
+
+    #[test]
+    fn extends_resolves_relative_to_the_extending_file_and_nests() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            &dir,
+            "shared/root.yaml",
+            "extends: relaxed\nrules:\n  line-length: {max: 90}\n",
+        );
+        write_file(
+            &dir,
+            "shared/mid.yaml",
+            "extends: root.yaml\nrules:\n  key-ordering: enable\n",
+        );
+        let path = write_file(
+            &dir,
+            "project/.fast-yaml.yaml",
+            "extends: ../shared/mid.yaml\n",
+        );
+        let cfg = ConfigFile::load(&path).unwrap();
+        assert_eq!(cfg.rules.line_length.options.max, NonZeroUsize::new(90));
+        assert!(cfg.rules.key_ordering.enabled);
+        assert!(!cfg.rules.document_start.enabled);
+    }
+
+    #[test]
+    fn extends_inherits_limits_and_ignore_but_not_yaml_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        write_file(
+            &dir,
+            "base.yaml",
+            "max-input-bytes: 4096\nmax-scan-ahead: 2048\nignore: ['vendor/']\nyaml-files: ['*.cfg']\n",
+        );
+        let own = write_file(
+            &dir,
+            "own.yaml",
+            "extends: base.yaml\nmax-input-bytes: 8192\n",
+        );
+        let cfg = ConfigFile::load(&own).unwrap();
+        assert_eq!(cfg.max_input_bytes, Some(MaxInputBytes::new(8192).unwrap()));
+        assert_eq!(cfg.max_scan_ahead, Some(MaxScanAhead::new(2048).unwrap()));
+        assert!(cfg.selection.yaml_files.is_none());
+        let ignore = cfg.selection.ignore.unwrap();
+        assert!(ignore.matches(&root.join("vendor/a.yaml"), false));
+        let overriding = write_file(
+            &dir,
+            "over.yaml",
+            "extends: base.yaml\nignore: ['other/']\n",
+        );
+        let ignore = ConfigFile::load(&overriding)
+            .unwrap()
+            .selection
+            .ignore
+            .unwrap();
+        assert!(!ignore.matches(&root.join("vendor/a.yaml"), false));
+        assert!(ignore.matches(&root.join("other/a.yaml"), false));
+    }
+
+    #[test]
+    fn extends_a_missing_file_names_both_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_file(&dir, "main.yaml", "extends: nowhere.yaml\n");
+        let err = ConfigFile::load(&path).unwrap_err();
+        let ConfigFileError::Extended { source, .. } = &err else {
+            panic!("expected Extended, got {err:?}");
+        };
+        assert!(
+            matches!(**source, ConfigFileError::Io { ref path, .. } if path.ends_with("nowhere.yaml")),
+            "{source:?}"
+        );
+        assert!(err.to_string().contains("'extends'"));
+    }
+
+    #[test]
+    fn extends_cycles_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = write_file(&dir, "a.yaml", "extends: b.yaml\n");
+        write_file(&dir, "b.yaml", "extends: a.yaml\n");
+        let mut error = ConfigFile::load(&first).unwrap_err();
+        while let ConfigFileError::Extended { source, .. } = error {
+            error = *source;
+        }
+        assert!(
+            matches!(error, ConfigFileError::ExtendsCycle { .. }),
+            "{error:?}"
+        );
+        let selfish = write_file(&dir, "self.yaml", "extends: ./self.yaml\n");
+        let mut error = ConfigFile::load(&selfish).unwrap_err();
+        while let ConfigFileError::Extended { source, .. } = error {
+            error = *source;
+        }
+        assert!(
+            matches!(error, ConfigFileError::ExtendsCycle { .. }),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn extends_depth_is_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let last = MAX_EXTENDS_DEPTH + 1;
+        for level in 0..last {
+            write_file(
+                &dir,
+                &format!("{level}.yaml"),
+                &format!("extends: {}.yaml\n", level + 1),
+            );
+        }
+        write_file(&dir, &format!("{last}.yaml"), "rules: {}\n");
+        let mut error = ConfigFile::load(&dir.path().join("0.yaml")).unwrap_err();
+        while let ConfigFileError::Extended { source, .. } = error {
+            error = *source;
+        }
+        assert!(
+            matches!(error, ConfigFileError::ExtendsTooDeep { .. }),
+            "{error:?}"
+        );
+        let within = MAX_EXTENDS_DEPTH - 1;
+        write_file(&dir, &format!("{within}.yaml"), "rules: {}\n");
+        assert!(ConfigFile::load(&dir.path().join("0.yaml")).is_ok());
+    }
+
+    #[test]
+    fn ignore_from_file_reads_patterns_next_to_the_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        write_file(&dir, ".yamlignore", "vendor/\n# comment\n*.tmp.yaml\n");
+        write_file(&dir, "more.txt", "build/\n");
+        for content in [
+            "ignore-from-file: .yamlignore\n",
+            "ignore-from-file: [.yamlignore, more.txt]\n",
+        ] {
+            let ignore = load_in(&dir, content).unwrap().selection.ignore.unwrap();
+            assert!(
+                ignore.matches(&root.join("vendor/a.yaml"), false),
+                "{content}"
+            );
+            assert!(
+                ignore.matches(&root.join("x/a.tmp.yaml"), false),
+                "{content}"
+            );
+            assert!(!ignore.matches(&root.join("a.yaml"), false), "{content}");
+        }
+        let both = load_in(&dir, "ignore-from-file: [.yamlignore, more.txt]\n")
+            .unwrap()
+            .selection
+            .ignore
+            .unwrap();
+        assert!(both.matches(&root.join("build/a.yaml"), false));
+    }
+
+    #[test]
+    fn ignore_from_file_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(&dir, ".yamlignore", "vendor/\n");
+        let (key, message) = invalid_key(
+            load_in(&dir, "ignore: ['a']\nignore-from-file: .yamlignore\n").unwrap_err(),
+        );
+        assert_eq!(key, TopLevelKey::IgnoreFromFile);
+        assert!(message.contains("together"), "{message}");
+        let err = load_in(&dir, "ignore-from-file: missing.txt\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::Io { .. }), "{err:?}");
+        let (key, _) = invalid_key(load_in(&dir, "ignore-from-file: 5\n").unwrap_err());
+        assert_eq!(key, TopLevelKey::IgnoreFromFile);
+    }
+
+    fn innermost(mut error: ConfigFileError) -> ConfigFileError {
+        while let ConfigFileError::Extended { source, .. } = error {
+            error = *source;
+        }
+        error
+    }
+
+    #[test]
+    fn oversized_files_are_rejected_for_every_read() {
+        let dir = tempfile::tempdir().unwrap();
+        write_file(
+            &dir,
+            "huge.txt",
+            &"a\n".repeat(MAX_CONFIG_FILE_BYTES / 2 + 1),
+        );
+        let err = load_in(&dir, "ignore-from-file: huge.txt\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::TooLarge { .. }), "{err:?}");
+        assert!(err.to_string().contains(&MAX_CONFIG_FILE_BYTES.to_string()));
+        let huge = write_file(
+            &dir,
+            "huge.yaml",
+            &format!("#{}\n", "a".repeat(MAX_CONFIG_FILE_BYTES)),
+        );
+        assert!(matches!(
+            ConfigFile::load(&huge).unwrap_err(),
+            ConfigFileError::TooLarge { .. }
+        ));
+        let main = write_file(&dir, "main.yaml", "extends: huge.yaml\n");
+        let err = innermost(ConfigFile::load(&main).unwrap_err());
+        assert!(matches!(err, ConfigFileError::TooLarge { .. }), "{err:?}");
+        let exact = write_file(&dir, "exact.yaml", &"#".repeat(MAX_CONFIG_FILE_BYTES));
+        assert!(ConfigFile::load(&exact).is_ok());
+    }
+
+    #[test]
+    fn directories_are_not_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("sub")).unwrap();
+        for content in ["extends: sub\n", "ignore-from-file: sub\n"] {
+            let err = innermost(load_in(&dir, content).unwrap_err());
+            assert!(
+                matches!(err, ConfigFileError::NotRegularFile { .. }),
+                "{content}: {err:?}"
+            );
+        }
+        let err = ConfigFile::load(&dir.path().join("sub")).unwrap_err();
+        assert!(
+            matches!(err, ConfigFileError::NotRegularFile { .. }),
+            "{err:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pipes_and_devices_are_never_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("pipe");
+        let status = std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap();
+        assert!(status.success());
+        for content in ["extends: pipe\n", "ignore-from-file: pipe\n"] {
+            let err = innermost(load_in(&dir, content).unwrap_err());
+            assert!(
+                matches!(err, ConfigFileError::NotRegularFile { .. }),
+                "{content}: {err:?}"
+            );
+        }
+        assert!(matches!(
+            ConfigFile::load(&fifo).unwrap_err(),
+            ConfigFileError::NotRegularFile { .. }
+        ));
+        for device in ["/dev/zero", "/dev/null"] {
+            for content in [
+                format!("extends: {device}\n"),
+                format!("ignore-from-file: {device}\n"),
+            ] {
+                let err = innermost(load_in(&dir, &content).unwrap_err());
+                assert!(
+                    matches!(err, ConfigFileError::NotRegularFile { .. }),
+                    "{content}: {err:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn errors_of_an_extended_file_do_not_quote_its_content() {
+        let dir = tempfile::tempdir().unwrap();
+        for (base, secret) in [
+            ("sekret-key: 1\n", "sekret-key"),
+            ("rules: [sekret-value\n", "sekret-value"),
+            ("rules: {sekret-rule: enable}\n", "sekret-rule"),
+            ("rules: {braces: {sekret-option: 1}}\n", "sekret-option"),
+            ("rules: {braces: sekret-severity}\n", "sekret-severity"),
+            ("max-input-bytes: sekret-value\n", "sekret-value"),
+            ("max-input-bytes: 0\n# sekret-value\n", "sekret-value"),
+            ("locale: sekret-value\n", "locale"),
+            ("extends: [sekret-value]\n", "sekret-value"),
+            ("ignore: 5\n# sekret-value\n", "sekret-value"),
+            ("ignore: ['[sekret-pattern']\n", "sekret-pattern"),
+            ("yaml-files: [sekret-value, 1]\n", "sekret-value"),
+            ("- sekret-value\n", "sekret-value"),
+        ] {
+            write_file(&dir, "base.yaml", base);
+            let err = load_in(&dir, "extends: base.yaml\n").unwrap_err();
+            let mut chain = err.to_string();
+            let mut source = std::error::Error::source(&err);
+            while let Some(cause) = source {
+                chain.push_str(&cause.to_string());
+                source = cause.source();
+            }
+            assert!(!chain.contains(secret), "{base}: {chain}");
+            assert!(chain.contains("base.yaml"), "{base}: {chain}");
+        }
+        let mut bytes = b"a: 1\n#".to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+        std::fs::write(dir.path().join("base.yaml"), bytes).unwrap();
+        let err = load_in(&dir, "extends: base.yaml\n").unwrap_err();
+        assert!(innermost(err).to_string().contains("base.yaml"));
+    }
+
+    #[test]
+    fn extended_ignore_from_file_is_inherited() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        write_file(&dir, "shared/.yamlignore", "vendor/\n");
+        write_file(&dir, "shared/base.yaml", "ignore-from-file: .yamlignore\n");
+        let path = write_file(&dir, "main.yaml", "extends: shared/base.yaml\n");
+        let ignore = ConfigFile::load(&path).unwrap().selection.ignore.unwrap();
+        assert!(ignore.matches(&root.join("shared/vendor/a.yaml"), false));
     }
 
     #[test]

@@ -1,7 +1,6 @@
 //! Diagnostics for inputs that cannot be linted, so report formats never print nothing.
 
 use fast_yaml_core::NormalizedInput;
-use saphyr_parser::Marker;
 
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintError, Location, Severity, SourceContext,
@@ -70,7 +69,7 @@ fn located_span(source: &str, line: usize, column: usize) -> Span {
     let normalized = NormalizedInput::new(source).ok();
     let text = normalized.as_ref().map_or(source, NormalizedInput::as_str);
     let ctx = SourceContext::new(text);
-    let offset = ctx.byte_offset_of(Marker::new(0, line, column.saturating_sub(1)));
+    let offset = ctx.byte_offset_at(line, column.saturating_sub(1));
     ctx.span_at(offset, 0)
 }
 

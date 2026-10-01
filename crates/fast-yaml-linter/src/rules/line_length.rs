@@ -8,8 +8,9 @@ use crate::config::RuleOptions;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
-use fast_yaml_core::Value;
-use saphyr_parser::{Event, Parser as SaphyrParser};
+use fast_yaml_core::events::{Event, EventStream};
+use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::{NormalizedInput, Value};
 
 use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 
@@ -62,23 +63,39 @@ impl LineLengthOptions {
         if !(self.allow_non_breakable_words || self.allow_non_breakable_inline_mappings) {
             return false;
         }
-        let chars: Vec<char> = line.chars().collect();
-        let mut start = chars.iter().take_while(|&&c| c == ' ').count();
-        if start == chars.len() {
+        let indent = line.bytes().take_while(|&b| b == b' ').count();
+        let Some(rest) = line.get(indent..).filter(|rest| !rest.is_empty()) else {
             return false;
-        }
-        match chars.get(start) {
-            Some('#') => {
-                start += chars.iter().skip(start).take_while(|&&c| c == '#').count() + 1;
-            }
-            Some('-') => start += 2,
-            _ => {}
-        }
-        if !chars.get(start..).is_some_and(|rest| rest.contains(&' ')) {
+        };
+        let marker_chars = match rest.chars().next() {
+            Some('#') => rest.chars().take_while(|&c| c == '#').count() + 1,
+            Some('-') => 2,
+            _ => 0,
+        };
+        let content = rest
+            .char_indices()
+            .nth(marker_chars)
+            .and_then(|(at, _)| rest.get(at..));
+        if content.is_none_or(|content| !content.contains(' ')) {
             return true;
         }
         self.allow_non_breakable_inline_mappings && is_inline_mapping_of_one_word(line)
     }
+}
+
+/// Whether `line` is, from its first content char to its last, one flow collection (`[...]` or
+/// `{...}`, after indentation and `- ` markers), which is never an inline mapping.
+///
+/// Decided from the text, so a multi-megabyte flow line is not handed to the parser, whose
+/// scanner buffers tokens far beyond the line's size.
+fn is_whole_flow_collection(line: &str) -> bool {
+    let mut content = line.trim_start_matches(' ');
+    while let Some(rest) = content.strip_prefix("- ") {
+        content = rest.trim_start_matches(' ');
+    }
+    let content = content.trim_end();
+    (content.starts_with('[') && content.ends_with(']'))
+        || (content.starts_with('{') && content.ends_with('}'))
 }
 
 /// Whether `line` holds a block mapping whose first plain or quoted value, without anchor or tag,
@@ -86,18 +103,23 @@ impl LineLengthOptions {
 ///
 /// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
 fn is_inline_mapping_of_one_word(line: &str) -> bool {
+    if is_whole_flow_collection(line) {
+        return false;
+    }
+    let Ok(input) = NormalizedInput::new(line) else {
+        return false;
+    };
+    let line = input.as_str();
     let context = SourceContext::new(line);
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "a line of a source that passed the guarded parse in the same lint call"
-    )]
-    let mut parser = SaphyrParser::new_from_str(line);
     let mut roles = RoleTracker::default();
     let mut seen_mapping = false;
-    while let Some(Ok((event, span))) = parser.next_event() {
-        let range = context.byte_range_of(span);
-        match event {
-            Event::MappingStart(..) => {
+    for item in EventStream::new(&input, ParseLimits::default()) {
+        let Ok(item) = item else {
+            break;
+        };
+        let range = context.byte_range_between(item.at, item.end);
+        match item.event {
+            Event::MappingStart { .. } => {
                 if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
                 {
                     return false;
@@ -105,22 +127,34 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
                 seen_mapping = true;
                 roles.start_mapping(line, range);
             }
-            Event::SequenceStart(..) => {
+            Event::SequenceStart { .. } => {
+                // Whatever a root flow sequence holds is flow too, so no block mapping follows
+                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
+                {
+                    return false;
+                }
                 roles.start_sequence(line, range);
             }
             Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-            Event::Alias(..) => {
+            Event::Alias(_) => {
                 roles.node();
             }
-            Event::Scalar(_, _, anchor, tag) => {
+            Event::Scalar { anchor, tag, .. } => {
                 let role = roles.node();
-                if role == NodeRole::MappingValue && seen_mapping && anchor == 0 && tag.is_none() {
+                if role == NodeRole::MappingValue
+                    && seen_mapping
+                    && anchor.is_none()
+                    && tag.is_none()
+                {
                     return line
                         .get(range.start().get()..)
                         .is_some_and(|rest| !rest.contains(' '));
                 }
             }
-            _ => {}
+            Event::StreamStart
+            | Event::StreamEnd
+            | Event::DocumentStart { .. }
+            | Event::DocumentEnd => {}
         }
     }
     false
@@ -395,6 +429,30 @@ mod tests {
         ] {
             assert_eq!(flagged(&yaml, on), [1], "{yaml:?}");
         }
+    }
+
+    #[test]
+    fn a_very_long_single_word_stays_exempt_in_an_inline_mapping() {
+        let on = "{max: 20, allow-non-breakable-inline-mappings: true}";
+        let word = "QUJD".repeat(50_000);
+        for yaml in [format!("key: {word}\n"), format!("- key: \"{word}\"\n")] {
+            assert!(flagged(&yaml, on).is_empty(), "{} bytes", yaml.len());
+        }
+    }
+
+    #[test]
+    fn a_line_that_is_one_flow_collection_is_not_an_inline_mapping() {
+        let on = "{max: 20, allow-non-breakable-inline-mappings: true}";
+        for yaml in [
+            "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n",
+            "- {a: 1, b: 2, c: 3, d: 4}\n",
+        ] {
+            assert_eq!(flagged(yaml, on), [1], "{yaml:?}");
+        }
+        assert_eq!(
+            flagged("[a, b]: http://localhost/very/very/very/long/url\n", on).len(),
+            0
+        );
     }
 
     #[test]

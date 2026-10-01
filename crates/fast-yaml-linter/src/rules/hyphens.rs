@@ -76,7 +76,7 @@ impl super::LintRule for HyphensRule {
         let max_spaces_after = config.rules.hyphens.options.max_spaces_after;
 
         let mut diagnostics = Vec::new();
-        let hyphens = tokenizer.find_all(TokenType::Hyphen);
+        let hyphens = tokenizer.tokens(TokenType::Hyphen);
 
         for hyphen in hyphens {
             if let Some(diag) = check_spaces_after_hyphen(

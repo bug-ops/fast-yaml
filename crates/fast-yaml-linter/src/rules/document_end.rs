@@ -14,7 +14,8 @@ use fast_yaml_core::Value;
 /// Linting rule for document end marker.
 ///
 /// Requires, forbids, or allows the YAML document end marker `...`. `required` checks every
-/// document of the stream, `forbidden` flags every `...` at column 0.
+/// document of the stream, `forbidden` flags every `...` at column 0. A source without any
+/// document (empty or comment-only) never lacks a required marker.
 ///
 /// Configuration options:
 /// - `present`: "required" | "forbidden" | "allowed" (default: "allowed"); `true` and `false`
@@ -81,6 +82,9 @@ impl super::LintRule for DocumentEndRule {
 /// Flags each document that is not closed by `...`: the ones followed by another document at that
 /// document's `---` line, and the last one at the end of the file.
 fn check_required(context: &LintContext, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
+    if context.documents().is_empty() && context.scan_is_complete() {
+        return Vec::new();
+    }
     let source = context.source();
     let source_context = context.source_context();
     let severity = config.rules.document_end.severity_or(Severity::Warning);
@@ -338,8 +342,8 @@ mod tests {
     }
 
     #[test]
-    fn required_comment_only_and_empty_sources_count_as_one_document() {
-        assert_eq!(required("# c\n").len(), 1);
-        assert_eq!(required("").len(), 1);
+    fn required_comment_only_and_empty_sources_have_no_document() {
+        assert_eq!(required("# c\n"), []);
+        assert_eq!(required(""), []);
     }
 }

@@ -9,14 +9,12 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
-use fast_yaml_core::events::Tag;
-use fast_yaml_core::scalar::core_tag_suffix;
-use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
-use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
+use fast_yaml_core::{ResolvedScalar, ScalarStyle, Value, resolve_scalar};
 
 use super::LintRule;
-use super::node_roles::{NodeRole, RoleTracker};
+use super::node_roles::NodeRole;
 use super::truthy::NON_STANDARD_BOOLS;
+use crate::nodes::{Node, TagKind};
 
 /// Linting rule for quoted strings.
 ///
@@ -189,60 +187,51 @@ impl super::LintRule for QuotedStringsRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
         let mut diagnostics = Vec::new();
-        let mut roles = RoleTracker::default();
-
         let check = ScalarCheck {
-            source,
+            source: context.source(),
             source_ctx: context.source_context(),
             config,
         };
+        let index = context.nodes();
 
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "source passed the guarded parse in the same lint call"
-        )]
-        let mut parser = SaphyrParser::new_from_str(source);
-
-        while let Some(Ok((event, span))) = parser.next_event() {
-            match event {
-                Event::MappingStart(..) => {
-                    roles.start_mapping(source, context.source_context().byte_range_of(span));
-                }
-                Event::SequenceStart(..) => {
-                    roles.start_sequence(source, context.source_context().byte_range_of(span));
-                }
-                Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-                Event::Alias(..) => {
-                    roles.node();
-                }
-                Event::Scalar(ref value, style, _, ref tag) => {
-                    let in_flow = roles.in_flow();
-                    let role = roles.node();
-                    self.check_scalar(
-                        &check,
-                        &ScalarEvent {
-                            value,
-                            style,
-                            role,
-                            in_flow,
-                            core_tagged: tag
-                                .as_deref()
-                                .map(|tag| Tag::new(tag.handle.clone(), tag.suffix.clone()))
-                                .is_some_and(|tag| core_tag_suffix(&tag).is_some()),
-                            span: context.source_context().span_of(span),
-                        },
-                        &mut diagnostics,
-                    );
-                }
-
-                _ => {}
+        for node in index.nodes() {
+            let Node::Scalar(scalar) = node else {
+                continue;
+            };
+            if scalar.anchored && anchor_precedes(check.source, scalar.range.start().get()) {
+                continue;
             }
+            self.check_scalar(
+                &check,
+                &ScalarEvent {
+                    value: index.text(scalar),
+                    style: scalar.style,
+                    role: scalar.role,
+                    in_flow: scalar.in_flow,
+                    core_tagged: scalar.tag == TagKind::Core,
+                    span: check.source_ctx.span_of_bytes(scalar.range),
+                },
+                &mut diagnostics,
+            );
         }
 
         diagnostics
     }
+}
+
+/// Whether the token written right before the scalar at byte `start` is its anchor.
+///
+/// yamllint looks at that one token only, so it skips `&a x` and `!!str &a x` but checks
+/// `&a !t x`.
+fn anchor_precedes(source: &str, start: usize) -> bool {
+    source.get(..start).is_some_and(|before| {
+        before
+            .trim_end()
+            .rsplit(char::is_whitespace)
+            .next()
+            .is_some_and(|token| token.trim_start_matches(['[', '{', ',']).starts_with('&'))
+    })
 }
 
 /// Source and configuration shared by every scalar check of one lint run.

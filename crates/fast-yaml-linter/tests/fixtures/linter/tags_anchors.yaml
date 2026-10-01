@@ -1,0 +1,10 @@
+a: yes
+b: !!str yes
+c: &x yes
+d: !<tag:yaml.org,2002:str> yes
+e: !!str
+f: *x
+g: "quoted"
+h: 'single'
+i: plain text
+j: &y !!str on

@@ -1116,6 +1116,12 @@ mod tests {
     }
 
     #[test]
+    fn anchor_names_survive_non_ascii_directive_names() {
+        let out = fmt("%ÄÖÜ x\n---\na: &abc 1\nb: *abc\n");
+        assert!(out.contains("&abc") && out.contains("*abc"), "{out}");
+    }
+
+    #[test]
     fn anchor_and_tag_together() {
         assert_stable("a: &x !!str 1\nb: *x\n");
         assert_stable("- &x !custom y\n- *x\n");

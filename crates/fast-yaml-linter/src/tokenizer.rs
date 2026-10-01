@@ -2,9 +2,10 @@
 
 use crate::{
     Location, SourceContext, Span,
+    scan::SourceScan,
     source::offset::{ByteOffset, ByteRange},
 };
-use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
+use fast_yaml_core::events::{Event, ScalarStyle};
 
 /// Types of tokens in YAML flow syntax.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +41,9 @@ impl Token {
     }
 }
 
+/// Most tokens a [`FlowTokenizer::find_all`] vector reserves before it has seen them.
+const MAX_PRESIZED_TOKENS: usize = 1 << 21;
+
 /// Tokenizes flow collection syntax in YAML source.
 ///
 /// Accurately identifies flow syntax elements while ignoring tokens
@@ -51,8 +55,9 @@ pub struct FlowTokenizer<'a> {
 
 /// Source ranges the flow tokenizer must skip, computed once per source.
 ///
-/// Building the index parses the source; share one index between all tokenizers of the same
-/// source (see [`LintContext::flow_tokenizer`](crate::LintContext::flow_tokenizer)).
+/// Built from the ranges the lint scan collected while the source was loaded; share one index
+/// between all tokenizers of the same source (see
+/// [`LintContext::flow_tokenizer`](crate::LintContext::flow_tokenizer)).
 pub struct FlowIndex {
     block_scalars: Vec<ByteRange>,
     flow_ranges: Vec<ByteRange>,
@@ -60,15 +65,17 @@ pub struct FlowIndex {
 }
 
 impl FlowIndex {
-    /// Builds the index for `source`, whose line table is `context`.
+    /// Builds the index for `source` from the ranges `scan` collected over it.
+    ///
+    /// A scan of a source that did not parse holds the ranges up to the error; past it quotes
+    /// are guessed from the text.
     #[must_use]
-    pub fn new(source: &str, context: &SourceContext<'_>) -> Self {
-        let scalars = collect_scalar_ranges(source, context);
-        let masked_ranges = collect_masked_ranges(source, &scalars);
+    pub(crate) fn from_scan(scan: &SourceScan<'_>, source: &str) -> Self {
+        let scalars = &scan.scalars;
         Self {
-            block_scalars: scalars.block,
-            flow_ranges: scalars.flow,
-            masked_ranges,
+            block_scalars: scalars.block.clone(),
+            flow_ranges: scalars.flow.clone(),
+            masked_ranges: collect_masked_ranges(source, scalars),
         }
     }
 }
@@ -84,8 +91,9 @@ enum Quote {
 ///
 /// State is carried across queries, so successive queries with increasing columns on one
 /// line cost O(line length) in total.
-struct PlainScalarScanner {
-    chars: Vec<char>,
+struct PlainScalarScanner<'a> {
+    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    len: usize,
     i: usize,
     quote: Quote,
     escape_next: bool,
@@ -94,10 +102,11 @@ struct PlainScalarScanner {
     in_plain_scalar: bool,
 }
 
-impl PlainScalarScanner {
-    fn new(line: &str) -> Self {
+impl<'a> PlainScalarScanner<'a> {
+    fn new(line: &'a str) -> Self {
         Self {
-            chars: line.chars().collect(),
+            chars: line.chars().peekable(),
+            len: line.chars().count(),
             i: 0,
             quote: Quote::None,
             escape_next: false,
@@ -118,12 +127,12 @@ impl PlainScalarScanner {
     /// This prevents false positives on template expressions like `${{ var }}`
     /// that appear as plain scalar values.
     fn contains(&mut self, col: usize) -> bool {
-        if col >= self.chars.len() {
+        if col >= self.len {
             return false;
         }
 
         while self.i < col
-            && let Some(&ch) = self.chars.get(self.i)
+            && let Some(ch) = self.chars.next()
         {
             if self.escape_next {
                 self.escape_next = false;
@@ -185,7 +194,7 @@ impl PlainScalarScanner {
                         self.at_value_start = false;
                     }
                     '#' => {
-                        self.i = self.chars.len();
+                        self.i = self.len;
                         break;
                     }
                     _ => {
@@ -205,14 +214,15 @@ impl PlainScalarScanner {
                     '\'' => self.quote = Quote::Single,
                     '{' | '[' => self.flow_depth += 1,
                     '}' | ']' => self.flow_depth = self.flow_depth.saturating_sub(1),
-                    ':' if matches!(self.chars.get(self.i + 1), Some(' ' | '\t')) => {
+                    ':' if matches!(self.chars.peek(), Some(' ' | '\t')) => {
                         self.at_value_start = true;
+                        self.chars.next();
                         self.i += 2; // consume `: `
                         continue;
                     }
                     ',' if self.flow_depth > 0 => self.at_value_start = true,
                     '#' => {
-                        self.i = self.chars.len();
+                        self.i = self.len;
                         break;
                     }
                     _ => {}
@@ -236,61 +246,69 @@ impl<'a> FlowTokenizer<'a> {
     /// Finds all tokens of a specific type in the source.
     ///
     /// Ignores tokens inside quoted strings and comments; commas are only reported inside
-    /// flow collections.
+    /// flow collections. A source with many tokens is better read through
+    /// [`tokens`](Self::tokens), which keeps no vector of them.
     #[must_use]
     pub fn find_all(&self, token_type: TokenType) -> Vec<Token> {
-        let ch = Self::token_char(token_type);
-        let mut tokens = Vec::new();
-
-        for line_num in 1..=self.context.line_count() {
-            if let Some(line) = self.context.get_line(line_num) {
-                let line_start = self.context.line_start(line_num);
-                let mut scanner: Option<PlainScalarScanner> = None;
-
-                for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
-                    let offset = line_start.add_bytes(byte_col);
-                    if c != ch || self.is_masked(offset) {
-                        continue;
-                    }
-
-                    if token_type == TokenType::Comma && !self.is_in_flow(offset) {
-                        continue;
-                    }
-
-                    // For hyphen, only match at start of line or after whitespace
-                    if token_type == TokenType::Hyphen && !Self::is_list_item_hyphen(line, byte_col)
-                    {
-                        continue;
-                    }
-
-                    let offset = line_start.add_bytes(byte_col);
-
-                    // Skip tokens inside block scalar content (literal `|` or folded `>`)
-                    if self.is_in_block_scalar(offset) {
-                        continue;
-                    }
-
-                    // Skip braces/brackets that appear inside block-context plain scalars
-                    // (e.g. template expressions like `${{ var }}`).
-                    if matches!(
-                        token_type,
-                        TokenType::BraceOpen
-                            | TokenType::BraceClose
-                            | TokenType::BracketOpen
-                            | TokenType::BracketClose
-                    ) && scanner
-                        .get_or_insert_with(|| PlainScalarScanner::new(line))
-                        .contains(char_col)
-                    {
-                        continue;
-                    }
-
-                    tokens.push(Self::single_char_token(line_num, char_col, offset));
-                }
-            }
-        }
-
+        // Every token is an occurrence of its char; sizing up front spares the copy and slack of
+        // a growing vector on sources with a million tokens
+        let occurrences = self
+            .context
+            .source()
+            .matches(Self::token_char(token_type))
+            .count();
+        let mut tokens = Vec::with_capacity(occurrences.min(MAX_PRESIZED_TOKENS));
+        tokens.extend(self.tokens(token_type));
         tokens
+    }
+
+    /// Lazy form of [`find_all`](Self::find_all): the tokens of a specific type in source order.
+    pub const fn tokens(&self, token_type: TokenType) -> Tokens<'_, 'a> {
+        Tokens {
+            tokenizer: self,
+            token_type,
+            ch: Self::token_char(token_type),
+            next_line: 1,
+            line: None,
+        }
+    }
+
+    /// Whether the `ch` at `offset`, `byte_col`/`char_col` into `line`, is a token.
+    fn accepts(
+        &self,
+        token_type: TokenType,
+        cursor: &mut LineCursor<'a>,
+        (char_col, byte_col): (usize, usize),
+    ) -> bool {
+        let offset = cursor.start.add_bytes(byte_col);
+        if self.is_masked(offset) {
+            return false;
+        }
+        if token_type == TokenType::Comma && !self.is_in_flow(offset) {
+            return false;
+        }
+        // For hyphen, only match at start of line or after whitespace
+        if token_type == TokenType::Hyphen && !Self::is_list_item_hyphen(cursor.text, byte_col) {
+            return false;
+        }
+        // Skip tokens inside block scalar content (literal `|` or folded `>`)
+        if self.is_in_block_scalar(offset) {
+            return false;
+        }
+        // Skip braces/brackets that appear inside block-context plain scalars
+        // (e.g. template expressions like `${{ var }}`).
+        let bracket = matches!(
+            token_type,
+            TokenType::BraceOpen
+                | TokenType::BraceClose
+                | TokenType::BracketOpen
+                | TokenType::BracketClose
+        );
+        !(bracket
+            && cursor
+                .scanner
+                .get_or_insert_with(|| PlainScalarScanner::new(cursor.text))
+                .contains(char_col))
     }
 
     /// Checks if a byte offset falls inside a block scalar range.
@@ -350,95 +368,133 @@ impl<'a> FlowTokenizer<'a> {
     }
 }
 
+/// The line [`Tokens`] is reading.
+struct LineCursor<'a> {
+    number: usize,
+    text: &'a str,
+    start: ByteOffset,
+    chars: std::iter::Enumerate<std::str::CharIndices<'a>>,
+    scanner: Option<PlainScalarScanner<'a>>,
+}
+
+/// Tokens of one type in source order, found as the iterator advances.
+pub struct Tokens<'t, 'a> {
+    tokenizer: &'t FlowTokenizer<'a>,
+    token_type: TokenType,
+    ch: char,
+    next_line: usize,
+    line: Option<LineCursor<'a>>,
+}
+
+impl Iterator for Tokens<'_, '_> {
+    type Item = Token;
+
+    fn next(&mut self) -> Option<Token> {
+        loop {
+            let Some(cursor) = &mut self.line else {
+                let number = self.next_line;
+                if number > self.tokenizer.context.line_count() {
+                    return None;
+                }
+                self.next_line += 1;
+                self.line = self
+                    .tokenizer
+                    .context
+                    .get_line(number)
+                    .map(|text| LineCursor {
+                        number,
+                        text,
+                        start: self.tokenizer.context.line_start(number),
+                        chars: text.char_indices().enumerate(),
+                        scanner: None,
+                    });
+                continue;
+            };
+            let Some((char_col, (byte_col, c))) = cursor.chars.next() else {
+                self.line = None;
+                continue;
+            };
+            if c == self.ch
+                && self
+                    .tokenizer
+                    .accepts(self.token_type, cursor, (char_col, byte_col))
+            {
+                let offset = cursor.start.add_bytes(byte_col);
+                return Some(FlowTokenizer::single_char_token(
+                    cursor.number,
+                    char_col,
+                    offset,
+                ));
+            }
+        }
+    }
+}
+
 /// Byte ranges of scalars that the parser reports as block or quoted, and of flow collections.
-struct ScalarRanges {
-    block: Vec<ByteRange>,
+///
+/// Filled event by event while the source loads; the ranges are sorted and disjoint.
+#[derive(Debug, Default)]
+pub struct ScalarRanges {
+    /// Content of literal and folded scalars.
+    pub(crate) block: Vec<ByteRange>,
     quoted: Vec<ByteRange>,
     /// Outermost flow collections, from the opening to the closing indicator. One that the
     /// parser never closed extends to the end of the source.
     flow: Vec<ByteRange>,
     /// Byte offset from which the parser produced no events because of a syntax error.
     unparsed_from: Option<ByteOffset>,
+    flow_open: Vec<ByteOffset>,
+    parsed_until: ByteOffset,
 }
 
-/// Collects byte ranges of block scalars (`|` literal, `>` folded) and quoted scalars.
-///
-/// Each range covers the scalar content (end is one past its last byte).
-/// On parse error, returns the ranges collected before the error and records where
-/// parsing stopped.
-fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRanges {
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "source passed the guarded parse in the same lint call"
-    )]
-    let mut parser = SaphyrParser::new_from_str(source);
-    let mut ranges = ScalarRanges {
-        block: Vec::new(),
-        quoted: Vec::new(),
-        flow: Vec::new(),
-        unparsed_from: None,
-    };
-
-    let mut parsed_until = ByteOffset::ZERO;
-    let mut flow_open = Vec::<ByteOffset>::new();
-    loop {
-        match parser.next_event() {
-            Some(Ok((event, span))) => {
-                let range = context.byte_range_of(span);
-                parsed_until = range.end();
-                // Block collection events are empty; End events may also cover trailing
-                // whitespace and comments, so the indicator is read from the source.
-                let indicator = (range.start() != range.end())
-                    .then(|| source.as_bytes().get(range.start().get()))
-                    .flatten();
-                match (&event, indicator) {
-                    (Event::SequenceStart(..) | Event::MappingStart(..), Some(b'[' | b'{')) => {
-                        flow_open.push(range.start());
-                    }
-                    (Event::SequenceEnd | Event::MappingEnd, Some(b']' | b'}')) => {
-                        if let Some(open) = flow_open.pop()
-                            && flow_open.is_empty()
-                        {
-                            ranges
-                                .flow
-                                .push(ByteRange::new(open, range.start().add_bytes(1)));
-                        }
-                    }
-                    _ => {}
-                }
-                if let Event::Scalar(_, style, ..) = event {
-                    match style {
-                        ScalarStyle::Literal | ScalarStyle::Folded => {
-                            debug_assert!(
-                                ranges
-                                    .block
-                                    .last()
-                                    .is_none_or(|last| last.end() <= range.start()),
-                                "block scalar ranges must be sorted and disjoint"
-                            );
-                            ranges.block.push(range);
-                        }
-                        ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
-                            ranges.quoted.push(range);
-                        }
-                        ScalarStyle::Plain => {}
-                    }
+impl ScalarRanges {
+    /// Folds one parser event that covers `range` of `source`.
+    pub(crate) fn observe(&mut self, source: &str, event: &Event<'_>, range: ByteRange) {
+        self.parsed_until = range.end();
+        // Block collection events are empty; End events may also cover trailing whitespace and
+        // comments, so the indicator is read from the source.
+        let indicator = (range.start() != range.end())
+            .then(|| source.as_bytes().get(range.start().get()))
+            .flatten();
+        match (event, indicator) {
+            (Event::SequenceStart { .. } | Event::MappingStart { .. }, Some(b'[' | b'{')) => {
+                self.flow_open.push(range.start());
+            }
+            (Event::SequenceEnd | Event::MappingEnd, Some(b']' | b'}')) => {
+                if let Some(open) = self.flow_open.pop()
+                    && self.flow_open.is_empty()
+                {
+                    self.flow
+                        .push(ByteRange::new(open, range.start().add_bytes(1)));
                 }
             }
-            Some(Err(_)) => {
-                ranges.unparsed_from = Some(parsed_until);
-                if let Some(&open) = flow_open.first() {
-                    ranges
-                        .flow
-                        .push(ByteRange::new(open, ByteOffset::new(source.len())));
+            (Event::Scalar { style, .. }, _) => match style {
+                ScalarStyle::Literal | ScalarStyle::Folded => {
+                    debug_assert!(
+                        self.block
+                            .last()
+                            .is_none_or(|last| last.end() <= range.start()),
+                        "block scalar ranges must be sorted and disjoint"
+                    );
+                    self.block.push(range);
                 }
-                break;
-            }
-            None => break,
+                ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
+                    self.quoted.push(range);
+                }
+                ScalarStyle::Plain => {}
+            },
+            _ => {}
         }
     }
 
-    ranges
+    /// Records that the parser stopped with a syntax error after the last observed event.
+    pub(crate) fn fail(&mut self, source_len: usize) {
+        self.unparsed_from = Some(self.parsed_until);
+        if let Some(&open) = self.flow_open.first() {
+            self.flow
+                .push(ByteRange::new(open, ByteOffset::new(source_len)));
+        }
+    }
 }
 
 /// Scanner state of [`collect_masked_ranges`].
@@ -590,6 +646,20 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange>
 mod tests {
     use super::*;
     use crate::{Location, Span};
+    use fast_yaml_core::limits::ParseLimits;
+
+    impl FlowIndex {
+        fn new(source: &str, context: &SourceContext<'_>) -> Self {
+            Self::from_scan(
+                &SourceScan::of_source(source, context, ParseLimits::default()),
+                source,
+            )
+        }
+    }
+
+    fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRanges {
+        SourceScan::of_source(source, context, ParseLimits::default()).scalars
+    }
 
     impl FlowTokenizer<'_> {
         /// Finds all tokens within a specific span.

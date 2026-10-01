@@ -1,10 +1,22 @@
 //! Configuration for parallel processing behavior.
 
+use std::num::NonZeroUsize;
+
 use fast_yaml_core::KeyDomain;
-use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes, ParseLimits};
+use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead, ParseLimits};
+
+use crate::scan_ahead::ScanAheadPolicy;
 
 /// Maximum number of threads allowed (security limit).
 const MAX_THREADS: usize = 128;
+
+/// [`MAX_THREADS`] as a non-zero count.
+const MAX_POOL_THREADS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(MAX_THREADS - 1);
+
+/// `n`, or one when `n` is zero.
+const fn at_least_one(n: usize) -> NonZeroUsize {
+    NonZeroUsize::MIN.saturating_add(n.saturating_sub(1))
+}
 
 /// Configuration for parallel processing behavior.
 ///
@@ -16,7 +28,7 @@ const MAX_THREADS: usize = 128;
 /// To prevent denial-of-service attacks and resource exhaustion:
 /// - Maximum threads: 128
 /// - Maximum input size: 100MB (configurable via [`with_max_input_bytes`](Config::with_max_input_bytes))
-/// - Maximum documents per input: 100 000 (configurable via [`with_max_documents`](Config::with_max_documents))
+/// - Maximum documents per input: 100 000 (`ParseLimits::max_documents`, via [`with_parse_limits`](Config::with_parse_limits))
 ///
 /// # Examples
 ///
@@ -32,20 +44,17 @@ pub struct Config {
     /// Worker count: None = auto (CPU count), Some(0) = sequential, Some(n) = n threads
     pub(crate) workers: Option<usize>,
 
-    /// Mmap threshold for large file reading (default: 512KB)
-    pub(crate) mmap_threshold: usize,
-
     /// Maximum input size (`DoS` protection, default: 100MB)
     pub(crate) max_input_bytes: MaxInputBytes,
-
-    /// Maximum documents in one input (`DoS` protection, default: 100 000)
-    pub(crate) max_documents: MaxDocuments,
 
     /// Sequential threshold: use sequential for small inputs (default: 4KB)
     pub(crate) sequential_threshold: usize,
 
     /// Parser resource limits applied to every parse
     pub(crate) parse_limits: ParseLimits,
+
+    /// How batch file operations bound the scanner look-ahead of their workers
+    pub(crate) scan_ahead: ScanAheadPolicy,
 
     /// Which keys count as the same key when parsing
     pub(crate) key_domain: KeyDomain,
@@ -90,40 +99,6 @@ impl Config {
         self
     }
 
-    /// Sets memory-map threshold for file reading.
-    ///
-    /// Files larger than this threshold will use memory-mapped I/O.
-    /// Default: 512KB
-    ///
-    /// # Tuning Guidance
-    ///
-    /// The optimal threshold depends on your workload:
-    ///
-    /// - **Lower (256KB-512KB)**: Better for many medium files (100KB-1MB)
-    ///   - Pros: Less virtual memory pressure, faster for small-to-medium files
-    ///   - Cons: More heap allocations for files just above threshold
-    ///
-    /// - **Higher (1MB-2MB)**: Better for fewer large files (>2MB)
-    ///   - Pros: Fewer mmaps, better for very large files
-    ///   - Cons: More heap usage for medium files
-    ///
-    /// Consider your typical file size distribution and available memory.
-    /// Profile with real data before changing the default.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_parallel::Config;
-    ///
-    /// let config = Config::new()
-    ///     .with_mmap_threshold(1024 * 1024); // 1MB
-    /// ```
-    #[must_use]
-    pub const fn with_mmap_threshold(mut self, threshold: usize) -> Self {
-        self.mmap_threshold = threshold;
-        self
-    }
-
     /// Sets maximum input size in bytes.
     ///
     /// Input exceeding this size will be rejected; files are checked before being read.
@@ -148,32 +123,23 @@ impl Config {
         self
     }
 
-    /// Sets the maximum number of documents accepted from one input.
-    ///
-    /// [`parse_parallel`](crate::parse_parallel) rejects input with more documents before parsing
-    /// when the chunk count already exceeds the limit, and again after parsing.
-    /// Default: 100 000
-    ///
-    /// # Security
-    ///
-    /// This limit bounds the memory spent on input made of a huge number of tiny documents.
+    /// Sets how [`FileProcessor`](crate::FileProcessor) formatting bounds the scanner
+    /// look-ahead of its workers. Default: [`ScanAheadPolicy::Fixed`] at the default limit, or
+    /// the limit of [`with_parse_limits`](Config::with_parse_limits). The scan-ahead limit of
+    /// the `EmitterConfig` passed to the format methods is not consulted, so this `Config` is
+    /// the one place that sets it. Calling [`with_parse_limits`](Config::with_parse_limits)
+    /// after this resets the policy to `Fixed`
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::limits::MaxDocuments;
-    /// use fast_yaml_parallel::{Config, Error, parse_parallel_with_config};
+    /// use fast_yaml_parallel::{Config, ScanAheadPolicy};
     ///
-    /// let config = Config::new().with_max_documents(MaxDocuments::new(2).unwrap());
-    /// assert!(parse_parallel_with_config("a: 1\n---\nb: 2\n", &config).is_ok());
-    /// assert!(matches!(
-    ///     parse_parallel_with_config("---\na\n---\nb\n---\nc\n", &config),
-    ///     Err(Error::TooManyDocuments { .. })
-    /// ));
+    /// let config = Config::new().with_scan_ahead_policy(ScanAheadPolicy::Scaled);
     /// ```
     #[must_use]
-    pub const fn with_max_documents(mut self, max: MaxDocuments) -> Self {
-        self.max_documents = max;
+    pub const fn with_scan_ahead_policy(mut self, policy: ScanAheadPolicy) -> Self {
+        self.scan_ahead = policy;
         self
     }
 
@@ -205,7 +171,10 @@ impl Config {
     ///
     /// Only parsing honors these limits: the format paths
     /// ([`FileProcessor::format_files`](crate::FileProcessor::format_files)) ignore them, because
-    /// the streaming formatter has its own fixed depth limit of 256 (see #427).
+    /// the streaming formatter has its own fixed depth limit of 256 (see #427). The exception
+    /// is `max_scan_ahead`: this call also sets the scan-ahead policy to
+    /// [`ScanAheadPolicy::Fixed`] at that limit, which the format paths honor. Call
+    /// [`with_scan_ahead_policy`](Config::with_scan_ahead_policy) afterwards to scale instead.
     ///
     /// # Examples
     ///
@@ -220,6 +189,7 @@ impl Config {
     #[must_use]
     pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
         self.parse_limits = limits;
+        self.scan_ahead = ScanAheadPolicy::Fixed(limits.max_scan_ahead);
         self
     }
 
@@ -258,28 +228,22 @@ impl Config {
         self.parse_limits
     }
 
+    /// Returns how batch file operations bound the scanner look-ahead.
+    #[must_use]
+    pub const fn scan_ahead_policy(&self) -> ScanAheadPolicy {
+        self.scan_ahead
+    }
+
     /// Returns worker count setting.
     #[must_use]
     pub const fn workers(&self) -> Option<usize> {
         self.workers
     }
 
-    /// Returns mmap threshold.
-    #[must_use]
-    pub const fn mmap_threshold(&self) -> usize {
-        self.mmap_threshold
-    }
-
     /// Returns maximum input size.
     #[must_use]
     pub const fn max_input_bytes(&self) -> MaxInputBytes {
         self.max_input_bytes
-    }
-
-    /// Returns maximum document count.
-    #[must_use]
-    pub const fn max_documents(&self) -> MaxDocuments {
-        self.max_documents
     }
 
     /// Returns sequential threshold.
@@ -292,26 +256,34 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            workers: None,              // Auto-detect CPU count
-            mmap_threshold: 512 * 1024, // 512KB
+            workers: None, // Auto-detect CPU count
             max_input_bytes: MaxInputBytes::DEFAULT,
-            max_documents: MaxDocuments::DEFAULT,
             sequential_threshold: 4096, // 4KB
             parse_limits: ParseLimits::default(),
+            scan_ahead: ScanAheadPolicy::Fixed(MaxScanAhead::DEFAULT),
             key_domain: KeyDomain::Yaml,
         }
     }
 }
 
 impl Config {
-    /// Returns the effective worker count, capped at security limit.
-    ///
-    /// # Security
-    ///
-    /// Worker count is capped at 128 to prevent resource exhaustion.
-    pub(crate) fn effective_workers(&self) -> usize {
-        let count = self.workers.unwrap_or_else(num_cpus::get);
-        count.min(MAX_THREADS)
+    /// The worker count a dedicated pool needs: `Some(n)` with `n > 0`, capped; `None` for
+    /// auto and sequential settings, which run without one.
+    pub(crate) fn pool_workers(&self) -> Option<NonZeroUsize> {
+        self.workers
+            .and_then(NonZeroUsize::new)
+            .map(|workers| workers.min(MAX_POOL_THREADS))
+    }
+
+    /// How many threads run a batch: the dedicated pool, the global pool, or one when
+    /// sequential.
+    pub(crate) fn worker_count(&self) -> NonZeroUsize {
+        self.pool_workers().unwrap_or_else(|| {
+            at_least_one(match self.workers {
+                Some(_) => 0,
+                None => rayon::current_num_threads(),
+            })
+        })
     }
 }
 
@@ -323,9 +295,7 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.workers, None);
-        assert_eq!(config.mmap_threshold, 512 * 1024);
         assert_eq!(config.max_input_bytes, MaxInputBytes::DEFAULT);
-        assert_eq!(config.max_documents, MaxDocuments::DEFAULT);
         assert_eq!(config.sequential_threshold, 4096);
     }
 
@@ -333,15 +303,11 @@ mod tests {
     fn test_config_builder() {
         let config = Config::new()
             .with_workers(Some(4))
-            .with_mmap_threshold(1024 * 1024)
             .with_max_input_bytes(MaxInputBytes::new(50 * 1024 * 1024).unwrap())
-            .with_max_documents(MaxDocuments::new(7).unwrap())
             .with_sequential_threshold(2048);
 
         assert_eq!(config.workers, Some(4));
-        assert_eq!(config.mmap_threshold, 1024 * 1024);
         assert_eq!(config.max_input_bytes.get(), 50 * 1024 * 1024);
-        assert_eq!(config.max_documents.get(), 7);
         assert_eq!(config.sequential_threshold, 2048);
     }
 
@@ -352,37 +318,33 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_workers_capping() {
-        // Normal case
-        let config = Config::new().with_workers(Some(4));
-        assert_eq!(config.effective_workers(), 4);
+    fn test_pool_workers_capping() {
+        let pool = |workers| Config::new().with_workers(workers).pool_workers();
+        assert_eq!(pool(Some(4)).map(NonZeroUsize::get), Some(4));
+        assert_eq!(pool(Some(10_000)).map(NonZeroUsize::get), Some(MAX_THREADS));
+        assert_eq!(pool(Some(0)), None);
+        assert_eq!(pool(None), None);
+    }
 
-        // Excessive worker count (should be capped)
-        let config = Config::new().with_workers(Some(10_000));
-        assert_eq!(config.effective_workers(), MAX_THREADS);
-
-        // Auto-detect (should be capped if CPU count > MAX_THREADS)
-        let config = Config::new();
-        assert!(config.effective_workers() <= MAX_THREADS);
-
-        // Sequential mode
-        let config = Config::new().with_workers(Some(0));
-        assert_eq!(config.effective_workers(), 0);
+    #[test]
+    fn test_worker_count_is_never_zero() {
+        let count = |workers| Config::new().with_workers(workers).worker_count().get();
+        assert_eq!(count(Some(4)), 4);
+        assert_eq!(count(Some(0)), 1);
+        assert!(count(None) >= 1);
+        assert_eq!(at_least_one(0).get(), 1);
+        assert_eq!(at_least_one(7).get(), 7);
     }
 
     #[test]
     fn test_getters() {
         let config = Config::new()
             .with_workers(Some(8))
-            .with_mmap_threshold(2048)
             .with_max_input_bytes(MaxInputBytes::new(50_000_000).unwrap())
-            .with_max_documents(MaxDocuments::new(9).unwrap())
             .with_sequential_threshold(8192);
 
         assert_eq!(config.workers(), Some(8));
-        assert_eq!(config.mmap_threshold(), 2048);
         assert_eq!(config.max_input_bytes().get(), 50_000_000);
-        assert_eq!(config.max_documents().get(), 9);
         assert_eq!(config.sequential_threshold(), 8192);
     }
 
@@ -392,9 +354,7 @@ mod tests {
         let config2 = Config::default();
 
         assert_eq!(config1.workers, config2.workers);
-        assert_eq!(config1.mmap_threshold, config2.mmap_threshold);
         assert_eq!(config1.max_input_bytes, config2.max_input_bytes);
-        assert_eq!(config1.max_documents, config2.max_documents);
         assert_eq!(config1.sequential_threshold, config2.sequential_threshold);
     }
 }

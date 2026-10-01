@@ -87,7 +87,7 @@ impl super::LintRule for CommasRule {
         let max_spaces_after = options.max_spaces_after;
 
         let mut diagnostics = Vec::new();
-        let commas = tokenizer.find_all(TokenType::Comma);
+        let commas = tokenizer.tokens(TokenType::Comma);
 
         for comma in commas {
             // Check spaces before comma

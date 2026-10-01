@@ -1,11 +1,7 @@
 //! Rule to detect `!!set` members that carry a value.
 
-use std::collections::HashMap;
-
-use saphyr_parser::{Event, Parser as SaphyrParser, Span};
-
-use super::core_schema::{is_null, is_set};
 use crate::echo::{KEY_LIMIT, echo};
+use crate::set_members::SetMember;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
@@ -45,15 +41,14 @@ impl super::LintRule for SetValuesRule {
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let severity = config.rules.set_values.severity_or(self.default_severity());
         let source_context = context.source_context();
-        if !may_contain_set(context.source()) {
-            return Vec::new();
-        }
-        collect_members(context.source())
-            .into_iter()
-            .map(|Member { key, span }| {
-                let span = source_context.span_of(span);
-                let member =
-                    key.map_or_else(String::new, |key| format!(" '{}'", echo(&key, KEY_LIMIT)));
+        context
+            .set_members()
+            .iter()
+            .map(|SetMember { key, range }| {
+                let span = source_context.span_of_bytes(*range);
+                let member = key
+                    .as_deref()
+                    .map_or_else(String::new, |key| format!(" '{}'", echo(key, KEY_LIMIT)));
                 let message =
                     format!("!!set member{member} has a value; set members are keys only");
                 DiagnosticBuilder::new(DiagnosticCode::SET_VALUES, severity, message, span)
@@ -63,136 +58,11 @@ impl super::LintRule for SetValuesRule {
     }
 }
 
-/// A `!!set` member whose value is not null.
-struct Member {
-    key: Option<String>,
-    span: Span,
-}
-
-/// Whether a value node is null.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Nullness {
-    Null,
-    NonNull,
-}
-
-impl Nullness {
-    const fn of(null: bool) -> Self {
-        if null { Self::Null } else { Self::NonNull }
-    }
-}
-
-/// A member key waiting for its value.
-struct Key {
-    span: Span,
-    text: Option<String>,
-}
-
-/// Position within an open `!!set`.
-#[derive(Default)]
-enum SetState {
-    #[default]
-    AwaitingKey,
-    AwaitingValue(Key),
-}
-
-/// One open collection.
-enum Frame {
-    Set(SetState),
-    Other,
-}
-
-/// Whether `source` can hold a `!!set`: every spelling of the tag (`!!set`, `!e!set`,
-/// `!<tag:yaml.org,2002:set>`) starts with `!` and ends in the `set` suffix.
-fn may_contain_set(source: &str) -> bool {
-    source.contains('!') && source.contains("set")
-}
-
-#[derive(Default)]
-struct Scan {
-    frames: Vec<Frame>,
-    anchors: HashMap<usize, Nullness>,
-    members: Vec<Member>,
-}
-
-impl Scan {
-    /// Places a node in the innermost `!!set`, reporting its member when it is a non-null value.
-    fn node(&mut self, span: Span, text: Option<&str>, nullness: Nullness) {
-        let Some(Frame::Set(state)) = self.frames.last_mut() else {
-            return;
-        };
-        match std::mem::take(state) {
-            SetState::AwaitingKey => {
-                *state = SetState::AwaitingValue(Key {
-                    span,
-                    text: text.map(str::to_owned),
-                });
-            }
-            SetState::AwaitingValue(Key { span, text }) => {
-                if nullness == Nullness::NonNull {
-                    self.members.push(Member { key: text, span });
-                }
-            }
-        }
-    }
-
-    fn collection(&mut self, span: Span, anchor: usize, frame: Frame) {
-        self.node(span, None, Nullness::NonNull);
-        if anchor > 0 {
-            self.anchors.insert(anchor, Nullness::NonNull);
-        }
-        self.frames.push(frame);
-    }
-}
-
-fn collect_members(source: &str) -> Vec<Member> {
-    let mut scan = Scan::default();
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "source passed the guarded parse in the same lint call"
-    )]
-    let mut parser = SaphyrParser::new_from_str(source);
-
-    while let Some(Ok((event, span))) = parser.next_event() {
-        match event {
-            Event::DocumentStart(_) => {
-                scan.frames.clear();
-                scan.anchors.clear();
-            }
-            Event::Scalar(text, style, anchor, tag) => {
-                let nullness = Nullness::of(is_null(&text, style, tag.as_deref()));
-                if anchor > 0 {
-                    scan.anchors.insert(anchor, nullness);
-                }
-                scan.node(span, Some(&text), nullness);
-            }
-            Event::Alias(id) => {
-                let nullness = scan.anchors.get(&id).copied().unwrap_or(Nullness::Null);
-                scan.node(span, None, nullness);
-            }
-            Event::MappingStart(anchor, tag) => {
-                let frame = if is_set(tag.as_deref()) {
-                    Frame::Set(SetState::default())
-                } else {
-                    Frame::Other
-                };
-                scan.collection(span, anchor, frame);
-            }
-            Event::SequenceStart(anchor, _) => scan.collection(span, anchor, Frame::Other),
-            Event::MappingEnd | Event::SequenceEnd => {
-                scan.frames.pop();
-            }
-            _ => {}
-        }
-    }
-
-    scan.members
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::rules::LintRule;
+    use crate::set_members::may_contain_set;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
         SetValuesRule.check(

@@ -1,6 +1,14 @@
 use std::path::PathBuf;
 use thiserror::Error;
 
+/// Writes one line to stderr and ignores a failure such as a closed pipe.
+///
+/// `eprintln!` panics when stderr is closed, which would replace the exit code of the run.
+pub fn stderr_line(args: std::fmt::Arguments<'_>) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr().lock(), "{args}");
+}
+
 /// Exit codes for CLI application
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {
@@ -69,6 +77,21 @@ pub enum PathError {
     },
 }
 
+impl PathError {
+    /// The path that cannot be used.
+    #[must_use]
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            Self::IoError { path, .. }
+            | Self::PermissionDenied { path }
+            | Self::BrokenSymlink { path }
+            | Self::PathNotFound { path }
+            | Self::NotAFile { path }
+            | Self::NotIncluded { path } => path,
+        }
+    }
+}
+
 /// Why a `--stdin-files` line was rejected.
 #[derive(Debug, Error)]
 pub enum StdinLineCause {
@@ -82,6 +105,17 @@ pub enum StdinLineCause {
     /// The path on the line cannot be used
     #[error(transparent)]
     Path(#[from] PathError),
+}
+
+impl DiscoveryError {
+    /// The single input path that failed, when the error is about one.
+    #[must_use]
+    pub fn path(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::Path(error) => Some(error.path()),
+            _ => None,
+        }
+    }
 }
 
 /// Errors that can occur during file discovery.
@@ -174,6 +208,8 @@ pub enum RaiseHint {
     MaxInputBytes,
     /// `--max-scan-ahead`
     MaxScanAhead,
+    /// `--max-documents`
+    MaxDocuments,
 }
 
 impl std::fmt::Display for RaiseHint {
@@ -183,6 +219,7 @@ impl std::fmt::Display for RaiseHint {
             Self::MaxAliasBytes => "raise with --max-alias-bytes",
             Self::MaxInputBytes => "raise with --max-input-bytes or the max-input-bytes config key",
             Self::MaxScanAhead => "raise with --max-scan-ahead or the max-scan-ahead config key",
+            Self::MaxDocuments => "raise with --max-documents",
         })
     }
 }
@@ -205,7 +242,7 @@ impl RaiseHint {
 
     fn of_link(err: &(dyn std::error::Error + 'static)) -> Option<Self> {
         use fast_yaml_core::limits::{
-            InputTooLarge, MaxAliasBytes, MaxDepth, MaxInputBytes, MaxScanAhead,
+            InputTooLarge, MaxAliasBytes, MaxDepth, MaxDocuments, MaxInputBytes, MaxScanAhead,
         };
         use fast_yaml_core::{LimitKind, ParseError};
         let input_limit = |e: &InputTooLarge| {
@@ -224,6 +261,10 @@ impl RaiseHint {
                 kind: LimitKind::ScanAhead(limit),
                 ..
             } if limit.get() < MaxScanAhead::MAX.get() => Some(Self::MaxScanAhead),
+            ParseError::LimitExceeded {
+                kind: LimitKind::Documents(limit),
+                ..
+            } if limit.get() < MaxDocuments::MAX.get() => Some(Self::MaxDocuments),
             _ => None,
         };
         if let Some(e) = err.downcast_ref::<ParseError>() {
@@ -326,7 +367,9 @@ mod tests {
 
     #[test]
     fn test_raise_hint_for_depth_and_alias_only() {
-        use fast_yaml_core::limits::{MaxAliasBytes, MaxDepth, MaxScanAhead, MaxTagBytes};
+        use fast_yaml_core::limits::{
+            MaxAliasBytes, MaxDepth, MaxDocuments, MaxScanAhead, MaxTagBytes,
+        };
         use fast_yaml_core::{LimitKind, ParseError};
         let limit = |kind| ParseError::LimitExceeded {
             kind,
@@ -357,6 +400,14 @@ mod tests {
         );
         assert_eq!(
             RaiseHint::of(&limit(LimitKind::ScanAhead(MaxScanAhead::MAX))),
+            None
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::Documents(MaxDocuments::DEFAULT))),
+            Some(RaiseHint::MaxDocuments)
+        );
+        assert_eq!(
+            RaiseHint::of(&limit(LimitKind::Documents(MaxDocuments::MAX))),
             None
         );
     }

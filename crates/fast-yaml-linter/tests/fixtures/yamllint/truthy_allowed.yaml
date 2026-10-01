@@ -1,0 +1,10 @@
+a: true
+b: false
+c: yes
+d: No
+e: True
+f: "true"
+g: !!str true
+h: [yes, false]
+true: 1
+yes: 2

@@ -13,7 +13,8 @@ use fast_yaml_core::Value;
 ///
 /// Requires, forbids, or allows the YAML document start marker `---`, in every document of the
 /// stream: `required` flags each document that starts without it (also after `...`), `forbidden`
-/// flags each `---` except one that follows a `%` directive, where the spec makes it mandatory.
+/// flags each `---`, also one that follows a `%` directive (yamllint does the same). A source
+/// without any document (empty or comment-only) is never reported.
 ///
 /// Configuration options:
 /// - `present`: "required" | "forbidden" | "allowed" (default: "allowed")
@@ -64,6 +65,9 @@ impl super::LintRule for DocumentStartRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let severity = config.rules.document_start.severity_or(Severity::Warning);
+        if context.documents().is_empty() && context.scan_is_complete() {
+            return Vec::new();
+        }
         let documents = context.document_markers();
         match config.rules.document_start.options.present {
             MarkerPresence::Required => documents
@@ -78,7 +82,6 @@ impl super::LintRule for DocumentStartRule {
             MarkerPresence::Forbidden => documents
                 .iter()
                 .filter_map(|document| document.start.marker())
-                .filter(|span| !follows_directive(context, span.start.line))
                 .map(|span| forbidden(context, severity, span))
                 .collect(),
             MarkerPresence::Allowed => Vec::new(),
@@ -113,20 +116,6 @@ fn forbidden(context: &LintContext<'_>, severity: Severity, span: Span) -> Diagn
     )
     .with_suggestion("Remove '---'", span, None)
     .build_with_context(context.source_context())
-}
-
-/// Whether a `%` directive line precedes the marker on `line`; the spec then makes it mandatory.
-fn follows_directive(context: &LintContext<'_>, line: usize) -> bool {
-    for above in context.lines().iter().take(line.saturating_sub(1)).rev() {
-        if above.starts_with('%') {
-            return true;
-        }
-        let trimmed = above.trim_start();
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            return false;
-        }
-    }
-    false
 }
 
 #[cfg(test)]
@@ -234,7 +223,7 @@ mod tests {
         assert_eq!(count("%TAG ! tag:x,2000:\n---\na: 1\n", REQUIRED), 0);
         assert_eq!(count("# c\n%YAML 1.2\n---\na: 1\n", REQUIRED), 0);
         assert_eq!(count("%YAML 1.2\na: 1\n", REQUIRED), 1);
-        assert_eq!(count("%YAML 1.2\n---\na: 1\n", FORBIDDEN), 0);
+        assert_eq!(count("%YAML 1.2\n---\na: 1\n", FORBIDDEN), 1);
         assert_eq!(count("---\na: 1\n", FORBIDDEN), 1);
     }
 
@@ -242,14 +231,14 @@ mod tests {
     fn test_directives_yaml_and_tag_together() {
         let yaml = "%YAML 1.2\n%TAG !e! tag:example.com,2000:\n---\na: 1\n";
         assert_eq!(count(yaml, REQUIRED), 0);
-        assert_eq!(count(yaml, FORBIDDEN), 0);
+        assert_eq!(count(yaml, FORBIDDEN), 1);
     }
 
     #[test]
     fn test_directives_with_crlf() {
         let yaml = "%YAML 1.2\r\n%TAG !e! tag:x,2000:\r\n---\r\na: 1\r\n";
         assert_eq!(count(yaml, REQUIRED), 0);
-        assert_eq!(count(yaml, FORBIDDEN), 0);
+        assert_eq!(count(yaml, FORBIDDEN), 1);
         assert_eq!(count("---\r\na: 1\r\n", FORBIDDEN), 1);
     }
 
@@ -261,8 +250,9 @@ mod tests {
 
     #[test]
     fn test_comment_only_file_with_required() {
-        assert_eq!(count("# only a comment\n", REQUIRED), 1);
+        assert_eq!(count("# only a comment\n", REQUIRED), 0);
         assert_eq!(count("# only a comment\n", FORBIDDEN), 0);
+        assert_eq!(count("", REQUIRED), 0);
     }
 
     #[test]
@@ -325,16 +315,12 @@ mod tests {
     }
 
     #[test]
-    fn test_forbidden_spares_markers_after_directives() {
-        assert_eq!(lines("%YAML 1.2\n---\na: 1\n---\nb: 2\n", FORBIDDEN), [4]);
+    fn test_forbidden_flags_markers_after_directives() {
         assert_eq!(
-            lines("%YAML 1.2\n# c\n\n---\na: 1\n", FORBIDDEN),
-            [] as [usize; 0]
+            lines("%YAML 1.2\n---\na: 1\n---\nb: 2\n", FORBIDDEN),
+            [2, 4]
         );
-        assert_eq!(
-            lines("a: 1\n...\n%YAML 1.2\n---\nb: 2\n---\nc: 3\n", FORBIDDEN),
-            [6]
-        );
+        assert_eq!(lines("%YAML 1.2\n# c\n\n---\na: 1\n", FORBIDDEN), [4]);
     }
 
     #[test]
