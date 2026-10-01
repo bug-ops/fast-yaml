@@ -4,7 +4,7 @@ use crate::{
     Location, Span,
     comments::Comment,
     diagnostic::{ContextLine, DiagnosticContext},
-    scan::{DocumentMarkers, IMPLICIT_DOCUMENT, SourceScan},
+    scan::{DocumentMarkers, IMPLICIT_DOCUMENT, KeyRepeat, SourceScan},
     source::offset::{ByteOffset, ByteRange},
     tokenizer::{FlowIndex, FlowTokenizer},
 };
@@ -1157,6 +1157,11 @@ impl<'a> LintContext<'a> {
     fn scan(&self) -> &SourceScan<'a> {
         self.scan
             .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
+    }
+
+    /// Returns the keys that repeat an earlier key of their mapping.
+    pub(crate) fn key_repeats(&self) -> &[KeyRepeat] {
+        &self.scan().key_repeats
     }
 
     /// Returns the explicit markers and first line of every parsed document.

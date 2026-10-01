@@ -1,8 +1,14 @@
 //! Single-pass scan of the parser events: comments and document markers.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
+
 use fast_yaml_core::events::{Event, EventItem};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
-use fast_yaml_core::{CommentScanner, DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser};
+use fast_yaml_core::{
+    CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, Parser, Value,
+    resolve_scalar,
+};
 
 use crate::{Location, SourceContext, Span, comments::Comment};
 
@@ -43,19 +49,68 @@ pub const IMPLICIT_DOCUMENT: DocumentMarkers = DocumentMarkers {
     first_line: 1,
 };
 
+/// Which kind of key a [`KeyRepeat`] repeats.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepeatedKey {
+    /// An ordinary key; keys are equal when their resolved values are.
+    Ordinary,
+    /// A `<<` merge key.
+    Merge,
+}
+
+/// A mapping key that repeats an earlier key of the same mapping.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyRepeat {
+    /// The key as written.
+    pub key: String,
+    /// 1-indexed line of the first occurrence.
+    pub first_line: usize,
+    /// Span of the repeating key.
+    pub span: Span,
+    /// Whether it is an ordinary or a merge key.
+    pub kind: RepeatedKey,
+}
+
 /// Everything the rules need from the parser events of one source.
 #[derive(Debug, Default)]
 pub struct SourceScan<'a> {
     pub comments: Vec<Comment<'a>>,
     pub documents: Vec<DocumentMarkers>,
+    pub key_repeats: Vec<KeyRepeat>,
+}
+
+/// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
+#[derive(Default)]
+struct MappingKeys {
+    values: HashMap<Value, usize>,
+    merge_first_line: Option<usize>,
+}
+
+impl MappingKeys {
+    /// Records `key` and returns the first line it was seen on if it repeats.
+    fn record(&mut self, kind: RepeatedKey, key: Value, line: usize) -> Option<usize> {
+        if kind == RepeatedKey::Merge {
+            let first = self.merge_first_line;
+            self.merge_first_line.get_or_insert(line);
+            return first;
+        }
+        match self.values.entry(key) {
+            Entry::Occupied(first) => Some(*first.get()),
+            Entry::Vacant(slot) => {
+                slot.insert(line);
+                None
+            }
+        }
+    }
 }
 
 impl<'a> SourceScan<'a> {
     /// Scans `source` with a loader pass that discards the values.
     ///
     /// It applies the default parse limits, and treats a repeated `<<` like `Linter::lint` does.
-    /// Empty when `source` is not valid YAML, or is not its own normalized form (a BOM prefix),
-    /// because the parser then sees a different text than the context.
+    /// Empty when `source` is not its own normalized form (a BOM prefix), because the parser then
+    /// sees a different text than the context. When the parse fails only the key repeats found
+    /// before the error remain.
     pub fn of_source(source: &'a str, context: &SourceContext<'_>) -> Self {
         let Ok(input) = NormalizedInput::new(source) else {
             return Self::default();
@@ -72,7 +127,7 @@ impl<'a> SourceScan<'a> {
             |item| collector.observe(item),
         );
         if loaded.is_err() {
-            return Self::default();
+            return collector.finish_failed();
         }
         collector.finish()
     }
@@ -85,6 +140,8 @@ pub struct ScanCollector<'a, 'c> {
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
     open: Option<(DocumentStart, usize)>,
+    mappings: Vec<MappingKeys>,
+    key_repeats: Vec<KeyRepeat>,
 }
 
 impl<'a, 'c> ScanCollector<'a, 'c> {
@@ -100,6 +157,8 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
             scanner: CommentScanner::new(input),
             documents: Vec::new(),
             open: None,
+            mappings: Vec::new(),
+            key_repeats: Vec::new(),
         }
     }
 
@@ -135,7 +194,40 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
                     first_line,
                 });
             }
+            Event::MappingStart { .. } => self.mappings.push(MappingKeys::default()),
+            Event::MappingEnd => {
+                self.mappings.pop();
+            }
+            Event::Scalar {
+                value, style, tag, ..
+            } => {
+                let kind = match item.role {
+                    Some(NodeRole::Key) => RepeatedKey::Ordinary,
+                    Some(NodeRole::MergeKey) => RepeatedKey::Merge,
+                    _ => return,
+                };
+                let Some(keys) = self.mappings.last_mut() else {
+                    return;
+                };
+                let resolved = Value::from(resolve_scalar(value, *style, tag.as_ref()));
+                if let Some(first_line) = keys.record(kind, resolved, item.at.line) {
+                    self.key_repeats.push(KeyRepeat {
+                        key: value.as_ref().to_owned(),
+                        first_line,
+                        span: self.context.span_between(item.at, item.end),
+                        kind,
+                    });
+                }
+            }
             _ => {}
+        }
+    }
+
+    /// The scan of a source whose parse failed: only the key repeats seen before the error.
+    pub fn finish_failed(self) -> SourceScan<'a> {
+        SourceScan {
+            key_repeats: self.key_repeats,
+            ..SourceScan::default()
         }
     }
 
@@ -149,6 +241,7 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
         SourceScan {
             comments,
             documents: self.documents,
+            key_repeats: self.key_repeats,
         }
     }
 }

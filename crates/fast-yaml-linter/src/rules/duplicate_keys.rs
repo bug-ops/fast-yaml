@@ -3,14 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
-};
-use fast_yaml_core::{MergeKeyValidator, NodeRole, Value, resolve_scalar};
-use saphyr_parser::{Event, Parser as SaphyrParser};
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
+use crate::scan::{KeyRepeat, RepeatedKey};
+use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use fast_yaml_core::Value;
 
 /// Rule to detect duplicate keys in YAML mappings.
 ///
@@ -80,128 +75,35 @@ impl super::LintRule for DuplicateKeysRule {
             .rules
             .duplicate_key
             .severity_or(self.default_severity());
-        let options = &config.rules.duplicate_key.options;
-        scan_duplicate_keys(
-            context.source(),
-            context.source_context(),
-            severity,
-            options.forbid_duplicated_merge_keys,
-        )
+        let forbid_merge_repeats = config
+            .rules
+            .duplicate_key
+            .options
+            .forbid_duplicated_merge_keys;
+
+        context
+            .key_repeats()
+            .iter()
+            .filter(|repeat| repeat.kind == RepeatedKey::Ordinary || forbid_merge_repeats)
+            .map(
+                |KeyRepeat {
+                     key,
+                     first_line,
+                     span,
+                     ..
+                 }| {
+                    DiagnosticBuilder::new(
+                        DiagnosticCode::DUPLICATE_KEY,
+                        severity,
+                        format!("duplicate key '{key}' (first defined at line {first_line})"),
+                        *span,
+                    )
+                    .with_suggestion("remove this duplicate key or rename it", *span, None)
+                    .build_with_context(context.source_context())
+                },
+            )
+            .collect()
     }
-}
-
-/// A repeated key occurrence.
-struct DuplicateKey {
-    key: String,
-    first_line: usize,
-    span: Span,
-}
-
-/// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
-#[derive(Default)]
-struct MappingKeys {
-    values: HashMap<Value, usize>,
-    merge_first_line: Option<usize>,
-}
-
-impl MappingKeys {
-    /// Records `key` and returns the first line it was seen on if it repeats.
-    ///
-    /// A repeated merge key is reported only when `forbid_merge_repeats` is set.
-    fn record(
-        &mut self,
-        role: NodeRole,
-        key: Value,
-        line: usize,
-        forbid_merge_repeats: bool,
-    ) -> Option<usize> {
-        if role == NodeRole::MergeKey {
-            let first = self.merge_first_line;
-            self.merge_first_line.get_or_insert(line);
-            return first.filter(|_| forbid_merge_repeats);
-        }
-        match self.values.entry(key) {
-            Entry::Occupied(first) => Some(*first.get()),
-            Entry::Vacant(slot) => {
-                slot.insert(line);
-                None
-            }
-        }
-    }
-}
-
-/// Parses raw YAML events and collects duplicate key occurrences.
-///
-/// Stops at the first invalid merge value, which `lint` already rejects.
-fn collect_duplicates(
-    source: &str,
-    source_context: &SourceContext<'_>,
-    forbid_merge_repeats: bool,
-) -> Vec<DuplicateKey> {
-    let mut duplicates = Vec::new();
-    let mut validator = MergeKeyValidator::default();
-    let mut open: Vec<MappingKeys> = Vec::new();
-
-    let mut parser = SaphyrParser::new_from_str(source);
-
-    while let Some(Ok((event, span))) = parser.next_event() {
-        let Ok(role) = validator.observe(&event, span) else {
-            break;
-        };
-        match event {
-            Event::MappingStart(..) => open.push(MappingKeys::default()),
-            Event::MappingEnd => {
-                open.pop();
-            }
-            Event::Scalar(ref text, style, _, ref tag) => {
-                let (Some(role @ (NodeRole::Key | NodeRole::MergeKey)), Some(keys)) =
-                    (role, open.last_mut())
-                else {
-                    continue;
-                };
-                let key = Value::from(resolve_scalar(text, style, tag.as_deref()));
-                if let Some(first_line) =
-                    keys.record(role, key, span.start.line(), forbid_merge_repeats)
-                {
-                    duplicates.push(DuplicateKey {
-                        key: text.as_ref().to_owned(),
-                        first_line,
-                        span: source_context.span_of(span),
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    duplicates
-}
-
-fn scan_duplicate_keys(
-    source: &str,
-    source_context: &SourceContext<'_>,
-    severity: Severity,
-    forbid_merge_repeats: bool,
-) -> Vec<Diagnostic> {
-    collect_duplicates(source, source_context, forbid_merge_repeats)
-        .into_iter()
-        .map(
-            |DuplicateKey {
-                 key,
-                 first_line,
-                 span,
-             }| {
-                DiagnosticBuilder::new(
-                    DiagnosticCode::DUPLICATE_KEY,
-                    severity,
-                    format!("duplicate key '{key}' (first defined at line {first_line})"),
-                    span,
-                )
-                .with_suggestion("remove this duplicate key or rename it", span, None)
-                .build_with_context(source_context)
-            },
-        )
-        .collect()
 }
 
 #[cfg(test)]
@@ -211,9 +113,11 @@ mod tests {
     use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
-        let rule = DuplicateKeysRule;
-        rule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+        DuplicateKeysRule.check(
+            &LintContext::new(yaml),
+            &Value::Null,
+            &LintConfig::default(),
+        )
     }
 
     #[test]

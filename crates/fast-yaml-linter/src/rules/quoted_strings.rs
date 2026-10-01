@@ -9,6 +9,7 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
+use fast_yaml_core::events::Tag;
 use fast_yaml_core::scalar::core_tag_suffix;
 use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
 use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
@@ -221,7 +222,10 @@ impl super::LintRule for QuotedStringsRule {
                             style,
                             role,
                             in_flow,
-                            core_tagged: tag.as_deref().and_then(core_tag_suffix).is_some(),
+                            core_tagged: tag
+                                .as_deref()
+                                .map(|tag| Tag::new(tag.handle.clone(), tag.suffix.clone()))
+                                .is_some_and(|tag| core_tag_suffix(&tag).is_some()),
                             span: context.source_context().span_of(span),
                         },
                         &mut diagnostics,

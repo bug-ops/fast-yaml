@@ -605,4 +605,28 @@ mod tests {
         assert!(events.any(|item| item.is_err()));
         assert_eq!(events.document(), 1);
     }
+
+    #[test]
+    fn items_carry_the_end_of_their_token() {
+        let input = NormalizedInput::new("a: \"bc\"\n---\nd\n...\n").unwrap();
+        let items: Vec<_> = stream(&input).collect::<Result<_, _>>().unwrap();
+        let span_of = |wanted: &Event<'_>| {
+            let item = items.iter().find(|item| &item.event == wanted).unwrap();
+            (
+                (item.at.line, item.at.column),
+                (item.end.line, item.end.column),
+            )
+        };
+        let quoted = Event::Scalar {
+            value: "bc".into(),
+            style: ScalarStyle::DoubleQuoted,
+            anchor: None,
+            tag: None,
+        };
+        assert_eq!(span_of(&quoted), ((1, 4), (1, 8)));
+        assert_eq!(
+            span_of(&Event::DocumentStart { explicit: true }),
+            ((2, 1), (2, 4))
+        );
+    }
 }
