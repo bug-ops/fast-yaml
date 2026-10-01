@@ -13,12 +13,13 @@ use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys}
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
 use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, MaxDocuments};
 use fast_yaml_parallel::{
-    Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config,
+    Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config, shared_pool,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
+use std::num::NonZeroUsize;
 
 /// Maximum thread count allowed (capped by Rust implementation).
 const MAX_THREADS: usize = 128;
@@ -67,7 +68,8 @@ impl PyParallelConfig {
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
         max_scan_ahead: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
+        let parse_limits =
+            limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         // Validate thread_count (if specified, must be <= 128)
         if let Some(count) = thread_count
             && count > MAX_THREADS
@@ -95,10 +97,6 @@ impl PyParallelConfig {
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
-            )?)
-            .with_max_documents(limits::bounded::<Documents>(
-                "max_documents",
-                max_documents,
             )?)
             .with_parse_limits(parse_limits);
 
@@ -158,11 +156,12 @@ impl PyParallelConfig {
     ///     `ValueError`: If count is outside 1..=10M
     ///     `TypeError`: If count is not an int (`bool` included)
     fn with_max_documents(&self, count: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = fast_yaml_core::ParseLimits {
+            max_documents: limits::bounded::<Documents>("max_documents", count)?,
+            ..self.inner.parse_limits()
+        };
         Ok(Self {
-            inner: self
-                .inner
-                .clone()
-                .with_max_documents(limits::bounded::<Documents>("max_documents", count)?),
+            inner: self.inner.clone().with_parse_limits(parse_limits),
             ..self.clone()
         })
     }
@@ -417,7 +416,9 @@ fn dump_parallel(
         yaml_values.push(yaml);
     }
 
-    let max_docs = config.map_or(MaxDocuments::DEFAULT, |cfg| cfg.inner.max_documents());
+    let max_docs = config.map_or(MaxDocuments::DEFAULT, |cfg| {
+        cfg.inner.parse_limits().max_documents
+    });
     if yaml_values.len() > max_docs.get() {
         return Err(PyValueError::new_err(format!(
             "input has {} documents, more than the maximum of {max_docs}",
@@ -477,18 +478,16 @@ fn dump_parallel(
             .map_err(|e| PyValueError::new_err(e.to_string()))?
     } else {
         // Parallel emission
+        let pool = shared_pool(NonZeroUsize::new(thread_count).unwrap_or(NonZeroUsize::MIN))
+            .map_err(|e| PyValueError::new_err(e.to_string()))?;
         py.detach(|| {
-            rayon::ThreadPoolBuilder::new()
-                .num_threads(thread_count)
-                .build()
-                .map_err(|e| PyValueError::new_err(e.to_string()))?
-                .install(|| {
-                    yaml_values
-                        .par_iter()
-                        .map(|v| Emitter::emit_str_with_config(v, &emitter_config))
-                        .collect::<Result<Vec<_>, _>>()
-                        .map_err(|e| PyValueError::new_err(e.to_string()))
-                })
+            pool.install(|| {
+                yaml_values
+                    .par_iter()
+                    .map(|v| Emitter::emit_str_with_config(v, &emitter_config))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| PyValueError::new_err(e.to_string()))
+            })
         })?
     };
 

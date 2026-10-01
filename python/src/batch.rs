@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use crate::limits;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::emitter::EmitterConfig;
-use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes, ScanAhead};
+use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
 use fast_yaml_core::{Indent, Width};
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
@@ -171,7 +171,7 @@ impl From<RustBatchResult> for PyBatchResult {
 
 /// Configuration for batch file processing.
 ///
-/// `max_depth` and `max_scan_ahead` apply to `process_files` and `format_files`;
+/// `max_depth`, `max_scan_ahead` and `max_documents` apply to `process_files` and `format_files`;
 /// `max_alias_bytes` to `process_files` only. `indent` must be in 1..=9 and `width` in 20..=1000. Non-integer values
 /// raise `TypeError`, out-of-range values `ValueError`.
 #[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig", from_py_object)]
@@ -190,7 +190,6 @@ impl PyBatchConfig {
     #[new]
     #[pyo3(signature = (
         workers=None,
-        mmap_threshold=512*1024,
         max_input_bytes=None,
         sequential_threshold=4096,
         indent=2,
@@ -198,12 +197,12 @@ impl PyBatchConfig {
         sort_keys=false,
         max_depth=None,
         max_alias_bytes=None,
-        max_scan_ahead=None
+        max_scan_ahead=None,
+        max_documents=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
         workers: Option<usize>,
-        mmap_threshold: usize,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
         sequential_threshold: usize,
         indent: usize,
@@ -212,8 +211,10 @@ impl PyBatchConfig {
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
         max_scan_ahead: Option<&Bound<'_, PyAny>>,
+        max_documents: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
+        let parse_limits =
+            limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         let emitter_indent = limits::indent(indent)?;
         let emitter_width = limits::width(width)?;
         if let Some(w) = workers
@@ -226,7 +227,6 @@ impl PyBatchConfig {
 
         let config = RustConfig::new()
             .with_workers(workers)
-            .with_mmap_threshold(mmap_threshold)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
@@ -305,6 +305,24 @@ impl PyBatchConfig {
     fn with_max_scan_ahead(&self, chars: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
             max_scan_ahead: limits::bounded::<ScanAhead>("max_scan_ahead", chars)?,
+            ..self.inner.parse_limits()
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+            ..self.clone()
+        })
+    }
+
+    /// Sets the maximum number of documents per file; `None` resets to 100,000.
+    ///
+    /// Applies to `process_files` and `format_files`. Range: 1..=10M.
+    ///
+    /// Raises:
+    ///     `ValueError`: If count is outside 1..=10M
+    ///     `TypeError`: If count is not an int (`bool` included)
+    fn with_max_documents(&self, count: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_documents: limits::bounded::<Documents>("max_documents", count)?,
             ..self.inner.parse_limits()
         };
         Ok(Self {

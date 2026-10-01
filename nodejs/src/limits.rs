@@ -1,5 +1,5 @@
 //! Validation of JavaScript-supplied limits (`maxDepth`, `maxAliasBytes`, `maxScanAhead`,
-//! `maxInputBytes`).
+//! `maxDocuments`, `maxInputBytes`).
 //!
 //! JavaScript numbers arrive as `f64`; every value is checked here so that `NaN`,
 //! fractions, negatives, zero, and values above the core cap are rejected with the
@@ -47,18 +47,20 @@ pub(crate) fn max_documents(value: Option<f64>) -> NapiResult<MaxDocuments> {
     bounded("maxDocuments", value)
 }
 
-/// Validates the optional `maxDepth` / `maxAliasBytes` / `maxScanAhead` values into [`ParseLimits`].
+/// Validates the optional `maxDepth` / `maxAliasBytes` / `maxScanAhead` / `maxDocuments` values into [`ParseLimits`].
 ///
 /// Absent values keep the core defaults.
 pub(crate) fn parse_limits(
     max_depth_opt: Option<f64>,
     max_alias_bytes_opt: Option<f64>,
     max_scan_ahead_opt: Option<f64>,
+    max_documents_opt: Option<f64>,
 ) -> NapiResult<ParseLimits> {
     Ok(ParseLimits {
         max_depth: bounded("maxDepth", max_depth_opt)?,
         max_alias_bytes: bounded("maxAliasBytes", max_alias_bytes_opt)?,
         max_scan_ahead: bounded("maxScanAhead", max_scan_ahead_opt)?,
+        max_documents: max_documents(max_documents_opt)?,
         ..ParseLimits::default()
     })
 }
@@ -71,18 +73,18 @@ mod tests {
     #[test]
     fn defaults_when_absent() {
         assert_eq!(
-            parse_limits(None, None, None).unwrap(),
+            parse_limits(None, None, None, None).unwrap(),
             ParseLimits::default()
         );
     }
 
     #[test]
     fn accepts_bounds() {
-        let l = parse_limits(Some(1.0), Some(1_073_741_824.0), None).unwrap();
+        let l = parse_limits(Some(1.0), Some(1_073_741_824.0), None, None).unwrap();
         assert_eq!(l.max_depth.get(), 1);
         assert_eq!(l.max_alias_bytes.get(), 1 << 30);
         assert_eq!(
-            parse_limits(Some(512.0), None, None)
+            parse_limits(Some(512.0), None, None, None)
                 .unwrap()
                 .max_depth
                 .get(),
@@ -93,26 +95,28 @@ mod tests {
     #[test]
     fn rejects_invalid_depth() {
         for v in [0.0, -1.0, 1.5, f64::NAN, f64::INFINITY, 513.0, 1e300] {
-            assert!(parse_limits(Some(v), None, None).is_err(), "{v}");
+            assert!(parse_limits(Some(v), None, None, None).is_err(), "{v}");
         }
     }
 
     #[test]
     fn rejects_invalid_alias_bytes() {
         for v in [0.0, -1.0, 2.5, f64::NAN, 1_073_741_825.0] {
-            assert!(parse_limits(None, Some(v), None).is_err(), "{v}");
+            assert!(parse_limits(None, Some(v), None, None).is_err(), "{v}");
         }
     }
 
     #[test]
     fn scan_ahead_defaults_and_bounds() {
-        let limits = parse_limits(None, None, Some(1_073_741_824.0)).unwrap();
+        let limits = parse_limits(None, None, Some(1_073_741_824.0), None).unwrap();
         assert_eq!(limits.max_scan_ahead, MaxScanAhead::MAX);
         for v in [0.0, -1.0, 2.5, f64::NAN, 1_073_741_825.0] {
-            assert!(parse_limits(None, None, Some(v)).is_err(), "{v}");
+            assert!(parse_limits(None, None, Some(v), None).is_err(), "{v}");
         }
         assert_eq!(
-            parse_limits(None, None, Some(0.0)).unwrap_err().reason,
+            parse_limits(None, None, Some(0.0), None)
+                .unwrap_err()
+                .reason,
             "maxScanAhead must be between 1 and 1073741824, got 0"
         );
     }
@@ -144,6 +148,13 @@ mod tests {
     }
 
     #[test]
+    fn parse_limits_carries_max_documents() {
+        let limits = parse_limits(None, None, None, Some(7.0)).unwrap();
+        assert_eq!(limits.max_documents.get(), 7);
+        assert!(parse_limits(None, None, None, Some(0.0)).is_err());
+    }
+
+    #[test]
     fn max_documents_defaults_and_bounds() {
         assert_eq!(max_documents(None).unwrap(), MaxDocuments::DEFAULT);
         assert_eq!(
@@ -169,7 +180,7 @@ mod tests {
             (1.5, "1.5"),
             (-1.0, "-1"),
         ] {
-            let e = parse_limits(Some(v), None, None).unwrap_err();
+            let e = parse_limits(Some(v), None, None, None).unwrap_err();
             assert_eq!(
                 e.reason,
                 format!("maxDepth must be between 1 and 512, got {want}")
@@ -179,7 +190,7 @@ mod tests {
 
     #[test]
     fn message_matches_core_shape() {
-        let e = parse_limits(Some(0.0), None, None).unwrap_err();
+        let e = parse_limits(Some(0.0), None, None, None).unwrap_err();
         assert_eq!(e.reason, "maxDepth must be between 1 and 512, got 0");
     }
 }

@@ -3,9 +3,9 @@
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
 use crate::conversion::yaml_to_js;
-use crate::limits::{max_documents, max_input_bytes, parse_limits, reject_legacy_max_input_size};
+use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size};
 use crate::options::{U32_MAX, checked_opt_uint};
-use fast_yaml_core::KeyDomain;
+use fast_yaml_core::{KeyDomain, LimitKind, ParseError};
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
     Env, Task,
@@ -68,9 +68,14 @@ pub struct ParallelConfig {
 /// Maps a parallel-parse failure to a JS error; the document cap is an argument error.
 fn parse_error(error: &fast_yaml_parallel::Error) -> napi::Error {
     match error {
-        fast_yaml_parallel::Error::TooManyDocuments { .. } => {
-            napi::Error::new(napi::Status::InvalidArg, error.to_string())
-        }
+        fast_yaml_parallel::Error::Parse {
+            source:
+                ParseError::LimitExceeded {
+                    kind: LimitKind::Documents(_),
+                    ..
+                },
+            ..
+        } => napi::Error::new(napi::Status::InvalidArg, error.to_string()),
         other => napi::Error::from_reason(other.to_string()),
     }
 }
@@ -87,9 +92,7 @@ impl ParallelConfig {
             config = config.with_workers(Some(count));
         }
         reject_legacy_max_input_size(self.max_input_size)?;
-        config = config
-            .with_max_input_bytes(max_input_bytes(self.max_input_bytes)?)
-            .with_max_documents(max_documents(self.max_documents)?);
+        config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
         // The parallel API has no chunk-size bounds; minChunkSize maps to the sequential threshold.
         if let Some(size) = min_chunk_size {
             config = config.with_sequential_threshold(size);
@@ -99,6 +102,7 @@ impl ParallelConfig {
             self.max_depth,
             self.max_alias_bytes,
             self.max_scan_ahead,
+            self.max_documents,
         )?))
     }
 }

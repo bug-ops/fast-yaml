@@ -42,7 +42,7 @@ subject to the limit. PyYAML reads leading-zero literals differently (`0012` is 
 Nesting depth, alias expansion and parser lookahead are capped by default. Raise or lower the caps with keyword arguments on
 `safe_load`, `safe_load_all`, `load`, `load_all`, and the `ParallelConfig`, `LintConfig`, and `BatchConfig`
 constructors (each config also has `with_max_depth()` / `with_max_alias_bytes()` / `with_max_scan_ahead()`; `None` resets to the default).
-`ParallelConfig`, `LintConfig`, and `BatchConfig` also accept `max_input_bytes` / `with_max_input_bytes()`, and `ParallelConfig` accepts `max_documents` / `with_max_documents()`:
+`ParallelConfig`, `LintConfig`, and `BatchConfig` also accept `max_input_bytes` / `with_max_input_bytes()`. Every loader and config accepts `max_documents` (each config also has `with_max_documents()`):
 
 ```python
 fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
@@ -54,7 +54,7 @@ fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
 | `max_alias_bytes` | 64 MiB | 1..=1 GiB |
 | `max_scan_ahead` | 4 Mi characters | 1..=1 Gi |
 | `max_input_bytes` (`ParallelConfig`, `LintConfig`, `BatchConfig`) | 100 MiB | 1..=1 GiB |
-| `max_documents` (`ParallelConfig`) | 100 000 | 1..=10 000 000 |
+| `max_documents` | 100 000 | 1..=10 000 000 |
 
 `max_scan_ahead` bounds how far the parser reads past the last node it reported, which bounds parser memory (about 190x the value). A flow collection that the parser reads whole (at the document root, in a `- ` entry, nested in another flow collection, or after a tab), so any JSON document longer than the limit, minified or pretty-printed, a single scalar, or a run of comments longer than the limit raises `ValueError`; raise `max_scan_ahead` for such input. Block YAML, `key: [..]` and `--- [..]` are not affected.
 
@@ -64,7 +64,7 @@ The dumper keeps a fixed depth of 256, so data parsed deeper may fail to dump.
 The alias budget is per stream, so parallel and batch runs can use up to workers x budget.
 `max_input_bytes` bounds work on oversized input; an in-memory source is already allocated when checked, so it is not a memory bound there.
 `safe_load` and `safe_load_all` reject sources over 100 MiB.
-`parse_parallel` and `dump_parallel` enforce `max_documents` (100 000 by default) even when no config is passed; exceeding it raises `ValueError`.
+`max_documents` caps the documents in one stream and applies even when no config is passed (`safe_load` and `load` also read the whole stream, so a source over the limit raises `ValueError`); `dump_parallel` enforces it on the input list.
 
 ## Sets
 
@@ -161,7 +161,6 @@ print(f"Changed {result.changed} files")
 | Option | Default | Description |
 |--------|---------|-------------|
 | `workers` | Auto | Number of worker threads |
-| `mmap_threshold` | 512 KB | Mmap threshold for large files |
 | `max_input_bytes` | 100 MiB | Maximum file size, 1..=1 GiB |
 | `indent` | 2 | Indentation width |
 | `width` | 80 | Line width |
@@ -169,8 +168,9 @@ print(f"Changed {result.changed} files")
 | `max_depth` | 256 | Maximum nesting depth, 1..=512 (`process_files` and `format_files`) |
 | `max_alias_bytes` | 64 MiB | Alias-expansion budget per file, 1..=1 GiB (`process_files` only) |
 | `max_scan_ahead` | 4 Mi | Characters the parser may read past the last node, 1..=1 Gi |
+| `max_documents` | 100 000 | Maximum documents per file, 1..=10 000 000 |
 
-`format_files` applies `max_depth` and `max_scan_ahead` and ignores `max_alias_bytes`. `indent` must be 1..=9 and `width` 20..=1000; other values raise `ValueError` instead of being clamped.
+`format_files` applies `max_depth`, `max_scan_ahead` and `max_documents` and ignores `max_alias_bytes`. `indent` must be 1..=9 and `width` 20..=1000; other values raise `ValueError` instead of being clamped.
 
 ### BatchResult
 

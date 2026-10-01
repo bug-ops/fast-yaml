@@ -123,8 +123,6 @@ const MAX_WORKERS: u64 = 128;
 pub struct BatchConfig {
     /// Worker count (null = auto, 0 = sequential)
     pub workers: Option<f64>,
-    /// Mmap threshold for large file reading (default: 512KB)
-    pub mmap_threshold: Option<f64>,
     /// Maximum input size in bytes per file (integer, 1..=1073741824, default: 104857600)
     pub max_input_bytes: Option<f64>,
     /// Removed: renamed to `maxInputBytes`; passing it throws.
@@ -149,6 +147,9 @@ pub struct BatchConfig {
     /// collection at the root or in a `- ` entry, one scalar, or a run of comments longer than
     /// this is rejected; parser memory is bounded by about 190 times this value.
     pub max_scan_ahead: Option<f64>,
+    /// Maximum number of documents per file (integer, 1..=10000000, default: 100000); applies to
+    /// `processFiles` and `formatFiles`.
+    pub max_documents: Option<f64>,
 }
 
 impl BatchConfig {
@@ -156,9 +157,6 @@ impl BatchConfig {
         let mut config = RustConfig::new();
         if let Some(w) = checked_opt_uint("workers", self.workers, 0, MAX_WORKERS)? {
             config = config.with_workers(Some(w));
-        }
-        if let Some(t) = checked_opt_uint("mmapThreshold", self.mmap_threshold, 0, U32_MAX)? {
-            config = config.with_mmap_threshold(t);
         }
         reject_legacy_max_input_size(self.max_input_size)?;
         config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
@@ -171,6 +169,7 @@ impl BatchConfig {
             self.max_depth,
             self.max_alias_bytes,
             self.max_scan_ahead,
+            self.max_documents,
         )?))
     }
 
@@ -178,7 +177,12 @@ impl BatchConfig {
         Ok(EmitterConfig::new()
             .with_indent(emitter_indent(self.indent)?)
             .with_width(emitter_width(self.width)?)
-            .with_parse_limits(parse_limits(self.max_depth, None, self.max_scan_ahead)?))
+            .with_parse_limits(parse_limits(
+                self.max_depth,
+                None,
+                self.max_scan_ahead,
+                self.max_documents,
+            )?))
     }
 }
 

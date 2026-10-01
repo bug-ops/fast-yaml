@@ -443,3 +443,27 @@ describe('invalid character after a huge flow collection (#563)', () => {
     expect(() => safeLoadAll(source, { maxScanAhead: 64 * 1024 })).toThrow(/\(document 4\)/);
   });
 });
+
+describe('maxDocuments', () => {
+  const docs = (n: number) => '---\na: 1\n'.repeat(n);
+
+  it('caps safeLoadAll and safeLoad streams', () => {
+    expect(() => safeLoadAll(docs(4), { maxDocuments: 3 })).toThrow(
+      /document count exceeds 3 \(document 4\)/
+    );
+    expect(safeLoadAll(docs(3), { maxDocuments: 3 })).toHaveLength(3);
+    expect(() => safeLoad(docs(2), { maxDocuments: 1 })).toThrow(/document count exceeds 1/);
+  });
+
+  it('rejects out-of-range values', () => {
+    for (const v of [0, 10_000_001]) {
+      expect(() => safeLoadAll('a', { maxDocuments: v })).toThrow(
+        /maxDocuments must be between 1 and 10000000/
+      );
+    }
+  });
+
+  it('applies a default of 100000', () => {
+    expect(() => safeLoadAll('---\n'.repeat(100_001))).toThrow(/document count exceeds 100000/);
+  });
+});

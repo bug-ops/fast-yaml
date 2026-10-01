@@ -582,6 +582,7 @@ fn container_children<'py>(
 ///     `max_depth`: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     `max_alias_bytes`: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///     `max_scan_ahead`: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi); a flow collection at the root or in a `- ` entry, one scalar, or a run of comments longer than this raises `ValueError`
+///     `max_documents`: Maximum documents in the stream, 1..=10M (default: 100 000); more raises `ValueError`
 ///
 /// Returns:
 ///     The parsed YAML document as Python objects (dict, list, str, int, float, bool, None)
@@ -606,15 +607,16 @@ fn container_children<'py>(
 ///     >>> data
 ///     {'name': 'test', 'value': 123}
 #[pyfunction]
-#[pyo3(signature = (yaml_str, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None))]
+#[pyo3(signature = (yaml_str, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
 fn safe_load(
     py: Python<'_>,
     yaml_str: &str,
     max_depth: Option<&Bound<'_, PyAny>>,
     max_alias_bytes: Option<&Bound<'_, PyAny>>,
     max_scan_ahead: Option<&Bound<'_, PyAny>>,
+    max_documents: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
+    let limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
     check_input_len(yaml_str.len())?;
 
     let docs = event_loader::load_all(py, yaml_str, limits)?;
@@ -630,6 +632,7 @@ fn safe_load(
 ///     `max_depth`: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     `max_alias_bytes`: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///     `max_scan_ahead`: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi); a flow collection at the root or in a `- ` entry, one scalar, or a run of comments longer than this raises `ValueError`
+///     `max_documents`: Maximum documents in the stream, 1..=10M (default: 100 000); more raises `ValueError`
 ///
 /// Returns:
 ///     A list of parsed YAML documents
@@ -650,15 +653,16 @@ fn safe_load(
 ///     >>> list(docs)
 ///     [{'foo': 1}, {'bar': 2}]
 #[pyfunction]
-#[pyo3(signature = (yaml_str, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None))]
+#[pyo3(signature = (yaml_str, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
 fn safe_load_all(
     py: Python<'_>,
     yaml_str: &str,
     max_depth: Option<&Bound<'_, PyAny>>,
     max_alias_bytes: Option<&Bound<'_, PyAny>>,
     max_scan_ahead: Option<&Bound<'_, PyAny>>,
+    max_documents: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
+    let limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
     check_input_len(yaml_str.len())?;
 
     let docs = event_loader::load_all(py, yaml_str, limits)?;
@@ -1028,6 +1032,7 @@ fn safe_dump_all(
 ///     max_depth: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///     max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi); a flow collection at the root or in a `- ` entry, one scalar, or a run of comments longer than this raises ValueError
+///     max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ValueError
 ///
 /// Returns:
 ///     The parsed YAML document as Python objects
@@ -1046,7 +1051,7 @@ fn safe_dump_all(
 ///     {'name': 'test', 'value': 123}
 ///     >>> data = fast_yaml.load("key: value", fast_yaml.SafeLoader())
 #[pyfunction]
-#[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None))]
+#[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
 #[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
 fn load(
     py: Python<'_>,
@@ -1055,11 +1060,19 @@ fn load(
     max_depth: Option<&Bound<'_, PyAny>>,
     max_alias_bytes: Option<&Bound<'_, PyAny>>,
     max_scan_ahead: Option<&Bound<'_, PyAny>>,
+    max_documents: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     // For now, all loaders behave like SafeLoader
     // The loader parameter is accepted for PyYAML API compatibility
     let _ = loader; // Explicitly mark as unused
-    safe_load(py, stream, max_depth, max_alias_bytes, max_scan_ahead)
+    safe_load(
+        py,
+        stream,
+        max_depth,
+        max_alias_bytes,
+        max_scan_ahead,
+        max_documents,
+    )
 }
 
 /// Parse a YAML string containing multiple documents with an optional loader.
@@ -1074,6 +1087,7 @@ fn load(
 ///     max_depth: Maximum collection nesting depth, 1..=512 (default: 256); flow collections stop at 255 levels
 ///     max_alias_bytes: Alias-expansion budget in bytes, 1..=1 GiB (default: 64 MiB)
 ///     max_scan_ahead: Characters the parser may read past the last node, 1..=1 Gi (default: 4 Mi); a flow collection at the root or in a `- ` entry, one scalar, or a run of comments longer than this raises ValueError
+///     max_documents: Maximum documents in the stream, 1..=10M (default: 100 000); more raises ValueError
 ///
 /// Returns:
 ///     A list of parsed YAML documents
@@ -1088,7 +1102,7 @@ fn load(
 ///     >>> list(docs)
 ///     [{'foo': 1}, {'bar': 2}]
 #[pyfunction]
-#[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None))]
+#[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
 #[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
 fn load_all(
     py: Python<'_>,
@@ -1097,11 +1111,19 @@ fn load_all(
     max_depth: Option<&Bound<'_, PyAny>>,
     max_alias_bytes: Option<&Bound<'_, PyAny>>,
     max_scan_ahead: Option<&Bound<'_, PyAny>>,
+    max_documents: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
     // For now, all loaders behave like SafeLoader
     // The loader parameter is accepted for PyYAML API compatibility
     let _ = loader; // Explicitly mark as unused
-    safe_load_all(py, stream, max_depth, max_alias_bytes, max_scan_ahead)
+    safe_load_all(
+        py,
+        stream,
+        max_depth,
+        max_alias_bytes,
+        max_scan_ahead,
+        max_documents,
+    )
 }
 
 /// Serialize a Python object to YAML with an optional dumper.

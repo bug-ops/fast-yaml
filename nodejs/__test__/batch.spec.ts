@@ -174,10 +174,17 @@ describe('Batch Processing', () => {
       expect(result.errors[0].message).toMatch(/exceeds maximum allowed 64 bytes/);
     });
 
+    it('reports a per-file error for files over maxDocuments', () => {
+      const many = path.join(tmpDir, 'many.yaml');
+      fs.writeFileSync(many, '---\na: 1\n'.repeat(5));
+      const result = processFiles([many], { maxDocuments: 3 });
+      expect(result.failed).toBe(1);
+      expect(result.errors[0].message).toMatch(/document count exceeds 3/);
+    });
+
     it('should accept all options', () => {
       const config: BatchConfig = {
         workers: 4,
-        mmapThreshold: 1024 * 1024,
         maxInputBytes: 50 * 1024 * 1024,
         sequentialThreshold: 2048,
         indent: 4,

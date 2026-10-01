@@ -593,3 +593,12 @@ def test_parse_parallel_keeps_its_docstring():
 
     assert core_parallel.parse_parallel.__doc__
     assert "Parse multi-document YAML in parallel" in core_parallel.parse_parallel.__doc__
+
+
+class TestSharedPool:
+    def test_dump_parallel_parallel_branch_matches_sequential(self):
+        docs = [{"id": i, "v": [i, i + 1]} for i in range(64)]
+        config = parallel.ParallelConfig(thread_count=4)
+        assert parallel.dump_parallel(docs, config) == parallel.dump_parallel(
+            docs, parallel.ParallelConfig(thread_count=0)
+        )

@@ -13,16 +13,16 @@ COMPLEX_KEY = "YAML complex keys"
 class TestMaxDocuments:
     def test_limit_hit_with_config(self):
         config = parallel.ParallelConfig(max_documents=2)
-        with pytest.raises(ValueError, match="more than the maximum of 2"):
+        with pytest.raises(ValueError, match="document count exceeds 2"):
             parallel.parse_parallel("---\na\n" * 3, config)
 
     def test_default_applies_without_config(self):
-        with pytest.raises(ValueError, match="more than the maximum of 100000"):
+        with pytest.raises(ValueError, match="document count exceeds 100000"):
             parallel.parse_parallel("---\na\n" * 100_001)
 
     def test_builder_sets_limit(self):
         config = parallel.ParallelConfig().with_max_documents(1)
-        with pytest.raises(ValueError, match="more than the maximum of 1"):
+        with pytest.raises(ValueError, match="document count exceeds 1"):
             parallel.parse_parallel("---\na\n---\nb\n", config)
 
     def test_at_limit_is_accepted(self):
@@ -33,6 +33,37 @@ class TestMaxDocuments:
         config = parallel.ParallelConfig(max_documents=2)
         with pytest.raises(ValueError, match="more than the maximum of 2"):
             core_parallel.dump_parallel([1, 2, 3], config)
+
+    def test_safe_load_all_limit(self):
+        with pytest.raises(ValueError, match=r"document count exceeds 3 \(document 4\)"):
+            fast_yaml.safe_load_all("---\na\n" * 5, max_documents=3)
+
+    def test_safe_load_all_at_limit(self):
+        assert list(fast_yaml.safe_load_all("---\na\n" * 3, max_documents=3)) == ["a"] * 3
+
+    def test_safe_load_default_limit(self):
+        with pytest.raises(ValueError, match="document count exceeds 100000"):
+            fast_yaml.safe_load("---\n" * 100_001)
+
+    @pytest.mark.parametrize("loader", [fast_yaml.load, fast_yaml.load_all])
+    def test_load_limit(self, loader):
+        with pytest.raises(ValueError, match="document count exceeds 1"):
+            loader("---\na\n---\nb\n", max_documents=1)
+
+    def test_lint_and_batch_builders(self):
+        from fast_yaml import lint
+
+        assert lint.LintConfig(max_documents=2).with_max_documents(None) is not None
+        assert batch.BatchConfig(max_documents=2).with_max_documents(5) is not None
+        with pytest.raises(ValueError, match="max_documents must be between"):
+            batch.BatchConfig(max_documents=0)
+
+    def test_batch_process_files_limit(self, tmp_path):
+        path = tmp_path / "many.yaml"
+        path.write_text("---\na\n" * 5)
+        result = batch.process_files([str(path)], batch.BatchConfig(max_documents=3))
+        assert result.failed == 1
+        assert "document count exceeds 3" in result.errors()[0][1]
 
     @pytest.mark.parametrize("bad", [0, -1, 10_000_001])
     def test_out_of_range(self, bad):
