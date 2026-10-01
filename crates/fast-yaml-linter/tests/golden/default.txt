@@ -54,7 +54,7 @@ edge_cases/empty_value_emoji_key.yaml:2:1: [warning] key 'k' should be ordered b
 edge_cases/empty_value_flow_non_ascii.yaml:1:14: [warning] empty value for key 'é' (empty-values)
 edge_cases/empty_value_flow_non_ascii.yaml:1:15: [warning] too many spaces inside braces (expected at most 0, found 1) (braces)
 edge_cases/empty_value_repeated_key.yaml:4:5: [warning] empty value for key 'b' (empty-values)
-edge_cases/empty_value_u2028_key.yaml:1:5: [warning] empty value for key 'a b' (empty-values)
+edge_cases/empty_value_u2028_key.yaml:1:5: [warning] empty value for key 'a\u{2028}b' (empty-values)
 edge_cases/multiline.yaml:12:1: [warning] key 'folded_block' should be ordered before 'literal_block' (line 5) (key-ordering)
 edge_cases/multiline.yaml:25:1: [warning] key 'literal_strip' should be ordered before 'literal_with_indent' (line 20) (key-ordering)
 edge_cases/multiline.yaml:30:1: [warning] key 'literal_keep' should be ordered before 'literal_with_indent' (line 20) (key-ordering)

@@ -201,17 +201,62 @@ impl<'a> DisplayPath<'a> {
 
 impl std::fmt::Display for DisplayPath<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use std::fmt::Write as _;
-        for c in self.0.to_string_lossy().chars() {
-            if c.is_control() {
-                for escaped in c.escape_debug() {
-                    f.write_char(escaped)?;
-                }
-            } else {
-                f.write_char(c)?;
+        write_escaped(f, &self.0.to_string_lossy())
+    }
+}
+
+/// Whether a terminal could act on `c` instead of showing it: control characters, line and
+/// paragraph separators and the bidirectional overrides and isolates that reorder what is shown.
+#[must_use]
+pub fn is_terminal_unsafe(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{2028}' | '\u{2029}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// Writes `text` with every [`is_terminal_unsafe`] character spelled as an escape (`\n`,
+/// `\u{1b}`).
+///
+/// # Errors
+///
+/// Returns the error of `out`.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::fs::write_escaped;
+///
+/// let mut out = String::new();
+/// write_escaped(&mut out, "a\u{202e}b\n").unwrap();
+/// assert_eq!(out, "a\\u{202e}b\\n");
+/// ```
+pub fn write_escaped(out: &mut impl std::fmt::Write, text: &str) -> std::fmt::Result {
+    for c in text.chars() {
+        if c.is_control() {
+            for escaped in c.escape_debug() {
+                out.write_char(escaped)?;
             }
+        } else if is_terminal_unsafe(c) {
+            for escaped in c.escape_unicode() {
+                out.write_char(escaped)?;
+            }
+        } else {
+            out.write_char(c)?;
         }
-        Ok(())
+    }
+    Ok(())
+}
+
+/// Text from an untrusted source (an error message that embeds a path) shown with its
+/// [`is_terminal_unsafe`] characters escaped.
+#[derive(Debug, Clone, Copy)]
+pub struct EscapedText<'a>(pub &'a str);
+
+impl std::fmt::Display for EscapedText<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write_escaped(f, self.0)
     }
 }
 
@@ -233,6 +278,15 @@ mod display_path_tests {
         assert_eq!(
             DisplayPath::new(path).to_string(),
             path.display().to_string()
+        );
+    }
+
+    #[test]
+    fn escapes_bidi_overrides_and_line_separators() {
+        let path = Path::new("a\u{202e}b\u{2066}c\u{2069}d\u{2028}e\u{2029}f.yaml");
+        assert_eq!(
+            DisplayPath::new(path).to_string(),
+            "a\\u{202e}b\\u{2066}c\\u{2069}d\\u{2028}e\\u{2029}f.yaml"
         );
     }
 

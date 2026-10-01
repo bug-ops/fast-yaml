@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use fast_yaml_core::fs::DisplayPath;
+use fast_yaml_core::fs::{DisplayPath, EscapedText};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::error::{DiscoveryError, PathError, StdinLineCause};
@@ -547,7 +547,10 @@ impl FileDiscovery {
                 Ok(e) => e,
                 Err(e) => {
                     // Log warning but continue processing
-                    crate::error::stderr_line(format_args!("Warning: failed to read entry: {e}"));
+                    crate::error::stderr_line(format_args!(
+                        "Warning: failed to read entry: {}",
+                        EscapedText(&e.to_string())
+                    ));
                     continue;
                 }
             };
@@ -587,7 +590,11 @@ impl FileDiscovery {
                     }
                 }
                 Err(e) => {
-                    crate::error::stderr_line(format_args!("Warning: glob error: {e}"));
+                    crate::error::stderr_line(format_args!(
+                        "Warning: glob error: {}: {}",
+                        DisplayPath::new(e.path()),
+                        e.error()
+                    ));
                 }
             }
         }

@@ -380,7 +380,7 @@ edge_cases/empty_value_repeated_key.yaml:4:5: [error] empty value for key 'b' (e
 edge_cases/empty_value_repeated_key.yaml:5:1: [error] missing document end marker '...' (document-end)
 edge_cases/empty_value_u2028_key.yaml:1:1: [warning] missing document start marker '---' (document-start)
 edge_cases/empty_value_u2028_key.yaml:1:1: [error] string should be quoted (quoted-strings)
-edge_cases/empty_value_u2028_key.yaml:1:5: [error] empty value for key 'a b' (empty-values)
+edge_cases/empty_value_u2028_key.yaml:1:5: [error] empty value for key 'a\u{2028}b' (empty-values)
 edge_cases/empty_value_u2028_key.yaml:2:1: [error] string should be quoted (quoted-strings)
 edge_cases/empty_value_u2028_key.yaml:3:1: [error] missing document end marker '...' (document-end)
 edge_cases/multiline.yaml:5:1: [warning] missing document start marker '---' (document-start)

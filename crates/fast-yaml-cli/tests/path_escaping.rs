@@ -100,3 +100,35 @@ fn a_missing_path_is_escaped() {
         );
     }
 }
+
+#[test]
+fn unreadable_directory_warnings_are_escaped() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = TempDir::new().unwrap();
+    let hostile = dir.path().join("d\u{1b}[2J\u{7}\u{202e}x");
+    fs::create_dir(&hostile).unwrap();
+    fs::write(hostile.join("a.yaml"), "a: 1\n").unwrap();
+    fs::set_permissions(&hostile, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&hostile).is_ok() {
+        // running as root: the directory stays readable
+        fs::set_permissions(&hostile, fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let walk = run(&["lint"], dir.path());
+    let pattern = dir.path().join("d*/*.yaml");
+    let glob = cargo_bin_cmd!("fy")
+        .arg("lint")
+        .arg(&pattern)
+        .output()
+        .unwrap();
+    fs::set_permissions(&hostile, fs::Permissions::from_mode(0o755)).unwrap();
+
+    for (what, output) in [("walk", walk), ("glob", glob)] {
+        assert_no_raw_control(&output, what);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.contains('\u{202e}'), "{what}");
+        assert!(stderr.contains("d\\u{1b}[2J"), "{what}: {stderr}");
+    }
+}
