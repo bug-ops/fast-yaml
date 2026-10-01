@@ -174,12 +174,13 @@ pub(super) fn render(files: &[FileReport<'_>]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
-    use crate::formatter::ReportPath;
+    #[cfg(unix)]
     use crate::{DiagnosticBuilder, DiagnosticCode, Location as Loc, Span};
+    #[cfg(unix)]
+    use {crate::formatter::ReportPath, std::path::Path};
 
+    #[cfg(unix)]
     fn diagnostic(span: Span) -> Diagnostic {
         DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)
             .build_without_context()

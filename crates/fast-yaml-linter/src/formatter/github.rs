@@ -54,11 +54,10 @@ fn escape_property(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::*;
-    use crate::formatter::ReportPath;
     use crate::{DiagnosticBuilder, Location, Span};
+    #[cfg(unix)]
+    use {crate::formatter::ReportPath, std::path::Path};
 
     #[cfg(unix)]
     #[test]
