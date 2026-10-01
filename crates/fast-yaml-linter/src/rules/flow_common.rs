@@ -10,7 +10,7 @@ use crate::{
         BoolOrName, EmptyInsideLimit, Limit, RuleOptions, RuleSettings, deserialize_bool_or_name,
     },
     diagnostic::{Diagnostic, DiagnosticBuilder},
-    tokenizer::{FlowTokenizer, Token, TokenType},
+    tokenizer::{Token, TokenType},
 };
 
 /// The two flow collection kinds checked by the braces and brackets rules.
@@ -155,7 +155,7 @@ pub(crate) fn check_flow_collection(
 ) -> Vec<Diagnostic> {
     let source = context.source();
     let source_context = context.source_context();
-    let tokenizer = FlowTokenizer::new(source, source_context);
+    let tokenizer = context.flow_tokenizer();
     let options = &settings.options;
 
     let opens = tokenizer.find_all(kind.open());
@@ -233,13 +233,12 @@ pub(crate) fn check_flow_collection(
 /// ```
 /// use fast_yaml_linter::{
 ///     rules::flow_common::pair_delimiters,
-///     tokenizer::{FlowTokenizer, TokenType},
-///     SourceContext,
+///     tokenizer::TokenType,
+///     LintContext,
 /// };
 ///
-/// let yaml = "{a: {b: c}}";
-/// let ctx = SourceContext::new(yaml);
-/// let tokenizer = FlowTokenizer::new(yaml, &ctx);
+/// let ctx = LintContext::new("{a: {b: c}}");
+/// let tokenizer = ctx.flow_tokenizer();
 /// let opens = tokenizer.find_all(TokenType::BraceOpen);
 /// let closes = tokenizer.find_all(TokenType::BraceClose);
 ///
@@ -458,13 +457,9 @@ mod tests {
 
     #[test]
     fn test_pair_delimiters_nested_and_unmatched() {
-        use crate::{
-            SourceContext,
-            tokenizer::{FlowTokenizer, TokenType},
-        };
-        let yaml = "{a: {b: c}}\n{d: e}";
-        let ctx = SourceContext::new(yaml);
-        let tokenizer = FlowTokenizer::new(yaml, &ctx);
+        use crate::{LintContext, tokenizer::TokenType};
+        let ctx = LintContext::new("{a: {b: c}}\n{d: e}");
+        let tokenizer = ctx.flow_tokenizer();
         let opens = tokenizer.find_all(TokenType::BraceOpen);
         let closes = tokenizer.find_all(TokenType::BraceClose);
         let offsets: Vec<_> = pair_delimiters(&opens, &closes)

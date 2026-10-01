@@ -5,8 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{Limit, RuleOptions};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
-    tokenizer::{FlowTokenizer, TokenType},
+    SourceContext, Span, tokenizer::TokenType,
 };
 use fast_yaml_core::Value;
 
@@ -80,7 +79,7 @@ impl super::LintRule for ColonsRule {
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let source_context = context.source_context();
-        let tokenizer = FlowTokenizer::new(source, source_context);
+        let tokenizer = context.flow_tokenizer();
 
         let options = &config.rules.colons.options;
         let max_spaces_before = options.max_spaces_before;

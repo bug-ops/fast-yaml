@@ -5,6 +5,7 @@ use crate::{
     comment_parser::{Comment, CommentParser},
     diagnostic::{ContextLine, DiagnosticContext},
     source::offset::{ByteOffset, ByteRange},
+    tokenizer::{FlowIndex, FlowTokenizer},
 };
 use saphyr_parser::{Marker, Span as SaphyrSpan};
 use std::collections::HashMap;
@@ -1022,6 +1023,7 @@ pub struct LintContext<'a> {
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
     key_index: OnceLock<KeyIndex<'a>>,
+    flow_index: OnceLock<FlowIndex>,
     /// 1-based line number where the current document starts within `source`.
     doc_start_line: usize,
 }
@@ -1049,6 +1051,7 @@ impl<'a> LintContext<'a> {
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
             key_index: OnceLock::new(),
+            flow_index: OnceLock::new(),
             doc_start_line: 1,
         }
     }
@@ -1204,6 +1207,28 @@ impl<'a> LintContext<'a> {
                 })
                 .collect()
         })
+    }
+
+    /// Returns a flow tokenizer over this source.
+    ///
+    /// The [`FlowIndex`] behind it is built on first use and shared by every flow rule and
+    /// every document of the run.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{tokenizer::TokenType, LintContext};
+    ///
+    /// let context = LintContext::new("object: {key: value}");
+    /// let braces = context.flow_tokenizer().find_all(TokenType::BraceOpen);
+    /// assert_eq!(braces.len(), 1);
+    /// ```
+    #[must_use]
+    pub fn flow_tokenizer(&self) -> FlowTokenizer<'_> {
+        let index = self
+            .flow_index
+            .get_or_init(|| FlowIndex::new(self.source, &self.source_context));
+        FlowTokenizer::new(index, &self.source_context)
     }
 
     /// Returns the lazily built first-key-per-line index, shared by all documents of a run.
@@ -1366,5 +1391,13 @@ mod lint_context_tests {
         assert!(metadata[0].is_empty);
         assert!(metadata[1].is_empty);
         assert!(metadata[2].is_empty);
+    }
+
+    #[test]
+    fn test_flow_index_is_built_once() {
+        let ctx = LintContext::new("a: {b: 1}\nc: [1, 2]");
+        let first = ctx.flow_tokenizer();
+        let second = ctx.flow_tokenizer();
+        assert!(std::ptr::eq(first.index, second.index));
     }
 }
