@@ -31,5 +31,9 @@ proptest = { workspace = true }
 name = "arena_benchmark"
 harness = false
 
+[[bench]]
+name = "input_value_benchmark"
+harness = false
+
 [lints]
 workspace = true

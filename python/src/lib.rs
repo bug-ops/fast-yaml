@@ -22,9 +22,10 @@
 
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
+use fast_yaml_core::events::Tag;
 use fast_yaml_core::{
     BigInt, DumpBudget, Float, LimitKind, Mapping, MaxDepth, MaxInputBytes, MaxOutputBytes,
-    ResolvedScalar, Value, resolve_scalar,
+    ResolvedScalar, ScalarStyle, Value, resolve_scalar,
 };
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyOverflowError, PyTypeError, PyValueError};
@@ -32,7 +33,6 @@ use pyo3::prelude::*;
 use pyo3::types::{
     PyBool, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PySet, PyString,
 };
-use saphyr_parser::{ScalarStyle, Tag};
 
 mod batch;
 mod conversion;
@@ -324,7 +324,7 @@ pub(crate) fn repr_to_python(
     py: Python<'_>,
     s: &str,
     style: ScalarStyle,
-    tag: Option<&Tag>,
+    tag: Option<&Tag<'_>>,
 ) -> PyResult<Py<PyAny>> {
     Ok(match resolve_scalar(s, style, tag) {
         ResolvedScalar::Null => py.None(),

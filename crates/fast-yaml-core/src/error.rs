@@ -23,10 +23,10 @@ pub struct SourcePosition {
     pub column: usize,
 }
 
-impl From<Span> for SourcePosition {
+impl SourcePosition {
     // Char-based column, 1-indexed like saphyr's own errors; no source text to convert from.
     #[allow(clippy::disallowed_methods)]
-    fn from(span: Span) -> Self {
+    pub(crate) fn from_span(span: Span) -> Self {
         Self {
             line: span.start.line(),
             column: span.start.col() + 1,
@@ -356,7 +356,7 @@ impl ParseError {
     #[must_use]
     // Char-based column, 1-indexed like the scanner's own messages; no source text to convert from.
     #[allow(clippy::disallowed_methods)]
-    pub fn scanner(error: &saphyr_parser::ScanError, document: usize) -> Self {
+    pub(crate) fn scanner(error: &saphyr_parser::ScanError, document: usize) -> Self {
         let marker = error.marker();
         Self::Syntax(SyntaxError::new(
             SyntaxReason::Scanner(error.info().into()),

@@ -6,7 +6,7 @@ use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
-use saphyr_parser::{Event, Parser as SaphyrParser};
+use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 /// Linting rule for float values.
 ///
@@ -96,10 +96,13 @@ impl super::LintRule for FloatValuesRule {
         while let Some(Ok((event, span))) = parser.next_event() {
             match event {
                 Event::Scalar(text, style, _, tag) => {
-                    if roles.node() == NodeRole::MappingKey || tag.is_some() {
+                    let plain = style == ScalarStyle::Plain;
+                    if roles.node() == NodeRole::MappingKey || tag.is_some() || !plain {
                         continue;
                     }
-                    let ResolvedScalar::Float(float) = resolve_scalar(&text, style, None) else {
+                    let ResolvedScalar::Float(float) =
+                        resolve_scalar(&text, fast_yaml_core::ScalarStyle::Plain, None)
+                    else {
                         continue;
                     };
                     let span = source_context.span_of_bytes(source_context.byte_range_of(span));

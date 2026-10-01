@@ -17,9 +17,6 @@ pub(crate) struct SourceOrigin {
 /// Represents a document chunk with metadata.
 #[derive(Debug, Clone)]
 pub(crate) struct Chunk<'a> {
-    /// Zero-based index of this chunk in the stream.
-    pub index: usize,
-
     /// Normalized text of this chunk (includes `---` prefix if present).
     pub input: NormalizedInput<'a>,
 
@@ -50,6 +47,59 @@ enum State {
     Document,
     /// Before the first document or after `...`; directives and a new document may follow.
     AfterEnd,
+    /// After `---` or an implicit document start with no node yet; properties and comments may follow.
+    RootProperties,
+    /// After an unindented block scalar header; the first line with content decides the scalar's indent.
+    RootBlockLead,
+    /// Inside a block scalar whose content starts at column 0; only `...` ends it, as in `saphyr`.
+    RootBlockScalar,
+}
+
+/// What the rest of a line holds when a root node may start on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootNode {
+    /// Nothing, a comment or properties only; the node starts on a later line.
+    Pending,
+    /// `|` or `>` with optional chomping and no indentation indicator.
+    BlockScalar,
+    Other,
+}
+
+impl RootNode {
+    fn of(text: &str) -> Self {
+        let is_header = |token: &str| {
+            token
+                .strip_prefix(['|', '>'])
+                .is_some_and(|rest| matches!(rest, "" | "-" | "+"))
+        };
+        let mut tokens = text.split([' ', '\t']).filter(|token| !token.is_empty());
+        for token in tokens.by_ref() {
+            if token.starts_with(['!', '&']) {
+                continue;
+            }
+            if token.starts_with('#') {
+                return Self::Pending;
+            }
+            if !is_header(token) {
+                return Self::Other;
+            }
+            return match tokens.next() {
+                None => Self::BlockScalar,
+                Some(rest) if rest.starts_with('#') => Self::BlockScalar,
+                Some(_) => Self::Other,
+            };
+        }
+        Self::Pending
+    }
+
+    /// State for a document whose first line, or marker remainder, is `text`.
+    fn state_of(text: &str) -> State {
+        match Self::of(text) {
+            Self::Pending => State::RootProperties,
+            Self::BlockScalar => State::RootBlockLead,
+            Self::Other => State::Document,
+        }
+    }
 }
 
 /// Splits normalized YAML input into chunks that each parse independently of the others.
@@ -61,7 +111,9 @@ enum State {
 /// - After `...` a `%` directive block belongs to the next document, and any other content
 ///   starts one implicitly; trailing comments stay with the previous chunk
 /// - Input without boundaries is a single chunk unless it is completely empty
-/// - A column-0 `---` inside a top-level block scalar still splits, unlike `saphyr` (#407)
+/// - A column-0 `---` inside an unindented top-level block scalar (no indentation indicator,
+///   first content line at column 0) is content, like `saphyr`; indented scalars and `|N`
+///   headers still split at it (#407)
 ///
 /// # Performance
 ///
@@ -103,17 +155,31 @@ pub(crate) fn chunk_documents<'a>(
     let mut here = start;
 
     for line in Lines::new(input) {
-        let boundary = match (state, classify(line.text)) {
-            (State::Document, LineKind::DocStart) => Some(here),
-            (State::Document, LineKind::DocEnd) => {
-                state = State::AfterEnd;
-                None
-            }
-            (State::Document, _) | (State::AfterEnd, LineKind::Blank) => None,
+        let kind = classify(line.text);
+        let boundary = match (state, kind) {
             (State::AfterEnd, LineKind::DocEnd) => {
                 pending_directives = None;
                 None
             }
+            (_, LineKind::DocEnd) => {
+                state = State::AfterEnd;
+                None
+            }
+            (State::RootBlockLead, _) => {
+                if !line.text.trim_start_matches([' ', '\t']).is_empty() {
+                    state = if line.text.starts_with(' ') {
+                        State::Document
+                    } else {
+                        State::RootBlockScalar
+                    };
+                }
+                None
+            }
+            (State::RootProperties, LineKind::Content | LineKind::Directive) => {
+                state = RootNode::state_of(line.text);
+                None
+            }
+            (State::Document | State::RootProperties, LineKind::DocStart) => Some(here),
             (State::AfterEnd, LineKind::Directive) => {
                 pending_directives.get_or_insert(here);
                 None
@@ -121,20 +187,24 @@ pub(crate) fn chunk_documents<'a>(
             (State::AfterEnd, LineKind::DocStart | LineKind::Content) => {
                 Some(pending_directives.unwrap_or(here))
             }
+            (State::RootBlockScalar | State::Document, _)
+            | (State::RootProperties | State::AfterEnd, LineKind::Blank) => None,
         };
 
         if let Some(boundary) = boundary {
             if has_doc {
                 admit(chunks.len())?;
                 chunks.push(Chunk {
-                    index: chunks.len(),
                     input: part(start.byte..boundary.byte),
                     origin: start.origin,
                 });
                 start = boundary;
             }
             has_doc = true;
-            state = State::Document;
+            state = match kind {
+                LineKind::DocStart => RootNode::state_of(&line.text[3..]),
+                _ => RootNode::state_of(line.text),
+            };
             pending_directives = None;
         }
 
@@ -144,7 +214,6 @@ pub(crate) fn chunk_documents<'a>(
 
     admit(chunks.len())?;
     chunks.push(Chunk {
-        index: chunks.len(),
         input: part(start.byte..input.len()),
         origin: start.origin,
     });
@@ -233,7 +302,6 @@ mod tests {
         let whole = normalized(yaml);
         let chunks = chunk_documents(&whole, None).unwrap();
         assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0].index, 0);
         assert_eq!(chunks[0].input.as_str(), yaml);
     }
 
@@ -242,8 +310,6 @@ mod tests {
         let whole = normalized("---\nfoo: 1\n---\nbar: 2");
         let chunks = chunk_documents(&whole, None).unwrap();
         assert_eq!(chunks.len(), 2);
-        assert_eq!(chunks[0].index, 0);
-        assert_eq!(chunks[1].index, 1);
     }
 
     #[test]
@@ -373,6 +439,32 @@ mod tests {
     fn test_chunk_percent_line_inside_document_is_content() {
         assert_eq!(contents("a\n%YAML 1.2\n---\nb").len(), 2);
         assert_eq!(contents("a\n%YAML 1.2\n---\nb")[0], "a\n%YAML 1.2\n");
+    }
+
+    #[test]
+    fn test_chunk_unindented_root_block_scalar_keeps_markers_as_content() {
+        for input in [
+            "--- |\nx\n---\nb",
+            "|\nx\n---\nb",
+            "--- |-  # c\n# c\nx\n---\nb",
+            "--- &a\n!t\n|\nx\n---\nb",
+            "--- |\n\t\n---\nb",
+        ] {
+            assert_eq!(contents(input).len(), 1, "{input:?}");
+        }
+        assert_eq!(contents("--- |\nx\n...\n---\nb").len(), 2);
+        assert_eq!(contents("--- |\n...\n---\nb").len(), 2);
+    }
+
+    #[test]
+    fn test_chunk_indented_or_indicated_root_block_scalar_splits() {
+        for input in [
+            "--- |\n  x\n---\nb",
+            "--- |2\n  x\n---\nb",
+            "--- |2\n---\nb",
+        ] {
+            assert_eq!(contents(input).len(), 2, "{input:?}");
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Resource limits for parsing untrusted YAML.
 //!
-//! [`LimitGuard`] observes the parser event stream before any tree is built, so
+//! The limit guard observes the parser event stream before any tree is built, so
 //! pathological input (deep nesting, alias amplification) is rejected while memory
 //! and stack usage are still bounded.
 
@@ -244,6 +244,19 @@ pub type MaxAliasBytes = Bounded<AliasBytes>;
 /// Bounds the work done on oversized input. Checks on an in-memory source are not a memory bound;
 /// file readers apply it before reading. Valid values lie between `1` and `MAX` (1 GiB)
 /// inclusive; the default is 100 MiB.
+///
+/// # Memory amplification
+///
+/// This limit bounds input size, not parser memory. The saphyr scanner tokenizes a whole flow
+/// collection before it emits the first event, and does so when an implicit key is possible at
+/// that position: a stream-root `[..]`, a block-sequence entry `- [..]`, or a collection nested
+/// in a flow collection (`{a: [..]}`). Such a collection costs up to about 190 times its input
+/// size, reached with two-byte tokens (`[1,1,..]`: 4 MB of input peaks near 750 MB). A flow
+/// sequence of one million integers (about 7 MB) peaks near 390 MB, roughly 56 times its input,
+/// against about 24 MB for the same sequence after `---` or as a block mapping value
+/// (`a: [..]`). The expansion happens
+/// before any event is produced, so event-based limits (depth, node count, aliases)
+/// cannot bound it; size the input limit with this factor in mind. See issue #553.
 ///
 /// # Examples
 ///
@@ -909,18 +922,9 @@ struct Frame {
 /// loader. It tracks open collections and the expanded size of every anchored node, so
 /// an alias is rejected before the loader clones it.
 ///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::limits::{LimitGuard, ParseLimits};
-/// use saphyr_parser::{Event, Marker, Span};
-///
-/// let mut guard = LimitGuard::new(ParseLimits::default());
-/// let span = Span::empty(Marker::new(0, 1, 0));
-/// assert!(guard.observe(&Event::SequenceStart(0, None), span).is_ok());
-/// ```
+/// Bindings reach it through [`EventStream`](crate::events::EventStream).
 #[derive(Debug)]
-pub struct LimitGuard {
+pub(crate) struct LimitGuard {
     budget: StreamBudget,
     stack: Vec<Frame>,
     completed: HashMap<usize, Subtree>,
@@ -1088,7 +1092,10 @@ impl LimitGuard {
         }
         // Absent means the anchor's collection is still open (`&a [*a]`).
         let subtree = self.completed.get(&id).copied().ok_or_else(|| {
-            ParseError::Syntax(SyntaxError::recursive_alias(span.into(), self.document()))
+            ParseError::Syntax(SyntaxError::recursive_alias(
+                SourcePosition::from_span(span),
+                self.document(),
+            ))
         })?;
         self.budget
             .charge_alias(subtree.bytes)
@@ -1133,7 +1140,7 @@ impl LimitGuard {
     }
 
     fn exceeded(&self, kind: LimitKind, span: Span) -> ParseError {
-        let SourcePosition { line, column } = span.into();
+        let SourcePosition { line, column } = SourcePosition::from_span(span);
         ParseError::LimitExceeded {
             kind,
             line,

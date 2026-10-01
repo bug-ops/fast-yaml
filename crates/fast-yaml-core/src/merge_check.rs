@@ -63,28 +63,7 @@ struct Open {
 /// validation: the core loader, the streaming formatter and the Python loader all use it, so each
 /// reports the same first invalid merge in document order.
 ///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::{MergeKeyValidator, NodeRole};
-/// use saphyr_parser::Parser;
-///
-/// let mut validator = MergeKeyValidator::default();
-/// let mut roles = Vec::new();
-/// for event in Parser::new_from_str("{<<: {a: 1}}") {
-///     let (event, span) = event?;
-///     roles.extend(validator.observe(&event, span)?);
-/// }
-/// assert!(roles.contains(&NodeRole::MergeKey));
-///
-/// let mut validator = MergeKeyValidator::default();
-/// let invalid = Parser::new_from_str("{<<: 1}").try_for_each(|event| {
-///     let (event, span) = event.unwrap();
-///     validator.observe(&event, span).map(drop)
-/// });
-/// assert!(invalid.is_err());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
+/// Bindings reach it through [`EventStream`](crate::events::EventStream).
 #[derive(Debug, Default)]
 pub struct MergeKeyValidator {
     tracker: MergeKeyTracker,
@@ -213,7 +192,7 @@ impl MergeKeyValidator {
             }
             (NodeRole::Value, Some(OpenKind::Mapping { merge_key, .. })) => {
                 if let Some(key) = merge_key.take() {
-                    let SourcePosition { line, column } = key.into();
+                    let SourcePosition { line, column } = SourcePosition::from_span(key);
                     kind.as_merge_value().map_err(|error| ParseError::Merge {
                         error,
                         line,

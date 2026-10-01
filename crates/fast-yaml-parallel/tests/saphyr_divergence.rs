@@ -1,11 +1,12 @@
 //! Pins known divergences between `Parser::parse_all` (saphyr) and `parse_parallel` (#407).
 //!
-//! Two saphyr behaviors are pinned. Column-0 `---` inside a top-level block scalar is scalar
-//! content for saphyr but a document marker for the chunker, and `--- |2\n---\n` is an error for
-//! saphyr but not for the chunker. An empty clip/keep block scalar at EOF yields `"\n"` instead
-//! of `""` (#456). Tests flip when saphyr fixes either one; where the parallel side is itself an
-//! EOF-chomping result it flips on both fixes. Update deliberately.
+//! Pinned: `--- |2\n---\n` is an error for saphyr but not for the chunker, and an empty
+//! clip/keep block scalar at EOF yields `"\n"` instead of `""` (#456). Tests flip when saphyr
+//! fixes either one; where the parallel side is itself an EOF-chomping result it flips on both
+//! fixes. Column-0 `---` inside an unindented top-level block scalar is scalar content in both
+//! engines (#552). Update deliberately.
 
+use fast_yaml_core::limits::MaxDocuments;
 use fast_yaml_core::{Parser, Value};
 use fast_yaml_parallel::{Config, Error, parse_parallel, parse_parallel_with_config};
 
@@ -50,85 +51,129 @@ fn assert_agrees(input: &str, expected: &[Value]) {
 }
 
 #[test]
-fn marker_inside_top_level_literal_splits_document() {
-    assert_diverges(
-        "--- |\nx\n---\nb: 1\n",
-        &[string("x\n---\nb: 1\n")],
-        &[string("x\n"), int_map("b", 1)],
-    );
+fn marker_inside_unindented_top_level_block_scalar_is_content() {
+    assert_agrees("--- |\nx\n---\nb: 1\n", &[string("x\n---\nb: 1\n")]);
+    assert_agrees("--- >\nx\n---\nb: 1\n", &[string("x --- b: 1\n")]);
 }
 
 #[test]
-fn marker_inside_top_level_folded_splits_document() {
-    assert_diverges(
-        "--- >\nx\n---\nb: 1\n",
-        &[string("x --- b: 1\n")],
-        &[string("x\n"), int_map("b", 1)],
-    );
+fn marker_inside_top_level_block_scalar_without_document_start_is_content() {
+    assert_agrees("|\nx\n---\nb: 1\n", &[string("x\n---\nb: 1\n")]);
+    assert_agrees(">\nx\n---\nb: 1\n", &[string("x --- b: 1\n")]);
 }
 
 #[test]
-fn marker_inside_top_level_block_scalar_without_document_start_splits_document() {
-    assert_diverges(
-        "|\nx\n---\nb: 1\n",
-        &[string("x\n---\nb: 1\n")],
-        &[string("x\n"), int_map("b", 1)],
-    );
-    assert_diverges(
-        ">\nx\n---\nb: 1\n",
-        &[string("x --- b: 1\n")],
-        &[string("x\n"), int_map("b", 1)],
-    );
-}
-
-#[test]
-fn marker_inside_top_level_block_scalar_splits_document_for_every_chomping() {
-    for (header, saphyr, parallel) in [
-        ("|-", "x\n---\nb: 1", "x"),
-        ("|+", "x\n---\nb: 1\n", "x\n"),
-        (">-", "x --- b: 1", "x"),
-        (">+", "x --- b: 1\n", "x\n"),
+fn marker_inside_top_level_block_scalar_is_content_for_every_chomping() {
+    for (header, value) in [
+        ("|-", "x\n---\nb: 1"),
+        ("|+", "x\n---\nb: 1\n"),
+        (">-", "x --- b: 1"),
+        (">+", "x --- b: 1\n"),
     ] {
-        assert_diverges(
-            &format!("--- {header}\nx\n---\nb: 1\n"),
-            &[string(saphyr)],
-            &[string(parallel), int_map("b", 1)],
-        );
+        assert_agrees(&format!("--- {header}\nx\n---\nb: 1\n"), &[string(value)]);
     }
 }
 
 #[test]
-fn marker_inside_top_level_block_scalar_splits_document_with_crlf() {
-    assert_diverges(
-        "--- |\r\nx\r\n---\r\nb: 1\r\n",
-        &[string("x\n---\nb: 1\n")],
-        &[string("x\n"), int_map("b", 1)],
-    );
+fn marker_inside_top_level_block_scalar_is_content_with_crlf() {
+    assert_agrees("--- |\r\nx\r\n---\r\nb: 1\r\n", &[string("x\n---\nb: 1\n")]);
 }
 
-// The parallel "\n" for clip/keep is the EOF-chomping divergence (spec value is ""), so these
-// flip on either upstream fix.
 #[test]
-fn marker_directly_after_top_level_block_header_splits_document() {
-    for (header, saphyr, parallel) in [
-        ("|", "---\nb: 1\n", "\n"),
-        (">", "--- b: 1\n", "\n"),
-        ("|-", "---\nb: 1", ""),
-        (">-", "--- b: 1", ""),
-        ("|+", "---\nb: 1\n", "\n"),
-        (">+", "--- b: 1\n", "\n"),
+fn marker_directly_after_top_level_block_header_is_content() {
+    for (header, value) in [
+        ("|", "---\nb: 1\n"),
+        (">", "--- b: 1\n"),
+        ("|-", "---\nb: 1"),
+        (">-", "--- b: 1"),
+        ("|+", "---\nb: 1\n"),
+        (">+", "--- b: 1\n"),
     ] {
-        assert_diverges(
-            &format!("--- {header}\n---\nb: 1\n"),
-            &[string(saphyr)],
-            &[string(parallel), int_map("b", 1)],
-        );
+        assert_agrees(&format!("--- {header}\n---\nb: 1\n"), &[string(value)]);
     }
-    assert_diverges(
-        "--- |\n\n---\nb: 1\n",
-        &[string("\n---\nb: 1\n")],
-        &[string("\n"), int_map("b", 1)],
-    );
+    assert_agrees("--- |\n\n---\nb: 1\n", &[string("\n---\nb: 1\n")]);
+}
+
+#[test]
+fn block_header_variants_merge_like_saphyr() {
+    for input in [
+        "--- | # c\nx\n---\nb\n",
+        "--- |\t# c\nx\n---\nb\n",
+        "--- &a |\nx\n---\nb\n",
+        "--- !t |\nx\n---\nb\n",
+        "--- &a\n!t\n|\nx\n---\nb\n",
+        "---\n|\nx\n---\nb\n",
+        "---\n\n# c\n|\nx\n---\nb\n",
+        "--- # c\n|\nx\n---\nb\n",
+        "---\t|\nx\n---\nb\n",
+        "--- |\n# c\n  x\n---\nb\n",
+        "--- |\n\t\n---\nb\n",
+        "--- |\n\n\tx\n---\nb\n",
+        "--- |\n\tx\n---\nb\n",
+        "---\n  |\nx\n---\nb\n",
+        "  |\nx\n---\nb\n",
+        "--- !t\n\t|\nx\n---\nb\n",
+        "  |\n---\n",
+        "--- |\n%YAML 1.2\n---\nb\n",
+        "--- |x\n---\nb\n",
+        "--- | foo\n---\nb\n",
+        "--- |",
+        "--- !!str |\n\n\n",
+        "--- !!str |\n\n\n---\nb\n",
+        "--- |\nx\n...\n%YAML 1.2\n---\nb\n",
+        "--- &a\n  !t\n|\nx\n---\nb\n",
+        "--- |\n \n---\nb\n",
+        "%YAML 1.2\n--- |\nx\n---\nb\n",
+        "a\n...\n|\nx\n---\nb\n",
+        "# c\n|\nx\n---\nb\n",
+        "--- |\nx\n---\t\nb\n",
+        "--- |\nx\n--- # c\nb\n",
+        "--- |\nx\n...x\n---\nb\n",
+        "--- |\r\rx\r---\rb\r",
+    ] {
+        let all = Parser::parse_all(input).ok();
+        let sequential = Config::new().with_workers(Some(0));
+        for result in [
+            parse_parallel(input),
+            parse_parallel_with_config(input, &sequential),
+        ] {
+            assert_eq!(result.ok(), all, "{input:?}");
+        }
+    }
+}
+
+#[test]
+fn document_end_first_after_block_header_still_ends_document() {
+    assert_agrees("--- |\n...\n---\nb\n", &[string(""), string("b")]);
+    assert_agrees("--- |\n\n...\n---\nb\n", &[string(""), string("b")]);
+}
+
+#[test]
+fn indented_top_level_block_scalar_still_splits_at_marker_in_both() {
+    assert_agrees("--- |\n  x\n---\nb\n", &[string("x\n"), string("b")]);
+    assert_agrees("--- |\n \n  x\n---\nb\n", &[string("\nx\n"), string("b")]);
+}
+
+#[test]
+fn comment_line_after_block_header_is_scalar_content() {
+    assert_agrees("--- |\n# c\n  x\n---\nb\n", &[string("# c\n  x\n---\nb\n")]);
+}
+
+#[test]
+fn merged_chunk_reports_the_stream_document_index() {
+    for input in ["--- |\nx\n---\nb\n...\n---\n[\n", "--- |\nx\n...\n---\n[\n"] {
+        let expected = Parser::parse_all(input).unwrap_err();
+        for result in [
+            parse_parallel(input),
+            parse_parallel_with_config(input, &Config::new().with_workers(Some(0))),
+        ] {
+            let Err(Error::Parse { index, source }) = result else {
+                panic!("expected parse error: {input:?}");
+            };
+            assert_eq!(index, expected.document_index(), "{input:?}");
+            assert_eq!(source.position(), expected.position(), "{input:?}");
+        }
+    }
 }
 
 #[test]
@@ -218,6 +263,14 @@ fn empty_block_scalar_followed_by_blank_line_keeps_one_newline_when_kept() {
         "strip: >-\n\nclip: >\n\nkeep: |+\n\n",
         &[Value::Mapping(map)],
     );
+}
+
+#[test]
+fn max_documents_counts_documents_of_a_merged_chunk() {
+    let input = "--- |\nx\n---\nb\n---\nc\n";
+    assert_eq!(Parser::parse_all(input).unwrap().len(), 1);
+    let config = Config::new().with_max_documents(MaxDocuments::new(1).unwrap());
+    assert_eq!(parse_parallel_with_config(input, &config).unwrap().len(), 1);
 }
 
 #[test]

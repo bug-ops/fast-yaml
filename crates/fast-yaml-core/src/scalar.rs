@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 
-use saphyr_parser::{ScalarStyle, Tag};
+use crate::events::{ScalarStyle, Tag};
 
 /// Numeral system of an integer literal.
 ///
@@ -62,17 +62,20 @@ const CORE_TAG_PREFIX: &str = "tag:yaml.org,2002:";
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_core::events::Tag;
 /// use fast_yaml_core::scalar::core_tag_suffix;
-/// use saphyr_parser::Tag;
 ///
-/// let tag = |handle: &str, suffix: &str| Tag { handle: handle.into(), suffix: suffix.into() };
-/// assert_eq!(core_tag_suffix(&tag("tag:yaml.org,2002:", "int")), Some("int"));
-/// assert_eq!(core_tag_suffix(&tag("", "tag:yaml.org,2002:int")), Some("int"));
-/// assert_eq!(core_tag_suffix(&tag("!", "int")), None);
-/// assert_eq!(core_tag_suffix(&tag("", "tag:example.com,2000:int")), None);
+/// assert_eq!(core_tag_suffix(&Tag::new("tag:yaml.org,2002:", "int")), Some("int"));
+/// assert_eq!(core_tag_suffix(&Tag::new("", "tag:yaml.org,2002:int")), Some("int"));
+/// assert_eq!(core_tag_suffix(&Tag::new("!", "int")), None);
+/// assert_eq!(core_tag_suffix(&Tag::new("", "tag:example.com,2000:int")), None);
 /// ```
 #[must_use]
-pub fn core_tag_suffix(tag: &Tag) -> Option<&str> {
+pub fn core_tag_suffix<'t>(tag: &'t Tag<'_>) -> Option<&'t str> {
+    core_tag_suffix_raw(&tag.0)
+}
+
+pub(crate) fn core_tag_suffix_raw(tag: &saphyr_parser::Tag) -> Option<&str> {
     if tag.handle == CORE_TAG_PREFIX {
         Some(&tag.suffix)
     } else if tag.handle.is_empty() {
@@ -106,7 +109,7 @@ impl<'a> BigIntRef<'a> {
     ///
     /// ```
     /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
-    /// use saphyr_parser::ScalarStyle;
+    /// use fast_yaml_core::ScalarStyle;
     ///
     /// let ResolvedScalar::BigInt(big) =
     ///     resolve_scalar("0xFFFFFFFFFFFFFFFFFF", ScalarStyle::Plain, None)
@@ -126,7 +129,7 @@ impl<'a> BigIntRef<'a> {
     ///
     /// ```
     /// use fast_yaml_core::{IntRadix, ResolvedScalar, resolve_scalar};
-    /// use saphyr_parser::ScalarStyle;
+    /// use fast_yaml_core::ScalarStyle;
     ///
     /// let ResolvedScalar::BigInt(big) =
     ///     resolve_scalar("0o7777777777777777777777", ScalarStyle::Plain, None)
@@ -150,7 +153,7 @@ impl<'a> BigIntRef<'a> {
     ///
     /// ```
     /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
-    /// use saphyr_parser::ScalarStyle;
+    /// use fast_yaml_core::ScalarStyle;
     ///
     /// for (raw, decimal) in [
     ///     ("+0099999999999999999999", "99999999999999999999"),
@@ -288,14 +291,14 @@ enum TagClass {
 }
 
 impl TagClass {
-    fn of(tag: Option<&Tag>) -> Self {
+    fn of(tag: Option<&saphyr_parser::Tag>) -> Self {
         let Some(tag) = tag else {
             return Self::Untagged;
         };
         if tag.handle.is_empty() && tag.suffix == "!" {
             return Self::NonSpecific;
         }
-        let Some(suffix) = core_tag_suffix(tag) else {
+        let Some(suffix) = core_tag_suffix_raw(tag) else {
             return Self::Other;
         };
         Self::Core(match suffix {
@@ -328,7 +331,8 @@ impl TagClass {
 ///
 /// ```
 /// use fast_yaml_core::{ResolvedScalar, resolve_scalar};
-/// use saphyr_parser::{ScalarStyle, Tag};
+/// use fast_yaml_core::ScalarStyle;
+/// use fast_yaml_core::events::Tag;
 ///
 /// // Quoted scalars are strings...
 /// assert_eq!(
@@ -337,7 +341,7 @@ impl TagClass {
 /// );
 ///
 /// // ...unless a core-schema tag says otherwise.
-/// let int = Tag { handle: "tag:yaml.org,2002:".into(), suffix: "int".into() };
+/// let int = Tag::new("tag:yaml.org,2002:", "int");
 /// assert_eq!(
 ///     resolve_scalar("7", ScalarStyle::DoubleQuoted, Some(&int)),
 ///     ResolvedScalar::Int(7)
@@ -354,14 +358,26 @@ impl TagClass {
 /// );
 ///
 /// // The non-specific tag `!` forces a string.
-/// let bang = Tag { handle: String::new(), suffix: "!".into() };
+/// let bang = Tag::new("", "!");
 /// assert_eq!(
 ///     resolve_scalar("42", ScalarStyle::Plain, Some(&bang)),
 ///     ResolvedScalar::Str("42")
 /// );
 /// ```
 #[must_use]
-pub fn resolve_scalar<'a>(s: &'a str, style: ScalarStyle, tag: Option<&Tag>) -> ResolvedScalar<'a> {
+pub fn resolve_scalar<'a>(
+    s: &'a str,
+    style: ScalarStyle,
+    tag: Option<&Tag<'_>>,
+) -> ResolvedScalar<'a> {
+    resolve_scalar_raw(s, style, tag.map(|tag| &*tag.0))
+}
+
+pub(crate) fn resolve_scalar_raw<'a>(
+    s: &'a str,
+    style: ScalarStyle,
+    tag: Option<&saphyr_parser::Tag>,
+) -> ResolvedScalar<'a> {
     match TagClass::of(tag) {
         TagClass::Core(core) => coerce_core(core, s).unwrap_or(ResolvedScalar::Str(s)),
         TagClass::NonSpecific => ResolvedScalar::Str(s),
@@ -663,11 +679,8 @@ mod tests {
         assert_eq!(big_of(&raw).canonical(), raw);
     }
 
-    fn core(suffix: &str) -> Tag {
-        Tag {
-            handle: "tag:yaml.org,2002:".into(),
-            suffix: suffix.into(),
-        }
+    fn core(suffix: &str) -> Tag<'static> {
+        Tag::new("tag:yaml.org,2002:", suffix)
     }
 
     fn big(s: &str) -> ResolvedScalar<'_> {
@@ -830,10 +843,7 @@ mod tests {
 
     #[test]
     fn non_specific_tag_forces_string() {
-        let bang = Tag {
-            handle: String::new(),
-            suffix: "!".into(),
-        };
+        let bang = Tag::new("", "!");
         for (s, style) in [
             ("42", ScalarStyle::Plain),
             ("x", ScalarStyle::DoubleQuoted),
@@ -845,10 +855,7 @@ mod tests {
 
     #[test]
     fn local_tag_falls_back_to_implicit() {
-        let local = Tag {
-            handle: "!".into(),
-            suffix: "foo".into(),
-        };
+        let local = Tag::new("!", "foo");
         for (style, expected) in [
             (ScalarStyle::Plain, Int(42)),
             (ScalarStyle::DoubleQuoted, Str("42")),

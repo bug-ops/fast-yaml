@@ -10,8 +10,8 @@ use std::hash::{Hash, Hasher};
 
 use indexmap::{IndexMap, IndexSet};
 
+use crate::events::ScalarStyle;
 use crate::scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
-use saphyr_parser::ScalarStyle;
 
 /// A resolved YAML node.
 ///
@@ -178,7 +178,7 @@ impl Float {
             return None;
         };
         let default = Self::new(value);
-        Some(if default.to_string() == text {
+        Some(if default.spells(text) {
             default
         } else {
             Self {
@@ -194,6 +194,16 @@ impl Float {
         self.value
     }
 
+    pub(crate) fn spelling(&self) -> Option<&str> {
+        self.text.as_deref()
+    }
+
+    fn spells(&self, text: &str) -> bool {
+        use fmt::Write as _;
+        let mut matcher = PrefixMatcher(text);
+        write!(matcher, "{self}").is_ok() && matcher.0.is_empty()
+    }
+
     fn normalized_bits(&self) -> u64 {
         if self.value.is_nan() {
             f64::NAN.to_bits()
@@ -202,6 +212,16 @@ impl Float {
         } else {
             self.value.to_bits()
         }
+    }
+}
+
+/// A [`fmt::Write`] sink that fails as soon as the written text stops matching the expected one.
+struct PrefixMatcher<'a>(&'a str);
+
+impl fmt::Write for PrefixMatcher<'_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        self.0 = self.0.strip_prefix(s).ok_or(fmt::Error)?;
+        Ok(())
     }
 }
 
@@ -814,5 +834,44 @@ mod tests {
         };
         let key = map.keys().next().unwrap();
         assert_eq!(key, &text("+99999999999999999999"));
+    }
+
+    #[test]
+    fn parse_keeps_non_default_spellings() {
+        for text in [
+            ".NaN", ".NAN", "+.inf", "-.Inf", ".INF", "1e400", "-1e400", "5e-324", "1e-400", "1.",
+            ".5", "+1.5", "1.50", "1.0E5", "-0.0e0",
+        ] {
+            let float = Float::parse(text).unwrap_or_else(|| panic!("{text} is a float"));
+            assert_eq!(float.to_string(), text, "{text}");
+        }
+    }
+
+    #[test]
+    fn parse_drops_spelling_equal_to_default_formatting() {
+        for text in [".nan", ".inf", "-.inf", "1.5", "0.0", "-0.0", "100000.0"] {
+            let float = Float::parse(text).unwrap();
+            assert!(float.spelling().is_none(), "{text}");
+            assert_eq!(float.to_string(), text);
+        }
+        assert!(Float::parse("1.50").unwrap().spelling().is_some());
+        assert!(Float::parse(".NaN").unwrap().spelling().is_some());
+    }
+
+    #[test]
+    fn parse_special_values_resolve() {
+        assert!(Float::parse(".NAN").unwrap().get().is_nan());
+        assert_eq!(Float::parse("+.inf").unwrap(), Float::new(f64::INFINITY));
+        assert_eq!(
+            Float::parse("-.Inf").unwrap(),
+            Float::new(f64::NEG_INFINITY)
+        );
+        assert_eq!(Float::parse("1e400").unwrap(), Float::new(f64::INFINITY));
+        assert_eq!(
+            Float::parse("-1e400").unwrap(),
+            Float::new(f64::NEG_INFINITY)
+        );
+        assert_eq!(Float::parse("5e-324").unwrap(), Float::new(5e-324));
+        assert_eq!(Float::parse("1e-400").unwrap(), Float::new(0.0));
     }
 }

@@ -1,21 +1,18 @@
 //! Event-based YAML-to-Python loader.
 //!
-//! Uses `saphyr_parser` events directly instead of `saphyr`'s `YamlLoader`,
+//! Consumes `fast_yaml_core::events` directly instead of `saphyr`'s `YamlLoader`,
 //! which silently drops core-schema collection tags (`!!set`, `!!omap`, …).
 //! This loader preserves the `!!set` tag and converts the mapping to a Python `set`.
 
 use std::collections::HashMap;
 
+use fast_yaml_core::events::{AnchorId, Event, EventItem, EventStream};
 use fast_yaml_core::merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 use fast_yaml_core::scalar::core_tag_suffix;
-use fast_yaml_core::{
-    LimitGuard, MergeKeyValidator, NormalizedInput, ParseError, ParseLimits, SourcePosition,
-    SyntaxError,
-};
+use fast_yaml_core::{NormalizedInput, ParseError, ParseLimits, SourcePosition, SyntaxError};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyList, PySet};
-use saphyr_parser::{Event, Parser, StrInput};
 
 use crate::conversion::COMPLEX_KEY_MESSAGE;
 use crate::numeric_keys::{KeyClash, NumericKeys, build_set};
@@ -35,10 +32,8 @@ use crate::repr_to_python;
 pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Vec<Py<PyAny>>> {
     let normalized = NormalizedInput::new(input).map_err(|e| limit_err(&e))?;
     let mut loader = EventLoader {
-        parser: Parser::new_from_str(normalized.as_str()),
+        stream: EventStream::new(&normalized, limits).sharing_anchors(),
         anchors: HashMap::new(),
-        merge_keys: MergeKeyValidator::default(),
-        guard: LimitGuard::new(limits).sharing_anchors(),
         nan: None,
         last: START,
     };
@@ -59,13 +54,10 @@ fn known(at: Option<SourcePosition>) -> SourcePosition {
 }
 
 struct EventLoader<'input> {
-    parser: Parser<'input, StrInput<'input>>,
+    /// Events with depth, alias and merge value checks already applied.
+    stream: EventStream<'input>,
     /// Anchor id → Python object, used to resolve YAML aliases.
-    anchors: HashMap<usize, Py<PyAny>>,
-    /// Rejects invalid `<<` values in document order and classifies merge keys.
-    merge_keys: MergeKeyValidator,
-    /// Enforces depth and alias limits before any recursion or aliasing happens.
-    guard: LimitGuard,
+    anchors: HashMap<AnchorId, Py<PyAny>>,
     /// The one NaN object of this load: `nan != nan`, so dict lookups only collapse NaN keys by identity.
     nan: Option<Py<PyAny>>,
     /// SourcePosition of the latest event; stands in for the end of the stream, which has no span.
@@ -74,24 +66,18 @@ struct EventLoader<'input> {
 
 impl<'input> EventLoader<'input> {
     /// Advance the parser and return the next meaningful event with its source position and role.
-    fn next(&mut self) -> PyResult<(Event<'input>, SourcePosition, Option<NodeRole>)> {
-        loop {
-            match self.parser.next_event() {
-                Some(Ok((Event::Nothing, _))) => {}
-                Some(Ok((ev, span))) => {
-                    self.guard.observe(&ev, span).map_err(|e| limit_err(&e))?;
-                    let role = self
-                        .merge_keys
-                        .observe(&ev, span)
-                        .map_err(|e| limit_err(&e))?;
-                    self.last = span.into();
-                    return Ok((ev, self.last, role));
-                }
-                Some(Err(e)) => {
-                    return Err(limit_err(&ParseError::scanner(&e, self.guard.document())));
-                }
-                None => return Ok((Event::StreamEnd, self.last, None)),
+    fn next(&mut self) -> PyResult<EventItem<'input>> {
+        match self.stream.next() {
+            Some(Ok(item)) => {
+                self.last = item.at;
+                Ok(item)
             }
+            Some(Err(error)) => Err(limit_err(&error)),
+            None => Ok(EventItem {
+                event: Event::StreamEnd,
+                at: self.last,
+                role: None,
+            }),
         }
     }
 
@@ -101,9 +87,9 @@ impl<'input> EventLoader<'input> {
 
         let mut docs = Vec::new();
         loop {
-            match self.next()?.0 {
+            match self.next()?.event {
                 Event::StreamEnd => break,
-                Event::DocumentStart(_) => docs.push(self.load_document(py)?),
+                Event::DocumentStart { .. } => docs.push(self.load_document(py)?),
                 _ => {} // ignore stray events, including DocumentEnd
             }
         }
@@ -117,48 +103,53 @@ impl<'input> EventLoader<'input> {
     fn load_document(&mut self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let mut stack: Vec<OpenNode> = Vec::new();
         loop {
-            let (event, at, role) = self.next()?;
+            let EventItem { event, at, role } = self.next()?;
             let merge_key = role == Some(NodeRole::MergeKey);
             let finished = match event {
-                Event::Scalar(s, style, anchor_id, tag) => {
-                    let value = repr_to_python(py, &s, style, tag.as_deref())?;
+                Event::Scalar {
+                    value: text,
+                    style,
+                    anchor,
+                    tag,
+                } => {
+                    let value = repr_to_python(py, &text, style, tag.as_ref())?;
                     let value = self.share_nan(py, value);
-                    self.store_anchor(anchor_id, &value, py);
+                    self.store_anchor(anchor, &value, py);
                     value
                 }
                 Event::Alias(id) => {
                     let Some(value) = self.anchors.get(&id) else {
                         return Err(limit_err(&ParseError::Syntax(
-                            SyntaxError::recursive_alias(at, self.guard.document()),
+                            SyntaxError::recursive_alias(at, self.stream.document()),
                         )));
                     };
                     value.clone_ref(py)
                 }
-                Event::MappingStart(anchor_id, tag) => {
-                    let is_set = tag.as_deref().and_then(core_tag_suffix) == Some("set");
+                Event::MappingStart { anchor, tag } => {
+                    let is_set = tag.as_ref().and_then(core_tag_suffix) == Some("set");
                     stack.push(if is_set {
-                        OpenNode::set(anchor_id)
+                        OpenNode::set(anchor)
                     } else {
-                        OpenNode::mapping(anchor_id)
+                        OpenNode::mapping(anchor)
                     });
                     continue;
                 }
-                Event::SequenceStart(anchor_id, _tag) => {
-                    stack.push(OpenNode::sequence(anchor_id));
+                Event::SequenceStart { anchor, .. } => {
+                    stack.push(OpenNode::sequence(anchor));
                     continue;
                 }
                 Event::MappingEnd | Event::SequenceEnd => {
                     let Some(node) = stack.pop() else {
                         return Ok(py.None());
                     };
-                    let anchor_id = node.anchor_id;
+                    let anchor = node.anchor;
                     let value = node.finish(py)?;
-                    self.store_anchor(anchor_id, &value, py);
+                    self.store_anchor(anchor, &value, py);
                     value
                 }
                 Event::DocumentEnd | Event::StreamEnd => return Ok(py.None()),
                 // Unexpected inside a value context; treat as null
-                Event::DocumentStart(_) | Event::StreamStart | Event::Nothing => py.None(),
+                Event::DocumentStart { .. } | Event::StreamStart => py.None(),
             };
             match stack.last_mut() {
                 Some(parent) => parent.accept(py, finished, merge_key, at)?,
@@ -167,9 +158,9 @@ impl<'input> EventLoader<'input> {
         }
     }
 
-    fn store_anchor(&mut self, anchor_id: usize, value: &Py<PyAny>, py: Python<'_>) {
-        if anchor_id > 0 {
-            self.anchors.insert(anchor_id, value.clone_ref(py));
+    fn store_anchor(&mut self, anchor: Option<AnchorId>, value: &Py<PyAny>, py: Python<'_>) {
+        if let Some(id) = anchor {
+            self.anchors.insert(id, value.clone_ref(py));
         }
     }
 
@@ -225,21 +216,21 @@ enum PendingKey {
 
 /// A container whose closing event has not been seen yet.
 struct OpenNode {
-    anchor_id: usize,
+    anchor: Option<AnchorId>,
     children: Children,
 }
 
 impl OpenNode {
-    const fn sequence(anchor_id: usize) -> Self {
+    const fn sequence(anchor: Option<AnchorId>) -> Self {
         Self {
-            anchor_id,
+            anchor,
             children: Children::Sequence(Vec::new()),
         }
     }
 
-    const fn mapping(anchor_id: usize) -> Self {
+    const fn mapping(anchor: Option<AnchorId>) -> Self {
         Self {
-            anchor_id,
+            anchor,
             children: Children::Mapping {
                 merge: None,
                 explicit: Vec::new(),
@@ -248,9 +239,9 @@ impl OpenNode {
         }
     }
 
-    const fn set(anchor_id: usize) -> Self {
+    const fn set(anchor: Option<AnchorId>) -> Self {
         Self {
-            anchor_id,
+            anchor,
             children: Children::Set {
                 keys: Vec::new(),
                 key: None,

@@ -25,7 +25,6 @@ fast-yaml-parallel = { workspace = true }
 num_cpus = { workspace = true }
 pyo3 = { workspace = true, features = ["extension-module", "abi3-py310"] }
 rayon = { workspace = true }
-saphyr-parser = { workspace = true }
 serde_norway = { workspace = true }
 
 [dev-dependencies]

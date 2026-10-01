@@ -492,7 +492,7 @@ fn flow_key_is_plain_safe(s: &str) -> bool {
 /// Whether the plain scalar `s` would be resolved to something other than a string.
 fn reads_as_non_string(s: &str) -> bool {
     !matches!(
-        resolve_scalar(s, ScalarStyle::Plain, None),
+        resolve_scalar(s, crate::events::ScalarStyle::Plain, None),
         ResolvedScalar::Str(_)
     )
 }
@@ -555,7 +555,12 @@ fn to_saphyr(value: &Value, depth: usize, max: MaxDepth) -> EmitResult<Yaml<'_>>
         Value::BigInt(big) => {
             Yaml::Representation(Cow::Borrowed(big.canonical()), ScalarStyle::Plain, None)
         }
-        Value::Float(f) => verbatim(f.to_string()),
+        Value::Float(f) => Yaml::Representation(
+            f.spelling()
+                .map_or_else(|| Cow::Owned(f.to_string()), Cow::Borrowed),
+            ScalarStyle::Plain,
+            None,
+        ),
         Value::String(s) if string_needs_own_quoting(s) => verbatim(double_quoted(s)),
         Value::String(s) => Yaml::Value(Scalar::String(Cow::Borrowed(s))),
         Value::Sequence(items) => {

@@ -1,9 +1,10 @@
 use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
+use crate::events::ScalarStyle;
 use crate::input::NormalizedInput;
 use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::merge::{MergeError, NodeRole, merge_into};
 use crate::merge_check::MergeKeyValidator;
-use crate::scalar::{ResolvedScalar, core_tag_suffix, resolve_scalar};
+use crate::scalar::{ResolvedScalar, core_tag_suffix_raw, resolve_scalar_raw};
 use crate::value::{Mapping, Value};
 use saphyr_parser::{Event, Parser as SaphyrParser, Span};
 use std::collections::HashMap;
@@ -161,7 +162,7 @@ impl Parser {
     }
 }
 
-/// Drives the parser event by event so [`LimitGuard`] can reject input before the builder
+/// Drives the parser event by event so the limit guard can reject input before the builder
 /// clones aliases, then returns the loaded documents.
 fn load_documents_with_budget(
     input: &NormalizedInput<'_>,
@@ -263,7 +264,11 @@ impl Builder {
                 self.documents.push(self.root.take().unwrap_or(Value::Null));
             }
             Event::Scalar(text, style, anchor, tag) => {
-                let value = match resolve_scalar(&text, style, tag.as_deref()) {
+                let value = match resolve_scalar_raw(
+                    &text,
+                    ScalarStyle::from_saphyr(style),
+                    tag.as_deref(),
+                ) {
                     ResolvedScalar::Str(_) => Value::String(text.into_owned()),
                     other => Value::from(other),
                 };
@@ -272,7 +277,7 @@ impl Builder {
             Event::Alias(id) => {
                 let value = self.anchors.get(&id).cloned().ok_or_else(|| {
                     ParseError::Syntax(SyntaxError::recursive_alias(
-                        span.into(),
+                        SourcePosition::from_span(span),
                         self.documents.len(),
                     ))
                 })?;
@@ -287,7 +292,7 @@ impl Builder {
                 anchor,
                 role,
                 body: Body::Mapping(MappingFrame {
-                    set: tag.as_deref().and_then(core_tag_suffix) == Some("set"),
+                    set: tag.as_deref().and_then(core_tag_suffix_raw) == Some("set"),
                     entries: Mapping::new(),
                     merge: None,
                     slot: Slot::Key,
@@ -330,7 +335,7 @@ impl Builder {
 
     // Unreachable for parser-loaded input, which `MergeKeyValidator` has already checked.
     fn merge_error(&self, error: MergeError, span: Span) -> ParseError {
-        let SourcePosition { line, column } = span.into();
+        let SourcePosition { line, column } = SourcePosition::from_span(span);
         ParseError::Merge {
             error,
             line,
