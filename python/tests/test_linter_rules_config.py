@@ -117,7 +117,7 @@ class TestConfigErrors:
 
     def test_unsupported_yamllint_option(self):
         with pytest.raises(ValueError, match="supported by yamllint but not implemented"):
-            lint.LintConfig(rules={"indentation": {"spaces": 2}})
+            lint.LintConfig(rules={"indentation": {"check-multi-line-strings": True}})
 
     def test_document_end_present_false_forbids_marker(self):
         config = lint.LintConfig(rules={"document-end": {"present": False}})

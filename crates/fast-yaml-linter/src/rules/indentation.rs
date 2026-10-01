@@ -1,8 +1,8 @@
 //! Rule to check indentation consistency.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::config::{IndentSize, RuleOptions};
+use crate::config::{IndentSequences, IndentSize, IndentSpaces, RuleOptions};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
@@ -14,23 +14,64 @@ pub struct IndentationRule;
 
 /// Options of the indentation rule.
 ///
+/// Both widths are unset until a config file, a flag or the formatter indent sets one; an unset
+/// width is 2. `spaces` is yamllint's key and takes `consistent`; `indent-size` is the fast-yaml
+/// key, and `spaces` wins when both are set.
+///
 /// # Examples
 ///
 /// ```
 /// use fast_yaml_linter::rules::IndentationOptions;
 ///
-/// assert_eq!(IndentationOptions::default().indent_size.get(), 2);
+/// assert_eq!(IndentationOptions::default().indent_size().get(), 2);
+/// assert!(!IndentationOptions::default().width_is_set());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
 pub struct IndentationOptions {
-    /// Spaces per indentation level.
-    pub indent_size: IndentSize,
+    /// Spaces per indentation level; `None` when not set.
+    #[serde(
+        deserialize_with = "some_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub indent_size: Option<IndentSize>,
+    /// Width of an indentation level, or `consistent`; `None` when not set.
+    #[serde(
+        deserialize_with = "some_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub spaces: Option<IndentSpaces>,
+    /// Whether a sequence nested in a mapping is indented under its key.
+    pub indent_sequences: IndentSequences,
+}
+
+/// Reads a present key as `Some`, so an explicit `null` is an error like for other options.
+fn some_value<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+
+impl IndentationOptions {
+    /// Whether a config file or a flag chose a width.
+    #[must_use]
+    pub const fn width_is_set(&self) -> bool {
+        self.indent_size.is_some() || self.spaces.is_some()
+    }
+
+    /// The width every level must be a multiple of: `spaces`, else `indent-size`, else 2.
+    #[must_use]
+    pub fn indent_size(&self) -> IndentSize {
+        match (self.spaces, self.indent_size) {
+            (Some(IndentSpaces::Fixed(size)), _)
+            | (None | Some(IndentSpaces::Consistent), Some(size)) => size,
+            (None | Some(IndentSpaces::Consistent), None) => IndentSize::default(),
+        }
+    }
 }
 
 impl RuleOptions for IndentationOptions {
-    const YAMLLINT_UNSUPPORTED: &'static [&'static str] =
-        &["spaces", "indent-sequences", "check-multi-line-strings"];
+    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["check-multi-line-strings"];
 }
 
 impl super::LintRule for IndentationRule {
@@ -52,7 +93,7 @@ impl super::LintRule for IndentationRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let ctx = context.source_context();
-        let indent_size = config.rules.indentation.options.indent_size.get();
+        let indent_size = config.rules.indentation.options.indent_size().get();
         let mut diagnostics = Vec::new();
 
         for line_num in 1..=ctx.line_count() {

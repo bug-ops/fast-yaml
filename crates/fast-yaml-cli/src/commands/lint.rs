@@ -259,15 +259,13 @@ impl LintCommand {
             self.output.ensure_not_input(path)?;
         }
 
-        // Apply indent from CommonConfig formatter only when linter config is at default
-        let effective_indent = self.config.formatter.lint_indent_size();
-        let configured_indent = self.lint_config.rules.indentation.options.indent_size;
-        let lint_config = if configured_indent == IndentSize::default()
-            && effective_indent != IndentSize::default()
-        {
-            self.lint_config.clone().with_indent_size(effective_indent)
-        } else {
+        // The formatter indent applies only while the lint config leaves the width unset
+        let lint_config = if self.lint_config.rules.indentation.options.width_is_set() {
             self.lint_config.clone()
+        } else {
+            self.lint_config
+                .clone()
+                .with_indent_size(self.config.formatter.lint_indent_size())
         };
 
         let linter = Linter::with_config(lint_config);

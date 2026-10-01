@@ -6,8 +6,8 @@ use serde_norway::Value;
 
 use super::test_support::config_with_rule;
 use super::{
-    EmptyInsideLimit, IndentSize, Limit, NoOptions, PatternList, RuleConfigError, RuleName,
-    RuleOptions, RulesConfig,
+    EmptyInsideLimit, IndentSequences, IndentSize, IndentSpaces, Limit, NoOptions, PatternList,
+    RuleConfigError, RuleName, RuleOptions, RulesConfig,
 };
 use crate::Linter;
 use crate::rules::{
@@ -171,7 +171,14 @@ fn every_options_type_round_trips_with_non_default_values() {
         forbid_duplicated_merge_keys: false,
     });
     round_trip(&IndentationOptions {
-        indent_size: IndentSize::try_from(8u64).unwrap(),
+        indent_size: Some(IndentSize::try_from(8u64).unwrap()),
+        spaces: Some(IndentSpaces::Fixed(IndentSize::try_from(8u64).unwrap())),
+        indent_sequences: IndentSequences::Consistent,
+    });
+    round_trip(&IndentationOptions {
+        indent_size: None,
+        spaces: Some(IndentSpaces::Consistent),
+        indent_sequences: IndentSequences::NotIndented,
     });
     round_trip(&NoOptions::default());
     round_trip(&DuplicateKeysOptions::default());

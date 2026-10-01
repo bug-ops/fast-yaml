@@ -718,8 +718,8 @@ impl PyLintConfig {
 
     /// Gets the indentation size.
     #[getter]
-    const fn indent_size(&self) -> usize {
-        self.inner.rules.indentation.options.indent_size.get()
+    fn indent_size(&self) -> usize {
+        self.inner.rules.indentation.options.indent_size().get()
     }
 
     /// Gets the largest source accepted for linting, in bytes.

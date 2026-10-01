@@ -1031,16 +1031,41 @@ mod tests {
 
     #[test]
     fn yamllint_only_options_are_refused() {
-        let cases = [
-            ("indentation", "spaces"),
-            ("indentation", "indent-sequences"),
-            ("indentation", "check-multi-line-strings"),
-        ];
+        let cases = [("indentation", "check-multi-line-strings")];
         for (rule, key) in cases {
             let message = error_of(&format!("{rule}: {{{key}: true}}"));
             assert!(message.contains("supported by yamllint"), "{message}");
             assert!(message.contains(rule) && message.contains(key), "{message}");
         }
+    }
+
+    #[test]
+    fn indentation_spaces_and_sequences_are_typed() {
+        use crate::config::{IndentSequences, IndentSize, IndentSpaces};
+
+        let mut rules = RulesConfig::default();
+        assert_eq!(rules.indentation.options.spaces, None);
+        apply(
+            &mut rules,
+            "indentation: {spaces: 4, indent-sequences: whatever}",
+        )
+        .unwrap();
+        assert_eq!(
+            rules.indentation.options.spaces,
+            Some(IndentSpaces::Fixed(IndentSize::try_from(4u64).unwrap()))
+        );
+        assert_eq!(
+            rules.indentation.options.indent_sequences,
+            IndentSequences::Whatever
+        );
+
+        apply(&mut rules, "indentation: {spaces: consistent}").unwrap();
+        assert_eq!(
+            rules.indentation.options.spaces,
+            Some(IndentSpaces::Consistent)
+        );
+        assert!(error_of("indentation: {spaces: 0}").contains("spaces"));
+        assert!(error_of("indentation: {indent-sequences: maybe}").contains("indent-sequences"));
     }
 
     #[test]
@@ -1260,7 +1285,7 @@ mod tests {
         assert!(rules.commas.enabled);
         assert!(!rules.hyphens.enabled);
         assert!(!rules.indentation.enabled);
-        assert_eq!(rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(rules.indentation.options.indent_size().get(), 4);
         assert!(!rules.line_length.enabled);
     }
 

@@ -698,7 +698,8 @@ impl ConfigFile {
             config.rules.line_length.options.max = Some(max);
         }
         if let Some(size) = indent_size {
-            config.rules.indentation.options.indent_size = size;
+            config.rules.indentation.options.spaces =
+                Some(crate::config::IndentSpaces::Fixed(size));
         }
         if allow_duplicate_keys == Some(true) {
             config.rules.set_enabled(RuleName::DuplicateKey, false);
@@ -1046,7 +1047,7 @@ mod tests {
             Some(true),
         );
         assert_eq!(result.rules.line_length.options.max, NonZeroUsize::new(200));
-        assert_eq!(result.rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(result.rules.indentation.options.indent_size().get(), 4);
         assert!(!result.rules.duplicate_key.enabled);
     }
 
@@ -1057,7 +1058,7 @@ mod tests {
             .with_indent_size(indent(3));
         let result = ConfigFile::merge_cli_overrides(base, None, None, Some(false));
         assert_eq!(result.rules.line_length.options.max, NonZeroUsize::new(42));
-        assert_eq!(result.rules.indentation.options.indent_size.get(), 3);
+        assert_eq!(result.rules.indentation.options.indent_size().get(), 3);
         assert!(result.rules.duplicate_key.enabled);
     }
 

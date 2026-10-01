@@ -360,7 +360,7 @@ mod config_fixtures {
         assert_eq!(rules.braces.options.forbid, Forbid::NonEmpty);
         assert_eq!(rules.brackets.options.max_spaces_inside, Limit::Disabled);
         assert_eq!(rules.line_length.options.max, NonZeroUsize::new(120));
-        assert_eq!(rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(rules.indentation.options.indent_size().get(), 4);
         assert_eq!(rules.quoted_strings.options.quote_type, QuoteType::Single);
         assert!(!rules.comments_indentation.enabled);
         assert_eq!(rules.document_start.severity, Some(Severity::Error));
@@ -420,7 +420,7 @@ mod config_fixtures {
             ("unknown-option.yaml", &["line-length", "maxx"][..]),
             (
                 "unsupported-yamllint-option.yaml",
-                &["indentation", "spaces", "yamllint"][..],
+                &["indentation", "check-multi-line-strings", "yamllint"][..],
             ),
             ("bad-severity.yaml", &["braces", "loud"][..]),
             ("null-option.yaml", &["quoted-strings", "quote-type"][..]),

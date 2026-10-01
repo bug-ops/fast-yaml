@@ -246,8 +246,7 @@ describe('yamllint forms and shorthands', () => {
   });
 
   it.each([
-    ['indentation', 'spaces', 2],
-    ['indentation', 'indent-sequences', true],
+    ['indentation', 'check-multi-line-strings', true],
   ])('yamllint-only option %s.%s is rejected', (rule, option, value) => {
     expect(() => lint('a: 1\n', bad({ [rule]: { [option]: value } }))).toThrow(
       new RegExp(`rule '${rule}'.*'${option}'.*not implemented by fast-yaml`)

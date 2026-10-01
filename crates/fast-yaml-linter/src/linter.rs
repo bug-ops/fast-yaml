@@ -24,7 +24,7 @@ use fast_yaml_core::{NormalizedInput, Parser, Value};
 ///
 /// let config = LintConfig::default();
 /// assert_eq!(config.rules.line_length.options.max.map(|max| max.get()), Some(80));
-/// assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
+/// assert_eq!(config.rules.indentation.options.indent_size().get(), 2);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct LintConfig {
@@ -82,11 +82,11 @@ impl LintConfig {
     /// use fast_yaml_linter::config::IndentSize;
     ///
     /// let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
-    /// assert_eq!(config.rules.indentation.options.indent_size.get(), 4);
+    /// assert_eq!(config.rules.indentation.options.indent_size().get(), 4);
     /// ```
     #[must_use]
     pub const fn with_indent_size(mut self, size: IndentSize) -> Self {
-        self.rules.indentation.options.indent_size = size;
+        self.rules.indentation.options.indent_size = Some(size);
         self
     }
 
@@ -919,7 +919,7 @@ mod tests {
     fn test_config_default() {
         let config = LintConfig::default();
         assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(80));
-        assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
+        assert_eq!(config.rules.indentation.options.indent_size().get(), 2);
         assert_eq!(
             config.rules.document_start.options.present,
             MarkerPresence::Allowed
@@ -934,7 +934,7 @@ mod tests {
             .with_indent_size(indent(4));
 
         assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(120));
-        assert_eq!(config.rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(config.rules.indentation.options.indent_size().get(), 4);
     }
 
     #[test]
@@ -962,7 +962,13 @@ mod tests {
         let config = LintConfig::new().with_indent_size(indent(4));
         let linter = Linter::with_config(config);
         assert_eq!(
-            linter.config().rules.indentation.options.indent_size.get(),
+            linter
+                .config()
+                .rules
+                .indentation
+                .options
+                .indent_size()
+                .get(),
             4
         );
         assert!(!linter.registry().rules().is_empty());
