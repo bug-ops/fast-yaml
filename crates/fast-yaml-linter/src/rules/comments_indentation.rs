@@ -9,8 +9,13 @@ use fast_yaml_core::Value;
 /// Linting rule for comment indentation.
 ///
 /// Ensures comments have the same indentation as surrounding content.
-/// Standalone comments (on their own line) should match the indentation
-/// of the next non-empty, non-comment line.
+/// A standalone comment (on its own line) must be indented like the next content line
+/// (column 0 at the end of the file) or like the content line before it; after another
+/// standalone comment of the same run it must match that comment instead. This is yamllint's
+/// rule. The first comment after a block scalar is not checked.
+///
+/// A multi-line quoted or plain scalar before a comment counts with the indent of its last line,
+/// yamllint uses the line where the scalar starts.
 ///
 /// # Examples
 ///
@@ -47,45 +52,18 @@ impl super::LintRule for CommentsIndentationRule {
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
         let comments = context.comments();
+        if comments.is_empty() {
+            return Vec::new();
+        }
 
         let mut diagnostics = Vec::new();
 
         let line_info = context.line_metadata();
 
-        let content_indent =
-            |info: &LineMetadata| (!info.is_empty && !info.is_comment).then_some(info.indent);
+        let lines = ContentLines::new(context, line_info);
 
-        // next_content[i] / prev_content[i]: indent of the nearest content line strictly after / before i
-        let mut next_content: Vec<Option<usize>> = line_info
-            .iter()
-            .rev()
-            .scan(None, |next, info| {
-                let current = *next;
-                *next = content_indent(info).or(*next);
-                Some(current)
-            })
-            .collect();
-        next_content.reverse();
-        let prev_content: Vec<Option<usize>> = line_info
-            .iter()
-            .scan(None, |prev, info| {
-                let current = *prev;
-                *prev = content_indent(info).or(*prev);
-                Some(current)
-            })
-            .collect();
-        // Line number of the nearest content line strictly before each line
-        let prev_content_line: Vec<Option<usize>> = line_info
-            .iter()
-            .enumerate()
-            .scan(None, |prev, (idx, info)| {
-                let current = *prev;
-                if content_indent(info).is_some() {
-                    *prev = Some(idx + 1);
-                }
-                Some(current)
-            })
-            .collect();
+        // Last checked own-line comment with the content line before its gap and its indent
+        let mut previous_standalone: Option<(Option<usize>, usize)> = None;
 
         for comment in comments {
             // Skip inline comments (they follow content indentation)
@@ -100,38 +78,44 @@ impl super::LintRule for CommentsIndentationRule {
 
             let comment_line_idx = comment_line - 1;
 
-            // yamllint does not check comments that follow a block scalar
-            if prev_content_line
-                .get(comment_line_idx)
-                .copied()
-                .flatten()
-                .is_some_and(|line| context.in_block_scalar(line))
-            {
-                continue;
-            }
             let Some(comment_indent) = line_info.get(comment_line_idx).map(|info| info.indent)
             else {
                 continue;
             };
+            let gap = lines.prev_line.get(comment_line_idx).copied().flatten();
 
-            // Column-0 comments belong to the top level: never borrow indentation
-            // from a preceding nested block.
-            let expected_indent = next_content
+            // yamllint does not check the first non-blank line after a block scalar, but later
+            // comments still follow it
+            if gap.is_some_and(|line| {
+                lines.in_scalar.get(line - 1).copied().unwrap_or(false)
+                    && line_info
+                        .get(line..comment_line_idx)
+                        .is_some_and(|between| between.iter().all(|info| info.is_empty))
+            }) {
+                previous_standalone = Some((gap, comment_indent));
+                continue;
+            }
+
+            let next_indent = lines
+                .next
                 .get(comment_line_idx)
                 .copied()
                 .flatten()
-                .or_else(|| {
-                    if comment_indent == 0 {
-                        None
-                    } else {
-                        prev_content.get(comment_line_idx).copied().flatten()
-                    }
-                });
+                .unwrap_or(0);
+            let prev_indent = match previous_standalone {
+                Some((previous_gap, indent)) if previous_gap == gap => indent,
+                _ => lines
+                    .prev
+                    .get(comment_line_idx)
+                    .copied()
+                    .flatten()
+                    .unwrap_or(0)
+                    .max(next_indent),
+            };
+            previous_standalone = Some((gap, comment_indent));
 
-            // Check if indentation matches
-            if let Some(expected) = expected_indent
-                && comment_indent != expected
-            {
+            if comment_indent != next_indent && comment_indent != prev_indent {
+                let expected = next_indent;
                 let severity = config
                     .rules
                     .comments_indentation
@@ -152,6 +136,75 @@ impl super::LintRule for CommentsIndentationRule {
         }
 
         diagnostics
+    }
+}
+
+/// Per-line view of the content lines around each comment; indices are 0-based line indices.
+struct ContentLines {
+    /// Whether the line is inside a literal or folded scalar.
+    in_scalar: Vec<bool>,
+    /// Indent of the nearest content line strictly after the line.
+    next: Vec<Option<usize>>,
+    /// Indent of the token that ends the nearest content line strictly before the line; a block
+    /// scalar counts with the indent of the line that opens it, like its yamllint token.
+    prev: Vec<Option<usize>>,
+    /// 1-based number of the nearest content line strictly before the line.
+    prev_line: Vec<Option<usize>>,
+}
+
+impl ContentLines {
+    fn new(context: &LintContext, line_info: &[LineMetadata]) -> Self {
+        let in_scalar: Vec<bool> = (1..=line_info.len())
+            .map(|line| context.in_block_scalar(line))
+            .collect();
+        // Block scalar lines are content even when they look like comments
+        let content_indent = |idx: usize, info: &LineMetadata| {
+            (!info.is_empty && (!info.is_comment || in_scalar.get(idx).copied().unwrap_or(false)))
+                .then_some(info.indent)
+        };
+
+        let mut next: Vec<Option<usize>> = line_info
+            .iter()
+            .enumerate()
+            .rev()
+            .scan(None, |next, (idx, info)| {
+                let current = *next;
+                *next = content_indent(idx, info).or(*next);
+                Some(current)
+            })
+            .collect();
+        next.reverse();
+        let mut token_indent = None;
+        let prev: Vec<Option<usize>> = line_info
+            .iter()
+            .enumerate()
+            .map(|(idx, info)| {
+                let current = token_indent;
+                if let Some(indent) = content_indent(idx, info)
+                    && !in_scalar.get(idx).copied().unwrap_or(false)
+                {
+                    token_indent = Some(indent);
+                }
+                current
+            })
+            .collect();
+        let prev_line: Vec<Option<usize>> = line_info
+            .iter()
+            .enumerate()
+            .scan(None, |prev, (idx, info)| {
+                let current = *prev;
+                if content_indent(idx, info).is_some() {
+                    *prev = Some(idx + 1);
+                }
+                Some(current)
+            })
+            .collect();
+        Self {
+            in_scalar,
+            next,
+            prev,
+            prev_line,
+        }
     }
 }
 
@@ -203,7 +256,21 @@ mod tests {
     #[test]
     fn test_comment_only_file() {
         let yaml = "# a\n  # b\n# c\n";
-        assert_eq!(check_source(yaml, "a: 1").len(), 0);
+        assert_eq!(check_source(yaml, "a: 1").len(), 1);
+        assert_eq!(check_source("# a\n# b\n", "a: 1").len(), 0);
+    }
+
+    #[test]
+    fn test_comment_may_match_the_previous_line_indent() {
+        assert_eq!(diag_count("a:\n  b: 1\n  # c\nd: 1\n"), 0);
+        assert_eq!(diag_count("a:\n  b: 1\n# c\nd: 1\n"), 0);
+        assert_eq!(diag_count("a:\n  b: 1\n    # c\nd: 1\n"), 1);
+    }
+
+    #[test]
+    fn test_comment_follows_the_previous_comment_when_it_went_back_to_the_next_indent() {
+        assert_eq!(diag_count("a:\n  - 1\n# c1\n  # c2\nb: 1\n"), 1);
+        assert_eq!(diag_count("a:\n  - 1\n  # c1\n# c2\nb: 1\n"), 0);
     }
 
     #[test]
