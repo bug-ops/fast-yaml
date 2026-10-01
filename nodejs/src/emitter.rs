@@ -4,11 +4,10 @@
 //! JavaScript objects to YAML strings.
 
 use crate::conversion::js_to_yaml;
-use crate::options::{U32_MAX, checked_opt_uint};
-use fast_yaml_core::{DumpBudget, MaxOutputBytes};
-use napi::{Env, bindgen_prelude::*};
+use crate::options::{emitter_indent, emitter_width};
+use fast_yaml_core::{DumpBudget, Mapping, MaxOutputBytes, Value};
+use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
-use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 
 /// Raises `result`'s error as a JS exception, returning a placeholder JS never observes.
 ///
@@ -32,12 +31,10 @@ fn check_output_size(output: String) -> napi::Result<String> {
     Ok(output)
 }
 
-fn emitter_config(opts: &DumpOptions) -> napi::Result<fast_yaml_core::EmitterConfig> {
-    let indent = checked_opt_uint("indent", opts.indent, 0, U32_MAX)?.unwrap_or(2);
-    let width = checked_opt_uint("width", opts.width, 0, U32_MAX)?.unwrap_or(80);
+fn emitter_config(opts: &DumpOptions) -> NapiResult<fast_yaml_core::EmitterConfig> {
     Ok(fast_yaml_core::EmitterConfig::new()
-        .with_indent(indent)
-        .with_width(width)
+        .with_indent(emitter_indent(opts.indent)?)
+        .with_width(emitter_width(opts.width)?)
         .with_default_flow_style(opts.default_flow_style)
         .with_explicit_start(opts.explicit_start.unwrap_or(false)))
 }
@@ -58,11 +55,11 @@ pub struct DumpOptions {
     pub allow_unicode: Option<bool>,
 
     /// Indentation width in spaces (default: 2).
-    /// Must be an integer; values outside 1-9 are clamped.
+    /// Must be an integer in 1-9; other values throw.
     pub indent: Option<f64>,
 
     /// Maximum line width for wrapping (default: 80).
-    /// Must be an integer; values outside 20-1000 are clamped.
+    /// Must be an integer in 20-1000; other values throw.
     pub width: Option<f64>,
 
     /// Default flow style for collections (default: null).
@@ -191,37 +188,36 @@ fn dump_many(documents: Vec<Unknown>, opts: &DumpOptions) -> napi::Result<String
 }
 
 /// Helper function to recursively sort dictionary keys in YAML
-fn sort_yaml_keys(yaml: &YamlOwned) -> YamlOwned {
+fn sort_yaml_keys(yaml: &Value) -> Value {
     match yaml {
-        YamlOwned::Mapping(map) => {
+        Value::Mapping(map) => {
             let mut sorted: Vec<_> = map.iter().collect();
             sorted.sort_by(|(k1, _), (k2, _)| {
                 let s1 = yaml_to_sort_key(k1);
                 let s2 = yaml_to_sort_key(k2);
                 s1.cmp(&s2)
             });
-            let mut new_map = MappingOwned::new();
+            let mut new_map = Mapping::new();
             for (k, v) in sorted {
                 new_map.insert(k.clone(), sort_yaml_keys(v));
             }
-            YamlOwned::Mapping(new_map)
+            Value::Mapping(new_map)
         }
-        YamlOwned::Sequence(arr) => YamlOwned::Sequence(arr.iter().map(sort_yaml_keys).collect()),
+        Value::Sequence(arr) => Value::Sequence(arr.iter().map(sort_yaml_keys).collect()),
         other => other.clone(),
     }
 }
 
 /// Convert YAML value to a sortable string key
-fn yaml_to_sort_key(yaml: &YamlOwned) -> String {
+fn yaml_to_sort_key(yaml: &Value) -> String {
     match yaml {
-        YamlOwned::Value(scalar) => match scalar {
-            ScalarOwned::String(s) => s.clone(),
-            ScalarOwned::Integer(i) => i.to_string(),
-            ScalarOwned::FloatingPoint(f) => f.to_string(),
-            ScalarOwned::Boolean(b) => b.to_string(),
-            ScalarOwned::Null => String::new(),
-        },
-        _ => String::new(),
+        Value::String(s) => s.clone(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.get().to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null | Value::BigInt(_) | Value::Sequence(_) | Value::Mapping(_) | Value::Set(_) => {
+            String::new()
+        }
     }
 }
 
@@ -249,44 +245,26 @@ mod tests {
 
     #[test]
     fn test_yaml_to_sort_key() {
-        assert_eq!(
-            yaml_to_sort_key(&YamlOwned::Value(ScalarOwned::String("test".to_string()))),
-            "test"
-        );
-        assert_eq!(
-            yaml_to_sort_key(&YamlOwned::Value(ScalarOwned::Integer(42))),
-            "42"
-        );
-        assert_eq!(
-            yaml_to_sort_key(&YamlOwned::Value(ScalarOwned::Boolean(true))),
-            "true"
-        );
+        assert_eq!(yaml_to_sort_key(&Value::String("test".to_string())), "test");
+        assert_eq!(yaml_to_sort_key(&Value::Int(42)), "42");
+        assert_eq!(yaml_to_sort_key(&Value::Bool(true)), "true");
     }
 
     #[test]
     fn test_sort_yaml_keys() {
-        let mut map = MappingOwned::new();
-        map.insert(
-            YamlOwned::Value(ScalarOwned::String("z".to_string())),
-            YamlOwned::Value(ScalarOwned::Integer(1)),
-        );
-        map.insert(
-            YamlOwned::Value(ScalarOwned::String("a".to_string())),
-            YamlOwned::Value(ScalarOwned::Integer(2)),
-        );
-        map.insert(
-            YamlOwned::Value(ScalarOwned::String("m".to_string())),
-            YamlOwned::Value(ScalarOwned::Integer(3)),
-        );
+        let mut map = Mapping::new();
+        map.insert(Value::String("z".to_string()), Value::Int(1));
+        map.insert(Value::String("a".to_string()), Value::Int(2));
+        map.insert(Value::String("m".to_string()), Value::Int(3));
 
-        let yaml = YamlOwned::Mapping(map);
+        let yaml = Value::Mapping(map);
         let sorted = sort_yaml_keys(&yaml);
 
-        if let YamlOwned::Mapping(sorted_map) = sorted {
+        if let Value::Mapping(sorted_map) = sorted {
             let keys: Vec<String> = sorted_map
                 .keys()
                 .map(|k| {
-                    if let YamlOwned::Value(ScalarOwned::String(s)) = k {
+                    if let Value::String(s) = k {
                         s.clone()
                     } else {
                         String::new()

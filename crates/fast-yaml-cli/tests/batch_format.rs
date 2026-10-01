@@ -629,7 +629,7 @@ fn test_bom_without_comment_still_formats() {
     fy().args(["format", "-i", file.to_str().unwrap()])
         .assert()
         .success();
-    assert_eq!(fs::read_to_string(&file).unwrap(), "key: v\n");
+    assert_eq!(fs::read_to_string(&file).unwrap(), "\u{FEFF}key: v\n");
 }
 
 #[test]

@@ -92,6 +92,7 @@ fn run() -> Result<ExitCode> {
             paths,
             indent,
             width,
+            max_depth,
             stdin_files,
             batch,
             dry_run,
@@ -103,8 +104,12 @@ fn run() -> Result<ExitCode> {
                 CommentPolicy::Reject
             };
             let intent = EditIntent::from_flags(dry_run, cli.in_place);
-            let common = common_config
-                .with_formatter(FormatterConfig::new().with_indent(indent).with_width(width));
+            let common = common_config.with_formatter(
+                FormatterConfig::new()
+                    .with_indent(indent)
+                    .with_width(width)
+                    .with_max_depth(max_depth),
+            );
 
             match Target::resolve(paths, stdin_files, &batch)? {
                 Target::Stdin => {

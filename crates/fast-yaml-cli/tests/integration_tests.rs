@@ -271,49 +271,6 @@ fn test_format_invalid_yaml() {
         .code(1);
 }
 
-#[test]
-fn test_format_indent_range_validation() {
-    // Test minimum value (2)
-    Command::cargo_bin("fy")
-        .unwrap()
-        .arg("format")
-        .arg("--indent")
-        .arg("2")
-        .write_stdin("name: test")
-        .assert()
-        .success();
-
-    // Test maximum value (8)
-    Command::cargo_bin("fy")
-        .unwrap()
-        .arg("format")
-        .arg("--indent")
-        .arg("8")
-        .write_stdin("name: test")
-        .assert()
-        .success();
-
-    // Test below minimum (should fail)
-    Command::cargo_bin("fy")
-        .unwrap()
-        .arg("format")
-        .arg("--indent")
-        .arg("1")
-        .write_stdin("name: test")
-        .assert()
-        .failure();
-
-    // Test above maximum (should fail)
-    Command::cargo_bin("fy")
-        .unwrap()
-        .arg("format")
-        .arg("--indent")
-        .arg("9")
-        .write_stdin("name: test")
-        .assert()
-        .failure();
-}
-
 // =============================================================================
 // CONVERT COMMAND TESTS
 // =============================================================================
@@ -1207,4 +1164,69 @@ fn test_parse_file_with_stats_after_subcommand() {
         .success()
         .code(0)
         .stdout(predicate::str::contains("Statistics:"));
+}
+
+#[test]
+fn test_convert_json_rejects_distinct_keys_with_the_same_json_key() {
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["convert", "json"])
+        .write_stdin("1: a\n1.0: b\n")
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains("same JSON key \"1\""));
+}
+
+#[test]
+fn test_rejected_character_reports_its_document_on_every_command() {
+    for args in [
+        &["parse"][..],
+        &["format"][..],
+        &["lint"][..],
+        &["convert", "json"][..],
+    ] {
+        for (input, document) in [
+            ("a: \u{1}\n", None),
+            ("a: 1\n---\nb: \u{1}\n", Some("(document 2)")),
+            ("a: 1\n---\nb: 2\n---\nc: \u{1}", Some("(document 3)")),
+            (
+                "\u{FEFF}a: 1\n...\n\u{FEFF}b: \u{7F}\n",
+                Some("(document 2)"),
+            ),
+        ] {
+            let assert = Command::cargo_bin("fy")
+                .unwrap()
+                .args(args)
+                .write_stdin(input)
+                .assert()
+                .failure();
+            let stderr = String::from_utf8_lossy(&assert.get_output().stderr).into_owned();
+            match document {
+                Some(marker) => assert!(stderr.contains(marker), "{args:?} {input:?}: {stderr}"),
+                None => assert!(
+                    !stderr.contains("(document"),
+                    "{args:?} {input:?}: {stderr}"
+                ),
+            }
+        }
+    }
+}
+
+#[test]
+fn test_non_printable_characters_are_rejected_by_every_command() {
+    for (args, input) in [
+        (&["parse"][..], "a: \u{FFFE}\n"),
+        (&["format"][..], "a: 1\n\u{7F}\n"),
+        (&["lint"][..], "a: \"x\u{86}\"\n"),
+        (&["convert", "json"][..], "a: 1\u{FFFF}\n"),
+    ] {
+        Command::cargo_bin("fy")
+            .unwrap()
+            .args(args)
+            .write_stdin(input)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("not allowed in YAML"));
+    }
 }

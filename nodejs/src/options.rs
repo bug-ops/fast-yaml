@@ -5,6 +5,7 @@
 
 use std::fmt::Display;
 
+use fast_yaml_core::{Indent, Width};
 use napi::Status;
 
 /// Upper bound for options that were plain `u32` before validation was introduced.
@@ -47,6 +48,42 @@ pub(crate) fn checked_uint(name: &str, value: f64, min: u64, max: u64) -> napi::
         return Err(range_error(name, min, max, display_f64(value)));
     }
     usize::try_from(value as u64).map_err(|_| range_error(name, min, max, display_f64(value)))
+}
+
+/// Validates an optional `indent` option, defaulting to [`Indent::DEFAULT`].
+///
+/// # Errors
+///
+/// Returns a `Status::InvalidArg` error unless the value is an integer in `1..=9`.
+pub(crate) fn emitter_indent(value: Option<f64>) -> napi::Result<Indent> {
+    let Some(n) = checked_opt_uint(
+        "indent",
+        value,
+        Indent::MIN.get() as u64,
+        Indent::MAX.get() as u64,
+    )?
+    else {
+        return Ok(Indent::DEFAULT);
+    };
+    Indent::new(n).map_err(|e| range_error("indent", e.min as u64, e.max as u64, e.value))
+}
+
+/// Validates an optional `width` option, defaulting to [`Width::DEFAULT`].
+///
+/// # Errors
+///
+/// Returns a `Status::InvalidArg` error unless the value is an integer in `20..=1000`.
+pub(crate) fn emitter_width(value: Option<f64>) -> napi::Result<Width> {
+    let Some(n) = checked_opt_uint(
+        "width",
+        value,
+        Width::MIN.get() as u64,
+        Width::MAX.get() as u64,
+    )?
+    else {
+        return Ok(Width::DEFAULT);
+    };
+    Width::new(n).map_err(|e| range_error("width", e.min as u64, e.max as u64, e.value))
 }
 
 /// Validates that `value` is an integer representable as `u32`.

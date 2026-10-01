@@ -94,7 +94,7 @@ pub struct MergeKeyValidator {
 }
 
 impl MergeKeyValidator {
-    /// Feeds the next event with its span.
+    /// Feeds the next event with its span; returns the role of the node it starts, if any.
     ///
     /// Returns the role of the node the event starts, `None` for events that start no node.
     ///
@@ -208,13 +208,7 @@ impl MergeKeyValidator {
                     *verdict = kind.as_merge_item();
                 }
             }
-            (
-                NodeRole::MergeKey,
-                Some(OpenKind::Mapping {
-                    set: false,
-                    merge_key,
-                }),
-            ) => {
+            (NodeRole::MergeKey, Some(OpenKind::Mapping { merge_key, .. })) => {
                 *merge_key = Some(span);
             }
             (NodeRole::Value, Some(OpenKind::Mapping { merge_key, .. })) => {
@@ -372,5 +366,45 @@ mod tests {
     #[test]
     fn anchored_merge_key_alias_is_a_merge_key() {
         assert!(rejected("a: {&k <<: {x: 1}, *k : 1}").is_some());
+    }
+
+    #[test]
+    fn verbatim_set_tag_is_a_set_source_and_its_keys_are_ordinary() {
+        let set = "s: &s !<tag:yaml.org,2002:set> {x}\nm:\n  <<: *s\n";
+        assert!(matches!(
+            validate(set),
+            Err(ParseError::Merge {
+                error: MergeError::SetSource,
+                ..
+            })
+        ));
+        assert!(validate("s: !<tag:yaml.org,2002:set> {k, <<}\n").is_ok());
+    }
+
+    #[test]
+    fn merge_tag_keys_are_validated_like_plain_ones() {
+        for key in [
+            "!!merge <<",
+            "!!merge '<<'",
+            "!<tag:yaml.org,2002:merge> merge",
+        ] {
+            let bad = format!("m:\n  {key}: 1\n");
+            assert!(
+                matches!(
+                    validate(&bad),
+                    Err(ParseError::Merge {
+                        error: MergeError::NotMapping,
+                        line: 2,
+                        ..
+                    })
+                ),
+                "{key}"
+            );
+            assert!(
+                validate(&format!("b: &b {{x: 1}}\nm:\n  {key}: *b\n")).is_ok(),
+                "{key}"
+            );
+        }
+        assert!(validate("s: !!set {!!merge <<}\n").is_ok());
     }
 }

@@ -8,8 +8,8 @@ use std::ops::{ControlFlow, Range};
 use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle};
 
 use crate::error::{ParseError, ParseResult};
+use crate::input::NormalizedInput;
 use crate::limits::DocumentCursor;
-use crate::parser::strip_bom;
 
 /// Returns `true` if `input` contains at least one YAML comment.
 ///
@@ -31,6 +31,27 @@ use crate::parser::strip_bom;
 /// assert!(has_comments("a: foo\n  \"bar\nb: 1 # real comment\n").unwrap());
 /// ```
 pub fn has_comments(input: &str) -> ParseResult<bool> {
+    has_comments_normalized(&NormalizedInput::new(input)?)
+}
+
+/// Returns whether already validated `input` contains a YAML comment.
+///
+/// Same detection as [`has_comments`], without normalizing the text again.
+///
+/// # Errors
+///
+/// Returns a [`ParseError`] if `input` is not valid YAML.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{NormalizedInput, has_comments_normalized};
+///
+/// let input = NormalizedInput::new("a: 1 # note\n")?;
+/// assert!(has_comments_normalized(&input)?);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn has_comments_normalized(input: &NormalizedInput<'_>) -> ParseResult<bool> {
     let mut found = false;
     scan_comments(input, |_, _| {
         found = true;
@@ -58,16 +79,15 @@ pub fn has_comments(input: &str) -> ParseResult<bool> {
 /// assert_eq!(found, ["# one", "# two"]);
 /// ```
 pub fn find_comments(input: &str) -> ParseResult<Vec<Range<usize>>> {
-    let stripped = strip_bom(input);
-    let bom_len = input.len() - stripped.len();
+    let normalized = NormalizedInput::new(input)?;
     let mut ranges = Vec::new();
     // (char index, byte offset) of the last range end; hits arrive in source order.
-    let mut pos = (0usize, bom_len);
-    scan_comments(input, |chars, hash| {
+    let mut pos = (0usize, 0usize);
+    scan_comments(&normalized, |chars, hash| {
         let start = pos.1 + byte_len(&chars[pos.0..hash]);
         let end = line_end(chars, hash);
         let end_byte = start + byte_len(&chars[hash..end]);
-        ranges.push(start..end_byte);
+        ranges.push(normalized.original_offset(start)..normalized.original_offset(end_byte));
         pos = (end, end_byte);
         ControlFlow::Continue(())
     })?;
@@ -76,20 +96,17 @@ pub fn find_comments(input: &str) -> ParseResult<Vec<Range<usize>>> {
 
 /// Feeds the chars and the index of each comment's `#` to `on_hit`, stopping early on `Break`.
 fn scan_comments(
-    input: &str,
+    input: &NormalizedInput<'_>,
     mut on_hit: impl FnMut(&[char], usize) -> ControlFlow<()>,
 ) -> ParseResult<()> {
-    let chars: Vec<char> = strip_bom(input).chars().collect();
+    let chars: Vec<char> = input.as_str().chars().collect();
     let line_starts = line_starts(&chars);
-    let mut parser = SaphyrParser::new_from_str(crate::parser::reject_nul(strip_bom(input))?);
+    let mut parser = SaphyrParser::new_from_str(input.as_str());
     let mut cursor = 0usize;
     let mut document = DocumentCursor::default();
 
     while let Some(event) = parser.next_event() {
-        let (event, span) = event.map_err(|error| ParseError::Scanner {
-            error,
-            document: document.index(),
-        })?;
+        let (event, span) = event.map_err(|error| ParseError::scanner(&error, document.index()))?;
         document.observe(&event);
         let Event::Scalar(_, style, _, _) = event else {
             continue;

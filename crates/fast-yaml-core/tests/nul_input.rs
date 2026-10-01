@@ -15,10 +15,10 @@ const INPUTS: [&str; 8] = [
 ];
 
 fn assert_nul_error(err: &ParseError) {
-    let ParseError::Scanner { error: scan, .. } = err else {
-        panic!("scanner error expected, got {err:?}");
+    let ParseError::Syntax(syntax) = err else {
+        panic!("syntax error expected, got {err:?}");
     };
-    assert!(scan.info().contains("NUL"), "{scan}");
+    assert!(syntax.to_string().contains("NUL"), "{syntax}");
 }
 
 #[test]
@@ -30,14 +30,9 @@ fn parse_rejects_nul() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // asserts the char-based marker
 fn error_points_at_the_nul() {
-    let ParseError::Scanner { error: scan, .. } = Parser::parse_all("a: 1\n# é\0\n").unwrap_err()
-    else {
-        panic!("scanner error expected");
-    };
-    let marker = scan.marker();
-    assert_eq!((marker.line(), marker.index()), (2, 8));
+    let position = Parser::parse_all("a: 1\n# é\0\n").unwrap_err().position();
+    assert_eq!((position.line, position.column), (2, 4));
 }
 
 #[test]
@@ -76,13 +71,9 @@ fn nul_free_input_still_parses() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // asserts the char-based marker
 fn error_position_matches_scanner_line_breaks() {
     for input in ["a: 1\rb: 2\r c\0: d", "a: 1\r\nb: 2\n c\0: d"] {
-        let ParseError::Scanner { error: scan, .. } = Parser::parse_all(input).unwrap_err() else {
-            panic!("scanner error expected");
-        };
-        let marker = scan.marker();
-        assert_eq!((marker.line(), marker.col()), (3, 2), "{input:?}");
+        let position = Parser::parse_all(input).unwrap_err().position();
+        assert_eq!((position.line, position.column), (3, 3), "{input:?}");
     }
 }

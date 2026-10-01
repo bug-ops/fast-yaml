@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use fast_yaml_core::{Emitter, has_comments};
+use fast_yaml_core::{Emitter, NormalizedInput, has_comments_normalized};
 use fast_yaml_parallel::{CommentPolicy, Error as ParallelError};
 
 use crate::config::CommonConfig;
@@ -139,12 +139,13 @@ impl FormatCommand {
     }
 
     fn format(&self, input: &InputSource) -> Result<(String, FormatStatus)> {
+        let normalized = NormalizedInput::new(input.as_str()).context("Failed to format YAML")?;
         let formatted =
-            Emitter::format_with_config(input.as_str(), &self.config.formatter.to_emitter_config())
+            Emitter::format_normalized(&normalized, &self.config.formatter.to_emitter_config())
                 .context("Failed to format YAML")?;
 
         if self.comments == CommentPolicy::Reject
-            && has_comments(input.as_str()).context("Failed to scan YAML for comments")?
+            && has_comments_normalized(&normalized).context("Failed to scan YAML for comments")?
         {
             anyhow::bail!(error_message(&ParallelError::CommentsWouldBeStripped));
         }
@@ -163,11 +164,11 @@ mod tests {
     use super::*;
     use crate::config::FormatterConfig;
     use crate::io::input::InputOrigin;
+    use fast_yaml_core::Indent;
     use tempfile::NamedTempFile;
 
     fn make_cmd(comments: CommentPolicy) -> FormatCommand {
-        let config = CommonConfig::new()
-            .with_formatter(FormatterConfig::new().with_indent(2).with_width(80));
+        let config = CommonConfig::new().with_formatter(FormatterConfig::new());
         FormatCommand::new(config, comments)
     }
 
@@ -219,7 +220,7 @@ mod tests {
             OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
 
         let config = CommonConfig::new()
-            .with_formatter(FormatterConfig::new().with_indent(4).with_width(80));
+            .with_formatter(FormatterConfig::new().with_indent(Indent::new(4).unwrap()));
         assert!(
             FormatCommand::new(config, CommentPolicy::Reject)
                 .run(&input, &WriteMode::Emit(output))

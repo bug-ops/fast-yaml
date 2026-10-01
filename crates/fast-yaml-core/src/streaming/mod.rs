@@ -25,6 +25,7 @@
 use crate::error::{EmitError, EmitResult, ParseError};
 use crate::limits::{LimitGuard, LimitKind, MaxAliasBytes, MaxDepth, ParseLimits};
 
+mod anchors;
 mod directives;
 mod formatter;
 mod std_backend;
@@ -33,10 +34,7 @@ mod traits;
 #[cfg(feature = "arena")]
 mod arena_backend;
 
-use formatter::Formatted;
-pub(crate) use formatter::{
-    effective_style, is_unsafe_plain, write_double_quoted, write_single_quoted,
-};
+pub(crate) use formatter::{is_unsafe_plain, write_double_quoted};
 
 // Re-export public API
 pub use std_backend::format_streaming;
@@ -44,11 +42,21 @@ pub use std_backend::format_streaming;
 #[cfg(feature = "arena")]
 pub use arena_backend::format_streaming_arena;
 
-/// Guard enforcing only the tag-prefix budget; the formatter has its own depth cap and never
-/// expands aliases.
-fn tag_budget_guard() -> LimitGuard {
+/// Formats normalized input with the backend the crate is built with.
+pub(crate) fn format_normalized(
+    input: &crate::input::NormalizedInput<'_>,
+    config: &crate::EmitterConfig,
+) -> EmitResult<String> {
+    #[cfg(feature = "arena")]
+    return arena_backend::format_normalized(input, config);
+    #[cfg(not(feature = "arena"))]
+    return std_backend::format_normalized(input, config);
+}
+
+/// Guard enforcing the depth cap and the tag-prefix budget; the formatter never expands aliases.
+fn format_guard(max_depth: MaxDepth) -> LimitGuard {
     LimitGuard::new(ParseLimits {
-        max_depth: MaxDepth::UNBOUNDED,
+        max_depth,
         max_alias_bytes: MaxAliasBytes::UNBOUNDED,
         ..ParseLimits::default()
     })
@@ -68,11 +76,6 @@ fn tag_budget_error(err: ParseError) -> EmitError {
 /// Maximum number of anchor definitions per document, to prevent memory exhaustion attacks.
 /// 4096 anchors is more than sufficient for any legitimate YAML document.
 const MAX_ANCHOR_ID: usize = 4096;
-
-/// Maximum number of nested non-empty collections, to prevent stack/memory exhaustion.
-/// 256 levels of nesting is far beyond any practical use case.
-// TODO(#427): unify with limits::MaxDepth
-const MAX_DEPTH: usize = 256;
 
 /// Longest implicit mapping key in characters (YAML 1.2 spec limit); longer keys use `? `.
 const MAX_IMPLICIT_KEY_CHARS: usize = 1024;
@@ -96,133 +99,6 @@ pub(crate) enum Context {
     ExplicitKey,
     /// Inside a mapping, the explicit key is complete and `:` is due
     ExplicitValue,
-}
-
-/// Whether the byte at `i` can start a token: line/input start, whitespace or a flow opener.
-const fn at_token_start(bytes: &[u8], i: usize) -> bool {
-    i == 0
-        || matches!(
-            bytes[i - 1],
-            b' ' | b'\t' | b'\r' | b'\n' | b'[' | b'{' | b','
-        )
-}
-
-/// Whether `c` ends an anchor name in saphyr's scanner (blank, flow indicator, NUL or BOM).
-const fn is_anchor_terminator(c: char) -> bool {
-    matches!(
-        c,
-        ' ' | '\t' | '\r' | '\n' | ',' | '[' | ']' | '{' | '}' | '\0' | '\u{feff}'
-    )
-}
-
-/// Whether `name` can be written back as `&name` and re-scanned as the same anchor.
-fn is_valid_anchor_name(name: &str) -> bool {
-    !name.is_empty()
-        && !name.contains(|c: char| {
-            is_anchor_terminator(c)
-                || c.is_control()
-                || c.is_whitespace()
-                || matches!(c, '\u{fffe}' | '\u{ffff}')
-        })
-}
-
-/// Formats `input` with `run`, seeding it with the extracted original anchor names.
-///
-/// The textual scan may be out of sync with the parser. That is detected when the anchor count
-/// differs or an emitted alias would bind to another anchor; the input is then formatted again
-/// with generated, unique `anchor{id}` names.
-fn format_with_anchor_names(
-    input: &str,
-    run: impl Fn(Vec<String>) -> EmitResult<Formatted>,
-) -> EmitResult<String> {
-    let names = extract_anchor_names(input);
-    // Index 0 is a placeholder, so the vector is never empty.
-    let expected = names.len().saturating_sub(1);
-    let formatted = run(names)?;
-    if formatted.max_anchor_id == expected && formatted.aliases_resolve {
-        return Ok(formatted.output);
-    }
-    drop(formatted);
-    run(vec![String::new()]).map(|formatted| formatted.output)
-}
-
-/// Extract original anchor names from YAML input.
-///
-/// Returns a `Vec` where `index == anchor_id` and `value == original anchor name`.
-/// Index 0 is always an empty string (saphyr anchor IDs start at 1).
-///
-/// This is a textual approximation of saphyr's scanner, so ids may diverge from the parser's;
-/// [`format_with_anchor_names`] verifies the count and that no alias would rebind to another
-/// anchor, and regenerates all names otherwise. Names the scanner could not
-/// have produced are stored empty (the formatter then generates `anchor{id}`), keeping ids aligned.
-pub(super) fn extract_anchor_names(input: &str) -> Vec<String> {
-    // Fast path: no `&` byte means no anchors
-    if !input.bytes().any(|b| b == b'&') {
-        return vec![String::new()]; // index 0 placeholder
-    }
-
-    let mut names: Vec<String> = vec![String::new()]; // index 0 unused (saphyr IDs start at 1)
-    let bytes = input.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-
-    while i < len {
-        match bytes[i] {
-            // Skip single-quoted strings: no escape sequences inside
-            b'\'' if at_token_start(bytes, i) => {
-                i += 1;
-                while i < len {
-                    if bytes[i] == b'\'' {
-                        i += 1;
-                        // Two consecutive single quotes = escaped quote inside string
-                        if i < len && bytes[i] == b'\'' {
-                            i += 1;
-                        } else {
-                            break;
-                        }
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-            // Skip double-quoted strings
-            b'"' if at_token_start(bytes, i) => {
-                i += 1;
-                while i < len {
-                    if bytes[i] == b'\\' {
-                        i += 2; // skip escape sequence
-                    } else if bytes[i] == b'"' {
-                        i += 1;
-                        break;
-                    } else {
-                        i += 1;
-                    }
-                }
-            }
-            // Skip comments to end of line
-            b'#' if i == 0 || bytes[i - 1].is_ascii_whitespace() => {
-                while i < len && bytes[i] != b'\n' {
-                    i += 1;
-                }
-            }
-            b'&' if at_token_start(bytes, i) => {
-                let rest = &input[i + 1..];
-                let end = rest.find(is_anchor_terminator).unwrap_or(rest.len());
-                let name = &rest[..end];
-                names.push(if is_valid_anchor_name(name) {
-                    name.to_owned()
-                } else {
-                    String::new()
-                });
-                i += 1 + end;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-
-    names
 }
 
 #[cfg(test)]
@@ -738,89 +614,99 @@ ref3: *a3";
         assert!(result.contains("level19:"));
     }
 
-    // ── Issue #120: extract_anchor_names unit tests ──────────────────────────
+    // ── Anchor names come from the source between events (#449) ─────────────
 
-    #[test]
-    fn test_extract_anchor_names_no_anchors() {
-        let names = extract_anchor_names("key: value\nlist:\n  - item\n");
-        // Fast path returns single-element vec with empty placeholder
-        assert_eq!(names, vec![String::new()]);
+    fn fmt(yaml: &str) -> String {
+        format_streaming(yaml, &EmitterConfig::default()).unwrap()
     }
 
     #[test]
-    fn test_extract_anchor_names_single() {
-        let names = extract_anchor_names("defaults: &myanchor\n  k: v\n");
-        assert_eq!(names.len(), 2);
-        assert_eq!(names[0], ""); // index 0 placeholder
-        assert_eq!(names[1], "myanchor");
+    fn test_anchor_names_no_anchors() {
+        assert_eq!(
+            fmt("key: value\nlist:\n  - item\n"),
+            "key: value\nlist:\n  - item\n"
+        );
     }
 
     #[test]
-    fn test_extract_anchor_names_multiple_in_order() {
-        let names = extract_anchor_names("a: &first\n  x: 1\nb: &second\n  y: 2\n");
-        assert_eq!(names.len(), 3);
-        assert_eq!(names[1], "first");
-        assert_eq!(names[2], "second");
+    fn test_anchor_names_kept_in_order() {
+        let out = fmt("a: &first\n  x: 1\nb: &second\n  y: 2\nc: *second\nd: *first\n");
+        assert!(out.contains("a: &first\n"), "{out:?}");
+        assert!(out.contains("b: &second\n"), "{out:?}");
+        assert!(
+            out.contains("c: *second") && out.contains("d: *first"),
+            "{out:?}"
+        );
     }
 
     #[test]
-    fn test_extract_anchor_names_skips_quoted_ampersand() {
-        // & inside quoted strings must not be treated as anchor
-        let names = extract_anchor_names("key: 'foo &notanchor bar'\nreal: &real\n  v: 1\n");
-        // Only &real should be captured
-        assert!(names.contains(&"real".to_owned()));
-        assert!(!names.contains(&"notanchor".to_owned()));
+    fn test_ampersand_inside_scalars_and_comments_is_not_an_anchor() {
+        let out = fmt("key: 'foo &no bar'\nreal: &real\n  v: 1\nuse: *real\n");
+        assert!(
+            out.contains("real: &real\n") && out.contains("use: *real"),
+            "{out:?}"
+        );
+        let out = fmt("key: value # &no\nreal: &real v\nuse: *real\n");
+        assert!(
+            out.contains("real: &real v") && out.contains("use: *real"),
+            "{out:?}"
+        );
+        assert_eq!(fmt("a&b: 1\n&c d: 2\nf: *c\n"), "a&b: 1\n&c d: 2\nf: *c\n");
     }
 
     #[test]
-    fn test_extract_anchor_names_skips_comment_ampersand() {
-        // & in a comment must not be treated as anchor
-        let names = extract_anchor_names("key: value # &notanchor\nreal: &real\n  v: 1\n");
-        assert!(names.contains(&"real".to_owned()));
-        assert!(!names.contains(&"notanchor".to_owned()));
-    }
-
-    #[test]
-    fn test_extract_anchor_names_keeps_colon_and_blanks_invalid() {
-        let names = extract_anchor_names("&a:b x\n- &c\u{1}d y\n- &\u{feff}z w\n");
-        assert_eq!(names, ["", "a:b", "", ""]);
-    }
-
-    #[test]
-    fn test_extract_anchor_names_ignores_ampersand_inside_scalar() {
-        let names = extract_anchor_names("a&b: 1\n&c d: 2\n");
-        assert_eq!(names, ["", "c"]);
-    }
-
-    #[test]
-    fn test_anchor_count_mismatch_falls_back_to_generated_names() {
-        let config = EmitterConfig::default();
-        let out = format_streaming("a &b c: 1\n&d e: 2\nf: *d\n", &config).unwrap();
-        assert_eq!(out, "a &b c: 1\n&anchor1 e: 2\nf: *anchor1\n");
-    }
-
-    #[test]
-    fn test_equal_count_misalignment_falls_back_when_alias_would_rebind() {
-        // The scan finds [q, q] (two spurious `&q`, real `&p`/`&q` swallowed by a fake quote):
-        // same count as the parser, but `*p` would resolve to the second `q`.
+    fn test_ampersand_in_plain_scalar_tail_keeps_later_names() {
+        assert_eq!(
+            fmt("a: foo &x\nb: &y v\nc: *y\n"),
+            "a: foo &x\nb: &y v\nc: *y\n"
+        );
         let yaml = "t: Tom &q\nk: [a 'b, &p 1]\nb: &q 2\nc: 'x'\nd: *p\ne: Tom &q\n";
-        assert_eq!(extract_anchor_names(yaml), ["", "q", "q"]);
-        let config = EmitterConfig::default();
-        let out = format_streaming(yaml, &config).unwrap();
-        assert!(out.contains("&anchor1 1"), "{out:?}");
-        assert!(out.contains("&anchor2 2"), "{out:?}");
-        assert!(out.contains("d: *anchor1"), "{out:?}");
+        let out = fmt(yaml);
+        assert!(out.contains("&p 1") && out.contains("&q 2"), "{out:?}");
+        assert!(out.contains("d: *p"), "{out:?}");
+        let out = fmt("x: |\n  text &no\ny: &real v\nz: *real\n");
+        assert!(
+            out.contains("y: &real v") && out.contains("z: *real"),
+            "{out:?}"
+        );
     }
 
     #[test]
-    fn test_original_anchor_names_are_kept_when_scan_is_correct() {
-        let yaml = "a: it's\nu: http://x/#frag\nk: &first 1\nb: &second 2\nc: *first\nd: *second\n";
-        assert_eq!(extract_anchor_names(yaml), ["", "first", "second"]);
-        let config = EmitterConfig::default();
-        let out = format_streaming(yaml, &config).unwrap();
-        assert!(out.contains("k: &first 1"), "{out:?}");
-        assert!(out.contains("c: *first"), "{out:?}");
-        assert!(out.contains("d: *second"), "{out:?}");
+    fn test_anchor_names_with_tags_keys_and_empty_nodes() {
+        let out = fmt("- !!str &a v\n- &b !!str w\n- &k key: v\n- *k : u\n- *a\n- *b\n");
+        for piece in ["&a", "&b", "&k", "*k", "*a", "*b"] {
+            assert!(out.contains(piece), "{piece}: {out:?}");
+        }
+        assert_eq!(fmt("a: &x\nb: *x\n"), "a: &x null\nb: *x\n");
+        assert_eq!(fmt("- &a\n- &b x\n- *a\n"), "- &a null\n- &b x\n- *a\n");
+        assert_eq!(fmt("&r\n- a\n"), "&r\n- a\n");
+        assert_eq!(fmt("--- &d !t\n- x\n"), "---\n&d !t\n- x\n");
+    }
+
+    #[test]
+    fn test_anchor_names_after_multibyte_text_and_comments() {
+        assert_eq!(fmt("é: &x 1\nü: *x\n"), "é: &x 1\nü: *x\n");
+        let out = fmt("# &c\n%YAML 1.2\n# &d\n--- &a x\n");
+        assert!(out.contains("&a x"), "{out:?}");
+    }
+
+    #[test]
+    fn test_anchor_name_is_reused_across_documents() {
+        assert_eq!(fmt("&a 1\n---\n&a 2\n"), "&a 1\n---\n&a 2\n");
+    }
+
+    #[test]
+    fn test_redefined_anchor_name_is_made_unique_within_a_document() {
+        let out = fmt("a: &x 1\nb: *x\nc: &x 2\nd: *x\n");
+        assert_eq!(out, "a: &x 1\nb: *x\nc: &anchor2 2\nd: *anchor2\n");
+        let aliased = fmt("a: &x 1\nc: &x 2\nb: *x\n");
+        assert_eq!(aliased, "a: &x 1\nc: &anchor2 2\nb: *anchor2\n");
+    }
+
+    #[test]
+    fn test_generated_anchor_name_does_not_collide_with_a_user_name() {
+        let out = fmt("a: &anchor2 1\nb: &anchor2 2\nc: *anchor2\n");
+        assert_eq!(out, "a: &anchor2 1\nb: &anchor2_1 2\nc: *anchor2_1\n");
     }
 
     // ── Issue #120: Multi-document streams ──────────────────────────────────
@@ -854,7 +740,7 @@ ref3: *a3";
 #[cfg(all(test, feature = "arena"))]
 mod arena_tests {
     use super::*;
-    use crate::EmitterConfig;
+    use crate::{EmitterConfig, Indent};
 
     #[test]
     fn test_arena_vs_standard_output_equivalence() {
@@ -873,7 +759,7 @@ mod arena_tests {
         ];
 
         for indent in [2, 4] {
-            let config = EmitterConfig::new().with_indent(indent);
+            let config = EmitterConfig::new().with_indent(Indent::new(indent).unwrap());
             for yaml in &test_cases {
                 let standard = format_streaming(yaml, &config).unwrap();
                 let arena = format_streaming_arena(yaml, &config).unwrap();

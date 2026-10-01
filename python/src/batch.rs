@@ -6,6 +6,7 @@ use crate::limits;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes};
+use fast_yaml_core::{Indent, Width};
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
     FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
@@ -170,15 +171,15 @@ impl From<RustBatchResult> for PyBatchResult {
 
 /// Configuration for batch file processing.
 ///
-/// `max_depth` and `max_alias_bytes` apply to `process_files` only; `format_files` ignores
-/// them (formatter depth is fixed at 256). Non-integer values raise `TypeError`,
-/// out-of-range values `ValueError`.
+/// `max_depth` applies to `process_files` and `format_files`; `max_alias_bytes` to
+/// `process_files` only. `indent` must be in 1..=9 and `width` in 20..=1000. Non-integer values
+/// raise `TypeError`, out-of-range values `ValueError`.
 #[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyBatchConfig {
     inner: RustConfig,
-    emitter_indent: usize,
-    emitter_width: usize,
+    emitter_indent: Indent,
+    emitter_width: Width,
     sort_keys: bool,
 }
 
@@ -211,6 +212,8 @@ impl PyBatchConfig {
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let parse_limits = limits::parse_limits(max_depth, max_alias_bytes)?;
+        let emitter_indent = limits::indent(indent)?;
+        let emitter_width = limits::width(width)?;
         if let Some(w) = workers
             && w > MAX_WORKERS
         {
@@ -231,8 +234,8 @@ impl PyBatchConfig {
 
         Ok(Self {
             inner: config,
-            emitter_indent: indent.clamp(1, 9),
-            emitter_width: width.clamp(20, 1000),
+            emitter_indent,
+            emitter_width,
             sort_keys,
         })
     }
@@ -251,9 +254,10 @@ impl PyBatchConfig {
         })
     }
 
-    /// Sets the maximum collection nesting depth for `process_files`; `None` resets to 256.
+    /// Sets the maximum collection nesting depth for `process_files` and `format_files`;
+    /// `None` resets to 256.
     ///
-    /// Ignored by `format_files` (formatter depth is fixed at 256). Range: 1..=512.
+    /// Range: 1..=512.
     /// Depth 512 needs about 1 MiB of thread stack and can abort on stacks of 512 KiB or less.
     ///
     /// Raises:
@@ -288,18 +292,18 @@ impl PyBatchConfig {
         })
     }
 
-    fn with_indent(&self, indent: usize) -> Self {
-        Self {
-            emitter_indent: indent.clamp(1, 9),
+    fn with_indent(&self, indent: usize) -> PyResult<Self> {
+        Ok(Self {
+            emitter_indent: limits::indent(indent)?,
             ..self.clone()
-        }
+        })
     }
 
-    fn with_width(&self, width: usize) -> Self {
-        Self {
-            emitter_width: width.clamp(20, 1000),
+    fn with_width(&self, width: usize) -> PyResult<Self> {
+        Ok(Self {
+            emitter_width: limits::width(width)?,
             ..self.clone()
-        }
+        })
     }
 
     fn with_sort_keys(&self, sort_keys: bool) -> Self {
@@ -325,6 +329,7 @@ impl PyBatchConfig {
         EmitterConfig::new()
             .with_indent(self.emitter_indent)
             .with_width(self.emitter_width)
+            .with_max_depth(self.inner.parse_limits().max_depth)
     }
 }
 

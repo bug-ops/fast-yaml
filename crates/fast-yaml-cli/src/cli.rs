@@ -1,6 +1,6 @@
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{
-    LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits,
+    Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, ParseLimits, Width,
 };
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::IndentSize;
@@ -177,11 +177,21 @@ fn range_error(err: LimitRangeError) -> String {
     err.to_string()
 }
 
+fn parse_number(raw: &str) -> Result<usize, String> {
+    raw.parse()
+        .map_err(|e| format!("invalid integer '{raw}': {e}"))
+}
+
+fn parse_indent(raw: &str) -> Result<Indent, String> {
+    Indent::new(parse_number(raw)?).map_err(range_error)
+}
+
+fn parse_width(raw: &str) -> Result<Width, String> {
+    Width::new(parse_number(raw)?).map_err(range_error)
+}
+
 fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
-    let depth: usize = raw
-        .parse()
-        .map_err(|e| format!("invalid integer '{raw}': {e}"))?;
-    MaxDepth::new(depth).map_err(range_error)
+    MaxDepth::new(parse_number(raw)?).map_err(range_error)
 }
 
 /// Binary size suffixes accepted by the byte-size flags, longest first.
@@ -233,13 +243,17 @@ pub enum Command {
         #[arg(value_name = "PATHS")]
         paths: Vec<PathBuf>,
 
-        /// Indentation width (2-8 spaces)
-        #[arg(long, default_value = "2", value_parser = clap::value_parser!(u8).range(2..=8))]
-        indent: u8,
+        /// Indentation width (1-9 spaces)
+        #[arg(long, value_name = "N", value_parser = parse_indent, default_value_t = Indent::DEFAULT)]
+        indent: Indent,
 
-        /// Maximum line width
-        #[arg(long, default_value = "80")]
-        width: usize,
+        /// Maximum line width (min: 20, max: 1000)
+        #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
+        width: Width,
+
+        /// Maximum nesting depth of sequences and mappings (min: 1, max: 512)
+        #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
+        max_depth: MaxDepth,
 
         /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
         /// file or a line over 4096 bytes is an error, so filter git output:

@@ -170,16 +170,16 @@ export interface BatchConfig {
   maxInputSize?: number
   /** Sequential threshold (default: 4KB) */
   sequentialThreshold?: number
-  /** Indentation width in spaces (default: 2) */
+  /** Indentation width in spaces (integer, 1..=9, default: 2) */
   indent?: number
-  /** Maximum line width (default: 80) */
+  /** Maximum line width (integer, 20..=1000, default: 80) */
   width?: number
   /** Sort dictionary keys alphabetically (default: false) */
   sortKeys?: boolean
   /**
    * Maximum collection nesting depth (integer, 1..=512, default: 256);
-   * applies to `processFiles`, not to `formatFiles` (fixed formatter depth limit).
-   * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
+   * applies to `processFiles` and `formatFiles`.
+   * Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` rejects input nested deeper than this limit.
    */
   maxDepth?: number
   /**
@@ -260,12 +260,12 @@ export interface DumpOptions {
   allowUnicode?: boolean
   /**
    * Indentation width in spaces (default: 2).
-   * Must be an integer; values outside 1-9 are clamped.
+   * Must be an integer in 1-9; other values throw.
    */
   indent?: number
   /**
    * Maximum line width for wrapping (default: 80).
-   * Must be an integer; values outside 20-1000 are clamped.
+   * Must be an integer in 20-1000; other values throw.
    */
   width?: number
   /**

@@ -8,12 +8,11 @@ use std::fmt::Write as FmtWrite;
 use saphyr_parser::Parser;
 
 use super::Context;
-use super::Formatted;
-use super::format_with_anchor_names;
 use super::formatter::StreamingFormatter;
 use super::traits::{AnchorStoreOps, ContextStackOps, FormatterBackend};
 use crate::emitter::EmitterConfig;
 use crate::error::{EmitResult, ParseError};
+use crate::input::NormalizedInput;
 
 /// Standard heap allocation backend.
 ///
@@ -64,11 +63,6 @@ impl ContextStackOps for Vec<Context> {
     fn last_mut(&mut self) -> Option<&mut Context> {
         <[Context]>::last_mut(self)
     }
-
-    #[inline]
-    fn len(&self) -> usize {
-        Vec::len(self)
-    }
 }
 
 // Implementation of AnchorStoreOps for Vec<String>
@@ -84,6 +78,12 @@ impl AnchorStoreOps for Vec<String> {
         <[String]>::get(self, anchor_id)
             .filter(|s| !s.is_empty())
             .map(String::as_str)
+    }
+
+    fn set_name(&mut self, anchor_id: usize, name: &str) {
+        if self[anchor_id].is_empty() {
+            self[anchor_id].push_str(name);
+        }
     }
 
     fn set_if_empty(&mut self, anchor_id: usize) -> &str {
@@ -146,16 +146,16 @@ impl FormatterBackend for StdBackend {
 /// assert!(formatted.contains("key:"));
 /// ```
 pub fn format_streaming(input: &str, config: &EmitterConfig) -> EmitResult<String> {
-    let input = crate::parser::strip_bom(input);
-    format_with_anchor_names(input, |names| format_with_names(input, config, names))
+    format_normalized(&NormalizedInput::new(input)?, config)
 }
 
-fn format_with_names(
-    input: &str,
+/// [`format_streaming`] for an input that is already normalized.
+pub fn format_normalized(
+    input: &NormalizedInput<'_>,
     config: &EmitterConfig,
-    anchor_names: Vec<String>,
-) -> EmitResult<Formatted> {
-    let parser = Parser::new_from_str(crate::parser::reject_nul(input)?);
+) -> EmitResult<String> {
+    let input = input.as_str();
+    let parser = Parser::new_from_str(input);
 
     // Output is typically 10-20% larger than input due to formatting
     let output_capacity = input.len() + (input.len() / 5);
@@ -166,17 +166,14 @@ fn format_with_names(
     // Pre-allocate for a reasonable number of anchors (~4 anchors per KB)
     let anchor_capacity = input.len().min(1024) / 256;
 
-    let mut backend = StdBackend::new(context_capacity, anchor_capacity.max(1));
-    *backend.anchor_store_mut() = anchor_names;
+    let backend = StdBackend::new(context_capacity, anchor_capacity.max(1));
     let mut formatter = StreamingFormatter::new(config, output_capacity, backend, input);
 
-    let mut guard = super::tag_budget_guard();
+    let mut guard = super::format_guard(config.max_depth);
     let mut merge_keys = crate::merge_check::MergeKeyValidator::default();
     for result in parser {
-        let (event, span) = result.map_err(|error| ParseError::Scanner {
-            error,
-            document: guard.document(),
-        })?;
+        let (event, span) =
+            result.map_err(|error| ParseError::scanner(&error, guard.document()))?;
         guard
             .observe(&event, span)
             .map_err(super::tag_budget_error)?;

@@ -23,19 +23,16 @@
 #![allow(clippy::doc_markdown)] // Python docstrings use different conventions
 
 use fast_yaml_core::{
-    DumpBudget, IntRadix, LimitKind, MaxDepth, MaxInputBytes, MaxOutputBytes, ResolvedScalar,
-    core_set_tag, resolve_scalar,
+    BigInt, DumpBudget, Float, LimitKind, Mapping, MaxDepth, MaxInputBytes, MaxOutputBytes,
+    ResolvedScalar, Value, resolve_scalar,
 };
-use ordered_float::OrderedFloat;
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{
     PyBool, PyDict, PyFloat, PyFrozenSet, PyInt, PyList, PyMapping, PySet, PyString,
 };
-use saphyr::{MappingOwned, ScalarOwned, YamlOwned};
 use saphyr_parser::{ScalarStyle, Tag};
-use std::borrow::Cow;
 
 mod batch;
 mod conversion;
@@ -307,7 +304,22 @@ fn check_input_len(len: usize) -> PyResult<()> {
         .map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-/// Resolve a `Representation` scalar to a Python object, applying YAML core schema coercion.
+/// Convert an integer outside `i64` to a Python `int`.
+///
+/// Decimal is counted by canonical digits so both loaders apply the same limit; hex and octal
+/// keep their source text so `int(text, base)` avoids a quadratic decimal conversion.
+pub(crate) fn big_int_to_python(py: Python<'_>, big: &BigInt) -> PyResult<Py<PyAny>> {
+    let (text, base) = big
+        .radix_text()
+        .map_or_else(|| (big.canonical(), 10), |text| (text, big.radix().value()));
+    Ok(py
+        .import("builtins")?
+        .getattr("int")?
+        .call1((text, base))?
+        .unbind())
+}
+
+/// Resolve a scalar to a Python object, applying YAML core schema coercion.
 pub(crate) fn repr_to_python(
     py: Python<'_>,
     s: &str,
@@ -319,32 +331,19 @@ pub(crate) fn repr_to_python(
         ResolvedScalar::Bool(b) => b.into_pyobject(py)?.as_any().clone().unbind(),
         ResolvedScalar::Int(i) => i.into_pyobject(py)?.as_any().clone().unbind(),
         ResolvedScalar::Float(f) => f.into_pyobject(py)?.as_any().clone().unbind(),
-        ResolvedScalar::BigInt(big) => {
-            // Decimal is counted by canonical digits so both loaders apply the same limit.
-            let text = match big.radix() {
-                IntRadix::Decimal => big.canonical(),
-                IntRadix::Hex | IntRadix::Octal => Cow::Borrowed(big.as_str()),
-            };
-            py.import("builtins")?
-                .getattr("int")?
-                .call1((text.as_ref(), big.radix().value()))?
-                .unbind()
-        }
+        ResolvedScalar::BigInt(big) => big_int_to_python(py, &BigInt::from(big))?,
         ResolvedScalar::Str(s) => s.into_pyobject(py)?.as_any().clone().unbind(),
     })
 }
 
-/// Convert a Python object to a `YamlOwned` value.
+/// Convert a Python object to a [`Value`].
 ///
 /// Handles Python types including special float values (inf, -inf, nan)
 /// converting them to YAML 1.2.2 compliant representations.
 ///
 /// The walk is iterative (explicit heap stack), so host thread stack size does not bound
 /// nesting; [`MaxDepth::DEFAULT`] does, which also catches self-referential containers.
-pub(crate) fn python_to_yaml(
-    obj: &Bound<'_, PyAny>,
-    budget: &mut DumpBudget,
-) -> PyResult<YamlOwned> {
+pub(crate) fn python_to_yaml(obj: &Bound<'_, PyAny>, budget: &mut DumpBudget) -> PyResult<Value> {
     let mut stack = vec![OpenContainer {
         shape: Shape::Root,
         children: vec![obj.clone()].into_iter(),
@@ -390,39 +389,29 @@ enum Shape {
 struct OpenContainer<'py> {
     shape: Shape,
     children: std::vec::IntoIter<Bound<'py, PyAny>>,
-    done: Vec<YamlOwned>,
+    done: Vec<Value>,
 }
 
 impl OpenContainer<'_> {
-    fn finish(self) -> YamlOwned {
+    fn finish(self) -> Value {
         match self.shape {
-            Shape::Root => self
-                .done
-                .into_iter()
-                .next()
-                .unwrap_or(YamlOwned::Value(ScalarOwned::Null)),
-            Shape::Sequence => YamlOwned::Sequence(self.done),
+            Shape::Root => self.done.into_iter().next().unwrap_or(Value::Null),
+            Shape::Sequence => Value::Sequence(self.done),
             Shape::Mapping => {
-                let mut map = MappingOwned::with_capacity(self.done.len() / 2);
+                let mut map = Mapping::with_capacity(self.done.len() / 2);
                 let mut pairs = self.done.into_iter();
                 while let (Some(key), Some(value)) = (pairs.next(), pairs.next()) {
                     map.insert(key, value);
                 }
-                YamlOwned::Mapping(map)
+                Value::Mapping(map)
             }
-            Shape::Set => {
-                let mut map = MappingOwned::with_capacity(self.done.len());
-                for member in self.done {
-                    map.insert(member, YamlOwned::Value(ScalarOwned::Null));
-                }
-                YamlOwned::Tagged(core_set_tag(), Box::new(YamlOwned::Mapping(map)))
-            }
+            Shape::Set => Value::Set(self.done.into_iter().collect()),
         }
     }
 }
 
 enum Classified<'py> {
-    Scalar(YamlOwned),
+    Scalar(Value),
     Container(OpenContainer<'py>),
 }
 
@@ -464,10 +453,10 @@ fn classify<'py>(
     budget: &mut DumpBudget,
 ) -> PyResult<Classified<'py>> {
     if let Some(scalar) = python_scalar_to_yaml(obj)? {
-        if let YamlOwned::Value(ScalarOwned::String(text)) | YamlOwned::Representation(text, ..) =
-            &scalar
-        {
-            budget.charge(text.len()).map_err(limit_error)?;
+        match &scalar {
+            Value::String(text) => budget.charge(text.len()).map_err(limit_error)?,
+            Value::BigInt(big) => budget.charge(big.canonical().len()).map_err(limit_error)?,
+            _ => {}
         }
         return Ok(Classified::Scalar(scalar));
     }
@@ -480,45 +469,36 @@ fn classify<'py>(
 }
 
 /// Convert `None`, bool, int, float and str; `None` result means "not a scalar".
-fn python_scalar_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Option<YamlOwned>> {
+fn python_scalar_to_yaml(obj: &Bound<'_, PyAny>) -> PyResult<Option<Value>> {
     let scalar = if obj.is_none() {
-        ScalarOwned::Null
+        Value::Null
     } else if obj.is_instance_of::<PyBool>() {
         // bool is checked before int: it is a subclass of int in Python
-        ScalarOwned::Boolean(obj.extract()?)
+        Value::Bool(obj.extract()?)
     } else if obj.is_instance_of::<PyInt>() {
         return match obj.extract::<i64>() {
-            Ok(i) => Ok(Some(YamlOwned::Value(ScalarOwned::Integer(i)))),
+            Ok(i) => Ok(Some(Value::Int(i))),
             Err(e) if e.is_instance_of::<PyOverflowError>(obj.py()) => {
                 let digits: String = obj
                     .py()
                     .get_type::<PyInt>()
                     .call_method1("__format__", (obj, "d"))?
                     .extract()?;
-                if !matches!(
-                    resolve_scalar(&digits, ScalarStyle::Plain, None),
-                    ResolvedScalar::BigInt(_)
-                ) {
-                    return Err(PyTypeError::new_err(
-                        "int did not format as a decimal integer",
-                    ));
-                }
-                Ok(Some(YamlOwned::Representation(
-                    digits,
-                    ScalarStyle::Plain,
-                    None,
-                )))
+                let big = BigInt::parse(&digits).ok_or_else(|| {
+                    PyTypeError::new_err("int did not format as a decimal integer")
+                })?;
+                Ok(Some(Value::BigInt(big)))
             }
             Err(e) => Err(e),
         };
     } else if obj.is_instance_of::<PyFloat>() {
-        ScalarOwned::FloatingPoint(OrderedFloat(obj.extract()?))
+        Value::Float(Float::new(obj.extract()?))
     } else if obj.is_instance_of::<PyString>() {
-        ScalarOwned::String(obj.extract()?)
+        Value::String(obj.extract()?)
     } else {
         return Ok(None);
     };
-    Ok(Some(YamlOwned::Value(scalar)))
+    Ok(Some(scalar))
 }
 
 /// Flatten an `items()` iterable of `(key, value)` pairs into `[k, v, k, v, ...]`.
@@ -741,8 +721,8 @@ fn safe_dump(
 
     // Create emitter configuration
     let config = fast_yaml_core::EmitterConfig::new()
-        .with_indent(indent)
-        .with_width(width)
+        .with_indent(limits::indent(indent)?)
+        .with_width(limits::width(width)?)
         .with_default_flow_style(default_flow_style)
         .with_explicit_start(explicit_start);
 
@@ -785,25 +765,27 @@ impl<'py> PyWriteable<'py> {
 }
 
 /// Estimate YAML output size for streaming threshold decision.
-fn estimate_dump_yaml_size(yaml: &YamlOwned) -> usize {
+pub(crate) fn estimate_dump_yaml_size(yaml: &Value) -> usize {
     match yaml {
-        YamlOwned::Value(scalar) => match scalar {
-            ScalarOwned::Null => 4,
-            ScalarOwned::Boolean(_) => 5,
-            ScalarOwned::Integer(_) => 12,
-            ScalarOwned::FloatingPoint(_) => 20,
-            ScalarOwned::String(s) => s.len().saturating_add(2),
-        },
-        YamlOwned::Sequence(arr) => arr.iter().fold(0usize, |acc, v| {
+        Value::Null => 4,
+        Value::Bool(_) => 5,
+        Value::Int(_) => 12,
+        Value::BigInt(big) => big.canonical().len(),
+        Value::Float(_) => 20,
+        Value::String(s) => s.len().saturating_add(2),
+        Value::Sequence(arr) => arr.iter().fold(0usize, |acc, v| {
             acc.saturating_add(3)
                 .saturating_add(estimate_dump_yaml_size(v))
         }),
-        YamlOwned::Mapping(map) => map.iter().fold(0usize, |acc, (k, v)| {
+        Value::Mapping(map) => map.iter().fold(0usize, |acc, (k, v)| {
             acc.saturating_add(10)
                 .saturating_add(estimate_dump_yaml_size(k))
                 .saturating_add(estimate_dump_yaml_size(v))
         }),
-        _ => 10,
+        Value::Set(set) => set.iter().fold(0usize, |acc, v| {
+            acc.saturating_add(3)
+                .saturating_add(estimate_dump_yaml_size(v))
+        }),
     }
 }
 
@@ -876,8 +858,8 @@ fn safe_dump_to(
 
     // Create emitter config
     let config = fast_yaml_core::EmitterConfig::new()
-        .with_indent(indent)
-        .with_width(width)
+        .with_indent(limits::indent(indent)?)
+        .with_width(limits::width(width)?)
         .with_default_flow_style(default_flow_style)
         .with_explicit_start(explicit_start);
 
@@ -912,40 +894,37 @@ fn safe_dump_to(
 }
 
 /// Helper function to recursively sort dictionary keys in YAML
-pub(crate) fn sort_yaml_keys(yaml: &YamlOwned) -> YamlOwned {
+pub(crate) fn sort_yaml_keys(yaml: &Value) -> Value {
     match yaml {
-        YamlOwned::Mapping(map) => {
+        Value::Mapping(map) => {
             let mut sorted: Vec<_> = map.iter().collect();
-            sorted.sort_by(|(k1, _), (k2, _)| {
-                let s1 = yaml_to_sort_key(k1);
-                let s2 = yaml_to_sort_key(k2);
-                s1.cmp(&s2)
-            });
-            let mut new_map = MappingOwned::new();
+            sorted.sort_by_cached_key(|(k, _)| yaml_to_sort_key(k));
+            let mut new_map = Mapping::with_capacity(map.len());
             for (k, v) in sorted {
                 new_map.insert(k.clone(), sort_yaml_keys(v));
             }
-            YamlOwned::Mapping(new_map)
+            Value::Mapping(new_map)
         }
-        YamlOwned::Sequence(arr) => YamlOwned::Sequence(arr.iter().map(sort_yaml_keys).collect()),
-        YamlOwned::Tagged(tag, inner) => {
-            YamlOwned::Tagged(tag.clone(), Box::new(sort_yaml_keys(inner)))
+        Value::Sequence(arr) => Value::Sequence(arr.iter().map(sort_yaml_keys).collect()),
+        Value::Set(set) => {
+            let mut sorted: Vec<_> = set.iter().collect();
+            sorted.sort_by_cached_key(|member| yaml_to_sort_key(member));
+            Value::Set(sorted.into_iter().map(sort_yaml_keys).collect())
         }
         other => other.clone(),
     }
 }
 
 /// Convert YAML value to a sortable string key
-fn yaml_to_sort_key(yaml: &YamlOwned) -> String {
+fn yaml_to_sort_key(yaml: &Value) -> String {
     match yaml {
-        YamlOwned::Value(scalar) => match scalar {
-            ScalarOwned::String(s) => s.clone(),
-            ScalarOwned::Integer(i) => i.to_string(),
-            ScalarOwned::FloatingPoint(f) => f.to_string(),
-            ScalarOwned::Boolean(b) => b.to_string(),
-            ScalarOwned::Null => String::new(),
-        },
-        _ => String::new(),
+        Value::String(s) => s.clone(),
+        Value::Int(i) => i.to_string(),
+        Value::Float(f) => f.get().to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null | Value::BigInt(_) | Value::Sequence(_) | Value::Mapping(_) | Value::Set(_) => {
+            String::new()
+        }
     }
 }
 
@@ -1016,8 +995,8 @@ fn safe_dump_all(
 
     // Create emitter configuration
     let config = fast_yaml_core::EmitterConfig::new()
-        .with_indent(indent)
-        .with_width(width)
+        .with_indent(limits::indent(indent)?)
+        .with_width(limits::width(width)?)
         .with_default_flow_style(default_flow_style)
         .with_explicit_start(explicit_start);
 
@@ -1327,15 +1306,14 @@ fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use fast_yaml_core::Parser;
-    use saphyr::LoadableYamlNode;
 
     #[test]
     fn test_parse_simple() {
         let yaml = "name: test\nvalue: 123";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 1);
 
-        if let YamlOwned::Mapping(map) = &docs[0] {
+        if let Value::Mapping(map) = &docs[0] {
             assert_eq!(map.len(), 2);
         } else {
             panic!("Expected mapping");
@@ -1352,7 +1330,7 @@ person:
     - reading
     - coding
 ";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 1);
     }
 
@@ -1367,7 +1345,7 @@ development:
   <<: *defaults
   database: dev_db
 ";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 1);
     }
 
@@ -1380,9 +1358,9 @@ development:
     fn test_yaml_122_null() {
         // Valid null representations in YAML 1.2.2: ~ and null (lowercase)
         for null_str in &["~", "null"] {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(null_str).unwrap();
+            let docs: Vec<Value> = Parser::parse_all(null_str).unwrap();
             assert!(
-                docs[0].is_null(),
+                matches!(docs[0], Value::Null),
                 "Failed for: {} (got {:?})",
                 null_str,
                 docs[0]
@@ -1394,7 +1372,7 @@ development:
         for null_str in &["Null", "NULL"] {
             let result = Parser::parse_str(null_str).unwrap().unwrap();
             assert!(
-                matches!(result, YamlOwned::Value(ScalarOwned::Null)),
+                matches!(result, Value::Null),
                 "Expected null for '{null_str}', got {result:?}",
             );
         }
@@ -1406,8 +1384,8 @@ development:
     fn test_yaml_122_boolean_valid() {
         // saphyr only recognizes lowercase true/false as booleans
         for (input, expected) in &[("true", true), ("false", false)] {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
-            assert!(docs[0].as_bool() == Some(*expected), "Failed for: {input}");
+            let docs: Vec<Value> = Parser::parse_all(input).unwrap();
+            assert!(docs[0] == Value::Bool(*expected), "Failed for: {input}");
         }
     }
 
@@ -1416,10 +1394,10 @@ development:
     fn test_yaml_122_boolean_yaml11_compat() {
         // These should be strings in YAML 1.2, not booleans
         for input in &["yes", "no", "on", "off", "y", "n"] {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
+            let docs: Vec<Value> = Parser::parse_all(input).unwrap();
             // saphyr correctly treats these as strings in YAML 1.2 mode
             assert!(
-                docs[0].as_str().is_some(),
+                matches!(docs[0], Value::String(_)),
                 "Should be string, not boolean: {input}"
             );
         }
@@ -1439,8 +1417,8 @@ development:
         ];
 
         for (input, expected) in test_cases {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
-            if let YamlOwned::Value(ScalarOwned::Integer(i)) = &docs[0] {
+            let docs: Vec<Value> = Parser::parse_all(input).unwrap();
+            if let Value::Int(i) = &docs[0] {
                 assert_eq!(*i, expected, "Failed for: {input} (expected {expected})");
             } else {
                 panic!("Expected integer for: {input}");
@@ -1460,9 +1438,9 @@ development:
         ];
 
         for (input, expected) in test_cases {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(input).unwrap();
-            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
-                let f_val: f64 = **f;
+            let docs: Vec<Value> = Parser::parse_all(input).unwrap();
+            if let Value::Float(f) = &docs[0] {
+                let f_val: f64 = f.get();
                 assert!(
                     (f_val - expected).abs() < 1e-10,
                     "Failed for: {input} (expected {expected}, got {f_val})"
@@ -1478,9 +1456,9 @@ development:
     fn test_yaml_122_special_floats() {
         // Positive infinity
         for inf_str in &[".inf", ".Inf", ".INF"] {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(inf_str).unwrap();
-            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
-                let f_val: f64 = **f;
+            let docs: Vec<Value> = Parser::parse_all(inf_str).unwrap();
+            if let Value::Float(f) = &docs[0] {
+                let f_val: f64 = f.get();
                 assert!(
                     f_val.is_infinite() && f_val.is_sign_positive(),
                     "Expected +inf for: {inf_str}"
@@ -1490,9 +1468,9 @@ development:
 
         // Negative infinity
         for neg_inf_str in &["-.inf", "-.Inf", "-.INF"] {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(neg_inf_str).unwrap();
-            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
-                let f_val: f64 = **f;
+            let docs: Vec<Value> = Parser::parse_all(neg_inf_str).unwrap();
+            if let Value::Float(f) = &docs[0] {
+                let f_val: f64 = f.get();
                 assert!(
                     f_val.is_infinite() && f_val.is_sign_negative(),
                     "Expected -inf for: {neg_inf_str}"
@@ -1502,9 +1480,9 @@ development:
 
         // NaN
         for nan_str in &[".nan", ".NaN", ".NAN"] {
-            let docs: Vec<YamlOwned> = YamlOwned::load_from_str(nan_str).unwrap();
-            if let YamlOwned::Value(ScalarOwned::FloatingPoint(f)) = &docs[0] {
-                let f_val: f64 = **f;
+            let docs: Vec<Value> = Parser::parse_all(nan_str).unwrap();
+            if let Value::Float(f) = &docs[0] {
+                let f_val: f64 = f.get();
                 assert!(f_val.is_nan(), "Expected NaN for: {nan_str}");
             }
         }
@@ -1514,8 +1492,8 @@ development:
     #[test]
     fn test_yaml_122_octal_format() {
         // 0o prefix is the YAML 1.2 octal format
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str("0o14").unwrap();
-        if let YamlOwned::Value(ScalarOwned::Integer(i)) = &docs[0] {
+        let docs: Vec<Value> = Parser::parse_all("0o14").unwrap();
+        if let Value::Int(i) = &docs[0] {
             assert_eq!(*i, 12);
         } else {
             panic!("Expected integer for 0o14");
@@ -1523,9 +1501,9 @@ development:
 
         // Leading zero without 'o' should be decimal or string in YAML 1.2
         // (saphyr behavior may vary - this documents expected behavior)
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str("014").unwrap();
+        let docs: Vec<Value> = Parser::parse_all("014").unwrap();
         // In strict YAML 1.2, this should be decimal 14, not octal 12
-        if let YamlOwned::Value(ScalarOwned::Integer(i)) = &docs[0] {
+        if let Value::Int(i) = &docs[0] {
             // saphyr treats this as decimal 14 (YAML 1.2 compliant)
             assert!(*i == 14 || *i == 12, "Got: {i}");
         }
@@ -1535,7 +1513,7 @@ development:
     #[test]
     fn test_yaml_122_multi_document() {
         let yaml = "---\nfoo: 1\n---\nbar: 2\n...";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
         assert_eq!(docs.len(), 2);
     }
 
@@ -1543,10 +1521,10 @@ development:
     #[test]
     fn test_yaml_122_literal_block() {
         let yaml = "text: |\n  line1\n  line2\n";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
-        if let YamlOwned::Mapping(map) = &docs[0] {
-            let key = YamlOwned::Value(ScalarOwned::String("text".to_string()));
-            if let Some(YamlOwned::Value(ScalarOwned::String(s))) = map.get(&key) {
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
+        if let Value::Mapping(map) = &docs[0] {
+            let key = Value::String("text".to_string());
+            if let Some(Value::String(s)) = map.get(&key) {
                 assert!(s.contains("line1"));
                 assert!(s.contains("line2"));
                 assert!(s.contains('\n'));
@@ -1558,10 +1536,10 @@ development:
     #[test]
     fn test_yaml_122_folded_block() {
         let yaml = "text: >\n  line1\n  line2\n";
-        let docs: Vec<YamlOwned> = YamlOwned::load_from_str(yaml).unwrap();
-        if let YamlOwned::Mapping(map) = &docs[0] {
-            let key = YamlOwned::Value(ScalarOwned::String("text".to_string()));
-            if let Some(YamlOwned::Value(ScalarOwned::String(s))) = map.get(&key) {
+        let docs: Vec<Value> = Parser::parse_all(yaml).unwrap();
+        if let Value::Mapping(map) = &docs[0] {
+            let key = Value::String("text".to_string());
+            if let Some(Value::String(s)) = map.get(&key) {
                 // Folded style converts newlines to spaces
                 assert!(s.contains("line1") && s.contains("line2"));
             }

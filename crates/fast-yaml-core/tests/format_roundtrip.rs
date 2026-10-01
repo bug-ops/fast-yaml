@@ -77,11 +77,16 @@ fn explicit_start_config_emits_one_marker_per_document() {
 }
 
 #[test]
-fn anchor_with_colon_and_control_chars_re_parses() {
+fn anchor_with_colon_re_parses_and_control_chars_are_rejected() {
     check("! &:&");
     check("&a:b x");
-    check("&\x01 x");
-    check("a: &\x01 x\nb: *\x01");
+    for input in ["&\x01 x", "a: &\x01 x\nb: *\x01"] {
+        assert!(Emitter::format(input).is_err(), "{input:?}");
+        assert!(
+            format_streaming(input, &EmitterConfig::default()).is_err(),
+            "{input:?}"
+        );
+    }
 }
 
 #[test]
@@ -116,7 +121,7 @@ fn flow_plain_scalars_starting_with_indicators_are_quoted() {
 
 #[test]
 fn aliases_follow_renamed_anchors() {
-    check("&a\x01 [1]\n---\n&b [2, *b]");
+    check("&a\u{feff}b [1]\n---\nk: &b [2]\nv: *b\n");
     check("x: &keep [1]\ny: *keep\nz: 'it''s'\n");
 }
 
@@ -135,7 +140,7 @@ fn check_values(input: &str) -> String {
 #[test]
 fn equal_count_anchor_misalignment_never_rebinds_aliases() {
     let out = check_values("t: Tom &q\nk: [a#b, &p 1]\nb: &q 2\nc: *p\n");
-    assert!(out.contains("c: *anchor1"), "{out:?}");
+    assert!(out.contains("&p 1") && out.contains("c: *p"), "{out:?}");
     check_values("t: Tom &q\nk: [a 'b, &p 1]\nb: &q 2\nc: 'x'\nd: *p\ne: Tom &q\n");
     check_values("a&b: 1\n&c d: 2\ne: *c\n");
 }

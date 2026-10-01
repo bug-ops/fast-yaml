@@ -8,12 +8,16 @@ const ERROR_INPUTS: &[&str] = &[
     "a:\n  - x\n  ---\n",
     "---\n---\na: 1\n---\nb: 'unclosed\n",
     "a: 1\n---\nb: 'unclosed\n---\nc: 3\n",
-    "日本\n...\n\u{FEFF}\n: v\n",
     "a: 1\n...\n\u{FEFF}x: [\n",
     "a: [x\n---\nb: 1\n",
 ];
 
 const INPUTS: &[&str] = &[
+    "日本\n...\n\u{FEFF}\n: v\n",
+    "a\n...\n\u{FEFF}%YAML 1.2\n---\nb\n",
+    "a\n...\n\u{FEFF}# c\n\u{FEFF}---\nb\n",
+    "a\n\u{FEFF}b\n",
+    "a: 1\n---\n\u{FEFF}--- b\n",
     "a: 1\n...\n\u{FEFF}b: 2\n",
     "\u{FEFF}\u{FEFF}a: 1\n",
     "\u{FEFF}\u{FEFF}",

@@ -2,6 +2,7 @@
 
 #![allow(clippy::redundant_pub_crate)]
 
+use fast_yaml_core::NormalizedInput;
 use fast_yaml_core::limits::MaxDocuments;
 
 use crate::error::{Error, Result};
@@ -11,8 +12,6 @@ use crate::error::{Error, Result};
 pub(crate) struct SourceOrigin {
     /// Line breaks before the chunk.
     pub line: usize,
-    /// Characters before the chunk.
-    pub char_index: usize,
 }
 
 /// Represents a document chunk with metadata.
@@ -21,14 +20,14 @@ pub(crate) struct Chunk<'a> {
     /// Zero-based index of this chunk in the stream.
     pub index: usize,
 
-    /// Source text for this chunk (includes `---` prefix if present).
-    pub content: &'a str,
+    /// Normalized text of this chunk (includes `---` prefix if present).
+    pub input: NormalizedInput<'a>,
 
     /// Where the chunk starts in the original input.
     pub origin: SourceOrigin,
 }
 
-/// A byte position together with its line and character coordinates.
+/// A byte position together with its line coordinate.
 #[derive(Debug, Clone, Copy)]
 struct Cursor {
     byte: usize,
@@ -53,7 +52,7 @@ enum State {
     AfterEnd,
 }
 
-/// Splits YAML input into chunks that each parse independently of the others.
+/// Splits normalized YAML input into chunks that each parse independently of the others.
 ///
 /// The chunk list mirrors the document stream of `Parser::parse_all`:
 /// - Lines end with `\n`, `\r\n` or a lone `\r`
@@ -72,7 +71,11 @@ enum State {
 ///
 /// Returns [`Error::TooManyDocuments`] as soon as the chunk count would pass `max`, so an
 /// input of millions of empty documents is never fully materialized.
-pub(crate) fn chunk_documents(input: &str, max: Option<MaxDocuments>) -> Result<Vec<Chunk<'_>>> {
+pub(crate) fn chunk_documents<'a>(
+    whole: &'a NormalizedInput<'_>,
+    max: Option<MaxDocuments>,
+) -> Result<Vec<Chunk<'a>>> {
+    let input = whole.as_str();
     if input.is_empty() {
         return Ok(Vec::new());
     }
@@ -82,6 +85,11 @@ pub(crate) fn chunk_documents(input: &str, max: Option<MaxDocuments>) -> Result<
             limit,
         }),
         _ => Ok(()),
+    };
+    let part = |range: std::ops::Range<usize>| {
+        whole
+            .slice(range)
+            .unwrap_or_else(|| unreachable!("chunks start at line starts"))
     };
 
     let mut chunks = Vec::new();
@@ -120,7 +128,7 @@ pub(crate) fn chunk_documents(input: &str, max: Option<MaxDocuments>) -> Result<
                 admit(chunks.len())?;
                 chunks.push(Chunk {
                     index: chunks.len(),
-                    content: &input[start.byte..boundary.byte],
+                    input: part(start.byte..boundary.byte),
                     origin: start.origin,
                 });
                 start = boundary;
@@ -132,13 +140,12 @@ pub(crate) fn chunk_documents(input: &str, max: Option<MaxDocuments>) -> Result<
 
         here.byte += line.len;
         here.origin.line += 1;
-        here.origin.char_index += line.chars;
     }
 
     admit(chunks.len())?;
     chunks.push(Chunk {
         index: chunks.len(),
-        content: &input[start.byte..],
+        input: part(start.byte..input.len()),
         origin: start.origin,
     });
 
@@ -166,11 +173,10 @@ fn classify(text: &str) -> LineKind {
     }
 }
 
-/// One input line: its text without terminator plus byte and char lengths including it.
+/// One input line: its text without terminator plus its byte length including it.
 struct Line<'a> {
     text: &'a str,
     len: usize,
-    chars: usize,
 }
 
 /// Iterator over lines terminated by `\n`, `\r\n` or a lone `\r`.
@@ -200,11 +206,7 @@ impl<'a> Iterator for Lines<'a> {
         };
         let len = text.len() + terminator_len;
         self.rest = &self.rest[len..];
-        Some(Line {
-            text,
-            len,
-            chars: text.chars().count() + terminator_len,
-        })
+        Some(Line { text, len })
     }
 }
 
@@ -212,26 +214,33 @@ impl<'a> Iterator for Lines<'a> {
 mod tests {
     use super::*;
 
-    fn contents(input: &str) -> Vec<&str> {
-        chunk_documents(input, None)
+    fn normalized(input: &str) -> NormalizedInput<'_> {
+        NormalizedInput::new(input).unwrap()
+    }
+
+    fn contents(input: &str) -> Vec<String> {
+        let whole = normalized(input);
+        chunk_documents(&whole, None)
             .unwrap()
             .iter()
-            .map(|c| c.content)
+            .map(|c| c.input.as_str().to_owned())
             .collect()
     }
 
     #[test]
     fn test_chunk_single_document() {
         let yaml = "foo: 1\nbar: 2";
-        let chunks = chunk_documents(yaml, None).unwrap();
+        let whole = normalized(yaml);
+        let chunks = chunk_documents(&whole, None).unwrap();
         assert_eq!(chunks.len(), 1);
         assert_eq!(chunks[0].index, 0);
-        assert_eq!(chunks[0].content, yaml);
+        assert_eq!(chunks[0].input.as_str(), yaml);
     }
 
     #[test]
     fn test_chunk_explicit_multi_document() {
-        let chunks = chunk_documents("---\nfoo: 1\n---\nbar: 2", None).unwrap();
+        let whole = normalized("---\nfoo: 1\n---\nbar: 2");
+        let chunks = chunk_documents(&whole, None).unwrap();
         assert_eq!(chunks.len(), 2);
         assert_eq!(chunks[0].index, 0);
         assert_eq!(chunks[1].index, 1);
@@ -252,26 +261,15 @@ mod tests {
 
     #[test]
     fn test_chunk_origin() {
-        let chunks = chunk_documents("first\n---\nsécond\n---\nthird", None).unwrap();
-        assert_eq!(
-            chunks[1].origin,
-            SourceOrigin {
-                line: 1,
-                char_index: 6
-            }
-        );
-        assert_eq!(
-            chunks[2].origin,
-            SourceOrigin {
-                line: 3,
-                char_index: 17
-            }
-        );
+        let whole = normalized("first\n---\nsécond\n---\nthird");
+        let chunks = chunk_documents(&whole, None).unwrap();
+        assert_eq!(chunks[1].origin, SourceOrigin { line: 1 });
+        assert_eq!(chunks[2].origin, SourceOrigin { line: 3 });
     }
 
     #[test]
     fn test_chunk_empty_input() {
-        assert!(chunk_documents("", None).unwrap().is_empty());
+        assert!(chunk_documents(&normalized(""), None).unwrap().is_empty());
     }
 
     #[test]
@@ -379,7 +377,8 @@ mod tests {
 
     #[test]
     fn test_chunk_documents_stops_at_the_limit() {
-        let input = "---\n".repeat(10_000);
+        let text = "---\n".repeat(10_000);
+        let input = normalized(&text);
         let limit = |n| Some(MaxDocuments::new(n).unwrap());
         let err = chunk_documents(&input, limit(3)).unwrap_err();
         assert!(
@@ -390,7 +389,8 @@ mod tests {
             chunk_documents(&input, limit(10_000)).unwrap().len(),
             10_000
         );
-        assert_eq!(chunk_documents("a\n---\nb\n", limit(2)).unwrap().len(), 2);
-        assert!(chunk_documents("a\n---\nb\n", limit(1)).is_err());
+        let two = normalized("a\n---\nb\n");
+        assert_eq!(chunk_documents(&two, limit(2)).unwrap().len(), 2);
+        assert!(chunk_documents(&two, limit(1)).is_err());
     }
 }

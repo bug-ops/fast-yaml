@@ -368,14 +368,16 @@ describe('Batch config validation', () => {
     expect(() => fn([], { maxAliasBytes: -1 })).toThrow(/maxAliasBytes must be between 1/);
   });
 
-  it('formatFiles ignores valid limits', () => {
+  it('formatFiles applies maxDepth and ignores maxAliasBytes', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'limits-format-'));
     try {
       const file = path.join(dir, 'nested.yaml');
       fs.writeFileSync(file, `${seq(50)}\n`);
-      const [result] = formatFiles([file], { maxDepth: 1, maxAliasBytes: 1 });
+      const [result] = formatFiles([file], { maxDepth: 64, maxAliasBytes: 1 });
       expect(result.error).toBeFalsy();
       expect(result.content).toBeTruthy();
+      const [deep] = formatFiles([file], { maxDepth: 1 });
+      expect(deep.error).toMatch(/nesting depth exceeds 1/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

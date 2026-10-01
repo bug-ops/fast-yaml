@@ -202,6 +202,7 @@ mod tests {
     use super::*;
     use crate::config::{FormatterConfig, OutputConfig, Verbosity};
     use crate::io::input::InputOrigin;
+    use fast_yaml_core::Indent;
     use std::io::Write;
 
     fn create_test_config(verbosity: Verbosity, use_color: bool, indent: u8) -> CommonConfig {
@@ -211,7 +212,9 @@ mod tests {
                     .with_verbosity(verbosity)
                     .with_color(use_color),
             )
-            .with_formatter(FormatterConfig::new().with_indent(indent))
+            .with_formatter(
+                FormatterConfig::new().with_indent(Indent::new(usize::from(indent)).unwrap()),
+            )
     }
 
     fn stdin_input(content: &str) -> InputSource {

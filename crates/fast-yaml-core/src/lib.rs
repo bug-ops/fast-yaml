@@ -1,7 +1,7 @@
 //! fast-yaml-core: Core YAML 1.2.2 parser and emitter.
 //!
 //! This crate provides the core functionality for parsing and emitting YAML documents,
-//! wrapping the saphyr library with a consistent, stable API.
+//! with a resolved [`Value`] model that does not expose the underlying parser.
 //!
 //! # YAML 1.2.2 Compliance
 //!
@@ -28,9 +28,9 @@
 //! Emitting YAML:
 //!
 //! ```
-//! use fast_yaml_core::{Emitter, Value, ScalarOwned};
+//! use fast_yaml_core::{Emitter, Value};
 //!
-//! let value = Value::Value(ScalarOwned::String("test".to_string()));
+//! let value = Value::String("test".to_string());
 //! let yaml = Emitter::emit_str(&value)?;
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
@@ -45,9 +45,10 @@ pub mod emitter;
 pub mod encoding;
 /// Error types for parsing and emitting operations.
 pub mod error;
+/// Validated, BOM-normalized parser input.
+pub mod input;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
 pub mod limits;
-mod loader;
 /// YAML 1.1 merge key (`<<`) resolution shared by the core loader and bindings.
 pub mod merge;
 mod merge_check;
@@ -55,7 +56,7 @@ mod merge_check;
 pub mod parser;
 /// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.
 pub mod scalar;
-/// Value types representing YAML data structures.
+/// Resolved value types representing YAML data structures.
 pub mod value;
 
 /// Streaming YAML formatter module.
@@ -64,19 +65,19 @@ pub mod value;
 /// without building an intermediate DOM representation.
 pub mod streaming;
 
-pub use comments::{find_comments, has_comments};
+pub use comments::{find_comments, has_comments, has_comments_normalized};
 pub use emitter::{Emitter, EmitterConfig};
-pub use encoding::{DecodeError, UnsupportedEncoding, decode_input, decode_input_owned};
-pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition};
+pub use encoding::{
+    DecodeError, EncodingEvidence, UnsupportedEncoding, decode_input, decode_input_owned,
+};
+pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition, SyntaxError};
+pub use input::NormalizedInput;
 pub use limits::{
-    DumpBudget, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
-    MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
-    StreamBudget,
+    DumpBudget, Indent, InputTooLarge, LimitGuard, LimitKind, LimitRangeError, MaxAliasBytes,
+    MaxDepth, MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
+    StreamBudget, Width,
 };
-pub use merge::{
-    MergeError, MergeKeyValidator, MergeSource, MergeTarget, NodeRole, core_set_tag,
-    is_core_set_tag, merge_into,
-};
-pub use parser::{Parser, canonicalize, reject_nul, strip_bom};
-pub use scalar::{BigInt, IntRadix, ResolvedScalar, resolve_scalar};
-pub use value::{Array, Map, OrderedFloat, ScalarOwned, Value};
+pub use merge::{MergeError, MergeKeyValidator, MergeSource, MergeTarget, NodeRole, merge_into};
+pub use parser::{Parser, strip_bom};
+pub use scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
+pub use value::{BigInt, Float, Mapping, Set, Value};

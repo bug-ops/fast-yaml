@@ -412,8 +412,8 @@ fn dump_parallel(
 
     // Create emitter config
     let emitter_config = EmitterConfig::new()
-        .with_indent(indent)
-        .with_width(width)
+        .with_indent(limits::indent(indent)?)
+        .with_width(limits::width(width)?)
         .with_default_flow_style(default_flow_style)
         .with_explicit_start(false); // We add separators manually
 
@@ -429,7 +429,11 @@ fn dump_parallel(
             let avg_size = if yaml_values.is_empty() {
                 0
             } else {
-                yaml_values.iter().map(estimate_yaml_size).sum::<usize>() / yaml_values.len()
+                yaml_values
+                    .iter()
+                    .map(crate::estimate_dump_yaml_size)
+                    .sum::<usize>()
+                    / yaml_values.len()
             };
             auto_tune_threads(yaml_values.len(), avg_size)
         } else {
@@ -479,25 +483,6 @@ fn dump_parallel(
     }
 
     check_output_size(output)
-}
-
-/// Estimate YAML output size for streaming threshold decision.
-fn estimate_yaml_size(yaml: &saphyr::YamlOwned) -> usize {
-    match yaml {
-        saphyr::YamlOwned::Value(scalar) => match scalar {
-            saphyr::ScalarOwned::Null => 4,
-            saphyr::ScalarOwned::Boolean(_) => 5,
-            saphyr::ScalarOwned::Integer(_) => 12,
-            saphyr::ScalarOwned::FloatingPoint(_) => 20,
-            saphyr::ScalarOwned::String(s) => s.len() + 2,
-        },
-        saphyr::YamlOwned::Sequence(arr) => arr.iter().map(|v| 3 + estimate_yaml_size(v)).sum(),
-        saphyr::YamlOwned::Mapping(map) => map
-            .iter()
-            .map(|(k, v)| 10 + estimate_yaml_size(k) + estimate_yaml_size(v))
-            .sum(),
-        _ => 10,
-    }
 }
 
 /// Register the parallel submodule.

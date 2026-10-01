@@ -60,7 +60,7 @@ fy parse --stats large.yaml
 # Format to stdout
 fy format messy.yaml
 
-# Custom indentation (2-8 spaces)
+# Custom indentation (1-9 spaces)
 fy format --indent 4 --width 100 config.yaml
 
 # Format in-place
@@ -152,7 +152,8 @@ fy lint --format json config.yaml
 `fy parse`, `fy convert` and `fy lint` accept `--max-depth` (1 to 512, default 256) and
 `--max-alias-bytes` (1 to 1GiB, default 64MiB; suffixes `KiB`, `MiB`, `GiB`). Out-of-range values
 are rejected. The alias budget is per file, so batch runs can use up to workers x `--max-alias-bytes` of
-memory. For `fy convert`, the flags apply to YAML input only.
+memory. For `fy convert`, the flags apply to YAML input only. `fy format` accepts `--max-depth`
+only (formatting never expands aliases); `--indent` is 1 to 9 and `--width` 20 to 1000.
 
 ```bash
 # Allow a large alias expansion

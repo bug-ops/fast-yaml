@@ -267,3 +267,21 @@ def test_aliased_set_keeps_merge_element():
     doc = "a: &a !!set {k, <<}\nb: *a\n"
     assert fast_yaml.safe_load(doc)["b"] == {"k", "<<"}
     assert set(parallel.parse_parallel(doc)[0]["b"]) == {"k", "<<"}
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["!!merge <<", "!!merge '<<'", "!!merge merge", "!<tag:yaml.org,2002:merge> <<"],
+)
+def test_merge_tag_makes_any_scalar_a_merge_key(key):
+    doc = BASE + f"m:\n  {key}: *b\n  k: 0\n"
+    expected = {"x": 1, "y": 2, "k": 0}
+    assert fast_yaml.safe_load(doc)["m"] == expected
+    assert parallel.parse_parallel(doc)[0]["m"] == expected
+
+
+def test_merge_tag_keys_are_validated_and_sets_keep_them_ordinary():
+    with pytest.raises(ValueError, match="merge key"):
+        fast_yaml.safe_load("m:\n  !!merge <<: 1\n")
+    assert fast_yaml.safe_load("s: !!set {!!merge <<, k}\n")["s"] == {"<<", "k"}
+    assert fast_yaml.safe_load("s: !<tag:yaml.org,2002:set> {<<, k}\n")["s"] == {"<<", "k"}

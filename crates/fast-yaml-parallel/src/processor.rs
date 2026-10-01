@@ -6,7 +6,7 @@ use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use fast_yaml_core::limits::StreamBudget;
-use fast_yaml_core::{Parser, ScalarOwned, Value};
+use fast_yaml_core::{NormalizedInput, Parser, Value};
 use rayon::prelude::*;
 
 /// Rejects a document count above the configured maximum.
@@ -31,14 +31,15 @@ const fn check_document_count(count: usize, config: &Config) -> Result<()> {
 pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value>> {
     config.max_input_bytes().check(input.len())?;
 
-    let chunks = chunk_documents(
-        fast_yaml_core::strip_bom(input),
-        Some(config.max_documents()),
-    )?;
+    let normalized = NormalizedInput::new(input).map_err(|source| Error::Parse {
+        index: source.document_index(),
+        source,
+    })?;
+    let chunks = chunk_documents(&normalized, Some(config.max_documents()))?;
 
     // A BOM-only stream is one null document, like `Parser::parse_all`.
-    if chunks.is_empty() && !input.is_empty() {
-        return Ok(vec![Value::Value(ScalarOwned::Null)]);
+    if chunks.is_empty() && normalized.original_len() > 0 {
+        return Ok(vec![Value::Null]);
     }
 
     let docs = parse_chunks(&chunks, config)?;
@@ -83,7 +84,7 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
 
     // With global thread pool (no creation overhead), parallelism is beneficial
     // even for smaller workloads as long as we have multiple documents
-    let total_bytes: usize = chunks.iter().map(|c| c.content.len()).sum();
+    let total_bytes: usize = chunks.iter().map(|c| c.input.as_str().len()).sum();
 
     // Use sequential only if both small total size AND few documents
     total_bytes < config.sequential_threshold() && chunks.len() < 4
@@ -102,8 +103,8 @@ fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<V
 ///
 /// Error marks are relocated to whole-input coordinates.
 fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> Result<Vec<Value>> {
-    Parser::parse_chunk_with_budget(chunk.content, budget).map_err(|source| {
-        let source = source.relocated(chunk.origin.line, chunk.origin.char_index, chunk.index);
+    Parser::parse_normalized(&chunk.input, budget).map_err(|source| {
+        let source = source.relocated(chunk.origin.line, chunk.index);
         Error::Parse {
             index: source.document_index(),
             source,
@@ -236,7 +237,12 @@ mod tests {
         let parallel = || Config::new().with_sequential_threshold(0);
 
         let nested = "a: 1\n---\n[[[1]]]\n---\nb: 2\n";
-        assert!(chunk_documents(nested, None).unwrap().len() >= 3);
+        assert!(
+            chunk_documents(&NormalizedInput::new(nested).unwrap(), None)
+                .unwrap()
+                .len()
+                >= 3
+        );
         let depth = parallel().with_parse_limits(ParseLimits {
             max_depth: MaxDepth::new(2).unwrap(),
             ..ParseLimits::default()
@@ -254,7 +260,12 @@ mod tests {
         assert!(process_parallel(nested, &parallel()).is_ok());
 
         let aliased = "a: &x [1, 2, 3]\nb: *x\n---\nc: &y [1, 2, 3]\nd: *y\n";
-        assert!(chunk_documents(aliased, None).unwrap().len() >= 2);
+        assert!(
+            chunk_documents(&NormalizedInput::new(aliased).unwrap(), None)
+                .unwrap()
+                .len()
+                >= 2
+        );
         let alias = parallel().with_parse_limits(ParseLimits {
             max_alias_bytes: MaxAliasBytes::new(300).unwrap(),
             ..ParseLimits::default()
@@ -281,7 +292,8 @@ mod tests {
             "a".repeat(4_000)
         );
         let stream = doc.repeat(CHUNKS);
-        let chunks = chunk_documents(&stream, None).unwrap();
+        let whole = NormalizedInput::new(&stream).unwrap();
+        let chunks = chunk_documents(&whole, None).unwrap();
         assert!(chunks.len() >= CHUNKS);
         let fresh = || {
             StreamBudget::new(ParseLimits {
@@ -331,7 +343,7 @@ mod tests {
     fn test_should_use_sequential_single_doc() {
         let chunks = vec![Chunk {
             index: 0,
-            content: "foo: 1",
+            input: NormalizedInput::new("foo: 1").unwrap(),
             origin: SourceOrigin::default(),
         }];
         let config = Config::default();
@@ -344,12 +356,12 @@ mod tests {
         let chunks = vec![
             Chunk {
                 index: 0,
-                content: "a: 1",
+                input: NormalizedInput::new("a: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
-                content: "b: 2",
+                input: NormalizedInput::new("b: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
         ];
@@ -363,12 +375,12 @@ mod tests {
         let chunks = vec![
             Chunk {
                 index: 0,
-                content: "foo: 1",
+                input: NormalizedInput::new("foo: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
-                content: "bar: 2",
+                input: NormalizedInput::new("bar: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
         ];
@@ -384,12 +396,12 @@ mod tests {
         let chunks = vec![
             Chunk {
                 index: 0,
-                content: &large_content,
+                input: NormalizedInput::new(&large_content).unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
-                content: &large_content,
+                input: NormalizedInput::new(&large_content).unwrap(),
                 origin: SourceOrigin::default(),
             },
         ];
@@ -403,12 +415,12 @@ mod tests {
         let chunks = vec![
             Chunk {
                 index: 0,
-                content: "---\nvalid: true",
+                input: NormalizedInput::new("---\nvalid: true").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
-                content: "---\ninvalid: [",
+                input: NormalizedInput::new("---\ninvalid: [").unwrap(),
                 origin: SourceOrigin::default(),
             },
         ];
@@ -442,17 +454,17 @@ mod tests {
         let chunks = vec![
             Chunk {
                 index: 0,
-                content: "---\nfirst: 0",
+                input: NormalizedInput::new("---\nfirst: 0").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
-                content: "---\nsecond: 1",
+                input: NormalizedInput::new("---\nsecond: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 2,
-                content: "---\nthird: 2",
+                input: NormalizedInput::new("---\nthird: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
         ];
@@ -466,17 +478,17 @@ mod tests {
         let chunks = vec![
             Chunk {
                 index: 0,
-                content: "---\nvalid: 1",
+                input: NormalizedInput::new("---\nvalid: 1").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 1,
-                content: "---\ninvalid: [",
+                input: NormalizedInput::new("---\ninvalid: [").unwrap(),
                 origin: SourceOrigin::default(),
             },
             Chunk {
                 index: 2,
-                content: "---\nvalid: 2",
+                input: NormalizedInput::new("---\nvalid: 2").unwrap(),
                 origin: SourceOrigin::default(),
             },
         ];
@@ -507,7 +519,7 @@ mod tests {
 
         let result = process_parallel(yaml, &config);
         // Non-empty whitespace-only input is one null document, like `Parser::parse_all`
-        assert_eq!(result.unwrap(), vec![Value::Value(ScalarOwned::Null)]);
+        assert_eq!(result.unwrap(), vec![Value::Null]);
     }
 
     #[test]
@@ -690,7 +702,6 @@ mod tests {
             "a: 1\r---\rb: 2\r---\rc: [\r",
             "---\nключ: 1\n---\nb: [\n",
             "a: 1\n...\n\u{FEFF}x: [\n",
-            "日本\n...\n\u{FEFF}\n: v\n",
         ] {
             let expected = Parser::parse_all(input).unwrap_err().to_string();
             let Err(Error::Parse { source, .. }) = process_parallel(input, &sequential()) else {

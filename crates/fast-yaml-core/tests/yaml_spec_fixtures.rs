@@ -9,7 +9,7 @@
 //! - Edge cases: Empty documents, special characters, deep nesting
 //! - Multi-document tests: Files with multiple YAML documents
 
-use fast_yaml_core::{Emitter, Map, Parser, ScalarOwned, Value};
+use fast_yaml_core::{Emitter, Mapping, Parser, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -336,13 +336,13 @@ fn test_core_schema_types() {
     );
 }
 
-fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
+fn verify_boolean_types(map: &Mapping, name: &str, failures: &mut Vec<String>) {
     // NOTE: saphyr only recognizes lowercase "true"/"false" as booleans per YAML 1.2.2 Core Schema
     // Title case and uppercase variants are treated as strings (which is correct)
     for key in &["bool_true_lower", "bool_false_lower"] {
-        let key_value = Value::Value(ScalarOwned::String((*key).to_string()));
+        let key_value = Value::String((*key).to_string());
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::Boolean(_)))
+            && !matches!(value, Value::Bool(_))
         {
             failures.push(format!(
                 "  {name} - Key '{key}' should be Boolean, got {value:?}"
@@ -357,9 +357,9 @@ fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         ("bool_true_upper", true),
         ("bool_false_upper", false),
     ] {
-        let key_value = Value::Value(ScalarOwned::String((*key).to_string()));
+        let key_value = Value::String((*key).to_string());
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::Boolean(b)) if b == expected_bool)
+            && !matches!(value, Value::Bool(b) if b == expected_bool)
         {
             failures.push(format!(
                 "  {name} - Key '{key}' should be Boolean({expected_bool}), got {value:?}"
@@ -376,9 +376,9 @@ fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         "yaml11_y",
         "yaml11_n",
     ] {
-        let key_value = Value::Value(ScalarOwned::String((*key).to_string()));
+        let key_value = Value::String((*key).to_string());
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::String(_)))
+            && !matches!(value, Value::String(_))
         {
             failures.push(format!(
                 "  {name} - Key '{key}' should be String in YAML 1.2.2, got {value:?}"
@@ -387,7 +387,7 @@ fn verify_boolean_types(map: &Map, name: &str, failures: &mut Vec<String>) {
     }
 }
 
-fn verify_null_types(map: &Map, name: &str, failures: &mut Vec<String>) {
+fn verify_null_types(map: &Mapping, name: &str, failures: &mut Vec<String>) {
     // NOTE: saphyr's null handling:
     // - Lowercase "null", "~", empty → null (per YAML 1.2.2 Core Schema)
     // - Uppercase "NULL" → null (YAML 1.1 compatibility)
@@ -399,9 +399,9 @@ fn verify_null_types(map: &Map, name: &str, failures: &mut Vec<String>) {
         "null_explicit",
         "null_word_upper", // saphyr accepts "NULL" as null
     ] {
-        let key_value = Value::Value(ScalarOwned::String((*key).to_string()));
+        let key_value = Value::String((*key).to_string());
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::Null))
+            && !matches!(value, Value::Null)
         {
             failures.push(format!(
                 "  {name} - Key '{key}' should be Null (saphyr behavior), got {value:?}"
@@ -412,9 +412,9 @@ fn verify_null_types(map: &Map, name: &str, failures: &mut Vec<String>) {
     // Title case "Null" is canonicalized to Null per YAML 1.2.2 Core Schema
     {
         let key = "null_word_title";
-        let key_value = Value::Value(ScalarOwned::String(key.to_string()));
+        let key_value = Value::String(key.to_string());
         if let Some(value) = map.get(&key_value)
-            && !matches!(value, Value::Value(ScalarOwned::Null))
+            && !matches!(value, Value::Null)
         {
             failures.push(format!(
                 "  {name} - Key '{key}' should be Null (YAML 1.2.2 Core Schema), got {value:?}"
@@ -423,21 +423,17 @@ fn verify_null_types(map: &Map, name: &str, failures: &mut Vec<String>) {
     }
 }
 
-fn verify_integer_types(map: &Map, name: &str, failures: &mut Vec<String>) {
+fn verify_integer_types(map: &Mapping, name: &str, failures: &mut Vec<String>) {
     // Check for presence of integer values (actual validation depends on file content)
-    let has_integers = map
-        .values()
-        .any(|v| matches!(v, Value::Value(ScalarOwned::Integer(_))));
+    let has_integers = map.values().any(|v| matches!(v, Value::Int(_)));
     if !has_integers {
         failures.push(format!("  {name} - Expected integer values, none found"));
     }
 }
 
-fn verify_float_types(map: &Map, name: &str, failures: &mut Vec<String>) {
+fn verify_float_types(map: &Mapping, name: &str, failures: &mut Vec<String>) {
     // Check for presence of float values (actual validation depends on file content)
-    let has_floats = map
-        .values()
-        .any(|v| matches!(v, Value::Value(ScalarOwned::FloatingPoint(_))));
+    let has_floats = map.values().any(|v| matches!(v, Value::Float(_)));
     if !has_floats {
         failures.push(format!("  {name} - Expected float values, none found"));
     }
@@ -818,16 +814,11 @@ fn test_all_fixtures_parse_without_panic() {
 /// and ignores formatting differences.
 fn values_semantically_equal(a: &Value, b: &Value) -> bool {
     match (a, b) {
-        (Value::Value(ScalarOwned::Null), Value::Value(ScalarOwned::Null)) => true,
-        (Value::Value(ScalarOwned::Boolean(a)), Value::Value(ScalarOwned::Boolean(b))) => a == b,
-        (Value::Value(ScalarOwned::Integer(a)), Value::Value(ScalarOwned::Integer(b))) => a == b,
-        (
-            Value::Value(ScalarOwned::FloatingPoint(a)),
-            Value::Value(ScalarOwned::FloatingPoint(b)),
-        ) => {
-            // FloatingPoint uses OrderedFloat wrapper
-            let af: f64 = (*a).into();
-            let bf: f64 = (*b).into();
+        (Value::Null, Value::Null) => true,
+        (Value::Bool(a), Value::Bool(b)) => a == b,
+        (Value::Int(a), Value::Int(b)) => a == b,
+        (Value::Float(a), Value::Float(b)) => {
+            let (af, bf) = (a.get(), b.get());
 
             // Handle NaN, Infinity, and normal floats
             if af.is_nan() && bf.is_nan() {
@@ -839,7 +830,7 @@ fn values_semantically_equal(a: &Value, b: &Value) -> bool {
                 (af - bf).abs() < f64::EPSILON * 10.0
             }
         }
-        (Value::Value(ScalarOwned::String(a)), Value::Value(ScalarOwned::String(b))) => a == b,
+        (Value::String(a), Value::String(b)) => a == b,
         (Value::Sequence(a), Value::Sequence(b)) => {
             if a.len() != b.len() {
                 return false;
@@ -855,7 +846,7 @@ fn values_semantically_equal(a: &Value, b: &Value) -> bool {
             a.iter()
                 .all(|(k, v)| b.get(k).is_some_and(|v2| values_semantically_equal(v, v2)))
         }
-        (Value::Tagged(ta, a), Value::Tagged(tb, b)) => ta == tb && values_semantically_equal(a, b),
+        (Value::Set(a), Value::Set(b)) => a == b,
         _ => false,
     }
 }

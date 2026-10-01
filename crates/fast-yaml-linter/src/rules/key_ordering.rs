@@ -122,11 +122,11 @@ fn check_value(
             let mut key_positions: Vec<(String, usize)> = Vec::new();
 
             for (key_value, nested_value) in hash {
-                let Some(key) = key_value.as_str() else {
+                let Value::String(key) = key_value else {
                     continue;
                 };
                 if let Some(line_num) = index.locate(key, cursor) {
-                    key_positions.push((key.to_string(), line_num));
+                    key_positions.push((key.clone(), line_num));
                 }
                 // Recurse into the value immediately after finding its key so
                 // the cursor is positioned correctly for nested keys before the
@@ -166,16 +166,19 @@ fn check_value(
                 );
             }
         }
-        Value::Tagged(_, inner) => check_value(
-            inner,
-            context,
-            index,
-            source,
-            case_sensitive,
-            config,
-            diagnostics,
-            cursor,
-        ),
+        Value::Set(set) => {
+            let members = set.iter().map(|m| (m.clone(), Value::Null)).collect();
+            check_value(
+                &Value::Mapping(members),
+                context,
+                index,
+                source,
+                case_sensitive,
+                config,
+                diagnostics,
+                cursor,
+            );
+        }
         _ => {}
     }
 }

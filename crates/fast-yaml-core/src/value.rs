@@ -1,66 +1,792 @@
-use crate::scalar::{ResolvedScalar, resolve_scalar};
-pub use saphyr::MappingOwned as Map;
-pub use saphyr::ScalarOwned;
-/// Wrapper around saphyr's `YamlOwned` type for consistent API.
-///
-/// This re-exports the saphyr types to provide a stable API
-/// that can be extended in the future without breaking changes.
-/// We use `YamlOwned` instead of `Yaml` to avoid lifetime parameters.
-pub use saphyr::YamlOwned as Value;
+//! Resolved YAML data model produced by the parser and consumed by the emitter.
+//!
+//! [`Value`] holds only resolved data: scalars are typed under the YAML 1.2 core schema, tags and
+//! anchors are consumed while loading, and merge keys are already applied. No parser or emitter
+//! type appears in this API.
 
-/// Re-export `OrderedFloat` for users working with YAML float values.
-///
-/// This is used internally by saphyr for float comparison in mappings.
-pub use ordered_float::OrderedFloat;
+use std::borrow::Cow;
+use std::fmt;
+use std::hash::{Hash, Hasher};
 
-/// Type alias for YAML arrays.
-pub type Array = Vec<Value>;
+use indexmap::{IndexMap, IndexSet};
 
-/// Returns the text of a scalar used as a mapping key in string-keyed formats (JSON, JS objects).
+use crate::scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
+use saphyr_parser::ScalarStyle;
+
+/// A resolved YAML node.
 ///
-/// Null, booleans, integers and floats use their canonical text; a `Representation` uses its
-/// stored text, except that an integer beyond `i64` uses its canonical decimal form.
-/// Returns `None` for collections, aliases and other non-scalar nodes.
+/// The enum is exhaustive on purpose: adding a variant must break every consumer at compile time.
+/// `Value` is [`Eq`] and [`Hash`] so it can key a [`Mapping`]; floats compare by normalized value
+/// (see [`Float`]).
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::{Parser, Value, value::scalar_key_text};
+/// use fast_yaml_core::{Parser, Value};
 ///
-/// let Some(Value::Mapping(map)) = Parser::parse_str("+0x8000000000000000: x").unwrap() else {
-///     unreachable!()
-/// };
-/// let key = map.keys().next().unwrap();
-/// assert_eq!(scalar_key_text(key).as_deref(), Some("9223372036854775808"));
+/// let doc = Parser::parse_str("n: 1\nok: true")?.unwrap();
+/// let Value::Mapping(map) = doc else { unreachable!() };
+/// assert_eq!(map.get(&Value::String("n".into())), Some(&Value::Int(1)));
+/// assert_eq!(map.get(&Value::String("ok".into())), Some(&Value::Bool(true)));
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Value {
+    /// Null (`~`, `null`, or an empty node).
+    Null,
+    /// Boolean.
+    Bool(bool),
+    /// Integer that fits in `i64`.
+    Int(i64),
+    /// Integer outside `i64`.
+    BigInt(BigInt),
+    /// Floating-point number, including `.inf` and `.nan`.
+    Float(Float),
+    /// String.
+    String(String),
+    /// Ordered list of nodes.
+    Sequence(Vec<Self>),
+    /// Insertion-ordered key/value pairs.
+    Mapping(Mapping),
+    /// Insertion-ordered unique members of a `!!set`.
+    Set(Set),
+}
+
+impl Value {
+    /// Returns the text of a scalar used as a mapping key in string-keyed formats (JSON, JS objects).
+    ///
+    /// Null, booleans, integers and floats use their canonical text (floats as `f64` `Display`,
+    /// so `1` and `1.0` share a key); a big integer uses its canonical decimal form.
+    /// Returns `None` for sequences and mappings.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Parser, Value};
+    ///
+    /// let Some(Value::Mapping(map)) = Parser::parse_str("+0x8000000000000000: x")? else {
+    ///     unreachable!()
+    /// };
+    /// let key = map.keys().next().unwrap();
+    /// assert_eq!(key.key_text().as_deref(), Some("9223372036854775808"));
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn key_text(&self) -> Option<Cow<'_, str>> {
+        Some(match self {
+            Self::Null => Cow::Borrowed("null"),
+            Self::Bool(b) => Cow::Borrowed(if *b { "true" } else { "false" }),
+            Self::Int(i) => Cow::Owned(i.to_string()),
+            Self::BigInt(big) => Cow::Borrowed(big.canonical()),
+            Self::Float(f) => Cow::Owned(f.get().to_string()),
+            Self::String(s) => Cow::Borrowed(s),
+            Self::Sequence(_) | Self::Mapping(_) | Self::Set(_) => return None,
+        })
+    }
+}
+
+/// Longest key prefix, in characters, that [`quote_key`] shows.
+const MAX_SHOWN_KEY_CHARS: usize = 64;
+
+/// Renders a mapping key for an error message: escaped like a Rust string and cut after 64
+/// characters, so control characters and huge keys cannot reach a terminal or flood a log.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::value::quote_key;
+///
+/// assert_eq!(quote_key("a\u{1b}b"), r#""a\u{1b}b""#);
+/// assert_eq!(quote_key(&"k".repeat(100)), format!("\"{}...\"", "k".repeat(64)));
 /// ```
 #[must_use]
-pub fn scalar_key_text(key: &Value) -> Option<String> {
-    match key {
-        Value::Value(scalar) => Some(match scalar {
-            ScalarOwned::Null => "null".to_string(),
-            ScalarOwned::Boolean(b) => b.to_string(),
-            ScalarOwned::Integer(i) => i.to_string(),
-            ScalarOwned::FloatingPoint(f) => f.to_string(),
-            ScalarOwned::String(s) => s.clone(),
-        }),
-        Value::Representation(s, style, tag) => {
-            Some(match resolve_scalar(s, *style, tag.as_ref()) {
-                ResolvedScalar::BigInt(big) => big.canonical().into_owned(),
-                _ => s.clone(),
-            })
+pub fn quote_key(text: &str) -> String {
+    let mut chars = text.chars();
+    let head: String = chars.by_ref().take(MAX_SHOWN_KEY_CHARS).collect();
+    let mut quoted = format!("{head:?}");
+    if chars.next().is_some() {
+        quoted.insert_str(quoted.len() - 1, "...");
+    }
+    quoted
+}
+
+impl From<ResolvedScalar<'_>> for Value {
+    fn from(resolved: ResolvedScalar<'_>) -> Self {
+        match resolved {
+            ResolvedScalar::Null => Self::Null,
+            ResolvedScalar::Bool(b) => Self::Bool(b),
+            ResolvedScalar::Int(i) => Self::Int(i),
+            ResolvedScalar::BigInt(big) => Self::BigInt(big.into()),
+            ResolvedScalar::Float(f) => Self::Float(f.into()),
+            ResolvedScalar::Str(s) => Self::String(s.to_owned()),
         }
-        _ => None,
+    }
+}
+
+/// A YAML float, optionally remembering the text it was written as.
+///
+/// Equality and hashing use the normalized value only: every NaN is equal to every other NaN and
+/// `-0.0 == 0.0`. The remembered text is carried so a float read from JSON keeps its spelling
+/// (`1.0E5`, `0.1000000000000000055`) when emitted as YAML; the YAML loader never sets it. As a
+/// result `a == b` does not imply that `a` and `b` emit identically. There is deliberately no
+/// `Ord`, because NaN has no place in a total order.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::Float;
+///
+/// let plain = Float::from(100_000.0);
+/// let spelled = Float::parse("1.0E5").unwrap();
+/// assert_eq!(plain, spelled);
+/// assert_eq!(plain.to_string(), "100000.0");
+/// assert_eq!(spelled.to_string(), "1.0E5");
+/// assert_eq!(Float::from(f64::NAN), Float::from(-f64::NAN));
+/// ```
+#[derive(Debug, Clone)]
+pub struct Float {
+    value: f64,
+    text: Option<Box<str>>,
+}
+
+impl Float {
+    /// Creates a float without a remembered spelling.
+    #[must_use]
+    pub const fn new(value: f64) -> Self {
+        Self { value, text: None }
+    }
+
+    /// Parses `text` as a YAML core-schema float and remembers its spelling.
+    ///
+    /// Returns `None` when `text` does not resolve to a float (for example an integer or a
+    /// string), so the remembered text is always valid plain YAML that reads back as this value.
+    /// The spelling is dropped when it equals the default formatting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Float;
+    ///
+    /// assert_eq!(Float::parse("2.50").unwrap().to_string(), "2.50");
+    /// assert_eq!(Float::parse("2.5").unwrap().to_string(), "2.5");
+    /// assert!(Float::parse("12").is_none());
+    /// assert!(Float::parse("1.5x").is_none());
+    /// ```
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let ResolvedScalar::Float(value) = resolve_scalar(text, ScalarStyle::Plain, None) else {
+            return None;
+        };
+        let default = Self::new(value);
+        Some(if default.to_string() == text {
+            default
+        } else {
+            Self {
+                value,
+                text: Some(text.into()),
+            }
+        })
+    }
+
+    /// Returns the numeric value.
+    #[must_use]
+    pub const fn get(&self) -> f64 {
+        self.value
+    }
+
+    fn normalized_bits(&self) -> u64 {
+        if self.value.is_nan() {
+            f64::NAN.to_bits()
+        } else if self.value == 0.0 {
+            0.0f64.to_bits()
+        } else {
+            self.value.to_bits()
+        }
+    }
+}
+
+impl From<f64> for Float {
+    fn from(value: f64) -> Self {
+        Self::new(value)
+    }
+}
+
+impl PartialEq for Float {
+    fn eq(&self, other: &Self) -> bool {
+        self.normalized_bits() == other.normalized_bits()
+    }
+}
+
+impl Eq for Float {}
+
+impl Hash for Float {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.normalized_bits().hash(state);
+    }
+}
+
+impl fmt::Display for Float {
+    /// Writes the remembered spelling, or YAML core-schema text (`.inf`, `-.inf`, `.nan`,
+    /// otherwise the shortest round-trip form that always reads as a float).
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if let Some(text) = &self.text {
+            return f.write_str(text);
+        }
+        match self.value {
+            v if v.is_nan() => f.write_str(".nan"),
+            v if v == f64::INFINITY => f.write_str(".inf"),
+            v if v == f64::NEG_INFINITY => f.write_str("-.inf"),
+            v => write!(f, "{v:?}"),
+        }
+    }
+}
+
+/// Source spelling of a hexadecimal or octal integer.
+#[derive(Debug, Clone)]
+struct RadixSpelling {
+    radix: IntRadix,
+    text: Box<str>,
+}
+
+/// An integer outside the `i64` range.
+///
+/// Equality and hashing use the canonical decimal text only, so `0xFF…FF`, `0xff…ff` and the
+/// decimal spelling of one number are the same mapping key. The hex or octal source spelling is
+/// kept for arbitrary-precision parsers such as Python's `int(text, base)`.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{BigInt, IntRadix};
+///
+/// let hex = BigInt::parse("0xFFFFFFFFFFFFFFFFFF").unwrap();
+/// let decimal = BigInt::parse("4722366482869645213695").unwrap();
+/// assert_eq!(hex, decimal);
+/// assert_eq!(hex.canonical(), "4722366482869645213695");
+/// assert_eq!(hex.radix(), IntRadix::Hex);
+/// assert_eq!(hex.radix_text(), Some("0xFFFFFFFFFFFFFFFFFF"));
+/// assert_eq!(decimal.radix_text(), None);
+/// assert!(BigInt::parse("42").is_none());
+/// ```
+#[derive(Debug, Clone)]
+pub struct BigInt {
+    canonical: Box<str>,
+    radix_digits: Option<Box<RadixSpelling>>,
+}
+
+impl BigInt {
+    /// Parses `text` as a core-schema integer that does not fit `i64`.
+    ///
+    /// Returns `None` for any other text, including integers that fit `i64` and radix literals
+    /// beyond the supported size.
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        match resolve_scalar(text, ScalarStyle::Plain, None) {
+            ResolvedScalar::BigInt(big) => Some(big.into()),
+            _ => None,
+        }
+    }
+
+    /// Returns the value as signed decimal text without `+`, leading zeros or radix prefix.
+    #[must_use]
+    pub fn canonical(&self) -> &str {
+        &self.canonical
+    }
+
+    /// Returns the numeral system the integer was written in.
+    #[must_use]
+    pub fn radix(&self) -> IntRadix {
+        self.radix_digits
+            .as_ref()
+            .map_or(IntRadix::Decimal, |spelling| spelling.radix)
+    }
+
+    /// Returns the hex or octal source text including sign and prefix, `None` for decimal.
+    ///
+    /// Pair it with [`radix`](Self::radix) for `int(text, base)`-style parsers.
+    #[must_use]
+    pub fn radix_text(&self) -> Option<&str> {
+        self.radix_digits.as_ref().map(|spelling| &*spelling.text)
+    }
+}
+
+impl From<BigIntRef<'_>> for BigInt {
+    fn from(big: BigIntRef<'_>) -> Self {
+        let radix = big.radix();
+        Self {
+            canonical: big.canonical().into_owned().into_boxed_str(),
+            radix_digits: match radix {
+                IntRadix::Decimal => None,
+                IntRadix::Hex | IntRadix::Octal => Some(Box::new(RadixSpelling {
+                    radix,
+                    text: big.as_str().into(),
+                })),
+            },
+        }
+    }
+}
+
+impl PartialEq for BigInt {
+    fn eq(&self, other: &Self) -> bool {
+        self.canonical == other.canonical
+    }
+}
+
+impl Eq for BigInt {}
+
+impl Hash for BigInt {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.canonical.hash(state);
+    }
+}
+
+/// Insertion-ordered YAML mapping.
+///
+/// Inserting an equal key keeps the original key and its position and replaces the value, so a
+/// duplicate key in a document takes the last value in the first key's place. Equality and hashing
+/// are order-sensitive; [`get`](Self::get) is not.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{Mapping, Value};
+///
+/// let key = |s: &str| Value::String(s.into());
+/// let mut map = Mapping::new();
+/// map.insert(key("b"), Value::Int(1));
+/// map.insert(key("a"), Value::Int(2));
+/// map.insert(key("b"), Value::Int(3));
+///
+/// let entries: Vec<_> = map.iter().collect();
+/// assert_eq!(entries, [(&key("b"), &Value::Int(3)), (&key("a"), &Value::Int(2))]);
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Mapping(Box<IndexMap<Value, Value>>);
+
+impl Mapping {
+    /// Creates an empty mapping.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates an empty mapping with room for `capacity` entries.
+    #[must_use]
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self(Box::new(IndexMap::with_capacity(capacity)))
+    }
+
+    /// Returns the number of entries.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` when the mapping has no entries.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the value stored under `key`.
+    #[must_use]
+    pub fn get(&self, key: &Value) -> Option<&Value> {
+        self.0.get(key)
+    }
+
+    /// Returns `true` when `key` is present.
+    #[must_use]
+    pub fn contains_key(&self, key: &Value) -> bool {
+        self.0.contains_key(key)
+    }
+
+    /// Stores `value` under `key` and returns the value it replaced.
+    ///
+    /// An equal key that is already present keeps its position and its original spelling.
+    pub fn insert(&mut self, key: Value, value: Value) -> Option<Value> {
+        self.0.insert(key, value)
+    }
+
+    /// Iterates over the entries in insertion order.
+    pub fn iter(&self) -> Iter<'_> {
+        Iter(self.0.iter())
+    }
+
+    /// Iterates over the keys in insertion order.
+    pub fn keys(&self) -> impl ExactSizeIterator<Item = &Value> {
+        self.0.keys()
+    }
+
+    /// Iterates over the values in insertion order.
+    pub fn values(&self) -> impl ExactSizeIterator<Item = &Value> {
+        self.0.values()
+    }
+}
+
+impl PartialEq for Mapping {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for Mapping {}
+
+impl Hash for Mapping {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_usize(self.len());
+        for (key, value) in self {
+            key.hash(state);
+            value.hash(state);
+        }
+    }
+}
+
+impl std::ops::Index<&Value> for Mapping {
+    type Output = Value;
+
+    /// Returns the value stored under `key`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `key` is absent; use [`Mapping::get`] for a fallible lookup.
+    fn index(&self, key: &Value) -> &Value {
+        self.get(key).expect("key not found in mapping")
+    }
+}
+
+impl FromIterator<(Value, Value)> for Mapping {
+    fn from_iter<I: IntoIterator<Item = (Value, Value)>>(iter: I) -> Self {
+        let iter = iter.into_iter();
+        let mut map = Self::with_capacity(iter.size_hint().0);
+        for (key, value) in iter {
+            map.insert(key, value);
+        }
+        map
+    }
+}
+
+/// Insertion-ordered unique members of a YAML `!!set`.
+///
+/// A parsed `!!set` holds its keys only; the null values YAML writes for them are implied. Equal
+/// members collapse to the first one. Equality and hashing are order-sensitive, like
+/// [`Mapping`]'s.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::{Parser, Set, Value};
+///
+/// let Some(Value::Set(set)) = Parser::parse_str("!!set {b, a, b}")? else { unreachable!() };
+/// let members: Vec<_> = set.iter().collect();
+/// assert_eq!(members, [&Value::String("b".into()), &Value::String("a".into())]);
+/// assert!(set.contains(&Value::String("a".into())));
+/// assert_eq!(Set::new().len(), 0);
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Set(Box<IndexSet<Value>>);
+
+impl Set {
+    /// Creates an empty set.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Returns the number of members.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns `true` when the set has no members.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns `true` when `member` is present.
+    #[must_use]
+    pub fn contains(&self, member: &Value) -> bool {
+        self.0.contains(member)
+    }
+
+    /// Adds `member`; returns `false` and keeps the existing member when an equal one is present.
+    pub fn insert(&mut self, member: Value) -> bool {
+        self.0.insert(member)
+    }
+
+    /// Iterates over the members in insertion order.
+    pub fn iter(&self) -> SetIter<'_> {
+        SetIter(self.0.iter())
+    }
+}
+
+impl PartialEq for Set {
+    fn eq(&self, other: &Self) -> bool {
+        self.len() == other.len() && self.iter().eq(other.iter())
+    }
+}
+
+impl Eq for Set {}
+
+impl Hash for Set {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_usize(self.len());
+        for member in self {
+            member.hash(state);
+        }
+    }
+}
+
+impl FromIterator<Value> for Set {
+    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
+        let mut set = Self::new();
+        for member in iter {
+            set.insert(member);
+        }
+        set
+    }
+}
+
+/// Borrowing iterator over the members of a [`Set`].
+#[derive(Debug, Clone)]
+pub struct SetIter<'a>(indexmap::set::Iter<'a, Value>);
+
+impl<'a> Iterator for SetIter<'a> {
+    type Item = &'a Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for SetIter<'_> {}
+
+/// Owning iterator over the members of a [`Set`].
+#[derive(Debug)]
+pub struct SetIntoIter(indexmap::set::IntoIter<Value>);
+
+impl Iterator for SetIntoIter {
+    type Item = Value;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for SetIntoIter {}
+
+impl<'a> IntoIterator for &'a Set {
+    type Item = &'a Value;
+    type IntoIter = SetIter<'a>;
+
+    fn into_iter(self) -> SetIter<'a> {
+        self.iter()
+    }
+}
+
+impl IntoIterator for Set {
+    type Item = Value;
+    type IntoIter = SetIntoIter;
+
+    fn into_iter(self) -> SetIntoIter {
+        SetIntoIter(IndexSet::into_iter(*self.0))
+    }
+}
+
+/// Borrowing iterator over the entries of a [`Mapping`].
+#[derive(Debug, Clone)]
+pub struct Iter<'a>(indexmap::map::Iter<'a, Value, Value>);
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = (&'a Value, &'a Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for Iter<'_> {}
+
+/// Owning iterator over the entries of a [`Mapping`].
+#[derive(Debug)]
+pub struct IntoIter(indexmap::map::IntoIter<Value, Value>);
+
+impl Iterator for IntoIter {
+    type Item = (Value, Value);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+}
+
+impl ExactSizeIterator for IntoIter {}
+
+impl<'a> IntoIterator for &'a Mapping {
+    type Item = (&'a Value, &'a Value);
+    type IntoIter = Iter<'a>;
+
+    fn into_iter(self) -> Iter<'a> {
+        self.iter()
+    }
+}
+
+impl IntoIterator for Mapping {
+    type Item = (Value, Value);
+    type IntoIter = IntoIter;
+
+    fn into_iter(self) -> IntoIter {
+        IntoIter(IndexMap::into_iter(*self.0))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use saphyr::ScalarOwned;
-    use saphyr_parser::ScalarStyle;
+    use std::collections::hash_map::DefaultHasher;
+
+    fn text(s: &str) -> Value {
+        Value::String(s.into())
+    }
+
+    fn hash_of(v: &impl Hash) -> u64 {
+        let mut h = DefaultHasher::new();
+        v.hash(&mut h);
+        h.finish()
+    }
 
     #[test]
-    fn scalar_key_text_of_parsed_big_int_is_canonical() {
+    fn value_stays_small() {
+        assert!(size_of::<Value>() <= 32, "{}", size_of::<Value>());
+        assert_eq!(size_of::<BigInt>(), 24);
+    }
+
+    #[test]
+    fn float_equality_ignores_spelling_and_nan_payload() {
+        let spelled = Float::parse("1e0").unwrap();
+        assert_eq!(spelled, Float::new(1.0));
+        assert_eq!(hash_of(&spelled), hash_of(&Float::new(1.0)));
+        assert_eq!(Float::new(f64::NAN), Float::new(-f64::NAN));
+        assert_eq!(
+            hash_of(&Float::new(f64::NAN)),
+            hash_of(&Float::new(-f64::NAN))
+        );
+        assert_eq!(Float::new(-0.0), Float::new(0.0));
+        assert_eq!(hash_of(&Float::new(-0.0)), hash_of(&Float::new(0.0)));
+        assert_ne!(Float::new(1.0), Float::new(2.0));
+    }
+
+    #[test]
+    fn float_display_is_core_schema() {
+        assert_eq!(Float::new(f64::INFINITY).to_string(), ".inf");
+        assert_eq!(Float::new(f64::NEG_INFINITY).to_string(), "-.inf");
+        assert_eq!(Float::new(f64::NAN).to_string(), ".nan");
+        assert_eq!(Float::new(1.0).to_string(), "1.0");
+        assert_eq!(Float::new(-0.0).to_string(), "-0.0");
+        assert_eq!(Float::new(1e300).to_string(), "1e300");
+    }
+
+    #[test]
+    fn float_parse_keeps_only_a_distinct_spelling() {
+        assert_eq!(Float::parse("1.0E5").unwrap().to_string(), "1.0E5");
+        assert_eq!(Float::parse(".inf").unwrap().to_string(), ".inf");
+        assert_eq!(Float::parse("1.5").unwrap().text, None);
+        for not_float in ["", "1", "abc", "0x1", "1.5.5"] {
+            assert!(Float::parse(not_float).is_none(), "{not_float:?}");
+        }
+    }
+
+    #[test]
+    fn big_int_equality_is_by_value() {
+        let hex = BigInt::parse("0xFFFFFFFFFFFFFFFFFF").unwrap();
+        let lower = BigInt::parse("0xffffffffffffffffff").unwrap();
+        let decimal = BigInt::parse("4722366482869645213695").unwrap();
+        let padded = BigInt::parse("+00004722366482869645213695").unwrap();
+        for other in [&lower, &decimal, &padded] {
+            assert_eq!(&hex, other);
+            assert_eq!(hash_of(&hex), hash_of(other));
+        }
+        assert_ne!(hex, BigInt::parse("-4722366482869645213695").unwrap());
+    }
+
+    #[test]
+    fn big_int_keeps_radix_spelling() {
+        let octal = BigInt::parse("-0o7777777777777777777777").unwrap();
+        assert_eq!(octal.radix(), IntRadix::Octal);
+        assert_eq!(octal.radix_text(), Some("-0o7777777777777777777777"));
+        assert_eq!(octal.canonical(), "-73786976294838206463");
+        assert_eq!(
+            BigInt::parse("99999999999999999999").unwrap().radix(),
+            IntRadix::Decimal
+        );
+    }
+
+    #[test]
+    fn mapping_insert_keeps_first_key_position_and_last_value() {
+        let big = |s: &str| Value::BigInt(BigInt::parse(s).unwrap());
+        let mut map = Mapping::new();
+        map.insert(big("0xFFFFFFFFFFFFFFFFFF"), Value::Int(1));
+        map.insert(text("x"), Value::Int(2));
+        map.insert(big("4722366482869645213695"), Value::Int(3));
+        assert_eq!(map.len(), 2);
+        let Some((Value::BigInt(first), value)) = map.iter().next() else {
+            panic!("big int key first");
+        };
+        assert_eq!(first.radix(), IntRadix::Hex);
+        assert_eq!(value, &Value::Int(3));
+    }
+
+    #[test]
+    fn mapping_equality_is_order_sensitive() {
+        let ab: Mapping = [(text("a"), Value::Null), (text("b"), Value::Null)]
+            .into_iter()
+            .collect();
+        let ba: Mapping = [(text("b"), Value::Null), (text("a"), Value::Null)]
+            .into_iter()
+            .collect();
+        assert_ne!(ab, ba);
+        assert_eq!(ab, ab.clone());
+        assert_eq!(hash_of(&ab), hash_of(&ab.clone()));
+        assert_eq!(ab.get(&text("b")), Some(&Value::Null));
+    }
+
+    #[test]
+    fn key_text_covers_scalars_only() {
+        assert_eq!(Value::Null.key_text().as_deref(), Some("null"));
+        assert_eq!(Value::Bool(true).key_text().as_deref(), Some("true"));
+        assert_eq!(Value::Int(-3).key_text().as_deref(), Some("-3"));
+        assert_eq!(
+            Value::Float(Float::new(1.0)).key_text().as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            Value::Float(Float::new(1.5)).key_text().as_deref(),
+            Some("1.5")
+        );
+        assert_eq!(text("s").key_text().as_deref(), Some("s"));
+        assert!(Value::Sequence(Vec::new()).key_text().is_none());
+        assert!(Value::Mapping(Mapping::new()).key_text().is_none());
+    }
+
+    #[test]
+    fn key_text_of_big_int_is_canonical() {
         for (raw, expected) in [
             ("+99999999999999999999", "99999999999999999999"),
             ("-99999999999999999999", "-99999999999999999999"),
@@ -75,44 +801,18 @@ mod tests {
                 unreachable!()
             };
             let key = map.keys().next().unwrap();
-            assert_eq!(scalar_key_text(key).as_deref(), Some(expected), "{raw}");
+            assert_eq!(key.key_text().as_deref(), Some(expected), "{raw}");
         }
     }
 
     #[test]
-    fn scalar_key_text_keeps_quoted_big_int_text_raw() {
-        let key = Value::Representation(
-            "+99999999999999999999".to_string(),
-            ScalarStyle::DoubleQuoted,
-            None,
-        );
-        assert_eq!(
-            scalar_key_text(&key).as_deref(),
-            Some("+99999999999999999999")
-        );
-    }
-
-    #[test]
-    fn test_value_null() {
-        let val = Value::Value(ScalarOwned::Null);
-        assert!(matches!(val, Value::Value(ScalarOwned::Null)));
-    }
-
-    #[test]
-    fn test_value_boolean() {
-        let val = Value::Value(ScalarOwned::Boolean(true));
-        assert!(matches!(val, Value::Value(ScalarOwned::Boolean(true))));
-    }
-
-    #[test]
-    fn test_value_integer() {
-        let val = Value::Value(ScalarOwned::Integer(42));
-        assert!(matches!(val, Value::Value(ScalarOwned::Integer(42))));
-    }
-
-    #[test]
-    fn test_value_string() {
-        let val = Value::Value(ScalarOwned::String("test".to_string()));
-        assert!(matches!(val, Value::Value(ScalarOwned::String(_))));
+    fn quoted_big_int_key_stays_a_string() {
+        let Some(Value::Mapping(map)) =
+            crate::Parser::parse_str("\"+99999999999999999999\": x").unwrap()
+        else {
+            unreachable!()
+        };
+        let key = map.keys().next().unwrap();
+        assert_eq!(key, &text("+99999999999999999999"));
     }
 }

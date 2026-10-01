@@ -94,10 +94,10 @@ let docs = Parser::parse_all_str(yaml)?;
 ### Emitter: Data Structures → YAML
 
 ```rust
-use fast_yaml_core::{Emitter, EmitterConfig, Value, Map, ScalarOwned};
+use fast_yaml_core::{Emitter, EmitterConfig, Value};
 
 // Basic emission
-let value = Value::Value(ScalarOwned::String("hello".to_string()));
+let value = Value::String("hello".to_string());
 let yaml = Emitter::emit_str(&value)?;
 
 // Custom configuration

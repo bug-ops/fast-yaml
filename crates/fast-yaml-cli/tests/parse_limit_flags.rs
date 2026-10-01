@@ -178,12 +178,18 @@ fn convert_to_yaml_ignores_parse_limits() {
 }
 
 #[test]
-fn format_does_not_accept_parse_limit_flags() {
+fn format_accepts_max_depth_but_not_alias_limits() {
     Command::cargo_bin("fy")
         .unwrap()
-        .args(["format", "--max-depth", "2"])
+        .args(["format", "--max-alias-bytes", "256"])
         .assert()
         .code(2);
+    Command::cargo_bin("fy")
+        .unwrap()
+        .args(["format", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--max-depth"));
 }
 
 #[test]

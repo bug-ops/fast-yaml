@@ -726,8 +726,9 @@ class batch:  # noqa: N801
     class BatchConfig:
         """Configuration for batch file processing.
 
-        ``max_depth`` and ``max_alias_bytes`` apply to ``process_files`` only;
-        ``format_files`` ignores them (formatter depth is fixed at 256).
+        ``max_depth`` applies to ``process_files`` and ``format_files``;
+        ``max_alias_bytes`` to ``process_files`` only. ``indent`` must be in 1..=9 and
+        ``width`` in 20..=1000.
         Non-integer values raise ``TypeError``, out-of-range values ``ValueError``.
         """
 

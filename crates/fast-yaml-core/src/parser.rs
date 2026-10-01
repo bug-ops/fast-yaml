@@ -1,22 +1,17 @@
-use crate::error::{ParseError, ParseResult};
-use crate::limits::{DocumentCursor, LimitGuard, ParseLimits, StreamBudget};
-use crate::loader::ValueLoader;
-use crate::merge::{
-    MergeError, MergeSource, MergeTarget, core_set_tag, is_core_set_tag, is_set_marker, merge_into,
-    set_marker_tag,
-};
+use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
+use crate::input::NormalizedInput;
+use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
+use crate::merge::{MergeError, NodeRole, merge_into};
 use crate::merge_check::MergeKeyValidator;
-use crate::scalar::{ResolvedScalar, resolve_scalar};
-use crate::value::{Map, Value};
-use saphyr::ScalarOwned;
-use saphyr_parser::{Event, Marker, Parser as SaphyrParser, ScalarStyle, Tag};
-use std::borrow::Cow;
+use crate::scalar::{ResolvedScalar, core_tag_suffix, resolve_scalar};
+use crate::value::{Mapping, Value};
+use saphyr_parser::{Event, Parser as SaphyrParser, Span};
 use std::collections::HashMap;
 
 /// Parser for YAML documents.
 ///
-/// Wraps saphyr's YAML loading to provide a consistent API. Every entry point enforces
-/// [`ParseLimits`] (nesting depth and alias expansion) before building the tree.
+/// Loads YAML into the resolved [`Value`] model. Every entry point enforces [`ParseLimits`]
+/// (nesting depth and alias expansion) before building the tree.
 #[derive(Debug)]
 pub struct Parser;
 
@@ -27,7 +22,7 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, or
     /// `ParseError::LimitExceeded` if the input exceeds the default [`ParseLimits`].
     ///
     /// # Examples
@@ -49,7 +44,7 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, `ParseError::Merge` if any
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, `ParseError::Merge` if any
     /// document has an invalid `<<` value, or `ParseError::LimitExceeded` if the input exceeds
     /// `limits`.
     ///
@@ -64,12 +59,8 @@ impl Parser {
     /// assert!(matches!(err, ParseError::LimitExceeded { .. }));
     /// ```
     pub fn parse_str_with_limits(input: &str, limits: &ParseLimits) -> ParseResult<Option<Value>> {
-        let docs = load_documents_with_budget(input, &StreamBudget::new(*limits), Bom::Strip)?;
-        let mut first = None;
-        for doc in canonicalize_documents(docs)? {
-            first.get_or_insert(doc);
-        }
-        Ok(first)
+        let docs = Self::parse_all_with_budget(input, &StreamBudget::new(*limits))?;
+        Ok(docs.into_iter().next())
     }
 
     /// Parse all YAML documents from a string.
@@ -78,7 +69,7 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, or
     /// `ParseError::LimitExceeded` if the input exceeds the default [`ParseLimits`].
     ///
     /// # Examples
@@ -98,7 +89,7 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, or
     /// `ParseError::LimitExceeded` if the input exceeds `limits`.
     ///
     /// # Examples
@@ -121,7 +112,7 @@ impl Parser {
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, or
     /// `ParseError::LimitExceeded` if the input exceeds the budget's limits.
     ///
     /// # Examples
@@ -136,148 +127,68 @@ impl Parser {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn parse_all_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-        canonicalize_documents(load_documents_with_budget(input, budget, Bom::Strip)?)
+        Self::parse_normalized(&NormalizedInput::new(input)?, budget)
     }
 
-    /// Parse all YAML documents of one chunk of a larger stream, without BOM handling.
+    /// Parse all YAML documents of an already normalized input.
     ///
-    /// Same pipeline as [`Parser::parse_all_with_budget`] except that a leading U+FEFF is
-    /// kept as content, matching [`Parser::parse_all`] for a BOM after the stream start: the
-    /// caller strips the stream-leading BOM once (see [`strip_bom`]) before splitting.
+    /// The other entry points normalize their `&str` first; use this one when the caller needs
+    /// the [`NormalizedInput`] itself, for example to map offsets back to the original text or
+    /// to parse the slices of one stream (see [`NormalizedInput::slice`]).
     ///
     /// # Errors
     ///
-    /// Returns `ParseError::Scanner` if the YAML syntax is invalid, or
+    /// Returns `ParseError::Syntax` if the YAML syntax is invalid, or
     /// `ParseError::LimitExceeded` if the input exceeds the budget's limits.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::Parser;
+    /// use fast_yaml_core::{NormalizedInput, Parser};
     /// use fast_yaml_core::limits::{ParseLimits, StreamBudget};
     ///
     /// let budget = StreamBudget::new(ParseLimits::default());
-    /// let kept = Parser::parse_chunk_with_budget("\u{FEFF}a: 1", &budget)?;
-    /// let stripped = Parser::parse_all_with_budget("\u{FEFF}a: 1", &budget)?;
-    /// assert_ne!(kept, stripped);
+    /// let input = NormalizedInput::new("a: 1\n---\nb: 2\n")?;
+    /// let second = input.slice(5..input.as_str().len()).unwrap();
+    /// assert_eq!(Parser::parse_normalized(&second, &budget)?.len(), 1);
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
-    pub fn parse_chunk_with_budget(input: &str, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-        canonicalize_documents(load_documents_with_budget(input, budget, Bom::Keep)?)
+    pub fn parse_normalized(
+        input: &NormalizedInput<'_>,
+        budget: &StreamBudget,
+    ) -> ParseResult<Vec<Value>> {
+        load_documents_with_budget(input, budget)
     }
 }
 
-/// Whether a leading U+FEFF is an encoding signature to drop or content to keep.
-#[derive(Clone, Copy)]
-enum Bom {
-    Strip,
-    Keep,
-}
-
-fn canonicalize_documents(docs: Vec<Value>) -> ParseResult<Vec<Value>> {
-    docs.into_iter()
-        .enumerate()
-        .map(|(document, doc)| {
-            // Merge values were validated on events; a failure here is a verdict mismatch
-            canonicalize(doc).map_err(|error| {
-                debug_assert!(false, "merge verdict mismatch: {error}");
-                ParseError::Merge {
-                    error,
-                    line: 1,
-                    column: 1,
-                    document,
-                }
-            })
-        })
-        .collect()
-}
-
-/// Drives the parser event by event so [`LimitGuard`] can reject input before the loader
-/// recurses or clones aliases and [`MergeKeyValidator`] can reject invalid `<<` values before
-/// the loader collapses equal keys, then returns the un-canonicalized documents.
+/// Drives the parser event by event so [`LimitGuard`] can reject input before the builder
+/// clones aliases, then returns the loaded documents.
 fn load_documents_with_budget(
-    input: &str,
+    input: &NormalizedInput<'_>,
     budget: &StreamBudget,
-    bom: Bom,
 ) -> ParseResult<Vec<Value>> {
-    let text = match bom {
-        Bom::Strip => strip_bom(input),
-        Bom::Keep => input,
-    };
     // StrInput is required: BufferedInput loops forever on a directive name at EOF (#403)
-    let mut parser = SaphyrParser::new_from_str(reject_nul(text)?);
-    let mut loader = ValueLoader::default();
+    let mut parser = SaphyrParser::new_from_str(input.as_str());
     let mut guard = LimitGuard::with_budget(budget.clone());
     let mut merge_keys = MergeKeyValidator::default();
+    let mut builder = Builder::default();
     while let Some(event) = parser.next_event() {
-        let (event, span) = event.map_err(|error| ParseError::Scanner {
-            error,
-            document: guard.document(),
-        })?;
+        let (event, span) = event.map_err(|error| ParseError::scanner(&error, guard.document()))?;
         guard.observe(&event, span)?;
-        merge_keys.observe(&event, span)?;
-        loader.on_event(mark_set(event));
+        let role = merge_keys.observe(&event, span)?;
+        builder.event(event, span, role)?;
     }
     Ok(inject_implicit_null_if_empty(
-        loader.into_documents(),
-        input,
+        builder.documents,
+        input.original_len(),
     ))
-}
-
-/// Rejects input containing a NUL (U+0000) character, returning it unchanged otherwise.
-///
-/// The scanner treats NUL as end of stream and would silently drop everything after it,
-/// while YAML 1.2 excludes it from the printable character set (§5.1).
-///
-/// # Errors
-///
-/// Returns `ParseError::Scanner` positioned at the first NUL.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::reject_nul;
-///
-/// assert_eq!(reject_nul("a: 1")?, "a: 1");
-/// assert!(reject_nul("a: 1\0\nb: 2").is_err());
-/// # Ok::<(), Box<dyn std::error::Error>>(())
-/// ```
-pub fn reject_nul(input: &str) -> ParseResult<&str> {
-    let Some(offset) = memchr::memchr(0, input.as_bytes()) else {
-        return Ok(input);
-    };
-    let (mut chars, mut line, mut col) = (0, 1, 0);
-    let mut prev = None;
-    for c in input[..offset].chars() {
-        chars += 1;
-        match c {
-            '\n' => (line, col) = (line + usize::from(prev != Some('\r')), 0),
-            '\r' => (line, col) = (line + 1, 0),
-            _ => col += 1,
-        }
-        prev = Some(c);
-    }
-    let marker = Marker::new(chars, line, col);
-    Err(ParseError::Scanner {
-        error: saphyr::ScanError::new(marker, "NUL (U+0000) is not allowed in YAML".to_owned()),
-        document: document_at_end_of(&input[..offset]),
-    })
-}
-
-/// Index of the document the text after `prefix` belongs to, as every other scanner error counts.
-fn document_at_end_of(prefix: &str) -> usize {
-    let mut cursor = DocumentCursor::default();
-    for event in SaphyrParser::new_from_str(prefix) {
-        let Ok((event, _)) = event else { break };
-        cursor.observe(&event);
-    }
-    cursor.index()
 }
 
 /// Strips one leading UTF-8 byte order mark (U+FEFF) from `input`.
 ///
-/// The BOM is an encoding signature, not YAML content (YAML 1.2 §5.2); a BOM in the
-/// middle of the text is data and is left untouched.
+/// For text that is not YAML, such as JSON. YAML entry points use
+/// [`NormalizedInput`], which also strips the BOMs of later document
+/// prefixes.
 ///
 /// # Examples
 ///
@@ -292,321 +203,167 @@ pub fn strip_bom(input: &str) -> &str {
     input.strip_prefix('\u{FEFF}').unwrap_or(input)
 }
 
-/// Injects one implicit null document when saphyr produces no documents for non-empty input.
+/// Injects one implicit null document when the parser produces no documents for non-empty input.
 ///
 /// Per YAML 1.2 §9.2, a stream with no explicit documents but non-empty content
 /// (comments, bare markers, whitespace) represents one document with an implicit null node.
 /// Empty string input stays `[]` to match `safe_load("")` → `None` behaviour.
-fn inject_implicit_null_if_empty(docs: Vec<Value>, input: &str) -> Vec<Value> {
-    if docs.is_empty() && !input.is_empty() {
-        vec![Value::Value(ScalarOwned::Null)]
+fn inject_implicit_null_if_empty(docs: Vec<Value>, original_len: usize) -> Vec<Value> {
+    if docs.is_empty() && original_len > 0 {
+        vec![Value::Null]
     } else {
         docs
     }
 }
 
-/// Canonicalize mixed-case YAML 1.2.2 bool/null variants that saphyr leaves as strings.
-///
-/// saphyr handles lowercase `true`, `false`, `null`, `~` natively.
-/// This function post-processes the tree to:
-/// - Resolve `Value::Representation` nodes (produced by `early_parse = false`) to typed scalars,
-///   applying explicit YAML core schema tags (`!!int`, `!!float`, `!!bool`, `!!null`, `!!str`)
-///   when present (#203). Every scalar other than a big integer becomes a typed `Value::Value`.
-/// - Handle `True`, `TRUE`, `False`, `FALSE`, `Null` mixed-case variants.
-/// - Keep integers that overflow `i64` (decimal, hex or octal) as plain `Value::Representation`
-///   nodes (non-core tags kept, core tags dropped), so they stay distinguishable from strings.
-///   Decimal values hold canonical decimal text; hex and octal values keep their source text.
-///   Mapping keys of equal value collapse to one entry whatever their spelling: the first
-///   spelling and its position stay, the last value wins.
-/// - Because the text of a big integer depends on its spelling, `Value` equality for big integers
-///   does too (`0xFF…` and its decimal form are unequal, and `parse(emit(parse(x)))` can differ
-///   from `parse(x)`); compare them through [`resolve_scalar`] and
-///   [`BigInt::canonical`](crate::BigInt::canonical).
-/// - Resolve YAML 1.1 merge keys (`<<: *anchor`) into parent mappings (#204). Only the plain,
-///   untagged scalar `<<` is a merge key; inside a `!!set` it is an ordinary element.
-///
-/// # Errors
-///
-/// Returns [`MergeError`] when a merge key's value is not a mapping or a sequence of mappings,
-/// or is a `!!set`.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::{Map, MergeError, ScalarOwned, Value, canonicalize};
-/// use saphyr_parser::ScalarStyle;
-///
-/// let plain = |s: &str| Value::Representation(s.into(), ScalarStyle::Plain, None);
-/// let mapping = |pairs: [(Value, Value); 1]| Value::Mapping(Map::from_iter(pairs));
-///
-/// let merged = canonicalize(mapping([(plain("<<"), mapping([(plain("x"), plain("1"))]))]))?;
-/// let x = Value::Value(ScalarOwned::String("x".into()));
-/// let Value::Mapping(map) = merged else { panic!("expected a mapping") };
-/// assert_eq!(map[&x], Value::Value(ScalarOwned::Integer(1)));
-///
-/// let err = canonicalize(mapping([(plain("<<"), plain("1"))])).unwrap_err();
-/// assert_eq!(err, MergeError::NotMapping);
-/// # Ok::<(), MergeError>(())
-/// ```
-///
-/// Recursion depth equals the nesting depth of `value`, which [`ParseLimits`] bounds for
-/// parsed input; the collection arms are kept free of scalar temporaries to keep frames small.
-pub fn canonicalize(mut value: Value) -> Result<Value, MergeError> {
-    canonicalize_in_place(&mut value, SetElements::No)?;
-    Ok(value)
+/// What the builder expects next inside an open mapping.
+enum Slot {
+    Key,
+    Value(Value),
+    MergeValue,
 }
 
-/// Whether the mapping being canonicalized holds `!!set` elements, where `<<` is not a merge key.
-#[derive(Clone, Copy)]
-enum SetElements {
-    Yes,
-    No,
+struct MappingFrame {
+    set: bool,
+    entries: Mapping,
+    merge: Option<Value>,
+    slot: Slot,
 }
 
-// In place, with a one-byte result: the recursion frame holds no `Value` temporaries.
-fn canonicalize_in_place(slot: &mut Value, set: SetElements) -> Result<(), MergeError> {
-    match slot {
-        Value::Sequence(seq) => {
-            for item in seq {
-                canonicalize_in_place(item, SetElements::No)?;
-            }
-            Ok(())
-        }
-        Value::Mapping(_) => canonicalize_mapping(slot, set),
-        Value::Tagged(..) => canonicalize_tagged(slot),
-        _ => {
-            canonicalize_scalar(slot);
-            Ok(())
-        }
-    }
+enum Body {
+    Sequence(Vec<Value>),
+    Mapping(MappingFrame),
 }
 
-fn canonicalize_mapping(slot: &mut Value, set: SetElements) -> Result<(), MergeError> {
-    let Value::Mapping(map) = std::mem::replace(slot, Value::Value(ScalarOwned::Null)) else {
-        return Ok(());
-    };
-    let mut explicit = KeyedMap::with_capacity(map.len());
-    let mut merge = None;
-    for (k, v) in map {
-        if matches!(set, SetElements::No) && is_merge_key(&k) {
-            let source = canonicalize_merge_source(v)?;
-            // A repeated `<<` keeps only the last value, but every value must be valid
-            if let Some(earlier) = merge.replace(source) {
-                merge_into(&mut Map::new(), Some(earlier), [])?;
-            }
-        } else {
-            let (mut k, mut v) = (k, v);
-            canonicalize_in_place(&mut k, SetElements::No)?;
-            canonicalize_in_place(&mut v, SetElements::No)?;
-            explicit.set(k, v)?;
-        }
-    }
-    *slot = Value::Mapping(match merge {
-        None => explicit.map,
-        Some(merge) => {
-            let mut result = KeyedMap::with_capacity(explicit.map.len());
-            merge_into(&mut result, Some(merge), explicit.map)?;
-            result.map
-        }
-    });
-    Ok(())
+struct Frame {
+    anchor: usize,
+    role: NodeRole,
+    body: Body,
 }
 
-/// Identity of a big-integer mapping key: canonical decimal value and tag, independent of spelling.
-#[derive(PartialEq, Eq, Hash)]
-struct BigKey {
-    canonical: String,
-    tag: Option<Tag>,
-}
-
-impl BigKey {
-    fn of(key: &Value) -> Option<Self> {
-        let Value::Representation(s, style, tag) = key else {
-            return None;
-        };
-        match resolve_scalar(s, *style, tag.as_ref()) {
-            ResolvedScalar::BigInt(big) => Some(Self {
-                canonical: big.canonical().into_owned(),
-                tag: tag.clone(),
-            }),
-            _ => None,
-        }
-    }
-}
-
-/// A mapping under construction in which big-integer keys of equal value collapse whatever their
-/// spelling: the first spelling and its position stay, the last value wins.
+/// Iterative tree builder: a heap stack instead of recursion, so nesting depth cannot overflow
+/// the call stack. Merge values are validated by `MergeKeyValidator` before they reach it.
 #[derive(Default)]
-struct KeyedMap {
-    map: Map,
-    first_spelling: HashMap<BigKey, Value>,
+struct Builder {
+    stack: Vec<Frame>,
+    anchors: HashMap<usize, Value>,
+    root: Option<Value>,
+    documents: Vec<Value>,
 }
 
-impl KeyedMap {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            map: Map::with_capacity(capacity),
-            first_spelling: HashMap::new(),
-        }
-    }
-
-    fn first_spelling_of(&mut self, key: Value) -> Value {
-        match BigKey::of(&key) {
-            Some(id) => self.first_spelling.entry(id).or_insert(key).clone(),
-            None => key,
-        }
-    }
-}
-
-impl MergeTarget for KeyedMap {
-    type Node = Value;
-    type Error = MergeError;
-    type Entries = Map;
-    type Items = Vec<Value>;
-
-    fn classify(&self, node: Value) -> Result<MergeSource<Map, Vec<Value>>, MergeError> {
-        self.map.classify(node)
-    }
-
-    fn reject(error: MergeError) -> MergeError {
-        error
-    }
-
-    fn set_if_absent(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
-        let key = self.first_spelling_of(key);
-        self.map.set_if_absent(key, value)
-    }
-
-    fn set(&mut self, key: Value, value: Value) -> Result<(), MergeError> {
-        let key = self.first_spelling_of(key);
-        self.map.set(key, value)
-    }
-}
-
-/// Whether `key` is the plain, untagged scalar `<<`; quoted and tagged forms are ordinary keys.
-fn is_merge_key(key: &Value) -> bool {
-    match key {
-        Value::Representation(s, ScalarStyle::Plain, tag) => s == "<<" && tag.is_none(),
-        _ => false,
-    }
-}
-
-/// Re-tags `!!set` mappings with a non-core marker: saphyr's loader drops core collection
-/// tags, and [`canonicalize`] must tell sets from mappings to resolve `<<` correctly.
-fn mark_set(event: Event<'_>) -> Event<'_> {
-    match event {
-        Event::MappingStart(anchor, Some(tag)) if is_core_set_tag(&tag) => {
-            Event::MappingStart(anchor, Some(Cow::Owned(set_marker_tag())))
-        }
-        other => other,
-    }
-}
-
-/// Canonicalizes a merge value, keeping the marker on a `!!set` source (and on sequence items)
-/// so that [`MergeTarget::classify`](crate::merge::MergeTarget::classify) rejects it.
-fn canonicalize_merge_source(raw: Value) -> Result<Value, MergeError> {
-    match raw {
-        Value::Sequence(items) => items
-            .into_iter()
-            .map(canonicalize_set_source)
-            .collect::<Result<_, _>>()
-            .map(Value::Sequence),
-        other => canonicalize_set_source(other),
-    }
-}
-
-fn canonicalize_set_source(raw: Value) -> Result<Value, MergeError> {
-    match raw {
-        Value::Tagged(tag, mut inner) if is_set_marker(&tag) => {
-            canonicalize_in_place(&mut inner, SetElements::Yes)?;
-            Ok(Value::Tagged(tag, inner))
-        }
-        other => canonicalize(other),
-    }
-}
-
-fn canonicalize_tagged(slot: &mut Value) -> Result<(), MergeError> {
-    let Value::Tagged(tag, mut inner) = std::mem::replace(slot, Value::Value(ScalarOwned::Null))
-    else {
-        return Ok(());
-    };
-    if let Some(coerced) = coerce_tagged_scalar(&tag, &inner) {
-        *slot = coerced;
-        return Ok(());
-    }
-    if (is_set_marker(&tag) || is_core_set_tag(&tag)) && matches!(*inner, Value::Mapping(_)) {
-        canonicalize_in_place(&mut inner, SetElements::Yes)?;
-        *slot = Value::Tagged(core_set_tag(), inner);
-        return Ok(());
-    }
-    *slot = *inner;
-    canonicalize_in_place(slot, SetElements::No)
-}
-
-/// Canonicalize a non-collection, non-tagged node.
-fn canonicalize_scalar(slot: &mut Value) {
-    let value = std::mem::replace(slot, Value::Value(ScalarOwned::Null));
-    *slot = match value {
-        Value::Representation(s, style, tag) => {
-            let resolved = resolve_scalar(&s, style, tag.as_ref());
-            match resolved {
-                // `Str` borrows all of `s`, so the owned text is reused.
-                ResolvedScalar::Str(_) => Value::Value(ScalarOwned::String(s)),
-                // A non-core tag survives so the emitter can write it back.
-                ResolvedScalar::BigInt(big) => Value::Representation(
-                    big.retained_text().into_owned(),
-                    ScalarStyle::Plain,
-                    tag.filter(|t| !t.is_yaml_core_schema()),
-                ),
-                other => scalar_to_value(other),
+impl Builder {
+    fn event(&mut self, event: Event<'_>, span: Span, role: Option<NodeRole>) -> ParseResult<()> {
+        let role = role.unwrap_or(NodeRole::Root);
+        match event {
+            Event::DocumentStart(_) => {
+                self.anchors.clear();
+                self.root = None;
             }
+            Event::DocumentEnd => {
+                self.documents.push(self.root.take().unwrap_or(Value::Null));
+            }
+            Event::Scalar(text, style, anchor, tag) => {
+                let value = match resolve_scalar(&text, style, tag.as_deref()) {
+                    ResolvedScalar::Str(_) => Value::String(text.into_owned()),
+                    other => Value::from(other),
+                };
+                self.deliver(value, anchor, role);
+            }
+            Event::Alias(id) => {
+                let value = self.anchors.get(&id).cloned().ok_or_else(|| {
+                    ParseError::Syntax(SyntaxError::recursive_alias(
+                        span.into(),
+                        self.documents.len(),
+                    ))
+                })?;
+                self.deliver(value, 0, role);
+            }
+            Event::SequenceStart(anchor, _) => self.stack.push(Frame {
+                anchor,
+                role,
+                body: Body::Sequence(Vec::new()),
+            }),
+            Event::MappingStart(anchor, tag) => self.stack.push(Frame {
+                anchor,
+                role,
+                body: Body::Mapping(MappingFrame {
+                    set: tag.as_deref().and_then(core_tag_suffix) == Some("set"),
+                    entries: Mapping::new(),
+                    merge: None,
+                    slot: Slot::Key,
+                }),
+            }),
+            Event::SequenceEnd | Event::MappingEnd => {
+                if let Some(frame) = self.stack.pop() {
+                    let value = self.finish(frame.body, span)?;
+                    self.deliver(value, frame.anchor, frame.role);
+                }
+            }
+            Event::Nothing | Event::StreamStart | Event::StreamEnd => {}
         }
-        Value::Value(ScalarOwned::String(ref s)) => match s.as_str() {
-            "True" | "TRUE" => Value::Value(ScalarOwned::Boolean(true)),
-            "False" | "FALSE" => Value::Value(ScalarOwned::Boolean(false)),
-            "Null" | "NULL" => Value::Value(ScalarOwned::Null),
-            _ => value,
-        },
-        other => other,
-    };
-}
-
-/// Converts a resolved scalar to its owned core value; strings are copied.
-///
-/// Integers beyond `i64` become a plain `Value::Representation` holding their
-/// [retained text](crate::BigInt::retained_text).
-pub(crate) fn scalar_to_value(resolved: ResolvedScalar<'_>) -> Value {
-    Value::Value(match resolved {
-        ResolvedScalar::Null => ScalarOwned::Null,
-        ResolvedScalar::Bool(b) => ScalarOwned::Boolean(b),
-        ResolvedScalar::Int(i) => ScalarOwned::Integer(i),
-        ResolvedScalar::Float(f) => ScalarOwned::FloatingPoint(f.into()),
-        ResolvedScalar::BigInt(big) => {
-            return Value::Representation(
-                big.retained_text().into_owned(),
-                ScalarStyle::Plain,
-                None,
-            );
-        }
-        ResolvedScalar::Str(s) => ScalarOwned::String(s.into()),
-    })
-}
-
-/// Coerce a core-schema-tagged string scalar; `None` when the tag is not a core-schema tag.
-fn coerce_tagged_scalar(tag: &Tag, inner: &Value) -> Option<Value> {
-    if !tag.is_yaml_core_schema() {
-        return None;
+        Ok(())
     }
-    let Value::Value(ScalarOwned::String(s)) = inner else {
-        return None;
-    };
-    let resolved = resolve_scalar(s, ScalarStyle::Plain, Some(tag));
-    Some(scalar_to_value(resolved))
+
+    fn finish(&self, body: Body, span: Span) -> ParseResult<Value> {
+        Ok(match body {
+            Body::Sequence(items) => Value::Sequence(items),
+            Body::Mapping(MappingFrame {
+                set: true, entries, ..
+            }) => Value::Set(entries.into_iter().map(|(member, _)| member).collect()),
+            Body::Mapping(MappingFrame {
+                entries,
+                merge: None,
+                ..
+            }) => Value::Mapping(entries),
+            Body::Mapping(MappingFrame {
+                entries,
+                merge: Some(merge),
+                ..
+            }) => {
+                let mut merged = Mapping::with_capacity(entries.len());
+                merge_into(&mut merged, Some(merge), entries)
+                    .map_err(|error| self.merge_error(error, span))?;
+                Value::Mapping(merged)
+            }
+        })
+    }
+
+    // Unreachable for parser-loaded input, which `MergeKeyValidator` has already checked.
+    fn merge_error(&self, error: MergeError, span: Span) -> ParseError {
+        let SourcePosition { line, column } = span.into();
+        ParseError::Merge {
+            error,
+            line,
+            column,
+            document: self.documents.len(),
+        }
+    }
+
+    fn deliver(&mut self, value: Value, anchor: usize, role: NodeRole) {
+        if anchor > 0 {
+            self.anchors.insert(anchor, value.clone());
+        }
+        match self.stack.last_mut().map(|frame| &mut frame.body) {
+            None => self.root = Some(value),
+            Some(Body::Sequence(items)) => items.push(value),
+            Some(Body::Mapping(frame)) => match std::mem::replace(&mut frame.slot, Slot::Key) {
+                Slot::Key if role == NodeRole::MergeKey => {
+                    frame.slot = Slot::MergeValue;
+                }
+                Slot::Key => frame.slot = Slot::Value(value),
+                Slot::Value(key) => {
+                    frame.entries.insert(key, value);
+                }
+                Slot::MergeValue => frame.merge = Some(value),
+            },
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::value::BigInt;
 
     #[test]
     fn unterminated_directive_errors_instead_of_hanging() {
@@ -654,7 +411,7 @@ mod tests {
             if let Value::Mapping(map) = result {
                 let v = map.values().next().unwrap();
                 assert!(
-                    matches!(v, Value::Value(ScalarOwned::Boolean(true))),
+                    matches!(v, Value::Bool(true)),
                     "{variant} should be Bool(true)"
                 );
             } else {
@@ -672,7 +429,7 @@ mod tests {
             if let Value::Mapping(map) = result {
                 let v = map.values().next().unwrap();
                 assert!(
-                    matches!(v, Value::Value(ScalarOwned::Boolean(false))),
+                    matches!(v, Value::Bool(false)),
                     "{variant} should be Bool(false)"
                 );
             } else {
@@ -686,10 +443,7 @@ mod tests {
         let result = Parser::parse_str("val: Null").unwrap().unwrap();
         if let Value::Mapping(map) = result {
             let v = map.values().next().unwrap();
-            assert!(
-                matches!(v, Value::Value(ScalarOwned::Null)),
-                "Null should be Null"
-            );
+            assert!(matches!(v, Value::Null), "Null should be Null");
         } else {
             panic!("expected mapping");
         }
@@ -730,31 +484,39 @@ development:
         assert!(result.is_some());
     }
 
+    fn big_int(text: &str) -> Value {
+        Value::BigInt(BigInt::parse(text).unwrap())
+    }
+
+    fn radix_text_of(v: &Value) -> Option<&str> {
+        let Value::BigInt(b) = v else {
+            panic!("big int expected, got {v:?}");
+        };
+        b.radix_text()
+    }
+
     fn get_mapping_val(yaml: &str, key: &str) -> Value {
         let result = Parser::parse_str(yaml).unwrap().unwrap();
         let Value::Mapping(map) = result else {
             panic!("expected mapping");
         };
-        let k = Value::Value(ScalarOwned::String(key.into()));
+        let k = Value::String(key.into());
         map[&k].clone()
     }
 
     #[test]
     fn test_explicit_tag_int_quoted() {
         let v = get_mapping_val("val: !!int '42'", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(42))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(42)), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_float() {
         let v = get_mapping_val("val: !!float '3.14'", "val");
-        if let Value::Value(ScalarOwned::FloatingPoint(f)) = v {
+        if let Value::Float(f) = v {
             #[allow(clippy::approx_constant)]
             let expected = 3.14_f64;
-            assert!((f64::from(f) - expected).abs() < 1e-9);
+            assert!((f.get() - expected).abs() < 1e-9);
         } else {
             panic!("expected FloatingPoint, got {v:?}");
         }
@@ -763,68 +525,50 @@ development:
     #[test]
     fn test_explicit_tag_bool() {
         let v = get_mapping_val("val: !!bool 'true'", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Boolean(true))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Bool(true)), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_null() {
         let v = get_mapping_val("val: !!null ''", "val");
-        assert!(matches!(v, Value::Value(ScalarOwned::Null)), "got {v:?}");
+        assert!(matches!(v, Value::Null), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_str_int() {
         let v = get_mapping_val("val: !!str 42", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "42"),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::String(ref s) if s == "42"), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_float_truncation() {
         let v = get_mapping_val("val: !!int 3.14", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(3))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(3)), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_negative_float() {
         let v = get_mapping_val("val: !!int -2.7", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(-2))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(-2)), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_scientific() {
         let v = get_mapping_val("val: !!int 1.0e2", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(100))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(100)), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_exact_float() {
         let v = get_mapping_val("val: !!int 3.0", "val");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(3))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(3)), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_nan_rejected() {
         let v = get_mapping_val("val: !!int .nan", "val");
         assert!(
-            !matches!(v, Value::Value(ScalarOwned::Integer(_))),
+            !matches!(v, Value::Int(_)),
             "!!int .nan should not produce an integer, got {v:?}"
         );
     }
@@ -833,7 +577,7 @@ development:
     fn test_explicit_tag_int_inf_rejected() {
         let v = get_mapping_val("val: !!int .inf", "val");
         assert!(
-            !matches!(v, Value::Value(ScalarOwned::Integer(_))),
+            !matches!(v, Value::Int(_)),
             "!!int .inf should not produce an integer, got {v:?}"
         );
     }
@@ -842,7 +586,7 @@ development:
     fn test_explicit_tag_int_overflow_rejected() {
         let v = get_mapping_val("val: !!int 1.0e20", "val");
         assert!(
-            !matches!(v, Value::Value(ScalarOwned::Integer(_))),
+            !matches!(v, Value::Int(_)),
             "!!int 1.0e20 should not produce a saturated integer, got {v:?}"
         );
     }
@@ -899,20 +643,20 @@ development:
         let Value::Mapping(root) = result else {
             panic!("expected mapping")
         };
-        let dev_key = Value::Value(ScalarOwned::String("development".into()));
+        let dev_key = Value::String("development".into());
         let Value::Mapping(dev) = root[&dev_key].clone() else {
             panic!("expected mapping")
         };
 
-        let adapter_key = Value::Value(ScalarOwned::String("adapter".into()));
-        let host_key = Value::Value(ScalarOwned::String("host".into()));
-        let db_key = Value::Value(ScalarOwned::String("database".into()));
+        let adapter_key = Value::String("adapter".into());
+        let host_key = Value::String("host".into());
+        let db_key = Value::String("database".into());
 
         assert!(dev.contains_key(&adapter_key), "adapter should be merged");
         assert!(dev.contains_key(&host_key), "host should be merged");
         assert!(dev.contains_key(&db_key), "database should be present");
         assert!(
-            !dev.contains_key(&Value::Value(ScalarOwned::String("<<".into()))),
+            !dev.contains_key(&Value::String("<<".into())),
             "<< should be removed"
         );
     }
@@ -931,13 +675,13 @@ override:
         let Value::Mapping(root) = result else {
             panic!("expected mapping")
         };
-        let ov_key = Value::Value(ScalarOwned::String("override".into()));
+        let ov_key = Value::String("override".into());
         let Value::Mapping(ov) = root[&ov_key].clone() else {
             panic!("expected mapping")
         };
-        let host_key = Value::Value(ScalarOwned::String("host".into()));
+        let host_key = Value::String("host".into());
         assert!(
-            matches!(&ov[&host_key], Value::Value(ScalarOwned::String(s)) if s == "remotehost"),
+            matches!(&ov[&host_key], Value::String(s) if s == "remotehost"),
             "explicit host should win over merged"
         );
     }
@@ -956,21 +700,21 @@ merged:
         assert_eq!(merged_entries(yaml, "merged"), ["x: 1", "y: 2", "z: 3"]);
     }
 
-    fn sub_mapping(doc: &Value, key: &str) -> Map {
+    fn sub_mapping(doc: &Value, key: &str) -> Mapping {
         let Value::Mapping(root) = doc else {
             panic!("expected mapping")
         };
-        match root[&Value::Value(ScalarOwned::String(key.into()))].clone() {
+        match root[&Value::String(key.into())].clone() {
             Value::Mapping(m) => m,
-            Value::Tagged(_, inner) => match *inner {
-                Value::Mapping(m) => m,
-                other => panic!("expected mapping, got {other:?}"),
-            },
-            other => panic!("expected mapping, got {other:?}"),
+            Value::Set(set) => set
+                .into_iter()
+                .map(|member| (member, Value::Null))
+                .collect(),
+            other => panic!("expected mapping or set, got {other:?}"),
         }
     }
 
-    fn entry_texts(m: &Map) -> Vec<String> {
+    fn entry_texts(m: &Mapping) -> Vec<String> {
         m.iter()
             .map(|(k, v)| format!("{}: {}", scalar_text(k), scalar_text(v)))
             .collect()
@@ -985,9 +729,9 @@ merged:
 
     fn scalar_text(v: &Value) -> String {
         match v {
-            Value::Value(ScalarOwned::String(s)) => s.clone(),
-            Value::Value(ScalarOwned::Integer(i)) => i.to_string(),
-            Value::Value(ScalarOwned::Null) => "null".to_owned(),
+            Value::String(s) => s.clone(),
+            Value::Int(i) => i.to_string(),
+            Value::Null => "null".to_owned(),
             other => format!("{other:?}"),
         }
     }
@@ -1248,7 +992,10 @@ m:
             "{yaml:?}"
         );
         assert_eq!(
-            merge_at(Parser::parse_chunk_with_budget(yaml, &budget)),
+            merge_at(Parser::parse_normalized(
+                &NormalizedInput::new(yaml).unwrap(),
+                &budget
+            )),
             expected,
             "{yaml:?}"
         );
@@ -1264,7 +1011,7 @@ m:
             "{yaml:?}"
         );
         assert!(
-            Parser::parse_chunk_with_budget(yaml, &budget).is_ok(),
+            Parser::parse_normalized(&NormalizedInput::new(yaml).unwrap(), &budget).is_ok(),
             "{yaml:?}"
         );
         assert!(
@@ -1347,13 +1094,13 @@ m:
         let Some(Value::Mapping(map)) = Parser::parse_str(yaml).unwrap() else {
             panic!("mapping expected");
         };
-        let key = |k: &str| Value::Value(ScalarOwned::String(k.into()));
-        assert_eq!(map[&key("x")], Value::Value(ScalarOwned::Integer(2)));
+        let key = |k: &str| Value::String(k.into());
+        assert_eq!(map[&key("x")], Value::Int(2));
         let Value::Mapping(m) = &map[&key("m")] else {
             panic!("mapping expected");
         };
         assert_eq!(m.len(), 1);
-        assert_eq!(m[&key("b")], Value::Value(ScalarOwned::Integer(2)));
+        assert_eq!(m[&key("b")], Value::Int(2));
     }
 
     #[test]
@@ -1366,7 +1113,6 @@ m:
         for yaml in [
             "m: {\"<<\": 1, \"<<\": 2}\n",
             "m: {!!str <<: 1, !!str <<: 2}\n",
-            "m: {!!merge <<: 1, !!merge <<: 2}\n",
             "m: !!set {<<, <<}\n",
         ] {
             assert_accepted_everywhere(yaml);
@@ -1391,7 +1137,7 @@ m:
         for err in [
             Parser::parse_str(yaml).unwrap_err(),
             Parser::parse_all(yaml).unwrap_err(),
-            Parser::parse_chunk_with_budget(yaml, &budget).unwrap_err(),
+            Parser::parse_normalized(&NormalizedInput::new(yaml).unwrap(), &budget).unwrap_err(),
         ] {
             assert_eq!(err.document_index(), 2);
             assert!(err.to_string().ends_with("(document 3)"), "{err}");
@@ -1406,7 +1152,7 @@ b: 2\n---\nc: [\n",
         )
         .unwrap_err();
         assert!(
-            matches!(scanner, ParseError::Scanner { document: 2, .. }),
+            matches!(&scanner, ParseError::Syntax(e) if e.document() == 2),
             "{scanner:?}"
         );
         assert_eq!(scanner.document_index(), 2);
@@ -1441,15 +1187,13 @@ b: 2\n---\nc: [\n",
     }
 
     #[test]
-    fn test_self_referencing_alias_key_loads_as_bad_value_like_a_self_referencing_item() {
-        let Some(Value::Mapping(map)) = Parser::parse_str("&a {*a : 1}\n").unwrap() else {
-            panic!("expected a mapping");
-        };
-        assert_eq!(map.keys().collect::<Vec<_>>(), [&Value::BadValue]);
-        let Some(Value::Sequence(items)) = Parser::parse_str("&a [*a]\n").unwrap() else {
-            panic!("expected a sequence");
-        };
-        assert_eq!(items, [Value::BadValue]);
+    fn test_self_referencing_alias_is_a_syntax_error_in_every_position() {
+        for input in ["&a {*a : 1}\n", "&a [*a]\n", "&a {k: *a}\n"] {
+            assert!(matches!(
+                Parser::parse_str(input),
+                Err(ParseError::Syntax(_))
+            ));
+        }
     }
 
     #[test]
@@ -1458,8 +1202,8 @@ b: 2\n---\nc: [\n",
         let Value::Mapping(second) = &docs[1] else {
             panic!("expected a mapping");
         };
-        let c = Value::Value(ScalarOwned::String("c".into()));
-        assert_eq!(second.get(&c), Some(&Value::Value(ScalarOwned::Integer(2))));
+        let c = Value::String("c".into());
+        assert_eq!(second.get(&c), Some(&Value::Int(2)));
     }
 
     #[test]
@@ -1472,7 +1216,7 @@ b: 2\n---\nc: [\n",
     fn test_stale_alias_error_reports_its_document() {
         let err = Parser::parse_all("a: &x 1\n---\nb: *x\n").unwrap_err();
         assert!(
-            matches!(err, ParseError::Scanner { document: 1, .. }),
+            matches!(&err, ParseError::Syntax(e) if e.document() == 1),
             "{err:?}"
         );
     }
@@ -1481,7 +1225,7 @@ b: 2\n---\nc: [\n",
     fn test_relocated_shifts_merge_document() {
         let err = Parser::parse_all("m: {<<: 1}\n")
             .unwrap_err()
-            .relocated(4, 20, 3);
+            .relocated(4, 3);
         assert!(matches!(
             err,
             ParseError::Merge {
@@ -1491,14 +1235,6 @@ b: 2\n---\nc: [\n",
                 ..
             }
         ));
-    }
-
-    #[test]
-    fn test_canonicalize_without_positions_reports_bare_error() {
-        let key = Value::Representation("<<".into(), ScalarStyle::Plain, None);
-        let one = Value::Representation("1".into(), ScalarStyle::Plain, None);
-        let map = Value::Mapping(Map::from_iter([(key, one)]));
-        assert_eq!(canonicalize(map).unwrap_err(), MergeError::NotMapping);
     }
 
     #[test]
@@ -1620,19 +1356,6 @@ b: 2\n---\nc: [\n",
     }
 
     #[test]
-    fn test_hand_built_nul_spelling_is_an_ordinary_key() {
-        let key = Value::Representation("<<\0".into(), ScalarStyle::Plain, None);
-        let value = Value::Mapping(Map::from_iter([(
-            key,
-            Value::Value(ScalarOwned::Integer(1)),
-        )]));
-        let Value::Mapping(map) = canonicalize(value).unwrap() else {
-            panic!("expected mapping")
-        };
-        assert_eq!(entry_texts(&map), ["<<\0: 1"]);
-    }
-
-    #[test]
     fn test_alias_to_plain_merge_key_scalar_merges() {
         let yaml = "k: &k <<\nb: &b {x: 1}\nm:\n  *k : *b\n  z: 0\n";
         assert_eq!(merged_entries(yaml, "m"), ["x: 1", "z: 0"]);
@@ -1679,9 +1402,7 @@ m:
   n: {p: 9}
 ";
         let doc = Parser::parse_str(yaml).unwrap().unwrap();
-        let Value::Mapping(n) =
-            sub_mapping(&doc, "m")[&Value::Value(ScalarOwned::String("n".into()))].clone()
-        else {
+        let Value::Mapping(n) = sub_mapping(&doc, "m")[&Value::String("n".into())].clone() else {
             panic!("expected mapping")
         };
         assert_eq!(n.len(), 1);
@@ -1691,95 +1412,69 @@ m:
     fn test_i64_max_boundary() {
         let v = get_mapping_val("x: 9223372036854775807", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(i64::MAX))),
+            matches!(v, Value::Int(i64::MAX)),
             "i64::MAX should stay Integer, got {v:?}"
         );
 
         let v = get_mapping_val("x: 9223372036854775808", "x");
-        assert!(
-            matches!(v, Value::Representation(ref s, _, None) if s == "9223372036854775808"),
-            "i64::MAX+1 should stay Representation, got {v:?}"
-        );
+        assert_eq!(v, big_int("9223372036854775808"));
     }
 
     #[test]
     fn test_leading_plus_large_integer() {
         let v = get_mapping_val("x: +42", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(42))),
+            matches!(v, Value::Int(42)),
             "+42 should be Integer(42), got {v:?}"
         );
 
         let v = get_mapping_val("x: +99999999999999999999", "x");
-        assert!(
-            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == "99999999999999999999"),
-            "+overflow should be canonical Representation, got {v:?}"
-        );
+        assert_eq!(v, big_int("99999999999999999999"));
     }
 
     #[test]
-    fn test_large_integer_preserved_as_representation() {
+    fn test_large_integer_becomes_big_int() {
         let big =
             "99999999999999999999999999999999999999999999999999999999999999999999999999999999";
         let v = get_mapping_val(&format!("x: {big}"), "x");
-        assert!(
-            matches!(v, Value::Representation(ref s, _, None) if s == big),
-            "got {v:?}"
-        );
+        assert_eq!(v, big_int(big));
     }
 
     #[test]
     fn test_quoted_large_integer_stays_string() {
         let v = get_mapping_val("x: \"9223372036854775808\"", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "9223372036854775808"),
+            matches!(v, Value::String(ref s) if s == "9223372036854775808"),
             "got {v:?}"
         );
     }
 
     #[test]
-    fn test_tagged_large_integer_is_untagged_representation() {
+    fn test_tagged_large_integer_is_big_int() {
         let v = get_mapping_val("x: !!int 9223372036854775808", "x");
-        assert!(
-            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == "9223372036854775808"),
-            "got {v:?}"
-        );
+        assert_eq!(v, big_int("9223372036854775808"));
     }
 
     #[test]
-    fn test_custom_tag_on_big_integer_is_kept_with_source_text() {
-        let v = get_mapping_val("x: !foo 0xFFFFFFFFFFFFFFFFFF", "x");
-        assert!(
-            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, Some(_)) if s == "0xFFFFFFFFFFFFFFFFFF"),
-            "got {v:?}"
-        );
-    }
-
-    #[test]
-    fn test_canonicalize_tagged_wrapper_large_integer() {
-        let tag = Tag {
-            handle: "tag:yaml.org,2002:".into(),
-            suffix: "int".into(),
+    fn test_custom_tag_on_big_integer_is_dropped_but_source_text_kept() {
+        let Value::BigInt(v) = get_mapping_val("x: !foo 0xFFFFFFFFFFFFFFFFFF", "x") else {
+            panic!("big int expected");
         };
-        let inner = Value::Value(ScalarOwned::String("9223372036854775808".into()));
-        let v = canonicalize(Value::Tagged(tag, Box::new(inner))).unwrap();
-        assert!(
-            matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == "9223372036854775808"),
-            "got {v:?}"
-        );
+        assert_eq!(v.radix_text(), Some("0xFFFFFFFFFFFFFFFFFF"));
+        assert_eq!(v.canonical(), "4722366482869645213695");
     }
 
     #[test]
     fn test_tagged_str_large_integer_is_string() {
         let v = get_mapping_val("x: !!str 9223372036854775808", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "9223372036854775808"),
+            matches!(v, Value::String(ref s) if s == "9223372036854775808"),
             "got {v:?}"
         );
     }
 
     #[test]
-    fn test_large_integer_as_mapping_key_stays_representation() {
+    fn test_large_integer_as_mapping_key_is_big_int() {
         let root = Parser::parse_str("9223372036854775808: x")
             .unwrap()
             .unwrap();
@@ -1787,56 +1482,46 @@ m:
             panic!("expected mapping")
         };
         let key = map.keys().next().unwrap();
-        assert!(
-            matches!(key, Value::Representation(s, _, None) if s == "9223372036854775808"),
-            "got {key:?}"
-        );
+        assert_eq!(key, &big_int("9223372036854775808"));
     }
 
     #[test]
     fn test_normal_integer_unaffected() {
         let v = get_mapping_val("x: 42", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(42))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(42)), "got {v:?}");
     }
 
     #[test]
     fn test_float_unaffected() {
         let v = get_mapping_val("x: 1.5e10", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::FloatingPoint(_))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Float(_)), "got {v:?}");
     }
 
     #[test]
     fn test_negative_large_integer() {
         let big = "-99999999999999999999999999999999";
         let v = get_mapping_val(&format!("x: {big}"), "x");
-        assert!(
-            matches!(v, Value::Representation(ref s, _, None) if s == big),
-            "got {v:?}"
-        );
+        assert_eq!(v, big_int(big));
     }
 
     #[test]
     fn test_hex_and_octal_overflow_keep_source_text_in_values() {
         for (raw, expected) in [
-            ("0x8000000000000000", "0x8000000000000000"),
-            ("-0x8000000000000001", "-0x8000000000000001"),
-            ("0o7777777777777777777777", "0o7777777777777777777777"),
-            ("!!int 0xFFFFFFFFFFFFFFFFFF", "0xFFFFFFFFFFFFFFFFFF"),
-            ("!!int 0o1000000000000000000000", "0o1000000000000000000000"),
-            ("0XDEADBEEFDEADBEEF", "0XDEADBEEFDEADBEEF"),
-            ("+0099999999999999999999", "99999999999999999999"),
+            ("0x8000000000000000", Some("0x8000000000000000")),
+            ("-0x8000000000000001", Some("-0x8000000000000001")),
+            ("0o7777777777777777777777", Some("0o7777777777777777777777")),
+            ("!!int 0xFFFFFFFFFFFFFFFFFF", Some("0xFFFFFFFFFFFFFFFFFF")),
+            (
+                "!!int 0o1000000000000000000000",
+                Some("0o1000000000000000000000"),
+            ),
+            ("0XDEADBEEFDEADBEEF", Some("0XDEADBEEFDEADBEEF")),
+            ("+0099999999999999999999", None),
         ] {
-            let v = get_mapping_val(&format!("x: {raw}"), "x");
-            assert!(
-                matches!(v, Value::Representation(ref s, ScalarStyle::Plain, None) if s == expected),
-                "{raw}: got {v:?}"
-            );
+            let Value::BigInt(v) = get_mapping_val(&format!("x: {raw}"), "x") else {
+                panic!("{raw}: big int expected");
+            };
+            assert_eq!(v.radix_text(), expected, "{raw}");
         }
     }
 
@@ -1850,15 +1535,12 @@ m:
         };
         let entries: Vec<_> = map.iter().collect();
         assert_eq!(entries.len(), 3);
-        assert!(matches!(
-            entries[0].0,
-            Value::Representation(s, _, None) if s == "0xFFFFFFFFFFFFFFFFFF"
-        ));
-        assert_eq!(entries[0].1, &Value::Value(ScalarOwned::String("b".into())));
-        assert!(matches!(
-            entries[2].0,
-            Value::Representation(s, _, None) if s == "0o7777777777777777777777"
-        ));
+        assert_eq!(radix_text_of(entries[0].0), Some("0xFFFFFFFFFFFFFFFFFF"));
+        assert_eq!(entries[0].1, &Value::String("b".into()));
+        assert_eq!(
+            radix_text_of(entries[2].0),
+            Some("0o7777777777777777777777")
+        );
     }
 
     #[test]
@@ -1869,14 +1551,14 @@ m:
             unreachable!()
         };
         let entries: Vec<_> = map.iter().collect();
-        let text = |s: &str| Value::Value(ScalarOwned::String(s.into()));
+        let text = |s: &str| Value::String(s.into());
         assert_eq!(
             entries,
             [
-                (&Value::Value(ScalarOwned::Integer(16)), &text("c")),
-                (&text("b"), &Value::Value(ScalarOwned::Integer(1))),
-                (&Value::Value(ScalarOwned::Boolean(true)), &text("y")),
-                (&text("k"), &Value::Value(ScalarOwned::Integer(2))),
+                (&Value::Int(16), &text("c")),
+                (&text("b"), &Value::Int(1)),
+                (&Value::Bool(true), &text("y")),
+                (&text("k"), &Value::Int(2)),
             ]
         );
     }
@@ -1887,7 +1569,7 @@ m:
         };
         map.keys()
             .map(|k| match k {
-                Value::Value(ScalarOwned::String(s)) => s.clone(),
+                Value::String(s) => s.clone(),
                 other => panic!("unexpected key {other:?}"),
             })
             .collect()
@@ -1902,8 +1584,8 @@ m:
         let Value::Mapping(map) = &doc else {
             unreachable!()
         };
-        let a = Value::Value(ScalarOwned::String("a".into()));
-        assert_eq!(map[&a], Value::Value(ScalarOwned::Integer(5)));
+        let a = Value::String("a".into());
+        assert_eq!(map[&a], Value::Int(5));
     }
 
     #[test]
@@ -1924,7 +1606,7 @@ m:
                 let Value::Mapping(top) = &doc else {
                     unreachable!()
                 };
-                doc = top[&Value::Value(ScalarOwned::String("m".into()))].clone();
+                doc = top[&Value::String("m".into())].clone();
             }
             let Value::Mapping(map) = &doc else {
                 panic!("expected a mapping for {input:?}");
@@ -1932,14 +1614,10 @@ m:
             let entries: Vec<_> = map.iter().collect();
             assert_eq!(entries.len(), 2, "{input:?}: {entries:?}");
             assert!(
-                matches!(entries[1].0, Value::Value(ScalarOwned::String(s)) if s == "b"),
+                matches!(entries[1].0, Value::String(s) if s == "b"),
                 "{input:?}: {entries:?}"
             );
-            assert_eq!(
-                entries[1].1,
-                &Value::Value(ScalarOwned::Integer(2)),
-                "{input:?}"
-            );
+            assert_eq!(entries[1].1, &Value::Int(2), "{input:?}");
         }
     }
 
@@ -1953,7 +1631,7 @@ m:
         let Value::Mapping(top) = &doc else {
             unreachable!()
         };
-        let get = |key: &str| top[&Value::Value(ScalarOwned::String(key.into()))].clone();
+        let get = |key: &str| top[&Value::String(key.into())].clone();
         assert_eq!(string_keys(&get("m")), ["x", "y"]);
         assert_eq!(string_keys(&get("f")), ["p", "q"]);
         let Value::Sequence(items) = get("s") else {
@@ -1967,7 +1645,7 @@ m:
         let doc = Parser::parse_str("a: 1\nb: 2\na: 3\n").unwrap().unwrap();
         assert!(matches!(
             &doc,
-            Value::Mapping(map) if map.keys().all(|k| matches!(k, Value::Value(_)))
+            Value::Mapping(map) if map.keys().all(|k| matches!(k, Value::String(_)))
         ));
     }
 
@@ -1977,7 +1655,7 @@ m:
         let Some(Value::Mapping(top)) = Parser::parse_str(input).unwrap() else {
             unreachable!()
         };
-        let child = &top[&Value::Value(ScalarOwned::String("child".into()))];
+        let child = &top[&Value::String("child".into())];
         assert_eq!(string_keys(child), ["x", "y", "z"]);
     }
 
@@ -1994,38 +1672,27 @@ m:
         let Some(Value::Mapping(map)) = Parser::parse_str(input).unwrap() else {
             unreachable!()
         };
-        let child = map
-            .get(&Value::Value(ScalarOwned::String("child".into())))
-            .unwrap();
+        let child = map.get(&Value::String("child".into())).unwrap();
         let Value::Mapping(child) = child else {
             unreachable!()
         };
         assert_eq!(child.len(), 2);
         let (key, value) = child.iter().next().unwrap();
-        assert!(matches!(
-            key,
-            Value::Representation(s, _, None) if s == "0xFFFFFFFFFFFFFFFFFF"
-        ));
-        assert_eq!(value, &Value::Value(ScalarOwned::String("explicit".into())));
+        assert_eq!(radix_text_of(key), Some("0xFFFFFFFFFFFFFFFFFF"));
+        assert_eq!(value, &Value::String("explicit".into()));
     }
 
     #[test]
     fn test_hex_min_i64_is_integer() {
         let v = get_mapping_val("x: -0x8000000000000000", "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(i64::MIN))),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::Int(i64::MIN)), "got {v:?}");
     }
 
     #[test]
     fn test_hex_beyond_bit_cap_stays_string() {
         let raw = format!("0x1{}", "0".repeat(3571));
         let v = get_mapping_val(&format!("x: {raw}"), "x");
-        assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if *s == raw),
-            "got {v:?}"
-        );
+        assert!(matches!(v, Value::String(ref s) if *s == raw), "got {v:?}");
     }
 
     #[test]
@@ -2040,8 +1707,9 @@ m:
         };
         assert_eq!(map.len(), 1, "got {map:?}");
         let (key, value) = map.iter().next().unwrap();
-        assert!(matches!(key, Value::Representation(s, _, None) if s == "99999999999999999999"));
-        assert!(matches!(value, Value::Value(ScalarOwned::String(s)) if s == "c"));
+        assert_eq!(key, &big_int("99999999999999999999"));
+        assert_eq!(radix_text_of(key), None);
+        assert!(matches!(value, Value::String(s) if s == "c"));
     }
 
     #[test]
@@ -2049,10 +1717,7 @@ m:
         // 0x7FFFFFFFFFFFFFFF == i64::MAX == 9223372036854775807
         let v = get_mapping_val("x: 0x7FFFFFFFFFFFFFFF", "x");
         assert!(
-            matches!(
-                v,
-                Value::Value(ScalarOwned::Integer(9_223_372_036_854_775_807))
-            ),
+            matches!(v, Value::Int(9_223_372_036_854_775_807)),
             "0x7FFFFFFFFFFFFFFF should be Integer(i64::MAX), got {v:?}"
         );
     }
@@ -2062,10 +1727,7 @@ m:
         // 0o777777777777777777777 == i64::MAX == 9223372036854775807
         let v = get_mapping_val("x: 0o777777777777777777777", "x");
         assert!(
-            matches!(
-                v,
-                Value::Value(ScalarOwned::Integer(9_223_372_036_854_775_807))
-            ),
+            matches!(v, Value::Int(9_223_372_036_854_775_807)),
             "0o777777777777777777777 should be Integer(i64::MAX), got {v:?}"
         );
     }
@@ -2074,7 +1736,7 @@ m:
     fn test_tagged_int_hex_fits_i64() {
         let v = get_mapping_val("x: !!int 0xFF", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::Integer(255))),
+            matches!(v, Value::Int(255)),
             "!!int 0xFF should be Integer(255), got {v:?}"
         );
     }
@@ -2091,41 +1753,41 @@ m:
     fn test_whitespace_only_yields_null_doc() {
         let docs = Parser::parse_all("   ").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+        assert!(matches!(docs[0], Value::Null));
     }
 
     #[test]
     fn test_comment_only_yields_null_doc() {
         let docs = Parser::parse_all("# comment").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+        assert!(matches!(docs[0], Value::Null));
     }
 
     #[test]
     fn test_bare_doc_end_yields_null_doc() {
         let docs = Parser::parse_all("...").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+        assert!(matches!(docs[0], Value::Null));
     }
 
     #[test]
     fn test_comment_then_doc_end_yields_null_doc() {
         let docs = Parser::parse_all("# c\n...").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+        assert!(matches!(docs[0], Value::Null));
     }
 
     #[test]
     fn test_bare_doc_start_yields_null_doc() {
         let docs = Parser::parse_all("---").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Value(ScalarOwned::Null)));
+        assert!(matches!(docs[0], Value::Null));
     }
 
     #[test]
     fn test_parse_str_comment_only_returns_null() {
         let result = Parser::parse_str("# comment").unwrap();
-        assert!(matches!(result, Some(Value::Value(ScalarOwned::Null))));
+        assert!(matches!(result, Some(Value::Null)));
     }
 
     #[test]
@@ -2149,7 +1811,7 @@ m:
     fn test_non_specific_tag_plain_integer_is_string() {
         let v = get_mapping_val("x: ! 99", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "99"),
+            matches!(v, Value::String(ref s) if s == "99"),
             "! 99 should be String(\"99\"), got {v:?}"
         );
     }
@@ -2158,7 +1820,7 @@ m:
     fn test_non_specific_tag_quoted_is_string() {
         let v = get_mapping_val("x: ! \"99\"", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "99"),
+            matches!(v, Value::String(ref s) if s == "99"),
             "! \"99\" should be String(\"99\"), got {v:?}"
         );
     }
@@ -2167,7 +1829,7 @@ m:
     fn test_non_specific_tag_true_is_string() {
         let v = get_mapping_val("x: ! true", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "true"),
+            matches!(v, Value::String(ref s) if s == "true"),
             "! true should be String(\"true\"), got {v:?}"
         );
     }
@@ -2176,7 +1838,7 @@ m:
     fn test_non_specific_tag_null_keyword_is_string() {
         let v = get_mapping_val("x: ! null", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "null"),
+            matches!(v, Value::String(ref s) if s == "null"),
             "! null should be String(\"null\"), got {v:?}"
         );
     }
@@ -2186,7 +1848,7 @@ m:
         // `! ''` must be String(""), NOT Null. Order of branches is load-bearing.
         let v = get_mapping_val("x: ! ''", "x");
         assert!(
-            matches!(v, Value::Value(ScalarOwned::String(ref s)) if s.is_empty()),
+            matches!(v, Value::String(ref s) if s.is_empty()),
             "! '' should be String(\"\") not Null, got {v:?}"
         );
     }
@@ -2199,7 +1861,7 @@ m:
         let Value::Mapping(map) = result else {
             panic!("expected mapping")
         };
-        let k = Value::Value(ScalarOwned::String("x".into()));
+        let k = Value::String("x".into());
         let val = &map[&k];
         assert!(
             matches!(val, Value::Sequence(_)),
@@ -2208,43 +1870,10 @@ m:
     }
 
     #[test]
-    fn test_parse_chunk_keeps_bom_that_parse_all_strips() {
-        let budget = StreamBudget::new(ParseLimits::default());
-        let key_of = |docs: Vec<Value>| {
-            let Some(Value::Mapping(map)) = docs.into_iter().next() else {
-                panic!("expected mapping");
-            };
-            let Some(Value::Value(ScalarOwned::String(key))) = map.keys().next().cloned() else {
-                panic!("expected string key");
-            };
-            key
-        };
-        let stripped = Parser::parse_all_with_budget("\u{FEFF}a: 1", &budget).unwrap();
-        assert_eq!(key_of(stripped), "a");
-        let kept = Parser::parse_chunk_with_budget("\u{FEFF}a: 1", &budget).unwrap();
-        assert_eq!(key_of(kept), "\u{FEFF}a");
-    }
-
-    #[test]
-    fn test_parse_chunk_bom_only_is_string_document() {
-        let budget = StreamBudget::new(ParseLimits::default());
-        let docs = Parser::parse_chunk_with_budget("\u{FEFF}", &budget).unwrap();
-        assert_eq!(
-            docs,
-            vec![Value::Value(ScalarOwned::String("\u{FEFF}".into()))]
-        );
-        let docs = Parser::parse_all_with_budget("\u{FEFF}", &budget).unwrap();
-        assert_eq!(docs, vec![Value::Value(ScalarOwned::Null)]);
-    }
-
-    #[test]
     fn test_parse_all_strips_only_one_of_double_bom() {
         let budget = StreamBudget::new(ParseLimits::default());
         let docs = Parser::parse_all_with_budget("\u{FEFF}\u{FEFF}", &budget).unwrap();
-        assert_eq!(
-            docs,
-            vec![Value::Value(ScalarOwned::String("\u{FEFF}".into()))]
-        );
+        assert_eq!(docs, vec![Value::String("\u{FEFF}".into())]);
     }
 
     #[test]
@@ -2255,7 +1884,7 @@ m:
         };
         assert!(
             map.keys()
-                .any(|k| matches!(k, Value::Value(ScalarOwned::String(s)) if s == "a"))
+                .any(|k| matches!(k, Value::String(s) if s == "a"))
         );
     }
 
@@ -2267,14 +1896,14 @@ m:
         };
         assert!(
             map.keys()
-                .any(|k| matches!(k, Value::Value(ScalarOwned::String(s)) if s == "a"))
+                .any(|k| matches!(k, Value::String(s) if s == "a"))
         );
     }
 
     #[test]
     fn test_mid_text_bom_stays_data() {
         let v = get_mapping_val("b: \u{FEFF}x", "b");
-        assert!(matches!(v, Value::Value(ScalarOwned::String(ref s)) if s == "\u{FEFF}x"));
+        assert!(matches!(v, Value::String(ref s) if s == "\u{FEFF}x"));
     }
 
     #[test]
@@ -2287,7 +1916,7 @@ m:
     #[test]
     fn test_bom_crlf_parses() {
         let v = get_mapping_val("\u{FEFF}# c\r\na: 1\r\n", "a");
-        assert!(matches!(v, Value::Value(ScalarOwned::Integer(1))));
+        assert!(matches!(v, Value::Int(1)));
     }
 
     #[test]
@@ -2299,7 +1928,7 @@ m:
     #[test]
     fn test_bom_only_parse_str_is_null() {
         let v = Parser::parse_str("\u{FEFF}").unwrap();
-        assert!(matches!(v, Some(Value::Value(ScalarOwned::Null))));
+        assert!(matches!(v, Some(Value::Null)));
     }
 
     mod limits {
@@ -2330,6 +1959,53 @@ m:
                 max_alias_bytes: MaxAliasBytes::new(bytes).unwrap(),
                 ..ParseLimits::default()
             }
+        }
+
+        #[test]
+        fn nested_anchor_copies_are_bounded_by_the_budget_and_the_source_size() {
+            let nested = |levels: usize, ints: usize| {
+                let leaf = (0..ints).fold(String::new(), |mut acc, i| {
+                    write!(acc, "{}, ", 100_000 + i).unwrap();
+                    acc
+                });
+                let open = (0..levels).fold(String::new(), |mut acc, i| {
+                    write!(acc, "&a{i} [").unwrap();
+                    acc
+                });
+                format!("{open}{leaf}0{}", "]".repeat(levels))
+            };
+            // a few anchored wrappers over a wide leaf are legitimate even under a tiny budget
+            assert!(Parser::parse_str_with_limits(&nested(3, 2000), &alias_limits(1)).is_ok());
+            assert!(Parser::parse_str_with_limits(&nested(5, 2000), &alias_limits(1)).is_ok());
+            // many wrappers: the copies dwarf the source
+            for levels in [50, 100, 250] {
+                assert!(
+                    matches!(
+                        Parser::parse_str_with_limits(
+                            &nested(levels, 2000),
+                            &alias_limits(1 << 20)
+                        ),
+                        Err(ParseError::LimitExceeded {
+                            kind: LimitKind::AnchorCopies(_),
+                            ..
+                        })
+                    ),
+                    "{levels}"
+                );
+            }
+            // a budget above the copies accepts the same document
+            assert!(
+                Parser::parse_str_with_limits(&nested(100, 2000), &alias_limits(1 << 30)).is_ok()
+            );
+        }
+
+        #[test]
+        fn sibling_anchors_are_not_charged() {
+            let input = (0..2000).fold(String::new(), |mut acc, i| {
+                writeln!(acc, "- &a{i} [{}]", "y".repeat(100)).unwrap();
+                acc
+            });
+            assert!(Parser::parse_str_with_limits(&input, &alias_limits(1 << 20)).is_ok());
         }
 
         #[test]
@@ -2704,13 +2380,25 @@ m:
         #[test]
         fn cross_document_alias_is_unknown_anchor() {
             let err = Parser::parse_all("--- &a [x]\n--- *a\n").unwrap_err();
-            assert!(matches!(err, ParseError::Scanner { .. }), "{err:?}");
+            assert!(matches!(err, ParseError::Syntax(_)), "{err:?}");
             assert!(err.to_string().contains("unknown anchor"));
         }
 
         #[test]
-        fn self_referential_alias_does_not_panic() {
-            assert!(Parser::parse_all("&a [*a]").is_ok());
+        fn self_referential_alias_is_a_syntax_error_at_the_alias() {
+            for input in [
+                "&a [*a]",
+                "&a {k: *a}",
+                "- &a
+  - *a
+",
+            ] {
+                let err = Parser::parse_all(input).unwrap_err();
+                assert!(matches!(err, ParseError::Syntax(_)), "{input:?}: {err:?}");
+                assert!(err.to_string().contains("still being defined"), "{err}");
+            }
+            let position = Parser::parse_all("&a [*a]").unwrap_err().position();
+            assert_eq!((position.line, position.column), (1, 5));
         }
 
         #[test]
@@ -2720,6 +2408,261 @@ m:
             assert!(msg.contains("limit exceeded"), "{msg}");
             assert!(msg.contains("line 2"), "{msg}");
             assert!(msg.contains("column 3"), "{msg}");
+        }
+    }
+
+    fn keys_of(yaml: &str) -> Vec<String> {
+        let Some(Value::Mapping(map)) = Parser::parse_str(yaml).unwrap() else {
+            panic!("mapping expected");
+        };
+        map.iter()
+            .map(|(k, v)| format!("{}={}", k.key_text().unwrap(), v.key_text().unwrap()))
+            .collect()
+    }
+
+    #[test]
+    fn duplicate_keys_keep_the_first_position_and_the_last_value() {
+        assert_eq!(keys_of("b: 1\na: 2\nb: 3\n"), ["b=3", "a=2"]);
+        assert_eq!(keys_of("\"b\": 1\na: 2\n'b': 3\nb: 4\n"), ["b=4", "a=2"]);
+        assert_eq!(
+            keys_of("x: 1\n+99999999999999999999: a\ny: 2\n99999999999999999999: b\n"),
+            ["x=1", "99999999999999999999=b", "y=2"]
+        );
+        assert_eq!(keys_of("{b: 1, a: 2, b: 3}"), ["b=3", "a=2"]);
+    }
+
+    #[test]
+    fn duplicate_keys_across_merge_keep_explicit_position() {
+        let yaml = "base: &b {x: 1, y: 2}\nm:\n  y: 0\n  <<: *b\n  y: 9\n  y: 10\n";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "y: 10"]);
+    }
+
+    #[test]
+    fn anchored_values_are_shared_by_value() {
+        let doc = Parser::parse_str("a: &x [1, {k: v}]\nb: *x\n")
+            .unwrap()
+            .unwrap();
+        let Value::Mapping(map) = doc else {
+            unreachable!()
+        };
+        assert_eq!(
+            map.get(&Value::String("a".into())),
+            map.get(&Value::String("b".into()))
+        );
+    }
+
+    #[test]
+    fn scalar_types_follow_the_core_schema_without_tags_in_the_value() {
+        let doc = Parser::parse_str("a: !custom 5\nb: !!set {x}\nc: !local [1]\n")
+            .unwrap()
+            .unwrap();
+        let Value::Mapping(map) = doc else {
+            unreachable!()
+        };
+        assert_eq!(map[&Value::String("a".into())], Value::Int(5));
+        let Value::Set(set) = &map[&Value::String("b".into())] else {
+            panic!("a !!set loads as a set");
+        };
+        assert!(set.contains(&Value::String("x".into())));
+        assert_eq!(
+            map[&Value::String("c".into())],
+            Value::Sequence(vec![Value::Int(1)])
+        );
+    }
+
+    #[test]
+    fn deep_nesting_within_limits_loads_without_recursion() {
+        let depth = 400;
+        let limits = ParseLimits {
+            max_depth: crate::limits::MaxDepth::new(512).unwrap(),
+            ..ParseLimits::default()
+        };
+        let yaml = format!("{}1", "- ".repeat(depth));
+        assert!(Parser::parse_str_with_limits(&yaml, &limits).is_ok());
+    }
+
+    const CORE: &str = "tag:yaml.org,2002:";
+
+    #[test]
+    fn verbatim_core_tags_behave_like_the_shorthand() {
+        for (shorthand, tag, input, expected) in [
+            ("!!int", "int", "\"7\"", Value::Int(7)),
+            ("!!int", "int", "3.0", Value::Int(3)),
+            (
+                "!!float",
+                "float",
+                "'1'",
+                Value::Float(crate::Float::new(1.0)),
+            ),
+            ("!!bool", "bool", "'true'", Value::Bool(true)),
+            ("!!null", "null", "''", Value::Null),
+            ("!!str", "str", "42", Value::String("42".into())),
+        ] {
+            for text in [
+                format!("x: {shorthand} {input}"),
+                format!("x: !<{CORE}{tag}> {input}"),
+                format!("%TAG !e! {CORE}\n---\nx: !e!{tag} {input}"),
+            ] {
+                assert_eq!(get_mapping_val(&text, "x"), expected, "{text}");
+            }
+        }
+    }
+
+    #[test]
+    fn verbatim_tag_outside_the_core_namespace_is_not_a_core_tag() {
+        let v = get_mapping_val("x: !<tag:example.com,2000:str> 7", "x");
+        assert_eq!(v, Value::Int(7));
+        let v = get_mapping_val("x: !<tag:yaml.org,2003:str> 7", "x");
+        assert_eq!(v, Value::Int(7));
+    }
+
+    #[test]
+    fn verbatim_set_tag_is_a_set_for_merging_and_for_its_keys() {
+        let set = format!("s: &s !<{CORE}set> {{x}}\nm:\n  <<: *s\n");
+        assert_eq!(merge_error(&set), Some(MergeError::SetSource));
+        let doc = format!("s: !<{CORE}set> {{k, <<}}\n");
+        let Some(Value::Mapping(map)) = Parser::parse_str(&doc).unwrap() else {
+            unreachable!()
+        };
+        let Value::Set(set) = &map[&Value::String("s".into())] else {
+            panic!("a !!set loads as a set");
+        };
+        assert_eq!(set.len(), 2);
+        assert!(set.contains(&Value::String("<<".into())));
+    }
+
+    #[test]
+    fn merge_tag_makes_any_scalar_a_merge_key() {
+        for key in [
+            "!!merge <<",
+            "!!merge '<<'",
+            "!!merge \"<<\"",
+            "!!merge merge",
+            "!!merge ''",
+            &format!("!<{CORE}merge> <<"),
+        ] {
+            let yaml = format!("b: &b {{x: 1}}\nm:\n  {key}: *b\n  k: 0\n");
+            assert_eq!(merged_entries(&yaml, "m"), ["x: 1", "k: 0"], "{key}");
+        }
+    }
+
+    #[test]
+    fn merge_tag_key_with_invalid_value_is_rejected_at_the_keys_content() {
+        assert_eq!(
+            merge_at(Parser::parse_str("m:\n  !!merge <<: 1\n")),
+            (MergeError::NotMapping, 2, 11)
+        );
+        assert_eq!(
+            merge_at(Parser::parse_str("m: {k: 0, !!merge x: [1]}\n")),
+            (MergeError::NotMapping, 1, 19)
+        );
+    }
+
+    #[test]
+    fn merge_tag_anchor_is_a_merge_key_through_an_alias() {
+        let yaml = "k: &k !!merge <<\nb: &b {x: 1}\nm:\n  *k : *b\n  z: 0\n";
+        assert_eq!(merged_entries(yaml, "m"), ["x: 1", "z: 0"]);
+    }
+
+    #[test]
+    fn other_tags_and_quotes_do_not_make_a_merge_key() {
+        for key in [
+            "'<<'",
+            "\"<<\"",
+            "!!str <<",
+            "!foo <<",
+            "!<tag:example.com,2000:merge> <<",
+        ] {
+            let yaml = format!("b: &b {{x: 1}}\nm:\n  {key}: *b\n  k: 0\n");
+            let m = sub_mapping(&Parser::parse_str(&yaml).unwrap().unwrap(), "m");
+            assert_eq!(m.len(), 2, "{key}");
+        }
+    }
+
+    #[test]
+    fn merge_tag_inside_a_set_is_an_ordinary_element() {
+        let doc = Parser::parse_str("s: !!set {!!merge <<, k}\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry_texts(&sub_mapping(&doc, "s")).len(), 2);
+    }
+
+    const B: char = '\u{FEFF}';
+
+    fn texts(docs: &[Value]) -> Vec<String> {
+        docs.iter()
+            .map(|d| {
+                d.key_text()
+                    .map_or_else(|| format!("{d:?}"), std::borrow::Cow::into_owned)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn bom_in_a_later_document_prefix_is_not_content() {
+        for (yaml, expected) in [
+            (format!("a\n...\n{B}b"), vec!["a", "b"]),
+            (format!("a\n...\n\n# c\n{B}b"), vec!["a", "b"]),
+            (format!("a\n...\n{B}%YAML 1.2\n---\nb"), vec!["a", "b"]),
+            (format!("a\n---\n{B}--- b"), vec!["a", "null", "b"]),
+            (format!("{B}a\n...\n{B}---\nb"), vec!["a", "b"]),
+        ] {
+            let docs = Parser::parse_all(&yaml);
+            assert_eq!(texts(&docs.unwrap()), expected, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn bom_elsewhere_is_content() {
+        let docs = Parser::parse_all(&format!("a: {B}1\n...\nb{B}")).unwrap();
+        assert_eq!(docs[0], Parser::parse_all(&format!("a: {B}1")).unwrap()[0]);
+        assert_eq!(texts(&docs[1..]), [format!("b{B}")]);
+        let docs = Parser::parse_all(&format!("a\n{B}b")).unwrap();
+        assert_eq!(texts(&docs), [format!("a {B}b")]);
+    }
+
+    #[test]
+    fn marker_after_a_bom_ends_a_root_block_scalar() {
+        let docs = Parser::parse_all(&format!("--- |\nfoo\n{B}---\nbar\n")).unwrap();
+        // saphyr reads a column-0 `---` inside a root block scalar as content (#407), so only the
+        // BOM is lost
+        assert_eq!(texts(&docs), ["foo\n---\nbar\n"]);
+    }
+
+    #[test]
+    fn marker_after_a_bom_inside_a_quoted_scalar_is_an_error() {
+        assert!(Parser::parse_all(&format!("\"a\n{B}--- y\"")).is_err());
+    }
+
+    #[test]
+    fn bom_only_input_is_one_null_document() {
+        assert_eq!(
+            Parser::parse_all(&B.to_string()).unwrap(),
+            vec![Value::Null]
+        );
+        assert_eq!(Parser::parse_all("").unwrap(), Vec::<Value>::new());
+    }
+
+    #[test]
+    fn non_printable_characters_are_syntax_errors_at_their_position() {
+        for (yaml, c, line, column) in [
+            ("a: \u{FFFE}\n", 'U', 1, 4),
+            ("a: b\n\u{7F}: 1\n", 'U', 2, 1),
+            ("a: \"x\u{86}y\"\n", 'U', 1, 6),
+            ("a: 1\n# c\u{FFFF}\n", 'U', 2, 4),
+            ("a: 1\0", 'N', 1, 5),
+        ] {
+            for result in [
+                Parser::parse_all(yaml).map(|_| ()),
+                Parser::parse_str(yaml).map(|_| ()),
+            ] {
+                let Err(ParseError::Syntax(err)) = result else {
+                    panic!("syntax error expected for {yaml:?}");
+                };
+                assert_eq!((err.line(), err.column()), (line, column), "{yaml:?}");
+                assert!(err.to_string().starts_with(c), "{err}");
+                assert!(err.to_string().contains("not allowed in YAML"), "{err}");
+            }
         }
     }
 }

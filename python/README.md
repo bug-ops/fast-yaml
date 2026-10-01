@@ -161,10 +161,10 @@ print(f"Changed {result.changed} files")
 | `indent` | 2 | Indentation width |
 | `width` | 80 | Line width |
 | `sort_keys` | False | Sort dictionary keys |
-| `max_depth` | 256 | Maximum nesting depth, 1..=512 (`process_files` only) |
+| `max_depth` | 256 | Maximum nesting depth, 1..=512 (`process_files` and `format_files`) |
 | `max_alias_bytes` | 64 MiB | Alias-expansion budget per file, 1..=1 GiB (`process_files` only) |
 
-`format_files` ignores `max_depth` and `max_alias_bytes`; formatter depth is fixed at 256.
+`format_files` applies `max_depth` and ignores `max_alias_bytes`. `indent` must be 1..=9 and `width` 20..=1000; other values raise `ValueError` instead of being clamped.
 
 ### BatchResult
 

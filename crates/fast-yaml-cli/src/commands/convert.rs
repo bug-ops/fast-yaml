@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::ParseLimits;
-use fast_yaml_core::{Emitter, Parser, ResolvedScalar, Value, resolve_scalar};
+use fast_yaml_core::value::quote_key;
+use fast_yaml_core::{BigInt, Emitter, Float, Mapping, Parser, Value};
 use serde_json;
 
 use crate::cli::ConvertFormat;
@@ -96,81 +97,85 @@ impl ConvertCommand {
 /// Returns an error for non-scalar key types (mappings, sequences, aliases)
 /// that have no meaningful string representation.
 fn yaml_key_to_string(key: &Value) -> Result<String> {
-    fast_yaml_core::value::scalar_key_text(key).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Unsupported YAML map key type: only scalar keys (string, number, boolean, null) \
+    key.key_text()
+        .map(std::borrow::Cow::into_owned)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unsupported YAML map key type: only scalar keys (string, number, boolean, null) \
              can be converted to JSON"
-        )
-    })
+            )
+        })
+}
+
+/// Inserts `value` under `key`, failing when distinct YAML keys produced the same JSON key.
+fn insert_unique(
+    map: &mut serde_json::Map<String, serde_json::Value>,
+    key: String,
+    value: serde_json::Value,
+) -> Result<()> {
+    if map.contains_key(&key) {
+        anyhow::bail!(
+            "distinct YAML keys convert to the same JSON key {} \
+             (for example `1` and `\"1\"`, `true` and `\"true\"`, or `1` and `1.0`)",
+            quote_key(&key)
+        );
+    }
+    map.insert(key, value);
+    Ok(())
 }
 
 /// Convert `fast_yaml_core::Value` to `serde_json::Value`
 fn value_to_json(value: &Value) -> Result<serde_json::Value> {
-    use Value as YValue;
-    use fast_yaml_core::value::ScalarOwned;
     use serde_json::Value as JValue;
 
     Ok(match value {
-        YValue::Value(scalar) => match scalar {
-            ScalarOwned::Null => JValue::Null,
-            ScalarOwned::Boolean(b) => JValue::Bool(*b),
-            ScalarOwned::Integer(i) => JValue::Number((*i).into()),
-            ScalarOwned::FloatingPoint(f) => serde_json::Number::from_f64(f.0)
-                .map(JValue::Number)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "YAML value '{f}' cannot be represented in JSON \
+        Value::Null => JValue::Null,
+        Value::Bool(b) => JValue::Bool(*b),
+        Value::Int(i) => JValue::Number((*i).into()),
+        Value::BigInt(big) => JValue::Number(
+            big.canonical()
+                .parse::<serde_json::Number>()
+                .with_context(|| format!("invalid big integer '{}'", big.canonical()))?,
+        ),
+        Value::Float(f) => serde_json::Number::from_f64(f.get())
+            .map(JValue::Number)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "YAML value '{f}' cannot be represented in JSON \
                      (JSON does not support infinity/NaN). \
                      Consider replacing with a numeric sentinel value."
-                    )
-                })?,
-            ScalarOwned::String(s) => JValue::String(s.clone()),
-        },
-        YValue::Sequence(arr) => {
+                )
+            })?,
+        Value::String(s) => JValue::String(s.clone()),
+        Value::Sequence(arr) => {
             let json_arr: Result<Vec<_>> = arr.iter().map(value_to_json).collect();
             JValue::Array(json_arr?)
         }
-        YValue::Mapping(map) => {
+        Value::Mapping(map) => {
             let mut json_map = serde_json::Map::new();
             for (k, v) in map {
-                let key = yaml_key_to_string(k)?;
-                json_map.insert(key, value_to_json(v)?);
+                insert_unique(&mut json_map, yaml_key_to_string(k)?, value_to_json(v)?)?;
             }
             JValue::Object(json_map)
         }
-        YValue::Alias(_) => {
-            anyhow::bail!("YAML aliases are not supported in JSON conversion");
-        }
-        YValue::BadValue => {
-            anyhow::bail!("Invalid YAML value encountered");
-        }
-        YValue::Representation(s, style, tag) => match resolve_scalar(s, *style, tag.as_ref()) {
-            ResolvedScalar::BigInt(big) => JValue::Number(
-                big.canonical()
-                    .parse::<serde_json::Number>()
-                    .with_context(|| format!("invalid big integer '{s}'"))?,
-            ),
-            _ => JValue::String(s.clone()),
-        },
-        YValue::Tagged(_, inner) => {
-            // Ignore the tag and convert the inner value
-            value_to_json(inner)?
+        Value::Set(set) => {
+            let mut json_map = serde_json::Map::new();
+            for member in set {
+                insert_unique(&mut json_map, yaml_key_to_string(member)?, JValue::Null)?;
+            }
+            JValue::Object(json_map)
         }
     })
 }
 
 /// Convert `serde_json::Value` to `fast_yaml_core::Value`
 fn json_to_value(json: &serde_json::Value) -> Result<Value> {
-    use Value as YValue;
-    use fast_yaml_core::Map;
-    use fast_yaml_core::value::ScalarOwned;
     use serde_json::Value as JValue;
 
     Ok(match json {
-        JValue::Null => YValue::Value(ScalarOwned::Null),
-        JValue::Bool(b) => YValue::Value(ScalarOwned::Boolean(*b)),
+        JValue::Null => Value::Null,
+        JValue::Bool(b) => Value::Bool(*b),
         JValue::Number(n) => {
-            use saphyr_parser::ScalarStyle;
             // With the `arbitrary_precision` serde_json feature, `as_str()` returns the
             // original JSON token (e.g. "1.0", "1.23e10", "42"). Use it to distinguish
             // floats (contain '.' or 'e'/'E') from integers so that `1.0` is preserved
@@ -178,32 +183,35 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
             let raw = n.as_str();
             let is_float = raw.contains('.') || raw.contains('e') || raw.contains('E');
             if is_float {
-                // Validate the value is representable, then store the original JSON token
-                // as a plain scalar so the YAML output preserves the float notation.
+                // Validate the value is representable, then keep the original JSON token
+                // so the YAML output preserves the float notation.
                 let _ = n.as_f64().ok_or_else(|| {
                     anyhow::anyhow!("Float value out of representable range: {n}")
                 })?;
-                YValue::Representation(raw.to_string(), ScalarStyle::Plain, None)
+                Value::Float(
+                    Float::parse(raw)
+                        .ok_or_else(|| anyhow::anyhow!("Unsupported JSON number: {raw}"))?,
+                )
             } else if let Some(i) = n.as_i64() {
-                YValue::Value(ScalarOwned::Integer(i))
+                Value::Int(i)
             } else {
-                YValue::Representation(raw.to_string(), ScalarStyle::Plain, None)
+                Value::BigInt(
+                    BigInt::parse(raw)
+                        .ok_or_else(|| anyhow::anyhow!("Unsupported JSON number: {raw}"))?,
+                )
             }
         }
-        JValue::String(s) => YValue::Value(ScalarOwned::String(s.clone())),
+        JValue::String(s) => Value::String(s.clone()),
         JValue::Array(arr) => {
             let yaml_arr: Result<Vec<_>> = arr.iter().map(json_to_value).collect();
-            YValue::Sequence(yaml_arr?)
+            Value::Sequence(yaml_arr?)
         }
         JValue::Object(map) => {
-            let mut yaml_map = Map::new();
+            let mut yaml_map = Mapping::with_capacity(map.len());
             for (k, v) in map {
-                yaml_map.insert(
-                    YValue::Value(ScalarOwned::String(k.clone())),
-                    json_to_value(v)?,
-                );
+                yaml_map.insert(Value::String(k.clone()), json_to_value(v)?);
             }
-            YValue::Mapping(yaml_map)
+            Value::Mapping(yaml_map)
         }
     })
 }
@@ -212,7 +220,6 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::io::input::InputOrigin;
-    use saphyr_parser::ScalarStyle;
 
     fn parse_json_number(raw: &str) -> Value {
         json_to_value(&serde_json::from_str(raw).unwrap()).unwrap()
@@ -228,7 +235,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_json_number(raw),
-                Value::Representation(raw.to_string(), ScalarStyle::Plain, None)
+                Value::BigInt(BigInt::parse(raw).unwrap())
             );
         }
     }
@@ -237,16 +244,16 @@ mod tests {
     fn json_integers_within_i64_stay_integers() {
         assert_eq!(
             parse_json_number("9223372036854775807"),
-            Value::Value(fast_yaml_core::ScalarOwned::Integer(i64::MAX))
+            Value::Int(i64::MAX)
         );
         assert_eq!(
             parse_json_number("-9223372036854775808"),
-            Value::Value(fast_yaml_core::ScalarOwned::Integer(i64::MIN))
+            Value::Int(i64::MIN)
         );
     }
 
     #[test]
-    fn big_int_representation_becomes_json_number() {
+    fn big_int_becomes_json_number() {
         for (text, expected) in [
             ("+99999999999999999999", "99999999999999999999"),
             ("-99999999999999999999", "-99999999999999999999"),
@@ -254,48 +261,31 @@ mod tests {
                 "000000000000000000000123456789012345678901",
                 "123456789012345678901",
             ),
+            ("0xFFFFFFFFFFFFFFFFFFFF", "1208925819614629174706175"),
         ] {
-            let value = Value::Representation(text.to_string(), ScalarStyle::Plain, None);
+            let value = Value::BigInt(BigInt::parse(text).unwrap());
             let json = value_to_json(&value).unwrap();
             assert_eq!(serde_json::to_string(&json).unwrap(), expected);
         }
     }
 
     #[test]
-    fn non_big_int_representation_stays_json_string() {
+    fn json_float_keeps_its_spelling_in_yaml() {
+        assert_eq!(
+            Emitter::emit_str(&parse_json_number(r#"{"a": 1.0e+5, "b": 2.50, "c": 7}"#)).unwrap(),
+            "a: 1.0e+5\nb: 2.50\nc: 7\n"
+        );
+    }
+
+    #[test]
+    fn oversized_hex_text_stays_json_string() {
         let over_cap = format!("0x1{}", "0".repeat(3571));
-        for text in ["1.5", "abc", over_cap.as_str()] {
-            let value = Value::Representation(text.to_string(), ScalarStyle::Plain, None);
-            assert_eq!(
-                value_to_json(&value).unwrap(),
-                serde_json::Value::String(text.to_string())
-            );
-        }
-    }
-
-    #[test]
-    fn radix_big_int_representation_becomes_json_number() {
-        let value = Value::Representation(
-            "0xFFFFFFFFFFFFFFFFFFFF".to_string(),
-            ScalarStyle::Plain,
-            None,
-        );
+        let Some(Value::String(text)) = Parser::parse_str(&over_cap).unwrap() else {
+            panic!("string expected");
+        };
         assert_eq!(
-            value_to_json(&value).unwrap().to_string(),
-            "1208925819614629174706175"
-        );
-    }
-
-    #[test]
-    fn quoted_big_int_text_stays_json_string() {
-        let value = Value::Representation(
-            "9223372036854775808".to_string(),
-            ScalarStyle::DoubleQuoted,
-            None,
-        );
-        assert_eq!(
-            value_to_json(&value).unwrap(),
-            serde_json::Value::String("9223372036854775808".to_string())
+            value_to_json(&Value::String(text)).unwrap(),
+            serde_json::Value::String(over_cap)
         );
     }
 
@@ -521,5 +511,31 @@ mod tests {
         let value = Parser::parse_str(yaml).unwrap().unwrap();
         let json = value_to_json(&value).unwrap();
         assert_eq!(json["42"], "answer");
+    }
+
+    fn json_of(yaml: &str) -> Result<serde_json::Value> {
+        value_to_json(&Parser::parse_str(yaml).unwrap().unwrap())
+    }
+
+    #[test]
+    fn distinct_yaml_keys_with_the_same_json_key_are_an_error() {
+        for yaml in [
+            "1: a\n1.0: b\n",
+            "1: a\n'1': b\n",
+            "true: a\n'true': b\n",
+            "null: a\n'null': b\n",
+            "0x10: a\n'16': b\n",
+            "99999999999999999999: a\n'99999999999999999999': b\n",
+        ] {
+            let err = json_of(yaml).unwrap_err().to_string();
+            assert!(err.contains("same JSON key"), "{yaml:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn spellings_of_one_yaml_key_are_not_a_collision() {
+        let json = json_of("+99999999999999999999: a\n99999999999999999999: b\n").unwrap();
+        assert_eq!(json.to_string(), r#"{"99999999999999999999":"b"}"#);
+        assert!(json_of("1: a\n2: b\n'3': c\n").is_ok());
     }
 }

@@ -26,8 +26,6 @@ fast-yaml-parallel = { workspace = true }
 napi = { workspace = true, features = ["napi8", "error_anyhow", "serde-json"] }
 serde_json = { workspace = true }
 napi-derive = { workspace = true }
-ordered-float = { workspace = true }
-saphyr = { workspace = true }
 thiserror = { workspace = true }
 
 [build-dependencies]
