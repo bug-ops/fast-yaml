@@ -1,17 +1,22 @@
 //! Batch lint command execution.
 //!
-//! Files are linted in bounded chunks and reported in file order as each chunk completes, so
-//! peak memory holds the contents of one chunk instead of every file, and both output streams
-//! are deterministic whatever the worker interleaving.
+//! Files are linted by the pool's workers and reported in file order through a bounded window:
+//! at most `window` files are started but not yet reported, so a file's content lives only while
+//! a worker lints it and finished results wait in a small reorder buffer. A slow file delays only
+//! the reports behind it, not the workers, and both output streams are deterministic whatever
+//! the worker interleaving.
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
 use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
 use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader};
-use rayon::prelude::*;
+use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
 
@@ -21,8 +26,9 @@ use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
 
-/// Files in flight per worker: a chunk of this many files per thread is linted, then reported.
-const IN_FLIGHT_PER_WORKER: usize = 4;
+/// Files that may be started but not yet reported, per worker. Finished files hold only their
+/// diagnostics, so the window can be wide enough to keep workers busy behind one slow file.
+const WINDOW_PER_WORKER: usize = 16;
 
 /// Formats a read failure for stderr; `Io` already names the path, the other variants do not.
 fn read_error_line(path: &Path, err: &ParallelError) -> String {
@@ -148,19 +154,18 @@ pub fn execute_lint_batch(
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 
     let reader = SmartReader::with_threshold(u64::MAX);
-    let batches = file_paths
-        .chunks((workers * IN_FLIGHT_PER_WORKER).max(1))
-        .map(|chunk| {
-            pool.install(|| {
-                chunk
-                    .par_iter()
-                    .map(|path| lint_one(path, &reader, lint_config, format, is_quiet, use_color))
-                    .collect::<Vec<_>>()
-            })
-        });
+    let window = workers.saturating_mul(WINDOW_PER_WORKER).max(1);
+    let lint_nth = |index: usize| {
+        let path = file_paths
+            .get(index)
+            .map_or_else(PathBuf::new, PathBuf::clone);
+        lint_one(&path, &reader, lint_config, format, is_quiet, use_color)
+    };
 
     let stdout = io::stdout();
-    let any_errors = emit(format, stdout.lock(), io::stderr().lock(), batches)?;
+    let any_errors = run_ordered(&pool, file_paths.len(), window, &lint_nth, |reports| {
+        emit(format, stdout.lock(), io::stderr().lock(), reports)
+    })?;
 
     if any_errors {
         Ok(ExitCode::LintErrors)
@@ -169,49 +174,133 @@ pub fn execute_lint_batch(
     }
 }
 
-/// Writes every batch of reports in file order and returns whether any file had an error.
+/// Runs `work(0..count)` on the pool and hands the results to `consume` in index order.
+///
+/// At most `window` indices are started but not yet consumed. The calling thread consumes, so
+/// `consume` may block on output without stalling the workers, and it stops the remaining
+/// work when it returns early.
+fn run_ordered<T: Send, R>(
+    pool: &ThreadPool,
+    count: usize,
+    window: usize,
+    work: &(impl Fn(usize) -> T + Sync),
+    consume: impl FnOnce(&mut dyn Iterator<Item = T>) -> R,
+) -> R {
+    let cancelled = AtomicBool::new(false);
+    pool.in_place_scope(|scope| {
+        let (sender, receiver) = mpsc::channel();
+        let mut ordered = Ordered {
+            scope,
+            sender,
+            receiver,
+            work,
+            cancelled: &cancelled,
+            count,
+            window,
+            launched: 0,
+            consumed: 0,
+            finished: HashMap::new(),
+        };
+        let result = consume(&mut ordered);
+        cancelled.store(true, Ordering::Relaxed);
+        result
+    })
+}
+
+/// Iterator over the results of a [`run_ordered`] call, in index order.
+struct Ordered<'a, 'scope, T, W> {
+    scope: &'a Scope<'scope>,
+    sender: Sender<(usize, T)>,
+    receiver: Receiver<(usize, T)>,
+    work: &'scope W,
+    cancelled: &'scope AtomicBool,
+    count: usize,
+    window: usize,
+    launched: usize,
+    consumed: usize,
+    finished: HashMap<usize, T>,
+}
+
+impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Ordered<'_, 'scope, T, W> {
+    /// Starts work until the window of unconsumed indices is full.
+    fn top_up(&mut self) {
+        while self.launched < self.count && self.launched - self.consumed < self.window {
+            let index = self.launched;
+            self.launched += 1;
+            let sender = self.sender.clone();
+            let (work, cancelled) = (self.work, self.cancelled);
+            self.scope.spawn(move |_| {
+                if !cancelled.load(Ordering::Relaxed) {
+                    // The consumer may be gone after an early return
+                    let _ = sender.send((index, work(index)));
+                }
+            });
+        }
+    }
+}
+
+impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Iterator for Ordered<'_, 'scope, T, W> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        if self.consumed == self.count {
+            return None;
+        }
+        self.top_up();
+        let item = loop {
+            if let Some(item) = self.finished.remove(&self.consumed) {
+                break item;
+            }
+            let (index, item) = self.receiver.recv().ok()?;
+            self.finished.insert(index, item);
+        };
+        self.consumed += 1;
+        self.top_up();
+        Some(item)
+    }
+}
+
+/// Writes the reports in file order and returns whether any file had an error.
 ///
 /// Failures go to `err`, results to `out`; a write error stops the run.
 fn emit<W: Write, E: Write>(
     format: LintFormat,
     out: W,
     err: E,
-    batches: impl Iterator<Item = Vec<FileReport>>,
+    reports: impl Iterator<Item = FileReport>,
 ) -> Result<bool> {
     match format {
-        LintFormat::Text => emit_text(out, err, batches),
-        LintFormat::Json => emit_json(out, err, batches),
+        LintFormat::Text => emit_text(out, err, reports),
+        LintFormat::Json => emit_json(out, err, reports),
     }
 }
 
 fn emit_text<W: Write, E: Write>(
     mut out: W,
     mut err: E,
-    batches: impl Iterator<Item = Vec<FileReport>>,
+    reports: impl Iterator<Item = FileReport>,
 ) -> Result<bool> {
     let mut any_errors = false;
-    for batch in batches {
-        for FileReport { path, outcome } in batch {
-            match outcome {
-                FileOutcome::Failed { message } => {
-                    any_errors = true;
-                    writeln!(err, "{message}").context("Failed to write to stderr")?;
-                }
-                FileOutcome::Text {
-                    has_errors,
-                    rendered,
-                } => {
-                    any_errors |= has_errors;
-                    if !rendered.is_empty() {
-                        writeln!(out, "{}:", path.display())
-                            .and_then(|()| write!(out, "{rendered}"))
-                            .context("Failed to write lint output")?;
-                    }
-                }
-                FileOutcome::Json { .. } => {}
+    for FileReport { path, outcome } in reports {
+        match outcome {
+            FileOutcome::Failed { message } => {
+                any_errors = true;
+                writeln!(err, "{message}").context("Failed to write to stderr")?;
             }
+            FileOutcome::Text {
+                has_errors,
+                rendered,
+            } => {
+                any_errors |= has_errors;
+                if !rendered.is_empty() {
+                    writeln!(out, "{}:", path.display())
+                        .and_then(|()| write!(out, "{rendered}"))
+                        .and_then(|()| out.flush())
+                        .context("Failed to write lint output")?;
+                }
+            }
+            FileOutcome::Json { .. } => {}
         }
-        out.flush().context("Failed to write lint output")?;
     }
     Ok(any_errors)
 }
@@ -221,7 +310,7 @@ fn emit_text<W: Write, E: Write>(
 fn emit_json<W: Write, E: Write>(
     out: W,
     mut err: E,
-    batches: impl Iterator<Item = Vec<FileReport>>,
+    reports: impl Iterator<Item = FileReport>,
 ) -> Result<bool> {
     let mut serializer = serde_json::Serializer::with_formatter(out, PrettyFormatter::new());
     let mut array = (&mut serializer)
@@ -229,32 +318,30 @@ fn emit_json<W: Write, E: Write>(
         .context("Failed to write lint output")?;
     let mut any_errors = false;
 
-    for batch in batches {
-        for FileReport { path, outcome } in batch {
-            match outcome {
-                FileOutcome::Failed { message } => {
-                    any_errors = true;
-                    writeln!(err, "{message}").context("Failed to write to stderr")?;
-                }
-                FileOutcome::Json {
-                    has_errors,
-                    diagnostics,
-                } => {
-                    any_errors |= has_errors;
-                    let file = path.display().to_string();
-                    for diagnostic in &diagnostics {
-                        let mut value = serde_json::to_value(diagnostic)
-                            .context("Failed to serialize a diagnostic")?;
-                        if let serde_json::Value::Object(map) = &mut value {
-                            map.insert("file".to_owned(), serde_json::Value::String(file.clone()));
-                        }
-                        array
-                            .serialize_element(&value)
-                            .context("Failed to write lint output")?;
-                    }
-                }
-                FileOutcome::Text { .. } => {}
+    for FileReport { path, outcome } in reports {
+        match outcome {
+            FileOutcome::Failed { message } => {
+                any_errors = true;
+                writeln!(err, "{message}").context("Failed to write to stderr")?;
             }
+            FileOutcome::Json {
+                has_errors,
+                diagnostics,
+            } => {
+                any_errors |= has_errors;
+                let file = path.display().to_string();
+                for diagnostic in &diagnostics {
+                    let mut value = serde_json::to_value(diagnostic)
+                        .context("Failed to serialize a diagnostic")?;
+                    if let serde_json::Value::Object(map) = &mut value {
+                        map.insert("file".to_owned(), serde_json::Value::String(file.clone()));
+                    }
+                    array
+                        .serialize_element(&value)
+                        .context("Failed to write lint output")?;
+                }
+            }
+            FileOutcome::Text { .. } => {}
         }
     }
 
@@ -270,6 +357,7 @@ fn emit_json<W: Write, E: Write>(
 mod tests {
     use super::*;
     use fast_yaml_linter::{DiagnosticBuilder, Location, Span};
+    use std::sync::atomic::AtomicUsize;
 
     fn diagnostic(line: usize, severity: Severity) -> Diagnostic {
         let span = Span::new(Location::new(line, 1, 0), Location::new(line, 2, 1));
@@ -298,9 +386,9 @@ mod tests {
         }
     }
 
-    fn json_of(batches: Vec<Vec<FileReport>>) -> (String, String, bool) {
+    fn json_of(reports: Vec<FileReport>) -> (String, String, bool) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let any = emit(LintFormat::Json, &mut out, &mut err, batches.into_iter()).unwrap();
+        let any = emit(LintFormat::Json, &mut out, &mut err, reports.into_iter()).unwrap();
         (
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
@@ -342,21 +430,11 @@ mod tests {
         ];
         for reports in [none, one, many] {
             let expected = buffered(&reports);
-            let batch = |range: &[(&str, Vec<Diagnostic>)]| -> Vec<FileReport> {
-                range
-                    .iter()
-                    .map(|(path, d)| json_report(path, d.clone()))
-                    .collect()
-            };
-            // One batch and one batch per file must produce the same bytes
-            let (single, _, _) = json_of(vec![batch(&reports)]);
-            let per_file: Vec<Vec<FileReport>> = reports
+            let streamed = reports
                 .iter()
-                .map(|r| batch(std::slice::from_ref(r)))
+                .map(|(path, d)| json_report(path, d.clone()))
                 .collect();
-            let (split, _, _) = json_of(per_file);
-            assert_eq!(single, expected);
-            assert_eq!(split, expected);
+            assert_eq!(json_of(streamed).0, expected);
         }
     }
 
@@ -367,7 +445,7 @@ mod tests {
 
     #[test]
     fn failures_go_to_stderr_in_order_and_count_as_errors() {
-        let (out, err, any) = json_of(vec![vec![failed("first")], vec![failed("second")]]);
+        let (out, err, any) = json_of(vec![failed("first"), failed("second")]);
         assert_eq!(out, "[]\n");
         assert_eq!(err, "first\nsecond\n");
         assert!(any);
@@ -375,10 +453,10 @@ mod tests {
 
     #[test]
     fn warnings_alone_are_not_errors() {
-        let (_, _, any) = json_of(vec![vec![json_report(
+        let (_, _, any) = json_of(vec![json_report(
             "a.yaml",
             vec![diagnostic(1, Severity::Warning)],
-        )]]);
+        )]);
         assert!(!any);
     }
 
@@ -396,15 +474,12 @@ mod tests {
 
     #[test]
     fn json_write_errors_are_propagated() {
-        let batches = vec![vec![json_report(
-            "a.yaml",
-            vec![diagnostic(1, Severity::Error)],
-        )]];
+        let reports = vec![json_report("a.yaml", vec![diagnostic(1, Severity::Error)])];
         let result = emit(
             LintFormat::Json,
             BrokenPipe,
             Vec::new(),
-            batches.into_iter(),
+            reports.into_iter(),
         );
         assert!(result.is_err());
         assert!(emit(LintFormat::Json, BrokenPipe, Vec::new(), std::iter::empty()).is_err());
@@ -430,13 +505,7 @@ mod tests {
             failed("boom"),
         ];
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let any = emit(
-            LintFormat::Text,
-            &mut out,
-            &mut err,
-            std::iter::once(reports),
-        )
-        .unwrap();
+        let any = emit(LintFormat::Text, &mut out, &mut err, reports.into_iter()).unwrap();
         assert!(any);
         assert_eq!(String::from_utf8(out).unwrap(), "dirty.yaml:\ndetails\n");
         assert_eq!(String::from_utf8(err).unwrap(), "boom\n");
@@ -455,8 +524,58 @@ mod tests {
             LintFormat::Text,
             BrokenPipe,
             Vec::new(),
-            std::iter::once(reports),
+            reports.into_iter(),
         );
         assert!(result.is_err());
+    }
+
+    fn pool(threads: usize) -> ThreadPool {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn run_ordered_yields_results_in_index_order_whatever_the_finish_order() {
+        let started = AtomicUsize::new(0);
+        let work = |index: usize| {
+            started.fetch_add(1, Ordering::SeqCst);
+            // Early indices finish last
+            std::thread::sleep(std::time::Duration::from_millis(
+                (40 - index.min(40)) as u64,
+            ));
+            index
+        };
+        let all = run_ordered(&pool(4), 40, 8, &work, |items| items.collect::<Vec<_>>());
+        assert_eq!(all, (0..40).collect::<Vec<_>>());
+        assert_eq!(started.load(Ordering::SeqCst), 40);
+    }
+
+    #[test]
+    fn run_ordered_never_has_more_than_a_window_in_flight() {
+        let (consumed, max_ahead) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        let started = AtomicUsize::new(0);
+        let work = |_: usize| {
+            let ahead =
+                started.fetch_add(1, Ordering::SeqCst) + 1 - consumed.load(Ordering::SeqCst);
+            max_ahead.fetch_max(ahead, Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        };
+        run_ordered(&pool(4), 200, 6, &work, |items| {
+            for () in items {
+                consumed.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        // The consumer counts an item after `next` has already topped the window up
+        assert!(max_ahead.load(Ordering::SeqCst) <= 6 + 1);
+    }
+
+    #[test]
+    fn run_ordered_handles_no_work_and_an_early_stop() {
+        let work = |index: usize| index;
+        assert!(run_ordered(&pool(2), 0, 4, &work, |items| items.next()).is_none());
+        let first = run_ordered(&pool(2), 1000, 4, &work, |items| items.next());
+        assert_eq!(first, Some(0));
     }
 }

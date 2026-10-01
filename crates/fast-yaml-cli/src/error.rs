@@ -136,7 +136,7 @@ pub enum DiscoveryError {
 
     /// Batch flags were given without any input source
     #[error(
-        "batch options (--jobs, --include, --exclude) need input: pass at least one path (or use --stdin-files with format)"
+        "batch options (--jobs, --include, --exclude) need input: pass at least one path (or use --stdin-files)"
     )]
     NoInput,
 

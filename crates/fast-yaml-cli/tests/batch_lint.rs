@@ -289,11 +289,12 @@ fn positions_in(output: &str, paths: &[String]) -> Vec<usize> {
 #[test]
 fn test_lint_batch_reports_failures_on_stderr_in_file_order() {
     let temp = TempDir::new().unwrap();
-    let paths = shuffled_files(&temp, "f", 60, BROKEN);
+    let paths = shuffled_files(&temp, "f", 300, BROKEN);
 
-    for _ in 0..3 {
+    // One worker keeps fewer files in flight than there are files
+    for jobs in ["1", "8", "8"] {
         let output = fy()
-            .args(["lint", "-j", "8"])
+            .args(["lint", "-j", jobs])
             .args(&paths)
             .output()
             .unwrap();
@@ -306,13 +307,15 @@ fn test_lint_batch_reports_failures_on_stderr_in_file_order() {
 #[test]
 fn test_lint_batch_text_output_follows_file_order() {
     let temp = TempDir::new().unwrap();
-    let paths = shuffled_files(&temp, "t", 30, "---\na: 1 \n");
+    let paths = shuffled_files(&temp, "t", 300, "---\na: 1 \n");
 
-    let output = fy()
-        .args(["lint", "-j", "8"])
-        .args(&paths)
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(positions_in(&stdout, &paths).is_sorted(), "{stdout}");
+    for jobs in ["1", "8"] {
+        let output = fy()
+            .args(["lint", "-j", jobs])
+            .args(&paths)
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(positions_in(&stdout, &paths).is_sorted(), "{stdout}");
+    }
 }
