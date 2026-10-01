@@ -263,6 +263,27 @@ enum KeyedKind {
     Map,
 }
 
+/// What the JS brand probe found: a built-in keyed collection or neither.
+enum Brand {
+    Keyed(KeyedKind),
+    None,
+}
+
+impl TryFrom<&str> for Brand {
+    type Error = napi::Error;
+
+    fn try_from(name: &str) -> NapiResult<Self> {
+        match name {
+            "Set" => Ok(Self::Keyed(KeyedKind::Set)),
+            "Map" => Ok(Self::Keyed(KeyedKind::Map)),
+            "None" => Ok(Self::None),
+            other => Err(napi::Error::from_reason(format!(
+                "internal error: unknown Set/Map brand {other:?}"
+            ))),
+        }
+    }
+}
+
 impl KeyedKind {
     const fn name(self) -> &'static str {
         match self {
@@ -286,7 +307,7 @@ impl KeyedKind {
 /// object that only claims the tag throws a `TypeError`, a real `Set` or `Map` from any realm
 /// works, and the user's own `size`, `length` and `Symbol.iterator` are never consulted. `entries`
 /// takes at most `size` steps of the built-in iterator. `brand` reports which built-in, if any,
-/// an object is an instance of (0 none, 1 `Set`, 2 `Map`), whatever its `Symbol.toStringTag` says.
+/// an object is an instance of (`'Set'`, `'Map'` or `'None'`), whatever its `Symbol.toStringTag` says.
 const KEYED_INTRINSICS: &str = r"(() => {
   const apply = Reflect.apply;
   const sizeOf = (proto) => Object.getOwnPropertyDescriptor(proto, 'size').get;
@@ -294,13 +315,14 @@ const KEYED_INTRINSICS: &str = r"(() => {
   const openers = [Set.prototype.values, Map.prototype.entries];
   const nexts = [new Set().values().next, new Map().entries().next];
   const brandOf = (object) => {
+    const names = ['Set', 'Map'];
     for (let i = 0; i < 2; i++) {
       try {
         apply(sizes[i], object, []);
-        return i + 1;
+        return names[i];
       } catch {}
     }
-    return 0;
+    return 'None';
   };
   return {
     objectPrototype: Object.prototype,
@@ -324,7 +346,7 @@ const KEYED_INTRINSICS: &str = r"(() => {
 struct KeyedHandles<'a> {
     to_string_tag: Unknown<'a>,
     object_prototype: Unknown<'a>,
-    brand: Function<'a, FnArgs<(Object<'a>,)>, u32>,
+    brand: Function<'a, FnArgs<(Object<'a>,)>, String>,
     size: Function<'a, FnArgs<(bool, Object<'a>)>, f64>,
     entries: Function<'a, FnArgs<(bool, Object<'a>, f64)>, Object<'a>>,
 }
@@ -366,10 +388,9 @@ impl<'a> KeyedCollections<'a> {
         let plain = prototype.get_type()? == ValueType::Null
             || env.strict_equals(prototype, handles.object_prototype)?;
         if !plain {
-            match handles.brand.call(FnArgs::from((object,)))? {
-                1 => return Ok(Some(KeyedKind::Set)),
-                2 => return Ok(Some(KeyedKind::Map)),
-                _ => {}
+            let brand = Brand::try_from(handles.brand.call(FnArgs::from((object,)))?.as_str())?;
+            if let Brand::Keyed(kind) = brand {
+                return Ok(Some(kind));
             }
         }
         self.kind_by_tag(object)
@@ -578,6 +599,20 @@ fn bigint_to_scalar(digits: &str) -> NapiResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brand_names_convert_and_unknown_is_an_error() {
+        assert!(matches!(
+            Brand::try_from("Set"),
+            Ok(Brand::Keyed(KeyedKind::Set))
+        ));
+        assert!(matches!(
+            Brand::try_from("Map"),
+            Ok(Brand::Keyed(KeyedKind::Map))
+        ));
+        assert!(matches!(Brand::try_from("None"), Ok(Brand::None)));
+        assert!(Brand::try_from("WeakSet").is_err());
+    }
 
     #[test]
     fn negative_zero_stays_a_float() {
