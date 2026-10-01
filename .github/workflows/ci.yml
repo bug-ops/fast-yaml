@@ -62,6 +62,8 @@ jobs:
   # Parallel format checks using matrix
   format:
     name: Format (${{ matrix.lang }})
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -873,10 +875,10 @@ jobs:
           echo "NodeJS Quality: ${{ needs.nodejs-quality.result }}"
           echo "NodeJS Coverage: ${{ needs.nodejs-coverage.result }}"
 
-          # Check required jobs (skipped is OK for path-filtered jobs)
+          # Docs-only changes (specs/, *.md, docs/) match no filter, so every job is skipped
           for job in format; do
             result="${{ needs.format.result }}"
-            if [[ "$result" != "success" ]]; then
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
               echo "❌ $job failed: $result"
               exit 1
             fi
