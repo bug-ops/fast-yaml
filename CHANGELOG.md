@@ -170,8 +170,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI/Parallel**: batch runs scale the default scan-ahead limit per worker and retry a rejected file at the full limit (#577) (#595)
 - **Linter**: rules share the loader pass, so `fy lint` of a long flow line uses about 1.1-1.25x the memory of `fy parse` (was 3.5x) (#579) (#578) (#573) (#595)
 - **Linter**: errors about an `extends` target name the file and do not quote its content (#571) (#595)
-- **CI**: the fuzz workflow also runs on push to `main` (path-filtered) and caches the fuzz corpus between runs
-- **CI**: the format job is split per language and Rust, Python and Node.js tests wait for their format, quality and Clippy jobs
+- **CI**: the fuzz workflow also runs on push to `main` (path-filtered) and caches the fuzz corpus between runs (#597)
+- **CI**: the format job is split per language and Rust, Python and Node.js tests wait for their format, quality and Clippy jobs (#597)
 - **Linter**: the flow rules share one `FlowIndex` per lint run instead of building a tokenizer index each (#576)
 - **Linter/CLI**: the `syntax` diagnostic of the CI report formats uses BOM-free line, column and offset like every other span, and `fy lint` batch lists report formats through the same ordered pipeline (#576)
 - **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#576)
