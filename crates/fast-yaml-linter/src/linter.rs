@@ -540,29 +540,41 @@ impl Linter {
         let normalized = input.normalized();
         let source = normalized.as_str();
         let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
-        let mut collector = ScanCollector::new(
-            normalized,
-            source,
-            context.source_context(),
-            self.scan_needs(path),
-        );
-        let docs = Parser::parse_normalized_observed(
-            normalized,
-            &StreamBudget::new(self.config.parse_limits),
-            lint_load_options(),
-            |item| collector.observe(item),
-        )?;
+        let active: Vec<&Rule> = self
+            .registry
+            .rules()
+            .iter()
+            .filter(|rule| self.config.is_rule_active(rule.info().id(), path))
+            .collect();
+        let needs = ScanNeeds::of_rules(active.iter().filter_map(|rule| match rule.info().id() {
+            RuleId::BuiltIn(name) => Some(name),
+            RuleId::Custom(_) => None,
+        }));
+        let mut collector = ScanCollector::new(normalized, source, context.source_context(), needs);
+        let budget = StreamBudget::new(self.config.parse_limits);
+        let docs = if active.iter().any(|rule| matches!(rule, Rule::Document(_))) {
+            Some(Parser::parse_normalized_observed(
+                normalized,
+                &budget,
+                lint_load_options(),
+                |item| collector.observe(item),
+            )?)
+        } else {
+            Parser::validate_normalized_observed(
+                normalized,
+                &budget,
+                lint_load_options(),
+                |item| collector.observe(item),
+            )?;
+            None
+        };
         let scan = collector.finish();
         let context = context.with_scan(scan);
         let directives = Directives::from_context(&context, &self.config, &self.registry);
-        let rules: Vec<&Rule> = if directives.disables_file() {
+        let rules = if directives.disables_file() {
             Vec::new()
         } else {
-            self.registry
-                .rules()
-                .iter()
-                .filter(|rule| self.config.is_rule_active(rule.info().id(), path))
-                .collect()
+            active
         };
 
         // The rules that read the documents run first, so the documents (the bulk of the heap)
@@ -573,7 +585,7 @@ impl Linter {
                 continue;
             };
             let mut found = Vec::new();
-            for (idx, value) in docs.iter().enumerate() {
+            for (idx, value) in docs.iter().flatten().enumerate() {
                 let first_line = context.documents().get(idx).map_or(1, |d| d.first_line);
                 let document = LintDocument { value, first_line };
                 found.extend(rule.check(&context, document, &self.config));
@@ -601,21 +613,6 @@ impl Linter {
             diagnostics.retain(|d| d.code.as_str() != DiagnosticCode::LINT_DIRECTIVE);
         }
         Ok(diagnostics)
-    }
-
-    /// The scan products the active rules read.
-    fn scan_needs(&self, path: Option<&CanonicalPath>) -> ScanNeeds {
-        ScanNeeds::of_rules(
-            self.registry
-                .rules()
-                .iter()
-                .map(|rule| rule.info().id())
-                .filter(|id| self.config.is_rule_active(*id, path))
-                .filter_map(|id| match id {
-                    RuleId::BuiltIn(name) => Some(name),
-                    RuleId::Custom(_) => None,
-                }),
-        )
     }
 
     /// Gets the current configuration.

@@ -264,14 +264,14 @@ impl<'a> SourceScan<'a> {
             Err(error) => return (Self::default(), Some(error)),
         };
         let mut collector = ScanCollector::new(&input, source, context, needs);
-        let loaded = Parser::parse_normalized_observed(
+        let loaded = Parser::validate_normalized_observed(
             &input,
             &StreamBudget::new(limits),
             lint_load_options(),
             |item| collector.observe(item),
         );
         match loaded {
-            Ok(_) => (collector.finish(), None),
+            Ok(()) => (collector.finish(), None),
             Err(error) => (collector.finish_failed(), Some(error)),
         }
     }
