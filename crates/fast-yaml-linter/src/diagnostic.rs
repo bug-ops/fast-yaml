@@ -510,7 +510,7 @@ mod tests {
         assert_eq!(diagnostic.message, "test message");
         assert_eq!(diagnostic.span, span);
         assert!(diagnostic.context.is_some());
-        assert!(diagnostic.suggestions.is_empty());
+        assert_eq!(diagnostic.suggestions, []);
     }
 
     #[test]

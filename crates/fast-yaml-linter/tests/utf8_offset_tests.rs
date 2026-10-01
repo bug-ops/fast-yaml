@@ -387,8 +387,11 @@ fn truthy_token_positions_for_hyphens_quotes_and_urls() {
     assert_single_span("some-thing: yes\n", DiagnosticCode::TRUTHY, 1, 13, "yes");
     assert_single_span("- yes\n", DiagnosticCode::TRUTHY, 1, 3, "yes");
     assert_single_span("k:\n    -   No\n", DiagnosticCode::TRUTHY, 2, 9, "No");
-    assert!(lint_code("url: http://a.b/yes\n", DiagnosticCode::TRUTHY).is_empty());
-    assert!(lint_code("url: \"yes\"\n", DiagnosticCode::TRUTHY).is_empty());
+    assert_eq!(
+        lint_code("url: http://a.b/yes\n", DiagnosticCode::TRUTHY),
+        []
+    );
+    assert_eq!(lint_code("url: \"yes\"\n", DiagnosticCode::TRUTHY), []);
     assert_single_span("ключ-2: yes\r\n", DiagnosticCode::TRUTHY, 1, 9, "yes");
 }
 
@@ -429,7 +432,7 @@ fn float_values_report_char_column() {
         .into_iter()
         .filter(|d| d.code.as_str() == DiagnosticCode::FLOAT_VALUES)
         .collect();
-    assert!(!diags.is_empty());
+    assert_ne!(diags, []);
     for d in diags {
         assert_eq!((d.span.start.line, d.span.start.column), (1, 7), "{d:?}");
         assert_eq!(SourceContext::new(yaml).get_snippet(d.span), ".5");
@@ -535,7 +538,7 @@ fn commas_ignore_verbatim_tags_after_flow_indicators() {
 #[test]
 fn commas_ignore_directive_in_lone_cr_file() {
     let yaml = "%TAG !e! tag:a.com,2026:\r---\ra: 1\r";
-    assert!(lint_code(yaml, DiagnosticCode::COMMAS).is_empty());
+    assert_eq!(lint_code(yaml, DiagnosticCode::COMMAS), []);
 }
 
 #[test]
@@ -635,7 +638,7 @@ fn new_lines_span_starts_at_line_with_wrong_ending() {
 
 #[test]
 fn empty_values_block_sequence_nulls_are_not_reported() {
-    assert!(lint_code("-\n-\n", DiagnosticCode::EMPTY_VALUES).is_empty());
+    assert_eq!(lint_code("-\n-\n", DiagnosticCode::EMPTY_VALUES), []);
 }
 
 #[test]

@@ -196,7 +196,7 @@ mod tests {
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -209,7 +209,7 @@ mod tests {
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         let diagnostics = rule.check(&lint_context, &value, &config);
 
         // Exactly at limit should not trigger
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -401,7 +401,7 @@ mod tests {
     fn inline_mappings_imply_non_breakable_words() {
         let yaml = format!("{URL}\n");
         let options = "{max: 20, allow-non-breakable-words: false, allow-non-breakable-inline-mappings: true}";
-        assert!(flagged(&yaml, options).is_empty());
+        assert_eq!(flagged(&yaml, options), [] as [usize; 0]);
     }
 
     #[test]

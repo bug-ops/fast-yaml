@@ -499,7 +499,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("single quotes"));
     }
 
@@ -516,7 +516,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("double quotes"));
     }
 
@@ -530,7 +530,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("does not need quotes"));
     }
 
@@ -545,7 +545,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // These should not be flagged as they need quotes
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -573,7 +573,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("should not be quoted"));
     }
 
@@ -588,7 +588,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Should not flag as unnecessary because it contains '-'
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     const HOSTS: &str = "[^http://, ^ftp://]";
@@ -597,7 +597,7 @@ mod tests {
     fn extra_required_flags_matching_plain_scalars_when_not_required() {
         let options = format!("{{required: false, extra-required: {HOSTS}}}");
         let ok = "- 123\n- \"123\"\n- localhost\n- \"localhost\"\n- \"http://localhost\"\n- \"ftp://localhost\"\n";
-        assert!(messages(ok, &options).is_empty());
+        assert_eq!(messages(ok, &options), [] as [String; 0]);
         let bad = "- http://localhost\n- ftp://localhost\n";
         assert_eq!(
             messages(bad, &options),
@@ -612,14 +612,17 @@ mod tests {
             messages("- http://localhost\n- localhost\n", &options),
             ["string should be quoted"]
         );
-        assert!(messages("- \"http://localhost\"\n", &options).is_empty());
+        assert_eq!(
+            messages("- \"http://localhost\"\n", &options),
+            [] as [String; 0]
+        );
     }
 
     #[test]
     fn extra_allowed_keeps_plain_scalars_when_only_needed() {
         let options = format!("{{extra-allowed: {HOSTS}}}");
         let ok = "- 123\n- \"123\"\n- localhost\n- http://localhost\n- ftp://localhost\n- \"http://localhost\"\n";
-        assert!(messages(ok, &options).is_empty());
+        assert_eq!(messages(ok, &options), [] as [String; 0]);
         assert_eq!(
             messages("- \"localhost\"\n", &options),
             ["string does not need quotes"]
@@ -628,9 +631,9 @@ mod tests {
 
     #[test]
     fn comma_needs_quotes_only_inside_flow_collections() {
-        assert!(messages("e: [ \"a,b\" ]\n", "{}").is_empty());
-        assert!(messages("e: { k: 'a,b' }\n", "{}").is_empty());
-        assert!(messages("e: [ k: 'a,b' ]\n", "{}").is_empty());
+        assert_eq!(messages("e: [ \"a,b\" ]\n", "{}"), [] as [String; 0]);
+        assert_eq!(messages("e: { k: 'a,b' }\n", "{}"), [] as [String; 0]);
+        assert_eq!(messages("e: [ k: 'a,b' ]\n", "{}"), [] as [String; 0]);
         assert_eq!(
             messages("e: \"a,b\"\n", "{}"),
             ["string does not need quotes"]
@@ -681,13 +684,16 @@ mod tests {
     #[test]
     fn redundant_quotes_matching_extra_patterns_are_silent() {
         let options = "{quote-type: single, extra-required: ['^J']}";
-        assert!(messages("a: \"John\"\n", options).is_empty());
+        assert_eq!(messages("a: \"John\"\n", options), [] as [String; 0]);
     }
 
     #[test]
     fn extra_required_does_not_quote_keys_or_non_strings() {
         let options = "{extra-required: ['.']}";
-        assert!(messages("a.b: 1\nc: 1.5\nd: null\n", options).is_empty());
+        assert_eq!(
+            messages("a.b: 1\nc: 1.5\nd: null\n", options),
+            [] as [String; 0]
+        );
     }
 
     #[test]
@@ -722,7 +728,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Quotes are needed because of the colon
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -892,8 +898,8 @@ mod tests {
 
     #[test]
     fn test_non_ascii_key_does_not_hide_unicode_escape() {
-        assert!(run("—: \"\\u00e9\"").is_empty());
-        assert!(run("ключ: \"\\x41\"").is_empty());
+        assert_eq!(run("—: \"\\u00e9\""), []);
+        assert_eq!(run("ключ: \"\\x41\""), []);
     }
 
     #[test]
@@ -914,7 +920,7 @@ mod tests {
         let span = diagnostics[0].span;
         assert_eq!((span.start.column, span.start.offset), (4, 6));
         assert_eq!((span.end.column, span.end.offset), (7, 10));
-        assert!(run("🎉: \"\\u00e9\"").is_empty());
+        assert_eq!(run("🎉: \"\\u00e9\""), []);
     }
 
     #[test]
@@ -986,22 +992,25 @@ mod tests {
 
     #[test]
     fn quotes_that_preserve_a_float_type_are_needed() {
-        assert!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n").is_empty());
+        assert_eq!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n"), []);
     }
 
     #[test]
     fn quotes_that_preserve_a_radix_big_int_type_are_needed() {
-        assert!(run("a: \"0xFFFFFFFFFFFFFFFFFF\"\nb: '0o7777777777777777777777'\n").is_empty());
+        assert_eq!(
+            run("a: \"0xFFFFFFFFFFFFFFFFFF\"\nb: '0o7777777777777777777777'\n"),
+            []
+        );
     }
 
     #[test]
     fn plain_radix_big_int_needs_no_quotes_under_always() {
-        assert!(
+        assert_eq!(
             messages(
                 "a: 0xFFFFFFFFFFFFFFFFFF\nb: 0o7777777777777777777777\n",
                 "{required: always}"
-            )
-            .is_empty()
+            ),
+            [] as [String; 0]
         );
     }
 
@@ -1039,13 +1048,13 @@ mod tests {
             messages("a: \"y\"\nb: 'n'\nc: \"Y\"\nd: \"N\"\n", "{}").len(),
             4
         );
-        assert!(messages("a: 'yes'\nb: 'No'\n", "{}").is_empty());
+        assert_eq!(messages("a: 'yes'\nb: 'No'\n", "{}"), [] as [String; 0]);
     }
 
     #[test]
     fn required_always_checks_root_scalar() {
         assert_eq!(messages("word\n", "{required: always}").len(), 1);
-        assert!(messages("12\n", "{required: always}").is_empty());
+        assert_eq!(messages("12\n", "{required: always}"), [] as [String; 0]);
     }
 
     #[test]
@@ -1059,7 +1068,10 @@ mod tests {
     #[test]
     fn check_keys_applies_the_rules_to_keys() {
         assert_eq!(messages("'a': 1\n", "{check-keys: true}").len(), 1);
-        assert!(messages("'a': 'b'\n", "{required: always, check-keys: true}").is_empty());
+        assert_eq!(
+            messages("'a': 'b'\n", "{required: always, check-keys: true}"),
+            [] as [String; 0]
+        );
         assert_eq!(
             messages("key: b\n", "{required: always, check-keys: true}").len(),
             2
@@ -1068,8 +1080,14 @@ mod tests {
 
     #[test]
     fn core_tagged_scalars_are_skipped() {
-        assert!(messages("a: !!str 'x'\nb: !!str x\n", "{required: always}").is_empty());
-        assert!(messages("a: !!str \"x\"\n", "{quote-type: single}").is_empty());
+        assert_eq!(
+            messages("a: !!str 'x'\nb: !!str x\n", "{required: always}"),
+            [] as [String; 0]
+        );
+        assert_eq!(
+            messages("a: !!str \"x\"\n", "{quote-type: single}"),
+            [] as [String; 0]
+        );
         assert_eq!(messages("a: !local x\n", "{required: always}").len(), 1);
     }
 
@@ -1077,12 +1095,12 @@ mod tests {
     fn allow_quoted_quotes_accepts_the_other_style_for_configured_quote() {
         let single = "{quote-type: single, required: not-required}";
         assert_eq!(messages("a: \"it's\"\n", single).len(), 1);
-        assert!(
+        assert_eq!(
             messages(
                 "a: \"it's\"\n",
                 "{quote-type: single, required: not-required, allow-quoted-quotes: true}"
-            )
-            .is_empty()
+            ),
+            [] as [String; 0]
         );
         assert_eq!(
             messages(
@@ -1093,7 +1111,7 @@ mod tests {
             1
         );
         let double = "{quote-type: double, required: not-required, allow-quoted-quotes: true}";
-        assert!(messages("a: 'say \"hi\"'\n", double).is_empty());
+        assert_eq!(messages("a: 'say \"hi\"'\n", double), [] as [String; 0]);
         assert_eq!(messages("a: 'plain'\n", double).len(), 1);
     }
 }

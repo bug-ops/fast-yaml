@@ -325,7 +325,7 @@ mod tests {
     fn test_formatter_empty() {
         let formatter = TextFormatter::new();
         let output = formatter.format(&[], "");
-        assert!(output.is_empty());
+        assert_eq!(output, "");
     }
 
     #[test]

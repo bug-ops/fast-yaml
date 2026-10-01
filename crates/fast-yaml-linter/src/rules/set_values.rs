@@ -221,7 +221,7 @@ mod tests {
 
     #[test]
     fn plain_mappings_may_have_values() {
-        assert!(run("a: 1\nb: [1, 2]\n").is_empty());
+        assert_eq!(run("a: 1\nb: [1, 2]\n"), []);
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
         assert!(may_contain_set(
             "%TAG !e! tag:yaml.org,2002:\n---\n!e!set {x}\n"
         ));
-        assert!(run("settings: {a: 1}\n").is_empty());
+        assert_eq!(run("settings: {a: 1}\n"), []);
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn alias_value_follows_its_anchor() {
-        assert!(run("x: &n ~\ns: !!set {a: *n}\n").is_empty());
+        assert_eq!(run("x: &n ~\ns: !!set {a: *n}\n"), []);
         assert_eq!(run("x: &v 1\ns: !!set {a: *v}\n").len(), 1);
     }
 

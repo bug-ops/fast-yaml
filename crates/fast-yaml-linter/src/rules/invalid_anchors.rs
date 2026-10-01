@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_single_anchor_no_warning() {
-        assert!(run("a: &anchor value").is_empty());
+        assert_eq!(run("a: &anchor value"), []);
     }
 
     #[test]
@@ -412,25 +412,25 @@ mod tests {
     #[test]
     fn test_anchor_in_comment_no_warning() {
         let yaml = "a: value\n# &anchor is not an anchor\nb: other\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
     fn test_anchor_in_double_quoted_string_no_warning() {
         let yaml = "a: \"contains &not_anchor here\"\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
     fn test_anchor_in_single_quoted_string_no_warning() {
         let yaml = "a: 'contains &not_anchor here'\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
     fn test_different_anchor_names_no_warning() {
         let yaml = "a: &anchor1 val\nb: &anchor2 val\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
@@ -445,13 +445,13 @@ mod tests {
     fn test_document_boundary_resets_anchors() {
         // Second document redefines &anchor — no warning because boundary resets map.
         let yaml = "a: &anchor val\n---\nb: &anchor val\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
     fn test_inline_comment_anchor_no_warning() {
         let yaml = "a: value # &not_anchor\nb: other\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
@@ -465,13 +465,13 @@ mod tests {
     fn test_anchor_in_multiline_double_quoted_no_warning() {
         // The `&not_anchor` on the continuation line is inside a double-quoted string.
         let yaml = "desc: \"first line\n  &not_anchor continuation\"\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
     fn test_block_scalar_anchor_no_warning() {
         let yaml = "script: |\n  echo &not_an_anchor\n  curl *endpoint\nkey: value\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]

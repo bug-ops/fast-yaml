@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn disable_file_after_percent_directives() {
         let source = "%YAML 1.2\n# fy: disable-file\n---\na: 1\na: 2\n";
-        assert!(lint(source).is_empty());
+        assert_eq!(lint(source), []);
     }
 
     #[test]
@@ -666,7 +666,7 @@ mod tests {
     #[test]
     fn many_disable_file_lines_stay_linear() {
         let source = "# fy: disable-file\n".repeat(20_000) + "a: 1\n";
-        assert!(lint(&source).is_empty());
+        assert_eq!(lint(&source), []);
         let late = "a: 1\n".to_owned() + &"# fy: disable-file\n".repeat(20_000);
         let start = std::time::Instant::now();
         let diagnostics = lint(&late);
@@ -706,7 +706,7 @@ mod tests {
 
     #[test]
     fn disable_file_before_document_marker() {
-        assert!(lint("# fy: disable-file\n---\na: 1\na: 2\n").is_empty());
+        assert_eq!(lint("# fy: disable-file\n---\na: 1\na: 2\n"), []);
         let inline = lint("--- # fy: disable-file\na: 1\na: 2\n");
         assert!(codes_of(&inline).contains(&"lint-directive"));
         assert!(codes_of(&inline).contains(&"duplicate-key"));
@@ -790,7 +790,7 @@ mod tests {
     #[test]
     fn disable_file_placement() {
         let accepted = "# header\n\n# fy: disable-file\na: 1\na: 2\n";
-        assert!(lint(accepted).is_empty());
+        assert_eq!(lint(accepted), []);
 
         let after_content = "a: 1\n# fy: disable-file\na: 2\na: 3\n";
         let diagnostics = lint(after_content);

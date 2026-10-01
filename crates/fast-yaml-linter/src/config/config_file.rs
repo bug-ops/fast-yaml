@@ -1006,7 +1006,7 @@ mod tests {
         ] {
             let (found, message) = invalid_key(load_in(&dir, content).unwrap_err());
             assert_eq!(found, key, "{content}");
-            assert!(!message.is_empty());
+            assert_ne!(message, "");
         }
     }
 

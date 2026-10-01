@@ -488,8 +488,11 @@ mod tests {
 
     #[test]
     fn find_comments_skips_scalars() {
-        assert!(ranges("a: 'x # y'\nb: \"p # q\"\nc: \"m\n  # n\"\n").is_empty());
-        assert!(ranges("s: |\n  # body\n  text\n").is_empty());
+        assert_eq!(
+            ranges("a: 'x # y'\nb: \"p # q\"\nc: \"m\n  # n\"\n"),
+            [] as [&str; 0]
+        );
+        assert_eq!(ranges("s: |\n  # body\n  text\n"), [] as [&str; 0]);
     }
 
     #[test]

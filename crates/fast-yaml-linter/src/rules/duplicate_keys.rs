@@ -128,7 +128,7 @@ mod tests {
 
     #[test]
     fn test_no_duplicate_keys() {
-        assert!(run("name: John\nage: 30\ncity: NYC").is_empty());
+        assert_eq!(run("name: John\nage: 30\ncity: NYC"), []);
     }
 
     #[test]
@@ -160,7 +160,10 @@ mod tests {
 
     #[test]
     fn test_same_key_in_different_scopes_is_valid() {
-        assert!(run("parent:\n  name: parent_value\nchild:\n  name: child_value\n").is_empty());
+        assert_eq!(
+            run("parent:\n  name: parent_value\nchild:\n  name: child_value\n"),
+            []
+        );
     }
 
     #[test]
@@ -186,13 +189,13 @@ mod tests {
     #[test]
     fn test_array_of_mappings_same_keys_valid() {
         let yaml = "users:\n  - name: Alice\n    age: 30\n  - name: Bob\n    age: 25\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
     fn test_keys_in_different_mappings_valid() {
         let yaml = "user1:\n  id: 1\n  email: a@b.com\nuser2:\n  id: 2\n  email: c@d.com\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
@@ -276,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_mapping_key_keys_are_scoped_to_the_inner_mapping() {
-        assert!(run("? {a: 1}\n: {a: 2}\na: 3\n").is_empty());
+        assert_eq!(run("? {a: 1}\n: {a: 2}\na: 3\n"), []);
         assert_eq!(run("? {a: 1, a: 2}\n: x\n").len(), 1);
     }
 
@@ -300,7 +303,7 @@ mod tests {
 
     #[test]
     fn test_repeated_collection_key_is_not_reported() {
-        assert!(run("? [a, b]\n: 1\n? [a, b]\n: 2\n").is_empty());
+        assert_eq!(run("? [a, b]\n: 1\n? [a, b]\n: 2\n"), []);
     }
 
     #[test]
@@ -358,7 +361,7 @@ mod tests {
     #[test]
     fn test_plain_merge_key_is_not_the_quoted_one() {
         let yaml = "base: &a\n  x: 1\nchild:\n  <<: *a\n  \"<<\": 1\n";
-        assert!(run(yaml).is_empty());
+        assert_eq!(run(yaml), []);
     }
 
     #[test]
@@ -411,7 +414,7 @@ mod tests {
     #[test]
     fn test_repeated_merge_key_is_allowed_when_not_forbidden() {
         let yaml = "a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n";
-        assert!(run_with(yaml, "{forbid-duplicated-merge-keys: false}").is_empty());
+        assert_eq!(run_with(yaml, "{forbid-duplicated-merge-keys: false}"), []);
     }
 
     #[test]
@@ -458,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_quoted_merge_text_is_not_a_merge_key() {
-        assert!(run("a: &a {x: 1}\nc: {\"<<\": 1, <<: *a}\n").is_empty());
+        assert_eq!(run("a: &a {x: 1}\nc: {\"<<\": 1, <<: *a}\n"), []);
     }
 
     #[test]
@@ -484,7 +487,7 @@ mod tests {
 
     #[test]
     fn test_merge_key_inside_set_is_an_ordinary_key() {
-        assert!(run("!!set {<<, a}\n").is_empty());
+        assert_eq!(run("!!set {<<, a}\n"), []);
         let diags = run("!!set {<<, <<}\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("duplicate key '<<'"));
@@ -494,7 +497,7 @@ mod tests {
     fn test_anchored_collection_key_collides_with_its_alias() {
         assert_eq!(run("{&c [1]: a, *c : b}").len(), 1);
         assert_eq!(run("{&c {x: 1}: a, *c : b}").len(), 1);
-        assert!(run("{&c [1]: a, &d [1]: b}").is_empty());
+        assert_eq!(run("{&c [1]: a, &d [1]: b}"), []);
     }
 
     #[test]

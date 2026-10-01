@@ -242,7 +242,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -254,7 +254,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -280,7 +280,7 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
         // Should detect empty value for 'child'
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
     }
 
     #[test]
@@ -292,7 +292,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &LintConfig::new());
 
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -320,7 +320,7 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         // Should not detect when forbid_in_flow_mappings is false
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
 
         // Block sequences with implicit nulls are allowed by default
         // (is_in_block_sequence_with_implicit_null returns false)
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_explicit_forms_are_not_empty() {
-        assert!(empty_positions("a: !!null\nc: ~\nd: ''\ne: null\n").is_empty());
+        assert_eq!(empty_positions("a: !!null\nc: ~\nd: ''\ne: null\n"), []);
     }
 
     #[test]
@@ -458,8 +458,8 @@ mod tests {
 
     #[test]
     fn test_key_without_colon_is_not_reported() {
-        assert!(empty_positions("? a\n").is_empty());
-        assert!(empty_positions("{a, b: 1}\n").is_empty());
+        assert_eq!(empty_positions("? a\n"), []);
+        assert_eq!(empty_positions("{a, b: 1}\n"), []);
     }
 
     #[test]
@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn test_explicit_key_without_value_is_not_reported() {
-        assert!(empty_positions("? a\n? b\n").is_empty());
+        assert_eq!(empty_positions("? a\n? b\n"), []);
     }
 
     #[test]
@@ -498,7 +498,7 @@ mod tests {
 
     #[test]
     fn test_tagged_empty_values_are_skipped() {
-        assert!(empty_positions("a: !!null\nb: !!str\n? c\n: !!null\n").is_empty());
+        assert_eq!(empty_positions("a: !!null\nb: !!str\n? c\n: !!null\n"), []);
     }
 
     #[test]
@@ -537,12 +537,12 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         // Currently no detection due to is_in_block_sequence_with_implicit_null
         // returning false (implementation limitation noted in code)
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_colon_prefixed_key_is_not_a_value_indicator() {
-        assert!(empty_positions("? a\n:x: 1\n").is_empty());
+        assert_eq!(empty_positions("? a\n:x: 1\n"), []);
     }
 
     #[test]
@@ -550,7 +550,7 @@ mod tests {
         assert_eq!(empty_positions("? a\n: # c\n"), [(2, 1)]);
         assert_eq!(empty_positions("? a\n\n\n\n:\n"), [(5, 1)]);
         assert_eq!(empty_positions("? a\r\n:\r\n"), [(2, 1)]);
-        assert!(empty_positions("? a\n# : x\n: v\n").is_empty());
+        assert_eq!(empty_positions("? a\n# : x\n: v\n"), []);
         assert_eq!(empty_positions("? a\n# : x\n:\n"), [(3, 1)]);
     }
 }

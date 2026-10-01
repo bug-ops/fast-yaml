@@ -408,8 +408,14 @@ fn flow_empty_limits_inherit_independently() {
 #[test]
 fn explicit_empty_limits_override_non_empty_ones() {
     let entry = "{max-spaces-inside: 0, min-spaces-inside-empty: 1, max-spaces-inside-empty: 1}";
-    assert!(messages(RuleName::Braces, entry, "a: { }\nb: {x: 1}\n").is_empty());
-    assert!(!messages(RuleName::Braces, entry, "a: {}\n").is_empty());
+    assert_eq!(
+        messages(RuleName::Braces, entry, "a: { }\nb: {x: 1}\n"),
+        [] as [String; 0]
+    );
+    assert_ne!(
+        messages(RuleName::Braces, entry, "a: {}\n"),
+        [] as [String; 0]
+    );
 }
 
 #[test]
@@ -426,7 +432,10 @@ fn min_above_max_for_empty_collections_flags_every_empty_collection() {
 #[test]
 fn quoted_strings_not_required_allows_quotes_but_checks_quote_type() {
     let entry = "{required: false}";
-    assert!(messages(RuleName::QuotedStrings, entry, "a: 'John'\nb: plain\n").is_empty());
+    assert_eq!(
+        messages(RuleName::QuotedStrings, entry, "a: 'John'\nb: plain\n"),
+        [] as [String; 0]
+    );
     let entry = "{required: false, quote-type: single}";
     let reported = messages(RuleName::QuotedStrings, entry, "a: \"John\"\n");
     assert_eq!(reported, ["string should use single quotes"]);
@@ -438,7 +447,10 @@ fn quoted_strings_not_required_allows_quotes_but_checks_quote_type() {
 fn document_start_present_true_is_enforced() {
     let reported = messages(RuleName::DocumentStart, "{present: true}", "a: 1\n");
     assert_eq!(reported.len(), 1);
-    assert!(messages(RuleName::DocumentStart, "{present: true}", "---\na: 1\n").is_empty());
+    assert_eq!(
+        messages(RuleName::DocumentStart, "{present: true}", "---\na: 1\n"),
+        [] as [String; 0]
+    );
     assert_eq!(
         messages(RuleName::DocumentStart, "{present: false}", "---\na: 1\n").len(),
         1
@@ -448,9 +460,15 @@ fn document_start_present_true_is_enforced() {
 #[test]
 fn line_length_null_max_disables_the_limit() {
     let long = format!("key: {}\n", "x".repeat(200));
-    assert!(messages(RuleName::LineLength, "{max: ~}", &long).is_empty());
+    assert_eq!(
+        messages(RuleName::LineLength, "{max: ~}", &long),
+        [] as [String; 0]
+    );
     assert_eq!(messages(RuleName::LineLength, "{}", &long).len(), 1);
-    assert!(messages(RuleName::LineLength, "{max: 500}", &long).is_empty());
+    assert_eq!(
+        messages(RuleName::LineLength, "{max: 500}", &long),
+        [] as [String; 0]
+    );
 }
 
 #[test]
@@ -469,15 +487,30 @@ fn empty_values_keys_are_kebab_case() {
 
 #[test]
 fn new_lines_type_selects_line_ending() {
-    assert!(!messages(RuleName::NewLines, "{type: dos}", "a: 1\n").is_empty());
-    assert!(messages(RuleName::NewLines, "{type: dos}", "a: 1\r\n").is_empty());
-    assert!(messages(RuleName::NewLines, "{}", "a: 1\n").is_empty());
+    assert_ne!(
+        messages(RuleName::NewLines, "{type: dos}", "a: 1\n"),
+        [] as [String; 0]
+    );
+    assert_eq!(
+        messages(RuleName::NewLines, "{type: dos}", "a: 1\r\n"),
+        [] as [String; 0]
+    );
+    assert_eq!(
+        messages(RuleName::NewLines, "{}", "a: 1\n"),
+        [] as [String; 0]
+    );
 }
 
 #[test]
 fn indentation_indent_size_is_applied() {
-    assert!(!messages(RuleName::Indentation, "{indent-size: 4}", "a:\n  b: 1\n").is_empty());
-    assert!(messages(RuleName::Indentation, "{indent-size: 4}", "a:\n    b: 1\n").is_empty());
+    assert_ne!(
+        messages(RuleName::Indentation, "{indent-size: 4}", "a:\n  b: 1\n"),
+        [] as [String; 0]
+    );
+    assert_eq!(
+        messages(RuleName::Indentation, "{indent-size: 4}", "a:\n    b: 1\n"),
+        [] as [String; 0]
+    );
 }
 
 fn assert_unsupported_keys_are_not_fields<O: RuleOptions>() {
@@ -570,7 +603,7 @@ fn too_many_patterns_are_rejected_before_compiling() {
     let message = error_of(&format!(
         "x: &a '\\w{{1,20}}[a-z]+x'\nquoted-strings: {{extra-required: [{aliased}]}}"
     ));
-    assert!(!message.is_empty());
+    assert_ne!(message, "");
     assert!(start.elapsed().as_secs() < 5);
     assert!(PatternList::new(vec!["a"; 65]).is_err());
 }

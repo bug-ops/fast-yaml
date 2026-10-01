@@ -250,7 +250,7 @@ fn test_parallel_with_varying_load() {
                 };
 
                 let docs = parse_parallel(&yaml).unwrap();
-                assert!(!docs.is_empty());
+                assert_ne!(docs, []);
             })
         })
         .collect();

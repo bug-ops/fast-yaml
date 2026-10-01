@@ -244,7 +244,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -257,7 +257,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
 
@@ -271,7 +271,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("explicit octal"));
     }
 
@@ -285,7 +285,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -311,7 +311,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -324,7 +324,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -337,7 +337,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -351,7 +351,7 @@ mod tests {
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
         // 089 is not valid octal (8 and 9 are not octal digits), so should be allowed
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
 
@@ -378,7 +378,7 @@ mod tests {
 
         let lint_context = LintContext::new(yaml);
         let diagnostics = rule.check(&lint_context, &value, &config);
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
 

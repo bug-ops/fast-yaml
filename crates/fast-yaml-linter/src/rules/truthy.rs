@@ -297,7 +297,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -384,7 +384,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -397,7 +397,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -440,7 +440,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -500,14 +500,17 @@ mod tests {
 
     #[test]
     fn test_truthy_only_whole_scalar_is_reported() {
-        assert!(truthy_spans("a: yes and more\nb: no thanks\n", &LintConfig::default()).is_empty());
-        assert!(truthy_spans("a: !!str yes\n", &LintConfig::default()).is_empty());
+        assert_eq!(
+            truthy_spans("a: yes and more\nb: no thanks\n", &LintConfig::default()),
+            []
+        );
+        assert_eq!(truthy_spans("a: !!str yes\n", &LintConfig::default()), []);
     }
 
     #[test]
     fn test_truthy_key_in_quotes_is_not_a_bool_key() {
         let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
-        assert!(truthy_spans("\"yes\": 1\n", &config).is_empty());
+        assert_eq!(truthy_spans("\"yes\": 1\n", &config), []);
         assert_eq!(truthy_spans("\"a:b\": 1\nyes: 2\n", &config), [(2, 1, 4)]);
     }
 
@@ -552,7 +555,7 @@ mod tests {
 
     #[test]
     fn test_truthy_quoted_or_tagged_root_is_skipped() {
-        assert!(truthy_spans("\"yes\"\n", &LintConfig::default()).is_empty());
-        assert!(truthy_spans("!!str yes\n", &LintConfig::default()).is_empty());
+        assert_eq!(truthy_spans("\"yes\"\n", &LintConfig::default()), []);
+        assert_eq!(truthy_spans("!!str yes\n", &LintConfig::default()), []);
     }
 }

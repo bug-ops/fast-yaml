@@ -470,8 +470,8 @@ mod tests {
 
     #[test]
     fn comment_only_source_has_no_documents() {
-        assert!(markers("# only a comment\n").is_empty());
-        assert!(markers("").is_empty());
+        assert_eq!(markers("# only a comment\n"), []);
+        assert_eq!(markers(""), []);
     }
 
     #[test]
@@ -500,7 +500,7 @@ mod tests {
     #[test]
     fn invalid_source_has_no_comments_and_is_incomplete() {
         let context = LintContext::new("a: [\n# c\n");
-        assert!(context.comments().is_empty());
+        assert_eq!(context.comments(), []);
         assert!(!context.scan_is_complete());
     }
 

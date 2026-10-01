@@ -148,7 +148,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -195,7 +195,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -209,12 +209,12 @@ mod tests {
         let value_with = Parser::parse_str(yaml_with).unwrap().unwrap();
         let context_with = LintContext::new(yaml_with);
         let diag_with = rule.check(&context_with, &value_with, &config);
-        assert!(diag_with.is_empty());
+        assert_eq!(diag_with, []);
 
         let value_without = Parser::parse_str(yaml_without).unwrap().unwrap();
         let context_without = LintContext::new(yaml_without);
         let diag_without = rule.check(&context_without, &value_without, &config);
-        assert!(diag_without.is_empty());
+        assert_eq!(diag_without, []);
     }
 
     const REQUIRED: &str = "{present: required}";
@@ -321,13 +321,16 @@ mod tests {
         assert_eq!(lines("---\na: 1\n---\nb: 2\n", FORBIDDEN), [1, 3]);
         assert_eq!(lines("a: 1\n---\nb: 2\n", FORBIDDEN), [2]);
         assert_eq!(lines("--- # c\na: 1\n", FORBIDDEN), [1]);
-        assert!(lines("a: 1\n", FORBIDDEN).is_empty());
+        assert_eq!(lines("a: 1\n", FORBIDDEN), [] as [usize; 0]);
     }
 
     #[test]
     fn test_forbidden_spares_markers_after_directives() {
         assert_eq!(lines("%YAML 1.2\n---\na: 1\n---\nb: 2\n", FORBIDDEN), [4]);
-        assert!(lines("%YAML 1.2\n# c\n\n---\na: 1\n", FORBIDDEN).is_empty());
+        assert_eq!(
+            lines("%YAML 1.2\n# c\n\n---\na: 1\n", FORBIDDEN),
+            [] as [usize; 0]
+        );
         assert_eq!(
             lines("a: 1\n...\n%YAML 1.2\n---\nb: 2\n---\nc: 3\n", FORBIDDEN),
             [6]
@@ -336,7 +339,7 @@ mod tests {
 
     #[test]
     fn test_marker_text_inside_scalars_is_not_a_marker() {
-        assert!(lines("a: |\n  ---\n  text\n", FORBIDDEN).is_empty());
-        assert!(lines("a: \"x\n  --- y\"\n", FORBIDDEN).is_empty());
+        assert_eq!(lines("a: |\n  ---\n  text\n", FORBIDDEN), [] as [usize; 0]);
+        assert_eq!(lines("a: \"x\n  --- y\"\n", FORBIDDEN), [] as [usize; 0]);
     }
 }

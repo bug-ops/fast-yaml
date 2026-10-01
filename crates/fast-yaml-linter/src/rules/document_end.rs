@@ -171,7 +171,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -199,12 +199,12 @@ mod tests {
         let value_with = Parser::parse_str(yaml_with).unwrap().unwrap();
         let context_with = LintContext::new(yaml_with);
         let diag_with = rule.check(&context_with, &value_with, &config);
-        assert!(diag_with.is_empty());
+        assert_eq!(diag_with, []);
 
         let value_without = Parser::parse_str(yaml_without).unwrap().unwrap();
         let context_without = LintContext::new(yaml_without);
         let diag_without = rule.check(&context_without, &value_without, &config);
-        assert!(diag_without.is_empty());
+        assert_eq!(diag_without, []);
     }
 
     #[test]
@@ -217,7 +217,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(diagnostics.is_empty());
+        assert_eq!(diagnostics, []);
     }
 
     #[test]
@@ -263,12 +263,12 @@ mod tests {
 
     #[test]
     fn forbidden_ignores_non_markers() {
-        assert!(forbidden("a: 1\n").is_empty());
-        assert!(forbidden("a: 1\n....\n").is_empty());
-        assert!(forbidden("a: ...\n").is_empty());
-        assert!(forbidden("a: |\n  ...\n  text\n").is_empty());
-        assert!(forbidden("a: 1\n  ...\n").is_empty());
-        assert!(forbidden("a: 1\n...x\n").is_empty());
+        assert_eq!(forbidden("a: 1\n"), []);
+        assert_eq!(forbidden("a: 1\n....\n"), []);
+        assert_eq!(forbidden("a: ...\n"), []);
+        assert_eq!(forbidden("a: |\n  ...\n  text\n"), []);
+        assert_eq!(forbidden("a: 1\n  ...\n"), []);
+        assert_eq!(forbidden("a: 1\n...x\n"), []);
     }
 
     #[test]
@@ -305,7 +305,7 @@ mod tests {
 
     #[test]
     fn required_checks_every_document() {
-        assert!(required("a: 1\n...\n---\nb: 2\n...\n").is_empty());
+        assert_eq!(required("a: 1\n...\n---\nb: 2\n...\n"), []);
         assert_eq!(required_lines("a: 1\n---\nb: 2\n..."), [(2, 1)]);
         assert_eq!(required_lines("a: 1\n...\n---\nb: 2\n"), [(5, 1)]);
         assert_eq!(
@@ -316,8 +316,8 @@ mod tests {
 
     #[test]
     fn required_accepts_a_marker_with_a_comment() {
-        assert!(required("a: 1\n... # end\n").is_empty());
-        assert!(required("--- # c\na: 1\n... # e\n").is_empty());
+        assert_eq!(required("a: 1\n... # end\n"), []);
+        assert_eq!(required("--- # c\na: 1\n... # e\n"), []);
     }
 
     #[test]

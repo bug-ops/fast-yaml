@@ -391,7 +391,10 @@ fn test_lint_file_with_a_bom_reports_bom_free_positions() {
         value
     };
     let expected = lint(&plain);
-    assert!(!expected.as_array().unwrap().is_empty());
+    assert_ne!(
+        expected.as_array().unwrap().as_slice(),
+        [] as [serde_json::Value; 0]
+    );
     assert_eq!(lint(&bom), expected);
 
     fy().args(["lint", "--format", "json"])

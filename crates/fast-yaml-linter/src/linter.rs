@@ -1143,7 +1143,7 @@ mod tests {
     }
 
     fn assert_same_coordinates(plain: &[Diagnostic], bom: &[Diagnostic], normalized: &str) {
-        assert!(!plain.is_empty());
+        assert_ne!(plain, []);
         assert_eq!(plain.len(), bom.len());
         for (p, b) in plain.iter().zip(bom) {
             assert_eq!(p.code, b.code);
@@ -1268,7 +1268,7 @@ mod tests {
             ..ParseLimits::default()
         };
         let raised = Linter::with_config(LintConfig::new().with_parse_limits(limits(512)));
-        assert!(raised.lint_value(&source, &value).unwrap().is_empty());
+        assert_eq!(raised.lint_value(&source, &value).unwrap(), []);
 
         let lowered = Linter::with_config(LintConfig::new().with_parse_limits(limits(8)));
         assert!(matches!(
