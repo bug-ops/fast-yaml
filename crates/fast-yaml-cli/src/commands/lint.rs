@@ -270,13 +270,14 @@ impl LintCommand {
             self.output.ensure_not_input(path)?;
         }
 
-        // The formatter indent applies only while the lint config leaves the width unset
-        let lint_config = if self.lint_config.rules.indentation.options.width_is_set() {
+        // A non-default formatter indent applies only while the lint config leaves the width unset
+        let formatter_indent = self.config.formatter.lint_indent_size();
+        let lint_config = if self.lint_config.rules.indentation.options.width_is_set()
+            || formatter_indent == IndentSize::default()
+        {
             self.lint_config.clone()
         } else {
-            self.lint_config
-                .clone()
-                .with_indent_size(self.config.formatter.lint_indent_size())
+            self.lint_config.clone().with_indent_size(formatter_indent)
         };
 
         let linter = Linter::with_config(lint_config);
@@ -287,10 +288,10 @@ impl LintCommand {
         let canonical = input
             .file_path()
             .and_then(|path| CanonicalPath::new(path).ok());
-        let linted = match &canonical {
-            Some(path) => linter.lint_source_file(&source, path),
-            None => linter.lint_source(&source),
-        };
+        let linted = canonical.as_ref().map_or_else(
+            || linter.lint_source(&source),
+            |path| linter.lint_source_file(&source, path),
+        );
         let diagnostics = match linted {
             Ok(diagnostics) => diagnostics,
             Err(err) => return self.report_lint_failure(input, err),

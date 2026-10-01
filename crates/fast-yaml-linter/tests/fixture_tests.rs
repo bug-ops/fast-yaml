@@ -418,10 +418,6 @@ mod config_fixtures {
             ("unknown-rule.yaml", &["no-such-rule"][..]),
             ("wrong-type.yaml", &["line-length", "max"][..]),
             ("unknown-option.yaml", &["line-length", "maxx"][..]),
-            (
-                "unsupported-yamllint-option.yaml",
-                &["indentation", "check-multi-line-strings", "yamllint"][..],
-            ),
             ("bad-severity.yaml", &["braces", "loud"][..]),
             ("null-option.yaml", &["quoted-strings", "quote-type"][..]),
             (
@@ -501,6 +497,8 @@ mod config_fixtures {
         assert!(rules.duplicate_key.enabled);
         let rules = load("valid/per-rule-ignore.yaml").unwrap().rules;
         assert!(rules.braces.ignore.is_some());
+        let rules = load("valid/check-multi-line-strings.yaml").unwrap().rules;
+        assert!(rules.indentation.options.check_multi_line_strings);
     }
 
     #[test]

@@ -279,9 +279,7 @@ pub fn execute_lint_batch(
     let pool = shared_pool(workers).context("Failed to build thread pool")?;
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-    for path in &file_paths {
-        output.ensure_not_input(path)?;
-    }
+    output.ensure_not_inputs(file_paths.iter().map(PathBuf::as_path))?;
     let linter = Linters::new(lint_config, scan_ahead, workers);
     let is_quiet = common.output.is_quiet();
     let mut sink = output.sink()?;

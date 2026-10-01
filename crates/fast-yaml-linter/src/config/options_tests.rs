@@ -533,7 +533,11 @@ fn indentation_indent_size_is_applied() {
 fn indentation_spaces_and_indent_sequences_are_applied() {
     let none = [] as [String; 0];
     assert_eq!(
-        messages(RuleName::Indentation, "{spaces: consistent}", "a:\n   b: 1\n   c: 2\n"),
+        messages(
+            RuleName::Indentation,
+            "{spaces: consistent}",
+            "a:\n   b: 1\n   c: 2\n"
+        ),
         none
     );
     assert_ne!(
@@ -541,11 +545,19 @@ fn indentation_spaces_and_indent_sequences_are_applied() {
         none
     );
     assert_ne!(
-        messages(RuleName::Indentation, "{indent-sequences: false}", "a:\n  - 1\n"),
+        messages(
+            RuleName::Indentation,
+            "{indent-sequences: false}",
+            "a:\n  - 1\n"
+        ),
         none
     );
     assert_eq!(
-        messages(RuleName::Indentation, "{indent-sequences: whatever}", "a:\n- 1\nb:\n  - 2\n"),
+        messages(
+            RuleName::Indentation,
+            "{indent-sequences: whatever}",
+            "a:\n- 1\nb:\n  - 2\n"
+        ),
         none
     );
 }

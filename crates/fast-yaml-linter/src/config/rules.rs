@@ -544,23 +544,7 @@ fn apply_mapping<O: RuleOptions>(
                 }
             },
             "ignore" | "ignore-from-file" => {
-                if matches!(base, IgnoreBase::Unavailable) {
-                    return Err(RuleConfigError::UnsupportedOption {
-                        rule,
-                        key,
-                        hint: Some(
-                            "per-rule ignore needs a config file; use the top-level 'ignore' key \
-                             to skip files for every rule",
-                        ),
-                    });
-                }
-                if let Some(first) = ignore_source.replace(IgnoreSource::parse(&key, value)) {
-                    return Err(RuleConfigError::InvalidOption {
-                        rule,
-                        key,
-                        message: format!("cannot be used together with '{}'", first.key()),
-                    });
-                }
+                record_ignore(rule, base, &mut ignore_source, key, value)?;
             }
             _ => {
                 if O::YAMLLINT_UNSUPPORTED.contains(&key.as_str()) {
@@ -589,6 +573,33 @@ fn apply_mapping<O: RuleOptions>(
         settings.ignore = Some(source.compile(rule, dir)?);
     }
     overlay_options(rule, settings, overlay, &bool_word_keys)
+}
+
+fn record_ignore(
+    rule: RuleName,
+    base: IgnoreBase<'_>,
+    seen: &mut Option<IgnoreSource>,
+    key: String,
+    value: Value,
+) -> Result<(), RuleConfigError> {
+    if matches!(base, IgnoreBase::Unavailable) {
+        return Err(RuleConfigError::UnsupportedOption {
+            rule,
+            key,
+            hint: Some(
+                "per-rule ignore needs a config file; use the top-level 'ignore' key \
+                 to skip files for every rule",
+            ),
+        });
+    }
+    seen.replace(IgnoreSource::parse(&key, value))
+        .map_or(Ok(()), |first| {
+            Err(RuleConfigError::InvalidOption {
+                rule,
+                key,
+                message: format!("cannot be used together with '{}'", first.key()),
+            })
+        })
 }
 
 /// The value of a per-rule `ignore` or `ignore-from-file` key.
@@ -621,8 +632,8 @@ impl IgnoreSource {
             message,
         };
         let lines = match self {
-            Self::Lines(lines) => lines.map_err(&invalid)?,
-            Self::Files(names) => ignore_file_lines(dir, &names.map_err(&invalid)?)
+            Self::Lines(lines) => lines.map_err(invalid)?,
+            Self::Files(names) => ignore_file_lines(dir, &names.map_err(invalid)?)
                 .map_err(|error| invalid(error.to_string()))?,
         };
         let root = dir
@@ -816,15 +827,6 @@ macro_rules! builtin_rules {
                 }
             }
 
-            /// Marks every entry that yamllint also has as configured, so that `enable` keeps it.
-            pub(super) fn mark_yamllint_entries(&mut self) {
-                $(
-                    if !RuleName::$variant.is_fy_only() {
-                        self.$field.origin = EntryOrigin::Configured;
-                    }
-                )+
-            }
-
             /// Returns whether the rule's own `ignore` patterns skip `path`.
             #[must_use]
             pub fn is_ignored(&self, name: RuleName, path: &CanonicalPath) -> bool {
@@ -899,11 +901,6 @@ impl FromStr for RuleName {
 }
 
 impl RuleName {
-    /// Rules that yamllint does not have.
-    const fn is_fy_only(self) -> bool {
-        matches!(self, Self::SetValues | Self::LintDirective)
-    }
-
     /// Rules whose yamllint name differs from the fast-yaml name.
     const YAMLLINT_NAMES: [(&'static str, Self); 3] = [
         ("key-duplicates", Self::DuplicateKey),
@@ -1283,13 +1280,10 @@ mod tests {
     }
 
     #[test]
-    fn yamllint_only_options_are_refused() {
-        let cases = [("indentation", "check-multi-line-strings")];
-        for (rule, key) in cases {
-            let message = error_of(&format!("{rule}: {{{key}: true}}"));
-            assert!(message.contains("supported by yamllint"), "{message}");
-            assert!(message.contains(rule) && message.contains(key), "{message}");
-        }
+    fn check_multi_line_strings_is_a_supported_option() {
+        let rules = applied("indentation: {check-multi-line-strings: true}");
+        assert!(rules.indentation.options.check_multi_line_strings);
+        assert!(error_of("indentation: {check-multi-line-string: true}").contains("unknown field"));
     }
 
     #[test]

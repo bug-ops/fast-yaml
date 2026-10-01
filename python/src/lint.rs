@@ -7,7 +7,7 @@ use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_linter::config::{IndentSize, RuleName};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize, RuleName};
 use fast_yaml_linter::formatter::Findings;
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
@@ -24,6 +24,7 @@ use pyo3::types::{PyList, PyString};
 use serde_norway::{Mapping, Value};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 #[cfg(feature = "json-output")]
@@ -466,7 +467,16 @@ fn parse_indent_size(size: i128) -> PyResult<IndentSize> {
 }
 
 fn parse_rule_name(code: &str) -> PyResult<RuleName> {
-    RuleName::from_str(code).map_err(|e| PyValueError::new_err(e.to_string()))
+    RuleName::from_config_key(code).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+fn parse_path(path: Option<PathBuf>) -> PyResult<Option<CanonicalPath>> {
+    path.map(|path| {
+        CanonicalPath::new(&path).map_err(|e| {
+            PyValueError::new_err(format!("cannot resolve path '{}': {e}", path.display()))
+        })
+    })
+    .transpose()
 }
 
 /// Configuration for the linter.
@@ -542,10 +552,11 @@ impl PyLintConfig {
         if let Some(rules_obj) = rules {
             let value = ValueConverter::default()
                 .convert_rules(&rules_obj, |name| parse_rule_name(name).map(drop))?;
-            inner
-                .rules
-                .apply(value)
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let applied = match std::env::current_dir() {
+                Ok(dir) => inner.rules.apply_at(value, &dir),
+                Err(_) => inner.rules.apply(value),
+            };
+            applied.map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
 
         if let Some(disabled) = disabled_rules {
@@ -779,16 +790,25 @@ impl PyLinter {
     ///
     /// Args:
     ///     source: YAML source code as string
+    ///     path: Path of the file the source comes from, so rules whose `ignore`
+    ///         patterns match it are skipped; omit for standard input
     ///
     /// Returns:
     ///     List of diagnostics (errors, warnings, hints)
     ///
     /// Raises:
-    ///     `ValueError`: If YAML cannot be parsed at all, or the source exceeds `max_input_bytes`
-    ///         (default 100 MiB)
-    fn lint(&self, py: Python<'_>, source: &str) -> PyResult<Vec<PyDiagnostic>> {
+    ///     `ValueError`: If YAML cannot be parsed at all, the source exceeds `max_input_bytes`
+    ///         (default 100 MiB), or the directory of `path` does not exist
+    #[pyo3(signature = (source, path=None))]
+    fn lint(
+        &self,
+        py: Python<'_>,
+        source: &str,
+        path: Option<PathBuf>,
+    ) -> PyResult<Vec<PyDiagnostic>> {
+        let path = parse_path(path)?;
         // Release GIL during CPU-intensive linting
-        let result = py.detach(|| lint_with_excerpts(&self.inner, source));
+        let result = py.detach(|| lint_with_excerpts(&self.inner, source, path.as_ref()));
 
         result
             .map(|diagnostics| diagnostics.into_iter().map(Into::into).collect())
@@ -873,9 +893,13 @@ fn given_findings(
 fn lint_with_excerpts(
     linter: &RustLinter,
     source: &str,
+    path: Option<&CanonicalPath>,
 ) -> Result<Vec<(RustDiagnostic, Option<RustDiagnosticContext>)>, RustLintError> {
     let input = linter.source(source)?;
-    let diagnostics = linter.lint_source(&input)?;
+    let diagnostics = match path {
+        Some(path) => linter.lint_source_file(&input, path)?,
+        None => linter.lint_source(&input)?,
+    };
     Ok(Findings::cut(diagnostics, &input.context()))
 }
 
@@ -959,15 +983,21 @@ impl PyJsonFormatter {
 ///     ...     `print(f"{diag.severity.as_str()}`: {diag.message}")
 ///     error: duplicate key 'key' found
 #[pyfunction]
-#[pyo3(signature = (source, config=None))]
-fn lint(py: Python<'_>, source: &str, config: Option<PyLintConfig>) -> PyResult<Vec<PyDiagnostic>> {
+#[pyo3(signature = (source, config=None, *, path=None))]
+fn lint(
+    py: Python<'_>,
+    source: &str,
+    config: Option<PyLintConfig>,
+    path: Option<PathBuf>,
+) -> PyResult<Vec<PyDiagnostic>> {
+    let path = parse_path(path)?;
     // Release GIL during CPU-intensive linting
     let result = py.detach(|| {
         let linter = match config {
             Some(cfg) => RustLinter::with_config(cfg.inner),
             None => RustLinter::with_all_rules(),
         };
-        lint_with_excerpts(&linter, source)
+        lint_with_excerpts(&linter, source, path.as_ref())
     });
 
     result

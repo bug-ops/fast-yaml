@@ -11,6 +11,10 @@ export interface RuleEntryBase {
   severity?: RuleSeverity
   /** yamllint spelling of `severity`; cannot be combined with it. */
   level?: RuleSeverity
+  /** Gitignore-style patterns of files the rule skips, relative to the working directory. */
+  ignore?: string | string[]
+  /** Files with one ignore pattern per line, relative to the working directory; excludes `ignore`. */
+  'ignore-from-file'?: string | string[]
 }
 
 /** Spacing options shared by `braces` and `brackets`. */
@@ -86,7 +90,14 @@ export type RuleEntry<R extends LintRuleName> =
   | (RuleEntryBase & RuleOptionsByRule[R])
 
 /** Per-rule configuration patch; the same shape as `rules:` in the `fy lint --config` file. */
-export type LintRulesConfig = { [R in LintRuleName]?: RuleEntry<R> }
+export type LintRulesConfig = { [R in LintRuleName]?: RuleEntry<R> } & {
+  /** yamllint's name for `duplicate-key`. */
+  'key-duplicates'?: RuleEntry<'duplicate-key'>
+  /** yamllint's name for `trailing-whitespace`. */
+  'trailing-spaces'?: RuleEntry<'trailing-whitespace'>
+  /** yamllint's name for `invalid-anchor`. */
+  anchors?: RuleEntry<'invalid-anchor'>
+}
 /**
  * YAML linter with configurable rules.
  *
@@ -113,12 +124,15 @@ export declare class Linter {
   /**
    * Lints YAML source code and returns diagnostics.
    *
+   * `path` is the file the source comes from; rules whose `ignore` patterns match it are
+   * skipped. Omit it for standard input.
+   *
    * # Errors
    *
-   * Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
-   * (default 100 MiB).
+   * Returns an error if the YAML cannot be parsed, the source exceeds `maxInputBytes`
+   * (default 100 MiB), or the directory of `path` does not exist.
    */
-  lint(source: string): Array<Diagnostic>
+  lint(source: string, path?: string | undefined | null): Array<Diagnostic>
 }
 
 /**
@@ -386,12 +400,12 @@ export interface FormatResult {
 /**
  * Lint YAML source with optional configuration.
  *
- * Convenience function equivalent to `Linter.withAllRules().lint(source)`.
+ * Convenience function equivalent to `Linter.withAllRules().lint(source, path)`.
  *
  * # Errors
  *
- * Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
- * (default 100 MiB).
+ * Returns an error if the YAML cannot be parsed, the source exceeds `maxInputBytes`
+ * (default 100 MiB), or the directory of `path` does not exist.
  *
  * # Example
  *
@@ -401,7 +415,7 @@ export interface FormatResult {
 key: duplicate');
  * ```
  */
-export declare function lint(source: string, config?: LintConfig | undefined | null): Array<Diagnostic>
+export declare function lint(source: string, config?: LintConfig | undefined | null, path?: string | undefined | null): Array<Diagnostic>
 
 /**
  * Configuration for the linter.

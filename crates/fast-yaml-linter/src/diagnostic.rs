@@ -56,7 +56,7 @@ pub struct Diagnostic {
 ///
 /// The lines are cut from the source when a diagnostic is printed, so a run that finds a million
 /// diagnostics does not hold a million copies of source text. Serialization skips the policy;
-/// serialize through [`JsonFormatter`](crate::JsonFormatter) to include the lines.
+/// serialize through `JsonFormatter` (feature `json-output`) to include the lines.
 ///
 /// # Examples
 ///

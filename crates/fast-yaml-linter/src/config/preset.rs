@@ -32,7 +32,11 @@ pub struct UnknownPresetError {
 ///
 /// - `anchors.forbid-undeclared-aliases: false`, because an undeclared alias is always a parse
 ///   error (`true` is accepted);
-/// - per-rule `ignore` and `ignore-from-file`, and the top-level `locale`.
+/// - the top-level `locale`: `C`, `POSIX` and `C.UTF-8` are accepted, any other locale is an error
+///   while `key-ordering` is enabled (keys are ordered by code point).
+///
+/// `rules: {x: enable}` keeps the options, severity and ignore of an enabled entry and resets a
+/// disabled one to yamllint's defaults at `error`.
 ///
 /// Some rules silently behave differently from yamllint, because fast-yaml reads the parser's
 /// events where yamllint reads `PyYAML` tokens:
@@ -128,7 +132,7 @@ const fn on<O>(severity: Severity, options: O) -> RuleSettings<O> {
         severity: Some(severity),
         options,
         ignore: None,
-        origin: EntryOrigin::FyDefault,
+        origin: EntryOrigin::Configured,
     }
 }
 
@@ -212,7 +216,10 @@ fn default_rules() -> RulesConfig {
                 ..IndentationOptions::default()
             },
         ),
-        set_values: error(),
+        set_values: RuleSettings {
+            origin: EntryOrigin::FyDefault,
+            ..error()
+        },
         lint_directive: RuleSettings::<NoOptions>::default(),
     }
 }

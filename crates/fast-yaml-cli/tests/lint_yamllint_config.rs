@@ -126,7 +126,10 @@ fn yamllint_rule_names_and_per_rule_ignore_are_accepted() {
     let dir = project("rules:\n  braces:\n    ignore: vendor/\n", &[]);
     fy(dir.path(), &[]).write_stdin("a: 1\n").assert().code(0);
 
-    let dir = project("rules:\n  trailing-spaces: error\n  anchors: disable\n", &[]);
+    let dir = project(
+        "rules:\n  trailing-spaces: error\n  anchors: disable\n",
+        &[],
+    );
     fy(dir.path(), &[]).write_stdin("a: 1 \n").assert().code(2);
 }
 

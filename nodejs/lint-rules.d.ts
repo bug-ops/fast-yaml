@@ -11,6 +11,10 @@ export interface RuleEntryBase {
   severity?: RuleSeverity
   /** yamllint spelling of `severity`; cannot be combined with it. */
   level?: RuleSeverity
+  /** Gitignore-style patterns of files the rule skips, relative to the working directory. */
+  ignore?: string | string[]
+  /** Files with one ignore pattern per line, relative to the working directory; excludes `ignore`. */
+  'ignore-from-file'?: string | string[]
 }
 
 /** Spacing options shared by `braces` and `brackets`. */
@@ -86,4 +90,11 @@ export type RuleEntry<R extends LintRuleName> =
   | (RuleEntryBase & RuleOptionsByRule[R])
 
 /** Per-rule configuration patch; the same shape as `rules:` in the `fy lint --config` file. */
-export type LintRulesConfig = { [R in LintRuleName]?: RuleEntry<R> }
+export type LintRulesConfig = { [R in LintRuleName]?: RuleEntry<R> } & {
+  /** yamllint's name for `duplicate-key`. */
+  'key-duplicates'?: RuleEntry<'duplicate-key'>
+  /** yamllint's name for `trailing-whitespace`. */
+  'trailing-spaces'?: RuleEntry<'trailing-whitespace'>
+  /** yamllint's name for `invalid-anchor`. */
+  anchors?: RuleEntry<'invalid-anchor'>
+}

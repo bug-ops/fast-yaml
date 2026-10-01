@@ -55,10 +55,6 @@ fn invalid_configs_fail_with_actionable_messages() {
         ("wrong-type.yaml", &["line-length", "max"][..]),
         ("unknown-option.yaml", &["line-length", "maxx"][..]),
         (
-            "unsupported-yamllint-option.yaml",
-            &["indentation", "check-multi-line-strings", "yamllint"][..],
-        ),
-        (
             "always-extra-allowed.yaml",
             &["quoted-strings", "extra-allowed"][..],
         ),

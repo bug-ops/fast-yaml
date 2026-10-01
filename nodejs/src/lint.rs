@@ -9,12 +9,12 @@ use fast_yaml_linter::{
     DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig,
     LintError as RustLintError, Linter as RustLinter, Location as RustLocation,
     Severity as RustSeverity, Span as RustSpan, Suggestion as RustSuggestion,
-    config::{IndentSize, RuleConfigError, RuleName},
+    config::{CanonicalPath, IndentSize, RuleConfigError, RuleName},
     formatter::Findings,
     rules::MarkerPresence,
 };
 use napi_derive::napi;
-use std::{num::NonZeroUsize, str::FromStr};
+use std::{num::NonZeroUsize, path::Path};
 
 use crate::rule_input::RuleInput;
 
@@ -289,7 +289,11 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
         rust = rust.with_disabled_rule(RuleName::DuplicateKey);
     }
     if let Some(rules) = &config.rules {
-        rust.rules.apply(&rules.0).map_err(|e| match e {
+        let applied = match std::env::current_dir() {
+            Ok(dir) => rust.rules.apply_at(&rules.0, &dir),
+            Err(_) => rust.rules.apply(&rules.0),
+        };
+        applied.map_err(|e| match e {
             RuleConfigError::Malformed { message } => {
                 config_error(format!("rules must be an object: {message}"))
             }
@@ -297,15 +301,31 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
         })?;
     }
     for code in config.disabled_rules.iter().flatten() {
-        rust = rust.with_disabled_rule(RuleName::from_str(code).map_err(config_error)?);
+        rust = rust.with_disabled_rule(RuleName::from_config_key(code).map_err(config_error)?);
     }
     Ok(rust)
 }
 
-fn lint_diagnostics(linter: &RustLinter, source: &str) -> napi::Result<Vec<Diagnostic>> {
+fn canonical_path(path: Option<&str>) -> napi::Result<Option<CanonicalPath>> {
+    path.map(|path| {
+        CanonicalPath::new(Path::new(path))
+            .map_err(|e| config_error(format!("cannot resolve path '{path}': {e}")))
+    })
+    .transpose()
+}
+
+fn lint_diagnostics(
+    linter: &RustLinter,
+    source: &str,
+    path: Option<&str>,
+) -> napi::Result<Vec<Diagnostic>> {
+    let path = canonical_path(path)?;
     let lint = || {
         let input = linter.source(source)?;
-        let diagnostics = linter.lint_source(&input)?;
+        let diagnostics = match &path {
+            Some(path) => linter.lint_source_file(&input, path)?,
+            None => linter.lint_source(&input)?,
+        };
         Ok::<_, RustLintError>(Findings::cut(diagnostics, &input.context()))
     };
     lint()
@@ -353,25 +373,28 @@ impl Linter {
 
     /// Lints YAML source code and returns diagnostics.
     ///
+    /// `path` is the file the source comes from; rules whose `ignore` patterns match it are
+    /// skipped. Omit it for standard input.
+    ///
     /// # Errors
     ///
-    /// Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
-    /// (default 100 MiB).
+    /// Returns an error if the YAML cannot be parsed, the source exceeds `maxInputBytes`
+    /// (default 100 MiB), or the directory of `path` does not exist.
     #[napi(catch_unwind)]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn lint(&self, source: String) -> napi::Result<Vec<Diagnostic>> {
-        lint_diagnostics(&self.inner, &source)
+    pub fn lint(&self, source: String, path: Option<String>) -> napi::Result<Vec<Diagnostic>> {
+        lint_diagnostics(&self.inner, &source, path.as_deref())
     }
 }
 
 /// Lint YAML source with optional configuration.
 ///
-/// Convenience function equivalent to `Linter.withAllRules().lint(source)`.
+/// Convenience function equivalent to `Linter.withAllRules().lint(source, path)`.
 ///
 /// # Errors
 ///
-/// Returns an error if the YAML cannot be parsed or the source exceeds `maxInputBytes`
-/// (default 100 MiB).
+/// Returns an error if the YAML cannot be parsed, the source exceeds `maxInputBytes`
+/// (default 100 MiB), or the directory of `path` does not exist.
 ///
 /// # Example
 ///
@@ -381,10 +404,14 @@ impl Linter {
 /// ```
 #[napi(catch_unwind)]
 #[allow(clippy::needless_pass_by_value)]
-pub fn lint(source: String, config: Option<LintConfig>) -> napi::Result<Vec<Diagnostic>> {
+pub fn lint(
+    source: String,
+    config: Option<LintConfig>,
+    path: Option<String>,
+) -> napi::Result<Vec<Diagnostic>> {
     let linter = match config {
         Some(cfg) => RustLinter::with_all_rules_and_config(to_rust_lint_config(&cfg)?),
         None => RustLinter::with_all_rules(),
     };
-    lint_diagnostics(&linter, &source)
+    lint_diagnostics(&linter, &source, path.as_deref())
 }

@@ -14,6 +14,8 @@ Example:
 
 from __future__ import annotations
 
+import os
+
 from ._core import lint as _lint_module
 
 # Re-export from the submodule
@@ -46,7 +48,12 @@ __all__ = [
 ]
 
 
-def lint(source: str, config: LintConfig | None = None) -> list[Diagnostic]:
+def lint(
+    source: str,
+    config: LintConfig | None = None,
+    *,
+    path: str | os.PathLike[str] | None = None,
+) -> list[Diagnostic]:
     """
     Lint YAML source code.
 
@@ -56,13 +63,16 @@ def lint(source: str, config: LintConfig | None = None) -> list[Diagnostic]:
     Args:
         source: YAML source code as string
         config: Optional linter configuration
+        path: Path of the file the source comes from. Rules whose ``ignore``
+            patterns match it are skipped; omit it for standard input
 
     Returns:
         List of diagnostics sorted by location
 
     Raises:
-        ValueError: If YAML is completely unparseable, or the source exceeds
-            the configured ``max_input_bytes`` (default 100 MiB)
+        ValueError: If YAML is completely unparseable, the source exceeds
+            the configured ``max_input_bytes`` (default 100 MiB), or the
+            directory of ``path`` does not exist
 
     Example:
         >>> import fast_yaml.lint as yaml_lint
@@ -72,7 +82,7 @@ def lint(source: str, config: LintConfig | None = None) -> list[Diagnostic]:
         ...     print(f"{d.severity.as_str()}: {d.message}")
         error: duplicate key 'key' found
     """
-    return _lint(source, config)
+    return _lint(source, config, path=path)
 
 
 def format_diagnostics(

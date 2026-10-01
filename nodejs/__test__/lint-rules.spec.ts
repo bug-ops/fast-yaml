@@ -88,16 +88,6 @@ describe('config errors', () => {
     expect(() => lint('a: 1\n', bad({ colons: { 'max-space-after': 1 } }))).toThrow(/colons/);
   });
 
-  it.each([
-    ['key-duplicates', 'duplicate-key'],
-    ['trailing-spaces', 'trailing-whitespace'],
-    ['anchors', 'invalid-anchor'],
-  ])('renamed yamllint rule %s hints at %s', (yamllint, ours) => {
-    expect(() => lint('a: 1\n', bad({ [yamllint]: 'enable' }))).toThrow(
-      new RegExp(`unknown rule '${yamllint}'; yamllint's '${yamllint}' is '${ours}' in fast-yaml`)
-    );
-  });
-
   it('unknown rule without a yamllint alias has no hint', () => {
     let message = '';
     try {
@@ -245,12 +235,13 @@ describe('yamllint forms and shorthands', () => {
     ).toThrow(/extra-allowed.*only-when-needed/);
   });
 
-  it.each([
-    ['indentation', 'check-multi-line-strings', true],
-  ])('yamllint-only option %s.%s is rejected', (rule, option, value) => {
-    expect(() => lint('a: 1\n', bad({ [rule]: { [option]: value } }))).toThrow(
-      new RegExp(`rule '${rule}'.*'${option}'.*not implemented by fast-yaml`)
-    );
+  it('check-multi-line-strings is supported and a typo is rejected', () => {
+    expect(() =>
+      lint('a: 1\n', bad({ indentation: { 'check-multi-line-strings': true } }))
+    ).not.toThrow();
+    expect(() =>
+      lint('a: 1\n', bad({ indentation: { 'check-multi-line-string': true } }))
+    ).toThrow(/check-multi-line-string/);
   });
 });
 

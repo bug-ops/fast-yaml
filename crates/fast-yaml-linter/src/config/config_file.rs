@@ -48,6 +48,18 @@ pub const MAX_CONFIG_FILE_BYTES: usize = 1 << 20;
 /// together. The patterns are read when the config is loaded, so they end up in
 /// [`FileSelection::ignore`], anchored at the config file's directory.
 ///
+/// Each rule entry also accepts `ignore` (gitignore patterns, as a string with one pattern per
+/// line or a list) or `ignore-from-file` (file names), but not both: the rule is skipped for the
+/// files they match, anchored at the directory of the file that declares them and inherited
+/// through `extends` like the other options. Rules are keyed by their fast-yaml code or by the
+/// name yamllint uses (`key-duplicates`, `trailing-spaces`, `anchors`). `rule: enable` keeps the
+/// options, severity and ignore of an enabled entry inherited from a config file or preset, and
+/// resets any other (a disabled or fast-yaml default one) to yamllint's defaults at `error`.
+///
+/// `locale` is accepted for yamllint compatibility. `key-ordering` compares code points, as the
+/// `C`, `POSIX` and `C.UTF-8` locales do, so any other locale is rejected by [`ConfigFile::load`]
+/// while `key-ordering` is enabled and is otherwise inert. It is not inherited through `extends`.
+///
 /// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
 /// suffixes) that caps the input the linter accepts. The `max-scan-ahead` key is likewise an
 /// integer, in characters, that sets [`MaxScanAhead`]. Omit both from files shared with yamllint.
@@ -492,7 +504,6 @@ impl ConfigFile {
         let (rules, base) = match top.extends {
             Some(Extends::Preset(preset)) => {
                 let mut rules = preset.rules();
-                rules.mark_yamllint_entries();
                 rules
                     .apply_over_preset(top.rules, ignore_base)
                     .map_err(invalid_rules)?;
