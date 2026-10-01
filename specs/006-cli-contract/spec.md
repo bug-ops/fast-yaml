@@ -265,7 +265,7 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | 7 | `using config file:` always on stderr (P3, GAP-CLI-020) | Printed even with `-q` and machine formats. | Print only with `-v`? |
 | 8 | Single-file text lint labels location `input:L:C` (P3, GAP-CLI-015) | Batch prints `<path>:` header; single file does not show the path. | Show the file name in single mode? **Proposed:** paths as given on the command line; file name in every format. |
 | 9 | `-v` has no effect on `format`, README says it lists files (P3, GAP-CLI-004) | Verified: only the standard summary. | Implement per-file lines or fix docs. |
-| 10 | Broken pipe (P3, GAP-CLI-013) | `fy lint` is quiet on a closed stdout or stderr; `fy format big \| head -1` still prints `error: Failed to write to stdout`, exit 1. | Treat EPIPE as quiet success for format and convert too? |
+| 10 | Broken pipe (GAP-CLI-013, resolved by #591) | `fy lint`, `format`, `convert` and `parse` are quiet on a closed stdout or stderr (piped to `head -1`, or `>&-`) and keep the exit code the result implies (lint 2, `format --dry-run` 5); a real write error such as `-o /nonexistent/x` still exits 1. | closed |
 | 11 | Cause chain repeats text (P4, GAP-CLI-014) | `caused by[0]` and `[1]` are identical for I/O errors. | Dedupe in `format_error`. |
 | 12 | Doc drift (P3, GAP-CLI-002/003/006/021) | Crate README synopsis, `skills/fast-yaml-cli/SKILL.md` (key sorting, `--indent` range, `convert -i` renaming, lint formats) disagree with behaviour. | Refresh docs from this spec. |
 | 13 | Single explicit non-YAML file accepted (P4, GAP-CLI-026) | `fy format -n a.txt` works; in a batch it errors on include patterns. | Make consistent? |

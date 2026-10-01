@@ -108,7 +108,7 @@ impl super::LintRule for KeyOrderingRule {
                 Node::Open { kind, .. } => {
                     stack.push((*kind == CollectionKind::Mapping).then(Vec::new));
                 }
-                Node::Close { .. } => {
+                Node::Close => {
                     stack.pop();
                 }
                 Node::Scalar(scalar)

@@ -5,7 +5,7 @@
 
 use fast_yaml_core::ScalarStyle;
 
-use crate::rules::node_roles::{CollectionStyle, NodeRole};
+use crate::rules::node_roles::NodeRole;
 use crate::source::offset::{ByteOffset, ByteRange};
 
 /// Nodes per chunk; chunks keep the index free of the copy and slack of a doubling `Vec`.
@@ -79,10 +79,6 @@ pub enum CollectionKind {
 
 /// One entry of the index.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "read once the indentation rule uses them")
-)]
 pub enum Node {
     Scalar(ScalarNode),
     Alias {
@@ -92,15 +88,9 @@ pub enum Node {
     /// The start of a mapping or sequence.
     Open {
         kind: CollectionKind,
-        style: CollectionStyle,
-        /// The `[` or `{` of a flow collection, the first node of a block collection.
-        at: ByteOffset,
     },
     /// The end of the innermost open collection.
-    Close {
-        /// The `]` or `}` of a flow collection, the end of a block collection.
-        at: ByteOffset,
-    },
+    Close,
 }
 
 /// The scalars, aliases and collection starts of a source, in source order.
@@ -138,17 +128,12 @@ impl<'a> NodeIndex<'a> {
         }
     }
 
-    pub(crate) fn push_open(
-        &mut self,
-        kind: CollectionKind,
-        style: CollectionStyle,
-        at: ByteOffset,
-    ) {
-        self.push(Node::Open { kind, style, at });
+    pub(crate) fn push_open(&mut self, kind: CollectionKind) {
+        self.push(Node::Open { kind });
     }
 
-    pub(crate) fn push_close(&mut self, at: ByteOffset) {
-        self.push(Node::Close { at });
+    pub(crate) fn push_close(&mut self) {
+        self.push(Node::Close);
     }
 
     pub(crate) fn push_alias(&mut self, range: ByteRange, role: NodeRole) {
@@ -272,11 +257,7 @@ mod tests {
                 scalar(range(start, start + 6), ScalarStyle::SingleQuoted),
                 "a'b",
             );
-            index.push_open(
-                CollectionKind::Mapping,
-                CollectionStyle::Block,
-                ByteOffset::new(0),
-            );
+            index.push_open(CollectionKind::Mapping);
         }
         let texts: Vec<&str> = index
             .nodes()

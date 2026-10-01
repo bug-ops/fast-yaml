@@ -177,7 +177,7 @@ fn collect_empty_values(
                 NodeRole::Root => {}
             },
             Node::Open { .. } => pending = None,
-            Node::Close { .. } => {}
+            Node::Close => {}
             Node::Alias { range, role } => {
                 pending = (*role == NodeRole::MappingKey)
                     .then(|| {

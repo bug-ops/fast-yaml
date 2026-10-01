@@ -12,7 +12,7 @@ use fast_yaml_core::{
 };
 
 use crate::nodes::{CollectionKind, NodeIndex, ScalarNode, TagKind};
-use crate::rules::node_roles::{CollectionStyle, RoleTracker};
+use crate::rules::node_roles::RoleTracker;
 use crate::set_members::{SetMember, SetMembers, may_contain_set};
 use crate::source::offset::{ByteOffset, ByteRange};
 use crate::tokenizer::ScalarRanges;
@@ -367,29 +367,20 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
         }
     }
 
-    fn push_open(&mut self, kind: CollectionKind, range: ByteRange) {
-        let style = if self.roles.in_flow() {
-            CollectionStyle::Flow
-        } else {
-            CollectionStyle::Block
-        };
-        self.nodes.push_open(kind, style, range.start());
-    }
-
     /// Adds the node of `item`, which covers `range`, to the index.
     fn observe_nodes(&mut self, item: &EventItem<'_>, range: ByteRange) {
         match &item.event {
             Event::MappingStart { .. } => {
                 self.roles.start_mapping(self.source, range);
-                self.push_open(CollectionKind::Mapping, range);
+                self.nodes.push_open(CollectionKind::Mapping);
             }
             Event::SequenceStart { .. } => {
                 self.roles.start_sequence(self.source, range);
-                self.push_open(CollectionKind::Sequence, range);
+                self.nodes.push_open(CollectionKind::Sequence);
             }
             Event::MappingEnd | Event::SequenceEnd => {
                 self.roles.leave();
-                self.nodes.push_close(range.start());
+                self.nodes.push_close();
             }
             Event::Alias(_) => {
                 let role = self.roles.node();
@@ -787,55 +778,37 @@ mod tests {
 }
 
 #[cfg(test)]
-mod collection_position_tests {
+mod collection_tests {
     use crate::LintContext;
-    use crate::nodes::Node;
+    use crate::nodes::{CollectionKind, Node};
 
-    fn brackets(source: &str) -> Vec<String> {
+    fn shape(source: &str) -> Vec<Option<CollectionKind>> {
         LintContext::new(source)
             .nodes()
             .nodes()
             .filter_map(|node| match node {
-                Node::Open { kind, style, at } => {
-                    Some(format!("open {kind:?} {style:?} {}", at.get()))
-                }
-                Node::Close { at } => Some(format!("close {}", at.get())),
+                Node::Open { kind } => Some(Some(*kind)),
+                Node::Close => Some(None),
                 _ => None,
             })
             .collect()
     }
 
     #[test]
-    fn flow_collections_carry_their_bracket_offsets() {
+    fn collections_open_and_close_in_order() {
+        use CollectionKind::{Mapping, Sequence};
         assert_eq!(
-            brackets("[1, [2]]\n"),
+            shape(
+                "a: [1, {b: 2}]
+"
+            ),
             [
-                "open Sequence Flow 0",
-                "open Sequence Flow 4",
-                "close 6",
-                "close 7"
-            ]
-        );
-        assert_eq!(
-            brackets("{a: [1]}\n"),
-            [
-                "open Mapping Flow 0",
-                "open Sequence Flow 4",
-                "close 6",
-                "close 7"
-            ]
-        );
-    }
-
-    #[test]
-    fn block_collections_start_at_their_first_node_and_end_with_the_text() {
-        assert_eq!(
-            brackets("a:\n  - x\n"),
-            [
-                "open Mapping Block 0",
-                "open Sequence Block 5",
-                "close 9",
-                "close 9"
+                Some(Mapping),
+                Some(Sequence),
+                Some(Mapping),
+                None,
+                None,
+                None
             ]
         );
     }

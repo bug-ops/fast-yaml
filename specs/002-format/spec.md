@@ -149,7 +149,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | FR-004 | WHEN the input contains a comment (outside quoted/block scalars, keys, anchors, tags) and `--strip-comments` is absent THE SYSTEM SHALL fail with the comment error and exit 1 without writing; WITH the flag it SHALL drop all comments. | MUST |
 | FR-005 | WHEN a scalar is written THE SYSTEM SHALL keep its source spelling and quoting (`yes`, `0x1F`, `01`, `1e3`, `.inf`, `~`, `'plain'`, `"it's"`, `"007"`). | MUST |
 | FR-006 | WHEN a value is omitted (`a:`) or a document is empty THE SYSTEM SHALL write `null`; an explicit `~` or `null` keeps its spelling. | MUST |
-| FR-007 | WHEN the input has several documents THE SYSTEM SHALL separate them with `---`, keep `%YAML`/`%TAG` directives and a leading `---` that follows a directive, and drop the trailing `...`. Reserved directives (any other `%NAME`) are dropped (see section 9). | MUST |
+| FR-007 | WHEN the input has several documents THE SYSTEM SHALL separate them with `---`, keep `%YAML`/`%TAG` directives and a leading `---` that follows a directive, and drop the trailing `...`. Reserved directives (any other `%NAME`) are kept in order with trailing blanks and a trailing comment cut, and the output is idempotent. | MUST |
 | FR-008 | WHEN a node has an anchor, alias or tag THE SYSTEM SHALL preserve them (`x: &a` followed by an indented body; `y: *a`; `!!str 5`), also in a document that follows a directive with a non-ASCII name. | MUST |
 | FR-009 | WHEN a flow collection appears THE SYSTEM SHALL rewrite it as block style; empty collections stay `[]` / `{}`. | MUST |
 | FR-010 | WHEN a sequence or mapping is a mapping key THE SYSTEM SHALL use the explicit `?` form. | MUST |
@@ -163,7 +163,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | FR-018 | WHEN a limit is exceeded (`--max-depth` 1..=512 default 256, `--max-documents` default 100 000, `--max-input-bytes`, `--max-scan-ahead`) THE SYSTEM SHALL return a typed error with the location and a hint naming the flag, never panic or exhaust the stack. | MUST |
 | FR-019 | WHEN the input is syntactically invalid THE SYSTEM SHALL fail with "Failed to format YAML" plus the parser message and position, exit 1, writing nothing. | MUST |
 | FR-020 | WHEN an alias references an unknown anchor THE SYSTEM SHALL fail instead of emitting a dangling alias. | MUST |
-| FR-021 | WHEN a file is rewritten in place THE SYSTEM SHALL write it atomically (temporary file, `fsync`, owner and mode kept, then rename via `write_atomic`), so a failure never leaves a half-written file; a hard-linked file the caller owns is written in place so all links see the result ([[005-batch-parallel/spec]] FR-008). | MUST |
+| FR-021 | WHEN a file is rewritten in place THE SYSTEM SHALL write it atomically (temporary file, `fsync`, owner, mode and (on Unix) extended attributes kept, then rename via `write_atomic`), so a failure never leaves a half-written file; a hard-linked file the caller owns is written in place so all links see the result ([[005-batch-parallel/spec]] FR-008). | MUST |
 | FR-022 | WHEN the input is empty THE SYSTEM SHALL succeed with empty output. | SHOULD |
 
 ## 4. Key entities and types
@@ -247,7 +247,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | 7 | Bindings' file formatters strip comments silently, unlike the CLI. (GAP-NODE-011, GAP-PY-014, OQ-03) | [NEEDS CLARIFICATION: mirror `CommentPolicy`]. See Python/Node specs **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
 | 8 | `-i` silently overrides `-o`. (GAP-CLI-007) | see CLI spec |
 | 9 | Default depth differs: emit 512, format/parse 256. (GAP-CORE-EMIT-004) | [NEEDS CLARIFICATION: converge or document] |
-| 10 | Reserved directives are dropped. A document that starts with `%FOO bar` and `---` formats without the `%FOO` line (verified); `%YAML` and `%TAG` are kept (the parser emits no directive events, so the formatter re-reads them from the source). | [NEEDS CLARIFICATION: keep reserved directives?] |
+| 10 | Reserved directives (resolved by #592): `%FOO bar` before `---` is kept (`%ÄÖÜ x`, BOM, CRLF, stdin and multi-document streams included); a bare `%` is a syntax error. `%YAML` and `%TAG` are kept too (the parser emits no directive events, so the formatter re-reads them from the source). | closed |
 
 ## 10. See also
 

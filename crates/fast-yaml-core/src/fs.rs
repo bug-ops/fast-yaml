@@ -130,9 +130,40 @@ pub fn read_regular_file(path: &Path, max: MaxInputBytes) -> Result<Vec<u8>, Rea
     }
     let size = metadata.len();
     max.check_file_len(size)?;
+    read_bounded(file, max, usize::try_from(size).unwrap_or_default())
+}
 
-    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or_default());
-    file.take(max.get() as u64 + 1).read_to_end(&mut bytes)?;
+/// Reads `reader` to its end, taking at most `max` bytes.
+///
+/// At most `max + 1` bytes are buffered, so an endless reader (standard input) cannot exhaust
+/// memory, and one byte over the limit is enough to reject it. `capacity` is only an
+/// allocation hint, such as the length a file system reports.
+///
+/// # Errors
+///
+/// Returns [`ReadFileError::Io`] when reading fails and [`ReadFileError::TooLarge`] when the
+/// reader yields more than `max` bytes.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::fs::{ReadFileError, read_bounded};
+/// use fast_yaml_core::limits::MaxInputBytes;
+///
+/// let max = MaxInputBytes::new(4).unwrap();
+/// assert_eq!(read_bounded(&b"abcd"[..], max, 0).unwrap(), b"abcd");
+/// assert!(matches!(
+///     read_bounded(&b"abcde"[..], max, 0),
+///     Err(ReadFileError::TooLarge(_))
+/// ));
+/// ```
+pub fn read_bounded(
+    reader: impl Read,
+    max: MaxInputBytes,
+    capacity: usize,
+) -> Result<Vec<u8>, ReadFileError> {
+    let mut bytes = Vec::with_capacity(capacity.min(max.get()));
+    reader.take(max.get() as u64 + 1).read_to_end(&mut bytes)?;
     max.check(bytes.len())?;
     Ok(bytes)
 }

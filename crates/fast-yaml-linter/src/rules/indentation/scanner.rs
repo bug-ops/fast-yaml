@@ -188,7 +188,7 @@ fn lex(
                 let (start, end) = (range.start().get(), range.end().get());
                 (Lexeme::Alias(start, end), start, end)
             }
-            Node::Open { .. } | Node::Close { .. } => continue,
+            Node::Open { .. } | Node::Close => continue,
         };
         if start < done {
             continue;

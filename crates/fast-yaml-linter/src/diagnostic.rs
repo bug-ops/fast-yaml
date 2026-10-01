@@ -1,8 +1,6 @@
 //! Diagnostic types for representing linting errors and warnings.
 
 use std::borrow::Cow;
-use std::convert::Infallible;
-use std::str::FromStr;
 
 use crate::{Severity, Span};
 
@@ -95,61 +93,79 @@ pub enum Excerpt {
 #[cfg_attr(feature = "json-output", serde(transparent))]
 pub struct DiagnosticCode(Cow<'static, str>);
 
+/// Declares the predefined codes once: the constants and the lookup that lets a known code borrow
+/// its constant instead of allocating.
+macro_rules! predefined_codes {
+    ($($(#[$meta:meta])* $name:ident = $text:literal;)+) => {
+        $($(#[$meta])* pub const $name: &'static str = $text;)+
+
+        /// The predefined constant equal to `text`.
+        fn predefined(text: &str) -> Option<&'static str> {
+            match text {
+                $($text => Some(Self::$name),)+
+                _ => None,
+            }
+        }
+    };
+}
+
 impl DiagnosticCode {
-    /// Predefined code for duplicate keys.
-    pub const DUPLICATE_KEY: &'static str = "duplicate-key";
-    /// Predefined code for invalid anchors.
-    pub const INVALID_ANCHOR: &'static str = "invalid-anchor";
-    /// Predefined code for undefined aliases.
-    pub const UNDEFINED_ALIAS: &'static str = "undefined-alias";
-    /// Predefined code for indentation issues.
-    pub const INDENTATION: &'static str = "indentation";
-    /// Predefined code for line length violations.
-    pub const LINE_LENGTH: &'static str = "line-length";
-    /// Predefined code for trailing whitespace.
-    pub const TRAILING_WHITESPACE: &'static str = "trailing-whitespace";
-    /// Predefined code for missing document start marker.
-    pub const DOCUMENT_START: &'static str = "document-start";
-    /// Predefined code for missing document end marker.
-    pub const DOCUMENT_END: &'static str = "document-end";
-    /// Predefined code for empty values.
-    pub const EMPTY_VALUES: &'static str = "empty-values";
-    /// Predefined code for missing newline at end of file.
-    pub const NEW_LINE_AT_END_OF_FILE: &'static str = "new-line-at-end-of-file";
-    /// Predefined code for braces formatting.
-    pub const BRACES: &'static str = "braces";
-    /// Predefined code for brackets formatting.
-    pub const BRACKETS: &'static str = "brackets";
-    /// Predefined code for colons spacing.
-    pub const COLONS: &'static str = "colons";
-    /// Predefined code for commas spacing.
-    pub const COMMAS: &'static str = "commas";
-    /// Predefined code for hyphens spacing.
-    pub const HYPHENS: &'static str = "hyphens";
-    /// Predefined code for comment formatting.
-    pub const COMMENTS: &'static str = "comments";
-    /// Predefined code for comment indentation.
-    pub const COMMENTS_INDENTATION: &'static str = "comments-indentation";
-    /// Predefined code for empty lines.
-    pub const EMPTY_LINES: &'static str = "empty-lines";
-    /// Predefined code for line endings.
-    pub const NEW_LINES: &'static str = "new-lines";
-    /// Predefined code for octal values.
-    pub const OCTAL_VALUES: &'static str = "octal-values";
-    /// Predefined code for truthy values.
-    pub const TRUTHY: &'static str = "truthy";
-    /// Predefined code for quoted strings.
-    pub const QUOTED_STRINGS: &'static str = "quoted-strings";
-    /// Predefined code for key ordering.
-    pub const KEY_ORDERING: &'static str = "key-ordering";
-    /// Predefined code for float values.
-    pub const FLOAT_VALUES: &'static str = "float-values";
-    /// Predefined code for `!!set` members that carry a value.
-    pub const SET_VALUES: &'static str = "set-values";
-    /// Predefined code for YAML syntax errors in CI report formats (not a rule, never configurable).
-    pub const SYNTAX: &'static str = "syntax";
-    /// Predefined code for problems in inline lint directives (config-only, never suppressible).
-    pub const LINT_DIRECTIVE: &'static str = "lint-directive";
+    predefined_codes! {
+        /// Predefined code for duplicate keys.
+        DUPLICATE_KEY = "duplicate-key";
+        /// Predefined code for invalid anchors.
+        INVALID_ANCHOR = "invalid-anchor";
+        /// Predefined code for undefined aliases.
+        UNDEFINED_ALIAS = "undefined-alias";
+        /// Predefined code for indentation issues.
+        INDENTATION = "indentation";
+        /// Predefined code for line length violations.
+        LINE_LENGTH = "line-length";
+        /// Predefined code for trailing whitespace.
+        TRAILING_WHITESPACE = "trailing-whitespace";
+        /// Predefined code for missing document start marker.
+        DOCUMENT_START = "document-start";
+        /// Predefined code for missing document end marker.
+        DOCUMENT_END = "document-end";
+        /// Predefined code for empty values.
+        EMPTY_VALUES = "empty-values";
+        /// Predefined code for missing newline at end of file.
+        NEW_LINE_AT_END_OF_FILE = "new-line-at-end-of-file";
+        /// Predefined code for braces formatting.
+        BRACES = "braces";
+        /// Predefined code for brackets formatting.
+        BRACKETS = "brackets";
+        /// Predefined code for colons spacing.
+        COLONS = "colons";
+        /// Predefined code for commas spacing.
+        COMMAS = "commas";
+        /// Predefined code for hyphens spacing.
+        HYPHENS = "hyphens";
+        /// Predefined code for comment formatting.
+        COMMENTS = "comments";
+        /// Predefined code for comment indentation.
+        COMMENTS_INDENTATION = "comments-indentation";
+        /// Predefined code for empty lines.
+        EMPTY_LINES = "empty-lines";
+        /// Predefined code for line endings.
+        NEW_LINES = "new-lines";
+        /// Predefined code for octal values.
+        OCTAL_VALUES = "octal-values";
+        /// Predefined code for truthy values.
+        TRUTHY = "truthy";
+        /// Predefined code for quoted strings.
+        QUOTED_STRINGS = "quoted-strings";
+        /// Predefined code for key ordering.
+        KEY_ORDERING = "key-ordering";
+        /// Predefined code for float values.
+        FLOAT_VALUES = "float-values";
+        /// Predefined code for `!!set` members that carry a value.
+        SET_VALUES = "set-values";
+        /// Predefined code for YAML syntax errors in CI report formats (not a rule, never configurable).
+        SYNTAX = "syntax";
+        /// Predefined code for problems in inline lint directives (config-only, never suppressible).
+        LINT_DIRECTIVE = "lint-directive";
+    }
 
     /// Creates a new diagnostic code.
     ///
@@ -182,42 +198,6 @@ impl DiagnosticCode {
     }
 }
 
-impl DiagnosticCode {
-    /// The predefined constant equal to `text`, so a known code borrows instead of allocating.
-    fn predefined(text: &str) -> Option<&'static str> {
-        Some(match text {
-            Self::DUPLICATE_KEY => Self::DUPLICATE_KEY,
-            Self::INVALID_ANCHOR => Self::INVALID_ANCHOR,
-            Self::UNDEFINED_ALIAS => Self::UNDEFINED_ALIAS,
-            Self::INDENTATION => Self::INDENTATION,
-            Self::LINE_LENGTH => Self::LINE_LENGTH,
-            Self::TRAILING_WHITESPACE => Self::TRAILING_WHITESPACE,
-            Self::DOCUMENT_START => Self::DOCUMENT_START,
-            Self::DOCUMENT_END => Self::DOCUMENT_END,
-            Self::EMPTY_VALUES => Self::EMPTY_VALUES,
-            Self::NEW_LINE_AT_END_OF_FILE => Self::NEW_LINE_AT_END_OF_FILE,
-            Self::BRACES => Self::BRACES,
-            Self::BRACKETS => Self::BRACKETS,
-            Self::COLONS => Self::COLONS,
-            Self::COMMAS => Self::COMMAS,
-            Self::HYPHENS => Self::HYPHENS,
-            Self::COMMENTS => Self::COMMENTS,
-            Self::COMMENTS_INDENTATION => Self::COMMENTS_INDENTATION,
-            Self::EMPTY_LINES => Self::EMPTY_LINES,
-            Self::NEW_LINES => Self::NEW_LINES,
-            Self::OCTAL_VALUES => Self::OCTAL_VALUES,
-            Self::TRUTHY => Self::TRUTHY,
-            Self::QUOTED_STRINGS => Self::QUOTED_STRINGS,
-            Self::KEY_ORDERING => Self::KEY_ORDERING,
-            Self::FLOAT_VALUES => Self::FLOAT_VALUES,
-            Self::SET_VALUES => Self::SET_VALUES,
-            Self::SYNTAX => Self::SYNTAX,
-            Self::LINT_DIRECTIVE => Self::LINT_DIRECTIVE,
-            _ => return None,
-        })
-    }
-}
-
 impl From<&str> for DiagnosticCode {
     fn from(s: &str) -> Self {
         Self(Self::predefined(s).map_or_else(|| Cow::Owned(s.to_owned()), Cow::Borrowed))
@@ -227,24 +207,6 @@ impl From<&str> for DiagnosticCode {
 impl From<String> for DiagnosticCode {
     fn from(s: String) -> Self {
         Self(Self::predefined(&s).map_or(Cow::Owned(s), Cow::Borrowed))
-    }
-}
-
-impl FromStr for DiagnosticCode {
-    type Err = Infallible;
-
-    /// Makes a code from any text; a predefined code borrows its constant.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::DiagnosticCode;
-    ///
-    /// let code: DiagnosticCode = "truthy".parse().unwrap();
-    /// assert_eq!(code.as_str(), DiagnosticCode::TRUTHY);
-    /// ```
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::from(s))
     }
 }
 
@@ -632,16 +594,12 @@ mod code_tests {
                 DiagnosticCode::from(text.to_owned()).0,
                 Cow::Borrowed(_)
             ));
-            assert!(matches!(
-                text.parse::<DiagnosticCode>().unwrap().0,
-                Cow::Borrowed(_)
-            ));
         }
     }
 
     #[test]
     fn custom_codes_are_owned_and_equal_by_text() {
-        let code: DiagnosticCode = "always-flags".parse().unwrap();
+        let code: DiagnosticCode = DiagnosticCode::from("always-flags");
         assert!(matches!(code.0, Cow::Owned(_)));
         assert_eq!(code, DiagnosticCode::new("always-flags"));
     }
