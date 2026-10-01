@@ -513,6 +513,7 @@ version = "0.6.6"
 dependencies = [
  "criterion",
  "fast-yaml-core",
+ "libc",
  "num_cpus",
  "proptest",
  "rayon",

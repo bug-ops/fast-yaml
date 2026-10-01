@@ -24,10 +24,16 @@ use std::path::{Path, PathBuf};
 ///   and stays read-only afterwards; on Windows the read-only attribute is cleared for the
 ///   rename and set again.
 ///
+/// - If the owner or group cannot be restored, the replacement never becomes more readable
+///   than the original: without the group, the group and other permission bits are dropped.
+///
 /// Limitations:
-/// - A Unix target with several hard links is **not** replaced atomically: the content is
-///   written in place so every link sees it. A crash or error mid-write can leave it
-///   truncated or partial, and a read-only hard-linked file is refused.
+/// - A Unix target with several hard links that the caller owns is **not** replaced
+///   atomically: the content is written in place so every link sees it. The file is opened
+///   with `O_NOFOLLOW` and must still be the inode that was resolved; a crash or error
+///   mid-write can leave it truncated or partial, and a read-only hard-linked file is refused.
+///   A hard-linked target owned by someone else is replaced through the rename instead, which
+///   breaks the link rather than writing into a file the caller may not control.
 /// - Extended attributes and ACLs of the old file are not preserved.
 ///
 /// # Errors
@@ -49,11 +55,6 @@ use std::path::{Path, PathBuf};
 pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
     let (target, existing) = resolve_target(path)?;
 
-    #[cfg(unix)]
-    if existing.as_ref().is_some_and(|old| old.hardlinked) {
-        return write_in_place(&target, content);
-    }
-
     let dir = match target.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -65,6 +66,13 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
             format!("cannot create temporary file in {}: {e}", dir.display()),
         )
     })?;
+    #[cfg(unix)]
+    if let Some(old) = existing.as_ref().filter(|old| old.hardlinked())
+        && old.owned_by(&temp.as_file().metadata()?)
+    {
+        drop(temp);
+        return write_in_place(&target, content, old);
+    }
     temp.write_all(content)?;
     let read_only = existing
         .as_ref()
@@ -72,8 +80,10 @@ pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
     if let Some(old) = &existing {
         // Before chmod: changing the owner can clear mode bits
         #[cfg(unix)]
-        restore_owner(temp.as_file(), old)?;
-        temp.as_file().set_permissions(old.permissions.clone())?;
+        let permissions = restore_owner(temp.as_file(), old)?;
+        #[cfg(not(unix))]
+        let permissions = old.permissions.clone();
+        temp.as_file().set_permissions(permissions)?;
     }
     temp.as_file().sync_all()?;
     // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
@@ -118,23 +128,48 @@ fn sync_dir(dir: &Path) {
 }
 
 /// Overwrites a target that other names share, so every hard link observes the new content.
+///
+/// The target is opened without truncation and without following a symlink, and written only
+/// if it is still the inode `old` was read from.
 #[cfg(unix)]
-fn write_in_place(target: &Path, content: &[u8]) -> io::Result<()> {
+fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
     let mut file = fs::OpenOptions::new()
         .write(true)
-        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(target)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() || (opened.dev(), opened.ino(), opened.nlink()) != old.identity {
+        return Err(io::Error::other(format!(
+            "{} changed while it was being replaced",
+            target.display()
+        )));
+    }
+    file.set_len(0)?;
     file.write_all(content)?;
     file.sync_all()
 }
 
-/// Gives `file` the owner of the file it replaces; a process without the right keeps its own.
+/// Gives `file` the owner of the file it replaces and returns the permissions to apply.
+///
+/// A process without the right to assign the owner keeps its own. It then tries the group
+/// alone and, failing that too, drops the group and other bits so the file is never more
+/// readable than it was.
 #[cfg(unix)]
-fn restore_owner(file: &fs::File, old: &Existing) -> io::Result<()> {
-    match std::os::unix::fs::fchown(file, Some(old.uid), Some(old.gid)) {
-        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(()),
-        other => other,
+fn restore_owner(file: &fs::File, old: &Existing) -> io::Result<Permissions> {
+    use std::os::unix::fs::{PermissionsExt, fchown};
+
+    let denied = |result: io::Result<()>| match result {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => Ok(false),
+        other => other.map(|()| true),
+    };
+    let mut permissions = old.permissions.clone();
+    let (uid, gid) = old.owner;
+    if !denied(fchown(file, Some(uid), Some(gid)))? && !denied(fchown(file, None, Some(gid)))? {
+        permissions.set_mode(permissions.mode() & 0o700);
     }
+    Ok(permissions)
 }
 
 /// Creates the temporary file; new targets get umask-filtered `0o666` instead of `0o600`.
@@ -154,12 +189,12 @@ fn create_temp(dir: &Path, new_target: bool) -> io::Result<tempfile::NamedTempFi
 /// What an existing target has that its replacement must keep.
 struct Existing {
     permissions: Permissions,
+    /// `(uid, gid)`
     #[cfg(unix)]
-    uid: u32,
+    owner: (u32, u32),
+    /// `(dev, ino, nlink)`
     #[cfg(unix)]
-    gid: u32,
-    #[cfg(unix)]
-    hardlinked: bool,
+    identity: (u64, u64, u64),
 }
 
 impl Existing {
@@ -169,12 +204,22 @@ impl Existing {
         Self {
             permissions: metadata.permissions(),
             #[cfg(unix)]
-            uid: metadata.uid(),
+            owner: (metadata.uid(), metadata.gid()),
             #[cfg(unix)]
-            gid: metadata.gid(),
-            #[cfg(unix)]
-            hardlinked: metadata.nlink() > 1,
+            identity: (metadata.dev(), metadata.ino(), metadata.nlink()),
         }
+    }
+
+    #[cfg(unix)]
+    const fn hardlinked(&self) -> bool {
+        self.identity.2 > 1
+    }
+
+    /// Whether the file belongs to the user that `process_file` (made by this process) has.
+    #[cfg(unix)]
+    fn owned_by(&self, process_file: &fs::Metadata) -> bool {
+        use std::os::unix::fs::MetadataExt;
+        self.owner.0 == process_file.uid()
     }
 }
 
@@ -331,6 +376,65 @@ mod tests {
             assert_eq!(mode(&path), 0o640);
         }
 
+        fn existing_of(path: &Path) -> Existing {
+            Existing::of(&fs::metadata(path).unwrap())
+        }
+
+        #[test]
+        fn in_place_write_refuses_a_replaced_inode() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.yaml");
+            let other = dir.path().join("other.yaml");
+            fs::write(&path, "old").unwrap();
+            fs::write(&other, "other").unwrap();
+
+            let err = write_in_place(&path, b"new", &existing_of(&other)).unwrap_err();
+
+            assert!(err.to_string().contains("changed while"), "{err}");
+            assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+        }
+
+        #[test]
+        fn in_place_write_does_not_follow_a_symlink() {
+            let dir = tempfile::tempdir().unwrap();
+            let victim = dir.path().join("victim.yaml");
+            let link = dir.path().join("link.yaml");
+            fs::write(&victim, "victim").unwrap();
+            symlink(&victim, &link).unwrap();
+
+            assert!(write_in_place(&link, b"new", &existing_of(&victim)).is_err());
+            assert_eq!(fs::read_to_string(&victim).unwrap(), "victim");
+        }
+
+        #[test]
+        fn hard_link_owned_by_someone_else_is_not_written_in_place() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.yaml");
+            fs::write(&path, "old").unwrap();
+            let mut old = existing_of(&path);
+            old.owner.0 = old.owner.0.wrapping_add(1);
+            let probe = tempfile::tempfile_in(dir.path()).unwrap();
+            assert!(!old.owned_by(&probe.metadata().unwrap()));
+        }
+
+        #[test]
+        fn losing_the_group_drops_group_and_other_bits() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.yaml");
+            fs::write(&path, "old").unwrap();
+            fs::set_permissions(&path, Permissions::from_mode(0o640)).unwrap();
+            let mut old = existing_of(&path);
+            old.owner = (old.owner.0.wrapping_add(1), old.owner.1.wrapping_add(1));
+            let probe = tempfile::tempfile_in(dir.path()).unwrap();
+            if std::os::unix::fs::fchown(&probe, None, Some(old.owner.1)).is_ok() {
+                return; // privileged, or a group the caller belongs to
+            }
+
+            let permissions = restore_owner(&probe, &old).unwrap();
+
+            assert_eq!(permissions.mode() & 0o077, 0);
+        }
+
         #[test]
         fn failing_to_assign_the_owner_is_not_an_error() {
             let dir = tempfile::tempdir().unwrap();
@@ -339,9 +443,8 @@ mod tests {
             let metadata = fs::metadata(&path).unwrap();
             let old = Existing {
                 permissions: metadata.permissions(),
-                uid: metadata.uid().wrapping_add(1),
-                gid: metadata.gid(),
-                hardlinked: false,
+                owner: (metadata.uid().wrapping_add(1), metadata.gid()),
+                identity: (metadata.dev(), metadata.ino(), 1),
             };
             let temp = tempfile::tempfile_in(dir.path()).unwrap();
             // Unprivileged: EPERM is ignored; privileged: the chown simply succeeds

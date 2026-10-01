@@ -17,6 +17,9 @@ rayon = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
 proptest = { workspace = true }
