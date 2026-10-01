@@ -87,6 +87,12 @@ impl<'a> Cursor<'a> {
         let Some(span) = self.source.get(self.mark.pointer..pointer) else {
             return self.mark;
         };
+        if span.is_ascii() && !span.contains(['\r', '\n']) {
+            self.mark.index += span.len();
+            self.mark.column += span.len();
+            self.mark.pointer = pointer;
+            return self.mark;
+        }
         let mut chars = span.chars().peekable();
         while let Some(c) = chars.next() {
             self.mark.index += 1;

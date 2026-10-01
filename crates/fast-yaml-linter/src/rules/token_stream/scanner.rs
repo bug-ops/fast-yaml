@@ -142,7 +142,7 @@ fn lex(
     nodes: &NodeIndex<'_>,
     complete: bool,
     synth: &mut Synth<'_>,
-    out: &mut impl FnMut(Token),
+    out: &mut impl FnMut(&Token),
 ) {
     let mut header = None;
     let mut feed = |lexeme: Lexeme, synth: &mut Synth<'_>| match lexeme {
@@ -319,20 +319,19 @@ impl<'a> Synth<'a> {
         self.queue.push_back(Token::new(kind, start, end));
     }
 
-    fn release(&mut self, out: &mut impl FnMut(Token)) {
-        while !self.queue.is_empty() {
+    fn release(&mut self, out: &mut impl FnMut(&Token)) {
+        while let Some(token) = self.queue.front() {
             let pending = self.simple_keys.iter().flatten().map(|k| k.token_number);
             if pending.min() == Some(self.taken) {
                 break;
             }
-            if let Some(token) = self.queue.pop_front() {
-                self.taken += 1;
-                out(token);
-            }
+            out(token);
+            self.queue.pop_front();
+            self.taken += 1;
         }
     }
 
-    fn feed(&mut self, lexeme: Lexeme, out: &mut impl FnMut(Token)) {
+    fn feed(&mut self, lexeme: Lexeme, out: &mut impl FnMut(&Token)) {
         if self.failed {
             return;
         }
@@ -506,7 +505,7 @@ impl<'a> Synth<'a> {
         self.push(Kind::Value, start, end);
     }
 
-    fn finish(&mut self, out: &mut impl FnMut(Token)) {
+    fn finish(&mut self, out: &mut impl FnMut(&Token)) {
         if self.failed {
             return;
         }
@@ -528,7 +527,7 @@ impl<'a> Synth<'a> {
 /// Stops where `PyYAML`'s scanner would report an error. When the parser stopped early
 /// (`complete` is false) the text after its last node is not read, since where it failed is
 /// unknown.
-pub fn scan(source: &str, nodes: &NodeIndex<'_>, complete: bool, mut out: impl FnMut(Token)) {
+pub fn scan(source: &str, nodes: &NodeIndex<'_>, complete: bool, mut out: impl FnMut(&Token)) {
     let mut synth = Synth::new(source);
     synth.release(&mut out);
     lex(source, nodes, complete, &mut synth, &mut out);

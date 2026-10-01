@@ -132,23 +132,14 @@ impl super::SourceRule for IndentationRule {
             IndentSpaces::Fixed(size) => Some(size.get()),
             IndentSpaces::Consistent => None,
         };
-        let mut machine = Machine::new(
-            source,
-            spaces,
-            options.indent_sequences,
-            options.check_multi_line_strings,
-        );
-        scanner::scan(
-            source,
-            context.nodes(),
-            context.scan_is_complete(),
-            |token| {
-                machine.push(token);
-            },
-        );
+        let problems = if is_one_flush_left_line(source) {
+            Vec::new()
+        } else {
+            machine_problems(context, spaces, options)
+        };
 
         let mut diagnostics = mixed_whitespace(context, severity);
-        diagnostics.extend(machine.finish().into_iter().map(|problem| {
+        diagnostics.extend(problems.into_iter().map(|problem| {
             let width = source
                 .get(problem.offset..)
                 .and_then(|rest| rest.chars().next())
@@ -163,6 +154,39 @@ impl super::SourceRule for IndentationRule {
         diagnostics.sort_by_key(|d| (d.span.start.line, d.span.start.column));
         diagnostics
     }
+}
+
+/// Whether `source` is ASCII text of a single line that starts in column 0.
+///
+/// The check compares a line with the ones around it, and the first token of a line only with the
+/// root indent, so such a source has nothing to report and the token stream is not scanned. This
+/// is what a minified JSON file is.
+fn is_one_flush_left_line(source: &str) -> bool {
+    let body = source.trim_end_matches(['\n', '\r']);
+    body.is_ascii()
+        && !body.starts_with([' ', '\t'])
+        && !body.bytes().any(|byte| matches!(byte, b'\n' | b'\r'))
+}
+
+/// Runs the indentation machine over the token stream of `context`.
+fn machine_problems(
+    context: &LintContext,
+    spaces: Option<usize>,
+    options: &IndentationOptions,
+) -> Vec<machine::Problem> {
+    let mut machine = Machine::new(
+        context.source(),
+        spaces,
+        options.indent_sequences,
+        options.check_multi_line_strings,
+    );
+    scanner::scan(
+        context.source(),
+        context.nodes(),
+        context.scan_is_complete(),
+        |token| machine.push(token),
+    );
+    machine.finish()
 }
 
 /// Reports lines whose indentation mixes tabs and spaces.
@@ -208,6 +232,67 @@ mod tests {
         config::{IndentSize, RuleName, test_support::config_with_rule},
         rules::SourceRule,
     };
+
+    #[test]
+    fn a_one_line_flush_left_source_is_recognized() {
+        for yes in [
+            "[1,2]",
+            "[1,2]\n",
+            "a: [1, 2]\r\n",
+            "--- {a: b}\n",
+            "# c",
+            "x",
+        ] {
+            assert!(is_one_flush_left_line(yes), "{yes:?}");
+        }
+        for no in [
+            " [1]",
+            "\t[1]",
+            "a: 1\nb: 2",
+            "a: 1\r\nb: 2",
+            "[\u{43a}]",
+            "a:\n  b",
+        ] {
+            assert!(!is_one_flush_left_line(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn the_machine_reports_nothing_for_one_flush_left_line() {
+        let options = IndentationOptions::default();
+        for source in [
+            "[1,2,3]\n",
+            "{a: 1, b: [2, 3], c: {d: e}}\n",
+            "a: [1, 2]\n",
+            "a: {b: [c, {d: e}]}\n",
+            "--- [1, 2]\n",
+            "[[], [[]], {}]\n",
+            "- a\n",
+            "- - a\n",
+            "? a\n",
+            "&x [1, *x]\n",
+            "!!seq [1]\n",
+            "'quoted': \"double\"\n",
+            "a: |\n",
+            "[a: 1, b: 2]\n",
+            "key: value # note\n",
+            "[1, 2] # note\n",
+            "{a: 1}\r\n",
+            "-1\n",
+            "a:\n",
+            "[\n",
+        ] {
+            assert!(is_one_flush_left_line(source), "{source:?}");
+            let context = LintContext::new(source);
+            assert_eq!(machine_problems(&context, None, &options), [], "{source:?}");
+            let context = LintContext::new(source);
+            assert_eq!(
+                machine_problems(&context, Some(4), &options),
+                [],
+                "{source:?}"
+            );
+        }
+    }
 
     #[test]
     fn test_correct_2space_indent() {

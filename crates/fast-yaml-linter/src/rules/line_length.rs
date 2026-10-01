@@ -111,7 +111,9 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
     let context = SourceContext::new(line);
     let (scan, _) = SourceScan::scan(line, &context, ParseLimits::default(), ScanNeeds::NODES);
     let mut tokens = Vec::new();
-    scanner::scan(line, &scan.nodes, scan.complete, |token| tokens.push(token));
+    scanner::scan(line, &scan.nodes, scan.complete, |token| {
+        tokens.push(*token);
+    });
     let mut rest = tokens
         .into_iter()
         .skip_while(|token| token.kind != Kind::BlockMappingStart)

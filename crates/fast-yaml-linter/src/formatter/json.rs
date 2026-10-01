@@ -1,7 +1,7 @@
 //! JSON formatter for machine-readable output.
 
 use std::borrow::Cow;
-use std::io;
+use std::io::{self, Write as _};
 
 use serde::{Serialize, Serializer as _};
 
@@ -128,12 +128,16 @@ impl Formatter for JsonFormatter {
         let entries = findings
             .iter()
             .map(|finding| JsonDiagnostic::new(&finding, None));
+        // The caller's writer is a trait object, so every token serde writes would be a virtual
+        // call; a local buffer keeps them inlined
+        let mut out = io::BufWriter::with_capacity(super::WRITE_BUFFER, out);
         if self.pretty {
-            (&mut serde_json::Serializer::pretty(out)).collect_seq(entries)
+            (&mut serde_json::Serializer::pretty(&mut out)).collect_seq(entries)
         } else {
-            (&mut serde_json::Serializer::new(out)).collect_seq(entries)
+            (&mut serde_json::Serializer::new(&mut out)).collect_seq(entries)
         }
-        .map_err(io::Error::from)
+        .map_err(io::Error::from)?;
+        out.flush()
     }
 }
 

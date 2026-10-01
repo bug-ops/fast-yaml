@@ -69,8 +69,11 @@ pub(super) struct Machine<'a> {
     stack: Vec<Parent>,
     cur_line: usize,
     cur_line_indent: usize,
-    prev: Option<Token>,
+    /// The tokens around the one being checked: the previous one once there is one, the one
+    /// being checked and the two after it.
     window: VecDeque<Token>,
+    /// Whether `window` starts with the previous token.
+    has_prev: bool,
     problems: Vec<Problem>,
 }
 
@@ -89,44 +92,49 @@ impl<'a> Machine<'a> {
             stack: vec![Parent::new(ParentKind::Root, 0)],
             cur_line: 0,
             cur_line_indent: 0,
-            prev: None,
-            window: VecDeque::with_capacity(3),
+            window: VecDeque::with_capacity(4),
+            has_prev: false,
             problems: Vec::new(),
         }
     }
 
-    pub(super) fn push(&mut self, token: Token) {
-        self.window.push_back(token);
-        if self.window.len() == 3 {
+    pub(super) fn push(&mut self, token: &Token) {
+        self.window.push_back(*token);
+        if self.window.len() == 3 + usize::from(self.has_prev) {
             self.step();
         }
     }
 
     pub(super) fn finish(mut self) -> Vec<Problem> {
-        while !self.window.is_empty() {
+        while self.window.len() > usize::from(self.has_prev) {
             self.step();
         }
         self.problems
     }
 
     fn step(&mut self) {
-        let Some(token) = self.window.pop_front() else {
-            return;
-        };
-        let (next, nextnext) = (self.window.front().copied(), self.window.get(1).copied());
-        let prev = self.prev;
-        if self
-            .check(&token, prev.as_ref(), next.as_ref(), nextnext.as_ref())
-            .is_err()
-        {
-            self.problems.push(Problem {
-                line: token.start.line + 1,
-                column: token.start.column + 1,
-                offset: token.start.pointer,
-                message: "cannot infer indentation: unexpected token".to_owned(),
-            });
+        // Moved out for the call so the neighbours are borrowed, not copied
+        let window = std::mem::take(&mut self.window);
+        let at = usize::from(self.has_prev);
+        if let Some(token) = window.get(at) {
+            let prev = if self.has_prev { window.front() } else { None };
+            if self
+                .check(token, prev, window.get(at + 1), window.get(at + 2))
+                .is_err()
+            {
+                self.problems.push(Problem {
+                    line: token.start.line + 1,
+                    column: token.start.column + 1,
+                    offset: token.start.pointer,
+                    message: "cannot infer indentation: unexpected token".to_owned(),
+                });
+            }
         }
-        self.prev = Some(token);
+        self.window = window;
+        if self.has_prev {
+            self.window.pop_front();
+        }
+        self.has_prev = true;
     }
 
     fn top(&self) -> Result<Parent, Unexpected> {

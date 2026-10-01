@@ -377,6 +377,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `fy lint` builds no value tree unless a custom `DocumentRule` is enabled, cutting the peak heap on large block files by about half (#609) (#PR)
 - **CLI/Linter/Parallel**: file names are escaped (`\u{1b}`) in text, parsable and github output, batch error lines, verbose headers and path errors, so a hostile name cannot inject terminal sequences (#607) (#PR)
 - **CLI**: `fy format -o` and `fy convert -o` refuse an output that is the input file, as `fy lint -o` does (#604) (#PR)
+- **Linter**: lint is no slower than before #605 on flow-heavy input: the text and JSON formatters buffer their small writes, `indentation` skips a one-line source that starts in column 0 and `hyphens` a source without a block entry (#600) (#PR)
 
 ### Security
 

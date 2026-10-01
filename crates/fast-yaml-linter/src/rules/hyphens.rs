@@ -81,6 +81,10 @@ impl super::SourceRule for HyphensRule {
         let max_spaces = settings.options.max_spaces_after;
         let source_context = context.source_context();
 
+        if !may_hold_block_entry(context.source()) {
+            return Vec::new();
+        }
+
         let mut diagnostics = Vec::new();
         let mut entry: Option<Token> = None;
         scanner::scan(
@@ -108,12 +112,22 @@ impl super::SourceRule for HyphensRule {
                     }
                 }
                 if token.kind == Kind::BlockEntry {
-                    entry = Some(token);
+                    entry = Some(*token);
                 }
             },
         );
         diagnostics
     }
+}
+
+/// Whether `source` has a `-` followed by a blank or the end of the text, the only way to write
+/// the hyphen of a block sequence entry; the token stream is not scanned for a source without one.
+fn may_hold_block_entry(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    bytes.last() == Some(&b'-')
+        || bytes
+            .windows(2)
+            .any(|pair| matches!(pair, [b'-', b' ' | b'\t' | b'\r' | b'\n']))
 }
 
 #[cfg(test)]
