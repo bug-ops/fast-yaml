@@ -21,8 +21,11 @@ use fast_yaml_core::Value;
 /// `99` and `+99`, `0x10` and `16`, `~` and `null` are the same key, while `"1"` and `1` are
 /// not. This is a deliberate divergence from yamllint, which compares the key text (it flags
 /// `"1"` next to `1`, and misses `+99` next to `99` or `true` next to `True`). A plain `<<`
-/// (or `!!merge`) merge key never equals a quoted `"<<"` key. Collection and alias keys are
-/// not compared.
+/// (or `!!merge`) merge key never equals a quoted `"<<"` key.
+///
+/// A collection key (`? [a, b]`) is never compared by its content, which matches yamllint: it
+/// reports no repeated collection key at all. fast-yaml reports one more case, a collection
+/// key that is repeated through its anchor (`? &x [c]` followed by `? *x`).
 pub struct DuplicateKeysRule;
 
 /// Options of the duplicate-key rule.

@@ -110,13 +110,13 @@ fn top_level_typo_in_config_exits_one() {
 }
 
 #[test]
-fn extending_a_config_file_is_reported_as_unsupported() {
+fn extending_a_missing_config_file_is_reported() {
     lint(&fixture("invalid/yamllint-extends.yaml"))
         .write_stdin("a: 1\n")
         .assert()
         .code(1)
         .stderr(predicate::str::contains("extends"))
-        .stderr(predicate::str::contains("not implemented"));
+        .stderr(predicate::str::contains("base.yaml"));
 }
 
 #[test]

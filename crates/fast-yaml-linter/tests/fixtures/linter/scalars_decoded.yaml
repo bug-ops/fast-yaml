@@ -1,0 +1,13 @@
+text: |
+  yes: [a, b]
+  # not a comment
+folded: >-
+  one
+   two
+
+plain: multi
+  line plain
+  value
+quoted: "multi
+  line \t escaped"
+sq: 'it''s'

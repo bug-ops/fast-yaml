@@ -38,7 +38,7 @@ use anyhow::Result;
 #[cfg(feature = "linter")]
 use fast_yaml_cli::file_filter;
 use fast_yaml_cli::{discovery, error};
-use fast_yaml_parallel::CommentPolicy;
+use fast_yaml_parallel::{CommentPolicy, ScanAheadPolicy};
 
 mod cli;
 mod commands;
@@ -55,19 +55,44 @@ use error::{ExitCode, format_error};
 use invocation::Target;
 use io::{InputSource, OutputWriter};
 
+/// Stack size of the command thread; deep values recurse per level (larger frames with
+/// `preserve_order`) and would overflow the 1 MiB Windows main-thread stack.
+const COMMAND_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+/// Exit status of a panicked command thread, matching the Rust default panic exit.
+const PANIC_EXIT_STATUS: i32 = 101;
+
 fn main() {
+    let status = match std::thread::Builder::new()
+        .name("fy-main".into())
+        .stack_size(COMMAND_STACK_SIZE)
+        .spawn(run_reporting_errors)
+    {
+        Ok(handle) => handle.join().unwrap_or(PANIC_EXIT_STATUS),
+        Err(err) => {
+            error::stderr_line(format_args!("error: failed to start command thread: {err}"));
+            ExitCode::ParseError.as_i32()
+        }
+    };
+
+    std::process::exit(status);
+}
+
+fn run_reporting_errors() -> i32 {
     let exit_code = match run() {
         Ok(code) => code,
         Err(err) => {
             // Use OutputConfig to determine color usage
             let cli = Cli::parse_validated();
             let output_config = config::OutputConfig::from_cli(cli.verbosity, cli.no_color);
-            eprintln!("{}", format_error(&err, output_config.use_color()));
+            error::stderr_line(format_args!(
+                "{}",
+                format_error(&err, output_config.use_color())
+            ));
             ExitCode::ParseError
         }
     };
-
-    std::process::exit(exit_code.as_i32());
+    exit_code.as_i32()
 }
 
 fn run() -> Result<ExitCode> {
@@ -97,6 +122,7 @@ fn run() -> Result<ExitCode> {
             indent,
             width,
             max_depth,
+            max_documents,
             stdin_files,
             batch,
             dry_run,
@@ -113,6 +139,7 @@ fn run() -> Result<ExitCode> {
                     .with_indent(indent)
                     .with_width(width)
                     .with_max_depth(max_depth)
+                    .with_max_documents(max_documents)
                     .with_max_scan_ahead(max_scan_ahead),
             );
 
@@ -135,8 +162,9 @@ fn run() -> Result<ExitCode> {
                             "use -i to format files in-place or --dry-run to preview changes"
                         ),
                     };
+                    let scan_ahead = ScanAheadPolicy::from(cli.max_scan_ahead);
                     commands::format_batch::execute_batch(
-                        &common, &target, write, comments, max_input,
+                        &common, &target, write, comments, max_input, scan_ahead,
                     )?
                 }
             }
@@ -176,7 +204,9 @@ fn run() -> Result<ExitCode> {
                     "--in-place is not supported by `fy lint` (auto-fix is not implemented)"
                 );
             }
-            let target = Target::resolve(paths, stdin_files, &batch)?;
+            let target = Target::resolve(paths, stdin_files, &batch).map_err(|err| {
+                commands::lint::report_unresolved(format, cli.output.clone(), err)
+            })?;
             let args = commands::lint::LintArgs {
                 config_path,
                 no_config,
@@ -187,6 +217,7 @@ fn run() -> Result<ExitCode> {
                 max_input_bytes: cli.max_input_bytes,
                 max_scan_ahead: cli.max_scan_ahead,
                 limits,
+                output: cli.output.clone(),
             };
 
             match target {
@@ -204,7 +235,7 @@ fn run() -> Result<ExitCode> {
                     let cmd =
                         commands::lint::LintCommand::build(common_config, args, &placeholder)?;
                     if cmd.is_ignored(&path) {
-                        cmd.execute_ignored()
+                        cmd.execute_ignored()?
                     } else {
                         let input = InputSource::from_file(&path, cmd.lint_config.max_input_bytes)
                             .map_err(|err| cmd.report_unreadable(Some(&path), err))?;
@@ -221,11 +252,16 @@ fn run() -> Result<ExitCode> {
                         &stdin_fallback,
                     )?;
                     target.discovery.file_filter = cmd.file_filter.clone();
+                    if target.discovery.include == discovery::IncludePatterns::Default {
+                        target.discovery.include = discovery::IncludePatterns::DefaultWithYamllint;
+                    }
                     commands::lint_batch::execute_lint_batch(
                         &common_config,
                         &target,
                         &cmd.lint_config,
                         format,
+                        cmd.scan_ahead,
+                        &cmd.output,
                     )?
                 }
             }

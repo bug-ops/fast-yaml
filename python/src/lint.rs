@@ -6,7 +6,7 @@
 use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
-use fast_yaml_core::limits::{AliasBytes, Depth, InputBytes, ScanAhead};
+use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
 use fast_yaml_linter::config::{IndentSize, RuleName};
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
@@ -498,6 +498,7 @@ impl PyLintConfig {
         max_alias_bytes=None,
         max_input_bytes=None,
         max_scan_ahead=None,
+        max_documents=None,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
@@ -512,8 +513,10 @@ impl PyLintConfig {
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
         max_scan_ahead: Option<&Bound<'_, PyAny>>,
+        max_documents: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
-        let parse_limits = limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead)?;
+        let parse_limits =
+            limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         let mut inner = RustLintConfig::new()
             .with_max_line_length(parse_max_line_length(max_line_length)?)
             .with_indent_size(parse_indent_size(indent_size)?)
@@ -607,6 +610,17 @@ impl PyLintConfig {
     fn with_max_scan_ahead(&self, chars: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         let parse_limits = ParseLimits {
             max_scan_ahead: limits::bounded::<ScanAhead>("max_scan_ahead", chars)?,
+            ..self.inner.parse_limits
+        };
+        Ok(Self {
+            inner: self.inner.clone().with_parse_limits(parse_limits),
+        })
+    }
+
+    /// Sets the maximum number of documents in the source (1..=10M, default 100 000); `None` resets to the default.
+    fn with_max_documents(&self, count: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
+        let parse_limits = ParseLimits {
+            max_documents: limits::bounded::<Documents>("max_documents", count)?,
             ..self.inner.parse_limits
         };
         Ok(Self {

@@ -170,7 +170,6 @@ console.log(`Changed ${result.changed} files`);
 ```typescript
 interface BatchConfig {
   workers?: number;           // Worker threads (null = auto)
-  mmapThreshold?: number;     // Mmap threshold (default: 512KB)
   maxInputBytes?: number;     // Max file size, 1..1073741824 (default: 100MiB)
   indent?: number;            // Indentation (default: 2)
   width?: number;             // Line width (default: 80)
@@ -178,6 +177,7 @@ interface BatchConfig {
   maxDepth?: number;          // Max nesting depth, 1..512 (default: 256); processFiles only
   maxAliasBytes?: number;     // Alias-expansion budget per file, 1..1073741824 (default: 64MiB); processFiles only
   maxScanAhead?: number;      // Characters the parser may read past the last node, 1..1073741824 (default: 4Mi)
+  maxDocuments?: number;      // Max documents per file, 1..10000000 (default: 100000)
 }
 ```
 
@@ -250,7 +250,7 @@ safeLoad(bigRootFlowJson, { maxScanAhead: 2 ** 26 }); // default 4Mi characters,
 - Values must be integers within the range; `0`, negatives, fractions, `NaN`, and out-of-range values throw `maxDepth must be between 1 and 512, got N`.
 - `maxAliasBytes` is an estimate of alias-expansion cost per call (per file in batch runs); JavaScript objects cost several times the estimate, so keep it modest on memory-constrained hosts.
 - `maxScanAhead` bounds how far the parser reads past the last node it reported, which bounds parser memory (about 190x the value). A flow collection that the parser reads whole (at the document root, in a `- ` entry, nested in another flow collection, or after a tab), so any JSON document longer than the limit, minified or pretty-printed, a single scalar, or a run of comments longer than the limit throws `parser lookahead exceeds N characters past the last node`; raise `maxScanAhead` for such input. Block YAML, `key: [..]` and `--- [..]` are not affected. It applies to `safeLoad`, `safeLoadAll`, `parseParallel`, `lint`, `processFiles` and `formatFiles`.
-- `parseParallel` / `parseParallelAsync` also accept `maxDocuments` (integer, 1..10000000, default 100000) and `maxInputBytes`; `processFiles` accepts `maxInputBytes`; all throw the same `... must be between 1 and N, got V` error for invalid values.
+- `safeLoad`, `safeLoadAll`, `parseParallel` / `parseParallelAsync`, `lint`, `processFiles` and `formatFiles` accept `maxDocuments` (integer, 1..10000000, default 100000; a longer stream throws `document count exceeds N`); `parseParallel` / `parseParallelAsync` also accept `maxInputBytes`; `processFiles` accepts `maxInputBytes`; all throw the same `... must be between 1 and N, got V` error for invalid values.
 - `lint` / `Linter` also accept `maxInputBytes` (integer, 1..1073741824, default 100MiB) and reject larger sources. It bounds linting work on oversized input; the source is already in memory when checked, so it is not a memory bound.
 - The calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (for example a worker with `stackSizeMb: 0.5`) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` / `formatFilesInPlace` apply `maxDepth` and `maxScanAhead` and ignore `maxAliasBytes`; `indent` (1..9) and `width` (20..1000) throw when out of range instead of being clamped.
 
@@ -308,6 +308,10 @@ through `safeLoad` is one-way (a `!!set` loads as an object). Two `Set` members 
 are the same YAML value (`null` and `undefined`) are an error. `safeLoad` rejects, with the
 position, a `!!set` member that has a value, a repeated `<<` key in one mapping, and keys that
 differ in YAML but share a property name (`1` and `"1"`).
+
+A float mapping key becomes the property name `String(number)` would give (`1e21` is `"1e+21"`, `.inf` is `"Infinity"`, `-0.0` is `"0"`), as in js-yaml, and collision errors spell it the same way.
+
+Integers beyond the `i64` range load as decimal strings, not `BigInt`, so `safeLoad` never loses digits; `safeDump` writes a JavaScript `BigInt` as a YAML integer, so `safeDump(2n ** 70n)` gives `1180591620717411303424` and loads back as that string. `-0` dumps as `-0.0` and loads back as `-0`.
 
 ## Security
 

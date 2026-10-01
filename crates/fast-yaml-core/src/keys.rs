@@ -342,6 +342,10 @@ mod tests {
             [Value::Bool(true), string("true")],
             [Value::Null, string("null")],
             [Value::Int(1), Value::Float(Float::new(1.0))],
+            [Value::Int(0), Value::Float(Float::new(-0.0))],
+            [Value::Float(Float::new(f64::NAN)), string("NaN")],
+            [Value::Float(Float::new(1e21)), string("1e+21")],
+            [Value::Float(Float::new(f64::INFINITY)), string("Infinity")],
         ] {
             let err = check_all(KeyDomain::StringKeys, &keys).unwrap_err();
             assert!(matches!(err, KeyError::StringCollision { .. }), "{keys:?}");

@@ -1,7 +1,7 @@
 //! Benchmarks for input validation, float parsing and float emission.
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use fast_yaml_core::{Emitter, Float, NormalizedInput, Value};
+use fast_yaml_core::{Emitter, Float, NormalizedInput, Parser, Value};
 use std::fmt::Write as _;
 use std::hint::black_box;
 
@@ -69,5 +69,18 @@ fn benchmark_float(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, benchmark_input, benchmark_float);
+fn benchmark_loader(c: &mut Criterion) {
+    let plain = ascii_yaml(50_000);
+    let seq = "- item\n".repeat(500_000);
+    let mut group = c.benchmark_group("loader");
+    group.bench_function("plain_mapping", |b| {
+        b.iter(|| Parser::parse_str(black_box(&plain)).unwrap());
+    });
+    group.bench_function("sequence", |b| {
+        b.iter(|| Parser::parse_str(black_box(&seq)).unwrap());
+    });
+    group.finish();
+}
+
+criterion_group!(benches, benchmark_input, benchmark_float, benchmark_loader);
 criterion_main!(benches);

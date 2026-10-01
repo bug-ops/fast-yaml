@@ -87,7 +87,6 @@ class TestBatchConfig:
         """Test custom limits."""
         config = batch.BatchConfig(
             max_input_bytes=50 * 1024 * 1024,
-            mmap_threshold=1024 * 1024,
         )
         assert config is not None
 
@@ -343,3 +342,8 @@ class TestEdgeCases:
             path.write_text("key: value\n")
             result = batch.process_files([str(path)])
             assert result.is_success()
+
+
+def test_mmap_threshold_removed():
+    with pytest.raises(TypeError):
+        batch.BatchConfig(mmap_threshold=1024)

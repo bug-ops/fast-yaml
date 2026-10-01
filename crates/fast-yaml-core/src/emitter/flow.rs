@@ -5,7 +5,7 @@ use saphyr_parser::{Event, ScalarStyle, Tag};
 use super::walk::EventSink;
 use crate::emitter::EmitterConfig;
 use crate::error::EmitResult;
-use crate::streaming::write_double_quoted;
+use crate::streaming::{MAX_IMPLICIT_KEY_CHARS, write_double_quoted};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -18,6 +18,8 @@ struct Frame {
     kind: Kind,
     entries: usize,
     after_key: bool,
+    /// The pending key was written as `? key`, so its value follows a spaced colon.
+    explicit_key: bool,
 }
 
 /// Writes `[a, b]`, `{k: v}` and `!!set {a, b}` without recursion.
@@ -53,7 +55,8 @@ impl FlowWriter {
             return;
         };
         if frame.after_key {
-            self.out.push_str(": ");
+            self.out
+                .push_str(if frame.explicit_key { " : " } else { ": " });
         } else if frame.entries > 0 {
             self.out.push_str(", ");
         }
@@ -74,6 +77,21 @@ impl FlowWriter {
         }
     }
 
+    /// Rewrites the mapping key written at `start` as `? key` when a `:` after it would lie
+    /// past the scanner's implicit key limit.
+    fn mark_long_key(&mut self, start: usize) {
+        let Some(frame) = self.frames.last_mut() else {
+            return;
+        };
+        if frame.kind == Kind::Mapping
+            && !frame.after_key
+            && self.out[start..].chars().count() > MAX_IMPLICIT_KEY_CHARS
+        {
+            self.out.insert_str(start, "? ");
+            frame.explicit_key = true;
+        }
+    }
+
     fn open(&mut self, kind: Kind, text: &str) {
         self.begin_node();
         self.out.push_str(text);
@@ -81,6 +99,7 @@ impl FlowWriter {
             kind,
             entries: 0,
             after_key: false,
+            explicit_key: false,
         });
     }
 
@@ -101,11 +120,13 @@ impl EventSink for FlowWriter {
             Event::DocumentStart(_) if self.explicit_start => self.out.push_str("---\n"),
             Event::Scalar(text, style, _, _) => {
                 self.begin_node();
+                let start = self.out.len();
                 if style == ScalarStyle::DoubleQuoted {
                     write_double_quoted(&mut self.out, &text);
                 } else {
                     self.out.push_str(&text);
                 }
+                self.mark_long_key(start);
                 self.end_node();
             }
             Event::SequenceStart(..) => self.open(Kind::Sequence, "["),

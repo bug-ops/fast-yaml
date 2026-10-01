@@ -86,7 +86,7 @@ impl super::LintRule for ColonsRule {
         let max_spaces_after = options.max_spaces_after;
 
         let mut diagnostics = Vec::new();
-        let colons = tokenizer.find_all(TokenType::Colon);
+        let colons = tokenizer.tokens(TokenType::Colon);
 
         for colon in colons {
             // Skip if colon is part of URL or time

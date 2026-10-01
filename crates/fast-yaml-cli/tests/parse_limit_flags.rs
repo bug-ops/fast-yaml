@@ -54,6 +54,35 @@ fn max_depth_flag_lowers_and_raises_the_limit() {
 }
 
 #[test]
+fn many_documents_are_rejected_by_default_and_raised_by_the_flag() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "many.yaml", &"---\n".repeat(200_000));
+    for cmd in [&["parse"][..], &["lint"], &["format"]] {
+        let (code, stderr) = run(cmd, &path);
+        assert_eq!(code, Some(1), "{cmd:?}: {stderr}");
+        assert!(stderr.contains("document count exceeds 100000"), "{stderr}");
+        assert!(stderr.contains("raise with --max-documents"), "{stderr}");
+
+        let (code, stderr) = run(&with_flag(cmd, "--max-documents", "300000"), &path);
+        assert!(matches!(code, Some(0 | 2)), "{cmd:?}: {stderr}");
+        assert!(!stderr.contains("limit exceeded"), "{stderr}");
+    }
+}
+
+#[test]
+fn max_documents_flag_lowers_the_limit_and_rejects_zero() {
+    let dir = TempDir::new().unwrap();
+    let path = write_fixture(&dir, "three.yaml", "a: 1\n---\nb: 2\n---\nc: 3\n");
+    for cmd in [&["parse"][..], &["lint"], &["format"]] {
+        let (code, stderr) = run(&with_flag(cmd, "--max-documents", "2"), &path);
+        assert_eq!(code, Some(1), "{cmd:?}: {stderr}");
+        assert!(stderr.contains("document count exceeds 2"), "{stderr}");
+        let (code, _) = run(&with_flag(cmd, "--max-documents", "0"), &path);
+        assert_eq!(code, Some(2), "{cmd:?}");
+    }
+}
+
+#[test]
 fn default_depth_failure_hints_at_max_depth() {
     let dir = TempDir::new().unwrap();
     let path = write_fixture(&dir, "deep.yaml", &format!("{}x\n", "- ".repeat(20_000)));

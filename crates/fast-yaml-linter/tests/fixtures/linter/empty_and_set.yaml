@@ -1,0 +1,14 @@
+a:
+  -
+  - x
+  -
+b: {}
+c: !!set {x, y}
+d: !!set {x: 1}
+e:
+f: null
+g: ~
+h: {i, j: }
+? k
+? l
+: m

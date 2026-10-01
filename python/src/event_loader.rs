@@ -9,13 +9,15 @@ use std::collections::HashMap;
 use fast_yaml_core::events::{AnchorId, Event, EventItem, EventStream};
 use fast_yaml_core::merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 use fast_yaml_core::scalar::core_tag_suffix;
-use fast_yaml_core::{NormalizedInput, ParseError, ParseLimits, SourcePosition, SyntaxError};
+use fast_yaml_core::{
+    KeyError, NormalizedInput, ParseError, ParseLimits, SourcePosition, SyntaxError,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFloat, PyList, PySet};
 
 use crate::conversion::COMPLEX_KEY_MESSAGE;
-use crate::numeric_keys::{KeyClash, NumericKeys, build_set};
+use crate::numeric_keys::{NumericKeys, build_set};
 use crate::repr_to_python;
 
 /// Parse all YAML documents from `input` into Python objects.
@@ -146,7 +148,7 @@ impl<'input> EventLoader<'input> {
                         return Ok(py.None());
                     };
                     let anchor = node.anchor;
-                    let value = node.finish(py)?;
+                    let value = node.finish(py, self.stream.document())?;
                     self.store_anchor(anchor, &value, py);
                     value
                 }
@@ -294,13 +296,13 @@ impl OpenNode {
     }
 
     /// Build the Python object once the container's end event arrives.
-    fn finish(self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+    fn finish(self, py: Python<'_>, document: usize) -> PyResult<Py<PyAny>> {
         match self.children {
             Children::Sequence(items) => Ok(PyList::new(py, &items)?.into_any().unbind()),
-            Children::Set { keys, .. } => build_py_set(py, &keys),
+            Children::Set { keys, .. } => build_py_set(py, &keys, document),
             Children::Mapping {
                 merge, explicit, ..
-            } => build_mapping(py, merge, &explicit),
+            } => build_mapping(py, merge, &explicit, document),
         }
     }
 }
@@ -310,7 +312,7 @@ enum PyMergeFailure {
     /// A `<<` value that is neither a mapping nor a sequence of mappings.
     Rejected(MergeError),
     /// Keys that YAML keeps distinct but a Python dict would merge.
-    Clash(KeyClash, KeyOrigin),
+    Clash(KeyError, KeyOrigin),
     Py(PyErr),
 }
 
@@ -424,13 +426,14 @@ fn build_mapping(
     py: Python<'_>,
     merge: Option<MergeValue>,
     explicit: &[Pair],
+    document: usize,
 ) -> PyResult<Py<PyAny>> {
     let merge_at = merge.as_ref().map(|m| m.at);
     if merge.is_some() {
         let mut explicit_keys = NumericKeys::new(py);
         for pair in explicit {
             if let Some(clash) = explicit_keys.record(pair.key.bind(py))? {
-                return Err(clash_err(&clash, known(Some(pair.at))));
+                return Err(key_err(clash, known(Some(pair.at)), document));
             }
         }
     }
@@ -445,14 +448,17 @@ fn build_mapping(
     .map_err(|failure| match failure {
         PyMergeFailure::Rejected(error) => {
             let SourcePosition { line, column } = known(merge_at);
-            PyValueError::new_err(format!(
-                "YAML parse error: {error} at line {line}, column {column}"
-            ))
+            limit_err(&ParseError::Merge {
+                error,
+                line,
+                column,
+                document,
+            })
         }
         PyMergeFailure::Clash(clash, origin) => match origin {
-            KeyOrigin::Merged => clash_err(&clash.through_merge(), known(merge_at)),
+            KeyOrigin::Merged => key_err(clash.through_merge(), known(merge_at), document),
             KeyOrigin::Explicit(index) => {
-                clash_err(&clash, known(explicit.get(index).map(|p| p.at)))
+                key_err(clash, known(explicit.get(index).map(|p| p.at)), document)
             }
         },
         PyMergeFailure::Py(err) => err,
@@ -469,18 +475,29 @@ fn reject_complex_key(key: &Bound<'_, PyAny>) -> PyResult<()> {
 }
 
 /// Build a `PySet` from `!!set` keys.
-fn build_py_set(py: Python<'_>, keys: &[(Py<PyAny>, SourcePosition)]) -> PyResult<Py<PyAny>> {
+fn build_py_set(
+    py: Python<'_>,
+    keys: &[(Py<PyAny>, SourcePosition)],
+    document: usize,
+) -> PyResult<Py<PyAny>> {
     let members: Vec<_> = keys.iter().map(|(key, _)| key.bind(py).clone()).collect();
     match build_set(py, &members)? {
         Ok(set) => Ok(set.into_any().unbind()),
-        Err((index, clash)) => Err(clash_err(&clash, keys[index].1)),
+        Err((index, error)) => Err(key_err(error, keys[index].1, document)),
     }
 }
 
-fn clash_err(clash: &KeyClash, SourcePosition { line, column }: SourcePosition) -> PyErr {
-    PyValueError::new_err(format!(
-        "YAML parse error: {clash} at line {line}, column {column}"
-    ))
+fn key_err(
+    error: KeyError,
+    SourcePosition { line, column }: SourcePosition,
+    document: usize,
+) -> PyErr {
+    limit_err(&ParseError::Key {
+        error,
+        line,
+        column,
+        document,
+    })
 }
 
 fn limit_err(e: &ParseError) -> PyErr {

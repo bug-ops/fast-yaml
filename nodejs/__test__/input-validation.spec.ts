@@ -43,7 +43,6 @@ const cases: OptionCase[] = [
     valid: 4,
   },
   { name: 'workers', call: (v) => processFiles([], { workers: v }), valid: 2, outOfRange: [129] },
-  { name: 'mmapThreshold', call: (v) => processFiles([], { mmapThreshold: v }), valid: 1024 },
   {
     name: 'maxInputBytes (batch)',
     call: (v) => processFiles([], { maxInputBytes: v }),
@@ -135,7 +134,6 @@ describe('numeric option validation', () => {
 
   it('accepts exactly 2**32 - 1 in u32 options', () => {
     const max = 2 ** 32 - 1;
-    expect(() => processFiles([], { mmapThreshold: max })).not.toThrow();
     expect(() => processFiles([], { sequentialThreshold: max })).not.toThrow();
     expect(() => formatFiles([], { indent: 9 })).not.toThrow();
     expect(() => formatFilesInPlace([], { width: 1000 })).not.toThrow();
@@ -144,14 +142,12 @@ describe('numeric option validation', () => {
 
   it('enforces maxDocuments', () => {
     expect(parseParallel(MULTI, { maxDocuments: 2 })).toHaveLength(2);
-    expect(() => parseParallel(MULTI, { maxDocuments: 1 })).toThrow(
-      /input has at least 2 documents, more than the maximum of 1/
-    );
+    expect(() => parseParallel(MULTI, { maxDocuments: 1 })).toThrow(/document count exceeds 1/);
   });
 
   it('enforces maxDocuments asynchronously', async () => {
     await expect(parseParallelAsync(MULTI, { maxDocuments: 1 })).rejects.toThrow(
-      /input has at least 2 documents, more than the maximum of 1/
+      /document count exceeds 1/
     );
   });
 

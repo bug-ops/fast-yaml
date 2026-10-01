@@ -101,6 +101,12 @@ fn every_options_type_round_trips_with_non_default_values() {
     });
     round_trip(&KeyOrderingOptions {
         case_sensitive: false,
+        ignored_keys: PatternList::new(["^name$", "^x-"]).unwrap(),
+    });
+    round_trip(&InvalidAnchorsOptions {
+        forbid_duplicated_anchors: false,
+        forbid_unused_anchors: true,
+        ..InvalidAnchorsOptions::default()
     });
     round_trip(&TruthyOptions {
         allowed_values: vec![
@@ -360,7 +366,8 @@ fn allowed_truthy_value_is_not_reported() {
         "{allowed-values: [yes]}",
         "a: yes\nb: true\n",
     );
-    assert!(reported.is_empty(), "{reported:?}");
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(reported[0].contains("'true'"), "{reported:?}");
     let reported = messages(RuleName::Truthy, "{}", "a: yes\n");
     assert_eq!(reported.len(), 1);
 }

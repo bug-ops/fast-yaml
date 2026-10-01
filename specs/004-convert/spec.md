@@ -17,7 +17,7 @@ related:
 # Feature: Convert (JSON and YAML)
 
 > [!info] Metadata
-> **Product version**: fast-yaml 0.6.6 (main, e5e6cfb). **Surface**: `fy convert <yaml|json> [FILE]` (CLI only; bindings expose their own load/dump APIs).
+> **Product version**: fast-yaml 0.6.6 (main, e5e6cfb) plus #557 (key order, escapes, flow keys), #567 (float key text) and #574 (`--max-documents`). **Surface**: `fy convert <yaml|json> [FILE]` (CLI only; bindings expose their own load/dump APIs).
 > **Method**: reverse-specified from `crates/fast-yaml-cli/src/commands/convert.rs` and real `fy` runs.
 
 ## 1. Purpose and value
@@ -25,11 +25,10 @@ related:
 Move data between JSON and YAML without surprises. YAML to JSON resolves the YAML 1.2.2 core schema (types, anchors, aliases, merge keys) into plain JSON, and fails loudly where JSON cannot express the value. JSON to YAML produces readable block YAML in which strings that would be misread as other types are quoted, so the data round-trips.
 
 ### Goal
-`fy convert` produces output that a standard JSON/YAML parser reads back as the same data, and refuses (with a clear error) instead of silently changing data.
+`fy convert` produces output that a standard JSON/YAML parser reads back as the same data, in the key order of the input, and refuses (with a clear error) instead of silently changing data.
 
 ### Non-goals
 - Preserving comments, formatting, or scalar spelling (use `fy format` for YAML to YAML).
-- Preserving key order (output is sorted, see open questions).
 - Lossless YAML-only constructs in JSON (binary, timestamps, custom tags, non-scalar keys); they are flattened or rejected as described below.
 - Converting several files at once or recursing into directories (one input per call).
 - Other formats (TOML, JSON5, NDJSON).
@@ -44,18 +43,18 @@ GIVEN input "b: 1\na: [x, 2.5, true, null]\n"
 WHEN  I run `fy convert json`
 THEN  stdout is
   {
+    "b": 1,
     "a": [
       "x",
       2.5,
       true,
       null
-    ],
-    "b": 1
+    ]
   }
-AND   exit code is 0
+AND   exit code is 0                                  (keys keep the input order)
 
 WHEN  I add --pretty=false
-THEN  stdout is {"a":["x",2.5,true,null],"b":1} followed by a newline
+THEN  stdout is {"b":1,"a":["x",2.5,true,null]} followed by a newline
 ```
 
 ### US-002 (P1): JSON to YAML
@@ -65,16 +64,17 @@ AS A developer I WANT `fy convert yaml` SO THAT I can turn API payloads into edi
 GIVEN input {"b":1,"a":{"z":[1,2],"y":null}}
 WHEN  I run `fy convert yaml`
 THEN  stdout is
+  b: 1
   a:
-    y: ~
     z:
       - 1
       - 2
-  b: 1
+    y: ~
 ```
+Keys keep the order of the JSON object. A duplicate key keeps its first position and its last value (`{"a":1,"b":2,"a":3}` gives `a: 3`, `b: 2`).
 
 Strings that look like other types are quoted so the type survives:
-`{"a":"true","b":"null","c":"","d":"1.5","e":"~","f":" x","g":"a: b","h":"#x"}` gives `a: "true"`, `b: "null"`, `c: ""`, `d: "1.5"`, `e: "~"`, `f: " x"`, `g: "a: b"`, `h: "#x"`. A multi-line string becomes `s: "line1\nline2"`; plain text such as `é` stays plain.
+`{"a":"true","b":"null","c":"","d":"1.5","e":"~","f":" x","g":"a: b","h":"#x"}` gives `a: "true"`, `b: "null"`, `c: ""`, `d: "1.5"`, `e: "~"`, `f: " x"`, `g: "a: b"`, `h: "#x"`. A multi-line string becomes `s: "line1\nline2"`; plain text such as `é` stays plain. U+0085, U+2028 and U+2029 are escaped (`"a\x85b\u2028c"`), and a scalar containing `?` in flow context is quoted.
 
 ### US-003 (P1): Multi-document YAML
 AS A user of Kubernetes-style streams I WANT every document converted SO THAT none is dropped.
@@ -112,7 +112,7 @@ AS A user of DRY YAML I WANT aliases and `<<` expanded SO THAT JSON consumers se
 ```
 GIVEN "base: &b {k: 1, j: 2}\nd:\n  <<: *b\n  k: 9\n"
 WHEN  I run `fy convert json --pretty=false`
-THEN  stdout is {"base":{"j":2,"k":1},"d":{"j":2,"k":9}}   (explicit key wins over the merged one)
+THEN  stdout is {"base":{"k":1,"j":2},"d":{"k":9,"j":2}}   (explicit key wins over the merged one, in the merged key's position)
 
 GIVEN "x: &a {k: 1}\ny: *a\n<<: *a\n"
 THEN  y is a copy of x, and the root also receives "k": 1 from the merge
@@ -149,13 +149,13 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | FR-003 | WHEN a scalar resolves to null, bool, int, or float THE SYSTEM SHALL emit the corresponding JSON type; other scalars (including `!!binary`, timestamps, unknown tags) SHALL be emitted as strings of their text, tags dropped. | MUST |
 | FR-004 | WHEN an integer is written in hex (`0x1F`) or octal (`0o17`) THE SYSTEM SHALL emit its decimal value; integers beyond 64 bits SHALL keep all digits. | MUST |
 | FR-005 | WHEN a float is `.inf`, `-.inf`, or `.nan` THE SYSTEM SHALL fail with the infinity/NaN error and exit 1 (never emit `null` or a string). | MUST |
-| FR-006 | WHEN a mapping key is a null, bool, int, or float scalar THE SYSTEM SHALL convert it to its canonical string (`"null"`, `"true"`, `"1"`); non-scalar keys SHALL fail. | MUST |
+| FR-006 | WHEN a mapping key is a null, bool, int, or float scalar THE SYSTEM SHALL convert it to its canonical string (`"null"`, `"true"`, `"1"`); a float key is spelled like ECMAScript `Number` toString (`1.5e21` is `"1.5e+21"`, `.inf` is `"Infinity"`, `.nan` is `"NaN"`, `-0.0` is `"0"`); non-scalar keys SHALL fail. | MUST |
 | FR-007 | WHEN two distinct YAML keys convert to the same JSON key (`1` and `"1"`, `true` and `"true"`, `1` and `1.0`) THE SYSTEM SHALL fail; spellings of the same YAML key are not a collision. | MUST |
 | FR-008 | WHEN aliases or merge keys (`<<`) appear THE SYSTEM SHALL expand them; explicit keys SHALL override merged keys. | MUST |
 | FR-009 | WHEN a `!!set` is converted THE SYSTEM SHALL emit an object whose values are `null`. | SHOULD |
 | FR-010 | WHEN the input has no document THE SYSTEM SHALL fail with `Empty YAML document` and exit 1. | MUST |
-| FR-011 | WHEN a mapping has duplicate YAML keys THE SYSTEM SHALL keep the last value. | MUST (as-is) |
-| FR-012 | THE SYSTEM SHALL apply `--max-depth` (1..=512, default 256), `--max-alias-bytes` (default 64 MiB), `--max-input-bytes`, and `--max-scan-ahead` to YAML input and report violations as typed errors with the flag in a hint. | MUST |
+| FR-011 | WHEN a mapping has duplicate YAML keys THE SYSTEM SHALL keep the first key position and the last value. | MUST (as-is) |
+| FR-012 | THE SYSTEM SHALL apply `--max-depth` (1..=512, default 256), `--max-alias-bytes` (default 64 MiB), `--max-documents` (default 100 000), `--max-input-bytes`, and `--max-scan-ahead` to YAML input and report violations as typed errors with the flag in a hint. | MUST |
 
 ### JSON to YAML
 
@@ -167,8 +167,9 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | FR-023 | WHEN a JSON number is a float THE SYSTEM SHALL keep its float nature (`1.0` stays `1.0`, `-0.0` stays `-0.0`, `1E5` becomes `1.0e+5`); a number outside `f64` range SHALL fail (`Float value out of representable range`). | MUST |
 | FR-024 | WHEN a string would resolve to another core-schema type or is syntactically unsafe (`true`, `null`, `~`, `""`, `1.5`, leading space, `: `, leading `#`, key `yes`) THE SYSTEM SHALL quote it; line breaks SHALL be written as `\n` escapes in a double-quoted scalar. | MUST |
 | FR-025 | WHEN JSON `null` is a value THE SYSTEM SHALL write `~`; an empty array/object SHALL be `[]` / `{}` (a root `null` is `~`). | MUST |
-| FR-026 | WHEN duplicate keys appear in a JSON object THE SYSTEM SHALL keep the last value. | MUST (as-is) |
+| FR-026 | WHEN duplicate keys appear in a JSON object THE SYSTEM SHALL keep the first key position and the last value. | MUST (as-is) |
 | FR-027 | WHEN JSON nests deeper than the JSON parser's recursion limit (128) THE SYSTEM SHALL fail with `recursion limit exceeded`. | MUST |
+| FR-028 | WHEN the YAML emitter writes a flow-style key longer than 1024 characters THE SYSTEM SHALL use the explicit `? key` form, SHALL quote a plain scalar that contains `?` in flow context, and SHALL escape U+0085, U+2028 and U+2029 in double-quoted output (the same emitter backs the Python and Node.js dump functions). | MUST |
 
 ### Common
 
@@ -178,7 +179,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | FR-031 | WHEN `-i` has no file THE SYSTEM SHALL fail before reading. | MUST |
 | FR-032 | WHEN conversion fails THE SYSTEM SHALL write nothing to stdout or the target file and exit 1. | MUST |
 | FR-033 | WHEN the YAML input starts with a BOM THE SYSTEM SHALL ignore it; output never contains a BOM. | MUST |
-| FR-034 | THE SYSTEM SHALL produce deterministic output: object keys in sorted order in both directions. | MUST (as-is) |
+| FR-034 | THE SYSTEM SHALL produce deterministic output: object keys keep their input order in both directions (insertion-ordered `serde_json` map, `preserve_order`). | MUST |
 
 ## 4. Key entities and types
 
@@ -188,7 +189,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | `Converter` | Holds target, `pretty`, `ParseLimits` |
 | `Parser::parse_all_with_options`, `LoadOptions`, `KeyDomain::StringKeys` | Resolve YAML to `Value` for conversion |
 | `Value` (`fast-yaml-core`) | Resolved tree: null, bool, int, big int, float, string, sequence, mapping, set |
-| `serde_json::Value` | JSON side; `Map` is sorted (no `preserve_order`) |
+| `serde_json::Value` | JSON side; `Map` is insertion-ordered (`preserve_order` enabled) |
 | `Emitter::emit_str` | YAML writer for JSON input (block style) |
 | `ParseLimits` (`MaxDepth`, `MaxAliasBytes`, `MaxInputBytes`, `MaxScanAhead`) | Resource bounds |
 
@@ -204,7 +205,8 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | `---\n...` | `null` |
 | `"hi"` JSON input | `hi` |
 | `plain` YAML input | `"plain"` |
-| JSON `{"a":1,"a":2}` / YAML `a: 1\na: 2` | `a: 2` / `{"a": 2}` (last wins, no warning) |
+| JSON `{"a":1,"a":2}` / YAML `a: 1\na: 2` | `a: 2` / `{"a": 2}` (last value wins, first position kept, no warning) |
+| YAML keys `.inf`, `.nan`, `1e3`, `0.1` | JSON keys `"Infinity"`, `"NaN"`, `"1000"`, `"0.1"` (verified) |
 | JSON `{"a": 1e400}` | `Float value out of representable range: 1e+400`, exit 1 |
 | YAML double-quoted string with a UTF-16 surrogate escape (`"\ud83d\ude00"`) | `found invalid Unicode character escape code at line 1, column 4`, exit 1 (YAML escapes must be scalar values) |
 | NDJSON or `[1,2]\n[3]` | `trailing characters at line 2 column 1`, exit 1 |
@@ -218,7 +220,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 |----|----------|-------------|
 | NFR-001 | Safety | Alias expansion, nesting, input size, and scan-ahead are bounded; hostile input yields an error, never an abort. |
 | NFR-002 | Determinism | Same input yields identical bytes. |
-| NFR-003 | Fidelity | For any JSON text `j` that converts, `convert json (convert yaml j)` is data-equal to `j` (modulo duplicate keys and key order). |
+| NFR-003 | Fidelity | For any JSON text `j` that converts, `convert json (convert yaml j)` is data-equal to `j` (modulo duplicate keys), with the same key order. |
 
 ## 7. Success criteria
 
@@ -248,7 +250,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | Key order is lost in both directions: `{"b":1,"a":2}` becomes `a:` then `b:`, and YAML to JSON is sorted. `serde_json` is used without `preserve_order`. Duplicate keys are last-wins with no warning. (GAP-CLI-009, OQ-02) | [NEEDS CLARIFICATION: preserve order by default (recommended), or document sorting as the contract] **Proposed:** preserve order by default, sorting opt-in. |
+| 1 | Duplicate keys are first-position, last-value with no warning in both directions. (GAP-CLI-009, OQ-02) | [NEEDS CLARIFICATION: warn or reject under a strict option?] |
 | 2 | `convert -i json file.yaml` overwrites the same path with JSON (a `.yaml` file containing JSON); `skills/fast-yaml-cli/SKILL.md` claims a renamed `file.json`. (GAP-CLI-006) | [NEEDS CLARIFICATION: rename, refuse, or fix docs] |
 | 3 | `-i` silently overrides `-o` (`convert json -i -o x w.yaml` writes `w.yaml` only). (GAP-CLI-007) | [NEEDS CLARIFICATION: make them conflict in clap] |
 | 4 | `-` is not accepted as stdin for the file argument. (GAP-CLI-008) | accept `-` as stdin |

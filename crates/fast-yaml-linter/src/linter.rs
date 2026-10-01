@@ -6,8 +6,8 @@ use std::str::FromStr;
 
 use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
 use crate::directives::Directives;
-use crate::rules::MarkerPresence;
-use crate::scan::{ScanCollector, SourceScan, lint_load_options};
+use crate::rules::{LintRule, MarkerPresence};
+use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
 use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{NormalizedInput, Parser, Value};
@@ -398,8 +398,13 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let context = LintContext::new(source);
-        let mut collector = ScanCollector::new(&normalized, source, context.source_context());
+        let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
+        let mut collector = ScanCollector::new(
+            &normalized,
+            source,
+            context.source_context(),
+            self.scan_needs(),
+        );
         let docs = Parser::parse_normalized_observed(
             &normalized,
             &StreamBudget::new(self.config.parse_limits),
@@ -409,30 +414,59 @@ impl Linter {
         let scan = collector.finish();
         let mut context = context.with_scan(scan);
         let directives = Directives::from_context(&context, &self.config, &self.registry);
-        let mut diagnostics = Vec::new();
+        let rules: Vec<&dyn LintRule> = if directives.disables_file() {
+            Vec::new()
+        } else {
+            self.registry
+                .rules()
+                .iter()
+                .map(AsRef::as_ref)
+                .filter(|rule| self.config.is_rule_enabled(rule.code()))
+                .collect()
+        };
 
-        for rule in self.registry.rules() {
-            if directives.disables_file() {
-                break;
-            }
-            if !self.config.is_rule_enabled(rule.code()) {
+        // The rules that read the documents run first, so the documents (the bulk of the heap)
+        // are freed before the other rules allocate; results are merged in registry order.
+        let mut by_value: Vec<Option<Vec<Diagnostic>>> = rules.iter().map(|_| None).collect();
+        for (slot, rule) in by_value.iter_mut().zip(&rules) {
+            if !rule.needs_value() {
                 continue;
             }
+            let mut found = Vec::new();
+            for (idx, doc) in docs.iter().enumerate() {
+                let start_line = context.documents().get(idx).map_or(1, |d| d.first_line);
+                context.set_doc_start_line(start_line);
+                found.extend(rule.check(&context, doc, &self.config));
+            }
+            *slot = Some(found);
+        }
+        context.set_doc_start_line(1);
+        drop(docs);
 
-            if rule.needs_value() {
-                for (idx, doc) in docs.iter().enumerate() {
-                    let start_line = context.documents().get(idx).map_or(1, |d| d.first_line);
-                    context.set_doc_start_line(start_line);
-                    diagnostics.extend(rule.check(&context, doc, &self.config));
-                }
-                context.set_doc_start_line(1);
+        let mut diagnostics = Vec::new();
+        for (slot, rule) in by_value.iter_mut().zip(&rules) {
+            let mut found = slot
+                .take()
+                .unwrap_or_else(|| rule.check(&context, &Value::Null, &self.config));
+            if diagnostics.is_empty() {
+                diagnostics = found;
             } else {
-                let dummy = Value::Null;
-                diagnostics.extend(rule.check(&context, &dummy, &self.config));
+                diagnostics.append(&mut found);
             }
         }
 
         Ok(finish(diagnostics, directives))
+    }
+
+    /// The scan products the enabled rules read.
+    fn scan_needs(&self) -> ScanNeeds {
+        ScanNeeds::of_rules(
+            self.registry
+                .rules()
+                .iter()
+                .map(|rule| rule.code())
+                .filter(|code| self.config.is_rule_enabled(code)),
+        )
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -468,11 +502,15 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let context = LintContext::new(source);
+        let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
         // Comments and markers come from the source itself, under the configured limits; a source
         // that does not load is an error here, as it is in `lint`
-        let (scan, failure) =
-            SourceScan::scan(source, context.source_context(), self.config.parse_limits);
+        let (scan, failure) = SourceScan::scan(
+            source,
+            context.source_context(),
+            self.config.parse_limits,
+            self.scan_needs(),
+        );
         if let Some(error) = failure {
             return Err(error.into());
         }
@@ -558,7 +596,6 @@ fn finish(mut diagnostics: Vec<Diagnostic>, directives: Directives) -> Vec<Diagn
 mod tests {
     use super::*;
     use crate::config::test_support::config_with_rule;
-    use crate::rules::LintRule;
     use std::fmt::Write as _;
 
     fn indent(size: u64) -> IndentSize {

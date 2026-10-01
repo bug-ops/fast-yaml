@@ -1,16 +1,20 @@
 //! Parallel file processor for batch YAML operations.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use fast_yaml_core::emitter::{Emitter, EmitterConfig};
-use fast_yaml_core::{NormalizedInput, has_comments_normalized};
+use fast_yaml_core::limits::MaxScanAhead;
+use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comments_normalized};
 use rayon::prelude::*;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
-use crate::io::SmartReader;
+use crate::io::read_file;
+use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
+use crate::scan_ahead::ScanAheadLane;
 
 /// Whether formatting may discard YAML comments, which the emitter cannot preserve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -34,7 +38,7 @@ pub struct FormatOutput {
 /// Parallel file processor for batch YAML operations.
 ///
 /// Processes multiple YAML files in parallel using Rayon's work-stealing scheduler.
-/// Automatically chooses optimal reading strategy based on file size (in-memory vs mmap).
+/// Each file is read whole into memory after a size check.
 ///
 /// # Security: Path Trust Boundary
 ///
@@ -66,7 +70,6 @@ pub struct FormatOutput {
 #[derive(Debug)]
 pub struct FileProcessor {
     config: Config,
-    reader: SmartReader,
 }
 
 impl FileProcessor {
@@ -77,9 +80,7 @@ impl FileProcessor {
 
     /// Creates a processor with custom config.
     pub const fn with_config(config: Config) -> Self {
-        let reader = SmartReader::with_threshold(config.mmap_threshold() as u64);
-
-        Self { config, reader }
+        Self { config }
     }
 
     /// Process files with custom operation.
@@ -97,7 +98,7 @@ impl FileProcessor {
             return BatchResult::new();
         }
 
-        let results = if Self::should_use_sequential(paths) {
+        let results = if self.should_use_sequential(paths) {
             self.process_files_sequential(paths, &f)
         } else {
             self.process_files_parallel(paths, &f)
@@ -152,18 +153,29 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> Vec<(PathBuf, Result<FormatOutput>)> {
-        let process_file = |path: &Path| self.format_content(path, emitter_config, comments);
+        let lane = self.lane();
+        let process_file = |path: &Path| self.format_content(path, emitter_config, comments, &lane);
 
-        if Self::should_use_sequential(paths) {
+        if self.should_use_sequential(paths) {
             paths
                 .iter()
                 .map(|path| (path.clone(), process_file(path)))
                 .collect()
         } else {
-            paths
-                .par_iter()
-                .map(|path| (path.clone(), process_file(path)))
-                .collect()
+            self.install(
+                || {
+                    paths
+                        .par_iter()
+                        .map(|path| (path.clone(), process_file(path)))
+                        .collect()
+                },
+                |error| {
+                    paths
+                        .iter()
+                        .map(|path| (path.clone(), Err(error())))
+                        .collect()
+                },
+            )
         }
     }
 
@@ -184,21 +196,37 @@ impl FileProcessor {
             return BatchResult::new();
         }
 
-        let results = if Self::should_use_sequential(paths) {
+        let lane = self.lane();
+        let results = if self.should_use_sequential(paths) {
             paths
                 .iter()
-                .map(|path| self.format_single_file(path, emitter_config, comments))
+                .map(|path| self.format_single_file(path, emitter_config, comments, &lane))
                 .collect()
         } else {
-            paths
-                .par_iter()
-                .map(|path| self.format_single_file(path, emitter_config, comments))
-                .collect()
+            self.install(
+                || {
+                    paths
+                        .par_iter()
+                        .map(|path| self.format_single_file(path, emitter_config, comments, &lane))
+                        .collect()
+                },
+                |error| {
+                    paths
+                        .iter()
+                        .map(|path| Self::failed(path, error()))
+                        .collect()
+                },
+            )
         };
 
         let mut batch = BatchResult::from_results(results);
         batch.duration = batch_start.elapsed();
         batch
+    }
+
+    /// The scan-ahead lane of one format run.
+    fn lane(&self) -> ScanAheadLane {
+        ScanAheadLane::for_policy(self.config.scan_ahead_policy(), self.config.worker_count())
     }
 
     /// Reads `path` once, enforces the size limit and comment policy, and formats it.
@@ -207,28 +235,34 @@ impl FileProcessor {
         path: &Path,
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
+        lane: &ScanAheadLane,
     ) -> Result<FormatOutput> {
-        let file_content = self.reader.read(path, self.config.max_input_bytes())?;
-        let content = file_content.as_str()?;
+        let content = read_file(path, self.config.max_input_bytes())?;
 
-        let normalized = NormalizedInput::new(content).map_err(|source| Error::Format {
+        let normalized = NormalizedInput::new(&content).map_err(|source| Error::Format {
             path: path.to_path_buf(),
             source: source.into(),
         })?;
-        let formatted =
-            Emitter::format_normalized(&normalized, emitter_config).map_err(|source| {
-                Error::Format {
-                    path: path.to_path_buf(),
-                    source,
-                }
-            })?;
+        let format_at = |limit: MaxScanAhead| {
+            let mut limited = emitter_config.clone();
+            limited.parse_limits.max_scan_ahead = limit;
+            let formatted =
+                Emitter::format_normalized(&normalized, &limited).map_err(|source| {
+                    Error::Format {
+                        path: path.to_path_buf(),
+                        source,
+                    }
+                })?;
 
-        if comments == CommentPolicy::Reject
-            && has_comments_normalized(&normalized, emitter_config.parse_limits.max_scan_ahead)
-                .map_err(|source| Error::CommentScan { source })?
-        {
-            return Err(Error::CommentsWouldBeStripped);
-        }
+            if comments == CommentPolicy::Reject
+                && has_comments_normalized(&normalized, limit)
+                    .map_err(|source| Error::CommentScan { source })?
+            {
+                return Err(Error::CommentsWouldBeStripped);
+            }
+            Ok(formatted)
+        };
+        let formatted = lane.run(format_at, exceeds_scan_ahead)?;
 
         Ok(FormatOutput {
             changed: content != formatted,
@@ -242,10 +276,11 @@ impl FileProcessor {
         path: &Path,
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
+        lane: &ScanAheadLane,
     ) -> FileResult {
         let start = std::time::Instant::now();
 
-        let output = match self.format_content(path, emitter_config, comments) {
+        let output = match self.format_content(path, emitter_config, comments, lane) {
             Ok(output) => output,
             Err(error) => {
                 return FileResult::new(
@@ -286,10 +321,44 @@ impl FileProcessor {
         F: Fn(&Path, &str) -> Result<R> + Sync,
         R: Send,
     {
-        paths
-            .par_iter()
-            .map(|path| self.process_single_file(path, f))
-            .collect()
+        self.install(
+            || {
+                paths
+                    .par_iter()
+                    .map(|path| self.process_single_file(path, f))
+                    .collect()
+            },
+            |error| {
+                paths
+                    .iter()
+                    .map(|path| Self::failed(path, error()))
+                    .collect()
+            },
+        )
+    }
+
+    /// Runs `op` on the pool the config asks for; when that pool cannot be built, `fallback`
+    /// receives a constructor of the pool error.
+    fn install<R: Send>(
+        &self,
+        op: impl FnOnce() -> R + Send,
+        fallback: impl FnOnce(&dyn Fn() -> Error) -> R,
+    ) -> R {
+        match pool::for_config(&self.config) {
+            Ok(Some(pool)) => pool.install(op),
+            Ok(None) => op(),
+            Err(source) => fallback(&|| Error::ThreadPool(Arc::clone(&source))),
+        }
+    }
+
+    fn failed(path: &Path, error: Error) -> FileResult {
+        FileResult::new(
+            path.to_path_buf(),
+            FileOutcome::Error {
+                error,
+                duration: Duration::ZERO,
+            },
+        )
     }
 
     /// Processes files sequentially without parallel overhead.
@@ -330,10 +399,9 @@ impl FileProcessor {
     where
         F: Fn(&Path, &str) -> Result<R>,
     {
-        let file_content = self.reader.read(path, self.config.max_input_bytes())?;
-        let content = file_content.as_str()?;
+        let content = read_file(path, self.config.max_input_bytes())?;
 
-        f(path, content)?;
+        f(path, &content)?;
         Ok(())
     }
 
@@ -348,15 +416,16 @@ impl FileProcessor {
     /// Returns true if sequential processing should be used.
     ///
     /// Sequential processing is preferred when:
+    /// - Workers are set to 0
     /// - Very few files (< 4)
     /// - Small total size (< 1MB) AND moderate file count (< 10)
     ///
     /// This avoids parallelism overhead for small workloads while enabling
     /// parallel processing for large files even if there are only a few of them.
-    fn should_use_sequential(paths: &[PathBuf]) -> bool {
+    fn should_use_sequential(&self, paths: &[PathBuf]) -> bool {
         let file_count = paths.len();
 
-        if file_count < 4 {
+        if self.config.workers() == Some(0) || file_count < 4 {
             return true;
         }
 
@@ -368,6 +437,25 @@ impl FileProcessor {
 
         total_size < 1_000_000 && file_count < 10
     }
+}
+
+/// Whether `error` is the scanner look-ahead limit, the only failure a larger limit can cure.
+const fn exceeds_scan_ahead(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Format {
+            source: EmitError::Parse(ParseError::LimitExceeded {
+                kind: LimitKind::ScanAhead(_),
+                ..
+            }),
+            ..
+        } | Error::CommentScan {
+            source: ParseError::LimitExceeded {
+                kind: LimitKind::ScanAhead(_),
+                ..
+            },
+        }
+    )
 }
 
 impl Default for FileProcessor {
@@ -530,14 +618,13 @@ mod tests {
     }
 
     #[test]
-    fn test_large_file_with_mmap() {
+    fn test_large_file() {
         let dir = TempDir::new().unwrap();
 
         let large_content = "key: value\n".repeat(100_000);
         let path = create_test_file(&dir, "large.yaml", &large_content);
 
-        let config = Config::new().with_mmap_threshold(1024);
-        let processor = FileProcessor::with_config(config);
+        let processor = FileProcessor::new();
 
         let result = processor.parse_files(&[path]);
         assert!(result.is_success());
@@ -678,8 +765,7 @@ mod tests {
         let small = create_test_file(&dir, "small.yaml", "key: value\n");
         let large = create_test_file(&dir, "large.yaml", &"key: value\n".repeat(100_000));
 
-        let config = Config::new().with_mmap_threshold(1024);
-        let processor = FileProcessor::with_config(config);
+        let processor = FileProcessor::new();
 
         let result = processor.parse_files(&[small, large]);
         assert_eq!(result.total, 2);
@@ -862,8 +948,8 @@ mod tests {
 
         // Both should have same config
         assert_eq!(
-            processor1.config.mmap_threshold(),
-            processor2.config.mmap_threshold()
+            processor1.config.max_input_bytes(),
+            processor2.config.max_input_bytes()
         );
     }
 
@@ -903,5 +989,90 @@ mod tests {
 
         // Should succeed
         assert!(result.is_success());
+    }
+
+    #[test]
+    fn test_scaled_policy_lowers_the_first_scan_ahead_limit() {
+        use crate::scan_ahead::ScanAheadPolicy;
+        use fast_yaml_core::limits::MaxScanAhead;
+
+        let lane = |policy| {
+            FileProcessor::with_config(
+                Config::new()
+                    .with_workers(Some(8))
+                    .with_scan_ahead_policy(policy),
+            )
+            .lane()
+            .first_limit()
+        };
+        assert_eq!(
+            lane(ScanAheadPolicy::Fixed(MaxScanAhead::DEFAULT)),
+            MaxScanAhead::DEFAULT
+        );
+        assert!(lane(ScanAheadPolicy::Scaled).get() < MaxScanAhead::DEFAULT.get());
+    }
+
+    fn flow_file(dir: &TempDir) -> PathBuf {
+        create_test_file(dir, "flow.yaml", &format!("[{}1]\n", "1, ".repeat(100)))
+    }
+
+    fn limited(chars: usize) -> Config {
+        use fast_yaml_core::limits::{MaxScanAhead, ParseLimits};
+        Config::new().with_parse_limits(ParseLimits {
+            max_scan_ahead: MaxScanAhead::new(chars).unwrap(),
+            ..ParseLimits::default()
+        })
+    }
+
+    fn is_scan_ahead_rejection(error: &Error) -> bool {
+        exceeds_scan_ahead(error) && error.to_string().contains("lookahead exceeds 64")
+    }
+
+    #[test]
+    fn test_explicit_scan_ahead_limit_applies_to_format_files() {
+        let dir = TempDir::new().unwrap();
+        let path = flow_file(&dir);
+        let emitter = EmitterConfig::new();
+
+        let strict = FileProcessor::with_config(limited(64));
+        let results =
+            strict.format_files(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
+        assert!(
+            matches!(&results[0].1, Err(e) if is_scan_ahead_rejection(e)),
+            "{results:?}"
+        );
+
+        let default = FileProcessor::new();
+        let results = default.format_files(&[path], &emitter, CommentPolicy::Reject);
+        assert!(results[0].1.is_ok(), "{results:?}");
+    }
+
+    #[test]
+    fn test_explicit_scan_ahead_limit_applies_to_format_in_place() {
+        let dir = TempDir::new().unwrap();
+        let path = flow_file(&dir);
+        let emitter = EmitterConfig::new();
+
+        let strict = FileProcessor::with_config(limited(64));
+        let batch =
+            strict.format_in_place(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
+        assert_eq!(batch.failed, 1);
+        assert!(batch.errors.iter().all(|(_, e)| is_scan_ahead_rejection(e)));
+
+        let batch = FileProcessor::new().format_in_place(&[path], &emitter, CommentPolicy::Reject);
+        assert_eq!(batch.failed, 0);
+    }
+
+    #[test]
+    fn test_scaled_policy_after_parse_limits_wins_and_parse_files_keep_their_limit() {
+        use crate::scan_ahead::ScanAheadPolicy;
+        let config = limited(64).with_scan_ahead_policy(ScanAheadPolicy::Scaled);
+        assert_eq!(config.scan_ahead_policy(), ScanAheadPolicy::Scaled);
+
+        let dir = TempDir::new().unwrap();
+        let path = flow_file(&dir);
+        let strict = FileProcessor::with_config(limited(64));
+        assert!(!strict.parse_files(std::slice::from_ref(&path)).is_success());
+        assert!(FileProcessor::new().parse_files(&[path]).is_success());
     }
 }

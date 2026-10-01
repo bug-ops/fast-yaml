@@ -14,6 +14,8 @@ use fast_yaml_core::Value;
 /// - Require space after '#' character
 /// - Minimum spacing from content for inline comments
 /// - Optional shebang exemption
+/// - Extra leading `#` characters (`## note`, `#####`) are skipped before the space check, like
+///   yamllint
 ///
 /// Configuration options:
 /// - `require-starting-space`: bool (default: true)
@@ -94,8 +96,8 @@ impl super::LintRule for CommentsRule {
             }
 
             // Check for space after '#'
-            if require_starting_space && !comment.text.is_empty() && !comment.text.starts_with(' ')
-            {
+            let text = comment.text.trim_start_matches('#');
+            if require_starting_space && !text.is_empty() && !text.starts_with(' ') {
                 let severity = config.rules.comments.severity_or(self.default_severity());
 
                 diagnostics.push(
@@ -185,6 +187,25 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics, []);
+    }
+
+    #[test]
+    fn test_comments_repeated_hash_needs_no_extra_space() {
+        let config = LintConfig::default();
+        for yaml in [
+            "## note\na: 1",
+            "#####\na: 1",
+            "### note\na: 1",
+            "a: 1  ## x",
+        ] {
+            let value = Parser::parse_str(yaml).unwrap().unwrap();
+            let found = CommentsRule.check(&LintContext::new(yaml), &value, &config);
+            assert_eq!(found, [], "{yaml:?}");
+        }
+        let yaml = "##note\na: 1";
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let found = CommentsRule.check(&LintContext::new(yaml), &value, &config);
+        assert_eq!(found.len(), 1);
     }
 
     #[test]

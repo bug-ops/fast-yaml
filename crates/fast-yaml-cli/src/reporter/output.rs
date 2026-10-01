@@ -59,6 +59,13 @@ impl Reporter {
     ///
     /// Returns an error if writing to stderr fails.
     pub fn report(&self, event: ReportEvent<'_>) -> io::Result<()> {
+        match self.report_event(event) {
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(()),
+            other => other,
+        }
+    }
+
+    fn report_event(&self, event: ReportEvent<'_>) -> io::Result<()> {
         match event {
             ReportEvent::Error { path, message } => {
                 self.write_error(path, message)?;

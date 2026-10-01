@@ -40,11 +40,19 @@ pub struct LoadOptions {
     /// scalar, or a run of comments longer than this is rejected; parser memory is bounded by
     /// about 190 times this value.
     pub max_scan_ahead: Option<f64>,
+
+    /// Maximum number of documents in the stream (integer, 1..=10000000, default: 100000).
+    pub max_documents: Option<f64>,
 }
 
 impl LoadOptions {
     fn parse_limits(&self) -> napi::Result<fast_yaml_core::limits::ParseLimits> {
-        parse_limits(self.max_depth, self.max_alias_bytes, self.max_scan_ahead)
+        parse_limits(
+            self.max_depth,
+            self.max_alias_bytes,
+            self.max_scan_ahead,
+            self.max_documents,
+        )
     }
 }
 
@@ -72,7 +80,7 @@ fn throw_and_undefined<'env>(env: &'env Env, msg: &str) -> napi::Result<Unknown<
 /// # Arguments
 ///
 /// * `yaml_str` - A YAML document as a string
-/// * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes` and `maxScanAhead` raise or lower the resource limits
+/// * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes`, `maxScanAhead` and `maxDocuments` raise or lower the resource limits
 ///
 /// # Returns
 ///
@@ -139,7 +147,7 @@ pub fn safe_load(
 /// # Arguments
 ///
 /// * `yaml_str` - A YAML string potentially containing multiple documents
-/// * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes` and `maxScanAhead` raise or lower the resource limits
+/// * `options` - Optional parsing options; `maxDepth`, `maxAliasBytes`, `maxScanAhead` and `maxDocuments` raise or lower the resource limits
 ///
 /// # Returns
 ///
@@ -150,7 +158,7 @@ pub fn safe_load(
 /// Throws an error if:
 /// - The YAML is invalid
 /// - Input exceeds size limit (100MB)
-/// - `maxDepth`, `maxAliasBytes` or `maxScanAhead` is not an integer within its range
+/// - `maxDepth`, `maxAliasBytes`, `maxScanAhead` or `maxDocuments` is not an integer within its range
 ///
 /// # Security
 ///
@@ -327,6 +335,7 @@ mod tests {
         assert!(opts.max_depth.is_none());
         assert!(opts.max_alias_bytes.is_none());
         assert!(opts.max_scan_ahead.is_none());
+        assert!(opts.max_documents.is_none());
     }
 
     #[test]

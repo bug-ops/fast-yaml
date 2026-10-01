@@ -4,7 +4,7 @@
 //! between `fast_yaml_core::Value` and NAPI-RS JavaScript values.
 
 use fast_yaml_core::value::quote_key;
-use fast_yaml_core::{DumpBudget, Float, LimitKind, Mapping, MaxDepth, Set, Value};
+use fast_yaml_core::{BigInt, DumpBudget, Float, LimitKind, Mapping, MaxDepth, Set, Value};
 use napi::{Result as NapiResult, bindgen_prelude::*};
 use std::collections::HashSet;
 
@@ -26,6 +26,7 @@ fn set_own(env: Env, object: &mut Object, key: &str, value: Unknown) -> NapiResu
 /// - `Value::Null` → `null`
 /// - `Value::Bool` → `boolean`
 /// - `Value::Int` → `number`
+/// - `Value::BigInt` (beyond `i64`) → decimal `string`
 /// - `Value::Float` → `number`
 /// - `Value::String` → `string`
 /// - `Value::Sequence` → `Array`
@@ -262,6 +263,27 @@ enum KeyedKind {
     Map,
 }
 
+/// What the JS brand probe found: a built-in keyed collection or neither.
+enum Brand {
+    Keyed(KeyedKind),
+    None,
+}
+
+impl TryFrom<&str> for Brand {
+    type Error = napi::Error;
+
+    fn try_from(name: &str) -> NapiResult<Self> {
+        match name {
+            "Set" => Ok(Self::Keyed(KeyedKind::Set)),
+            "Map" => Ok(Self::Keyed(KeyedKind::Map)),
+            "None" => Ok(Self::None),
+            other => Err(napi::Error::from_reason(format!(
+                "internal error: unknown Set/Map brand {other:?}"
+            ))),
+        }
+    }
+}
+
 impl KeyedKind {
     const fn name(self) -> &'static str {
         match self {
@@ -284,14 +306,27 @@ impl KeyedKind {
 /// `size` and `entries` brand-check their receiver through the built-in `size` getter, so an
 /// object that only claims the tag throws a `TypeError`, a real `Set` or `Map` from any realm
 /// works, and the user's own `size`, `length` and `Symbol.iterator` are never consulted. `entries`
-/// takes at most `size` steps of the built-in iterator.
+/// takes at most `size` steps of the built-in iterator. `brand` reports which built-in, if any,
+/// an object is an instance of (`'Set'`, `'Map'` or `'None'`), whatever its `Symbol.toStringTag` says.
 const KEYED_INTRINSICS: &str = r"(() => {
   const apply = Reflect.apply;
   const sizeOf = (proto) => Object.getOwnPropertyDescriptor(proto, 'size').get;
   const sizes = [sizeOf(Set.prototype), sizeOf(Map.prototype)];
   const openers = [Set.prototype.values, Map.prototype.entries];
   const nexts = [new Set().values().next, new Map().entries().next];
+  const brandOf = (object) => {
+    const names = ['Set', 'Map'];
+    for (let i = 0; i < 2; i++) {
+      try {
+        apply(sizes[i], object, []);
+        return names[i];
+      } catch {}
+    }
+    return 'None';
+  };
   return {
+    objectPrototype: Object.prototype,
+    brand: brandOf,
     size: (isMap, object) => apply(sizes[+isMap], object, []),
     entries: (isMap, object, size) => {
       const iterator = apply(openers[+isMap], object, []);
@@ -310,11 +345,14 @@ const KEYED_INTRINSICS: &str = r"(() => {
 /// Handles needed to recognise and read a `Set` or `Map`, fetched on the first plain object.
 struct KeyedHandles<'a> {
     to_string_tag: Unknown<'a>,
+    object_prototype: Unknown<'a>,
+    brand: Function<'a, FnArgs<(Object<'a>,)>, String>,
     size: Function<'a, FnArgs<(bool, Object<'a>)>, f64>,
     entries: Function<'a, FnArgs<(bool, Object<'a>, f64)>, Object<'a>>,
 }
 
-/// Recognises `Set` and `Map` objects by `Symbol.toStringTag`, which also holds across realms.
+/// Recognises `Set` and `Map` objects across realms: by built-in brand when the prototype is not
+/// the plain `Object.prototype` (a subclass may override `Symbol.toStringTag`), else by the tag.
 struct KeyedCollections<'a> {
     env: Env,
     handles: Option<KeyedHandles<'a>>,
@@ -332,6 +370,8 @@ impl<'a> KeyedCollections<'a> {
             let intrinsics: Object = self.env.run_script(KEYED_INTRINSICS)?;
             self.handles = Some(KeyedHandles {
                 to_string_tag: symbol.get_named_property("toStringTag")?,
+                object_prototype: intrinsics.get_named_property("objectPrototype")?,
+                brand: intrinsics.get_named_property("brand")?,
                 size: intrinsics.get_named_property("size")?,
                 entries: intrinsics.get_named_property("entries")?,
             });
@@ -342,6 +382,21 @@ impl<'a> KeyedCollections<'a> {
     }
 
     fn kind(&mut self, object: Object<'a>) -> NapiResult<Option<KeyedKind>> {
+        let env = self.env;
+        let handles = self.handles()?;
+        let prototype = object.get_prototype()?;
+        let plain = prototype.get_type()? == ValueType::Null
+            || env.strict_equals(prototype, handles.object_prototype)?;
+        if !plain {
+            let brand = Brand::try_from(handles.brand.call(FnArgs::from((object,)))?.as_str())?;
+            if let Brand::Keyed(kind) = brand {
+                return Ok(Some(kind));
+            }
+        }
+        self.kind_by_tag(object)
+    }
+
+    fn kind_by_tag(&mut self, object: Object<'a>) -> NapiResult<Option<KeyedKind>> {
         let tag: Unknown = object.get_property(self.handles()?.to_string_tag)?;
         if tag.get_type()? != ValueType::String {
             return Ok(None);
@@ -433,6 +488,12 @@ fn classify<'a>(
             Ok(Classified::Scalar(number_to_scalar(num)))
         }
 
+        ValueType::BigInt => {
+            let digits = js_value.coerce_to_string()?.into_utf8()?.into_owned()?;
+            budget.charge(digits.len()).map_err(limit_error)?;
+            Ok(Classified::Scalar(bigint_to_scalar(&digits)?))
+        }
+
         ValueType::String => {
             let s: String = FromNapiValue::from_unknown(js_value)?;
             budget.charge(s.len()).map_err(limit_error)?;
@@ -515,16 +576,65 @@ fn number_to_scalar(num: f64) -> Value {
     // Safe integer range for f64 is -(2^53) to 2^53
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
     #[allow(clippy::cast_possible_truncation)]
-    if num.fract() == 0.0 && num.is_finite() && num.abs() <= MAX_SAFE_INTEGER {
+    if num.fract() == 0.0
+        && num.is_finite()
+        && num.abs() <= MAX_SAFE_INTEGER
+        && !(num == 0.0 && num.is_sign_negative())
+    {
         return Value::Int(num as i64);
     }
-    // Float value (including inf, -inf, nan)
+    // Float value (including inf, -inf, nan, and -0, which must keep its sign)
     Value::Float(Float::new(num))
+}
+
+/// Decimal text of a JavaScript `BigInt`: an `Int` when it fits `i64`, a `BigInt` beyond.
+fn bigint_to_scalar(digits: &str) -> NapiResult<Value> {
+    digits
+        .parse()
+        .map(Value::Int)
+        .or_else(|_| BigInt::parse(digits).map(Value::BigInt).ok_or(()))
+        .map_err(|()| napi::Error::from_reason("cannot serialize BigInt to YAML"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn brand_names_convert_and_unknown_is_an_error() {
+        assert!(matches!(
+            Brand::try_from("Set"),
+            Ok(Brand::Keyed(KeyedKind::Set))
+        ));
+        assert!(matches!(
+            Brand::try_from("Map"),
+            Ok(Brand::Keyed(KeyedKind::Map))
+        ));
+        assert!(matches!(Brand::try_from("None"), Ok(Brand::None)));
+        assert!(Brand::try_from("WeakSet").is_err());
+    }
+
+    #[test]
+    fn negative_zero_stays_a_float() {
+        assert!(matches!(number_to_scalar(-0.0), Value::Float(f) if f.get().is_sign_negative()));
+        assert!(matches!(number_to_scalar(0.0), Value::Int(0)));
+    }
+
+    #[test]
+    fn bigint_digits_split_at_i64() {
+        assert!(matches!(
+            bigint_to_scalar("-9223372036854775808"),
+            Ok(Value::Int(i64::MIN))
+        ));
+        assert!(matches!(
+            bigint_to_scalar("9223372036854775808"),
+            Ok(Value::BigInt(_))
+        ));
+        assert!(matches!(
+            bigint_to_scalar("-9223372036854775809"),
+            Ok(Value::BigInt(_))
+        ));
+    }
 
     #[test]
     fn test_yaml_key_to_string() {

@@ -52,13 +52,13 @@ describe('parseParallel limits', () => {
   const docs = (n: number) => '---\na: 1\n'.repeat(n);
 
   it('enforces maxDocuments', () => {
-    const tooMany = /at least \d+ documents, more than the maximum of 2/;
+    const tooMany = /document count exceeds 2/;
     expect(() => parseParallel(docs(3), { maxDocuments: 2 })).toThrow(tooMany);
     expect(parseParallel(docs(2), { maxDocuments: 2 })).toHaveLength(2);
   });
 
   it('enforces the default document limit without a config', () => {
-    expect(() => parseParallel(docs(100_001))).toThrow(/maximum of 100000/);
+    expect(() => parseParallel(docs(100_001))).toThrow(/document count exceeds 100000/);
   });
 
   it('enforces maxInputBytes', () => {
@@ -70,7 +70,9 @@ describe('parseParallel limits', () => {
   });
 
   it('enforces maxDocuments in async mode', async () => {
-    await expect(parseParallelAsync(docs(3), { maxDocuments: 2 })).rejects.toThrow(/maximum of 2/);
+    await expect(parseParallelAsync(docs(3), { maxDocuments: 2 })).rejects.toThrow(
+      /document count exceeds 2/
+    );
   });
 });
 

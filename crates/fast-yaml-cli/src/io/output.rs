@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use fast_yaml_parallel::AtomicFile;
+
 /// Destination for output data
 #[derive(Debug)]
 pub enum OutputDestination {
@@ -98,10 +100,149 @@ impl OutputWriter {
         Ok(())
     }
 
+    /// Write a finished report; a closed stdout or stderr ends the output silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on any I/O failure other than a closed pipe.
+    pub fn write_report(&self, content: &str) -> Result<()> {
+        let mut sink = self.sink()?;
+        sink.write_all(content.as_bytes())
+            .and_then(|()| sink.flush())
+            .context("Failed to write lint output")?;
+        sink.finish()
+    }
+
+    /// Opens a streaming writer for output produced piece by piece.
+    ///
+    /// Stdout and stderr are written as the pieces arrive and stop silently once the reader
+    /// closes the pipe. A file destination streams into a temporary file next to it, which
+    /// [`OutputSink::finish`] moves into place atomically, so memory use does not grow with
+    /// the output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the temporary file for a file destination cannot be created.
+    pub fn sink(&self) -> Result<OutputSink> {
+        let kind = match &self.destination {
+            OutputDestination::File(path) => SinkKind::File(
+                AtomicFile::create(path)
+                    .with_context(|| format!("Failed to write file: {}", path.display()))?,
+            ),
+            OutputDestination::Stdout => SinkKind::Stdout,
+            OutputDestination::Stderr => SinkKind::Stderr,
+        };
+        Ok(OutputSink {
+            kind,
+            reader_gone: false,
+        })
+    }
+
+    /// Refuses to overwrite `input` with the output.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the destination file is the same file as `input`.
+    pub fn ensure_not_input(&self, input: &Path) -> Result<()> {
+        if let OutputDestination::File(destination) = &self.destination
+            && same_file(destination, input)
+        {
+            anyhow::bail!(
+                "--output '{}' is also an input file; refusing to overwrite it",
+                destination.display()
+            );
+        }
+        Ok(())
+    }
+
     /// Write to file via the shared secure atomic writer
     fn write_file(path: &Path, content: &str) -> Result<()> {
         fast_yaml_parallel::write_atomic(path, content.as_bytes())
             .with_context(|| format!("Failed to write file: {}", path.display()))
+    }
+}
+
+/// Whether both paths name the same file: the same canonical path, or on Unix the same inode
+/// (a hard link).
+fn same_file(a: &Path, b: &Path) -> bool {
+    if let (Ok(a), Ok(b)) = (a.canonicalize(), b.canonicalize())
+        && a == b
+    {
+        return true;
+    }
+    #[cfg(unix)]
+    if let (Ok(a), Ok(b)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+        use std::os::unix::fs::MetadataExt;
+        return (a.dev(), a.ino()) == (b.dev(), b.ino());
+    }
+    false
+}
+
+/// A stderr writer that, like [`OutputWriter::sink`], goes quiet once the pipe is closed.
+pub const fn stderr_sink() -> OutputSink {
+    OutputSink {
+        kind: SinkKind::Stderr,
+        reader_gone: false,
+    }
+}
+
+#[derive(Debug)]
+enum SinkKind {
+    Stdout,
+    Stderr,
+    File(AtomicFile),
+}
+
+/// Streaming writer over an [`OutputWriter`] destination that survives a closed pipe.
+///
+/// Once the reader of stdout or stderr is gone (`EPIPE`), every later write succeeds without
+/// writing, so the producer finishes its work and the caller keeps its own exit status.
+#[derive(Debug)]
+pub struct OutputSink {
+    kind: SinkKind,
+    reader_gone: bool,
+}
+
+impl OutputSink {
+    /// Moves the output of a file destination into place; stream destinations have nothing left.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written.
+    pub fn finish(self) -> Result<()> {
+        match self.kind {
+            SinkKind::File(file) => file.commit().context("Failed to write the output file"),
+            SinkKind::Stdout | SinkKind::Stderr => Ok(()),
+        }
+    }
+
+    fn stream(&mut self, op: impl FnOnce(&mut dyn Write) -> io::Result<()>) -> io::Result<()> {
+        if self.reader_gone {
+            return Ok(());
+        }
+        let result = match &mut self.kind {
+            SinkKind::Stdout => op(&mut io::stdout().lock()),
+            SinkKind::Stderr => op(&mut io::stderr().lock()),
+            SinkKind::File(file) => return op(file),
+        };
+        match result {
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                self.reader_gone = true;
+                Ok(())
+            }
+            other => other,
+        }
+    }
+}
+
+impl Write for OutputSink {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.stream(|w| w.write_all(buf))?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream(|w| w.flush())
     }
 }
 
@@ -199,5 +340,65 @@ mod tests {
 
         let content = fs::read_to_string(path).unwrap();
         assert_eq!(content, "new content");
+    }
+
+    #[test]
+    fn test_file_sink_streams_to_a_temp_file_and_commits_atomically() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.txt");
+        fs::write(&path, "old").unwrap();
+        let writer = OutputWriter::from_args(Some(path.clone()), false, None).unwrap();
+
+        let mut sink = writer.sink().unwrap();
+        sink.write_all(b"new report").unwrap();
+        sink.flush().unwrap();
+        let streamed: u64 = fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| fs::metadata(entry.unwrap().path()).unwrap().len())
+            .max()
+            .unwrap();
+        assert_eq!(streamed, "new report".len() as u64);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+
+        sink.finish().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new report");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_dropped_file_sink_leaves_the_target_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("report.txt");
+        fs::write(&path, "old").unwrap();
+        let writer = OutputWriter::from_args(Some(path.clone()), false, None).unwrap();
+        let mut sink = writer.sink().unwrap();
+        sink.write_all(b"partial").unwrap();
+        drop(sink);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn test_ensure_not_input_refuses_a_hard_link_to_the_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        let alias = dir.path().join("alias.yaml");
+        fs::write(&path, "a: 1").unwrap();
+        fs::hard_link(&path, &alias).unwrap();
+        let writer = OutputWriter::from_args(Some(alias), false, None).unwrap();
+        assert!(writer.ensure_not_input(&path).is_err());
+    }
+
+    #[test]
+    fn test_ensure_not_input_refuses_the_same_file_through_another_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "a: 1").unwrap();
+        let alias = dir.path().join(".").join("a.yaml");
+        let writer = OutputWriter::from_args(Some(alias), false, None).unwrap();
+        let err = writer.ensure_not_input(&path).unwrap_err();
+        assert!(err.to_string().contains("also an input file"), "{err}");
+        assert!(writer.ensure_not_input(dir.path()).is_ok());
     }
 }

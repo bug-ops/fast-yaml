@@ -1,10 +1,11 @@
 //! Error types for parallel processing operations.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use fast_yaml_core::DecodeError;
 use fast_yaml_core::ParseError as CoreParseError;
-use fast_yaml_core::limits::{InputTooLarge, MaxDocuments};
+use fast_yaml_core::limits::InputTooLarge;
 use thiserror::Error;
 
 /// Unified error type for all parallel operations.
@@ -91,19 +92,9 @@ pub enum Error {
     #[error(transparent)]
     InputTooLarge(#[from] InputTooLarge),
 
-    /// Input holds more documents than the configured maximum (`DoS` protection).
-    #[error("input has at least {count} documents, more than the maximum of {limit}")]
-    TooManyDocuments {
-        /// Documents counted when the limit was hit; exact after parsing, a lower bound before.
-        count: usize,
-
-        /// The limit that was exceeded.
-        limit: MaxDocuments,
-    },
-
     /// Building the Rayon thread pool failed.
     #[error("failed to build thread pool")]
-    ThreadPool(#[source] rayon::ThreadPoolBuildError),
+    ThreadPool(#[source] Arc<rayon::ThreadPoolBuildError>),
 }
 
 /// Result type for parallel operations.

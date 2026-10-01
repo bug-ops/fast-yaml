@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::RuleOptions;
+use crate::config::{PatternList, RuleOptions};
 use crate::context::KeyIndex;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
@@ -12,8 +12,14 @@ use fast_yaml_core::Value;
 /// Checks if keys in mappings are alphabetically ordered.
 /// This helps maintain consistency and makes it easier to find keys in large YAML files.
 ///
+/// Like yamllint, a key is reported when it sorts before any earlier key of the same mapping that
+/// was itself accepted. The keys of a flow mapping are checked only when it is the whole root of
+/// a document (`--- {b: 1, a: 2}`); nested flow mappings are not located in the source.
+///
 /// Configuration options:
 /// - `case-sensitive`: boolean (default: true)
+/// - `ignored-keys`: list of regular expressions (default: empty); a key matching any of them
+///   (`re.search` semantics) is neither checked nor compared against
 ///
 /// # Examples
 ///
@@ -38,19 +44,20 @@ pub struct KeyOrderingRule;
 pub struct KeyOrderingOptions {
     /// Compare keys case-sensitively.
     pub case_sensitive: bool,
+    /// Regular expressions for keys that are skipped by the ordering check.
+    pub ignored_keys: PatternList,
 }
 
 impl Default for KeyOrderingOptions {
     fn default() -> Self {
         Self {
             case_sensitive: true,
+            ignored_keys: PatternList::default(),
         }
     }
 }
 
-impl RuleOptions for KeyOrderingOptions {
-    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["ignored-keys"];
-}
+impl RuleOptions for KeyOrderingOptions {}
 
 impl super::LintRule for KeyOrderingRule {
     fn code(&self) -> &str {
@@ -74,17 +81,27 @@ impl super::LintRule for KeyOrderingRule {
     }
 
     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+        let options = &config.rules.key_ordering.options;
         let mut walk = OrderingWalk {
             context,
             index: context.key_index(),
-            case_sensitive: config.rules.key_ordering.options.case_sensitive,
+            case_sensitive: options.case_sensitive,
+            ignored: &options.ignored_keys,
             config,
             diagnostics: Vec::new(),
             cursor: context.doc_start_line(),
         };
-        walk.visit(value);
+        walk.visit_root(value);
         walk.diagnostics
     }
+}
+
+/// A mapping key found in the source.
+struct LocatedKey {
+    key: String,
+    line: usize,
+    /// Byte column and length (quotes included) when the key was not found by its line.
+    at: Option<(usize, usize)>,
 }
 
 /// Recursive walk that locates keys in the source and emits ordering diagnostics.
@@ -97,12 +114,54 @@ struct OrderingWalk<'a, 'src> {
     context: &'a LintContext<'src>,
     index: &'a KeyIndex<'src>,
     case_sensitive: bool,
+    ignored: &'a PatternList,
     config: &'a LintConfig,
     diagnostics: Vec<Diagnostic>,
     cursor: usize,
 }
 
 impl OrderingWalk<'_, '_> {
+    /// Walks a document root, checking a root flow mapping from the text of its first line.
+    fn visit_root(&mut self, value: &Value) {
+        if let Value::Mapping(_) = value
+            && let Some(keys) = self.root_flow_keys()
+        {
+            self.emit_ordering_diagnostics(&keys);
+            return;
+        }
+        self.visit(value);
+    }
+
+    /// Keys of a flow mapping that starts the document, e.g. `--- {b: 1, a: 2}`, on its first line.
+    fn root_flow_keys(&self) -> Option<Vec<LocatedKey>> {
+        let source_context = self.context.source_context();
+        // The cursor of a document with a `---` marker is the line after the marker
+        let marker_line = self.cursor.checked_sub(1).filter(|&number| {
+            source_context
+                .get_line(number)
+                .is_some_and(|line| strip_document_marker(line).len() != line.len())
+        });
+        let first = marker_line.unwrap_or(self.cursor);
+        let (line_num, line) = (first..=source_context.line_count()).find_map(|number| {
+            let line = source_context.get_line(number)?;
+            let content = strip_document_marker(line);
+            (!content.trim().is_empty() && !content.trim_start().starts_with('#'))
+                .then_some((number, line))
+        })?;
+        let offset = line.len() - strip_document_marker(line).trim_start().len();
+        let keys = flow_keys(line.get(offset..)?)?;
+        Some(
+            keys.into_iter()
+                .filter(|(text, ..)| !self.ignored.is_match(text))
+                .map(|(key, column, len)| LocatedKey {
+                    key,
+                    line: line_num,
+                    at: Some((offset + column, len)),
+                })
+                .collect(),
+        )
+    }
+
     /// Walks `value` and emits ordering diagnostics.
     ///
     /// For mappings, each key is located and its value is recursed into immediately
@@ -112,14 +171,20 @@ impl OrderingWalk<'_, '_> {
     fn visit(&mut self, value: &Value) {
         match value {
             Value::Mapping(hash) => {
-                let mut key_positions: Vec<(String, usize)> = Vec::new();
+                let mut located: Vec<LocatedKey> = Vec::new();
 
                 for (key_value, nested_value) in hash {
                     let Value::String(key) = key_value else {
                         continue;
                     };
-                    if let Some(line_num) = self.index.locate(key, &mut self.cursor) {
-                        key_positions.push((key.clone(), line_num));
+                    if let Some(line) = self.index.locate(key, &mut self.cursor)
+                        && !self.ignored.is_match(key)
+                    {
+                        located.push(LocatedKey {
+                            key: key.clone(),
+                            line,
+                            at: None,
+                        });
                     }
                     // Recurse into the value immediately after finding its key so
                     // the cursor is positioned correctly for nested keys before the
@@ -127,7 +192,7 @@ impl OrderingWalk<'_, '_> {
                     self.visit(nested_value);
                 }
 
-                self.emit_ordering_diagnostics(&key_positions);
+                self.emit_ordering_diagnostics(&located);
             }
             Value::Sequence(arr) => {
                 for item in arr {
@@ -142,64 +207,140 @@ impl OrderingWalk<'_, '_> {
         }
     }
 
-    /// Compares consecutive key pairs and pushes a diagnostic for each violation.
-    fn emit_ordering_diagnostics(&mut self, key_positions: &[(String, usize)]) {
-        let context = self.context;
-        let case_sensitive = self.case_sensitive;
-        let config = self.config;
-        let mut prev_key: Option<&str> = None;
-        let mut prev_line: Option<usize> = None;
-
-        for (key, line_num) in key_positions {
-            if let Some(prev) = prev_key {
-                let out_of_order = if case_sensitive {
-                    key.as_str() < prev
-                } else {
-                    key.to_lowercase() < prev.to_lowercase()
-                };
-
-                if out_of_order {
-                    let severity = config.rules.key_ordering.severity_or(Severity::Info);
-                    let source_context = context.source_context();
-                    let line = source_context.get_line(*line_num).unwrap_or_default();
-                    let key_start = line.find(key.as_str()).unwrap_or_default();
-                    let (key_start, key_len) =
-                        match line.get(..key_start).and_then(|p| p.chars().next_back()) {
-                            Some(quote @ ('"' | '\''))
-                                if line
-                                    .get(key_start + key.len()..)
-                                    .is_some_and(|rest| rest.starts_with(quote)) =>
-                            {
-                                (key_start - 1, key.len() + 2)
-                            }
-                            _ => (key_start, key.len()),
-                        };
-                    let span = source_context.span_at(
-                        source_context.line_start(*line_num).add_bytes(key_start),
-                        key_len,
-                    );
-
-                    self.diagnostics.push(
-                        DiagnosticBuilder::new(
-                            DiagnosticCode::KEY_ORDERING,
-                            severity,
-                            format!(
-                                "key '{}' should be ordered before '{}' (line {})",
-                                key,
-                                prev,
-                                prev_line.unwrap_or(0)
-                            ),
-                            span,
-                        )
-                        .build_with_context(context.source_context()),
-                    );
-                }
-            }
-
-            prev_key = Some(key);
-            prev_line = Some(*line_num);
+    fn sorts_before(&self, key: &str, earlier: &str) -> bool {
+        if self.case_sensitive {
+            key < earlier
+        } else {
+            key.to_lowercase() < earlier.to_lowercase()
         }
     }
+
+    /// Pushes a diagnostic for each key that sorts before an earlier accepted key.
+    fn emit_ordering_diagnostics(&mut self, keys: &[LocatedKey]) {
+        let context = self.context;
+        let config = self.config;
+        let mut accepted: Vec<&LocatedKey> = Vec::new();
+
+        for located in keys {
+            let LocatedKey { key, line, at } = located;
+            let Some(prev) = accepted
+                .iter()
+                .find(|earlier| self.sorts_before(key, &earlier.key))
+            else {
+                accepted.push(located);
+                continue;
+            };
+
+            let severity = config.rules.key_ordering.severity_or(Severity::Info);
+            let source_context = context.source_context();
+            let (key_start, key_len) = at.unwrap_or_else(|| {
+                let text = source_context.get_line(*line).unwrap_or_default();
+                let key_start = text.find(key.as_str()).unwrap_or_default();
+                match text.get(..key_start).and_then(|p| p.chars().next_back()) {
+                    Some(quote @ ('"' | '\''))
+                        if text
+                            .get(key_start + key.len()..)
+                            .is_some_and(|rest| rest.starts_with(quote)) =>
+                    {
+                        (key_start - 1, key.len() + 2)
+                    }
+                    _ => (key_start, key.len()),
+                }
+            });
+            let span = source_context.span_at(
+                source_context.line_start(*line).add_bytes(key_start),
+                key_len,
+            );
+
+            self.diagnostics.push(
+                DiagnosticBuilder::new(
+                    DiagnosticCode::KEY_ORDERING,
+                    severity,
+                    format!(
+                        "key '{}' should be ordered before '{}' (line {})",
+                        key, prev.key, prev.line
+                    ),
+                    span,
+                )
+                .build_with_context(context.source_context()),
+            );
+        }
+    }
+}
+
+/// Removes a leading `---` marker (followed by a blank or the end of the line) from `line`.
+fn strip_document_marker(line: &str) -> &str {
+    line.strip_prefix("---")
+        .filter(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+        .unwrap_or(line)
+}
+
+/// Keys of the flow mapping that `text` starts with, as (unquoted key, byte column, byte length
+/// including quotes). Returns `None` when `text` does not start with `{`.
+fn flow_keys(text: &str) -> Option<Vec<(String, usize, usize)>> {
+    let body = text.strip_prefix('{')?;
+    let mut keys = Vec::new();
+    let mut depth = 1usize;
+    let mut expect_key = true;
+    let mut chars = body.char_indices().peekable();
+    while let Some((idx, c)) = chars.next() {
+        let column = idx + 1;
+        match c {
+            '#' if body
+                .get(..idx)
+                .is_some_and(|before| before.is_empty() || before.ends_with([' ', '\t'])) =>
+            {
+                break;
+            }
+            '{' | '[' => {
+                depth += 1;
+                expect_key = false;
+            }
+            '}' | ']' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            ',' if depth == 1 => expect_key = true,
+            ' ' | '\t' => {}
+            '"' | '\'' => {
+                let mut end = None;
+                while let Some((at, next)) = chars.next() {
+                    if c == '"' && next == '\\' {
+                        chars.next();
+                    } else if next == c {
+                        if c == '\'' && chars.peek().is_some_and(|&(_, after)| after == '\'') {
+                            chars.next();
+                        } else {
+                            end = Some(at);
+                            break;
+                        }
+                    }
+                }
+                let end = end?;
+                if depth == 1 && expect_key {
+                    let inner = body.get(idx + 1..end)?;
+                    keys.push((inner.to_owned(), column, end + 1 - idx));
+                }
+                expect_key = false;
+            }
+            _ if depth == 1 && expect_key => {
+                let rest = body.get(idx..)?;
+                let len = rest.find([',', '}', ':']).unwrap_or(rest.len());
+                let key = rest.get(..len)?.trim_end();
+                if !key.is_empty() {
+                    keys.push((key.to_owned(), column, key.len()));
+                }
+                while chars.peek().is_some_and(|&(at, _)| at < idx + len) {
+                    chars.next();
+                }
+                expect_key = false;
+            }
+            _ => expect_key = false,
+        }
+    }
+    Some(keys)
 }
 
 #[cfg(test)]
@@ -458,8 +599,10 @@ mod tests {
     fn test_key_ordering_sequence_item_keys() {
         let diagnostics =
             check_yaml("items:\n  - b: 1\n    a: 2\n  - b: 3\n    a: 4\nz: 1\ny: 2\n");
-        assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].message.contains("key 'y'"));
+        assert_eq!(diagnostics.len(), 3);
+        assert!(diagnostics[0].message.contains("key 'a'"));
+        assert!(diagnostics[1].message.contains("key 'a'"));
+        assert!(diagnostics[2].message.contains("key 'y'"));
     }
 
     #[test]
@@ -515,6 +658,86 @@ mod tests {
             .map(|d| d.span.start.line)
             .collect();
         assert_eq!(lines, [2, 5]);
+    }
+
+    fn check_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let config = config_with_rule(RuleName::KeyOrdering, options);
+        KeyOrderingRule.check(&LintContext::new(yaml), &value, &config)
+    }
+
+    fn positions(found: &[Diagnostic]) -> Vec<(usize, usize)> {
+        found
+            .iter()
+            .map(|d| (d.span.start.line, d.span.start.column))
+            .collect()
+    }
+
+    #[test]
+    fn test_ignored_keys_are_skipped_and_not_compared() {
+        let yaml = "a:\nb:\nname:\nfirst-name:\nc:\nd:\n";
+        assert_eq!(check_yaml(yaml).len(), 3);
+        assert_eq!(check_with(yaml, "{ignored-keys: ['name']}"), []);
+        assert_eq!(
+            check_with(yaml, "{ignored-keys: ['^first-', '^name$']}"),
+            []
+        );
+        assert_eq!(check_with("b: 1\na: 2\n", "{ignored-keys: ['^a$']}"), []);
+    }
+
+    #[test]
+    fn test_ignored_keys_rejects_a_bad_pattern() {
+        let mut rules = crate::config::RulesConfig::default();
+        let result = rules.apply_rule(
+            RuleName::KeyOrdering,
+            serde_norway::Deserializer::from_str("{ignored-keys: ['(']}"),
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_key_is_compared_with_every_earlier_accepted_key() {
+        let found = check_yaml("c: 1\nd: 2\nb: 3\na: 4\n");
+        assert_eq!(positions(&found), [(3, 1), (4, 1)]);
+        let found = check_yaml("c: 1\na: 2\nb: 3\n");
+        assert_eq!(positions(&found), [(2, 1), (3, 1)]);
+    }
+
+    #[test]
+    fn test_flow_mapping_on_the_document_marker_line() {
+        assert_eq!(positions(&check_yaml("--- {b: 1, a: 2}\n")), [(1, 12)]);
+        assert_eq!(positions(&check_yaml("{b: 1, a: 2}\n")), [(1, 8)]);
+        assert_eq!(positions(&check_yaml("---\n{b: 1, a: 2}\n")), [(2, 8)]);
+        assert_eq!(
+            positions(&check_yaml("--- {\"b\": 1, 'a': 2}\n")),
+            [(1, 14)]
+        );
+        assert_eq!(check_yaml("--- {a: 1, b: 2}\n"), []);
+        assert_eq!(
+            positions(&check_yaml("--- {b: {z: 1, y: 2}, a: 2}\n")),
+            [(1, 23)]
+        );
+    }
+
+    #[test]
+    fn test_flow_mapping_documents_are_reported_once_each() {
+        let yaml = "--- {b: 1, a: 2}\n--- {d: 1, c: 2}\n";
+        let values = fast_yaml_core::Parser::parse_all(yaml).unwrap();
+        let mut context = LintContext::new(yaml);
+        let mut found = Vec::new();
+        for (value, start) in values.iter().zip([1, 3]) {
+            context.set_doc_start_line(start);
+            found.extend(KeyOrderingRule.check(&context, value, &LintConfig::default()));
+        }
+        assert_eq!(positions(&found), [(1, 12), (2, 12)]);
+    }
+
+    #[test]
+    fn test_flow_root_honors_ignored_keys() {
+        assert_eq!(
+            check_with("--- {b: 1, a: 2}\n", "{ignored-keys: ['^a$']}"),
+            []
+        );
     }
 
     #[test]

@@ -122,9 +122,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/CLI/Python/Node.js**: a `!!set` member with a non-null value is an error with its position; Python `safe_load` and `parse_parallel` now raise where PyYAML drops it (#555) (#541) (#564)
 - **Parallel**: `Config` gains `with_key_domain`/`key_domain`; Python `parse_parallel` uses the Python domain and Node.js `parseParallel` the string-key domain (#548) (#564)
 - **CLI/Node.js/Python**: key collision errors carry the line and column of the later key (the `<<` key for merged keys) and have new text (#548) (#564)
+- **Core/CLI/Parallel/Python/Node.js**: loaders reject streams over 100000 documents via `ParseLimits::max_documents` and `LimitKind::Documents`; `Config::max_documents` and `Error::TooManyDocuments` are removed and `--max-documents` is added (#574) (#595)
+- **Parallel/Python/Node.js**: files are read into memory, not memory-mapped; `mmap_threshold`, `SmartReader` and `FileContent` are removed and the crate forbids `unsafe` (#531) (#595)
+- **Core/CLI/Node.js**: float mapping keys are spelled like ECMAScript `Number` toString (`1e+21`, `Infinity`, `0` for `-0.0`) (#567) (#595)
+- **Core/Python/Node.js**: dump writes flow keys over 1024 chars as `? key` and quotes plain scalars containing `?` in flow context (#557) (#595)
+- **Linter**: `key-ordering`, `comments-indentation`, `document-start`/`document-end` and `truthy` follow yamllint in more cases (#572) (#575) (#595)
+- **Linter**: `ConfigFileError` gains `Extended`, `ExtendsCycle`, `ExtendsTooDeep`, `NotRegularFile`, `TooLarge` and `TopLevelKey::IgnoreFromFile` (#571) (#595)
+- **Linter**: `FlowIndex` is built from the loader pass and `SourceScan::of_source` takes `ParseLimits` (#573) (#578) (#595)
+- **CLI**: `fy lint -o` refuses to overwrite an input and writes atomically, and a closed stdout or stderr keeps the diagnostic exit code (#569) (#575) (#595)
+- **CLI**: `fy lint` visits `.yamllint` by default, `fy format` does not (#571) (#595)
 
 ### Added
 
+- **Linter**: config `extends` and `ignore-from-file`, `key-ordering` `ignored-keys` and `invalid-anchor` duplicate/unused/undeclared options (#571) (#572) (#595)
+- **Parallel**: `shared_pool`, `read_file`, `AtomicFile` and `ScanAheadPolicy` (#532) (#531) (#366) (#577) (#595)
 - **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#576)
 - **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#576)
 - **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#576)
@@ -157,6 +168,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Docs**: removed `docs/CI-CD-QUICKSTART.md` and the unused `Makefile.toml` (cargo-make); maintainer CI notes moved to `CONTRIBUTING.md` (#596)
+- **CLI/Parallel**: batch runs scale the default scan-ahead limit per worker and retry a rejected file at the full limit (#577) (#595)
+- **Linter**: rules share the loader pass, so `fy lint` of a long flow line uses about 1.1-1.25x the memory of `fy parse` (was 3.5x) (#579) (#578) (#573) (#595)
+- **Linter**: errors about an `extends` target name the file and do not quote its content (#571) (#595)
 - **Linter**: the flow rules share one `FlowIndex` per lint run instead of building a tokenizer index each (#576)
 - **Linter/CLI**: the `syntax` diagnostic of the CI report formats uses BOM-free line, column and offset like every other span, and `fy lint` batch lists report formats through the same ordered pipeline (#576)
 - **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#576)
@@ -194,6 +208,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **Linter**: config files, `extends` and `ignore-from-file` are read as bounded regular files, so a FIFO or `/dev/zero` cannot hang or exhaust memory (#571) (#595)
+- **Parallel**: `write_atomic` fsyncs, keeps the owner, and writes a hard-linked file in place only for its owner (#366) (#595)
 - **Core/Node.js/CLI**: nested anchors are bounded by the alias budget and 24 times the source size (`LimitKind::AnchorCopies`) (#412) (#561)
 - Python `LintConfig` rules input is converted with bounded depth and node budget, so deep, cyclic or alias-bomb input raises `ValueError` instead of crashing the process (#426)
 - Write files in `fy format` via a secure atomic writer (no predictable `.tmp`, mode and symlinks preserved) (#364)
@@ -203,6 +219,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core**: `fy format` keeps anchor names after a non-ASCII directive (#580) (#595)
+- **CLI/Parallel**: `-j N` limits concurrency to N, batch runs share one pool and `format --dry-run` reports its duration (#581) (#532) (#595)
+- **CLI**: `fy lint` honors `-o`, reports a missing path in report formats and stays silent on a closed pipe (#569) (#575) (#595)
+- **CLI**: `fy convert` keeps mapping key order (#557) (#595)
+- **Python**: key collision and merge errors name the document (#568) (#595)
+- **Node.js**: `safeDump` handles `Set`/`Map` subclasses (#566), `-0` and `BigInt` (#557) (#595)
+- **Linter**: `comments` ignores `##` and `quoted-strings` follows yamllint for anchored and verbatim-tagged scalars (#575) (#572) (#595)
+- **Parallel**: the document-limit error points at the rejected document (#574) (#595)
 - **Linter**: `comments-indentation` skips a comment that follows a block scalar, as yamllint does (#576)
 - **Linter**: `comments`, `comments-indentation` and inline directives no longer treat a `#` inside a multi-line quoted or block scalar as a comment, and document start lines are read from parser events instead of `---` lines (#576)
 - **Linter**: `duplicate-key` detects a repeated `<<` written through an alias and a repeated alias key to a collection; a duplicate `<<` reads `duplicate merge key '<<'` and plain and quoted `<<` no longer collide (#565) (#570)

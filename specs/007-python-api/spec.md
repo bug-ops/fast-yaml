@@ -19,7 +19,7 @@ related:
 > [!info] Metadata
 > **Package**: PyPI `fastyaml-rs`, import name `fast_yaml` (PyO3, abi3, Python >= 3.10, version 0.6.6)
 > **Sources of truth**: `python/src/*.rs`, `python/fast_yaml/*.py`, `python/fast_yaml/_core.pyi`, `python/tests/`
-> **Verified**: examples below were run against a wheel built from HEAD (`e5e6cfb`) in a scratch venv. The checked-in `python/fast_yaml/_core*.so` is stale (0.6.5); always rebuild before testing.
+> **Verified**: examples below were run against a wheel built from HEAD (`e5e6cfb`, plus the fixes #574, #557, #568, #531/#532) in a scratch venv. The checked-in `python/fast_yaml/_core*.so` is stale (0.6.5); always rebuild before testing.
 
 ## 1. Purpose and value
 
@@ -137,7 +137,10 @@ WHEN   parallel.parse_parallel(source)
 THEN   [{'a': 1}, {'b': 2}]   (document order preserved)
 
 GIVEN  ParallelConfig(max_documents=1) and 2 documents
-THEN   ValueError "input has at least 2 documents, more than the maximum of 1"
+THEN   ValueError "... document count exceeds 1 ..."
+
+GIVEN  safe_load_all("---\na\n" * 5, max_documents=3)
+THEN   ValueError "... document count exceeds 3 (document 4)"   (the default is 100 000 on every loader)
 ```
 
 ### US-006 (P2): Batch file processing
@@ -169,7 +172,7 @@ AS A typed-Python user I WANT the package to ship `py.typed` and stubs SO THAT m
 | FR-005 | WHEN two YAML keys are distinct in YAML but equal as Python `dict` keys (e.g. `1` and `1.0`), THE SYSTEM SHALL fail with `ValueError` ("float key 1.0 is distinct in YAML but equal as a Python dict key ...") rather than drop data silently; `1` and `'1'` stay distinct keys. | must |
 | FR-006 | WHEN YAML uses complex keys (sequence or mapping as key), THE SYSTEM SHALL raise `ValueError` ("not supported as Python dict keys"). | must |
 | FR-007 | WHEN unknown or `!!python/*` tags appear, THE SYSTEM SHALL NOT construct objects or execute code; the node loads as its underlying scalar/collection. | must |
-| FR-008 | WHEN a limit keyword (`max_depth` 1..=512 default 256; `max_alias_bytes` 1..=1 GiB default 64 MiB; `max_scan_ahead` 1..=1 GiB default 4 MiB) is out of range, THE SYSTEM SHALL raise `ValueError`; WHEN it is not an `int` (including `bool`), `TypeError`. | must |
+| FR-008 | WHEN a limit keyword (`max_depth` 1..=512 default 256; `max_alias_bytes` 1..=1 GiB default 64 MiB; `max_scan_ahead` 1..=1 GiB default 4 MiB; `max_documents` 1..=10 000 000 default 100 000) is out of range, THE SYSTEM SHALL raise `ValueError`; WHEN it is not an `int` (including `bool`), `TypeError`. `max_documents` is accepted by `safe_load`, `safe_load_all`, `load`, `load_all`, `LintConfig`, `ParallelConfig` and `BatchConfig` (a stream over the limit raises `ValueError` with the core text `document count exceeds N`, plus ` (document K)` for the rejected document); `dump*` functions take none. | must |
 | FR-009 | THE SYSTEM SHALL cap single-input size at 100 MiB for loaders. | must |
 | FR-010 | `safe_dump`/`safe_dump_all` SHALL accept `stream`, `allow_unicode`, `sort_keys`, `indent` (1..=9, default 2), `width` (20..=1000), `explicit_start`, `default_flow_style`; invalid values raise `ValueError`/`TypeError`. | must |
 | FR-011 | WHEN dumping strings that YAML 1.1 or 1.2 parsers could read as non-strings (`yes`, `null`, `1`, `a: b`, leading `- `/`#`), THE SYSTEM SHALL quote them; plain `y`, `n` and non-ASCII text (`é`) stay plain. | must |
@@ -178,11 +181,13 @@ AS A typed-Python user I WANT the package to ship `py.typed` and stubs SO THAT m
 | FR-014 | `lint.lint` SHALL return diagnostics sorted by location, using all default rules when `config` is `None`; `LintConfig` SHALL accept `max_line_length`, `indent_size`, `require_document_start/end`, `allow_duplicate_keys`, `disabled_rules`, `rules` (per-rule patch, same schema as the CLI config file), and the four limits (`max_depth`, `max_alias_bytes`, `max_input_bytes`, `max_scan_ahead`). | must |
 | FR-015 | `lint.Linter(config).lint(source)` SHALL give the same diagnostics as `lint.lint(source, config)`. | must |
 | FR-016 | `format_diagnostics` SHALL support `format="text"` and `"json"`; any other value raises `ValueError`. | must |
-| FR-017 | `parse_parallel` SHALL preserve document order, honor `ParallelConfig` (`thread_count` <= 128, `min_chunk_size`, `max_input_bytes`, `max_documents`, limits) and release the GIL while parsing. | must |
-| FR-018 | `process_files`, `format_files` and `format_files_in_place` SHALL release the GIL, never raise for a per-file failure, and report it per file; `format_files_in_place` writes atomically. | must |
-| FR-019 | `BatchConfig` SHALL validate `indent` (1..=9), `width` (20..=1000) and the limits at construction; its builder methods (`with_workers`, `with_indent`, `with_width`, `with_sort_keys`, `with_max_depth`, `with_max_alias_bytes`, `with_max_scan_ahead`) SHALL return a new/updated config. | should |
+| FR-017 | `parse_parallel` SHALL preserve document order, honor `ParallelConfig` (`thread_count` <= 128 on the shared per-process pool, `min_chunk_size`, `max_input_bytes`, `max_documents`, limits) and release the GIL while parsing. | must |
+| FR-018 | `process_files`, `format_files` and `format_files_in_place` SHALL release the GIL, never raise for a per-file failure (including `document count exceeds N`), and report it per file; `format_files_in_place` writes atomically. Files are read into memory; there is no `mmap_threshold` option. An explicit `max_scan_ahead` in `BatchConfig` is final (no scaling, no retry). | must |
+| FR-019 | `BatchConfig` SHALL validate `indent` (1..=9), `width` (20..=1000) and the limits at construction; its builder methods (`with_workers`, `with_indent`, `with_width`, `with_sort_keys`, `with_max_depth`, `with_max_alias_bytes`, `with_max_scan_ahead`, `with_max_documents`) SHALL return a new/updated config. | should |
 | FR-020 | THE SYSTEM SHALL ship `py.typed` and a `_core.pyi` whose signatures match the runtime. | should |
 | FR-021 | WHEN the wheel is built for abi3, THE SYSTEM SHALL work on every CPython >= 3.10 without a rebuild. | must |
+| FR-022 | WHEN a key collision or merge error occurs in the Nth document (N >= 2) of a stream THE SYSTEM SHALL end the `ValueError` message with ` (document N)`; an error in the first document carries no suffix. | must |
+| FR-023 | `safe_dump*` SHALL escape U+0085, U+2028 and U+2029 in double-quoted output (`"a\x85b"`), write a flow-style key longer than 1024 characters as `? key`, quote a scalar containing `?` in flow context (`{a: ["x?y", "?"]}`) and dump `-0.0` as `-0.0`; the output SHALL load back to the same data. | must |
 
 ## 4. Key entities
 
@@ -202,6 +207,7 @@ Python version policy: `requires-python >=3.10`; large-int conversion respects `
 | Scenario | Expected behavior |
 |----------|-------------------|
 | Empty string | `safe_load("")` returns `None`; `safe_load_all("")` yields nothing |
+| Comment-only source | `safe_load("# c")` returns `None`; `safe_load_all("# c")` yields one `None` |
 | UTF-8 BOM in text | stripped before parsing |
 | NUL character | `ValueError` (not valid YAML) |
 | `bytes` input in UTF-16/32 | `UnicodeDecodeError` (wrapper decodes UTF-8 only) |
@@ -257,7 +263,7 @@ Python version policy: `requires-python >=3.10`; large-int conversion respects `
 | Comment loss in `format_files*` (GAP-PY-014) | Comments are silently stripped, including in place; CLI refuses without `--strip-comments` | [NEEDS CLARIFICATION] Mirror the CLI policy with a `strip_comments` option, default refuse? (OQ-03) **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
 | Bytes and datetimes on dump (GAP-PY-003) | `bytes` become an int list, `date`/`datetime` raise `TypeError`; PyYAML emits `!!binary`/timestamps | [NEEDS CLARIFICATION] Policy for `bytes` (reject vs `!!binary`) and timestamps |
 | Loader size cap (GAP-PY-021) | `safe_load*` and `load*` have no `max_input_bytes`; fixed 100 MiB | Add keyword? |
-| `max_documents` for `safe_load_all` | Not enforced; enforced in `parse_parallel`/`ParallelConfig` | Enforce in core for all surfaces? (OQ-05) **Proposed:** enforce in core so every surface inherits it. |
+| `max_documents` on dump paths | `dump`, `dump_all`, `safe_dump*` take no `max_documents`; `dump_parallel` honors `ParallelConfig.max_documents` ("cannot serialize to YAML: document count exceeds N") | [NEEDS CLARIFICATION: add to the dump functions?] |
 | `dump`/`dump_all` wrappers (GAP-PY-005) | Lack `default_flow_style`; stub positional order disagrees with native signature | Fix wrappers and add stubtest |
 | Lint formats (GAP-PY-013) | Only `text`/`json`; CLI also has github, sarif, parsable | Expose the CI formats? |
 | Public batch module (GAP-PY-008) | Only reachable via `fast_yaml._core.batch`; `dump_parallel` only via `_core.parallel` | Promote to `fast_yaml.batch` / `fast_yaml.parallel.dump_parallel`? |
@@ -275,7 +281,7 @@ Python version policy: `requires-python >=3.10`; large-int conversion respects `
 | Capability | CLI | Core | Python |
 |------------|-----|------|--------|
 | Parse, YAML 1.2.2, dup keys first-position/last-value | `fy parse` | yes | `safe_load*` yes |
-| Parse limits (depth, alias bytes, scan-ahead) | `--max-scan-ahead`, config | `ParseLimits` | keywords on loaders, configs; input cap fixed |
+| Parse limits (depth, alias bytes, scan-ahead, documents) | flags, config (`--max-documents` is a flag only) | `ParseLimits` | keywords on loaders, configs; input cap fixed |
 | Format | `fy format` (refuses comments by default) | emitter | `safe_dump` formats data (not text); `format_files*` format text, strip comments |
 | Lint formats | text, json, github, sarif, parsable | n/a | text, json |
 | Lint config | `.fast-yaml.yaml` | `LintConfig` | `LintConfig` object (no file discovery) |

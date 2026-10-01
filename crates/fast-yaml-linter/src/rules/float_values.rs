@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::node_roles::{NodeRole, RoleTracker};
+use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
+use crate::nodes::{Node, TagKind};
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::{ResolvedScalar, Value, resolve_scalar};
-use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
+use fast_yaml_core::{ResolvedScalar, ScalarStyle, Value, resolve_scalar};
 
 /// Linting rule for float values.
 ///
@@ -88,46 +88,30 @@ impl super::LintRule for FloatValuesRule {
             .float_values
             .severity_or(self.default_severity());
         let source_context = context.source_context();
+        let index = context.nodes();
 
         let mut diagnostics = Vec::new();
-        let mut roles = RoleTracker::default();
-        #[allow(
-            clippy::disallowed_methods,
-            reason = "source passed the guarded parse in the same lint call"
-        )]
-        let mut parser = SaphyrParser::new_from_str(context.source());
-
-        while let Some(Ok((event, span))) = parser.next_event() {
-            match event {
-                Event::Scalar(text, style, _, tag) => {
-                    let plain = style == ScalarStyle::Plain;
-                    if roles.node() == NodeRole::MappingKey || tag.is_some() || !plain {
-                        continue;
-                    }
-                    let ResolvedScalar::Float(float) =
-                        resolve_scalar(&text, fast_yaml_core::ScalarStyle::Plain, None)
-                    else {
-                        continue;
-                    };
-                    let span = source_context.span_of_bytes(source_context.byte_range_of(span));
-                    for msg in messages(&text, float, options) {
-                        diagnostics.push(
-                            DiagnosticBuilder::new(self.code(), severity, msg, span)
-                                .build_with_context(source_context),
-                        );
-                    }
-                }
-                Event::MappingStart(..) => {
-                    roles.start_mapping(context.source(), source_context.byte_range_of(span));
-                }
-                Event::SequenceStart(..) => {
-                    roles.start_sequence(context.source(), source_context.byte_range_of(span));
-                }
-                Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-                Event::Alias(..) => {
-                    roles.node();
-                }
-                _ => {}
+        for node in index.nodes() {
+            let Node::Scalar(scalar) = node else {
+                continue;
+            };
+            if scalar.role == NodeRole::MappingKey
+                || scalar.tag != TagKind::None
+                || scalar.style != ScalarStyle::Plain
+            {
+                continue;
+            }
+            let text = index.text(scalar);
+            let ResolvedScalar::Float(float) = resolve_scalar(text, ScalarStyle::Plain, None)
+            else {
+                continue;
+            };
+            let span = source_context.span_of_bytes(scalar.range);
+            for msg in messages(text, float, options) {
+                diagnostics.push(
+                    DiagnosticBuilder::new(self.code(), severity, msg, span)
+                        .build_with_context(source_context),
+                );
             }
         }
 

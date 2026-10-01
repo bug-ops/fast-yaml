@@ -5,10 +5,10 @@
 //! whitespace, comments, directives and other node properties, so it is found there instead of
 //! by scanning the whole input (which cannot tell an anchor from `&x` inside a scalar).
 
-// Parser markers count characters; the cursor below converts them to byte offsets.
-#![allow(clippy::disallowed_methods)]
-
 use saphyr_parser::{Event, Span};
+
+use crate::error::SourcePosition;
+use crate::marker::ByteCursor;
 
 /// Whether `c` ends an anchor name in saphyr's scanner (blank, flow indicator, NUL or BOM).
 const fn is_anchor_terminator(c: char) -> bool {
@@ -63,50 +63,34 @@ fn first_anchor(gap: &str) -> Option<&str> {
     None
 }
 
-/// Tracks the end of the previous event and converts its character index to a byte offset.
+/// Tracks the end of the previous event and converts its position to a byte offset.
 ///
-/// Parser markers count characters; the cursor only moves forward, so the conversions over a
-/// whole stream cost one pass over the source.
+/// The cursor only moves forward, so the conversions over a whole stream cost one pass over the
+/// source.
 pub(super) struct AnchorNames<'a> {
     source: &'a str,
-    byte: usize,
-    chars: usize,
-    prev_end: usize,
+    cursor: ByteCursor<'a>,
+    prev_end: SourcePosition,
 }
 
 impl<'a> AnchorNames<'a> {
     pub(super) const fn new(source: &'a str) -> Self {
         Self {
             source,
-            byte: 0,
-            chars: 0,
-            prev_end: 0,
+            cursor: ByteCursor::new(source),
+            prev_end: SourcePosition { line: 1, column: 1 },
         }
-    }
-
-    fn seek(&mut self, char_index: usize) -> usize {
-        if char_index < self.chars {
-            (self.byte, self.chars) = (0, 0);
-        }
-        for c in self.source[self.byte..].chars() {
-            if self.chars == char_index {
-                break;
-            }
-            self.byte += c.len_utf8();
-            self.chars += 1;
-        }
-        self.byte
     }
 
     /// Returns the anchor name written between the previous event and the node whose event has
     /// `span`, or `None` when it cannot be recovered or re-emitted.
     pub(super) fn name_before(&mut self, span: Span) -> Option<&'a str> {
-        self.name_before_index(span.start.index())
+        self.name_before_position(SourcePosition::from_span(span))
     }
 
-    fn name_before_index(&mut self, node_start: usize) -> Option<&'a str> {
-        let from = self.seek(self.prev_end);
-        let to = self.seek(node_start.max(self.prev_end));
+    fn name_before_position(&mut self, node_start: SourcePosition) -> Option<&'a str> {
+        let from = self.cursor.offset(self.prev_end);
+        let to = self.cursor.offset(node_start).max(from);
         first_anchor(&self.source[from..to]).filter(|name| is_valid_anchor_name(name))
     }
 
@@ -116,8 +100,8 @@ impl<'a> AnchorNames<'a> {
     /// root node's leading properties, so the gap after it begins where that span begins.
     pub(super) fn advance(&mut self, event: &Event<'_>, span: Span) {
         self.prev_end = match event {
-            Event::DocumentStart(_) => span.start.index(),
-            _ => span.end.index(),
+            Event::DocumentStart(_) => SourcePosition::from_span(span),
+            _ => SourcePosition::end_of(span),
         };
     }
 }
@@ -139,19 +123,23 @@ mod tests {
         assert_eq!(first_anchor(": "), None);
     }
 
-    #[test]
-    fn invalid_names_are_not_recovered() {
-        let mut names = AnchorNames::new("a: &\u{1}x v");
-        assert_eq!(names.name_before_index(6), None);
+    const fn at(line: usize, column: usize) -> SourcePosition {
+        SourcePosition { line, column }
     }
 
     #[test]
-    fn cursor_moves_forward_and_resets_backwards() {
+    fn invalid_names_are_not_recovered() {
+        let mut names = AnchorNames::new("a: &\u{1}x v");
+        assert_eq!(names.name_before_position(at(1, 7)), None);
+    }
+
+    #[test]
+    fn gaps_are_located_after_non_ascii_text() {
         let mut names = AnchorNames::new("é: &x 1\nü: &y 2\n");
-        assert_eq!(names.name_before_index(5), Some("x"));
-        names.prev_end = 8;
-        assert_eq!(names.name_before_index(13), Some("y"));
-        names.prev_end = 0;
-        assert_eq!(names.name_before_index(5), Some("x"));
+        assert_eq!(names.name_before_position(at(1, 6)), Some("x"));
+        names.prev_end = at(2, 1);
+        assert_eq!(names.name_before_position(at(2, 6)), Some("y"));
+        names.prev_end = at(1, 1);
+        assert_eq!(names.name_before_position(at(1, 6)), Some("x"));
     }
 }

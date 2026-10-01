@@ -1,5 +1,7 @@
 //! Diagnostic types for representing linting errors and warnings.
 
+use std::borrow::Cow;
+
 use crate::{Severity, SourceContext, Span};
 
 #[cfg(feature = "json-output")]
@@ -67,7 +69,7 @@ pub struct Diagnostic {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "json-output", serde(transparent))]
-pub struct DiagnosticCode(String);
+pub struct DiagnosticCode(Cow<'static, str>);
 
 impl DiagnosticCode {
     /// Predefined code for duplicate keys.
@@ -137,7 +139,7 @@ impl DiagnosticCode {
     /// ```
     #[must_use]
     pub fn new(code: impl Into<String>) -> Self {
-        Self(code.into())
+        Self::from(code.into())
     }
 
     /// Returns the code as a string slice.
@@ -156,15 +158,53 @@ impl DiagnosticCode {
     }
 }
 
+/// Every predefined code, so a code made from its text borrows the constant instead of
+/// allocating (a lint run holds one code per diagnostic).
+const PREDEFINED: [&str; 27] = [
+    DiagnosticCode::DUPLICATE_KEY,
+    DiagnosticCode::INVALID_ANCHOR,
+    DiagnosticCode::UNDEFINED_ALIAS,
+    DiagnosticCode::INDENTATION,
+    DiagnosticCode::LINE_LENGTH,
+    DiagnosticCode::TRAILING_WHITESPACE,
+    DiagnosticCode::DOCUMENT_START,
+    DiagnosticCode::DOCUMENT_END,
+    DiagnosticCode::EMPTY_VALUES,
+    DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
+    DiagnosticCode::BRACES,
+    DiagnosticCode::BRACKETS,
+    DiagnosticCode::COLONS,
+    DiagnosticCode::COMMAS,
+    DiagnosticCode::HYPHENS,
+    DiagnosticCode::COMMENTS,
+    DiagnosticCode::COMMENTS_INDENTATION,
+    DiagnosticCode::EMPTY_LINES,
+    DiagnosticCode::NEW_LINES,
+    DiagnosticCode::OCTAL_VALUES,
+    DiagnosticCode::TRUTHY,
+    DiagnosticCode::QUOTED_STRINGS,
+    DiagnosticCode::KEY_ORDERING,
+    DiagnosticCode::FLOAT_VALUES,
+    DiagnosticCode::SET_VALUES,
+    DiagnosticCode::SYNTAX,
+    DiagnosticCode::LINT_DIRECTIVE,
+];
+
 impl From<&str> for DiagnosticCode {
     fn from(s: &str) -> Self {
-        Self::new(s)
+        Self(
+            PREDEFINED
+                .iter()
+                .find(|known| **known == s)
+                .map_or_else(|| Cow::Owned(s.to_owned()), |known| Cow::Borrowed(*known)),
+        )
     }
 }
 
 impl From<String> for DiagnosticCode {
     fn from(s: String) -> Self {
-        Self(s)
+        let known = PREDEFINED.iter().copied().find(|known| *known == s);
+        Self(known.map_or(Cow::Owned(s), Cow::Borrowed))
     }
 }
 
@@ -318,10 +358,13 @@ impl DiagnosticBuilder {
         message: impl Into<String>,
         span: Span,
     ) -> Self {
+        let mut message = message.into();
+        // A formatted message carries growth slack, and a run can hold a million of them
+        message.shrink_to_fit();
         Self {
             code: code.into(),
             severity,
-            message: message.into(),
+            message,
             span,
             suggestions: Vec::new(),
         }

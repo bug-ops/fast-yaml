@@ -1,21 +1,23 @@
-//! Rule to detect duplicate anchor definitions in YAML documents.
+//! Rule to detect duplicate and unused anchor definitions in YAML documents.
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::RuleOptions;
+use crate::config::{AlwaysTrue, RuleOptions};
 use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
+    SourceContext, Span,
 };
 use fast_yaml_core::Value;
 use std::collections::HashMap;
 
-/// Rule to detect duplicate anchor definitions.
+/// Rule to detect duplicate and unused anchor definitions.
 ///
 /// Scans raw YAML source for `&name` anchor definitions and reports any anchor
 /// that is defined more than once within the same document. The second and each
-/// subsequent definition produce a `Warning` diagnostic.
+/// subsequent definition produce a `Warning` diagnostic. With `forbid-unused-anchors`
+/// an anchor that no `*alias` of the same document refers to is reported too.
 ///
 /// False-positive prevention:
 /// - Lines where the entire line is a comment are skipped.
@@ -27,18 +29,32 @@ use std::collections::HashMap;
 /// - Document boundaries (`---` at column 0) reset the anchor map.
 pub struct InvalidAnchorsRule;
 
-/// Options of the invalid-anchor rule (none).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct InvalidAnchorsOptions {}
-
-impl RuleOptions for InvalidAnchorsOptions {
-    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &[
-        "forbid-undeclared-aliases",
-        "forbid-duplicated-anchors",
-        "forbid-unused-anchors",
-    ];
+/// Options of the invalid-anchor rule, named like yamllint's `anchors` rule.
+///
+/// Unlike yamllint, duplicated anchors are reported by default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct InvalidAnchorsOptions {
+    /// An alias without an earlier anchor is a parse error, so it is always reported; only
+    /// `true` is accepted.
+    pub forbid_undeclared_aliases: AlwaysTrue,
+    /// Report an anchor defined again in the same document.
+    pub forbid_duplicated_anchors: bool,
+    /// Report an anchor that is never referenced by an alias in its document.
+    pub forbid_unused_anchors: bool,
 }
+
+impl Default for InvalidAnchorsOptions {
+    fn default() -> Self {
+        Self {
+            forbid_undeclared_aliases: AlwaysTrue,
+            forbid_duplicated_anchors: true,
+            forbid_unused_anchors: false,
+        }
+    }
+}
+
+impl RuleOptions for InvalidAnchorsOptions {}
 
 impl super::LintRule for InvalidAnchorsRule {
     fn code(&self) -> &str {
@@ -62,7 +78,12 @@ impl super::LintRule for InvalidAnchorsRule {
             .rules
             .invalid_anchor
             .severity_or(self.default_severity());
-        scan_duplicate_anchors(context.source(), context.source_context(), severity)
+        scan_anchors(
+            context.source(),
+            context.source_context(),
+            severity,
+            config.rules.invalid_anchor.options,
+        )
     }
 }
 
@@ -107,14 +128,16 @@ impl ScanState {
 
 // ── Main scan function ─────────────────────────────────────────────────────
 
-fn scan_duplicate_anchors(
+fn scan_anchors(
     source: &str,
     source_context: &SourceContext<'_>,
     severity: Severity,
+    options: InvalidAnchorsOptions,
 ) -> Vec<Diagnostic> {
     let mut scan = AnchorScan {
         source_context,
         severity,
+        options,
         state: ScanState::new(),
         seen: HashMap::new(),
         diagnostics: Vec::new(),
@@ -127,9 +150,13 @@ fn scan_duplicate_anchors(
         // ── Document boundary: reset anchor map ──────────────────────────
         if state.quote == QuoteState::None
             && state.block_scalar.is_none()
-            && is_document_start(line)
+            && (is_document_start(line) || is_document_end(line))
         {
-            scan.seen.clear();
+            scan.end_document();
+            if is_document_start(line) {
+                let rest = line.get(3..).unwrap_or_default();
+                scan.scan_line(rest, line_number, line_start_offset + 3);
+            }
             continue;
         }
 
@@ -170,6 +197,7 @@ fn scan_duplicate_anchors(
         scan.scan_line(line, line_number, line_start_offset);
     }
 
+    scan.end_document();
     scan.diagnostics
 }
 
@@ -179,13 +207,44 @@ fn scan_duplicate_anchors(
 struct AnchorScan<'a> {
     source_context: &'a SourceContext<'a>,
     severity: Severity,
+    options: InvalidAnchorsOptions,
     state: ScanState,
-    /// Anchor name to the 1-indexed line of its first definition.
-    seen: HashMap<String, usize>,
+    seen: HashMap<String, Anchor>,
     diagnostics: Vec<Diagnostic>,
 }
 
+/// An anchor definition of the current document.
+struct Anchor {
+    /// 1-indexed line of the first definition of the name.
+    first_line: usize,
+    /// Span of the latest `&name`.
+    span: Span,
+    used: bool,
+}
+
 impl AnchorScan<'_> {
+    /// Reports the unused anchors of the finished document and starts a new one.
+    fn end_document(&mut self) {
+        if self.options.forbid_unused_anchors {
+            let mut unused: Vec<(&String, &Anchor)> =
+                self.seen.iter().filter(|(_, a)| !a.used).collect();
+            unused.sort_by_key(|(_, anchor)| anchor.span.start.offset);
+            for (name, anchor) in unused {
+                self.diagnostics.push(
+                    DiagnosticBuilder::new(
+                        DiagnosticCode::INVALID_ANCHOR,
+                        self.severity,
+                        format!("anchor '&{name}' is never used by an alias"),
+                        anchor.span,
+                    )
+                    .with_suggestion("remove the anchor or reference it", anchor.span, None)
+                    .build_with_context(self.source_context),
+                );
+            }
+        }
+        self.seen.clear();
+    }
+
     fn scan_line(&mut self, line: &str, line_number: usize, line_start_offset: usize) {
         let bytes = line.as_bytes();
         let mut i = 0;
@@ -246,10 +305,11 @@ impl AnchorScan<'_> {
                     if name_end > name_start {
                         let name = line.get(name_start..name_end).unwrap_or_default();
 
-                        if let Some(&first_line) = self.seen.get(name) {
-                            let span = self
-                                .source_context
-                                .span_at(ByteOffset::new(line_start_offset + i), name.len() + 1);
+                        let span = self
+                            .source_context
+                            .span_at(ByteOffset::new(line_start_offset + i), name.len() + 1);
+                        let first_line = self.seen.get(name).map_or(line_number, |a| a.first_line);
+                        if self.options.forbid_duplicated_anchors && self.seen.contains_key(name) {
                             self.diagnostics.push(
                                 DiagnosticBuilder::new(
                                     DiagnosticCode::INVALID_ANCHOR,
@@ -264,14 +324,30 @@ impl AnchorScan<'_> {
                                 .with_suggestion("rename this anchor to be unique", span, None)
                                 .build_with_context(self.source_context),
                             );
-                        } else {
-                            self.seen.insert(name.to_owned(), line_number);
                         }
+                        self.seen.insert(
+                            name.to_owned(),
+                            Anchor {
+                                first_line,
+                                span,
+                                used: false,
+                            },
+                        );
 
                         i = name_end;
                     } else {
                         i += 1;
                     }
+                }
+                b'*' if i == 0 || bytes.get(i - 1).is_some_and(|p| b" \t[{,".contains(p)) => {
+                    let name_end = find_anchor_name_end(bytes, i + 1);
+                    if let Some(anchor) = line
+                        .get(i + 1..name_end)
+                        .and_then(|name| self.seen.get_mut(name))
+                    {
+                        anchor.used = true;
+                    }
+                    i = name_end.max(i + 1);
                 }
                 _ => {
                     i += 1;
@@ -290,6 +366,12 @@ impl AnchorScan<'_> {
 /// Returns true if `line` is a YAML document-start marker at column 0.
 fn is_document_start(line: &str) -> bool {
     line.strip_prefix("---")
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t'))
+}
+
+/// Returns true if `line` is a YAML document-end marker at column 0.
+fn is_document_end(line: &str) -> bool {
+    line.strip_prefix("...")
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(' ') || rest.starts_with('\t'))
 }
 
@@ -472,6 +554,81 @@ mod tests {
     fn test_block_scalar_anchor_no_warning() {
         let yaml = "script: |\n  echo &not_an_anchor\n  curl *endpoint\nkey: value\n";
         assert_eq!(run(yaml), []);
+    }
+
+    fn run_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
+        let config = config_with_rule(RuleName::InvalidAnchor, options);
+        InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &config)
+    }
+
+    #[test]
+    fn test_forbid_duplicated_anchors_false_allows_redefinition() {
+        let yaml = "a: &x 1\nb: &x 2\n";
+        assert_eq!(run_with(yaml, "{forbid-duplicated-anchors: false}"), []);
+        assert_eq!(run_with(yaml, "{forbid-duplicated-anchors: true}").len(), 1);
+    }
+
+    #[test]
+    fn test_forbid_unused_anchors() {
+        let options = "{forbid-unused-anchors: true}";
+        let found = run_with("- &a 1\n- &b 2\n- *a\n", options);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].message, "anchor '&b' is never used by an alias");
+        assert_eq!(
+            (found[0].span.start.line, found[0].span.start.column),
+            (2, 3)
+        );
+        assert_eq!(run("- &a 1\n- &b 2\n"), []);
+    }
+
+    #[test]
+    fn test_forbid_unused_anchors_is_per_document() {
+        let options = "{forbid-unused-anchors: true}";
+        let found = run_with("- &a 1\n- *a\n---\n- &a 2\n", options);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].span.start.line, 4);
+        let found = run_with("- &a 1\n...\n---\n- &b 2\n- *b\n", options);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].span.start.line, 1);
+    }
+
+    #[test]
+    fn test_forbid_unused_anchors_sees_flow_aliases_and_marker_line_anchors() {
+        let options = "{forbid-unused-anchors: true}";
+        assert_eq!(run_with("- &a 1\n- [*a, 2]\n", options), []);
+        assert_eq!(run_with("- &a 1\n- {k: *a}\n", options), []);
+        let found = run_with("--- &a x\n", options);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].span.start.column, 5);
+    }
+
+    #[test]
+    fn test_forbid_unused_anchors_ignores_alias_lookalikes() {
+        let options = "{forbid-unused-anchors: true}";
+        let found = run_with("a: &x 1\nb: \"*x\"\nc: 2*x\n# *x\n", options);
+        assert_eq!(found.len(), 1);
+    }
+
+    #[test]
+    fn test_redefined_anchor_is_unused_again() {
+        let options = "{forbid-unused-anchors: true, forbid-duplicated-anchors: false}";
+        let found = run_with("- &a 1\n- *a\n- &a 2\n", options);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].span.start.line, 3);
+    }
+
+    #[test]
+    fn test_forbid_undeclared_aliases_only_accepts_true() {
+        let mut rules = crate::config::RulesConfig::default();
+        let apply = |rules: &mut crate::config::RulesConfig, entry: &str| {
+            rules.apply_rule(
+                RuleName::InvalidAnchor,
+                serde_norway::Deserializer::from_str(entry),
+            )
+        };
+        assert!(apply(&mut rules, "{forbid-undeclared-aliases: true}").is_ok());
+        assert!(apply(&mut rules, "{forbid-undeclared-aliases: false}").is_err());
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{
-    Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxInputBytes, MaxScanAhead, ParseLimits,
-    Width,
+    Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDocuments, MaxInputBytes, MaxScanAhead,
+    ParseLimits, Width,
 };
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::IndentSize;
@@ -60,7 +60,10 @@ pub struct Cli {
     /// value per input): a flow collection read whole (at the root, in a `- ` entry, nested in flow
     /// or after a tab, so any JSON document longer than this), one scalar, or a run of comments
     /// longer than this is rejected. For `lint` it overrides the
-    /// `max-scan-ahead` config key
+    /// `max-scan-ahead` config key. Without this flag, batch runs start each file at the default
+    /// divided by the worker count (at least 1MiB) and re-run a rejected file at the full
+    /// default one at a time, so the result matches a single-file run; with the flag the limit
+    /// is used as is
     #[arg(long, global = true, value_name = "CHARS", value_parser = parse_max_scan_ahead)]
     pub max_scan_ahead: Option<MaxScanAhead>,
 
@@ -117,7 +120,7 @@ impl Cli {
 /// Discovery and parallelism flags shared by every batch-capable subcommand.
 #[derive(Args, Debug)]
 pub struct BatchArgs {
-    /// Include files matching glob pattern, case-insensitive (can be repeated; default: *.yaml, *.yml)
+    /// Include files matching glob pattern, case-insensitive (can be repeated; default: *.yaml, *.yml; `lint` also .yamllint)
     #[arg(long)]
     pub include: Vec<String>,
 
@@ -166,6 +169,7 @@ impl BatchArgs {
 
 /// Parser resource limits shared by every subcommand that parses YAML.
 #[derive(Args, Debug, Clone, Copy)]
+#[allow(clippy::struct_field_names)] // field names are the flag names
 pub struct ParseLimitArgs {
     /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
     #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
@@ -175,6 +179,10 @@ pub struct ParseLimitArgs {
     /// Accepts KiB, MiB and GiB suffixes
     #[arg(long, value_name = "BYTES", value_parser = parse_max_alias_bytes, default_value_t = MaxAliasBytes::DEFAULT)]
     pub max_alias_bytes: MaxAliasBytes,
+
+    /// Maximum documents per input stream (min: 1, max: 10000000)
+    #[arg(long, value_name = "N", value_parser = parse_max_documents, default_value_t = MaxDocuments::DEFAULT)]
+    pub max_documents: MaxDocuments,
 }
 
 impl Default for ParseLimitArgs {
@@ -182,6 +190,7 @@ impl Default for ParseLimitArgs {
         Self {
             max_depth: MaxDepth::DEFAULT,
             max_alias_bytes: MaxAliasBytes::DEFAULT,
+            max_documents: MaxDocuments::DEFAULT,
         }
     }
 }
@@ -194,6 +203,7 @@ impl ParseLimitArgs {
         ParseLimits {
             max_depth: self.max_depth,
             max_alias_bytes: self.max_alias_bytes,
+            max_documents: self.max_documents,
             max_scan_ahead,
             ..ParseLimits::default()
         }
@@ -219,6 +229,10 @@ fn parse_width(raw: &str) -> Result<Width, String> {
 
 fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
     MaxDepth::new(parse_number(raw)?).map_err(range_error)
+}
+
+fn parse_max_documents(raw: &str) -> Result<MaxDocuments, String> {
+    MaxDocuments::new(parse_number(raw)?).map_err(range_error)
 }
 
 /// Binary size suffixes accepted by the byte-size flags, longest first.
@@ -285,6 +299,10 @@ pub enum Command {
         /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
         #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
         max_depth: MaxDepth,
+
+        /// Maximum documents per input stream (min: 1, max: 10000000)
+        #[arg(long, value_name = "N", value_parser = parse_max_documents, default_value_t = MaxDocuments::DEFAULT)]
+        max_documents: MaxDocuments,
 
         /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
         /// file or a line over 4096 bytes is an error, so filter git output:
