@@ -376,6 +376,10 @@ impl Linter {
     /// also spelled `# yamllint ...`). Problems in directives are reported as `lint-directive`
     /// diagnostics.
     ///
+    /// Every location (line, column, byte offset, suggestion spans) refers to `source` with
+    /// document-prefix BOMs removed, the same text the parser reports syntax errors against; use
+    /// [`NormalizedInput::original_offset`] to map an offset back to `source`.
+    ///
     /// # Errors
     ///
     /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
@@ -426,7 +430,7 @@ impl Linter {
             }
         }
 
-        Ok(finish(diagnostics, directives, &normalized))
+        Ok(finish(diagnostics, directives))
     }
 
     /// Lints a pre-parsed Value (avoids double parsing).
@@ -445,6 +449,8 @@ impl Linter {
     /// let linter = Linter::with_all_rules();
     /// let diagnostics = linter.lint_value(yaml, &value).unwrap();
     /// ```
+    ///
+    /// Locations use the same BOM-free coordinates as [`Linter::lint`].
     ///
     /// # Errors
     ///
@@ -471,7 +477,7 @@ impl Linter {
             diagnostics.append(&mut rule_diagnostics);
         }
 
-        Ok(finish(diagnostics, directives, &normalized))
+        Ok(finish(diagnostics, directives))
     }
 
     /// Gets the current configuration.
@@ -549,30 +555,11 @@ fn compute_doc_start_lines(source: &str, doc_count: usize) -> Vec<usize> {
     starts
 }
 
-/// Applies inline directives, rebases spans onto the original file and sorts.
-fn finish(
-    mut diagnostics: Vec<Diagnostic>,
-    directives: Directives,
-    normalized: &NormalizedInput<'_>,
-) -> Vec<Diagnostic> {
+/// Applies inline directives and sorts.
+fn finish(mut diagnostics: Vec<Diagnostic>, directives: Directives) -> Vec<Diagnostic> {
     directives.apply(&mut diagnostics);
-    shift_offsets(&mut diagnostics, normalized);
     diagnostics.sort_by_key(|d| d.span.start);
     diagnostics
-}
-
-/// Rebases span offsets onto the original file, which still contains the removed BOMs.
-///
-/// Lines and columns stay as the rules saw them, in the normalized text, so a line that lost a
-/// BOM reads as if the BOM were absent.
-fn shift_offsets(diagnostics: &mut [Diagnostic], normalized: &NormalizedInput<'_>) {
-    let spans = diagnostics.iter_mut().flat_map(|d| {
-        std::iter::once(&mut d.span).chain(d.suggestions.iter_mut().map(|s| &mut s.span))
-    });
-    for span in spans {
-        span.start.offset = normalized.original_offset(span.start.offset);
-        span.end.offset = normalized.original_offset(span.end.offset);
-    }
 }
 
 #[cfg(test)]
@@ -1139,68 +1126,51 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_lint_bom_input_keeps_line_column_and_shifts_offset() {
-        let linter = Linter::with_all_rules();
-        let plain = linter.lint("# c\na: 1").unwrap();
-        let bom = linter.lint("\u{FEFF}# c\na: 1").unwrap();
+    fn assert_same_coordinates(plain: &[Diagnostic], bom: &[Diagnostic], normalized: &str) {
         assert!(!plain.is_empty());
         assert_eq!(plain.len(), bom.len());
-        for (p, b) in plain.iter().zip(&bom) {
+        for (p, b) in plain.iter().zip(bom) {
             assert_eq!(p.code, b.code);
+            assert_eq!(p.span, b.span, "{}", p.code.as_str());
             assert_eq!(
-                (p.span.start.line, p.span.start.column),
-                (b.span.start.line, b.span.start.column)
+                p.suggestions.iter().map(|s| s.span).collect::<Vec<_>>(),
+                b.suggestions.iter().map(|s| s.span).collect::<Vec<_>>(),
+                "{}",
+                p.code.as_str()
             );
-            assert_eq!(b.span.start.offset, p.span.start.offset + 3);
-            assert_eq!(b.span.end.offset, p.span.end.offset + 3);
+            assert!(
+                normalized
+                    .get(b.span.start.offset..b.span.end.offset)
+                    .is_some()
+            );
         }
     }
 
     #[test]
-    fn test_lint_prefix_bom_lines_keep_columns_and_shift_offsets() {
+    fn test_lint_bom_input_uses_normalized_coordinates() {
+        let linter = Linter::with_all_rules();
+        let plain = linter.lint("# c\na: 1").unwrap();
+        let bom = linter.lint("\u{FEFF}# c\na: 1").unwrap();
+        assert_same_coordinates(&plain, &bom, "# c\na: 1");
+    }
+
+    #[test]
+    fn test_lint_prefix_bom_lines_use_normalized_coordinates() {
         let linter = Linter::with_all_rules();
         let bom = '\u{FEFF}';
-        for (plain_src, bom_src, bom_lines) in [
+        for (plain_src, bom_src) in [
             (
                 "a: 1\n...\nb: 2   \nc:  3\n".to_owned(),
                 format!("a: 1\n...\n{bom}b: 2   \nc:  3\n"),
-                vec![3],
             ),
             (
                 "a: 1\n...\n# c\n---\nb: 2   \n".to_owned(),
                 format!("{bom}a: 1\n...\n{bom}# c\n{bom}---\nb: 2   \n"),
-                vec![1, 3, 4],
             ),
         ] {
             let plain = linter.lint(&plain_src).unwrap();
             let shifted = linter.lint(&bom_src).unwrap();
-            assert!(!plain.is_empty(), "{plain_src:?}");
-            assert_eq!(plain.len(), shifted.len(), "{bom_src:?}");
-            for (p, b) in plain.iter().zip(&shifted) {
-                assert_eq!(p.code, b.code);
-                assert_eq!(
-                    (p.span.start.line, p.span.start.column),
-                    (b.span.start.line, b.span.start.column),
-                    "{}",
-                    p.code.as_str()
-                );
-                let before = |line: usize| bom_lines.iter().filter(|&&l| l <= line).count() * 3;
-                assert_eq!(
-                    b.span.start.offset,
-                    p.span.start.offset + before(p.span.start.line),
-                    "{}",
-                    p.code.as_str()
-                );
-                assert_eq!(
-                    b.span.end.offset,
-                    p.span.end.offset + before(p.span.end.line)
-                );
-                assert_eq!(
-                    &bom_src[b.span.start.offset..b.span.end.offset],
-                    &plain_src[p.span.start.offset..p.span.end.offset]
-                );
-            }
+            assert_same_coordinates(&plain, &shifted, &plain_src);
         }
     }
 
@@ -1223,14 +1193,13 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_value_bom_shifts_offset() {
+    fn test_lint_value_bom_uses_normalized_coordinates() {
         let linter = Linter::with_all_rules();
         let src = "a: 1";
         let value = fast_yaml_core::Parser::parse_str(src).unwrap().unwrap();
         let plain = linter.lint_value(src, &value).unwrap();
         let bom = linter.lint_value("\u{FEFF}a: 1", &value).unwrap();
-        assert!(!plain.is_empty());
-        assert_eq!(bom[0].span.start.offset, plain[0].span.start.offset + 3);
+        assert_same_coordinates(&plain, &bom, src);
     }
 
     #[test]

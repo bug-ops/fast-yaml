@@ -139,7 +139,7 @@ pub struct PyLocation {
     #[pyo3(get)]
     pub column: usize,
 
-    /// Byte offset from the start of the file (0-indexed).
+    /// Byte offset in the text with document-prefix BOMs removed (0-indexed), also for suggestion spans.
     #[pyo3(get)]
     pub offset: usize,
 }

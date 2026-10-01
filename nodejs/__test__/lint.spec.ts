@@ -294,3 +294,26 @@ describe('merge keys and sets in lint', () => {
     );
   });
 });
+
+describe('BOM coordinates', () => {
+  const spans = (source: string) =>
+    lint(source).map((d) => [
+      d.code,
+      d.span.start.line,
+      d.span.start.column,
+      d.span.start.offset,
+      d.span.end.offset,
+    ]);
+
+  it('leading BOM does not shift spans', () => {
+    const plain = spans('a: 1   \n');
+    expect(plain.length).toBeGreaterThan(0);
+    expect(spans('\uFEFFa: 1   \n')).toEqual(plain);
+  });
+
+  it('prefix BOM in a later document does not shift spans', () => {
+    const plain = spans('a: 1\n...\nb: 2   \n');
+    expect(plain.length).toBeGreaterThan(0);
+    expect(spans('a: 1\n...\n\uFEFFb: 2   \n')).toEqual(plain);
+  });
+});

@@ -51,7 +51,7 @@ pub struct Location {
     pub line: u32,
     /// Column number (1-indexed).
     pub column: u32,
-    /// Byte offset from start of file (0-indexed).
+    /// Byte offset in the text with document-prefix BOMs removed (0-indexed), also for suggestion spans.
     pub offset: u32,
 }
 

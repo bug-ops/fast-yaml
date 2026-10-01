@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking Changes
 
 - **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
+- **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331 (#550)
 - **Linter**: `FlowTokenizer::new` takes a prebuilt `FlowIndex` and `LintContext::flow_tokenizer` is added (#386)
 - **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
 - **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)

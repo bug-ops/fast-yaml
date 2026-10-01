@@ -882,16 +882,16 @@ mod tests {
     }
 
     #[test]
-    fn bom_keeps_offsets_of_directive_warnings() {
+    fn bom_free_offsets_for_directive_warnings() {
         let source = "\u{FEFF}# fy: disable bogus\na: 1\n";
         let diagnostics = lint(source);
         let warning = diagnostics
             .iter()
             .find(|d| d.code.as_str() == "lint-directive")
             .unwrap();
-        assert_eq!(warning.span.start.offset, 3);
+        assert_eq!(warning.span.start.offset, 0);
         assert_eq!(
-            &source[warning.span.start.offset..warning.span.end.offset],
+            &source[3 + warning.span.start.offset..3 + warning.span.end.offset],
             "# fy: disable bogus"
         );
     }

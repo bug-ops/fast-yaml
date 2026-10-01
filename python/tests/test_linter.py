@@ -603,3 +603,24 @@ def test_set_member_with_a_value_aborts_linting_with_its_position():
 
     with pytest.raises(ValueError, match=r"member has a non-null value.*line 1, column 11"):
         lint.lint("s: !!set {a: 1}\n")
+
+
+class TestBomCoordinates:
+    """Spans use the coordinates of the text with the BOM removed (#550)."""
+
+    @staticmethod
+    def _spans(source: str):
+        return [
+            (d.code, d.span.start.line, d.span.start.column, d.span.start.offset, d.span.end.offset)
+            for d in lint.lint(source)
+        ]
+
+    def test_leading_bom_does_not_shift_spans(self):
+        plain = self._spans("a: 1   \n")
+        assert plain
+        assert self._spans("\ufeffa: 1   \n") == plain
+
+    def test_prefix_bom_in_later_document_does_not_shift_spans(self):
+        plain = self._spans("a: 1\n...\nb: 2   \n")
+        assert plain
+        assert self._spans("a: 1\n...\n\ufeffb: 2   \n") == plain
