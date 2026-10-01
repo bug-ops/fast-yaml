@@ -402,6 +402,40 @@ impl<'de> Deserialize<'de> for MarkerPresence {
     }
 }
 
+/// A boolean option that is always `true`: yamllint accepts `false`, fast-yaml cannot honor it.
+///
+/// Deserializing `true` succeeds; `false` fails with an explanatory error instead of being
+/// silently ignored.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::AlwaysTrue;
+///
+/// assert!(serde_norway::from_str::<AlwaysTrue>("true").is_ok());
+/// assert!(serde_norway::from_str::<AlwaysTrue>("false").is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct AlwaysTrue;
+
+impl Serialize for AlwaysTrue {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+}
+
+impl<'de> Deserialize<'de> for AlwaysTrue {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        if bool::deserialize(deserializer)? {
+            Ok(Self)
+        } else {
+            Err(de::Error::custom(
+                "false is not supported: this check is always on (it is a parse error)",
+            ))
+        }
+    }
+}
+
 /// Compiled-size budget of one regular expression and of a whole list, in bytes.
 const SIZE_LIMIT: usize = 10 << 20;
 

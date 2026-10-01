@@ -22,7 +22,7 @@ use fast_yaml_linter::formatter::{
 use fast_yaml_linter::{
     Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
 };
-use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader, shared_pool};
+use fast_yaml_parallel::{Error as ParallelError, read_file, shared_pool};
 use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
@@ -134,20 +134,18 @@ struct ReportOutput {
 
 fn lint_one<F: OutputFormat>(
     path: &Path,
-    reader: &SmartReader,
     linter: &Linter,
     format: &F,
     is_quiet: bool,
 ) -> FileReport<F::Payload, F::Salvage> {
     FileReport {
         path: path.to_path_buf(),
-        outcome: lint_content(path, reader, linter, format, is_quiet),
+        outcome: lint_content(path, linter, format, is_quiet),
     }
 }
 
 fn lint_content<F: OutputFormat>(
     path: &Path,
-    reader: &SmartReader,
     linter: &Linter,
     format: &F,
     is_quiet: bool,
@@ -156,18 +154,15 @@ fn lint_content<F: OutputFormat>(
         salvage: format.salvage(&failure, content),
         failure,
     };
-    let content = reader
-        .read(path, linter.config().max_input_bytes)
-        .and_then(FileContent::into_string)
-        .map_err(|source| {
-            failed(
-                FileFailure::Read {
-                    path: path.to_path_buf(),
-                    source,
-                },
-                None,
-            )
-        })?;
+    let content = read_file(path, linter.config().max_input_bytes).map_err(|source| {
+        failed(
+            FileFailure::Read {
+                path: path.to_path_buf(),
+                source,
+            },
+            None,
+        )
+    })?;
 
     let mut diagnostics = linter.lint(&content).map_err(|source| {
         failed(
@@ -249,12 +244,11 @@ fn run_batch<F: OutputFormat>(
     format: &F,
     is_quiet: bool,
 ) -> Result<bool> {
-    let reader = SmartReader::with_threshold(u64::MAX);
     let window = pool
         .current_num_threads()
         .saturating_mul(WINDOW_PER_WORKER)
         .max(1);
-    let lint_nth = |index: usize| lint_one(&file_paths[index], &reader, linter, format, is_quiet);
+    let lint_nth = |index: usize| lint_one(&file_paths[index], linter, format, is_quiet);
 
     let stdout = io::stdout();
     run_ordered(pool, file_paths.len(), window, &lint_nth, |reports| {

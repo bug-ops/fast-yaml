@@ -32,9 +32,6 @@ pub struct Config {
     /// Worker count: None = auto (CPU count), Some(0) = sequential, Some(n) = n threads
     pub(crate) workers: Option<usize>,
 
-    /// Mmap threshold for large file reading (default: 512KB)
-    pub(crate) mmap_threshold: usize,
-
     /// Maximum input size (`DoS` protection, default: 100MB)
     pub(crate) max_input_bytes: MaxInputBytes,
 
@@ -84,40 +81,6 @@ impl Config {
     #[must_use]
     pub const fn with_workers(mut self, workers: Option<usize>) -> Self {
         self.workers = workers;
-        self
-    }
-
-    /// Sets memory-map threshold for file reading.
-    ///
-    /// Files larger than this threshold will use memory-mapped I/O.
-    /// Default: 512KB
-    ///
-    /// # Tuning Guidance
-    ///
-    /// The optimal threshold depends on your workload:
-    ///
-    /// - **Lower (256KB-512KB)**: Better for many medium files (100KB-1MB)
-    ///   - Pros: Less virtual memory pressure, faster for small-to-medium files
-    ///   - Cons: More heap allocations for files just above threshold
-    ///
-    /// - **Higher (1MB-2MB)**: Better for fewer large files (>2MB)
-    ///   - Pros: Fewer mmaps, better for very large files
-    ///   - Cons: More heap usage for medium files
-    ///
-    /// Consider your typical file size distribution and available memory.
-    /// Profile with real data before changing the default.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_parallel::Config;
-    ///
-    /// let config = Config::new()
-    ///     .with_mmap_threshold(1024 * 1024); // 1MB
-    /// ```
-    #[must_use]
-    pub const fn with_mmap_threshold(mut self, threshold: usize) -> Self {
-        self.mmap_threshold = threshold;
         self
     }
 
@@ -232,12 +195,6 @@ impl Config {
         self.workers
     }
 
-    /// Returns mmap threshold.
-    #[must_use]
-    pub const fn mmap_threshold(&self) -> usize {
-        self.mmap_threshold
-    }
-
     /// Returns maximum input size.
     #[must_use]
     pub const fn max_input_bytes(&self) -> MaxInputBytes {
@@ -254,8 +211,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            workers: None,              // Auto-detect CPU count
-            mmap_threshold: 512 * 1024, // 512KB
+            workers: None, // Auto-detect CPU count
             max_input_bytes: MaxInputBytes::DEFAULT,
             sequential_threshold: 4096, // 4KB
             parse_limits: ParseLimits::default(),
@@ -284,7 +240,6 @@ mod tests {
     fn test_default_config() {
         let config = Config::default();
         assert_eq!(config.workers, None);
-        assert_eq!(config.mmap_threshold, 512 * 1024);
         assert_eq!(config.max_input_bytes, MaxInputBytes::DEFAULT);
         assert_eq!(config.sequential_threshold, 4096);
     }
@@ -293,12 +248,10 @@ mod tests {
     fn test_config_builder() {
         let config = Config::new()
             .with_workers(Some(4))
-            .with_mmap_threshold(1024 * 1024)
             .with_max_input_bytes(MaxInputBytes::new(50 * 1024 * 1024).unwrap())
             .with_sequential_threshold(2048);
 
         assert_eq!(config.workers, Some(4));
-        assert_eq!(config.mmap_threshold, 1024 * 1024);
         assert_eq!(config.max_input_bytes.get(), 50 * 1024 * 1024);
         assert_eq!(config.sequential_threshold, 2048);
     }
@@ -332,12 +285,10 @@ mod tests {
     fn test_getters() {
         let config = Config::new()
             .with_workers(Some(8))
-            .with_mmap_threshold(2048)
             .with_max_input_bytes(MaxInputBytes::new(50_000_000).unwrap())
             .with_sequential_threshold(8192);
 
         assert_eq!(config.workers(), Some(8));
-        assert_eq!(config.mmap_threshold(), 2048);
         assert_eq!(config.max_input_bytes().get(), 50_000_000);
         assert_eq!(config.sequential_threshold(), 8192);
     }
@@ -348,7 +299,6 @@ mod tests {
         let config2 = Config::default();
 
         assert_eq!(config1.workers, config2.workers);
-        assert_eq!(config1.mmap_threshold, config2.mmap_threshold);
         assert_eq!(config1.max_input_bytes, config2.max_input_bytes);
         assert_eq!(config1.sequential_threshold, config2.sequential_threshold);
     }

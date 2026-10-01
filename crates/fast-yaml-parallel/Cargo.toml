@@ -12,7 +12,6 @@ categories = ["parsing", "concurrency"]
 
 [dependencies]
 fast-yaml-core = { workspace = true }
-memmap2 = { workspace = true }
 num_cpus = { workspace = true }
 rayon = { workspace = true }
 tempfile = { workspace = true }

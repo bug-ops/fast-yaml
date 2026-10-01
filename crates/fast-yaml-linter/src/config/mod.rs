@@ -16,11 +16,11 @@ pub use rules::{
     CustomRuleCode, NoOptions, OptionConflict, RuleConfigError, RuleName, RuleOptions,
     RuleSettings, RulesConfig, UnknownRuleError,
 };
-pub(crate) use values::{BoolOrName, deserialize_bool_or_name};
 pub use values::{
-    EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList, InvalidRegexPattern,
-    Limit, MarkerPresence, PatternList,
+    AlwaysTrue, EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList,
+    InvalidRegexPattern, Limit, MarkerPresence, PatternList,
 };
+pub(crate) use values::{BoolOrName, deserialize_bool_or_name};
 
 #[cfg(test)]
 pub(crate) mod test_support {

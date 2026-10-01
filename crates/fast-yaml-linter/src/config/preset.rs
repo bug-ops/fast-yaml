@@ -28,9 +28,9 @@ pub struct UnknownPresetError {
 /// an error:
 ///
 /// - `indentation.spaces` (the fast-yaml `indent-size` stays), `indent-sequences` and
-///   `check-multi-line-strings`;
-/// - `key-ordering.ignored-keys`;
-/// - `anchors.forbid-undeclared-aliases`, `forbid-duplicated-anchors` and `forbid-unused-anchors`.
+///   `check-multi-line-strings`, which need a token-based rewrite of the indentation rule;
+/// - `anchors.forbid-undeclared-aliases: false`, because an undeclared alias is always a parse
+///   error (`true` is accepted).
 ///
 /// Some rules silently behave differently from yamllint, because fast-yaml reads the parser's
 /// events where yamllint reads `PyYAML` tokens:
@@ -41,17 +41,23 @@ pub struct UnknownPresetError {
 /// - `quoted-strings` resolves plain scalars with the YAML 1.2 core schema, so `yes`, `on` and
 ///   dates are strings to it, and its `only-when-needed` check keeps fast-yaml's character
 ///   heuristics instead of yamllint's re-scan of the value;
-/// - `document-start` and `document-end` report a source with no document (empty or only
-///   comments) as one document without markers, where yamllint reports nothing, and report the
-///   last document's missing `...` at the end of the file, where yamllint reports the line before;
-///   a bare document after `...` is accepted, where `PyYAML` (and so yamllint) rejects it;
-/// - `document-start: forbidden` leaves a `---` after a `%` directive alone, where yamllint flags
-///   it;
+/// - `document-end` reports the last document's missing `...` at the end of the file, where
+///   yamllint reports the line before; a bare document after `...` is accepted, where `PyYAML`
+///   (and so yamllint) rejects it;
+/// - `anchors` (`invalid-anchor`) reports duplicated anchors unless `forbid-duplicated-anchors`
+///   is `false`, where yamllint's default is not to; it finds anchors and aliases in the source
+///   text;
 /// - `quoted-strings` checks a scalar with an anchor, which yamllint skips, and skips a verbatim
 ///   `!<tag:yaml.org,2002:str>` scalar, which yamllint checks (only the `!!` spelling is skipped
 ///   there);
 /// - `key-ordering` locates keys in the source text instead of reading tokens, which differs on
-///   flow mappings and numeric keys;
+///   nested flow mappings (only a flow mapping that is the whole root of a document is checked),
+///   numeric keys and the first key of a mapping in a sequence item (`- b: 1`); `locale` is not
+///   supported;
+/// - `comments-indentation` takes a multi-line quoted or plain scalar before a comment with the
+///   indent of its last line, where yamllint uses the line where the scalar starts;
+/// - `comments` reports a missing space at the start of the comment, where yamllint reports the
+///   column after its leading `#` characters;
 /// - the default `yaml-files` do not include `.yamllint`.
 ///
 /// Rules that only fast-yaml has (`lint-directive`) keep their fast-yaml defaults.

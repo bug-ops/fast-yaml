@@ -101,6 +101,12 @@ fn every_options_type_round_trips_with_non_default_values() {
     });
     round_trip(&KeyOrderingOptions {
         case_sensitive: false,
+        ignored_keys: PatternList::new(["^name$", "^x-"]).unwrap(),
+    });
+    round_trip(&InvalidAnchorsOptions {
+        forbid_duplicated_anchors: false,
+        forbid_unused_anchors: true,
+        ..InvalidAnchorsOptions::default()
     });
     round_trip(&TruthyOptions {
         allowed_values: vec![

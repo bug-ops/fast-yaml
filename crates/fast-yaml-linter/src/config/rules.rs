@@ -992,10 +992,6 @@ mod tests {
             ("indentation", "spaces"),
             ("indentation", "indent-sequences"),
             ("indentation", "check-multi-line-strings"),
-            ("key-ordering", "ignored-keys"),
-            ("invalid-anchor", "forbid-undeclared-aliases"),
-            ("invalid-anchor", "forbid-duplicated-anchors"),
-            ("invalid-anchor", "forbid-unused-anchors"),
         ];
         for (rule, key) in cases {
             let message = error_of(&format!("{rule}: {{{key}: true}}"));
@@ -1011,9 +1007,14 @@ mod tests {
             &mut rules,
             "line-length: {allow-non-breakable-words: false, allow-non-breakable-inline-mappings: true}\n\
              quoted-strings: {allow-quoted-quotes: true, check-keys: true}\n\
-             duplicate-key: {forbid-duplicated-merge-keys: false}",
+             duplicate-key: {forbid-duplicated-merge-keys: false}\n\
+             key-ordering: {ignored-keys: ['^name$']}\n\
+             invalid-anchor: {forbid-undeclared-aliases: true, forbid-duplicated-anchors: false, forbid-unused-anchors: true}",
         )
         .unwrap();
+        assert!(rules.key_ordering.options.ignored_keys.is_match("name"));
+        assert!(!rules.invalid_anchor.options.forbid_duplicated_anchors);
+        assert!(rules.invalid_anchor.options.forbid_unused_anchors);
         assert!(!rules.line_length.options.allow_non_breakable_words);
         assert!(
             rules

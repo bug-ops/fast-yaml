@@ -10,7 +10,7 @@ use rayon::prelude::*;
 
 use crate::config::Config;
 use crate::error::{Error, Result};
-use crate::io::SmartReader;
+use crate::io::read_file;
 use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
 
@@ -36,7 +36,7 @@ pub struct FormatOutput {
 /// Parallel file processor for batch YAML operations.
 ///
 /// Processes multiple YAML files in parallel using Rayon's work-stealing scheduler.
-/// Automatically chooses optimal reading strategy based on file size (in-memory vs mmap).
+/// Each file is read whole into memory after a size check.
 ///
 /// # Security: Path Trust Boundary
 ///
@@ -68,7 +68,6 @@ pub struct FormatOutput {
 #[derive(Debug)]
 pub struct FileProcessor {
     config: Config,
-    reader: SmartReader,
 }
 
 impl FileProcessor {
@@ -79,9 +78,7 @@ impl FileProcessor {
 
     /// Creates a processor with custom config.
     pub const fn with_config(config: Config) -> Self {
-        let reader = SmartReader::with_threshold(config.mmap_threshold() as u64);
-
-        Self { config, reader }
+        Self { config }
     }
 
     /// Process files with custom operation.
@@ -230,10 +227,9 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> Result<FormatOutput> {
-        let file_content = self.reader.read(path, self.config.max_input_bytes())?;
-        let content = file_content.as_str()?;
+        let content = read_file(path, self.config.max_input_bytes())?;
 
-        let normalized = NormalizedInput::new(content).map_err(|source| Error::Format {
+        let normalized = NormalizedInput::new(&content).map_err(|source| Error::Format {
             path: path.to_path_buf(),
             source: source.into(),
         })?;
@@ -386,10 +382,9 @@ impl FileProcessor {
     where
         F: Fn(&Path, &str) -> Result<R>,
     {
-        let file_content = self.reader.read(path, self.config.max_input_bytes())?;
-        let content = file_content.as_str()?;
+        let content = read_file(path, self.config.max_input_bytes())?;
 
-        f(path, content)?;
+        f(path, &content)?;
         Ok(())
     }
 
@@ -587,14 +582,13 @@ mod tests {
     }
 
     #[test]
-    fn test_large_file_with_mmap() {
+    fn test_large_file() {
         let dir = TempDir::new().unwrap();
 
         let large_content = "key: value\n".repeat(100_000);
         let path = create_test_file(&dir, "large.yaml", &large_content);
 
-        let config = Config::new().with_mmap_threshold(1024);
-        let processor = FileProcessor::with_config(config);
+        let processor = FileProcessor::new();
 
         let result = processor.parse_files(&[path]);
         assert!(result.is_success());
@@ -735,8 +729,7 @@ mod tests {
         let small = create_test_file(&dir, "small.yaml", "key: value\n");
         let large = create_test_file(&dir, "large.yaml", &"key: value\n".repeat(100_000));
 
-        let config = Config::new().with_mmap_threshold(1024);
-        let processor = FileProcessor::with_config(config);
+        let processor = FileProcessor::new();
 
         let result = processor.parse_files(&[small, large]);
         assert_eq!(result.total, 2);
@@ -919,8 +912,8 @@ mod tests {
 
         // Both should have same config
         assert_eq!(
-            processor1.config.mmap_threshold(),
-            processor2.config.mmap_threshold()
+            processor1.config.max_input_bytes(),
+            processor2.config.max_input_bytes()
         );
     }
 

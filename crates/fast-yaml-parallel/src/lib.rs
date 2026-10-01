@@ -66,6 +66,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+#![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
 mod atomic;
@@ -89,7 +90,7 @@ pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 
 // File-level parallelism
 pub use files::{CommentPolicy, FileProcessor, FormatOutput};
-pub use io::{FileContent, SmartReader};
+pub use io::read_file;
 pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};
 
