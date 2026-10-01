@@ -4,6 +4,8 @@
 //! point report the same error: the first invalid merge value, repeated `<<` key or set member
 //! value in document order, positioned at its key.
 
+use std::collections::HashMap;
+
 use saphyr_parser::{Event, Span};
 
 use crate::error::{ParseError, SourcePosition};
@@ -68,8 +70,6 @@ struct Open {
     role: NodeRole,
     anchor: usize,
     span: Span,
-    /// Whether the verdict of a sequence can still matter: it is anchored or is a merge value.
-    tracked: bool,
 }
 
 /// Rejects `<<` values that cannot be merged, repeated `<<` keys and `!!set` members that carry a
@@ -85,8 +85,7 @@ struct Open {
 pub struct MergeKeyValidator {
     tracker: MergeKeyTracker,
     open: Vec<Open>,
-    /// Finished anchored nodes by anchor id; ids are never reused, so documents share the table.
-    anchors: Vec<Option<NodeKind>>,
+    anchors: HashMap<usize, NodeKind>,
     documents: usize,
     duplicates: DuplicateMergeKeys,
     set_values: SetValues,
@@ -135,9 +134,6 @@ impl MergeKeyValidator {
     ) -> Result<(), ParseError> {
         match event {
             Event::Scalar(text, style, anchor, tag) => {
-                if *anchor == 0 && self.scalar_is_irrelevant(role) {
-                    return Ok(());
-                }
                 let kind = if *anchor > 0 || self.in_set() {
                     match resolve_scalar_raw(text, ScalarStyle::from_saphyr(*style), tag.as_deref())
                     {
@@ -151,12 +147,7 @@ impl MergeKeyValidator {
             }
             Event::Alias(id) => {
                 // An alias to an undefined anchor is the parser's error to report
-                let kind = self
-                    .anchors
-                    .get(*id)
-                    .copied()
-                    .flatten()
-                    .unwrap_or(NodeKind::Mapping);
+                let kind = self.anchors.get(id).copied().unwrap_or(NodeKind::Mapping);
                 self.settle(role, kind, 0, span)
             }
             Event::MappingStart(anchor, tag) => {
@@ -172,61 +163,20 @@ impl MergeKeyValidator {
                     role,
                     anchor: *anchor,
                     span,
-                    tracked: true,
                 });
                 Ok(())
             }
             Event::SequenceStart(anchor, _) => {
                 self.reserve_anchor(*anchor);
-                let tracked = *anchor > 0 || self.is_merge_value(role);
                 self.open.push(Open {
                     kind: OpenKind::Sequence(Ok(())),
                     role,
                     anchor: *anchor,
                     span,
-                    tracked,
                 });
                 Ok(())
             }
             _ => Ok(()),
-        }
-    }
-
-    /// Whether a node with `role` is the value of a `<<` key that was just seen.
-    fn is_merge_value(&self, role: NodeRole) -> bool {
-        role == NodeRole::Value
-            && matches!(
-                self.open.last(),
-                Some(Open {
-                    kind: OpenKind::Mapping {
-                        merge_key: Some(_),
-                        ..
-                    },
-                    ..
-                })
-            )
-    }
-
-    /// Whether an unanchored scalar changes nothing the validator reports: it is neither a merge
-    /// key or value, nor a set member, nor an item of a sequence whose verdict is used.
-    fn scalar_is_irrelevant(&self, role: NodeRole) -> bool {
-        match self.open.last() {
-            None => true,
-            Some(Open {
-                kind: OpenKind::Sequence(_),
-                tracked,
-                ..
-            }) => !tracked,
-            Some(Open {
-                kind:
-                    OpenKind::Mapping {
-                        set: false,
-                        merge_key: None,
-                        ..
-                    },
-                ..
-            }) => role != NodeRole::MergeKey,
-            Some(_) => false,
         }
     }
 
@@ -243,15 +193,8 @@ impl MergeKeyValidator {
     /// An alias to a still-open node resolves to a non-mapping, like the loader does.
     fn reserve_anchor(&mut self, anchor: usize) {
         if anchor > 0 {
-            self.store_anchor(anchor, NodeKind::Open);
+            self.anchors.insert(anchor, NodeKind::Open);
         }
-    }
-
-    fn store_anchor(&mut self, anchor: usize, kind: NodeKind) {
-        if self.anchors.len() <= anchor {
-            self.anchors.resize(anchor + 1, None);
-        }
-        self.anchors[anchor] = Some(kind);
     }
 
     fn observe_structure(&mut self, event: &Event<'_>) -> Result<(), ParseError> {
@@ -259,6 +202,7 @@ impl MergeKeyValidator {
             Event::DocumentStart(_) => {
                 self.documents += 1;
                 self.open.clear();
+                self.anchors.clear();
                 Ok(())
             }
             Event::MappingEnd | Event::SequenceEnd => {
@@ -267,7 +211,6 @@ impl MergeKeyValidator {
                     role,
                     anchor,
                     span,
-                    ..
                 }) = self.open.pop()
                 else {
                     return Ok(());
@@ -292,7 +235,7 @@ impl MergeKeyValidator {
         span: Span,
     ) -> Result<(), ParseError> {
         if anchor > 0 {
-            self.store_anchor(anchor, kind);
+            self.anchors.insert(anchor, kind);
         }
         let document = self.documents.saturating_sub(1);
         let merge_error = |error, at: Span| {

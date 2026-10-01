@@ -310,7 +310,7 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
 
     let file = match fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
         .open(real)
     {
         Ok(file) => file,
@@ -318,7 +318,7 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
         Err(e) => return Err(e),
     };
     let opened = file.metadata()?;
-    if (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
+    if !opened.is_file() || (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
         return Err(io::Error::other(format!(
             "{} changed while it was being replaced",
             real.display()
@@ -548,6 +548,28 @@ mod tests {
                 xattr::get(&to, XATTR).unwrap().as_deref(),
                 Some(&b"same"[..])
             );
+        }
+
+        #[test]
+        fn fifo_in_place_of_the_target_does_not_block() {
+            let dir = tempfile::tempdir().unwrap();
+            let fifo = dir.path().join("pipe.yaml");
+            assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let metadata = fs::metadata(&fifo).unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                tx.send(open_xattr_source(&fifo, &metadata).is_err()).ok();
+            });
+            let refused = rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("opening a FIFO must not block");
+            assert!(refused);
         }
 
         #[test]

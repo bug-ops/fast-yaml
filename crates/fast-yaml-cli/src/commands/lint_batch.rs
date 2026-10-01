@@ -496,6 +496,14 @@ impl OutputFormat for TextOutput {
     }
 }
 
+/// The `syntax` or input-error diagnostic that stands for a file that could not be linted.
+fn failure_diagnostic(failure: &FileFailure, content: Option<&str>) -> Diagnostic {
+    match failure {
+        FileFailure::Read { source, .. } => input_error_diagnostic(source.to_string()),
+        FileFailure::Lint { source, .. } => syntax_diagnostic(source, content.unwrap_or("")),
+    }
+}
+
 impl OutputFormat for ReportOutput {
     type Payload = Vec<Diagnostic>;
     /// The `syntax` or input-error diagnostic that stands for the file in the report.
@@ -506,10 +514,7 @@ impl OutputFormat for ReportOutput {
     }
 
     fn salvage(&self, failure: &FileFailure, content: Option<&str>) -> Diagnostic {
-        match failure {
-            FileFailure::Read { source, .. } => input_error_diagnostic(source.to_string()),
-            FileFailure::Lint { source, .. } => syntax_diagnostic(source, content.unwrap_or("")),
-        }
+        failure_diagnostic(failure, content)
     }
 
     /// Renders one report of all files, sorted by path (the formats list files in path order,
@@ -566,9 +571,12 @@ impl OutputFormat for ReportOutput {
 
 impl OutputFormat for JsonOutput {
     type Payload = Vec<(Diagnostic, Option<DiagnosticContext>)>;
-    type Salvage = ();
+    /// The `syntax` or input-error diagnostic that stands for the file in the array.
+    type Salvage = Diagnostic;
 
-    fn salvage(&self, _failure: &FileFailure, _content: Option<&str>) {}
+    fn salvage(&self, failure: &FileFailure, content: Option<&str>) -> Diagnostic {
+        failure_diagnostic(failure, content)
+    }
 
     fn payload(&self, diagnostics: Vec<Diagnostic>, source: &LintSource<'_>) -> Self::Payload {
         Findings::cut(diagnostics, &source.context())
@@ -580,7 +588,9 @@ impl OutputFormat for JsonOutput {
         &self,
         out: W,
         mut err: E,
-        reports: impl Iterator<Item = FileReport<Vec<(Diagnostic, Option<DiagnosticContext>)>>>,
+        reports: impl Iterator<
+            Item = FileReport<Vec<(Diagnostic, Option<DiagnosticContext>)>, Diagnostic>,
+        >,
     ) -> Result<bool> {
         let mut serializer = serde_json::Serializer::with_formatter(out, PrettyFormatter::new());
         let mut array = (&mut serializer)
@@ -590,9 +600,16 @@ impl OutputFormat for JsonOutput {
 
         for FileReport { path, outcome } in reports {
             match outcome {
-                Err(Failed { failure, .. }) => {
+                Err(Failed { failure, salvage }) => {
                     any_errors = true;
                     writeln!(err, "{failure}").context("Failed to write to stderr")?;
+                    let file = path.display().to_string();
+                    let stand_in = [(salvage, None)];
+                    for finding in Findings::Given(&stand_in).iter() {
+                        array
+                            .serialize_element(&JsonDiagnostic::new(&finding, Some(&file)))
+                            .context("Failed to write lint output")?;
+                    }
                 }
                 Ok(Linted {
                     has_errors,
@@ -632,7 +649,7 @@ mod tests {
             .build()
     }
 
-    fn linted<P>(path: &str, payload: P, has_errors: bool) -> FileReport<P> {
+    fn linted<P, X>(path: &str, payload: P, has_errors: bool) -> FileReport<P, X> {
         FileReport {
             path: PathBuf::from(path),
             outcome: Ok(Linted {
@@ -644,13 +661,20 @@ mod tests {
 
     type JsonPayload = Vec<(Diagnostic, Option<DiagnosticContext>)>;
 
-    fn json_report(path: &str, diagnostics: Vec<Diagnostic>) -> FileReport<JsonPayload> {
+    fn json_report(
+        path: &str,
+        diagnostics: Vec<Diagnostic>,
+    ) -> FileReport<JsonPayload, Diagnostic> {
         let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
         let pairs = diagnostics.into_iter().map(|d| (d, None)).collect();
         linted(path, pairs, has_errors)
     }
 
     fn failed<P>(path: &str) -> FileReport<P> {
+        failed_with(path, ())
+    }
+
+    fn failed_with<P, X>(path: &str, salvage: X) -> FileReport<P, X> {
         FileReport {
             path: PathBuf::from(path),
             outcome: Err(Failed {
@@ -658,12 +682,12 @@ mod tests {
                     path: PathBuf::from(path),
                     source: Linter::with_all_rules().lint("a: [").unwrap_err(),
                 },
-                salvage: (),
+                salvage,
             }),
         }
     }
 
-    fn json_of(reports: Vec<FileReport<JsonPayload>>) -> (String, String, bool) {
+    fn json_of(reports: Vec<FileReport<JsonPayload, Diagnostic>>) -> (String, String, bool) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let any = JsonOutput
             .emit(&mut out, &mut err, reports.into_iter())
@@ -724,8 +748,19 @@ mod tests {
 
     #[test]
     fn failures_go_to_stderr_in_order_and_count_as_errors() {
-        let (out, err, any) = json_of(vec![failed("first.yaml"), failed("second.yaml")]);
-        assert_eq!(out, "[]\n");
+        let stand_in = || input_error_diagnostic("unreadable");
+        let (out, err, any) = json_of(vec![
+            failed_with("first.yaml", stand_in()),
+            failed_with("second.yaml", stand_in()),
+        ]);
+        let records: serde_json::Value = serde_json::from_str(&out).unwrap();
+        let files: Vec<&str> = records
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|record| record["file"].as_str().unwrap())
+            .collect();
+        assert_eq!(files, ["first.yaml", "second.yaml"]);
         let lines: Vec<&str> = err.lines().collect();
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with("error: 'first.yaml': "), "{err}");
