@@ -420,7 +420,7 @@ describe('merge tag and verbatim core tags', () => {
     (key) => {
       const doc = `b: &b {x: 1, y: 2}\nm:\n  ${key}: *b\n  k: 0\n`;
       expect((safeLoad(doc) as { m: object }).m).toEqual({ x: 1, y: 2, k: 0 });
-    },
+    }
   );
 
   it('applies verbatim core tags like the shorthand', () => {
@@ -430,12 +430,9 @@ describe('merge tag and verbatim core tags', () => {
 });
 
 describe('keys that share a JavaScript property name', () => {
-  it.each(['1: a\n1.0: b\n', "1: a\n'1': b\n", "true: a\n'true': b\n"])(
-    'throws for %j',
-    (doc) => {
-      expect(() => safeLoad(doc)).toThrow(/same JavaScript property/);
-    },
-  );
+  it.each(['1: a\n1.0: b\n', "1: a\n'1': b\n", "true: a\n'true': b\n"])('throws for %j', (doc) => {
+    expect(() => safeLoad(doc)).toThrow(/same JavaScript property/);
+  });
 
   it('keeps equal big-integer spellings as one key', () => {
     expect(safeLoad('+99999999999999999999: a\n99999999999999999999: b\n')).toEqual({
@@ -454,4 +451,3 @@ describe('BOMs and non-printable characters', () => {
     expect(() => safeLoad(`a: x${char}y\n`)).toThrow(/not allowed in YAML/);
   });
 });
-

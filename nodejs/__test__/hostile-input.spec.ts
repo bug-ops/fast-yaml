@@ -49,7 +49,7 @@ describe('dump round trips', () => {
         const data = { user: { name: 'bob' }, [key]: true };
         expect(safeLoad(safeDump(data, { indent }))).toEqual(data);
       }
-    },
+    }
   );
 
   it('quotes strings holding a BOM', () => {
@@ -89,8 +89,12 @@ describe('batch input', () => {
   it('reports BOM-less UTF-16 and UTF-32 as unsupported', () => {
     const utf16le = Buffer.from('a: 1\n', 'utf16le');
     const utf16be = Buffer.from(utf16le).swap16();
-    const utf32le = Buffer.concat([...'a: 1\n'].map((c) => Buffer.from([c.charCodeAt(0), 0, 0, 0])));
-    const utf32be = Buffer.concat([...'a: 1\n'].map((c) => Buffer.from([0, 0, 0, c.charCodeAt(0)])));
+    const utf32le = Buffer.concat(
+      [...'a: 1\n'].map((c) => Buffer.from([c.charCodeAt(0), 0, 0, 0]))
+    );
+    const utf32be = Buffer.concat(
+      [...'a: 1\n'].map((c) => Buffer.from([0, 0, 0, c.charCodeAt(0)]))
+    );
     for (const [name, data] of [
       ['utf16le', utf16le],
       ['utf16be', utf16be],
@@ -135,7 +139,14 @@ describe('rejected characters', () => {
 
 describe('nested collections at any indent', () => {
   it.each([1, 2, 3, 4, 5, 9])('keeps nested lists for indent %i', (indent) => {
-    const data = { perms: [['read', 'write'], [true, 13], [[1], []]], m: [{ k: ['v'] }] };
+    const data = {
+      perms: [
+        ['read', 'write'],
+        [true, 13],
+        [[1], []],
+      ],
+      m: [{ k: ['v'] }],
+    };
     expect(safeLoad(safeDump(data, { indent }))).toEqual(data);
   });
 });
