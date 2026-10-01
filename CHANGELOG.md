@@ -136,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CLI**: `fy lint` batch mode lints files in bounded chunks and streams the results, so memory no longer holds every file's content, and stdout and stderr follow file order (#539)
 - **Linter**: `duplicate-key` compares resolved key values like the loaders (`99`/`+99`, `0x10`/`16` collide, `"1"`/`1` and `<<`/`"<<"` do not), which deliberately differs from yamllint's key-text comparison (#545)
 - **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#438)
 - **Linter**: the flow rules share one `FlowIndex` per lint run instead of one tokenizer index each (#386)
