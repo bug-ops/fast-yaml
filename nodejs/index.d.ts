@@ -9,6 +9,8 @@ export interface RuleEntryBase {
   enabled?: boolean
   /** Severity override for the rule. */
   severity?: RuleSeverity
+  /** yamllint spelling of `severity`; cannot be combined with it. */
+  level?: RuleSeverity
 }
 
 /** Spacing options shared by `braces` and `brackets`. */
@@ -49,7 +51,11 @@ export interface RuleOptionsByRule {
   }
   indentation: { 'indent-size'?: number }
   'key-ordering': { 'case-sensitive'?: boolean }
-  'line-length': { max?: number | null }
+  'line-length': {
+    max?: number | null
+    'allow-non-breakable-words'?: boolean
+    'allow-non-breakable-inline-mappings'?: boolean
+  }
   'new-lines': { type?: 'unix' | 'dos' | 'platform' }
   'new-line-at-end-of-file': {}
   'octal-values': { 'forbid-implicit-octal'?: boolean; 'forbid-explicit-octal'?: boolean }
@@ -58,10 +64,12 @@ export interface RuleOptionsByRule {
     required?: boolean | 'always' | 'not-required' | 'only-when-needed' | 'never'
     'extra-required'?: string[]
     'extra-allowed'?: string[]
+    'allow-quoted-quotes'?: boolean
+    'check-keys'?: boolean
   }
   'trailing-whitespace': {}
   truthy: { 'allowed-values'?: string[]; 'check-keys'?: boolean }
-  'duplicate-key': {}
+  'duplicate-key': { 'forbid-duplicated-merge-keys'?: boolean }
   'invalid-anchor': {}
 }
 

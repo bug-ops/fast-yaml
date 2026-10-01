@@ -352,3 +352,74 @@ class TestCliParity:
         with pytest.raises(ValueError) as exc:
             lint.LintConfig(rules={"quoted-strings": {"quote-type": "singel"}})
         assert str(exc.value) in result.stderr
+
+
+class TestYamllintParityOptions:
+    """Options and aliases added for yamllint parity (#536)."""
+
+    def test_level_is_an_alias_of_severity(self):
+        config = lint.LintConfig(rules={"line-length": {"max": 10, "level": "warning"}})
+        diagnostics = lint.lint("key: " + "x" * 20 + "\n", config)
+        diag = next(d for d in diagnostics if d.code == "line-length")
+        assert str(diag.severity) == "warning"
+
+    def test_level_and_severity_together_are_rejected(self):
+        with pytest.raises(ValueError, match="aliases"):
+            lint.LintConfig(rules={"line-length": {"level": "warning", "severity": "error"}})
+
+    def test_truthy_does_not_report_single_letters(self):
+        config = lint.LintConfig(rules={"truthy": {"check-keys": True}})
+        assert "truthy" not in codes(lint.lint("a: y\nb: N\ny: 1\n", config))
+        assert "truthy" in codes(lint.lint("a: yes\n", config))
+
+    def test_quoted_strings_check_keys_and_allow_quoted_quotes(self):
+        skip = lint.LintConfig(rules={"quoted-strings": {"required": True}})
+        assert "quoted-strings" not in codes(lint.lint('"a": "b"\n', skip))
+        keys = lint.LintConfig(rules={"quoted-strings": {"required": True, "check-keys": True}})
+        assert "quoted-strings" in codes(lint.lint("a: \"b\"\n", keys))
+        quotes = lint.LintConfig(
+            rules={
+                "quoted-strings": {
+                    "quote-type": "single",
+                    "required": False,
+                    "allow-quoted-quotes": True,
+                }
+            }
+        )
+        assert "quoted-strings" not in codes(lint.lint('a: "it\'s"\n', quotes))
+        assert "quoted-strings" in codes(lint.lint('a: "plain"\n', quotes))
+
+    def test_forbid_duplicated_merge_keys(self):
+        source = "a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n"
+        assert "duplicate-key" in codes(lint.lint(source))
+        allowed = lint.LintConfig(
+            rules={"duplicate-key": {"forbid-duplicated-merge-keys": False}}
+        )
+        assert "duplicate-key" not in codes(lint.lint(source, allowed))
+
+    def test_line_length_non_breakable_options(self):
+        url = "http://localhost/very/very/very/very/very/very/very/very/long/url"
+        base = {"max": 20}
+        assert "line-length" not in codes(
+            lint.lint(f"- {url}\n", lint.LintConfig(rules={"line-length": base}))
+        )
+        strict = lint.LintConfig(
+            rules={"line-length": {**base, "allow-non-breakable-words": False}}
+        )
+        assert "line-length" in codes(lint.lint(f"- {url}\n", strict))
+        inline = lint.LintConfig(
+            rules={"line-length": {**base, "allow-non-breakable-inline-mappings": True}}
+        )
+        assert "line-length" not in codes(lint.lint(f"key: {url}\n", inline))
+        assert "line-length" in codes(lint.lint(f"key: a b {url}\n", inline))
+
+    def test_document_markers_are_checked_per_document(self):
+        required = lint.LintConfig(rules={"document-start": {"present": True}})
+        diagnostics = lint.lint("---\na: 1\n...\n---\nb: 2\n", required)
+        assert "document-start" not in codes(diagnostics)
+        assert [d.span.start.line for d in lint.lint("a: 1\n---\nb: 2\n", required)
+                if d.code == "document-start"] == [1]
+        end = lint.LintConfig(rules={"document-end": {"present": True}})
+        lines = [d.span.start.line for d in lint.lint("a: 1\n---\nb: 2\n...\n", end)
+                 if d.code == "document-end"]
+        assert lines == [2]

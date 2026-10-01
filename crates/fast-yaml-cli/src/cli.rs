@@ -307,9 +307,15 @@ pub enum Command {
         /// Input paths (files, directories, or glob patterns).
         /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
         /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
-        /// If empty, reads from stdin.
+        /// If empty and no --stdin-files, reads from stdin.
         #[arg(value_name = "PATHS")]
         paths: Vec<PathBuf>,
+
+        /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
+        /// file or a line over 4096 bytes is an error, so filter git output:
+        /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files`
+        #[arg(long, conflicts_with = "paths")]
+        stdin_files: bool,
 
         /// Path to config file (default: auto-discover .fast-yaml.yaml)
         #[arg(long, value_name = "FILE", conflicts_with = "no_config")]

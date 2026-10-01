@@ -447,3 +447,97 @@ fn ignore_and_yaml_files_combine() {
         .stdout(predicate::str::contains("a.yaml.j2"))
         .stdout(predicate::str::contains("b.yaml.j2").not());
 }
+
+#[test]
+fn level_is_an_alias_of_severity() {
+    let dir = project(
+        "rules:\n  trailing-whitespace: {level: error}\n  truthy: {level: warning}\n",
+        &[],
+    );
+    fy(dir.path(), &[])
+        .write_stdin("a: 1 \nb: yes\n")
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("error[trailing-whitespace]"))
+        .stdout(predicate::str::contains("warning[truthy]"));
+}
+
+#[test]
+fn level_together_with_severity_is_rejected() {
+    let dir = project("rules:\n  truthy: {level: error, severity: warning}\n", &[]);
+    fy(dir.path(), &[])
+        .write_stdin("a: 1\n")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("aliases"));
+}
+
+#[test]
+fn single_letter_truthy_values_are_not_reported() {
+    let dir = project("extends: default\n", &[]);
+    fy(dir.path(), &[])
+        .write_stdin("---\na: y\nb: N\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("truthy").not());
+}
+
+#[test]
+fn quoted_strings_options_are_accepted_in_a_config_file() {
+    let dir = project(
+        "rules:\n  quoted-strings: {quote-type: single, required: false, allow-quoted-quotes: true, check-keys: true}\n",
+        &[],
+    );
+    fy(dir.path(), &[])
+        .write_stdin("\"a\": \"it's\"\n")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("quoted-strings").count(1));
+}
+
+#[test]
+fn duplicated_merge_keys_follow_the_option_and_the_presets() {
+    let source = "---\na: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n";
+    let dir = project("rules:\n  trailing-whitespace: error\n", &[]);
+    fy(dir.path(), &[])
+        .write_stdin(source)
+        .assert()
+        .code(2)
+        .stdout(predicate::str::contains("duplicate key '<<'"));
+
+    let dir = project("extends: default\n", &[]);
+    fy(dir.path(), &[])
+        .write_stdin(source)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("duplicate").not());
+}
+
+#[test]
+fn line_length_non_breakable_options_are_accepted() {
+    let url = "http://localhost/very/very/very/very/very/very/very/very/long/url";
+    let dir = project("rules:\n  line-length: {max: 20}\n", &[]);
+    fy(dir.path(), &[])
+        .write_stdin(format!("- {url}\n"))
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("line-length").not());
+
+    let dir = project(
+        "rules:\n  line-length: {max: 20, allow-non-breakable-words: false}\n",
+        &[],
+    );
+    fy(dir.path(), &[])
+        .write_stdin(format!("- {url}\n"))
+        .assert()
+        .stdout(predicate::str::contains("line-length"));
+}
+
+#[test]
+fn document_end_required_checks_every_document() {
+    let dir = project("rules:\n  document-end: {present: true}\n", &[]);
+    fy(dir.path(), &[])
+        .write_stdin("a: 1\n---\nb: 2\n...\n")
+        .assert()
+        .stdout(predicate::str::contains("missing document end marker").count(1));
+}

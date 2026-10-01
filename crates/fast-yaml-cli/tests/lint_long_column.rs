@@ -29,7 +29,7 @@ fn assert_lint_reports_without_panic(content: &str) {
 
 #[test]
 fn lint_survives_ascii_line_beyond_u16() {
-    assert_lint_reports_without_panic(&format!("!{}", "a".repeat(LONG)));
+    assert_lint_reports_without_panic(&format!("! {}", "a".repeat(LONG)));
 }
 
 #[test]

@@ -5,10 +5,20 @@ use std::num::NonZeroUsize;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
+};
 use fast_yaml_core::Value;
+use saphyr_parser::{Event, Parser as SaphyrParser};
+
+use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 
 /// Rule to check line length limits.
+///
+/// A line over the limit is not reported when it cannot be broken: with
+/// `allow-non-breakable-words` (the default) its content, after indentation and a `#` or `-`
+/// marker, is one word; with `allow-non-breakable-inline-mappings` it also may be a mapping
+/// whose value is one word, as in yamllint.
 pub struct LineLengthRule;
 
 /// Options of the line-length rule.
@@ -25,22 +35,89 @@ pub struct LineLengthRule;
 pub struct LineLengthOptions {
     /// Maximum line length in characters; `null` removes the limit.
     pub max: Option<NonZeroUsize>,
+    /// Accepts a long line whose content is a single word, such as a URL.
+    pub allow_non_breakable_words: bool,
+    /// Also accepts `key: word` lines; implies `allow-non-breakable-words`.
+    pub allow_non_breakable_inline_mappings: bool,
 }
 
 impl Default for LineLengthOptions {
     fn default() -> Self {
         Self {
             max: NonZeroUsize::new(80),
+            allow_non_breakable_words: true,
+            allow_non_breakable_inline_mappings: false,
         }
     }
 }
 
 impl RuleOptions for LineLengthOptions {
     const NULLABLE: &'static [&'static str] = &["max"];
-    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &[
-        "allow-non-breakable-words",
-        "allow-non-breakable-inline-mappings",
-    ];
+}
+
+impl LineLengthOptions {
+    /// Whether an over-long `line` is let through because it cannot be broken (yamllint's
+    /// algorithm).
+    fn is_non_breakable(&self, line: &str) -> bool {
+        if !(self.allow_non_breakable_words || self.allow_non_breakable_inline_mappings) {
+            return false;
+        }
+        let chars: Vec<char> = line.chars().collect();
+        let mut start = chars.iter().take_while(|&&c| c == ' ').count();
+        if start == chars.len() {
+            return false;
+        }
+        match chars.get(start) {
+            Some('#') => {
+                start += chars.iter().skip(start).take_while(|&&c| c == '#').count() + 1;
+            }
+            Some('-') => start += 2,
+            _ => {}
+        }
+        if !chars.get(start..).is_some_and(|rest| rest.contains(&' ')) {
+            return true;
+        }
+        self.allow_non_breakable_inline_mappings && is_inline_mapping_of_one_word(line)
+    }
+}
+
+/// Whether `line` holds a block mapping whose first plain or quoted value, without anchor or tag,
+/// has no space from its start to the end of the line (yamllint's inline mapping check).
+///
+/// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
+fn is_inline_mapping_of_one_word(line: &str) -> bool {
+    let context = SourceContext::new(line);
+    let mut parser = SaphyrParser::new_from_str(line);
+    let mut roles = RoleTracker::default();
+    let mut seen_mapping = false;
+    while let Some(Ok((event, span))) = parser.next_event() {
+        let range = context.byte_range_of(span);
+        match event {
+            Event::MappingStart(..) => {
+                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
+                {
+                    return false;
+                }
+                seen_mapping = true;
+                roles.start_mapping(line, range);
+            }
+            Event::SequenceStart(..) => roles.start_sequence(line, range),
+            Event::MappingEnd | Event::SequenceEnd => roles.leave(),
+            Event::Alias(..) => {
+                roles.node();
+            }
+            Event::Scalar(_, _, anchor, tag) => {
+                let role = roles.node();
+                if role == NodeRole::MappingValue && seen_mapping && anchor == 0 && tag.is_none() {
+                    return line
+                        .get(range.start().get()..)
+                        .is_some_and(|rest| !rest.contains(' '));
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 impl super::LintRule for LineLengthRule {
@@ -61,7 +138,8 @@ impl super::LintRule for LineLengthRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let Some(max_length) = config.rules.line_length.options.max.map(NonZeroUsize::get) else {
+        let options = &config.rules.line_length.options;
+        let Some(max_length) = options.max.map(NonZeroUsize::get) else {
             return Vec::new();
         };
 
@@ -71,7 +149,7 @@ impl super::LintRule for LineLengthRule {
         for line_num in 1..=ctx.line_count() {
             if let Some(line_content) = ctx.get_line(line_num) {
                 let line_len = line_content.chars().count();
-                if line_len > max_length {
+                if line_len > max_length && !options.is_non_breakable(line_content) {
                     let span = ctx.span_at(ctx.line_start(line_num), line_content.len());
 
                     let diagnostic = DiagnosticBuilder::new(
@@ -243,5 +321,89 @@ mod tests {
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].span.start.line, 2); // Second line
+    }
+
+    fn flagged(yaml: &str, options: &str) -> Vec<usize> {
+        let config = config_with_rule(RuleName::LineLength, options);
+        LineLengthRule
+            .check(&LintContext::new(yaml), &Value::Null, &config)
+            .iter()
+            .map(|d| d.span.start.line)
+            .collect()
+    }
+
+    const URL: &str = "http://localhost/very/very/very/very/very/very/very/very/long/url";
+
+    #[test]
+    fn single_word_lines_are_allowed_by_default() {
+        for yaml in [
+            format!("{URL}\n"),
+            format!("  {URL}\n"),
+            format!("- {URL}\n"),
+            format!("# {URL}\n"),
+            format!("### {URL}\n"),
+            format!("a:\n  {URL}\n"),
+        ] {
+            assert!(flagged(&yaml, "{max: 20}").is_empty(), "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn lines_with_a_space_after_the_marker_are_flagged() {
+        for yaml in [
+            "# a b http://localhost/very/very/very/long/url\n",
+            "- a b http://localhost/very/very/very/long/url\n",
+            "a http://localhost/very/very/very/very/long/url\n",
+        ] {
+            assert_eq!(flagged(yaml, "{max: 20}"), [1], "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn single_word_lines_are_flagged_when_words_are_not_allowed() {
+        assert_eq!(
+            flagged(
+                &format!("- {URL}\n"),
+                "{max: 20, allow-non-breakable-words: false}"
+            ),
+            [1]
+        );
+    }
+
+    #[test]
+    fn inline_mappings_with_one_word_are_allowed_on_request() {
+        let on = "{max: 20, allow-non-breakable-inline-mappings: true}";
+        for yaml in [
+            format!("key: {URL}\n"),
+            format!("- key: {URL}\n"),
+            format!("  nested: {URL}\n"),
+            format!("- key: \"{}\"\n", URL.replace('/', "")),
+            format!("key: {{a: {URL}}}\n"),
+        ] {
+            assert!(flagged(&yaml, on).is_empty(), "{yaml:?}");
+        }
+        for yaml in [
+            "key: a b http://localhost/very/very/very/long/url\n".to_owned(),
+            format!("key: !!str {URL}\n"),
+            format!("key: &x {URL}\n"),
+        ] {
+            assert_eq!(flagged(&yaml, on), [1], "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn inline_mappings_imply_non_breakable_words() {
+        let yaml = format!("{URL}\n");
+        let options = "{max: 20, allow-non-breakable-words: false, allow-non-breakable-inline-mappings: true}";
+        assert!(flagged(&yaml, options).is_empty());
+    }
+
+    #[test]
+    fn indented_unparsable_line_is_not_an_inline_mapping() {
+        let on = "{max: 20, allow-non-breakable-inline-mappings: true}";
+        assert_eq!(
+            flagged("  a: b: http://localhost/very/very/very/long/url\n", on),
+            [1]
+        );
     }
 }

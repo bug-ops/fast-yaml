@@ -3,17 +3,17 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::{MarkerPresence, RuleOptions};
-use crate::context::source_lines;
-use crate::source::offset::ByteOffset;
+use crate::scan::DocumentStart;
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    SourceContext, Span,
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
 };
 use fast_yaml_core::Value;
 
 /// Linting rule for document start marker.
 ///
-/// Requires, forbids, or allows the YAML document start marker `---`.
+/// Requires, forbids, or allows the YAML document start marker `---`, in every document of the
+/// stream: `required` flags each document that starts without it (also after `...`), `forbidden`
+/// flags each `---` except one that follows a `%` directive, where the spec makes it mandatory.
 ///
 /// Configuration options:
 /// - `present`: "required" | "forbidden" | "allowed" (default: "allowed")
@@ -63,112 +63,70 @@ impl super::LintRule for DocumentStartRule {
     }
 
     fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
-        let source_context = context.source_context();
+        let severity = config.rules.document_start.severity_or(Severity::Warning);
+        let documents = context.document_markers();
         match config.rules.document_start.options.present {
-            MarkerPresence::Required => check_required(source, source_context, config, self.code()),
-            MarkerPresence::Forbidden => {
-                check_forbidden(source, source_context, config, self.code())
-            }
+            MarkerPresence::Required => documents
+                .iter()
+                .filter_map(|document| match document.start {
+                    DocumentStart::Implicit(first_token) => {
+                        Some(missing(context, severity, first_token))
+                    }
+                    DocumentStart::Explicit(_) => None,
+                })
+                .collect(),
+            MarkerPresence::Forbidden => documents
+                .iter()
+                .filter_map(|document| document.start.marker())
+                .filter(|span| !follows_directive(context, span.start.line))
+                .map(|span| forbidden(context, severity, span))
+                .collect(),
             MarkerPresence::Allowed => Vec::new(),
         }
     }
 }
 
-fn check_required(
-    source: &str,
-    source_context: &SourceContext<'_>,
-    config: &LintConfig,
-    code: &str,
-) -> Vec<Diagnostic> {
-    if has_document_start_marker(source) {
-        Vec::new()
-    } else {
-        let severity = config.rules.document_start.severity_or(Severity::Warning);
-        let start_span = source_context.span_at(ByteOffset::ZERO, 0);
-        vec![
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                "missing document start marker '---'",
-                start_span,
-            )
-            .with_suggestion(
-                "Add '---' at the beginning",
-                start_span,
-                Some("---\n".to_string()),
-            )
-            .build_with_context(source_context),
-        ]
-    }
-}
-
-fn check_forbidden(
-    source: &str,
-    source_context: &SourceContext<'_>,
-    config: &LintConfig,
-    code: &str,
-) -> Vec<Diagnostic> {
-    if let Some(DocumentStartMarker {
+/// Reports a document that starts without `---`, at the line of its first token.
+fn missing(context: &LintContext<'_>, severity: Severity, first_token: Span) -> Diagnostic {
+    let source_context = context.source_context();
+    let span = source_context.span_at(source_context.line_start(first_token.start.line), 0);
+    DiagnosticBuilder::new(
+        DiagnosticCode::DOCUMENT_START,
+        severity,
+        "missing document start marker '---'",
         span,
-        after_directive: false,
-    }) = find_document_start_marker(source)
-    {
-        let severity = config.rules.document_start.severity_or(Severity::Warning);
-        vec![
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                "document start marker '---' is forbidden",
-                span,
-            )
-            .with_suggestion("Remove '---'", span, None)
-            .build_with_context(source_context),
-        ]
-    } else {
-        Vec::new()
+    )
+    .with_suggestion(
+        "Add '---' before this document",
+        span,
+        Some("---\n".to_string()),
+    )
+    .build_with_context(source_context)
+}
+
+fn forbidden(context: &LintContext<'_>, severity: Severity, span: Span) -> Diagnostic {
+    DiagnosticBuilder::new(
+        DiagnosticCode::DOCUMENT_START,
+        severity,
+        "document start marker '---' is forbidden",
+        span,
+    )
+    .with_suggestion("Remove '---'", span, None)
+    .build_with_context(context.source_context())
+}
+
+/// Whether a `%` directive line precedes the marker on `line`; the spec then makes it mandatory.
+fn follows_directive(context: &LintContext<'_>, line: usize) -> bool {
+    for above in context.lines().iter().take(line.saturating_sub(1)).rev() {
+        if above.starts_with('%') {
+            return true;
+        }
+        let trimmed = above.trim_start();
+        if !trimmed.is_empty() && !trimmed.starts_with('#') {
+            return false;
+        }
     }
-}
-
-fn has_document_start_marker(source: &str) -> bool {
-    find_document_start_marker(source).is_some()
-}
-
-/// Location of a `---` marker; `after_directive` marks markers the spec makes mandatory.
-struct DocumentStartMarker {
-    span: Span,
-    after_directive: bool,
-}
-
-fn find_document_start_marker(source: &str) -> Option<DocumentStartMarker> {
-    let mut after_directive = false;
-    for (line_num, (offset, line)) in source_lines(source).enumerate() {
-        let trimmed = line.trim_start();
-
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-
-        if line.starts_with('%') {
-            after_directive = true;
-            continue;
-        }
-
-        if trimmed.starts_with("---") {
-            let col = line.len() - trimmed.len() + 1;
-            return Some(DocumentStartMarker {
-                span: Span::new(
-                    Location::new(line_num + 1, col, offset + col - 1),
-                    Location::new(line_num + 1, col + 3, offset + col + 2),
-                ),
-                after_directive,
-            });
-        }
-
-        break;
-    }
-
-    None
+    false
 }
 
 #[cfg(test)]
@@ -308,31 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn test_marker_found_after_directive_reports_line_and_span() {
-        let marker = find_document_start_marker("%YAML 1.2\n---\na: 1\n").unwrap();
-        assert!(marker.after_directive);
-        assert_eq!(marker.span.start.line, 2);
-        assert_eq!(marker.span.start.column, 1);
-        let plain = find_document_start_marker("---\na: 1\n").unwrap();
-        assert!(!plain.after_directive);
-    }
-
-    #[test]
-    fn test_bom_before_marker_is_not_skipped() {
-        let with_bom = "\u{feff}---\na: 1\n";
-        assert!(find_document_start_marker(with_bom).is_none());
-    }
-
-    #[test]
-    fn test_find_document_start_marker() {
-        assert!(find_document_start_marker("---\ntest: value").is_some());
-        assert!(find_document_start_marker("# comment\n---\ntest: value").is_some());
-        assert!(find_document_start_marker("  ---\ntest: value").is_some());
-        assert!(find_document_start_marker("test: value").is_none());
-        assert!(find_document_start_marker("").is_none());
-    }
-
-    #[test]
     fn test_severity_override() {
         let yaml = "name: John";
         let value = Parser::parse_str(yaml).unwrap().unwrap();
@@ -347,5 +280,63 @@ mod tests {
         let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
+    }
+
+    fn diagnostics(yaml: &str, cfg: &str) -> Vec<Diagnostic> {
+        let value = Parser::parse_str("a: 1").unwrap().unwrap();
+        let config = config_with_rule(RuleName::DocumentStart, cfg);
+        DocumentStartRule.check(&LintContext::new(yaml), &value, &config)
+    }
+
+    fn lines(yaml: &str, cfg: &str) -> Vec<usize> {
+        diagnostics(yaml, cfg)
+            .iter()
+            .map(|d| d.span.start.line)
+            .collect()
+    }
+
+    #[test]
+    fn test_required_checks_every_document() {
+        assert_eq!(
+            lines("---\na: 1\n---\nb: 2\n", REQUIRED),
+            Vec::<usize>::new()
+        );
+        assert_eq!(lines("a: 1\n---\nb: 2\n", REQUIRED), [1]);
+        assert_eq!(lines("---\na: 1\n...\nb: 2\n", REQUIRED), [4]);
+        assert_eq!(lines("a: 1\n...\n# c\nb: 2\n", REQUIRED), [1, 4]);
+    }
+
+    #[test]
+    fn test_required_suggestion_inserts_marker_at_the_document_line() {
+        let found = diagnostics("---\na: 1\n...\n# c\nb: 2\n", REQUIRED);
+        assert_eq!(found.len(), 1);
+        let suggestion = &found[0].suggestions[0];
+        assert_eq!(suggestion.replacement.as_deref(), Some("---\n"));
+        assert_eq!(suggestion.span.start.offset, "---\na: 1\n...\n# c\n".len());
+        assert_eq!(suggestion.span.start.offset, suggestion.span.end.offset);
+    }
+
+    #[test]
+    fn test_forbidden_flags_every_marker() {
+        assert_eq!(lines("---\na: 1\n---\nb: 2\n", FORBIDDEN), [1, 3]);
+        assert_eq!(lines("a: 1\n---\nb: 2\n", FORBIDDEN), [2]);
+        assert_eq!(lines("--- # c\na: 1\n", FORBIDDEN), [1]);
+        assert!(lines("a: 1\n", FORBIDDEN).is_empty());
+    }
+
+    #[test]
+    fn test_forbidden_spares_markers_after_directives() {
+        assert_eq!(lines("%YAML 1.2\n---\na: 1\n---\nb: 2\n", FORBIDDEN), [4]);
+        assert!(lines("%YAML 1.2\n# c\n\n---\na: 1\n", FORBIDDEN).is_empty());
+        assert_eq!(
+            lines("a: 1\n...\n%YAML 1.2\n---\nb: 2\n---\nc: 3\n", FORBIDDEN),
+            [6]
+        );
+    }
+
+    #[test]
+    fn test_marker_text_inside_scalars_is_not_a_marker() {
+        assert!(lines("a: |\n  ---\n  text\n", FORBIDDEN).is_empty());
+        assert!(lines("a: \"x\n  --- y\"\n", FORBIDDEN).is_empty());
     }
 }

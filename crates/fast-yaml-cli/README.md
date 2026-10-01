@@ -145,6 +145,9 @@ fy lint --max-line-length 100 --indent-size 2 app.yaml
 
 # JSON output for IDE integration
 fy lint --format json config.yaml
+
+# Changed YAML files only (deleted and non-YAML entries are errors)
+git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files
 ```
 
 ### Parser resource limits

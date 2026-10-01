@@ -1,0 +1,10 @@
+plain: value
+"quoted": "value"
+tagged: !!str value
+local: !local value
+single: 'text'
+double: "text"
+apostrophe: "it's"
+inner: 'say "hi"'
+empty_value: ""
+number: !!int 5

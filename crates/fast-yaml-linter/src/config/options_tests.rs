@@ -121,6 +121,8 @@ fn every_options_type_round_trips_with_non_default_values() {
                 required,
                 extra_required: PatternList::new(["a"]).unwrap(),
                 extra_allowed: PatternList::new(["b", "c"]).unwrap(),
+                allow_quoted_quotes: true,
+                check_keys: true,
             });
         }
     }
@@ -150,9 +152,17 @@ fn every_options_type_round_trips_with_non_default_values() {
         forbid_in_flow_mappings: false,
         forbid_in_block_sequences: false,
     });
-    round_trip(&LineLengthOptions { max: None });
+    round_trip(&LineLengthOptions {
+        max: None,
+        ..LineLengthOptions::default()
+    });
     round_trip(&LineLengthOptions {
         max: NonZeroUsize::new(120),
+        allow_non_breakable_words: false,
+        allow_non_breakable_inline_mappings: true,
+    });
+    round_trip(&DuplicateKeysOptions {
+        forbid_duplicated_merge_keys: false,
     });
     round_trip(&IndentationOptions {
         indent_size: IndentSize::try_from(8u64).unwrap(),

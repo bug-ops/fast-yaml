@@ -4,18 +4,44 @@ use fast_yaml_core::events::{Event, EventItem};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
 use fast_yaml_core::{CommentScanner, DuplicateMergeKeys, LoadOptions, NormalizedInput, Parser};
 
-use crate::{SourceContext, Span, comments::Comment};
+use crate::{Location, SourceContext, Span, comments::Comment};
+
+/// How a document starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentStart {
+    /// With a `---` marker at this span.
+    Explicit(Span),
+    /// Without a marker; the span is the first token of the document.
+    Implicit(Span),
+}
+
+impl DocumentStart {
+    /// The span of the explicit `---`, if any.
+    pub const fn marker(self) -> Option<Span> {
+        match self {
+            Self::Explicit(span) => Some(span),
+            Self::Implicit(_) => None,
+        }
+    }
+}
 
 /// Explicit markers and first line of one document.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DocumentMarkers {
-    /// Span of the explicit `---`, `None` when the document start is implicit.
-    pub start: Option<Span>,
+    /// How the document starts.
+    pub start: DocumentStart,
     /// Span of the explicit `...`, `None` when the document end is implicit.
     pub end: Option<Span>,
     /// 1-based line where a forward key search for the document begins.
     pub first_line: usize,
 }
+
+/// Stand-in for the document of a source the parser reports no document for.
+pub const IMPLICIT_DOCUMENT: DocumentMarkers = DocumentMarkers {
+    start: DocumentStart::Implicit(Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0))),
+    end: None,
+    first_line: 1,
+};
 
 /// Everything the rules need from the parser events of one source.
 #[derive(Debug, Default)]
@@ -58,7 +84,7 @@ pub struct ScanCollector<'a, 'c> {
     context: &'c SourceContext<'c>,
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
-    open: Option<(Option<Span>, usize)>,
+    open: Option<(DocumentStart, usize)>,
 }
 
 impl<'a, 'c> ScanCollector<'a, 'c> {
@@ -87,7 +113,12 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
                     (false, true) => span.start.line + 1,
                     (false, false) => span.start.line,
                 };
-                self.open = Some((explicit.then_some(span), first_line));
+                let start = if *explicit {
+                    DocumentStart::Explicit(span)
+                } else {
+                    DocumentStart::Implicit(span)
+                };
+                self.open = Some((start, first_line));
             }
             Event::DocumentEnd => {
                 let range = self.context.byte_range_between(item.at, item.end);
@@ -95,7 +126,9 @@ impl<'a, 'c> ScanCollector<'a, 'c> {
                     .source
                     .get(range.start().get()..range.end().get())
                     .is_some_and(|text| text == "...");
-                let (start, first_line) = self.open.take().unwrap_or((None, 1));
+                let Some((start, first_line)) = self.open.take() else {
+                    return;
+                };
                 self.documents.push(DocumentMarkers {
                     start,
                     end: explicit.then(|| self.context.span_between(item.at, item.end)),
@@ -130,7 +163,7 @@ mod tests {
             .iter()
             .map(|d| {
                 (
-                    d.start.map(|s| s.start.line),
+                    d.start.marker().map(|s| s.start.line),
                     d.end.map(|s| s.start.line),
                     d.first_line,
                 )

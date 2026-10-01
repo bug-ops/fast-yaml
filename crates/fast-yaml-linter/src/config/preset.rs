@@ -6,7 +6,9 @@ use std::str::FromStr;
 use crate::Severity;
 use crate::config::{Limit, MarkerPresence, NoOptions, RuleSettings, RulesConfig};
 use crate::echo::{KEY_LIMIT, echo};
-use crate::rules::{DocumentEndOptions, DocumentStartOptions, QuoteRequirement};
+use crate::rules::{
+    DocumentEndOptions, DocumentStartOptions, DuplicateKeysOptions, QuoteRequirement,
+};
 use crate::rules::{FloatValuesOptions, QuotedStringsOptions, TruthyOptions};
 
 /// Error returned when a string is not a preset name.
@@ -22,22 +24,32 @@ pub struct UnknownPresetError {
 ///
 /// Every preset spells out all yamllint rules, enabled or not, with yamllint's option
 /// defaults, so a rule that a preset disables behaves like yamllint once it is re-enabled.
-/// This is not full yamllint parity. Options that fast-yaml does not implement are left out, and
-/// rules that depend on them behave differently from yamllint:
+/// This is not full yamllint parity. Options that fast-yaml does not implement are rejected with
+/// an error:
 ///
-/// - `indentation.spaces` stays at the fast-yaml default; `indent-sequences` and
-///   `check-multi-line-strings` are missing;
-/// - `line-length.allow-non-breakable-words` (yamllint default true) and
-///   `allow-non-breakable-inline-mappings` (true in `relaxed`);
+/// - `indentation.spaces` (the fast-yaml `indent-size` stays), `indent-sequences` and
+///   `check-multi-line-strings`;
 /// - `key-ordering.ignored-keys`;
-/// - `quoted-strings.allow-quoted-quotes` and `check-keys`;
-/// - `key-duplicates.forbid-duplicated-merge-keys` and `anchors.forbid-*`.
+/// - `anchors.forbid-undeclared-aliases`, `forbid-duplicated-anchors` and `forbid-unused-anchors`.
+///
+/// Some rules silently behave differently from yamllint, because fast-yaml reads the parser's
+/// events where yamllint reads `PyYAML` tokens:
+///
+/// - `key-duplicates` compares resolved values, so `99` and `+99` collide and `"1"` and `1` do
+///   not, where yamllint compares the key text; a quoted `"<<"` is an ordinary key, not a merge
+///   key;
+/// - `quoted-strings` resolves plain scalars with the YAML 1.2 core schema, so `yes`, `on` and
+///   dates are strings to it, and its `only-when-needed` check keeps fast-yaml's character
+///   heuristics instead of yamllint's re-scan of the value;
+/// - `document-start` and `document-end` report a source with no document (empty or only
+///   comments) as one document without markers, and report the last document's missing `...`
+///   at the end of the file, where yamllint reports the line before; a bare document after `...`
+///   is accepted, where `PyYAML` (and so yamllint) rejects it;
+/// - `key-ordering` locates keys in the source text instead of reading tokens, which differs on
+///   flow mappings and numeric keys;
+/// - the default `yaml-files` do not include `.yamllint`.
 ///
 /// Rules that only fast-yaml has (`lint-directive`) keep their fast-yaml defaults.
-///
-/// `key-duplicates` deliberately differs from yamllint in what makes two keys equal: it
-/// compares resolved values, so `99` and `+99` collide and `"1"` and `1` do not, where yamllint
-/// compares the key text.
 ///
 /// # Examples
 ///
@@ -134,7 +146,12 @@ const fn disable<O>(settings: &mut RuleSettings<O>) {
 
 fn default_rules() -> RulesConfig {
     RulesConfig {
-        duplicate_key: error(),
+        duplicate_key: on(
+            Severity::Error,
+            DuplicateKeysOptions {
+                forbid_duplicated_merge_keys: false,
+            },
+        ),
         line_length: error(),
         trailing_whitespace: error(),
         document_start: on(
@@ -192,6 +209,10 @@ fn relaxed_rules() -> RulesConfig {
     rules.hyphens.severity = Some(Severity::Warning);
     rules.indentation.severity = Some(Severity::Warning);
     rules.line_length.severity = Some(Severity::Warning);
+    rules
+        .line_length
+        .options
+        .allow_non_breakable_inline_mappings = true;
     disable(&mut rules.comments);
     disable(&mut rules.comments_indentation);
     disable(&mut rules.document_start);

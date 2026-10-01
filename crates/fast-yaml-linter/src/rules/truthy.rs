@@ -13,9 +13,11 @@ use fast_yaml_core::Value;
 use saphyr_parser::{Event, Parser as SaphyrParser, ScalarStyle};
 
 /// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
+///
+/// Like yamllint's list this leaves out the single letters `y`/`n`, which are plain strings
+/// in both YAML 1.2 and `PyYAML`.
 pub const NON_STANDARD_BOOLS: &[&str] = &[
-    "yes", "no", "Yes", "No", "YES", "NO", "on", "off", "On", "Off", "ON", "OFF", "y", "n", "Y",
-    "N",
+    "yes", "no", "Yes", "No", "YES", "NO", "on", "off", "On", "Off", "ON", "OFF",
 ];
 
 /// Valid YAML 1.2.2 booleans that are not in canonical form (`true`/`false`).
@@ -25,7 +27,8 @@ const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 ///
 /// Validates boolean value representations to ensure consistent usage.
 /// YAML 1.2 standardizes on `true` and `false`, but YAML 1.1 allowed
-/// many alternatives (yes/no, on/off, y/n, etc.) which can cause confusion.
+/// many alternatives (yes/no, on/off) which can cause confusion. The single letters `y` and
+/// `n` are not reported, as in yamllint.
 ///
 /// Configuration options:
 /// - `allowed-values`: list of allowed truthy representations (default: `["true", "false"]`)
@@ -184,7 +187,7 @@ impl super::LintRule for TruthyRule {
     }
 
     fn description(&self) -> &'static str {
-        "Forbids non-standard truthy value representations (yes/no, on/off, y/n, etc.)"
+        "Forbids non-standard truthy value representations (yes/no, on/off)"
     }
 
     fn default_severity(&self) -> Severity {
@@ -451,16 +454,23 @@ mod tests {
     }
 
     #[test]
-    fn test_truthy_single_letter() {
-        let yaml = "enabled: y\ndisabled: n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+    fn test_truthy_single_letters_are_not_reported() {
+        let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
+        for yaml in ["enabled: y\ndisabled: n\n", "a: Y\nb: N\n", "y: 1\nn: 2\n"] {
+            assert!(
+                truthy_spans(yaml, &LintConfig::default()).is_empty(),
+                "{yaml:?}"
+            );
+            assert!(truthy_spans(yaml, &config).is_empty(), "{yaml:?}");
+        }
+    }
 
-        let rule = TruthyRule;
-        let config = LintConfig::default();
-
-        let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
-        assert_eq!(diagnostics.len(), 2);
+    #[test]
+    fn test_truthy_single_letter_is_not_an_allowed_value() {
+        for letter in ["y", "n", "Y", "N"] {
+            let err = TruthySpelling::new(letter).unwrap_err();
+            assert_eq!(err.input, letter);
+        }
     }
 
     fn truthy_spans(yaml: &str, config: &LintConfig) -> Vec<(usize, usize, usize)> {
@@ -501,8 +511,8 @@ mod tests {
     fn test_truthy_flow_pair_in_flow_sequence_is_checked() {
         let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
         assert_eq!(
-            truthy_spans("k: [a: yes]\nm: [ {x: 1}, y: no ]\n", &config),
-            [(1, 8, 11), (2, 14, 15), (2, 17, 19)]
+            truthy_spans("k: [a: yes]\nm: [ {x: 1}, on: no ]\n", &config),
+            [(1, 8, 11), (2, 14, 16), (2, 18, 20)]
         );
     }
 

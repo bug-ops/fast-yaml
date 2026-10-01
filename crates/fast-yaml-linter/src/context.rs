@@ -4,7 +4,7 @@ use crate::{
     Location, Span,
     comments::Comment,
     diagnostic::{ContextLine, DiagnosticContext},
-    scan::{DocumentMarkers, SourceScan},
+    scan::{DocumentMarkers, IMPLICIT_DOCUMENT, SourceScan},
     source::offset::{ByteOffset, ByteRange},
     tokenizer::{FlowIndex, FlowTokenizer},
 };
@@ -1162,6 +1162,15 @@ impl<'a> LintContext<'a> {
     /// Returns the explicit markers and first line of every parsed document.
     pub(crate) fn documents(&self) -> &[DocumentMarkers] {
         &self.scan().documents
+    }
+
+    /// Like [`documents`](Self::documents), but a source with no parsed document (empty, only
+    /// comments, or not valid YAML) counts as one implicit document.
+    pub(crate) fn document_markers(&self) -> &[DocumentMarkers] {
+        match self.documents() {
+            [] => std::slice::from_ref(&IMPLICIT_DOCUMENT),
+            documents => documents,
+        }
     }
 
     /// Returns all comments found in the source, in source order.

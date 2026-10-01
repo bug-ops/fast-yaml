@@ -29,14 +29,34 @@ use std::collections::hash_map::Entry;
 /// not compared.
 pub struct DuplicateKeysRule;
 
-/// Options of the duplicate-key rule (none).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DuplicateKeysOptions {}
-
-impl RuleOptions for DuplicateKeysOptions {
-    const YAMLLINT_UNSUPPORTED: &'static [&'static str] = &["forbid-duplicated-merge-keys"];
+/// Options of the duplicate-key rule.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::rules::DuplicateKeysOptions;
+///
+/// assert!(DuplicateKeysOptions::default().forbid_duplicated_merge_keys);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+pub struct DuplicateKeysOptions {
+    /// Reports a second `<<` merge key in one mapping.
+    ///
+    /// On by default, because the loaders keep only the last merge key and silently drop the
+    /// others; the yamllint presets turn it off, as yamllint does.
+    pub forbid_duplicated_merge_keys: bool,
 }
+
+impl Default for DuplicateKeysOptions {
+    fn default() -> Self {
+        Self {
+            forbid_duplicated_merge_keys: true,
+        }
+    }
+}
+
+impl RuleOptions for DuplicateKeysOptions {}
 
 impl super::LintRule for DuplicateKeysRule {
     fn code(&self) -> &str {
@@ -60,7 +80,13 @@ impl super::LintRule for DuplicateKeysRule {
             .rules
             .duplicate_key
             .severity_or(self.default_severity());
-        scan_duplicate_keys(context.source(), context.source_context(), severity)
+        let options = &config.rules.duplicate_key.options;
+        scan_duplicate_keys(
+            context.source(),
+            context.source_context(),
+            severity,
+            options.forbid_duplicated_merge_keys,
+        )
     }
 }
 
@@ -80,11 +106,19 @@ struct MappingKeys {
 
 impl MappingKeys {
     /// Records `key` and returns the first line it was seen on if it repeats.
-    fn record(&mut self, role: NodeRole, key: Value, line: usize) -> Option<usize> {
+    ///
+    /// A repeated merge key is reported only when `forbid_merge_repeats` is set.
+    fn record(
+        &mut self,
+        role: NodeRole,
+        key: Value,
+        line: usize,
+        forbid_merge_repeats: bool,
+    ) -> Option<usize> {
         if role == NodeRole::MergeKey {
             let first = self.merge_first_line;
             self.merge_first_line.get_or_insert(line);
-            return first;
+            return first.filter(|_| forbid_merge_repeats);
         }
         match self.values.entry(key) {
             Entry::Occupied(first) => Some(*first.get()),
@@ -99,7 +133,11 @@ impl MappingKeys {
 /// Parses raw YAML events and collects duplicate key occurrences.
 ///
 /// Stops at the first invalid merge value, which `lint` already rejects.
-fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<DuplicateKey> {
+fn collect_duplicates(
+    source: &str,
+    source_context: &SourceContext<'_>,
+    forbid_merge_repeats: bool,
+) -> Vec<DuplicateKey> {
     let mut duplicates = Vec::new();
     let mut validator = MergeKeyValidator::default();
     let mut open: Vec<MappingKeys> = Vec::new();
@@ -122,7 +160,9 @@ fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<D
                     continue;
                 };
                 let key = Value::from(resolve_scalar(text, style, tag.as_deref()));
-                if let Some(first_line) = keys.record(role, key, span.start.line()) {
+                if let Some(first_line) =
+                    keys.record(role, key, span.start.line(), forbid_merge_repeats)
+                {
                     duplicates.push(DuplicateKey {
                         key: text.as_ref().to_owned(),
                         first_line,
@@ -141,8 +181,9 @@ fn scan_duplicate_keys(
     source: &str,
     source_context: &SourceContext<'_>,
     severity: Severity,
+    forbid_merge_repeats: bool,
 ) -> Vec<Diagnostic> {
-    collect_duplicates(source, source_context)
+    collect_duplicates(source, source_context, forbid_merge_repeats)
         .into_iter()
         .map(
             |DuplicateKey {
@@ -439,5 +480,48 @@ mod tests {
             &LintConfig::default(),
         );
         assert_eq!(diags.len(), 1);
+    }
+
+    fn run_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
+        use crate::config::{RuleName, test_support::config_with_rule};
+        let config = config_with_rule(RuleName::DuplicateKey, options);
+        DuplicateKeysRule.check(&LintContext::new(yaml), &Value::Null, &config)
+    }
+
+    #[test]
+    fn test_forbid_duplicated_merge_keys_is_on_by_default() {
+        let yaml = "a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n";
+        assert_eq!(run(yaml).len(), 1);
+        assert_eq!(
+            run_with(yaml, "{forbid-duplicated-merge-keys: true}").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_repeated_merge_key_is_allowed_when_not_forbidden() {
+        let yaml = "a: &a {x: 1}\nb: &b {y: 2}\nc:\n  <<: *a\n  <<: *b\n";
+        assert!(run_with(yaml, "{forbid-duplicated-merge-keys: false}").is_empty());
+    }
+
+    #[test]
+    fn test_option_does_not_hide_repeated_ordinary_or_quoted_keys() {
+        let off = "{forbid-duplicated-merge-keys: false}";
+        assert_eq!(run_with("\"<<\": 1\n\"<<\": 2\n", off).len(), 1);
+        assert_eq!(run_with("a: 1\na: 2\n", off).len(), 1);
+    }
+
+    #[test]
+    fn test_presets_turn_the_option_off() {
+        use crate::config::Preset;
+        for preset in [Preset::Default, Preset::Relaxed] {
+            assert!(
+                !preset
+                    .rules()
+                    .duplicate_key
+                    .options
+                    .forbid_duplicated_merge_keys
+            );
+        }
     }
 }

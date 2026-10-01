@@ -153,3 +153,60 @@ fn test_lint_exclude_drops_explicit_file() {
     .assert()
     .success();
 }
+
+#[test]
+fn test_lint_stdin_files_lints_each_listed_file() {
+    let temp = TempDir::new().unwrap();
+    let broken = temp.path().join("broken.yaml");
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&broken, BROKEN).unwrap();
+    fs::write(&clean, CLEAN).unwrap();
+
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin(format!("{}\n{}\n", broken.display(), clean.display()))
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("broken.yaml"));
+}
+
+#[test]
+fn test_lint_stdin_files_accepts_blank_and_comment_lines() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    fs::write(&clean, CLEAN).unwrap();
+
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin(format!("\n# list\n  {}  \r\n", clean.display()))
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_lint_stdin_files_empty_list_succeeds() {
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin("")
+        .assert()
+        .success();
+}
+
+#[test]
+fn test_lint_stdin_files_rejects_non_yaml_line() {
+    let temp = TempDir::new().unwrap();
+    let clean = temp.path().join("clean.yaml");
+    let text = temp.path().join("notes.txt");
+    fs::write(&clean, CLEAN).unwrap();
+    fs::write(&text, "hello\n").unwrap();
+
+    fy().args(["lint", "--stdin-files"])
+        .write_stdin(format!("{}\n{}\n", clean.display(), text.display()))
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("--stdin-files line 2"));
+}
+
+#[test]
+fn test_lint_stdin_files_conflicts_with_paths() {
+    fy().args(["lint", "--stdin-files", "a.yaml"])
+        .assert()
+        .failure();
+}

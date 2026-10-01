@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `truthy` no longer reports `y`/`n`/`Y`/`N` (also in the fast-yaml default), and they are no longer accepted in `allowed-values` (#536)
+- **Linter**: `quoted-strings` skips mapping keys unless `check-keys: true` and scalars with a `!!` core tag (#536)
+- **Linter**: `line-length` accepts a long line that is one word (`allow-non-breakable-words`, default true) (#536)
+- **Linter**: `document-start` and `document-end` check every document of the stream, not only the first marker and the last `...` (#536)
+- **Linter**: `RuleOptions::YAMLLINT_UNSUPPORTED` no longer lists `allow-non-breakable-*`, `allow-quoted-quotes`, `check-keys` and `forbid-duplicated-merge-keys`, and `QuotedStringsOptions`, `LineLengthOptions` and `DuplicateKeysOptions` gain fields (#536)
 - **Core**: `events::EventItem` gains `end`, the position where the event's token ends (#438)
 - **Linter**: the `comment_parser` module is removed; `Comment` is `Comment<'a> { text, span, kind }` with a `CommentKind` enum instead of `content`/`is_inline`/`is_shebang`, and comments come from parser events (#438)
 - **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
@@ -104,6 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#536)
+- **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#536)
+- **Core**: `CommentScanner` and `Parser::parse_normalized_observed` let a caller find comments in the same parser pass that loads the documents (#438)
 - **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#438)
 - **Core**: new `events` module with `EventStream`, `Event`, `ScalarStyle`, `Tag` and `AnchorId`, and a root `ScalarStyle` re-export (#542) (#562)
 - **Core**: `MaxInputBytes` documents the flow-collection memory amplification of saphyr-parser (#553) (#562)
