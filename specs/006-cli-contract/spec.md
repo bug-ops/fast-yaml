@@ -191,6 +191,7 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 |----|-------------|----------|
 | FR-040 | THE SYSTEM SHALL ship features `colors` (default; without it output is never colored), `linter` (default; adds `lint`, config files and report formats), `arena` (default; core arena backend) and `all`. | must |
 | FR-041 | THE SYSTEM SHALL compile with `--no-default-features` (a `parse`/`format`/`convert`-only binary). | should |
+| FR-042 | THE SYSTEM SHALL render every file name it prints in human-readable output (text, `parsable` and `github` reports, batch error lines, `format` failure lines, `--verbose` headers and path errors) through `DisplayPath`, which escapes control characters (`\u{1b}`) without truncating, so a hostile file name cannot move the cursor, retitle the window or forge lines; JSON and SARIF keep the real name, which they escape as JSON strings and percent-encoded URIs. | must |
 
 ## 4. Key entities and types
 

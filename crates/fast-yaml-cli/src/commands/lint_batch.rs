@@ -16,6 +16,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
 use fast_yaml_core::{LimitKind, ParseError};
 use fast_yaml_linter::config::CanonicalPath;
@@ -77,8 +78,12 @@ impl fmt::Display for FileFailure {
                 source: source @ ParallelError::Io { .. },
                 ..
             } => write!(f, "error: {source}")?,
-            Self::Read { path, source } => write!(f, "error: '{}': {source}", path.display())?,
-            Self::Lint { path, source } => write!(f, "error: '{}': {source}", path.display())?,
+            Self::Read { path, source } => {
+                write!(f, "error: '{}': {source}", DisplayPath::new(path))?;
+            }
+            Self::Lint { path, source } => {
+                write!(f, "error: '{}': {source}", DisplayPath::new(path))?;
+            }
         }
         self.hint().map_or(Ok(()), |hint| write!(f, " ({hint})"))
     }
@@ -484,7 +489,7 @@ impl OutputFormat for TextOutput {
                 }) => {
                     any_errors |= has_errors;
                     if !rendered.is_empty() {
-                        writeln!(out, "{}:", path.display())
+                        writeln!(out, "{}:", DisplayPath::new(&path))
                             .and_then(|()| write!(out, "{rendered}"))
                             .and_then(|()| out.flush())
                             .context("Failed to write lint output")?;

@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead};
 use fast_yaml_linter::config::{CanonicalPath, IndentSize};
 use fast_yaml_linter::formatter::{
@@ -70,7 +71,7 @@ pub fn report_source(path: Option<&Path>) -> Result<ReportSource> {
     let absolute = match path.canonicalize() {
         Ok(canonical) => canonical,
         Err(_) => std::path::absolute(path)
-            .with_context(|| format!("failed to resolve '{}'", path.display()))?,
+            .with_context(|| format!("failed to resolve '{}'", DisplayPath::new(path)))?,
     };
     Ok(ReportSource::File(ReportPath::from_absolute(&absolute)?))
 }
@@ -177,8 +178,9 @@ impl LintCommand {
 
         if let Some(path) = config_path {
             // Explicit --config: hard error if missing or invalid
-            let cfg = ConfigFile::load(&path)
-                .with_context(|| format!("failed to load config file '{}'", path.display()))?;
+            let cfg = ConfigFile::load(&path).with_context(|| {
+                format!("failed to load config file '{}'", DisplayPath::new(&path))
+            })?;
             return Ok(cfg);
         }
 
@@ -191,9 +193,15 @@ impl LintCommand {
         });
 
         if let Some(discovered) = ConfigFile::discover(&start_dir) {
-            error::stderr_line(format_args!("using config file: {}", discovered.display()));
+            error::stderr_line(format_args!(
+                "using config file: {}",
+                DisplayPath::new(&discovered)
+            ));
             let cfg = ConfigFile::load(&discovered).with_context(|| {
-                format!("failed to load config file '{}'", discovered.display())
+                format!(
+                    "failed to load config file '{}'",
+                    DisplayPath::new(&discovered)
+                )
             })?;
             return Ok(cfg);
         }
@@ -287,7 +295,7 @@ impl LintCommand {
         };
         let canonical = match input.file_path().map(|path| {
             CanonicalPath::new(path)
-                .with_context(|| format!("failed to resolve '{}'", path.display()))
+                .with_context(|| format!("failed to resolve '{}'", DisplayPath::new(path)))
         }) {
             Some(Ok(path)) => Some(path),
             Some(Err(err)) => return Err(self.report_unreadable(input.file_path(), err)),
@@ -338,7 +346,7 @@ impl LintCommand {
         if self.config.output.is_verbose() && !matches!(self.format.output(), LintOutput::Json) {
             let elapsed = start_time.elapsed();
             if let Some(path) = input.file_path() {
-                error::stderr_line(format_args!("\nFile: {}", path.display()));
+                error::stderr_line(format_args!("\nFile: {}", DisplayPath::new(path)));
             }
             error::stderr_line(format_args!(
                 "Lint time: {:.2}ms",

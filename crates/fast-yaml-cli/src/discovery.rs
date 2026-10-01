@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use fast_yaml_core::fs::DisplayPath;
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 
 use crate::error::{DiscoveryError, PathError, StdinLineCause};
@@ -512,7 +513,7 @@ impl FileDiscovery {
                     // still matched against `ignore` by its own canonical path
                     crate::error::stderr_line(format_args!(
                         "Warning: cannot resolve '{}' to prune ignored directories: {error}",
-                        dir.display()
+                        DisplayPath::new(dir)
                     ));
                     None
                 }

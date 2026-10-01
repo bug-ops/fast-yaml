@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_parallel::AtomicFile;
 
 /// Destination for output data
@@ -124,7 +125,7 @@ impl OutputWriter {
         let kind = match &self.destination {
             OutputDestination::File(path) => SinkKind::File(
                 AtomicFile::create(path)
-                    .with_context(|| format!("Failed to write file: {}", path.display()))?,
+                    .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))?,
             ),
             OutputDestination::Stdout => SinkKind::Stdout,
             OutputDestination::Stderr => SinkKind::Stderr,
@@ -157,7 +158,7 @@ impl OutputWriter {
         if inputs.into_iter().any(|input| identity.is(input)) {
             anyhow::bail!(
                 "--output '{}' is also an input file; refusing to overwrite it",
-                destination.display()
+                DisplayPath::new(destination)
             );
         }
         Ok(())
@@ -166,7 +167,7 @@ impl OutputWriter {
     /// Write to file via the shared secure atomic writer
     fn write_file(path: &Path, content: &str) -> Result<()> {
         fast_yaml_parallel::write_atomic(path, content.as_bytes())
-            .with_context(|| format!("Failed to write file: {}", path.display()))
+            .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))
     }
 }
 

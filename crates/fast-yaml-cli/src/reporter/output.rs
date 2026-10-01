@@ -2,6 +2,7 @@
 
 use super::events::{BatchStats, ReportEvent};
 use crate::config::OutputConfig;
+use fast_yaml_core::fs::DisplayPath;
 use std::io::{self, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -103,7 +104,7 @@ impl Reporter {
                     lock,
                     "{} {}: {}",
                     "error:".red().bold(),
-                    p.display(),
+                    DisplayPath::new(p),
                     message
                 );
             }
@@ -114,7 +115,7 @@ impl Reporter {
             let _ = self.config.use_color();
         }
         if let Some(p) = path {
-            writeln!(lock, "error: {}: {}", p.display(), message)
+            writeln!(lock, "error: {}: {}", DisplayPath::new(p), message)
         } else {
             writeln!(lock, "error: {}", message)
         }

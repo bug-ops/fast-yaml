@@ -61,6 +61,23 @@ mod tests {
         assert_eq!(render(&[report]).lines().count(), 1);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn control_characters_in_a_path_are_escaped() {
+        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
+        let path = std::path::Path::new("/w/a\u{1b}]0;x\u{7}.yaml");
+        let source = ReportSource::File(crate::formatter::ReportPath::from_absolute(path).unwrap());
+        let report = FileReport {
+            source: &source,
+            diagnostics: &[d],
+        };
+        assert_eq!(
+            render(&[report]),
+            "/w/a\\u{1b}]0;x\\u{7}.yaml:1:1: [error] m (r)\n"
+        );
+    }
+
     #[test]
     fn info_and_hint_print_as_warning() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));

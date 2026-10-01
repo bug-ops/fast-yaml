@@ -167,3 +167,88 @@ pub fn read_bounded(
     max.check(bytes.len())?;
     Ok(bytes)
 }
+
+/// A path rendered for a terminal, with control characters escaped.
+///
+/// A file name can hold ESC, BEL or newline bytes, so printing it raw lets whoever names a file
+/// clear the screen, retitle the window or forge output lines. Every human-readable message that
+/// names a path renders it through this type; machine formats (JSON, SARIF) keep the real
+/// name, which they escape themselves. The escaping is the one diagnostic messages use, but a
+/// path is never truncated. Bytes that are not valid UTF-8 print as U+FFFD.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+/// use fast_yaml_core::fs::DisplayPath;
+///
+/// assert_eq!(DisplayPath::new(Path::new("a/b.yaml")).to_string(), "a/b.yaml");
+/// assert_eq!(
+///     DisplayPath::new(Path::new("x\u{1b}[2Jy\n.yaml")).to_string(),
+///     "x\\u{1b}[2Jy\\n.yaml"
+/// );
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct DisplayPath<'a>(&'a Path);
+
+impl<'a> DisplayPath<'a> {
+    /// Wraps `path` for display.
+    #[must_use]
+    pub const fn new(path: &'a Path) -> Self {
+        Self(path)
+    }
+}
+
+impl std::fmt::Display for DisplayPath<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use std::fmt::Write as _;
+        for c in self.0.to_string_lossy().chars() {
+            if c.is_control() {
+                for escaped in c.escape_debug() {
+                    f.write_char(escaped)?;
+                }
+            } else {
+                f.write_char(c)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod display_path_tests {
+    use super::*;
+
+    #[test]
+    fn escapes_terminal_sequences_in_a_path() {
+        let path = Path::new("d/x\u{1b}]0;PWNED\u{7}\u{1b}[2Jy.yaml");
+        let shown = DisplayPath::new(path).to_string();
+        assert_eq!(shown, "d/x\\u{1b}]0;PWNED\\u{7}\\u{1b}[2Jy.yaml");
+        assert!(!shown.chars().any(char::is_control));
+    }
+
+    #[test]
+    fn leaves_ordinary_and_non_ascii_names_alone() {
+        let path = Path::new("dir/\u{43a}\u{43b}\u{44e}\u{447} \u{65e5}.yaml");
+        assert_eq!(
+            DisplayPath::new(path).to_string(),
+            path.display().to_string()
+        );
+    }
+
+    #[test]
+    fn does_not_truncate_a_long_path() {
+        let long = "x".repeat(10_000);
+        assert_eq!(DisplayPath::new(Path::new(&long)).to_string(), long);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn escapes_c1_controls_and_invalid_utf8() {
+        use std::os::unix::ffi::OsStrExt as _;
+        let csi = Path::new("a\u{9b}31m.yaml");
+        assert_eq!(DisplayPath::new(csi).to_string(), "a\\u{9b}31m.yaml");
+        let bad = Path::new(std::ffi::OsStr::from_bytes(b"a\xffb.yaml"));
+        assert_eq!(DisplayPath::new(bad).to_string(), "a\u{fffd}b.yaml");
+    }
+}

@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+
+use fast_yaml_core::fs::DisplayPath;
 use thiserror::Error;
 
 /// Writes one line to stderr and ignores a failure such as a closed pipe.
@@ -30,7 +32,7 @@ pub enum ExitCode {
 #[derive(Debug, Error)]
 pub enum PathError {
     /// IO error during directory traversal
-    #[error("failed to read '{path}': {source}")]
+    #[error("failed to read '{}': {source}", DisplayPath::new(.path))]
     IoError {
         /// The path that caused the error
         path: PathBuf,
@@ -40,28 +42,28 @@ pub enum PathError {
     },
 
     /// Permission denied
-    #[error("permission denied: '{path}'")]
+    #[error("permission denied: '{}'", DisplayPath::new(.path))]
     PermissionDenied {
         /// The path where permission was denied
         path: PathBuf,
     },
 
     /// Broken symbolic link
-    #[error("broken symbolic link: '{path}'")]
+    #[error("broken symbolic link: '{}'", DisplayPath::new(.path))]
     BrokenSymlink {
         /// The path to the broken symlink
         path: PathBuf,
     },
 
     /// Path does not exist
-    #[error("path does not exist: '{path}'")]
+    #[error("path does not exist: '{}'", DisplayPath::new(.path))]
     PathNotFound {
         /// The path that was not found
         path: PathBuf,
     },
 
     /// A path that must name a regular file does not (for example a directory on stdin)
-    #[error("not a regular file: '{path}'")]
+    #[error("not a regular file: '{}'", DisplayPath::new(.path))]
     NotAFile {
         /// The offending path
         path: PathBuf,
@@ -69,7 +71,8 @@ pub enum PathError {
 
     /// An explicitly named file is rejected by the include patterns
     #[error(
-        "not matched by the include patterns (default: *.yaml, *.yml; see --include): '{path}'"
+        "not matched by the include patterns (default: *.yaml, *.yml; see --include): '{}'",
+        DisplayPath::new(.path)
     )]
     NotIncluded {
         /// The rejected path

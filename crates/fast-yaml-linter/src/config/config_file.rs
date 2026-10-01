@@ -3,7 +3,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use fast_yaml_core::fs::ReadFileError;
+use fast_yaml_core::fs::{DisplayPath, ReadFileError};
 use fast_yaml_core::limits::{
     Bounded, Bounds, LimitRangeError, MaxInputBytes, MaxScanAhead, ParseLimits,
 };
@@ -161,7 +161,7 @@ impl std::fmt::Display for TopLevelKey {
 #[non_exhaustive]
 pub enum ConfigFileError {
     /// I/O error reading config file.
-    #[error("failed to read config file '{}'", .path.display())]
+    #[error("failed to read config file '{}'", DisplayPath::new(.path))]
     Io {
         /// Path that failed.
         path: PathBuf,
@@ -170,7 +170,7 @@ pub enum ConfigFileError {
     },
 
     /// The config file is not UTF-8 text (unsupported encoding or invalid bytes).
-    #[error("failed to decode config file '{}'", .path.display())]
+    #[error("failed to decode config file '{}'", DisplayPath::new(.path))]
     Decode {
         /// Path that failed.
         path: PathBuf,
@@ -180,7 +180,7 @@ pub enum ConfigFileError {
 
     /// The config text parsed under the core parser but failed in `serde_norway`, for example
     /// on duplicate keys, several documents or a malformed scalar.
-    #[error("failed to parse config file '{}'", .path.display())]
+    #[error("failed to parse config file '{}'", DisplayPath::new(.path))]
     Parse {
         /// Path that failed.
         path: PathBuf,
@@ -190,7 +190,7 @@ pub enum ConfigFileError {
 
     /// The core parser rejected the config file: a syntax error, or nesting depth or alias
     /// expansion beyond the default parser limits.
-    #[error("failed to parse config file '{}'", .path.display())]
+    #[error("failed to parse config file '{}'", DisplayPath::new(.path))]
     Rejected {
         /// Path that failed.
         path: PathBuf,
@@ -199,7 +199,7 @@ pub enum ConfigFileError {
     },
 
     /// The `rules:` section is invalid.
-    #[error("invalid rules in config file '{}'", .path.display())]
+    #[error("invalid rules in config file '{}'", DisplayPath::new(.path))]
     InvalidRules {
         /// Path that failed.
         path: PathBuf,
@@ -208,7 +208,7 @@ pub enum ConfigFileError {
     },
 
     /// The file is not a mapping.
-    #[error("config file '{}': expected a mapping with a 'rules' key", .path.display())]
+    #[error("config file '{}': expected a mapping with a 'rules' key", DisplayPath::new(.path))]
     NotAMapping {
         /// Path that failed.
         path: PathBuf,
@@ -217,7 +217,7 @@ pub enum ConfigFileError {
     /// `locale` names a locale that `key-ordering` cannot honor while the rule is enabled.
     #[error(
         "config file '{}': locale '{}' is not supported while 'key-ordering' is enabled; keys are ordered by code point, as in the 'C', 'POSIX' and 'C.UTF-8' locales",
-        .path.display(),
+        DisplayPath::new(.path),
         echo(.locale, KEY_LIMIT)
     )]
     UnsupportedLocale {
@@ -230,7 +230,7 @@ pub enum ConfigFileError {
     /// A limit key is not a positive integer (negative, fractional, suffixed or not a number).
     #[error(
         "config file '{}': '{key}' must be a positive integer without a size suffix, got {found}",
-        .path.display()
+        DisplayPath::new(.path)
     )]
     LimitNotPositive {
         /// Path that failed.
@@ -242,7 +242,7 @@ pub enum ConfigFileError {
     },
 
     /// A limit key is outside the accepted range.
-    #[error("config file '{}': invalid '{key}'", .path.display())]
+    #[error("config file '{}': invalid '{key}'", DisplayPath::new(.path))]
     LimitOutOfRange {
         /// Path that failed.
         path: PathBuf,
@@ -255,7 +255,7 @@ pub enum ConfigFileError {
     /// A top-level key is not recognized.
     #[error(
         "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'ignore-from-file', 'yaml-files', 'locale', 'max-input-bytes' or 'max-scan-ahead'",
-        .path.display(),
+        DisplayPath::new(.path),
         echo(.key, KEY_LIMIT)
     )]
     UnknownKey {
@@ -267,28 +267,28 @@ pub enum ConfigFileError {
 
     /// A config, `extends` or `ignore-from-file` path is not a regular file (a directory, a pipe
     /// or a device), so it is not opened.
-    #[error("'{}' is not a regular file", .path.display())]
+    #[error("'{}' is not a regular file", DisplayPath::new(.path))]
     NotRegularFile {
         /// The rejected path.
         path: PathBuf,
     },
 
     /// A config, `extends` or `ignore-from-file` file is larger than [`MAX_CONFIG_FILE_BYTES`].
-    #[error("'{}' is larger than {MAX_CONFIG_FILE_BYTES} bytes", .path.display())]
+    #[error("'{}' is larger than {MAX_CONFIG_FILE_BYTES} bytes", DisplayPath::new(.path))]
     TooLarge {
         /// The oversized file.
         path: PathBuf,
     },
 
     /// A file named by `extends` is not a valid config file; its content is not echoed.
-    #[error("'{}' is not a valid config file (its content is not shown)", .path.display())]
+    #[error("'{}' is not a valid config file (its content is not shown)", DisplayPath::new(.path))]
     Malformed {
         /// The extended file.
         path: PathBuf,
     },
 
     /// The file named by `extends` could not be loaded.
-    #[error("config file '{}': failed to load the file named by 'extends'", .path.display())]
+    #[error("config file '{}': failed to load the file named by 'extends'", DisplayPath::new(.path))]
     Extended {
         /// The extending config file.
         path: PathBuf,
@@ -297,14 +297,14 @@ pub enum ConfigFileError {
     },
 
     /// A config file is its own ancestor through `extends`.
-    #[error("config file '{}': 'extends' leads back to this file", .path.display())]
+    #[error("config file '{}': 'extends' leads back to this file", DisplayPath::new(.path))]
     ExtendsCycle {
         /// The file met twice.
         path: PathBuf,
     },
 
     /// The `extends` chain is longer than [`MAX_EXTENDS_DEPTH`] files.
-    #[error("config file '{}': 'extends' is nested more than {MAX_EXTENDS_DEPTH} files deep", .path.display())]
+    #[error("config file '{}': 'extends' is nested more than {MAX_EXTENDS_DEPTH} files deep", DisplayPath::new(.path))]
     ExtendsTooDeep {
         /// The first file beyond the limit.
         path: PathBuf,
@@ -313,7 +313,7 @@ pub enum ConfigFileError {
     /// The value of `extends`, `ignore`, `ignore-from-file`, `yaml-files` or `locale` is invalid.
     #[error(
         "config file '{}': invalid '{key}': {}",
-        .path.display(),
+        DisplayPath::new(.path),
         echo(.message, MESSAGE_LIMIT)
     )]
     InvalidKey {

@@ -31,6 +31,7 @@ use crate::rules::{
     KeyOrderingOptions, LineLengthOptions, NewLinesOptions, OctalValuesOptions,
     QuotedStringsOptions, TruthyOptions,
 };
+use fast_yaml_core::fs::DisplayPath;
 
 /// Options of a built-in rule.
 ///
@@ -656,7 +657,10 @@ impl IgnoreSource {
                 .map_err(|error| invalid(&error))?,
         };
         let root = dir.canonicalize().map_err(|error| {
-            invalid(&format_args!("cannot resolve '{}': {error}", dir.display()))
+            invalid(&format_args!(
+                "cannot resolve '{}': {error}",
+                DisplayPath::new(dir)
+            ))
         })?;
         RuleIgnore::new(&root, lines).map_err(|error| {
             // patterns read from a file are never echoed

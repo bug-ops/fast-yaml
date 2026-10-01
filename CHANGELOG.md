@@ -373,6 +373,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `line-length` `allow-non-breakable-inline-mappings` decides from the line's token stream like yamllint's `check_inline_mapping`, in both directions (#618) (#PR)
 - **Linter**: `truthy` stops reporting `yes`/`no`/`on`/`off` in a document preceded by `%YAML 1.2`, which applies to that document only (#606) (#PR)
 - **Linter**: `fy lint` builds no value tree unless a custom `DocumentRule` is enabled, cutting the peak heap on large block files by about half (#609) (#PR)
+- **CLI/Linter/Parallel**: file names are escaped (`\u{1b}`) in text, parsable and github output, batch error lines, verbose headers and path errors, so a hostile name cannot inject terminal sequences (#607) (#PR)
 
 ### Security
 
