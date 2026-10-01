@@ -30,7 +30,8 @@ pub struct UnknownPresetError {
 /// - `indentation.spaces` (the fast-yaml `indent-size` stays), `indent-sequences` and
 ///   `check-multi-line-strings`, which need a token-based rewrite of the indentation rule;
 /// - `anchors.forbid-undeclared-aliases: false`, because an undeclared alias is always a parse
-///   error (`true` is accepted).
+///   error (`true` is accepted);
+/// - per-rule `ignore` and `ignore-from-file`, and the top-level `locale`.
 ///
 /// Some rules silently behave differently from yamllint, because fast-yaml reads the parser's
 /// events where yamllint reads `PyYAML` tokens:
@@ -49,13 +50,11 @@ pub struct UnknownPresetError {
 ///   text;
 /// - `key-ordering` locates keys in the source text instead of reading tokens, which differs on
 ///   nested flow mappings (only a flow mapping that is the whole root of a document is checked),
-///   numeric keys and the first key of a mapping in a sequence item (`- b: 1`); `locale` is not
-///   supported;
+///   explicit `? key` entries and numeric keys;
 /// - `comments-indentation` takes a multi-line quoted or plain scalar before a comment with the
 ///   indent of its last line, where yamllint uses the line where the scalar starts;
-/// - `comments` reports a missing space at the start of the comment, where yamllint reports the
-///   column after its leading `#` characters;
-/// - the default `yaml-files` do not include `.yamllint`.
+/// - `empty-values` reports some columns one off from yamllint;
+/// - `fy format` does not visit `.yamllint` by default (`fy lint` does).
 ///
 /// Rules that only fast-yaml has (`lint-directive`) keep their fast-yaml defaults.
 ///
