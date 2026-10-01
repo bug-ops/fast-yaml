@@ -237,9 +237,10 @@ fn run_ordered<T: Send, R>(
     consume: impl FnOnce(&mut dyn Iterator<Item = T>) -> R,
 ) -> R {
     let cancelled = AtomicBool::new(false);
-    // Also stops the queued work when `consume` unwinds, for instance on a re-raised panic
-    let _cancel = CancelOnDrop(&cancelled);
     pool.in_place_scope(|scope| {
+        // Dropped before the scope joins its jobs, on return and on unwind (a re-raised panic),
+        // so the queued work is skipped instead of run
+        let _cancel = CancelOnDrop(&cancelled);
         let (sender, receiver) = mpsc::channel::<(usize, std::thread::Result<T>)>();
         let mut ordered = Ordered {
             scope,
@@ -681,5 +682,26 @@ mod tests {
             .recv_timeout(std::time::Duration::from_secs(30))
             .expect("run_ordered hung after a worker panic");
         assert!(panicked);
+    }
+
+    #[test]
+    fn run_ordered_skips_queued_work_when_the_consumer_stops_or_panics() {
+        for panics in [false, true] {
+            let executed = AtomicUsize::new(0);
+            let work = |index: usize| {
+                executed.fetch_add(1, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                index
+            };
+            let stop = |items: &mut dyn Iterator<Item = usize>| {
+                assert_eq!(items.next(), Some(0));
+                assert!(!panics, "consumer failed");
+            };
+            let outcome = catch_unwind(AssertUnwindSafe(|| {
+                run_ordered(&pool(1), 1000, 64, &work, stop);
+            }));
+            assert_eq!(outcome.is_err(), panics);
+            assert!(executed.load(Ordering::SeqCst) < 20, "{panics}");
+        }
     }
 }
