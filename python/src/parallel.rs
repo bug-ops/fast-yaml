@@ -13,16 +13,13 @@ use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys}
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
 use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, LimitKind, MaxDocuments};
 use fast_yaml_parallel::{
-    Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config, shared_pool,
+    Config as RustParallelConfig, Error as ParallelError, WorkerCount, Workers,
+    parse_parallel_with_config, shared_pool,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyList;
 use rayon::prelude::*;
-use std::num::NonZeroUsize;
-
-/// Maximum thread count allowed (capped by Rust implementation).
-const MAX_THREADS: usize = 128;
 
 /// Configuration for parallel YAML processing.
 ///
@@ -70,14 +67,7 @@ impl PyParallelConfig {
     ) -> PyResult<Self> {
         let parse_limits =
             limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
-        // Validate thread_count (if specified, must be <= 128)
-        if let Some(count) = thread_count
-            && count > MAX_THREADS
-        {
-            return Err(PyValueError::new_err(format!(
-                "thread_count {count} exceeds maximum allowed {MAX_THREADS}"
-            )));
-        }
+        let workers = limits::workers("thread_count", thread_count)?;
 
         // Validate chunk sizes
         if min_chunk_size == 0 {
@@ -92,7 +82,7 @@ impl PyParallelConfig {
         }
 
         let config = python_config()
-            .with_workers(thread_count)
+            .with_workers(workers)
             .with_sequential_threshold(min_chunk_size)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
@@ -112,21 +102,17 @@ impl PyParallelConfig {
     /// Sets thread pool size.
     ///
     /// - None: Use all available CPU cores (default, capped at 128)
-    /// - Some(0): Sequential processing (no parallelism)
-    /// - Some(n): Use exactly n threads (max 128)
+    /// - 0: Sequential processing (no parallelism)
+    /// - n: Use exactly n threads (max 128)
     ///
     /// Raises:
     ///     `ValueError`: If thread count exceeds 128
     fn with_thread_count(&self, count: Option<usize>) -> PyResult<Self> {
-        if let Some(c) = count
-            && c > MAX_THREADS
-        {
-            return Err(PyValueError::new_err(format!(
-                "thread_count {c} exceeds maximum allowed {MAX_THREADS}"
-            )));
-        }
         Ok(Self {
-            inner: self.inner.clone().with_workers(count),
+            inner: self
+                .inner
+                .clone()
+                .with_workers(limits::workers("thread_count", count)?),
             auto_tune: self.auto_tune,
         })
     }
@@ -279,24 +265,25 @@ impl PyParallelConfig {
 }
 
 /// Auto-tune thread count based on document count and average size.
-fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> usize {
-    let cpu_count = num_cpus::get().max(1); // Ensure at least 1 CPU
+fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> WorkerCount {
+    let cpu_count = Workers::Auto.threads().get();
 
     // At least 4 documents to justify parallelism
     if doc_count < 4 {
-        return 1;
+        return WorkerCount::MIN;
     }
 
     // Small documents: limit threads to reduce overhead
     if avg_doc_size < 1024 {
         let max_threads = (cpu_count / 2).max(2); // Ensure max >= 2
-        return (doc_count / 10).clamp(2, max_threads).max(2);
+        let threads = (doc_count / 10).clamp(2, max_threads).max(2);
+        return WorkerCount::new(threads).unwrap_or(WorkerCount::MAX);
     }
 
     // Normal case: scale with document count
     let max_threads = cpu_count.max(2); // Ensure max >= 2
     let optimal = (doc_count / 4).clamp(2, max_threads);
-    optimal.min(128)
+    WorkerCount::new(optimal).unwrap_or(WorkerCount::MAX)
 }
 
 /// Configuration whose keys follow Python dict equality, so `1` and `true` collide with a position.
@@ -440,15 +427,9 @@ fn dump_parallel(
         .with_default_flow_style(default_flow_style)
         .with_explicit_start(false); // We add separators manually
 
-    // Determine thread count
-    let thread_count = config.map_or(1, |cfg| {
-        // If explicit workers is set, use it (takes precedence)
-        if let Some(explicit) = cfg.inner.workers() {
-            return explicit.min(128_usize);
-        }
-
-        // Otherwise, auto-tune if enabled
-        if cfg.auto_tune {
+    // An explicit worker setting wins; otherwise auto-tune when enabled
+    let threads = config.map_or(WorkerCount::MIN, |cfg| match cfg.inner.workers() {
+        Workers::Auto if cfg.auto_tune => {
             let avg_size = if yaml_values.is_empty() {
                 0
             } else {
@@ -459,14 +440,12 @@ fn dump_parallel(
                     / yaml_values.len()
             };
             auto_tune_threads(yaml_values.len(), avg_size)
-        } else {
-            // Default to all CPUs when no workers and no auto_tune
-            num_cpus::get().min(128)
         }
+        workers => workers.threads(),
     });
 
     // Release GIL and emit in parallel
-    let emitted: Vec<String> = if thread_count <= 1 || yaml_values.len() < 4 {
+    let emitted: Vec<String> = if threads == WorkerCount::MIN || yaml_values.len() < 4 {
         // Sequential for small workloads
         yaml_values
             .iter()
@@ -475,8 +454,7 @@ fn dump_parallel(
             .map_err(|e| PyValueError::new_err(e.to_string()))?
     } else {
         // Parallel emission
-        let pool = shared_pool(NonZeroUsize::new(thread_count).unwrap_or(NonZeroUsize::MIN))
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let pool = shared_pool(threads).map_err(|e| PyValueError::new_err(e.to_string()))?;
         py.detach(|| {
             pool.install(|| {
                 yaml_values

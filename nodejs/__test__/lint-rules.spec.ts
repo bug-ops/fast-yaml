@@ -50,10 +50,21 @@ describe('rule options pass-through', () => {
 });
 
 describe('application order', () => {
-  it('rules patch overrides option fields', () => {
+  it('option fields override the rules patch', () => {
     const source = 'key: this value makes the line exceed forty characters\n';
     const config: LintConfig = { maxLineLength: 200, rules: { 'line-length': { max: 40 } } };
-    expect(codes(source, config)).toContain('line-length');
+    expect(codes(source, config)).not.toContain('line-length');
+    expect(codes(source, { rules: { 'line-length': { max: 40 } } })).toContain('line-length');
+    expect(
+      codes(source, { maxLineLength: undefined, rules: { 'line-length': { max: 40 } } })
+    ).toContain('line-length');
+  });
+
+  it('indentSize overrides rules.indentation.spaces', () => {
+    const source = 'a:\n    b: 1\n';
+    const rules = { indentation: { spaces: 4 } };
+    expect(codes(source, { rules })).not.toContain('indentation');
+    expect(codes(source, { indentSize: 2, rules })).toContain('indentation');
   });
 
   it('disabledRules wins over rules enabled', () => {
@@ -64,12 +75,12 @@ describe('application order', () => {
     expect(codes('a: 1\na: 2\n', config)).not.toContain('duplicate-key');
   });
 
-  it('rules can re-enable a rule turned off by allowDuplicateKeys', () => {
+  it('allowDuplicateKeys wins over a rules entry that enables the rule', () => {
     const config: LintConfig = {
       allowDuplicateKeys: true,
       rules: { 'duplicate-key': { enabled: true } },
     };
-    expect(codes('a: 1\na: 2\n', config)).toContain('duplicate-key');
+    expect(codes('a: 1\na: 2\n', config)).not.toContain('duplicate-key');
   });
 
   it('maxLineLength unset keeps the default limit', () => {

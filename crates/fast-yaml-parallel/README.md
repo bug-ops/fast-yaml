@@ -51,10 +51,10 @@ assert_eq!(docs.len(), 3);
 With custom configuration:
 
 ```rust
-use fast_yaml_parallel::{parse_parallel_with_config, Config};
+use fast_yaml_parallel::{parse_parallel_with_config, Config, WorkerCount, Workers};
 
 let config = Config::new()
-    .with_workers(Some(8))              // 8 threads
+    .with_workers(Workers::Fixed(WorkerCount::new(8)?)) // 8 threads
     .with_sequential_threshold(2048);   // Skip parallelism for small inputs
 
 let yaml = "---\nfoo: 1\n---\nbar: 2";
@@ -83,7 +83,7 @@ let result: BatchResult = FileProcessor::new().parse_files(&files);
 println!("Processed {} files, {} failed", result.total, result.failed);
 
 // With custom configuration
-let config = Config::new().with_workers(Some(4));
+let config = Config::new().with_workers(Workers::Fixed(WorkerCount::new(4)?));
 let processor = FileProcessor::with_config(config);
 let result = processor.parse_files(&files);
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -123,7 +123,7 @@ assert!(result.is_success());
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `workers` | Auto (CPU cores) | Number of worker threads. `None` = auto, `Some(0)` = sequential |
+| `workers` | Auto (CPU cores) | Number of worker threads. `Workers::Auto`, `Workers::Sequential` or `Workers::Fixed(WorkerCount)` (1..=128) |
 | `max_input_bytes` | 100 MB | Maximum input size (DoS protection); files are checked before being read |
 | `parse_limits.max_documents` | 100 000 | Maximum documents per input (DoS protection); set through `with_parse_limits`, checked before parsing |
 | `sequential_threshold` | 4 KB | Skip parallelism for inputs smaller than this |
@@ -132,10 +132,10 @@ assert!(result.is_success());
 
 ```rust
 use fast_yaml_core::limits::ParseLimits;
-use fast_yaml_parallel::{Config, MaxDocuments, MaxInputBytes};
+use fast_yaml_parallel::{Config, MaxDocuments, MaxInputBytes, WorkerCount, Workers};
 
 let config = Config::new()
-    .with_workers(Some(8))              // 8 threads
+    .with_workers(Workers::Fixed(WorkerCount::new(8)?)) // 8 threads
     .with_max_input_bytes(MaxInputBytes::new(50 * 1024 * 1024)?) // 50 MB max
     .with_parse_limits(ParseLimits {
         max_documents: MaxDocuments::new(1_000)?,                // 1000 documents max

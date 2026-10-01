@@ -55,10 +55,10 @@
 //! Custom configuration:
 //!
 //! ```
-//! use fast_yaml_parallel::{parse_parallel_with_config, Config};
+//! use fast_yaml_parallel::{parse_parallel_with_config, Config, WorkerCount, Workers};
 //!
 //! let config = Config::new()
-//!     .with_workers(Some(8))
+//!     .with_workers(Workers::Fixed(WorkerCount::new(8)?))
 //!     .with_sequential_threshold(2048);
 //!
 //! let yaml = "---\nfoo: 1\n---\nbar: 2";
@@ -81,6 +81,8 @@ mod io;
 mod pool;
 mod result;
 mod scan_ahead;
+mod trace;
+mod workers;
 
 // Core public API
 pub use atomic::{AtomicFile, write_atomic};
@@ -95,6 +97,7 @@ pub use io::read_file;
 pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};
 pub use scan_ahead::{ScanAheadLane, ScanAheadPolicy};
+pub use workers::{WorkerCount, Workers};
 
 /// Parse multi-document YAML stream in parallel.
 ///
@@ -161,10 +164,10 @@ pub fn parse_parallel(input: &str) -> Result<Vec<Value>> {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_parallel::{parse_parallel_with_config, Config};
+/// use fast_yaml_parallel::{parse_parallel_with_config, Config, WorkerCount, Workers};
 ///
 /// let config = Config::new()
-///     .with_workers(Some(4));
+///     .with_workers(Workers::Fixed(WorkerCount::new(4)?));
 ///
 /// let yaml = "---\nfoo: 1\n---\nbar: 2";
 /// let docs = parse_parallel_with_config(yaml, &config)?;
@@ -221,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_parse_parallel_with_config() {
-        let config = Config::new().with_workers(Some(2));
+        let config = Config::new().with_workers(Workers::try_from(2).unwrap());
         let yaml = "---\nfoo: 1\n---\nbar: 2";
         let docs = parse_parallel_with_config(yaml, &config).unwrap();
         assert_eq!(docs.len(), 2);

@@ -25,7 +25,7 @@ fn input() -> (TempDir, std::path::PathBuf) {
 fn format_refuses_an_output_equal_to_the_input() {
     let (_dir, path) = input();
     let out = fy()
-        .args(["-o", path.to_str().unwrap(), "format"])
+        .args(["format", "-o", path.to_str().unwrap()])
         .arg(&path)
         .output()
         .unwrap();
@@ -38,7 +38,7 @@ fn format_refuses_an_output_equal_to_the_input() {
 fn convert_refuses_an_output_equal_to_the_input() {
     let (_dir, path) = input();
     let out = fy()
-        .args(["-o", path.to_str().unwrap(), "convert", "json"])
+        .args(["convert", "json", "-o", path.to_str().unwrap()])
         .arg(&path)
         .output()
         .unwrap();
@@ -58,8 +58,8 @@ fn a_hard_link_or_symlink_to_the_input_is_refused() {
     for alias in [&hard, &soft] {
         for args in [["format"].as_slice(), ["convert", "json"].as_slice()] {
             let out = fy()
-                .args(["-o", alias.to_str().unwrap()])
                 .args(args)
+                .args(["-o", alias.to_str().unwrap()])
                 .arg(&path)
                 .output()
                 .unwrap();
@@ -74,7 +74,7 @@ fn another_destination_is_written_and_in_place_still_works() {
     let (dir, path) = input();
     let out_path = dir.path().join("out.yaml");
     let out = fy()
-        .args(["-o", out_path.to_str().unwrap(), "format"])
+        .args(["format", "-o", out_path.to_str().unwrap()])
         .arg(&path)
         .output()
         .unwrap();
@@ -82,7 +82,7 @@ fn another_destination_is_written_and_in_place_still_works() {
     assert_eq!(fs::read_to_string(&out_path).unwrap(), "b: 1\na: 2\n");
     assert_eq!(fs::read_to_string(&path).unwrap(), SOURCE);
 
-    let out = fy().args(["-i", "format"]).arg(&path).output().unwrap();
+    let out = fy().args(["format", "-i"]).arg(&path).output().unwrap();
     assert_eq!(out.status.code(), Some(0));
     assert_eq!(fs::read_to_string(&path).unwrap(), "b: 1\na: 2\n");
 }

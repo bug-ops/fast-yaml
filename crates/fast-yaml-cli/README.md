@@ -214,18 +214,24 @@ fy parse --max-input-bytes 500MiB huge.yaml
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--in-place` | `-i` | Edit file in-place | - |
-| `--output` | `-o` | Write to file | stdout |
-| `--format` | `-f` | Output format (yaml/json/compact) | yaml |
 | `--no-color` | - | Disable colored output | - |
 | `--quiet` | `-q` | Suppress non-error output | - |
 | `--verbose` | `-v` | Enable verbose output | - |
+
+### Write Options
+
+`-o` and `-i` go after the subcommand that declares them; `fy -o out.yaml format` and `fy parse -o out.yaml` are usage errors (exit 2).
+
+| Option | Short | Commands | Description | Default |
+|--------|-------|----------|-------------|---------|
+| `--output` | `-o` | `format`, `convert`, `lint` | Write to file | stdout |
+| `--in-place` | `-i` | `format`, `convert` | Edit file in-place (conflicts with `-o`) | - |
 
 ### Batch Mode Options
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--jobs` | `-j` | Number of parallel workers (0 = auto) | auto-detect |
+| `--jobs` | `-j` | Number of parallel workers (0 = auto, 1-128) | auto-detect |
 | `--stdin-files` | - | Read file paths from stdin; a missing path, directory, non-YAML file or line over 4096 bytes is an error | - |
 | `--include` | - | Include pattern (glob, case-insensitive) | `*.yaml`, `*.yml` (`lint` also `.yamllint`) |
 | `--exclude` | - | Exclude pattern (glob, case-insensitive) | none |
@@ -251,6 +257,15 @@ cargo build --release --no-default-features
 
 > [!NOTE]
 > The `linter` feature adds the `lint` command. Without it, only `parse`, `format`, and `convert` are available.
+
+## Debug Logging
+
+`RUST_LOG` turns on debug events on stderr (stdout is unaffected): files skipped by discovery and why, the config file chosen, the worker count, pool building, scan-ahead retries and the sequential-vs-parallel choice. Without it nothing extra is printed.
+
+```bash
+RUST_LOG=debug fy lint --format json -j 4 configs/ 2> debug.log
+RUST_LOG=fast_yaml_parallel=debug fy format -n configs/
+```
 
 ## Exit Codes
 

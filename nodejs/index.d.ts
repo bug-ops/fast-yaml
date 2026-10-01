@@ -183,7 +183,7 @@ export declare class Mark {
 
 /** Configuration for batch file processing. */
 export interface BatchConfig {
-  /** Worker count (null = auto, 0 = sequential) */
+  /** Worker count (omit = auto, 0 = sequential, 1..=128 = fixed pool) */
   workers?: number
   /** Maximum input size in bytes per file (integer, 1..=1073741824, default: 104857600) */
   maxInputBytes?: number
@@ -436,7 +436,7 @@ export interface LintConfig {
   /** Disabled rule codes. */
   disabledRules?: Array<string>
   /**
-   * Per-rule configuration patch, applied after the fields above.
+   * Per-rule configuration patch, applied first: the fields above win over it.
    *
    * Each key is a rule code; the value is a severity string (case-insensitive),
    * or an object with `enabled`, `severity` and the rule's own options
@@ -599,7 +599,7 @@ export interface Location {
  * ```
  */
 export interface ParallelConfig {
-  /** Thread pool size (null = CPU count, 0 = sequential). */
+  /** Thread pool size (omit = CPU count capped at 128, 0 = sequential, 1..=128 = fixed pool). */
   threadCount?: number
   /** Minimum bytes per chunk (default: 4096). */
   minChunkSize?: number

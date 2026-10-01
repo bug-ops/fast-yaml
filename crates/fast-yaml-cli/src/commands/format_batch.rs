@@ -1,6 +1,5 @@
 //! Batch format command execution.
 
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -41,6 +40,11 @@ pub fn execute_batch(
     let files = discovery
         .discover_source(&target.source)
         .context("Failed to discover files")?;
+    tracing::debug!(
+        files = files.len(),
+        workers = target.workers.threads().get(),
+        "discovered files for a format batch"
+    );
 
     // Only an empty --stdin-files list gets here
     if files.is_empty() {
@@ -56,7 +60,7 @@ pub fn execute_batch(
 
     let processor = FileProcessor::with_config(
         ParallelConfig::new()
-            .with_workers(target.workers.map(NonZeroUsize::get))
+            .with_workers(target.workers)
             .with_max_input_bytes(max_input)
             .with_scan_ahead_policy(scan_ahead),
     );

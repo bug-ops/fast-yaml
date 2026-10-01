@@ -711,8 +711,7 @@ impl ConfigFile {
             config.rules.line_length.options.max = Some(max);
         }
         if let Some(size) = indent_size {
-            config.rules.indentation.options.spaces =
-                Some(crate::config::IndentSpaces::Fixed(size));
+            config = config.with_indent_size(size);
         }
         if allow_duplicate_keys == Some(true) {
             config.rules.set_enabled(RuleName::DuplicateKey, false);

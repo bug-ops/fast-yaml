@@ -41,9 +41,6 @@ describe('parseParallel', () => {
   it('validates config limits', () => {
     const yaml = 'foo: bar';
 
-    // Thread count too high
-    expect(() => parseParallel(yaml, { threadCount: 1000 })).toThrow(/threadCount|thread|128/i);
-
     expect(() => parseParallel(yaml, { minChunkSize: 0 })).toThrow(/minChunkSize/);
   });
 });
@@ -102,7 +99,7 @@ describe('parseParallelAsync', () => {
 
     // Thread count too high
     await expect(parseParallelAsync(yaml, { threadCount: 1000 })).rejects.toThrow(
-      /threadCount|thread|128/i
+      /threadCount must be between 0 and 128, got 1000/
     );
 
     await expect(parseParallelAsync(yaml, { minChunkSize: 0 })).rejects.toThrow(/minChunkSize/);

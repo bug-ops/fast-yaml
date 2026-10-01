@@ -1,3 +1,5 @@
+#[cfg(feature = "linter")]
+use crate::commands::lint::ConfigSource;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{
     Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDocuments, MaxInputBytes, MaxScanAhead,
@@ -5,11 +7,14 @@ use fast_yaml_core::limits::{
 };
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::{IndentSize, MaxDiagnostics};
+use fast_yaml_parallel::Workers;
+#[cfg(feature = "linter")]
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use crate::config::Verbosity;
 use crate::discovery::DiscoveryConfig;
+use crate::io::{OutputTarget, WriteTarget};
 
 /// Fast YAML processor with validation and linting
 #[derive(Parser, Debug)]
@@ -20,26 +25,13 @@ use crate::discovery::DiscoveryConfig;
     author,
     long_about = None
 )]
-#[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Option<Command>,
-
-    /// Edit file in-place (requires file argument)
-    #[arg(short = 'i', long, global = true)]
-    pub in_place: bool,
-
-    /// Output file (default: stdout)
-    #[arg(short, long, global = true, value_name = "FILE")]
-    pub output: Option<PathBuf>,
-
-    /// Output format
-    #[arg(short = 'f', long, value_enum, default_value = "yaml")]
-    pub format: OutputFormat,
+    command: Option<Command>,
 
     /// Disable colored output
     #[arg(long, global = true)]
-    pub no_color: bool,
+    no_color: bool,
 
     /// Quiet mode (errors only)
     #[arg(short, long, global = true)]
@@ -53,7 +45,7 @@ pub struct Cli {
     /// Accepts KiB, MiB and GiB suffixes. Applies to single inputs and to batch runs;
     /// for `lint` it overrides the `max-input-bytes` config key
     #[arg(long, global = true, alias = "max-input-size", value_name = "BYTES", value_parser = parse_max_input_bytes)]
-    pub max_input_bytes: Option<MaxInputBytes>,
+    max_input_bytes: Option<MaxInputBytes>,
 
     /// Maximum characters the parser may read past the last node it reported (min: 1, max: 1GiB,
     /// default: 4MiB). Accepts KiB, MiB and GiB suffixes. Bounds parser memory (about 190x this
@@ -65,14 +57,26 @@ pub struct Cli {
     /// default one at a time, so the result matches a single-file run; with the flag the limit
     /// is used as is
     #[arg(long, global = true, value_name = "CHARS", value_parser = parse_max_scan_ahead)]
-    pub max_scan_ahead: Option<MaxScanAhead>,
-
-    /// Verbosity resolved from `--quiet`/`--verbose` by [`Cli::validate`]; `Normal` before that.
-    #[arg(skip)]
-    pub verbosity: Verbosity,
+    max_scan_ahead: Option<MaxScanAhead>,
 }
 
-impl Cli {
+/// The parsed command line after validation: the only form the rest of the program sees, so a
+/// `--quiet`/`--verbose` conflict can never reach a command.
+#[derive(Debug)]
+pub struct ResolvedCli {
+    /// The subcommand; `None` formats stdin to stdout.
+    pub command: Option<Command>,
+    /// `--no-color` was given.
+    pub no_color: bool,
+    /// Verbosity resolved from `--quiet`/`--verbose`.
+    pub verbosity: Verbosity,
+    /// `--max-input-bytes`, if given.
+    pub max_input_bytes: Option<MaxInputBytes>,
+    /// `--max-scan-ahead`, if given.
+    pub max_scan_ahead: Option<MaxScanAhead>,
+}
+
+impl ResolvedCli {
     /// Input size limit of commands that have no config file key: the flag or the default.
     #[must_use]
     pub fn max_input(&self) -> MaxInputBytes {
@@ -84,16 +88,18 @@ impl Cli {
     pub fn scan_ahead(&self) -> MaxScanAhead {
         self.max_scan_ahead.unwrap_or_default()
     }
+}
 
+impl Cli {
     /// Parses the process arguments, exiting with code 2 on any usage error.
     #[must_use]
-    pub fn parse_validated() -> Self {
+    pub fn parse_validated() -> ResolvedCli {
         Self::try_parse()
             .and_then(Self::validate)
             .unwrap_or_else(|err| err.exit())
     }
 
-    /// Resolves [`verbosity`](Self::verbosity), rejecting `--quiet` together with `--verbose`.
+    /// Resolves the parsed flags, rejecting `--quiet` together with `--verbose`.
     ///
     /// clap cannot enforce this for global flags given on both sides of the subcommand
     /// (`fy -q parse -v`), so it is checked on the merged result.
@@ -101,8 +107,8 @@ impl Cli {
     /// # Errors
     ///
     /// Returns an argument-conflict error when both flags are set.
-    pub fn validate(mut self) -> Result<Self, clap::Error> {
-        self.verbosity = match (self.quiet, self.verbose) {
+    pub fn validate(self) -> Result<ResolvedCli, clap::Error> {
+        let verbosity = match (self.quiet, self.verbose) {
             (true, true) => {
                 return Err(Self::command().error(
                     clap::error::ErrorKind::ArgumentConflict,
@@ -113,7 +119,78 @@ impl Cli {
             (false, true) => Verbosity::Verbose,
             (false, false) => Verbosity::Normal,
         };
-        Ok(self)
+        Ok(ResolvedCli {
+            command: self.command,
+            no_color: self.no_color,
+            verbosity,
+            max_input_bytes: self.max_input_bytes,
+            max_scan_ahead: self.max_scan_ahead,
+        })
+    }
+}
+
+/// Config file flags of `fy lint`.
+#[cfg(feature = "linter")]
+#[derive(Args, Debug, Clone, Default)]
+pub struct ConfigArgs {
+    /// Path to config file (default: auto-discover .fast-yaml.yaml)
+    #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
+    config: Option<PathBuf>,
+
+    /// Disable config file auto-discovery
+    #[arg(long, conflicts_with = "config")]
+    no_config: bool,
+}
+
+#[cfg(feature = "linter")]
+impl ConfigArgs {
+    /// Resolves the flags into the single source they name.
+    #[must_use]
+    pub fn source(self) -> ConfigSource {
+        match (self.config, self.no_config) {
+            (Some(path), _) => ConfigSource::Explicit(path),
+            (None, true) => ConfigSource::Disabled,
+            (None, false) => ConfigSource::Discover,
+        }
+    }
+}
+
+/// Report destination flag of the subcommands that write output.
+#[derive(Args, Debug, Clone, Default)]
+pub struct OutputArgs {
+    /// Output file (default: stdout)
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+}
+
+impl OutputArgs {
+    /// Resolves the flag into the destination it names.
+    #[must_use]
+    pub fn target(self) -> OutputTarget {
+        self.output.map_or(OutputTarget::Stdout, OutputTarget::File)
+    }
+}
+
+/// Write-destination flags of the subcommands that can also rewrite their input.
+#[derive(Args, Debug, Clone, Default)]
+pub struct WriteArgs {
+    #[command(flatten)]
+    output: OutputArgs,
+
+    /// Edit file in-place (requires file argument)
+    #[arg(short = 'i', long, conflicts_with = "output")]
+    in_place: bool,
+}
+
+impl WriteArgs {
+    /// Resolves the flags into the single destination they name.
+    #[must_use]
+    pub fn target(self) -> WriteTarget {
+        if self.in_place {
+            WriteTarget::InPlace
+        } else {
+            WriteTarget::Output(self.output.target())
+        }
     }
 }
 
@@ -132,9 +209,9 @@ pub struct BatchArgs {
     #[arg(long)]
     pub no_recursive: bool,
 
-    /// Number of parallel jobs (0 = auto-detect)
-    #[arg(short = 'j', long, default_value = "0")]
-    pub jobs: usize,
+    /// Number of parallel jobs (0 = auto, 1-128)
+    #[arg(short = 'j', long, default_value = "0", value_name = "N", value_parser = parse_jobs)]
+    pub jobs: Workers,
 }
 
 impl BatchArgs {
@@ -154,16 +231,12 @@ impl BatchArgs {
         config
     }
 
-    /// Returns the explicit worker count, or `None` to auto-detect.
-    #[must_use]
-    pub const fn workers(&self) -> Option<NonZeroUsize> {
-        NonZeroUsize::new(self.jobs)
-    }
-
     /// Returns `true` when any flag only makes sense for a batch run.
     #[must_use]
     pub const fn requests_batch(&self) -> bool {
-        !self.include.is_empty() || !self.exclude.is_empty() || self.jobs > 0
+        !self.include.is_empty()
+            || !self.exclude.is_empty()
+            || matches!(self.jobs, Workers::Fixed(_))
     }
 }
 
@@ -227,6 +300,14 @@ fn parse_width(raw: &str) -> Result<Width, String> {
     Width::new(parse_number(raw)?).map_err(range_error)
 }
 
+/// Parses `-j`: `0` selects [`Workers::Auto`] (the CLI never runs sequentially), `1..=128` a pool.
+fn parse_jobs(raw: &str) -> Result<Workers, String> {
+    match Workers::from_count(parse_number(raw)?).map_err(range_error)? {
+        Workers::Sequential => Ok(Workers::Auto),
+        workers => Ok(workers),
+    }
+}
+
 fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
     MaxDepth::new(parse_number(raw)?).map_err(range_error)
 }
@@ -264,6 +345,108 @@ fn parse_max_input_bytes(raw: &str) -> Result<MaxInputBytes, String> {
     MaxInputBytes::new(parse_byte_size(raw)?).map_err(range_error)
 }
 
+/// Arguments of `fy format`.
+#[derive(Args, Debug)]
+pub struct FormatArgs {
+    /// Input paths (files, directories, or glob patterns).
+    /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
+    /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
+    /// If empty and no --stdin-files, reads from stdin
+    #[arg(value_name = "PATHS")]
+    pub paths: Vec<PathBuf>,
+
+    /// Indentation width (1-9 spaces)
+    #[arg(long, value_name = "N", value_parser = parse_indent, default_value_t = Indent::DEFAULT)]
+    pub indent: Indent,
+
+    /// Maximum line width (min: 20, max: 1000)
+    #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
+    pub width: Width,
+
+    /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
+    #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
+    pub max_depth: MaxDepth,
+
+    /// Maximum documents per input stream (min: 1, max: 10000000)
+    #[arg(long, value_name = "N", value_parser = parse_max_documents, default_value_t = MaxDocuments::DEFAULT)]
+    pub max_documents: MaxDocuments,
+
+    /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
+    /// file or a line over 4096 bytes is an error, so filter git output:
+    /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy format --stdin-files`
+    #[arg(long, conflicts_with = "paths")]
+    pub stdin_files: bool,
+
+    #[command(flatten)]
+    pub batch: BatchArgs,
+
+    /// Never write any file; only print a summary of what would change.
+    /// Works for stdin too. Exits with code 5 if any file would change,
+    /// 1 if any file failed (takes precedence), 0 otherwise
+    #[arg(short = 'n', long, conflicts_with = "output")]
+    pub dry_run: bool,
+
+    #[command(flatten)]
+    pub write: WriteArgs,
+
+    /// Suppress the error when YAML comments are detected.
+    /// Comments are not preserved by the formatter and will be stripped.
+    /// Without this flag, formatting a file that contains comments exits with an error.
+    #[arg(long)]
+    pub strip_comments: bool,
+}
+
+#[cfg(feature = "linter")]
+/// Arguments of `fy lint`.
+#[derive(Args, Debug)]
+pub struct LintFlags {
+    /// Input paths (files, directories, or glob patterns).
+    /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
+    /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
+    /// If empty and no --stdin-files, reads from stdin.
+    #[arg(value_name = "PATHS")]
+    pub paths: Vec<PathBuf>,
+
+    /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
+    /// file or a line over 4096 bytes is an error, so filter git output:
+    /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files`
+    #[arg(long, conflicts_with = "paths")]
+    pub stdin_files: bool,
+
+    #[command(flatten)]
+    pub config: ConfigArgs,
+
+    /// Maximum line length (overrides config file)
+    #[arg(long)]
+    pub max_line_length: Option<NonZeroUsize>,
+
+    /// Indentation size (overrides config file)
+    #[arg(long)]
+    pub indent_size: Option<IndentSize>,
+
+    /// Lint output format
+    #[arg(long, value_enum, default_value = "text")]
+    pub format: LintFormat,
+
+    /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
+    #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
+    pub allow_duplicate_keys: Option<bool>,
+
+    /// Show at most N diagnostics per file, then one summary line; output only, the exit
+    /// code is unaffected (overrides the `max-diagnostics` config key)
+    #[arg(long, value_name = "N")]
+    pub max_diagnostics: Option<MaxDiagnostics>,
+
+    #[command(flatten)]
+    pub batch: BatchArgs,
+
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    #[command(flatten)]
+    pub limits: ParseLimitArgs,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Parse and validate YAML
@@ -280,51 +463,7 @@ pub enum Command {
     },
 
     /// Format YAML with consistent style
-    Format {
-        /// Input paths (files, directories, or glob patterns).
-        /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
-        /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
-        /// If empty and no --stdin-files, reads from stdin
-        #[arg(value_name = "PATHS")]
-        paths: Vec<PathBuf>,
-
-        /// Indentation width (1-9 spaces)
-        #[arg(long, value_name = "N", value_parser = parse_indent, default_value_t = Indent::DEFAULT)]
-        indent: Indent,
-
-        /// Maximum line width (min: 20, max: 1000)
-        #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
-        width: Width,
-
-        /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
-        #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
-        max_depth: MaxDepth,
-
-        /// Maximum documents per input stream (min: 1, max: 10000000)
-        #[arg(long, value_name = "N", value_parser = parse_max_documents, default_value_t = MaxDocuments::DEFAULT)]
-        max_documents: MaxDocuments,
-
-        /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
-        /// file or a line over 4096 bytes is an error, so filter git output:
-        /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy format --stdin-files`
-        #[arg(long, conflicts_with = "paths")]
-        stdin_files: bool,
-
-        #[command(flatten)]
-        batch: BatchArgs,
-
-        /// Never write any file; only print a summary of what would change.
-        /// Works for stdin too. Exits with code 5 if any file would change,
-        /// 1 if any file failed (takes precedence), 0 otherwise
-        #[arg(short = 'n', long, conflicts_with = "output")]
-        dry_run: bool,
-
-        /// Suppress the error when YAML comments are detected.
-        /// Comments are not preserved by the formatter and will be stripped.
-        /// Without this flag, formatting a file that contains comments exits with an error.
-        #[arg(long)]
-        strip_comments: bool,
-    },
+    Format(FormatArgs),
 
     /// Convert between YAML and JSON
     #[command(
@@ -344,6 +483,9 @@ pub enum Command {
         pretty: bool,
 
         #[command(flatten)]
+        write: WriteArgs,
+
+        #[command(flatten)]
         limits: ParseLimitArgs,
     },
 
@@ -352,62 +494,7 @@ pub enum Command {
     ///
     /// Diagnostics can be suppressed inline with `# fy: disable [rules]`, `# fy: enable [rules]`,
     /// `# fy: disable-line [rules]` and `# fy: disable-file` (`# yamllint ...` is also accepted).
-    Lint {
-        /// Input paths (files, directories, or glob patterns).
-        /// A missing path, a glob matching nothing or an explicit non-YAML file in batch mode is
-        /// an error. `[` is literal unless the pattern also has `*` or `?` (write `[[]` for it then).
-        /// If empty and no --stdin-files, reads from stdin.
-        #[arg(value_name = "PATHS")]
-        paths: Vec<PathBuf>,
-
-        /// Read file paths from stdin (one per line). A missing path, a directory, a non-YAML
-        /// file or a line over 4096 bytes is an error, so filter git output:
-        /// `git diff --name-only --diff-filter=d -- '*.yaml' '*.yml' | fy lint --stdin-files`
-        #[arg(long, conflicts_with = "paths")]
-        stdin_files: bool,
-
-        /// Path to config file (default: auto-discover .fast-yaml.yaml)
-        #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
-        config: Option<PathBuf>,
-
-        /// Disable config file auto-discovery
-        #[arg(long, conflicts_with = "config")]
-        no_config: bool,
-
-        /// Maximum line length (overrides config file)
-        #[arg(long)]
-        max_line_length: Option<NonZeroUsize>,
-
-        /// Indentation size (overrides config file)
-        #[arg(long)]
-        indent_size: Option<IndentSize>,
-
-        /// Lint output format
-        #[arg(long, value_enum, default_value = "text")]
-        format: LintFormat,
-
-        /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
-        #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
-        allow_duplicate_keys: Option<bool>,
-
-        /// Show at most N diagnostics per file, then one summary line; output only, the exit
-        /// code is unaffected (overrides the `max-diagnostics` config key)
-        #[arg(long, value_name = "N")]
-        max_diagnostics: Option<MaxDiagnostics>,
-
-        #[command(flatten)]
-        batch: BatchArgs,
-
-        #[command(flatten)]
-        limits: ParseLimitArgs,
-    },
-}
-
-#[derive(ValueEnum, Clone, Debug)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-    Compact,
+    Lint(LintFlags),
 }
 
 #[derive(ValueEnum, Clone, Debug)]
@@ -572,6 +659,17 @@ mod tests {
                 .contains("too large")
         );
         assert!(parse_byte_size("18446744073709551615KiB").is_err());
+    }
+
+    #[test]
+    fn jobs_zero_is_auto_and_bounds_are_enforced() {
+        assert_eq!(parse_jobs("0").unwrap(), Workers::Auto);
+        assert!(matches!(parse_jobs("128").unwrap(), Workers::Fixed(n) if n.get() == 128));
+        assert_eq!(
+            parse_jobs("129").unwrap_err(),
+            "must be between 0 and 128, got 129"
+        );
+        assert!(parse_jobs("-1").is_err());
     }
 
     #[test]

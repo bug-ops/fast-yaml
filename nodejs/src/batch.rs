@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size};
+use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size, workers};
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
@@ -115,13 +115,11 @@ impl From<RustBatchResult> for BatchResult {
     }
 }
 
-const MAX_WORKERS: u64 = 128;
-
 /// Configuration for batch file processing.
 #[napi(object)]
 #[derive(Debug, Clone, Default)]
 pub struct BatchConfig {
-    /// Worker count (null = auto, 0 = sequential)
+    /// Worker count (omit = auto, 0 = sequential, 1..=128 = fixed pool)
     pub workers: Option<f64>,
     /// Maximum input size in bytes per file (integer, 1..=1073741824, default: 104857600)
     pub max_input_bytes: Option<f64>,
@@ -154,10 +152,7 @@ pub struct BatchConfig {
 
 impl BatchConfig {
     fn to_rust_config(&self) -> napi::Result<RustConfig> {
-        let mut config = RustConfig::new();
-        if let Some(w) = checked_opt_uint("workers", self.workers, 0, MAX_WORKERS)? {
-            config = config.with_workers(Some(w));
-        }
+        let mut config = RustConfig::new().with_workers(workers("workers", self.workers)?);
         reject_legacy_max_input_size(self.max_input_size)?;
         config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
         if let Some(t) =

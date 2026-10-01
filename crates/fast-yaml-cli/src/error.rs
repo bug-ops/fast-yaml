@@ -297,6 +297,7 @@ impl RaiseHint {
 }
 
 /// Format error with colored output (if enabled)
+#[cfg_attr(not(feature = "colors"), expect(unused_variables))]
 pub fn format_error(err: &anyhow::Error, use_color: bool) -> String {
     use std::fmt::Write;
     let mut output = String::new();

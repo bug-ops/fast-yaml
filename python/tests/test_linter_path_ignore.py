@@ -69,9 +69,22 @@ def test_ignore_and_ignore_from_file_conflict(workdir: Path) -> None:
         LintConfig(rules={"braces": {"ignore": ["x/"], "ignore-from-file": "ignores"}})
 
 
-def test_a_path_in_a_missing_directory_is_a_value_error(workdir: Path) -> None:
+def test_a_path_in_a_missing_directory_is_a_value_error_only_with_ignore(workdir: Path) -> None:
+    config = LintConfig(rules={"trailing-whitespace": {"ignore": ["generated/"]}})
     with pytest.raises(ValueError, match="cannot resolve path"):
-        lint(SOURCE, path="no-such-dir/a.yaml")
+        lint(SOURCE, config, path="no-such-dir/a.yaml")
+
+
+def test_path_does_not_touch_the_file_system_without_ignore(workdir: Path) -> None:
+    for path in ("no-such-dir/a.yaml", "/nonexistent/x.yaml", ""):
+        assert "duplicate-key" in codes(lint(SOURCE, path=path))
+        assert "duplicate-key" in codes(Linter(LintConfig()).lint(SOURCE, path))
+
+
+def test_with_rule_config_honors_ignore_like_the_constructor(workdir: Path) -> None:
+    config = LintConfig().with_rule_config("trailing-whitespace", options={"ignore": "generated/"})
+    assert "trailing-whitespace" not in codes(lint(SOURCE, config, path="generated/a.yaml"))
+    assert "trailing-whitespace" in codes(lint(SOURCE, config, path="src/a.yaml"))
 
 
 def test_a_path_to_a_file_that_does_not_exist_yet_is_accepted(workdir: Path) -> None:

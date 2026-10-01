@@ -6,6 +6,7 @@ use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::pool;
+use crate::workers::Workers;
 use fast_yaml_core::limits::StreamBudget;
 use fast_yaml_core::{LoadOptions, NormalizedInput, ParseError, ParseResult, Parser, Value};
 use rayon::prelude::*;
@@ -58,9 +59,9 @@ fn parse_chunks(chunks: &[Chunk<'_>], config: &Config) -> Result<Vec<Value>> {
 /// Returns true when:
 /// - Single document (no parallelism benefit)
 /// - Total size is very small AND few documents (overhead exceeds benefit)
-/// - Workers explicitly set to 0
+/// - Workers explicitly set to [`Workers::Sequential`]
 fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
-    if config.workers() == Some(0) {
+    if config.workers() == Workers::Sequential {
         return true; // User requested sequential
     }
 
@@ -321,7 +322,7 @@ mod tests {
     #[test]
     fn test_process_parallel_with_thread_limit() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let config = Config::new().with_workers(Some(2));
+        let config = Config::new().with_workers(Workers::try_from(2).unwrap());
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 2);
@@ -330,7 +331,7 @@ mod tests {
     #[test]
     fn test_process_sequential_mode() {
         let yaml = "---\nfoo: 1\n---\nbar: 2";
-        let config = Config::new().with_workers(Some(0));
+        let config = Config::new().with_workers(Workers::Sequential);
 
         let docs = process_parallel(yaml, &config).unwrap();
         assert_eq!(docs.len(), 2);
@@ -376,7 +377,7 @@ mod tests {
                 origin: SourceOrigin::default(),
             },
         ];
-        let config = Config::new().with_workers(Some(0));
+        let config = Config::new().with_workers(Workers::Sequential);
 
         assert!(should_use_sequential(&chunks, &config));
     }
@@ -538,7 +539,10 @@ mod tests {
     #[test]
     fn test_document_limit_rejects_before_and_after_parsing() {
         let three = "---\na\n---\nb\n---\nc\n";
-        for config in [max_documents(2), max_documents(2).with_workers(Some(0))] {
+        for config in [
+            max_documents(2),
+            max_documents(2).with_workers(Workers::Sequential),
+        ] {
             let result = process_parallel(three, &config);
             assert_eq!(documents_limit_error(&result), Some((2, 2)), "{result:?}");
         }
@@ -573,7 +577,7 @@ mod tests {
     }
 
     fn sequential() -> Config {
-        Config::new().with_workers(Some(0))
+        Config::new().with_workers(Workers::Sequential)
     }
 
     fn bomb_doc() -> String {
@@ -616,7 +620,7 @@ mod tests {
         assert_alias_limit(&process_parallel(&stream, &Config::default()));
         assert_alias_limit(&process_parallel(
             &stream,
-            &Config::new().with_workers(Some(2)),
+            &Config::new().with_workers(Workers::try_from(2).unwrap()),
         ));
     }
 

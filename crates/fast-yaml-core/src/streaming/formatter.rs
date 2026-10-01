@@ -238,12 +238,23 @@ enum ScalarTyping {
     Implicit,
 }
 
+/// Where the next block entry of a collection starts.
+///
+/// The first key of a mapping or the first item of a sequence opened inline after `"- "` must
+/// not call `write_indent`: the dash already placed the cursor at the right column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Cursor {
+    /// At the start of a line: the entry writes its own indentation.
+    Normal,
+    /// Right after `"- "` on the same line.
+    AfterDash,
+}
+
 /// Generic streaming formatter with pluggable backend.
 ///
 /// This struct contains ALL formatting logic and is parameterized over
 /// the backend type `B: FormatterBackend`. Through monomorphization,
 /// this compiles to specialized code for each backend with zero runtime cost.
-#[allow(clippy::struct_excessive_bools)]
 pub struct StreamingFormatter<'a, B: FormatterBackend> {
     config: &'a EmitterConfig,
     indent: Indent,
@@ -258,12 +269,8 @@ pub struct StreamingFormatter<'a, B: FormatterBackend> {
     /// Space after mapping key colon is deferred until the value is known.
     /// Cleared without emitting when the value is a nested collection.
     pending_space: bool,
-    /// The first key of a mapping opened inline after "- " must not call
-    /// `write_indent` — the dash already placed the cursor at the right column.
-    first_key_after_dash: bool,
-    /// The first item of a sequence opened inline after an outer "- " must not
-    /// call `write_indent` — the outer dash already positioned the cursor.
-    first_item_after_dash: bool,
+    /// Where the next block entry starts; see [`Cursor`].
+    cursor: Cursor,
     /// Collection start not yet written; an immediately following end event
     /// turns it into an empty flow collection (`[]` / `{}`).
     pending_start: Option<PendingStart>,
@@ -313,8 +320,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             pending_newline: false,
             last_char_newline: true, // Empty buffer conceptually "ends with" newline
             pending_space: false,
-            first_key_after_dash: false,
-            first_item_after_dash: false,
+            cursor: Cursor::Normal,
             pending_start: None,
             anchor_base: 0,
             max_anchor_id: 0,
@@ -691,9 +697,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
     /// Writes the `"- "` prefix of a sequence entry.
     fn write_dash_prefix(&mut self) {
-        if self.first_item_after_dash {
-            self.first_item_after_dash = false;
-        } else {
+        if !self.take_after_dash() {
             self.write_indent();
         }
         self.output.push_str("- ");
@@ -702,11 +706,14 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 
     /// Writes the indentation of a mapping key, unless an outer dash already placed the cursor.
     fn write_key_indent(&mut self) {
-        if self.first_key_after_dash {
-            self.first_key_after_dash = false;
-        } else {
+        if !self.take_after_dash() {
             self.write_indent();
         }
+    }
+
+    /// Returns whether an outer dash left the cursor on this entry's line, and resets it.
+    fn take_after_dash(&mut self) -> bool {
+        std::mem::replace(&mut self.cursor, Cursor::Normal) == Cursor::AfterDash
     }
 
     fn emit_value_with_style(&mut self, value: &str, style: ScalarStyle, typing: ScalarTyping) {
@@ -832,10 +839,8 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
                     // Properties occupy the "- " line, so children need fresh indentation.
                     self.output.push('\n');
                     self.last_char_newline = true;
-                } else if kind == CollectionKind::Sequence {
-                    self.first_item_after_dash = true;
                 } else {
-                    self.first_key_after_dash = true;
+                    self.cursor = Cursor::AfterDash;
                 }
             }
             Context::MappingKey => {
@@ -888,6 +893,12 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
             return Ok(());
         }
 
+        debug_assert_eq!(
+            self.cursor,
+            Cursor::Normal,
+            "entry cursor left set at collection end"
+        );
+        self.cursor = Cursor::Normal;
         self.backend.context_stack_mut().pop();
         self.columns.pop();
         if self.current_context() == Context::ExplicitKey {

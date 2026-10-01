@@ -8,12 +8,21 @@
 use fast_yaml_core::limits::{
     Bounded, Bounds, LimitRangeError, MaxDocuments, MaxInputBytes, ParseLimits,
 };
+use fast_yaml_parallel::{WorkerCount, Workers};
 use napi::Result as NapiResult;
 
 use crate::options::{checked_uint, range_error};
 
 fn core_error(option: &str, e: LimitRangeError) -> napi::Error {
     range_error(option, e.min as u64, e.max as u64, e.value)
+}
+
+/// Validates an optional worker count: absent is auto, `0` sequential, `1..=128` a fixed pool.
+pub(crate) fn workers(option: &str, value: Option<f64>) -> NapiResult<Workers> {
+    value.map_or(Ok(Workers::Auto), |v| {
+        let n = checked_uint(option, v, 0, WorkerCount::MAX.get() as u64)?;
+        Workers::from_count(n).map_err(|e| core_error(option, e))
+    })
 }
 
 /// Validates an optional limit of kind `K`, defaulting to [`Bounded::DEFAULT`].

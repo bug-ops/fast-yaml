@@ -2,7 +2,7 @@
 
 use fast_yaml_core::limits::{MaxDocuments, ParseLimits};
 use fast_yaml_core::{LimitKind, ParseError};
-use fast_yaml_parallel::{Config, Error, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, Error, Workers, parse_parallel, parse_parallel_with_config};
 
 fn limited(max: usize) -> Config {
     Config::new().with_parse_limits(ParseLimits {
@@ -15,7 +15,7 @@ fn configs(max: usize) -> [Config; 2] {
     [
         limited(max),
         limited(max)
-            .with_workers(Some(2))
+            .with_workers(Workers::try_from(2).unwrap())
             .with_sequential_threshold(0),
     ]
 }

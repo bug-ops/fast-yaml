@@ -15,6 +15,8 @@ use crate::io::read_file;
 use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
 use crate::scan_ahead::ScanAheadLane;
+use crate::trace::debug_event;
+use crate::workers::Workers;
 
 /// Whether formatting may discard YAML comments, which the emitter cannot preserve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -226,7 +228,10 @@ impl FileProcessor {
 
     /// The scan-ahead lane of one format run.
     fn lane(&self) -> ScanAheadLane {
-        ScanAheadLane::for_policy(self.config.scan_ahead_policy(), self.config.worker_count())
+        ScanAheadLane::for_policy(
+            self.config.scan_ahead_policy(),
+            self.config.workers().threads(),
+        )
     }
 
     /// Reads `path` once, enforces the size limit and comment policy, and formats it.
@@ -425,7 +430,8 @@ impl FileProcessor {
     fn should_use_sequential(&self, paths: &[PathBuf]) -> bool {
         let file_count = paths.len();
 
-        if self.config.workers() == Some(0) || file_count < 4 {
+        if self.config.workers() == Workers::Sequential || file_count < 4 {
+            debug_event!("running {file_count} files sequentially");
             return true;
         }
 
@@ -435,7 +441,16 @@ impl FileProcessor {
             .map(|m| m.len())
             .sum();
 
-        total_size < 1_000_000 && file_count < 10
+        let sequential = total_size < 1_000_000 && file_count < 10;
+        debug_event!(
+            "{file_count} files, {total_size} bytes: running {}",
+            if sequential {
+                "sequentially"
+            } else {
+                "in parallel"
+            }
+        );
+        sequential
     }
 }
 
@@ -508,7 +523,7 @@ mod tests {
 
     #[test]
     fn test_file_processor_with_config() {
-        let config = Config::new().with_workers(Some(4));
+        let config = Config::new().with_workers(Workers::try_from(4).unwrap());
         let _processor = FileProcessor::with_config(config);
     }
 
@@ -999,7 +1014,7 @@ mod tests {
         let lane = |policy| {
             FileProcessor::with_config(
                 Config::new()
-                    .with_workers(Some(8))
+                    .with_workers(Workers::try_from(8).unwrap())
                     .with_scan_ahead_policy(policy),
             )
             .lane()

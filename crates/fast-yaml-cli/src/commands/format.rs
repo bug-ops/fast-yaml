@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -7,7 +7,7 @@ use fast_yaml_parallel::{CommentPolicy, Error as ParallelError};
 
 use crate::config::CommonConfig;
 use crate::error::ExitCode;
-use crate::io::{InputSource, OutputWriter};
+use crate::io::{InputSource, OutputWriter, WriteTarget};
 use crate::reporter::{BatchStats, ReportEvent, Reporter};
 
 /// Hint appended to [`ParallelError::CommentsWouldBeStripped`] messages.
@@ -43,26 +43,22 @@ pub enum WriteMode {
 }
 
 /// What the user asked `fy format` to do with the result, resolved once from the CLI flags.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditIntent {
     /// `--dry-run`: report only, never write
     Preview,
-    /// `-i`: rewrite the input file
-    InPlace,
-    /// Neither flag: write to `--output` or stdout
-    Print,
+    /// Write to the destination the write flags name
+    Write(WriteTarget),
 }
 
 impl EditIntent {
     /// Resolves the flags; `--dry-run` wins over `-i`.
     #[must_use]
-    pub const fn from_flags(dry_run: bool, in_place: bool) -> Self {
+    pub fn resolve(dry_run: bool, target: WriteTarget) -> Self {
         if dry_run {
             Self::Preview
-        } else if in_place {
-            Self::InPlace
         } else {
-            Self::Print
+            Self::Write(target)
         }
     }
 }
@@ -72,20 +68,13 @@ impl WriteMode {
     ///
     /// # Errors
     ///
-    /// Returns an error if the intent is [`EditIntent::InPlace`] without an input file.
-    pub fn new(
-        intent: EditIntent,
-        output: Option<PathBuf>,
-        input_file: Option<&Path>,
-    ) -> Result<Self> {
+    /// Returns an error if the intent writes in place and there is no input file.
+    pub fn new(intent: EditIntent, input_file: Option<&Path>) -> Result<Self> {
         match intent {
             EditIntent::Preview => Ok(Self::DryRun),
-            EditIntent::InPlace => Ok(Self::Emit(OutputWriter::from_args(
-                output, true, input_file,
-            )?)),
-            EditIntent::Print => Ok(Self::Emit(OutputWriter::from_args(
-                output, false, input_file,
-            )?)),
+            EditIntent::Write(target) => {
+                Ok(Self::Emit(OutputWriter::for_write(target, input_file)?))
+            }
         }
     }
 }
@@ -164,6 +153,7 @@ impl FormatCommand {
 mod tests {
     use super::*;
     use crate::config::FormatterConfig;
+    use crate::io::OutputTarget;
     use crate::io::input::InputOrigin;
     use fast_yaml_core::Indent;
     use tempfile::NamedTempFile;
@@ -181,8 +171,7 @@ mod tests {
         };
 
         let temp_file = NamedTempFile::new().unwrap();
-        let output =
-            OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_file.path().to_path_buf()));
 
         assert!(
             make_cmd(CommentPolicy::Reject)
@@ -217,8 +206,7 @@ mod tests {
         };
 
         let temp_file = NamedTempFile::new().unwrap();
-        let output =
-            OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_file.path().to_path_buf()));
 
         let config = CommonConfig::new()
             .with_formatter(FormatterConfig::new().with_indent(Indent::new(4).unwrap()));
@@ -252,8 +240,7 @@ mod tests {
             origin: InputOrigin::Stdin,
         };
         let temp_file = NamedTempFile::new().unwrap();
-        let output =
-            OutputWriter::from_args(Some(temp_file.path().to_path_buf()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_file.path().to_path_buf()));
         assert!(
             make_cmd(CommentPolicy::Strip)
                 .run(&input, &WriteMode::Emit(output))

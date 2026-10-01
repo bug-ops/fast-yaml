@@ -8,7 +8,7 @@
 
 use fast_yaml_core::limits::{MaxDocuments, ParseLimits};
 use fast_yaml_core::{Parser, Value};
-use fast_yaml_parallel::{Config, Error, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, Error, Workers, parse_parallel, parse_parallel_with_config};
 
 fn string(s: &str) -> Value {
     Value::String(s.into())
@@ -27,7 +27,7 @@ fn str_map(key: &str, value: &str) -> Value {
 }
 
 fn parallel_results(input: &str) -> [Vec<Value>; 2] {
-    let sequential = Config::new().with_workers(Some(0));
+    let sequential = Config::new().with_workers(Workers::Sequential);
     [
         parse_parallel(input).unwrap(),
         parse_parallel_with_config(input, &sequential).unwrap(),
@@ -132,7 +132,7 @@ fn block_header_variants_merge_like_saphyr() {
         "--- |\r\rx\r---\rb\r",
     ] {
         let all = Parser::parse_all(input).ok();
-        let sequential = Config::new().with_workers(Some(0));
+        let sequential = Config::new().with_workers(Workers::Sequential);
         for result in [
             parse_parallel(input),
             parse_parallel_with_config(input, &sequential),
@@ -165,7 +165,7 @@ fn merged_chunk_reports_the_stream_document_index() {
         let expected = Parser::parse_all(input).unwrap_err();
         for result in [
             parse_parallel(input),
-            parse_parallel_with_config(input, &Config::new().with_workers(Some(0))),
+            parse_parallel_with_config(input, &Config::new().with_workers(Workers::Sequential)),
         ] {
             let Err(Error::Parse { index, source }) = result else {
                 panic!("expected parse error: {input:?}");

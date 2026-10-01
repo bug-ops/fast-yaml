@@ -38,38 +38,66 @@ fn detect_special_device(path: &Path) -> Option<OutputDestination> {
     }
 }
 
+/// Where a command that only writes a report sends it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum OutputTarget {
+    /// Standard output
+    #[default]
+    Stdout,
+    /// The named file; a special device path such as `/dev/stdout` selects that stream
+    File(PathBuf),
+}
+
+/// Where a command that can rewrite its input sends the result.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteTarget {
+    /// Standard output or an explicit file
+    Output(OutputTarget),
+    /// The input file itself
+    InPlace,
+}
+
 impl OutputWriter {
-    /// Create writer from CLI arguments.
+    /// Creates a writer for `target`.
+    ///
+    /// A special device path (`/dev/stdout`, `-`, ...) selects that stream instead of a file.
+    #[must_use]
+    pub fn new(target: OutputTarget) -> Self {
+        let destination = match target {
+            OutputTarget::Stdout => OutputDestination::Stdout,
+            OutputTarget::File(path) => {
+                detect_special_device(&path).unwrap_or(OutputDestination::File(path))
+            }
+        };
+        Self { destination }
+    }
+
+    /// Creates a writer for `target`, resolving [`WriteTarget::InPlace`] to `input_file`.
     ///
     /// Unless `in_place` is set, a destination that is the same file as `input_file` is refused,
     /// since an explicit `--output` must never overwrite the input it was read from.
     ///
     /// # Errors
     ///
-    /// Returns an error if `in_place` is `true` and `input_file` is `None`, or if `--output` is
-    /// the same file as `input_file` and `in_place` is `false`.
-    pub fn from_args(
-        output: Option<PathBuf>,
-        in_place: bool,
-        input_file: Option<&Path>,
-    ) -> Result<Self> {
-        let destination = if in_place {
-            // In-place editing requires input file
-            let path =
-                input_file.ok_or_else(|| anyhow::anyhow!("--in-place requires a file argument"))?;
-            OutputDestination::File(path.to_path_buf())
-        } else if let Some(out_path) = output {
-            // Detect special device paths before falling through to temp-file strategy
-            detect_special_device(&out_path).unwrap_or(OutputDestination::File(out_path))
-        } else {
-            OutputDestination::Stdout
-        };
-
-        let writer = Self { destination };
-        if let (false, Some(input)) = (in_place, input_file) {
-            writer.ensure_not_input(input)?;
+    /// Returns an error if the target is [`WriteTarget::InPlace`] and `input_file` is `None`, or
+    /// if an explicit output is the same file as `input_file`.
+    pub fn for_write(target: WriteTarget, input_file: Option<&Path>) -> Result<Self> {
+        match target {
+            WriteTarget::Output(output) => {
+                let writer = Self::new(output);
+                if let Some(input) = input_file {
+                    writer.ensure_not_input(input)?;
+                }
+                Ok(writer)
+            }
+            WriteTarget::InPlace => {
+                let path = input_file
+                    .ok_or_else(|| anyhow::anyhow!("--in-place requires a file argument"))?;
+                Ok(Self {
+                    destination: OutputDestination::File(path.to_path_buf()),
+                })
+            }
         }
-        Ok(writer)
     }
 
     /// Create stdout writer for tests
@@ -106,6 +134,7 @@ impl OutputWriter {
         }
     }
 
+    #[cfg(feature = "linter")]
     /// Write a finished report; a closed stdout or stderr ends the output silently.
     ///
     /// # Errors
@@ -227,6 +256,7 @@ fn inode_of(path: &Path) -> Option<(u64, u64)> {
     std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
+#[cfg(feature = "linter")]
 /// A stderr writer that, like [`OutputWriter::sink`], goes quiet once the pipe is closed.
 pub const fn stderr_sink() -> OutputSink {
     OutputSink {
@@ -302,15 +332,15 @@ mod tests {
     use tempfile::NamedTempFile;
 
     #[test]
-    fn test_from_args_stdout() {
-        let writer = OutputWriter::from_args(None, false, None).unwrap();
+    fn test_new_stdout() {
+        let writer = OutputWriter::new(OutputTarget::Stdout);
         assert!(matches!(writer.destination, OutputDestination::Stdout));
     }
 
     #[test]
-    fn test_from_args_output_file() {
+    fn test_new_output_file() {
         let output_path = PathBuf::from("/tmp/output.yaml");
-        let writer = OutputWriter::from_args(Some(output_path.clone()), false, None).unwrap();
+        let writer = OutputWriter::new(OutputTarget::File(output_path.clone()));
         match writer.destination {
             OutputDestination::File(path) => assert_eq!(path, output_path),
             _ => panic!("Expected File destination"),
@@ -318,9 +348,9 @@ mod tests {
     }
 
     #[test]
-    fn test_from_args_in_place() {
+    fn test_for_write_in_place() {
         let input_path = PathBuf::from("/tmp/input.yaml");
-        let writer = OutputWriter::from_args(None, true, Some(&input_path)).unwrap();
+        let writer = OutputWriter::for_write(WriteTarget::InPlace, Some(&input_path)).unwrap();
         match writer.destination {
             OutputDestination::File(path) => assert_eq!(path, input_path),
             _ => panic!("Expected File destination"),
@@ -328,8 +358,8 @@ mod tests {
     }
 
     #[test]
-    fn test_from_args_in_place_without_file() {
-        let result = OutputWriter::from_args(None, true, None);
+    fn test_for_write_in_place_without_file() {
+        let result = OutputWriter::for_write(WriteTarget::InPlace, None);
         assert!(result.is_err());
         assert!(
             result
@@ -340,36 +370,32 @@ mod tests {
     }
 
     #[test]
-    fn test_from_args_dev_stdout() {
-        let writer =
-            OutputWriter::from_args(Some(PathBuf::from("/dev/stdout")), false, None).unwrap();
+    fn test_new_dev_stdout() {
+        let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/stdout")));
         assert!(matches!(writer.destination, OutputDestination::Stdout));
     }
 
     #[test]
-    fn test_from_args_dash() {
-        let writer = OutputWriter::from_args(Some(PathBuf::from("-")), false, None).unwrap();
+    fn test_new_dash() {
+        let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("-")));
         assert!(matches!(writer.destination, OutputDestination::Stdout));
     }
 
     #[test]
-    fn test_from_args_dev_fd_1() {
-        let writer =
-            OutputWriter::from_args(Some(PathBuf::from("/dev/fd/1")), false, None).unwrap();
+    fn test_new_dev_fd_1() {
+        let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/fd/1")));
         assert!(matches!(writer.destination, OutputDestination::Stdout));
     }
 
     #[test]
-    fn test_from_args_dev_stderr() {
-        let writer =
-            OutputWriter::from_args(Some(PathBuf::from("/dev/stderr")), false, None).unwrap();
+    fn test_new_dev_stderr() {
+        let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/stderr")));
         assert!(matches!(writer.destination, OutputDestination::Stderr));
     }
 
     #[test]
-    fn test_from_args_dev_fd_2() {
-        let writer =
-            OutputWriter::from_args(Some(PathBuf::from("/dev/fd/2")), false, None).unwrap();
+    fn test_new_dev_fd_2() {
+        let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/fd/2")));
         assert!(matches!(writer.destination, OutputDestination::Stderr));
     }
 
@@ -396,7 +422,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.txt");
         fs::write(&path, "old").unwrap();
-        let writer = OutputWriter::from_args(Some(path.clone()), false, None).unwrap();
+        let writer = OutputWriter::new(OutputTarget::File(path.clone()));
 
         let mut sink = writer.sink().unwrap();
         sink.write_all(b"new report").unwrap();
@@ -419,7 +445,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("report.txt");
         fs::write(&path, "old").unwrap();
-        let writer = OutputWriter::from_args(Some(path.clone()), false, None).unwrap();
+        let writer = OutputWriter::new(OutputTarget::File(path.clone()));
         let mut sink = writer.sink().unwrap();
         sink.write_all(b"partial").unwrap();
         drop(sink);
@@ -435,17 +461,18 @@ mod tests {
         let alias = dir.path().join("alias.yaml");
         fs::write(&path, "a: 1").unwrap();
         fs::hard_link(&path, &alias).unwrap();
-        let writer = OutputWriter::from_args(Some(alias), false, None).unwrap();
+        let writer = OutputWriter::new(OutputTarget::File(alias));
         assert!(writer.ensure_not_input(&path).is_err());
     }
 
     #[test]
+    #[cfg(feature = "linter")]
     fn test_ensure_not_input_refuses_the_same_file_through_another_path() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");
         fs::write(&path, "a: 1").unwrap();
         let alias = dir.path().join(".").join("a.yaml");
-        let writer = OutputWriter::from_args(Some(alias), false, None).unwrap();
+        let writer = OutputWriter::new(OutputTarget::File(alias));
         let err = writer.ensure_not_input(&path).unwrap_err();
         assert!(err.to_string().contains("also an input file"), "{err}");
         assert!(writer.ensure_not_input(dir.path()).is_ok());

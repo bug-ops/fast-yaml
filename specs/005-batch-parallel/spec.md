@@ -130,10 +130,10 @@ AS A tool author I WANT `FileProcessor::process(paths, f)` SO THAT I can run my 
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | FR-020 | WHEN `parse_parallel(_with_config)` receives text, THE SYSTEM SHALL normalise it (BOM, line endings), split at document boundaries (`---`, `...`, directives, block-scalar and quoting state aware), parse chunks concurrently and return documents in source order. | must |
-| FR-021 | WHEN the input has one chunk, is small (`< sequential_threshold`, default 4096 bytes, and fewer than 4 chunks) or `workers == Some(0)`, THE SYSTEM SHALL parse sequentially. | must |
+| FR-021 | WHEN the input has one chunk, is small (`< sequential_threshold`, default 4096 bytes, and fewer than 4 chunks) or `workers == Workers::Sequential`, THE SYSTEM SHALL parse sequentially. | must |
 | FR-022 | WHEN the input exceeds `Config::max_input_bytes` (default 100 MiB), THE SYSTEM SHALL return `Error::InputTooLarge`; WHEN it holds more than `ParseLimits::max_documents` (default 100,000; set through `Config::with_parse_limits`) documents, `Error::Parse` carrying `LimitKind::Documents`, positioned at the start of the first rejected document and checked before parsing. `Config::max_documents` and `Error::TooManyDocuments` no longer exist. File-level `parse_files` applies the same limit per file. | must |
 | FR-023 | WHEN several chunks fail, THE SYSTEM SHALL report the error of the lowest-index chunk, with line marks relocated to the whole input and the document index in the message. | must |
-| FR-024 | WHEN `workers = Some(n)` with `n > 0` THE SYSTEM SHALL run on the process-wide cached pool (`shared_pool(n)`, capped at 128 threads), building it on first use and replacing it only when a different count is requested (the old pool lives until its last user drops it); `None` SHALL use the global rayon pool. | should |
+| FR-024 | WHEN `workers = Workers::Fixed(n)` THE SYSTEM SHALL run on the process-wide cached pool (`shared_pool(n)`; `WorkerCount` is 1..=128, so a larger count cannot be built), building it on first use and replacing it only when a different count is requested (the old pool lives until its last user drops it); `Workers::Auto` SHALL use the global rayon pool, or a 128-thread shared pool when the global pool is larger, and `Workers::threads()` (also the scan-ahead lane share) SHALL report the count that actually runs. | should |
 | FR-025 | THE SYSTEM SHALL produce the same values as `Parser::parse_all`, except for the documented divergences (block scalar at column 0 cut by `---`, empty block scalar before `---`, error text/position for unterminated quoted/flow scalars). | must |
 | FR-026 | WHEN the input is empty, THE SYSTEM SHALL return zero documents; WHEN it is only a BOM, one null document. | should |
 
@@ -141,7 +141,7 @@ AS A tool author I WANT `FileProcessor::process(paths, f)` SO THAT I can run my 
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-040 | WHEN `format` or `lint` gets exactly one existing non-directory path and no batch flag (`--include`, `--exclude`, `-j N>0`, `--stdin-files`), THE SYSTEM SHALL run in single-file mode; WHEN no path is given, in stdin mode; otherwise in batch mode. | must |
+| FR-040 | WHEN `format` or `lint` gets exactly one existing non-directory path and no batch flag (`--include`, `--exclude`, `-j N` with N>0, `--stdin-files`), THE SYSTEM SHALL run in single-file mode; WHEN no path is given, in stdin mode; otherwise in batch mode. | must |
 | FR-041 | WHEN batch flags are given without any input, THE SYSTEM SHALL fail with a message naming `--jobs`, `--include`, `--exclude`. | must |
 | FR-042 | WHEN a directory is walked, THE SYSTEM SHALL skip hidden entries (except `.yamllint` for `fy lint`, which also matches it by default; `fy format` never does), honour `.gitignore`/global/exclude files inside git work trees, NOT follow symlinks, recurse to depth 100 (depth 1 with `--no-recursive`) and match file names against `*.yaml`/`*.yml` case-insensitively; `--include` SHALL replace these defaults and match on the file name. | must |
 | FR-043 | WHEN `--exclude` globs are given, THE SYSTEM SHALL match them (case-insensitive) against the path as given, with a leading `./` stripped; matching files SHALL be dropped silently. | must |
@@ -159,7 +159,7 @@ AS A tool author I WANT `FileProcessor::process(paths, f)` SO THAT I can run my 
 | FR-060 | WHEN `format` runs in batch mode without `-i` or `-n`, THE SYSTEM SHALL fail before reading files (exit 1). `-n` SHALL win over `-i`; `-n` conflicts with `-o` (usage error, exit 2). | must |
 | FR-061 | WHEN a `format` batch ends, THE SYSTEM SHALL print to stderr a blank line, `Completed: N file(s) in X.XXms` (the elapsed time of the run, also with `-n`), then one line each for non-zero counters among `formatted`, `unchanged`, `would change`, `failed`, then one `error: <path>: <message>` per failed file. `-q` SHALL suppress everything unless a file failed. | must |
 | FR-062 | THE SYSTEM SHALL exit a `format` batch with 1 if any file failed, else 5 if `-n` and any file would change, else 0. | must |
-| FR-063 | WHEN `lint` or `format` runs in batch mode, THE SYSTEM SHALL honour `-j N` by running on the shared pool with exactly N threads (`0` or unset means all cores), so at most N files are processed at once, and `lint` SHALL render the report sorted by file path so output does not depend on scheduling. | must |
+| FR-063 | WHEN `lint` or `format` runs in batch mode, THE SYSTEM SHALL honour `-j N` by running on the shared pool with exactly N threads (`0` or unset is `Workers::Auto`: all cores, capped at 128; `N > 128` is a usage error), so at most N files are processed at once (the bindings read `0` as `Sequential`, the CLI as auto; outputs are identical), and `lint` SHALL render the report sorted by file path so output does not depend on scheduling. | must |
 | FR-064 | WHEN a file cannot be read or has a syntax error in a lint batch, THE SYSTEM SHALL print `error: '<path>': <message>` to stderr, keep linting the rest and exit 2. | must |
 | FR-065 | WHEN lint config contains `ignore` or `yaml-files`, THE SYSTEM SHALL apply them during lint discovery (explicitly named files that match `ignore` are skipped silently). | should |
 | FR-066 | THE SYSTEM SHALL apply `--max-input-bytes`, `--max-scan-ahead` and `--max-documents` to every file of a batch. Without an explicit `--max-scan-ahead` (or config key) each file is parsed under the scaled limit and retried alone at the full one when rejected, as in [[009-limits-security/spec]] FR-019; the outcome of every file equals the single-file run. | must |
@@ -169,7 +169,7 @@ AS A tool author I WANT `FileProcessor::process(paths, f)` SO THAT I can run my 
 
 | Entity | Description |
 |--------|-------------|
-| `Config` (parallel) | Builder: `workers: Option<usize>`, `max_input_bytes: MaxInputBytes`, `sequential_threshold` (4096), `parse_limits: ParseLimits` (document limit included), `scan_ahead: ScanAheadPolicy`, `key_domain: KeyDomain`. |
+| `Config` (parallel) | Builder: `workers: Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)` with `WorkerCount` 1..=128), `max_input_bytes: MaxInputBytes`, `sequential_threshold` (4096), `parse_limits: ParseLimits` (document limit included), `scan_ahead: ScanAheadPolicy`, `key_domain: KeyDomain`. |
 | `FileProcessor` | Owns `Config`; entry points `parse_files`, `format_files`, `format_in_place`, `process`. |
 | `read_file`, `shared_pool`, `AtomicFile` | Bounded file read into a `String`; the process-wide rayon pool; streaming atomic writer behind `write_atomic`. |
 | `ScanAheadPolicy`, `ScanAheadLane` | `Fixed(limit)` or `Scaled`; the lane gives the first-attempt limit and serializes full-limit retries. |

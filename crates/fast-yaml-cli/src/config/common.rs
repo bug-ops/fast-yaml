@@ -3,7 +3,7 @@
 #![allow(clippy::missing_const_for_fn)]
 
 use super::{FormatterConfig, OutputConfig};
-use crate::cli::Cli;
+use crate::cli::ResolvedCli;
 
 /// Common configuration aggregating output and formatter settings.
 ///
@@ -29,7 +29,7 @@ impl CommonConfig {
     ///
     /// Extracts common configuration from the global CLI flags.
     #[must_use]
-    pub fn from_cli(cli: &Cli) -> Self {
+    pub fn from_cli(cli: &ResolvedCli) -> Self {
         Self {
             output: OutputConfig::from_cli(cli.verbosity, cli.no_color),
             formatter: FormatterConfig::default(),

@@ -62,8 +62,16 @@ describe('per-rule ignore and path', () => {
     ).toThrow(/cannot be used together/);
   });
 
-  it('rejects a path in a missing directory', () => {
-    expect(() => lint(SOURCE, undefined, 'no-such-dir/a.yaml')).toThrow(/cannot resolve path/);
+  it('rejects a path in a missing directory only when a rule has ignore', () => {
+    const config: LintConfig = { rules: { 'trailing-whitespace': { ignore: ['generated/'] } } };
+    expect(() => lint(SOURCE, config, 'no-such-dir/a.yaml')).toThrow(/cannot resolve path/);
+  });
+
+  it('does not touch the file system for a path when no rule has ignore', () => {
+    for (const path of ['no-such-dir/a.yaml', '/nonexistent/x.yaml', '']) {
+      expect(codes(lint(SOURCE, undefined, path))).toContain('duplicate-key');
+      expect(codes(new Linter({}).lint(SOURCE, path))).toContain('duplicate-key');
+    }
   });
 });
 

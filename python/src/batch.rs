@@ -11,7 +11,6 @@ use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
     FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
 };
-use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 /// Outcome of processing a single file.
@@ -183,8 +182,6 @@ pub struct PyBatchConfig {
     sort_keys: bool,
 }
 
-const MAX_WORKERS: usize = 128;
-
 #[pymethods]
 impl PyBatchConfig {
     #[new]
@@ -217,16 +214,8 @@ impl PyBatchConfig {
             limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         let emitter_indent = limits::indent(indent)?;
         let emitter_width = limits::width(width)?;
-        if let Some(w) = workers
-            && w > MAX_WORKERS
-        {
-            return Err(PyValueError::new_err(format!(
-                "workers {w} exceeds maximum {MAX_WORKERS}"
-            )));
-        }
-
         let config = RustConfig::new()
-            .with_workers(workers)
+            .with_workers(limits::workers("workers", workers)?)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
@@ -243,15 +232,11 @@ impl PyBatchConfig {
     }
 
     fn with_workers(&self, workers: Option<usize>) -> PyResult<Self> {
-        if let Some(w) = workers
-            && w > MAX_WORKERS
-        {
-            return Err(PyValueError::new_err(format!(
-                "workers {w} exceeds maximum {MAX_WORKERS}"
-            )));
-        }
         Ok(Self {
-            inner: self.inner.clone().with_workers(workers),
+            inner: self
+                .inner
+                .clone()
+                .with_workers(limits::workers("workers", workers)?),
             ..self.clone()
         })
     }
@@ -354,8 +339,9 @@ impl PyBatchConfig {
 
     fn __repr__(&self) -> String {
         format!(
-            "BatchConfig(workers={:?}, indent={}, width={}, sort_keys={})",
-            self.inner.workers(),
+            "BatchConfig(workers={}, indent={}, width={}, sort_keys={})",
+            limits::workers_value(self.inner.workers())
+                .map_or_else(|| "None".to_owned(), |n| n.to_string()),
             self.emitter_indent,
             self.emitter_width,
             self.sort_keys

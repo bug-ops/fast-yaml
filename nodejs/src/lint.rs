@@ -209,7 +209,7 @@ pub struct LintConfig {
     pub allow_duplicate_keys: Option<bool>,
     /// Disabled rule codes.
     pub disabled_rules: Option<Vec<String>>,
-    /// Per-rule configuration patch, applied after the fields above.
+    /// Per-rule configuration patch, applied first: the fields above win over it.
     ///
     /// Each key is a rule code; the value is a severity string (case-insensitive),
     /// or an object with `enabled`, `severity` and the rule's own options
@@ -263,6 +263,14 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
             config.max_documents,
         )?)
         .with_max_input_bytes(max_input_bytes(config.max_input_bytes)?);
+    if let Some(rules) = &config.rules {
+        rust.rules.apply_in_cwd(&rules.0).map_err(|e| match e {
+            RuleConfigError::Malformed { message } => {
+                config_error(format!("rules must be an object: {message}"))
+            }
+            other => config_error(other),
+        })?;
+    }
     if let Some(max) = config.max_line_length {
         let max = checked_uint(
             "maxLineLength",
@@ -288,30 +296,19 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
     if config.allow_duplicate_keys == Some(true) {
         rust = rust.with_disabled_rule(RuleName::DuplicateKey);
     }
-    if let Some(rules) = &config.rules {
-        let applied = match std::env::current_dir() {
-            Ok(dir) => rust.rules.apply_at(&rules.0, &dir),
-            Err(_) => rust.rules.apply(&rules.0),
-        };
-        applied.map_err(|e| match e {
-            RuleConfigError::Malformed { message } => {
-                config_error(format!("rules must be an object: {message}"))
-            }
-            other => config_error(other),
-        })?;
-    }
     for code in config.disabled_rules.iter().flatten() {
         rust = rust.with_disabled_rule(RuleName::from_config_key(code).map_err(config_error)?);
     }
     Ok(rust)
 }
 
-fn canonical_path(path: Option<&str>) -> napi::Result<Option<CanonicalPath>> {
-    path.map(|path| {
-        CanonicalPath::new(Path::new(path))
+fn canonical_path(linter: &RustLinter, path: Option<&str>) -> napi::Result<Option<CanonicalPath>> {
+    path.map_or(Ok(None), |path| {
+        linter
+            .config()
+            .matching_path(Path::new(path))
             .map_err(|e| config_error(format!("cannot resolve path '{path}': {e}")))
     })
-    .transpose()
 }
 
 fn lint_diagnostics(
@@ -319,7 +316,7 @@ fn lint_diagnostics(
     source: &str,
     path: Option<&str>,
 ) -> napi::Result<Vec<Diagnostic>> {
-    let path = canonical_path(path)?;
+    let path = canonical_path(linter, path)?;
     let lint = || {
         let input = linter.source(source)?;
         let diagnostics = match &path {

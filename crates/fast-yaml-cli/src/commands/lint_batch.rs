@@ -9,7 +9,6 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
-use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -29,7 +28,7 @@ use fast_yaml_linter::{
     TextFormatter,
 };
 use fast_yaml_parallel::{
-    Error as ParallelError, ScanAheadLane, ScanAheadPolicy, read_file, shared_pool,
+    Error as ParallelError, ScanAheadLane, ScanAheadPolicy, WorkerCount, read_file, shared_pool,
 };
 use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
@@ -155,7 +154,7 @@ struct Linters {
 }
 
 impl Linters {
-    fn new(config: &LintConfig, policy: ScanAheadPolicy, workers: NonZeroUsize) -> Self {
+    fn new(config: &LintConfig, policy: ScanAheadPolicy, workers: WorkerCount) -> Self {
         let lane = ScanAheadLane::for_policy(policy, workers);
         let first_limits = ParseLimits {
             max_scan_ahead: lane.first_limit(),
@@ -277,9 +276,12 @@ pub fn execute_lint_batch(
         .discover_source(&target.source)
         .context("Failed to discover files")?;
 
-    let workers = target.workers.unwrap_or_else(|| {
-        NonZeroUsize::new(rayon::current_num_threads()).unwrap_or(NonZeroUsize::MIN)
-    });
+    let workers = target.workers.threads();
+    tracing::debug!(
+        files = files.len(),
+        workers = workers.get(),
+        "discovered files for a lint batch"
+    );
     let pool = shared_pool(workers).context("Failed to build thread pool")?;
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();

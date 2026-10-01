@@ -6,10 +6,12 @@
 //! only fails because of the smaller limit is re-run at the full limit one at a time, so the
 //! outcome of every file equals what a single-file run gives on any machine.
 
-use std::num::NonZeroUsize;
 use std::sync::{Mutex, PoisonError};
 
 use fast_yaml_core::limits::MaxScanAhead;
+
+use crate::trace::debug_event;
+use crate::workers::WorkerCount;
 
 /// How a batch bounds the scanner look-ahead of its workers.
 ///
@@ -47,17 +49,17 @@ pub enum ScanAheadPolicy {
 /// # Examples
 ///
 /// ```
-/// use std::num::NonZeroUsize;
 /// use fast_yaml_core::limits::MaxScanAhead;
-/// use fast_yaml_parallel::{ScanAheadLane, ScanAheadPolicy};
+/// use fast_yaml_parallel::{ScanAheadLane, ScanAheadPolicy, WorkerCount};
 ///
-/// let lane = ScanAheadLane::for_policy(ScanAheadPolicy::Scaled, NonZeroUsize::new(16).unwrap());
+/// let lane = ScanAheadLane::for_policy(ScanAheadPolicy::Scaled, WorkerCount::new(16)?);
 /// assert_eq!(lane.first_limit().get(), 1 << 20);
 ///
 /// let first_try = |limit: MaxScanAhead| {
 ///     if limit == MaxScanAhead::DEFAULT { Ok("parsed") } else { Err("too long") }
 /// };
 /// assert_eq!(lane.run(first_try, |err| *err == "too long"), Ok("parsed"));
+/// # Ok::<(), fast_yaml_core::limits::LimitRangeError>(())
 /// ```
 #[derive(Debug)]
 pub struct ScanAheadLane {
@@ -98,7 +100,7 @@ impl ScanAheadLane {
     }
 
     /// A lane starting at `full / workers` (at least 1 MiB, at most `full`).
-    fn scaled(full: MaxScanAhead, workers: NonZeroUsize) -> Self {
+    fn scaled(full: MaxScanAhead, workers: WorkerCount) -> Self {
         let share = (full.get() / workers.get()).max(MIN_SCALED);
         let first = MaxScanAhead::new(share.min(full.get())).unwrap_or(full);
         Self {
@@ -110,7 +112,7 @@ impl ScanAheadLane {
 
     /// A lane for `policy` and the number of `workers`.
     #[must_use]
-    pub fn for_policy(policy: ScanAheadPolicy, workers: NonZeroUsize) -> Self {
+    pub fn for_policy(policy: ScanAheadPolicy, workers: WorkerCount) -> Self {
         match policy {
             ScanAheadPolicy::Fixed(limit) => Self::fixed(limit),
             ScanAheadPolicy::Scaled => Self::scaled(MaxScanAhead::DEFAULT, workers),
@@ -138,6 +140,11 @@ impl ScanAheadLane {
         match attempt(self.first) {
             Err(error) if self.first.get() < self.full.get() && exceeded(&error) => {
                 let _lane = self.retries.lock().unwrap_or_else(PoisonError::into_inner);
+                debug_event!(
+                    "scan-ahead limit {} exceeded, retrying under {}",
+                    self.first.get(),
+                    self.full.get()
+                );
                 attempt(self.full)
             }
             result => result,
@@ -151,8 +158,8 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::time::Duration;
 
-    fn workers(n: usize) -> NonZeroUsize {
-        NonZeroUsize::new(n).unwrap()
+    fn workers(n: usize) -> WorkerCount {
+        WorkerCount::new(n).unwrap()
     }
 
     #[test]

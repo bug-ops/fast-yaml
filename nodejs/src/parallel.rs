@@ -3,7 +3,7 @@
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
 use crate::conversion::yaml_to_js;
-use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size};
+use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size, workers};
 use crate::options::{U32_MAX, checked_opt_uint};
 use fast_yaml_core::{KeyDomain, LimitKind, ParseError};
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
@@ -13,9 +13,6 @@ use napi::{
 };
 use napi_derive::napi;
 use std::panic::{AssertUnwindSafe, catch_unwind};
-
-/// Maximum thread count allowed.
-const MAX_THREADS: u64 = 128;
 
 /// Configuration for parallel YAML processing.
 ///
@@ -35,7 +32,7 @@ const MAX_THREADS: u64 = 128;
 #[napi(object)]
 #[derive(Debug, Clone, Default)]
 pub struct ParallelConfig {
-    /// Thread pool size (null = CPU count, 0 = sequential).
+    /// Thread pool size (omit = CPU count capped at 128, 0 = sequential, 1..=128 = fixed pool).
     pub thread_count: Option<f64>,
 
     /// Minimum bytes per chunk (default: 4096).
@@ -83,14 +80,12 @@ fn parse_error(error: &fast_yaml_parallel::Error) -> napi::Error {
 impl ParallelConfig {
     /// Convert to Rust parallel config with validation.
     fn to_rust_config(&self) -> napi::Result<RustParallelConfig> {
-        let thread_count = checked_opt_uint("threadCount", self.thread_count, 0, MAX_THREADS)?;
+        let workers = workers("threadCount", self.thread_count)?;
         let min_chunk_size = checked_opt_uint("minChunkSize", self.min_chunk_size, 1, U32_MAX)?;
 
-        let mut config = RustParallelConfig::new().with_key_domain(KeyDomain::StringKeys);
-
-        if let Some(count) = thread_count {
-            config = config.with_workers(Some(count));
-        }
+        let mut config = RustParallelConfig::new()
+            .with_key_domain(KeyDomain::StringKeys)
+            .with_workers(workers);
         reject_legacy_max_input_size(self.max_input_size)?;
         config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
         // The parallel API has no chunk-size bounds; minChunkSize maps to the sequential threshold.

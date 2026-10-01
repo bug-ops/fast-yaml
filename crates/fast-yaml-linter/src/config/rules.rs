@@ -860,6 +860,12 @@ macro_rules! builtin_rules {
                 }
             }
 
+            /// Returns whether any rule has `ignore` patterns.
+            #[must_use]
+            pub const fn has_ignore(&self) -> bool {
+                false $(|| self.$field.ignore.is_some())+
+            }
+
             /// Returns whether the rule's own `ignore` patterns skip `path`.
             #[must_use]
             pub fn is_ignored(&self, name: RuleName, path: &CanonicalPath) -> bool {
@@ -1003,6 +1009,33 @@ impl RulesConfig {
         )
     }
 
+    /// Like [`RulesConfig::apply_at`], anchored at the working directory, or like
+    /// [`RulesConfig::apply`] when the working directory cannot be read.
+    ///
+    /// # Errors
+    ///
+    /// As [`RulesConfig::apply_at`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::RulesConfig;
+    ///
+    /// let mut rules = RulesConfig::default();
+    /// let yaml = "line-length: {ignore: 'vendor/'}";
+    /// rules.apply_in_cwd(serde_norway::Deserializer::from_str(yaml)).unwrap();
+    /// assert!(rules.has_ignore());
+    /// ```
+    pub fn apply_in_cwd<'de, D: Deserializer<'de>>(
+        &mut self,
+        deserializer: D,
+    ) -> Result<(), RuleConfigError> {
+        match std::env::current_dir() {
+            Ok(dir) => self.apply_at(deserializer, &dir),
+            Err(_) => self.apply(deserializer),
+        }
+    }
+
     /// Like [`RulesConfig::apply`], but accepts per-rule `ignore` and `ignore-from-file`.
     ///
     /// Patterns are anchored at `base_dir`, and ignore files are read relative to it. A rule
@@ -1126,9 +1159,78 @@ impl RulesConfig {
         name: RuleName,
         deserializer: D,
     ) -> Result<(), RuleConfigError> {
+        self.apply_rule_over(name, deserializer, IgnoreBase::Unavailable)
+    }
+
+    /// Like [`RulesConfig::apply_rule`], but accepts `ignore` and `ignore-from-file` in the
+    /// entry, anchored at `base_dir` as in [`RulesConfig::apply_at`].
+    ///
+    /// # Errors
+    ///
+    /// As [`RulesConfig::apply_rule`], and when `base_dir` cannot be resolved, an ignore file
+    /// cannot be read, or a pattern is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::{RuleName, RulesConfig};
+    ///
+    /// let mut rules = RulesConfig::default();
+    /// let yaml = "{ignore: 'vendor/'}";
+    /// let base = std::env::temp_dir();
+    /// rules
+    ///     .apply_rule_at(RuleName::Colons, serde_norway::Deserializer::from_str(yaml), &base)
+    ///     .unwrap();
+    /// assert!(rules.has_ignore());
+    /// ```
+    pub fn apply_rule_at<'de, D: Deserializer<'de>>(
+        &mut self,
+        name: RuleName,
+        deserializer: D,
+        base_dir: &Path,
+    ) -> Result<(), RuleConfigError> {
+        self.apply_rule_over(name, deserializer, IgnoreBase::Dir(base_dir))
+    }
+
+    /// Like [`RulesConfig::apply_rule_at`], anchored at the working directory, or like
+    /// [`RulesConfig::apply_rule`] when the working directory cannot be read.
+    ///
+    /// # Errors
+    ///
+    /// As [`RulesConfig::apply_rule_at`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::{RuleName, RulesConfig};
+    ///
+    /// let mut rules = RulesConfig::default();
+    /// let yaml = "{ignore: 'vendor/'}";
+    /// rules
+    ///     .apply_rule_in_cwd(RuleName::Colons, serde_norway::Deserializer::from_str(yaml))
+    ///     .unwrap();
+    /// assert!(rules.has_ignore());
+    /// ```
+    pub fn apply_rule_in_cwd<'de, D: Deserializer<'de>>(
+        &mut self,
+        name: RuleName,
+        deserializer: D,
+    ) -> Result<(), RuleConfigError> {
+        match std::env::current_dir() {
+            Ok(dir) => self.apply_rule_at(name, deserializer, &dir),
+            Err(_) => self.apply_rule(name, deserializer),
+        }
+    }
+
+    fn apply_rule_over<'de, D: Deserializer<'de>>(
+        &mut self,
+        name: RuleName,
+        deserializer: D,
+        base: IgnoreBase<'_>,
+    ) -> Result<(), RuleConfigError> {
         let entry = buffer(deserializer)?;
         let mut next = self.clone();
-        next.apply_value(name, &ApplyCtx::new(IgnoreBase::Unavailable), entry)?;
+        next.apply_value(name, &ApplyCtx::new(base), entry)?;
         *self = next;
         Ok(())
     }
@@ -1546,6 +1648,24 @@ mod tests {
             assert!(message.contains("supported by yamllint"), "{message}");
             assert!(message.contains("top-level 'ignore'"), "{message}");
         }
+    }
+
+    #[test]
+    fn apply_rule_at_accepts_ignore_and_apply_rule_does_not() {
+        let entry = || serde_norway::Deserializer::from_str("{ignore: 'gen/'}");
+        let mut rules = RulesConfig::default();
+        assert!(rules.apply_rule(RuleName::Colons, entry()).is_err());
+        assert!(!rules.has_ignore());
+
+        let base = std::env::temp_dir().canonicalize().unwrap();
+        rules
+            .apply_rule_at(RuleName::Colons, entry(), &base)
+            .unwrap();
+        assert!(rules.has_ignore());
+        let skipped = CanonicalPath::assume_canonical(base.join("gen/a.yaml"));
+        let kept = CanonicalPath::assume_canonical(base.join("src/a.yaml"));
+        assert!(rules.is_ignored(RuleName::Colons, &skipped));
+        assert!(!rules.is_ignored(RuleName::Colons, &kept));
     }
 
     fn over_preset(rules: &mut RulesConfig, yaml: &str) {

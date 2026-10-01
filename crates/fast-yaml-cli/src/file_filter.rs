@@ -22,6 +22,7 @@ impl FileFilter {
     /// Builds a filter from the `ignore` and `yaml-files` settings.
     #[cfg(feature = "linter")]
     #[must_use]
+    #[cfg_attr(not(feature = "linter"), expect(clippy::missing_const_for_fn))]
     pub fn new(selection: FileSelection) -> Self {
         Self {
             ignore: selection.ignore.map(Arc::new),
@@ -31,7 +32,10 @@ impl FileFilter {
 
     /// Returns whether config `ignore` drops `path`, which must be canonical.
     #[must_use]
-    #[cfg_attr(not(feature = "linter"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "linter"),
+        expect(unused_variables, clippy::missing_const_for_fn)
+    )]
     pub fn is_ignored(&self, path: &Path, is_dir: bool) -> bool {
         #[cfg(feature = "linter")]
         {
@@ -62,6 +66,7 @@ impl FileFilter {
     ///
     /// A `!` pattern can re-include a file below an ignored directory, so pruning is off then.
     #[must_use]
+    #[cfg_attr(not(feature = "linter"), expect(clippy::missing_const_for_fn))]
     pub fn can_prune(&self) -> bool {
         #[cfg(feature = "linter")]
         {
@@ -78,7 +83,10 @@ impl FileFilter {
     /// Returns whether the file name of `path` matches `yaml-files`, or `None` when the config
     /// has no `yaml-files` key.
     #[must_use]
-    #[cfg_attr(not(feature = "linter"), allow(unused_variables))]
+    #[cfg_attr(
+        not(feature = "linter"),
+        expect(unused_variables, clippy::missing_const_for_fn)
+    )]
     pub fn selects(&self, path: &Path) -> Option<bool> {
         #[cfg(feature = "linter")]
         {

@@ -35,7 +35,7 @@ After `fy format`, the document parses to the same data as before, formatting th
 - Wrapping or folding long lines (`--width` is accepted but inert, see section 9).
 - Style options beyond indent (no quote-style, key sorting, or `---` forcing flags on the CLI).
 - Linting or fixing semantic problems (see lint spec).
-- Choosing between JSON/YAML output: `fy format` always emits YAML (the global `-f/--format` flag is not accepted by `format`).
+- Choosing between JSON/YAML output: `fy format` always emits YAML (the former `-f/--format` flag is removed).
 
 ## 2. User stories
 

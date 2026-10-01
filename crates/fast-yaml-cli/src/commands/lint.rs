@@ -19,14 +19,25 @@ use crate::cli::{LintFormat, LintOutput, ParseLimitArgs};
 use crate::config::CommonConfig;
 use crate::error::{self, DiscoveryError, ExitCode};
 use crate::file_filter::FileFilter;
-use crate::io::{InputSource, OutputWriter};
+use crate::io::input::InputOrigin;
+use crate::io::{InputSource, OutputTarget, OutputWriter};
+
+/// Where `fy lint` takes its config file from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum ConfigSource {
+    /// `--config FILE`: the file must load.
+    Explicit(PathBuf),
+    /// `--no-config`: built-in defaults only.
+    Disabled,
+    /// Neither flag: use the `.fast-yaml.yaml` found from the working directory, if any.
+    #[default]
+    Discover,
+}
 
 /// CLI arguments for the lint command, separated from `CommonConfig`.
 pub struct LintArgs {
-    /// Explicit config file path (from `--config`).
-    pub config_path: Option<PathBuf>,
-    /// Whether to disable config file auto-discovery (`--no-config`).
-    pub no_config: bool,
+    /// Where the config file comes from (from `--config` / `--no-config`).
+    pub config: ConfigSource,
     /// Maximum line length override (from `--max-line-length`).
     pub max_line_length: Option<NonZeroUsize>,
     /// Indentation size override (from `--indent-size`).
@@ -43,8 +54,8 @@ pub struct LintArgs {
     pub max_scan_ahead: Option<MaxScanAhead>,
     /// Depth and alias limits from the flags.
     pub limits: ParseLimitArgs,
-    /// Report destination (from `--output`); stdout when `None`.
-    pub output: Option<PathBuf>,
+    /// Report destination (from `--output`).
+    pub output: OutputTarget,
 }
 
 /// Lint command implementation
@@ -147,15 +158,19 @@ fn write_report_or_warn(
 /// Returns `err` as the error to propagate; its exit code is unchanged.
 pub fn report_unresolved(
     format: LintFormat,
-    output: Option<PathBuf>,
+    output: OutputTarget,
     err: DiscoveryError,
 ) -> anyhow::Error {
     if !matches!(format.output(), LintOutput::Text)
         && let Some(path) = err.path()
-        && let Ok(output) = OutputWriter::from_args(output, false, None)
     {
         let diagnostic = input_error_diagnostic(err.to_string());
-        write_report_or_warn(&output, format.output(), Some(path), diagnostic);
+        write_report_or_warn(
+            &OutputWriter::new(output),
+            format.output(),
+            Some(path),
+            diagnostic,
+        );
     }
     err.into()
 }
@@ -171,8 +186,8 @@ impl LintCommand {
     /// # Errors
     ///
     /// Returns error if an explicit `--config` path cannot be read or parsed.
-    pub fn build(config: CommonConfig, args: LintArgs, input: &InputSource) -> Result<Self> {
-        let file = Self::load_config_file(args.config_path, args.no_config, input)?;
+    pub fn build(config: CommonConfig, args: LintArgs, origin: &InputOrigin) -> Result<Self> {
+        let file = Self::load_config_file(args.config, origin, config.output.is_verbose())?;
         let max_diagnostics = args.max_diagnostics.or(file.max_diagnostics);
         let max_input_bytes = args
             .max_input_bytes
@@ -195,7 +210,7 @@ impl LintCommand {
             lint_config,
             file_filter,
             scan_ahead,
-            output: OutputWriter::from_args(args.output, false, None)?,
+            output: OutputWriter::new(args.output),
             max_diagnostics,
             format: args.format,
         })
@@ -203,45 +218,36 @@ impl LintCommand {
 
     /// Load the config file (explicit path, auto-discovered, or default).
     fn load_config_file(
-        config_path: Option<PathBuf>,
-        no_config: bool,
-        input: &InputSource,
+        source: ConfigSource,
+        origin: &InputOrigin,
+        verbose: bool,
     ) -> Result<ConfigFile> {
-        if no_config {
-            return Ok(ConfigFile::default());
-        }
-
-        if let Some(path) = config_path {
-            // Explicit --config: hard error if missing or invalid
-            let cfg = ConfigFile::load(&path).with_context(|| {
-                format!("failed to load config file '{}'", DisplayPath::new(&path))
-            })?;
-            return Ok(cfg);
-        }
-
-        // Auto-discovery: start from CWD (matches yamllint behavior)
-        let start_dir = std::env::current_dir().unwrap_or_else(|_| {
-            input
-                .file_path()
-                .and_then(|p| p.parent().map(Path::to_owned))
-                .unwrap_or_else(|| PathBuf::from("."))
-        });
-
-        if let Some(discovered) = ConfigFile::discover(&start_dir) {
-            error::stderr_line(format_args!(
-                "using config file: {}",
-                DisplayPath::new(&discovered)
-            ));
-            let cfg = ConfigFile::load(&discovered).with_context(|| {
-                format!(
-                    "failed to load config file '{}'",
-                    DisplayPath::new(&discovered)
-                )
-            })?;
-            return Ok(cfg);
-        }
-
-        Ok(ConfigFile::default())
+        let path = match source {
+            ConfigSource::Disabled => return Ok(ConfigFile::default()),
+            ConfigSource::Explicit(path) => path,
+            ConfigSource::Discover => {
+                // Discovery starts from CWD (matches yamllint behavior)
+                let start_dir = std::env::current_dir().unwrap_or_else(|_| {
+                    origin
+                        .path()
+                        .and_then(|p| p.parent().map(Path::to_owned))
+                        .unwrap_or_else(|| PathBuf::from("."))
+                });
+                let Some(discovered) = ConfigFile::discover(&start_dir) else {
+                    return Ok(ConfigFile::default());
+                };
+                tracing::debug!("discovered config file: {}", DisplayPath::new(&discovered));
+                if verbose {
+                    error::stderr_line(format_args!(
+                        "using config file: {}",
+                        DisplayPath::new(&discovered)
+                    ));
+                }
+                discovered
+            }
+        };
+        ConfigFile::load(&path)
+            .with_context(|| format!("failed to load config file '{}'", DisplayPath::new(&path)))
     }
 
     /// Returns whether the config file's `ignore` drops the file at `path`.
@@ -431,8 +437,7 @@ mod tests {
         LintCommand::build(
             config,
             LintArgs {
-                config_path: None,
-                no_config: true,
+                config: ConfigSource::Disabled,
                 max_line_length,
                 indent_size: None,
                 format,
@@ -441,9 +446,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            input,
+            &input.origin,
         )
         .unwrap()
     }
@@ -469,8 +474,9 @@ mod tests {
         LintCommand::build(
             create_test_config(Verbosity::Quiet, false, 2),
             LintArgs {
-                config_path: config_text.map(|_| f.path().to_owned()),
-                no_config: config_text.is_none(),
+                config: config_text.map_or(ConfigSource::Disabled, |_| {
+                    ConfigSource::Explicit(f.path().to_owned())
+                }),
                 max_line_length: None,
                 indent_size: None,
                 format: LintFormat::Text,
@@ -479,9 +485,9 @@ mod tests {
                 max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         )
         .unwrap()
     }
@@ -623,8 +629,7 @@ mod tests {
         let cmd = LintCommand::build(
             config,
             LintArgs {
-                config_path: Some(f.path().to_owned()),
-                no_config: false,
+                config: ConfigSource::Explicit(f.path().to_owned()),
                 max_line_length: None,
                 indent_size: None,
                 format: LintFormat::Text,
@@ -633,9 +638,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         )
         .unwrap();
         let result = cmd.execute(&input);
@@ -648,8 +653,7 @@ mod tests {
         let result = LintCommand::build(
             config,
             LintArgs {
-                config_path: Some(PathBuf::from("/nonexistent/.fast-yaml.yaml")),
-                no_config: false,
+                config: ConfigSource::Explicit(PathBuf::from("/nonexistent/.fast-yaml.yaml")),
                 max_line_length: None,
                 indent_size: None,
                 format: LintFormat::Text,
@@ -658,9 +662,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         );
         assert!(result.is_err());
     }
@@ -674,8 +678,7 @@ mod tests {
         let cmd = LintCommand::build(
             config,
             LintArgs {
-                config_path: Some(f.path().to_owned()),
-                no_config: false,
+                config: ConfigSource::Explicit(f.path().to_owned()),
                 max_line_length: None,
                 indent_size: None,
                 format: LintFormat::Text,
@@ -684,9 +687,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         )
         .unwrap();
         assert_eq!(
@@ -706,8 +709,7 @@ mod tests {
         let cmd = LintCommand::build(
             config,
             LintArgs {
-                config_path: Some(f.path().to_owned()),
-                no_config: false,
+                config: ConfigSource::Explicit(f.path().to_owned()),
                 max_line_length: None,
                 indent_size: None,
                 format: LintFormat::Json,
@@ -716,9 +718,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         )
         .unwrap();
         let result = cmd.execute(&input);
@@ -734,8 +736,7 @@ mod tests {
         let cmd = LintCommand::build(
             config,
             LintArgs {
-                config_path: Some(f.path().to_owned()),
-                no_config: false,
+                config: ConfigSource::Explicit(f.path().to_owned()),
                 max_line_length: NonZeroUsize::new(200),
                 indent_size: None,
                 format: LintFormat::Text,
@@ -744,9 +745,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         )
         .unwrap();
         // CLI value wins over config file value
@@ -764,8 +765,7 @@ mod tests {
         let cmd = LintCommand::build(
             config,
             LintArgs {
-                config_path: Some(f.path().to_owned()),
-                no_config: false,
+                config: ConfigSource::Explicit(f.path().to_owned()),
                 max_line_length: None,
                 indent_size: None,
                 format: LintFormat::Text,
@@ -774,9 +774,9 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
-            &stdin_input(""),
+            &InputOrigin::Stdin,
         )
         .unwrap();
         assert!(cmd.lint_config.rules.duplicate_key.enabled);

@@ -1,22 +1,10 @@
 //! Configuration for parallel processing behavior.
 
-use std::num::NonZeroUsize;
-
 use fast_yaml_core::KeyDomain;
 use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead, ParseLimits};
 
 use crate::scan_ahead::ScanAheadPolicy;
-
-/// Maximum number of threads allowed (security limit).
-const MAX_THREADS: usize = 128;
-
-/// [`MAX_THREADS`] as a non-zero count.
-const MAX_POOL_THREADS: NonZeroUsize = NonZeroUsize::MIN.saturating_add(MAX_THREADS - 1);
-
-/// `n`, or one when `n` is zero.
-const fn at_least_one(n: usize) -> NonZeroUsize {
-    NonZeroUsize::MIN.saturating_add(n.saturating_sub(1))
-}
+use crate::workers::Workers;
 
 /// Configuration for parallel processing behavior.
 ///
@@ -26,23 +14,24 @@ const fn at_least_one(n: usize) -> NonZeroUsize {
 /// # Security Limits
 ///
 /// To prevent denial-of-service attacks and resource exhaustion:
-/// - Maximum threads: 128
+/// - Maximum threads: [`WorkerCount::MAX`](crate::WorkerCount::MAX) (128)
 /// - Maximum input size: 100MB (configurable via [`with_max_input_bytes`](Config::with_max_input_bytes))
 /// - Maximum documents per input: 100 000 (`ParseLimits::max_documents`, via [`with_parse_limits`](Config::with_parse_limits))
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_parallel::Config;
+/// use fast_yaml_parallel::{Config, WorkerCount, Workers};
 ///
 /// let config = Config::new()
-///     .with_workers(Some(8))
+///     .with_workers(Workers::Fixed(WorkerCount::new(8)?))
 ///     .with_sequential_threshold(2048);
+/// # Ok::<(), fast_yaml_core::limits::LimitRangeError>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Worker count: None = auto (CPU count), Some(0) = sequential, Some(n) = n threads
-    pub(crate) workers: Option<usize>,
+    /// How many threads run the work
+    pub(crate) workers: Workers,
 
     /// Maximum input size (`DoS` protection, default: 100MB)
     pub(crate) max_input_bytes: MaxInputBytes,
@@ -76,25 +65,26 @@ impl Config {
         Self::default()
     }
 
-    /// Sets worker count.
+    /// Sets how many threads run the work.
     ///
-    /// - `None`: Auto-detect CPU count (default, capped at 128)
-    /// - `Some(0)`: Sequential processing (no parallelism)
-    /// - `Some(n)`: Use exactly `n` threads (capped at 128)
+    /// - [`Workers::Auto`]: the global Rayon pool, capped at 128 threads (default)
+    /// - [`Workers::Sequential`]: no parallelism
+    /// - [`Workers::Fixed`]: a pool of exactly that many threads
     ///
     /// # Security
     ///
-    /// Thread count is capped at 128 to prevent resource exhaustion.
+    /// [`WorkerCount`](crate::WorkerCount) rejects counts above 128, and `Auto` never runs more
+    /// than 128 threads, to prevent resource exhaustion.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_parallel::Config;
+    /// use fast_yaml_parallel::{Config, Workers};
     ///
-    /// let config = Config::new().with_workers(Some(4));
+    /// let config = Config::new().with_workers(Workers::Sequential);
     /// ```
     #[must_use]
-    pub const fn with_workers(mut self, workers: Option<usize>) -> Self {
+    pub const fn with_workers(mut self, workers: Workers) -> Self {
         self.workers = workers;
         self
     }
@@ -234,9 +224,9 @@ impl Config {
         self.scan_ahead
     }
 
-    /// Returns worker count setting.
+    /// Returns the worker setting.
     #[must_use]
-    pub const fn workers(&self) -> Option<usize> {
+    pub const fn workers(&self) -> Workers {
         self.workers
     }
 
@@ -256,7 +246,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            workers: None, // Auto-detect CPU count
+            workers: Workers::Auto,
             max_input_bytes: MaxInputBytes::DEFAULT,
             sequential_threshold: 4096, // 4KB
             parse_limits: ParseLimits::default(),
@@ -266,35 +256,19 @@ impl Default for Config {
     }
 }
 
-impl Config {
-    /// The worker count a dedicated pool needs: `Some(n)` with `n > 0`, capped; `None` for
-    /// auto and sequential settings, which run without one.
-    pub(crate) fn pool_workers(&self) -> Option<NonZeroUsize> {
-        self.workers
-            .and_then(NonZeroUsize::new)
-            .map(|workers| workers.min(MAX_POOL_THREADS))
-    }
-
-    /// How many threads run a batch: the dedicated pool, the global pool, or one when
-    /// sequential.
-    pub(crate) fn worker_count(&self) -> NonZeroUsize {
-        self.pool_workers().unwrap_or_else(|| {
-            at_least_one(match self.workers {
-                Some(_) => 0,
-                None => rayon::current_num_threads(),
-            })
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workers::WorkerCount;
+
+    fn four() -> Workers {
+        Workers::Fixed(WorkerCount::new(4).unwrap())
+    }
 
     #[test]
     fn test_default_config() {
         let config = Config::default();
-        assert_eq!(config.workers, None);
+        assert_eq!(config.workers, Workers::Auto);
         assert_eq!(config.max_input_bytes, MaxInputBytes::DEFAULT);
         assert_eq!(config.sequential_threshold, 4096);
     }
@@ -302,48 +276,29 @@ mod tests {
     #[test]
     fn test_config_builder() {
         let config = Config::new()
-            .with_workers(Some(4))
+            .with_workers(four())
             .with_max_input_bytes(MaxInputBytes::new(50 * 1024 * 1024).unwrap())
             .with_sequential_threshold(2048);
 
-        assert_eq!(config.workers, Some(4));
+        assert_eq!(config.workers, four());
         assert_eq!(config.max_input_bytes.get(), 50 * 1024 * 1024);
         assert_eq!(config.sequential_threshold, 2048);
     }
 
     #[test]
     fn test_sequential_mode() {
-        let config = Config::new().with_workers(Some(0));
-        assert_eq!(config.workers, Some(0));
-    }
-
-    #[test]
-    fn test_pool_workers_capping() {
-        let pool = |workers| Config::new().with_workers(workers).pool_workers();
-        assert_eq!(pool(Some(4)).map(NonZeroUsize::get), Some(4));
-        assert_eq!(pool(Some(10_000)).map(NonZeroUsize::get), Some(MAX_THREADS));
-        assert_eq!(pool(Some(0)), None);
-        assert_eq!(pool(None), None);
-    }
-
-    #[test]
-    fn test_worker_count_is_never_zero() {
-        let count = |workers| Config::new().with_workers(workers).worker_count().get();
-        assert_eq!(count(Some(4)), 4);
-        assert_eq!(count(Some(0)), 1);
-        assert!(count(None) >= 1);
-        assert_eq!(at_least_one(0).get(), 1);
-        assert_eq!(at_least_one(7).get(), 7);
+        let config = Config::new().with_workers(Workers::Sequential);
+        assert_eq!(config.workers, Workers::Sequential);
     }
 
     #[test]
     fn test_getters() {
         let config = Config::new()
-            .with_workers(Some(8))
+            .with_workers(four())
             .with_max_input_bytes(MaxInputBytes::new(50_000_000).unwrap())
             .with_sequential_threshold(8192);
 
-        assert_eq!(config.workers(), Some(8));
+        assert_eq!(config.workers(), four());
         assert_eq!(config.max_input_bytes().get(), 50_000_000);
         assert_eq!(config.sequential_threshold(), 8192);
     }

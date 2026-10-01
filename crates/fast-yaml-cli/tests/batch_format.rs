@@ -921,12 +921,12 @@ fn test_in_place_without_file_fails() {
 }
 
 #[test]
-fn test_in_place_without_subcommand_fails() {
+fn test_in_place_without_subcommand_is_a_usage_error() {
     fy().arg("-i")
         .write_stdin("")
         .assert()
-        .code(1)
-        .stderr(predicate::str::contains("requires a file argument"));
+        .code(2)
+        .stderr(predicate::str::contains("unexpected argument"));
 }
 
 #[test]

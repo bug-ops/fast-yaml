@@ -212,7 +212,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | NDJSON or `[1,2]\n[3]` | `trailing characters at line 2 column 1`, exit 1 |
 | Syntax error in YAML | `Failed to parse YAML` plus parser message, exit 1 |
 | Missing input file | `Failed to read file: ...`, exit 1 |
-| `-f json` after `convert` | usage error (the global format flag does not apply here), exit 2 |
+| `-f json` after `convert` | usage error (`-f` no longer exists), exit 2 |
 
 ## 6. Non-functional requirements
 

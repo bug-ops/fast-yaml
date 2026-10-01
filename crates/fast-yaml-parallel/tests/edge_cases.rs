@@ -1,7 +1,7 @@
 //! Edge case tests for unusual inputs and boundary conditions.
 
 use fast_yaml_core::limits::{MaxDocuments, ParseLimits};
-use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, Workers, parse_parallel, parse_parallel_with_config};
 
 #[test]
 fn test_only_whitespace() {
@@ -252,7 +252,7 @@ fn test_config_edge_cases() {
     let yaml = "---\ntest: 1";
 
     // Zero thread count (sequential mode)
-    let config = Config::new().with_workers(Some(0));
+    let config = Config::new().with_workers(Workers::Sequential);
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 1);
 

@@ -179,6 +179,8 @@ class TestYamllintForms:
         config = lint.LintConfig(rules={"duplicate-key": "disable"})
         assert "duplicate-key" not in codes(lint.lint("a: 1\na: 2\n", config))
         config = lint.LintConfig(allow_duplicate_keys=True, rules={"duplicate-key": "enable"})
+        assert "duplicate-key" not in codes(lint.lint("a: 1\na: 2\n", config))
+        config = lint.LintConfig(rules={"duplicate-key": "enable"})
         assert "duplicate-key" in codes(lint.lint("a: 1\na: 2\n", config))
 
     def test_with_rule_config_unknown_rule(self):
@@ -226,11 +228,11 @@ class TestKwargSemantics:
         with pytest.raises(ValueError, match="between 1 and 16"):
             lint.LintConfig().with_indent_size(size)
 
-    def test_rules_can_reenable_allow_duplicate_keys(self):
+    def test_allow_duplicate_keys_beats_rules_enabled(self):
         config = lint.LintConfig(
             allow_duplicate_keys=True, rules={"duplicate-key": {"enabled": True}}
         )
-        assert "duplicate-key" in codes(lint.lint("a: 1\na: 2\n", config))
+        assert "duplicate-key" not in codes(lint.lint("a: 1\na: 2\n", config))
 
     def test_disabled_rules_wins_over_rules(self):
         config = lint.LintConfig(
@@ -400,3 +402,47 @@ def test_entry_over_default_reports_at_yamllint_level():
     config = lint.LintConfig(rules={"line-length": {"max": 5}, "comments": "warning"})
     found = {d.code: str(d.severity) for d in lint.lint("key: value  # c\n", config)}
     assert found["line-length"] == "error"
+
+
+class TestShorthandPrecedence:
+    """Keyword arguments win over the ``rules`` patch; ``disabled_rules`` wins over both."""
+
+    def test_indent_size_beats_rules_spaces(self):
+        config = lint.LintConfig(indent_size=2, rules={"indentation": {"spaces": 4}})
+        assert config.indent_size == 2
+
+    def test_rules_spaces_applies_when_indent_size_is_omitted(self):
+        config = lint.LintConfig(rules={"indentation": {"spaces": 4}})
+        assert config.indent_size == 4
+
+    def test_max_line_length_omitted_none_and_int(self):
+        rules = {"line-length": {"max": 100}}
+        assert lint.LintConfig(rules=rules).max_line_length == 100
+        assert lint.LintConfig(max_line_length=None, rules=rules).max_line_length is None
+        assert lint.LintConfig(max_line_length=120, rules=rules).max_line_length == 120
+        assert lint.LintConfig().max_line_length == 80
+
+    def test_max_line_length_rejects_non_positive(self):
+        with pytest.raises(ValueError, match="positive integer"):
+            lint.LintConfig(max_line_length=0)
+
+    def test_disabled_rules_beats_enabled_rules_entry(self):
+        config = lint.LintConfig(
+            rules={"line-length": {"enabled": True}}, disabled_rules=["line-length"]
+        )
+        long_line = "a: " + "x" * 200 + "\n"
+        assert "line-length" not in {d.code for d in lint.lint(long_line, config)}
+
+    def test_default_config_keeps_the_fixed_indent_size(self):
+        source = "a:\n    b: 1\n    c:\n        d: 2\n"
+        assert "indentation" in {d.code for d in lint.Linter(lint.LintConfig()).lint(source)}
+        assert "indentation" in {d.code for d in lint.lint(source, lint.LintConfig())}
+
+    def test_rules_replace_the_default_indent_size(self):
+        source = "a:\n    b: 1\n"
+        config = lint.LintConfig(rules={"indentation": {"indent-size": 4}})
+        assert "indentation" not in {d.code for d in lint.Linter(config).lint(source)}
+
+    def test_max_line_length_rejects_bool(self):
+        with pytest.raises(TypeError, match="not bool"):
+            lint.LintConfig(max_line_length=True)

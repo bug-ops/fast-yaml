@@ -1,7 +1,7 @@
 //! Integration tests for fast-yaml-parallel using YAML spec fixtures.
 
 use fast_yaml_core::limits::MaxInputBytes;
-use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, Workers, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
@@ -85,7 +85,7 @@ fn test_parallel_with_custom_config() {
 
     // Test with different thread counts
     for thread_count in [1, 2, 4, 8] {
-        let config = Config::new().with_workers(Some(thread_count));
+        let config = Config::new().with_workers(Workers::try_from(thread_count).unwrap());
         let docs = parse_parallel_with_config(yaml, &config).unwrap();
         assert_eq!(
             docs.len(),

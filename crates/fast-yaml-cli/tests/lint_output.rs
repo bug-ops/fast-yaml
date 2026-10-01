@@ -38,9 +38,9 @@ fn output_flag_receives_the_report_in_every_format() {
 
         let target = dir.path().join(format!("report.{format}"));
         let redirected = fy(&[
+            "lint",
             "-o",
             path_arg(&target),
-            "lint",
             "--format",
             format,
             path_arg(&input),
@@ -67,9 +67,9 @@ fn output_flag_receives_batch_reports() {
         let out = TempDir::new().unwrap();
         let target = out.path().join("report");
         let redirected = fy(&[
+            "lint",
             "-o",
             path_arg(&target),
-            "lint",
             "--format",
             format,
             path_arg(dir.path()),
@@ -106,9 +106,9 @@ fn missing_path_report_goes_to_the_output_file() {
     let missing = dir.path().join("missing.yaml");
     let target = dir.path().join("report.sarif");
     let output = fy(&[
+        "lint",
         "-o",
         path_arg(&target),
-        "lint",
         "--format",
         "sarif",
         path_arg(&missing),
@@ -238,10 +238,10 @@ fn output_flag_never_overwrites_an_input_file() {
     let other = fixture(&dir, "b.yaml", "k: 1\n");
     let path = path_arg(&input);
     for args in [
-        vec!["-o", path, "lint", path],
-        vec!["-o", path, "lint", path, path],
-        vec!["-o", path, "lint", path, path_arg(&other)],
-        vec!["-o", path, "lint", path_arg(dir.path())],
+        vec!["lint", "-o", path, path],
+        vec!["lint", "-o", path, path, path],
+        vec!["lint", "-o", path, path, path_arg(&other)],
+        vec!["lint", "-o", path, path_arg(dir.path())],
     ] {
         let output = fy(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
