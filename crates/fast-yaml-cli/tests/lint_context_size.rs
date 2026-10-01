@@ -1,9 +1,8 @@
 //! Regression test for #454: diagnostic context must not copy the whole source line per diagnostic.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use fast_yaml_linter::MAX_CONTEXT_COLUMNS;
 use std::fs;
 
@@ -15,8 +14,7 @@ fn json_context_of_many_diagnostics_on_one_line_stays_bounded() {
     let path = dir.path().join("long.yaml");
     fs::write(&path, format!("k: [{}]\n", "1 ,".repeat(COMMAS))).unwrap();
 
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .args(["lint", "--format", "json"])
         .arg(&path)
         .output()

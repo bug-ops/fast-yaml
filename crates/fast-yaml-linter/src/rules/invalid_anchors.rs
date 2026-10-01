@@ -238,7 +238,7 @@ impl AnchorScan<'_> {
                         anchor.span,
                     )
                     .with_suggestion("remove the anchor or reference it", anchor.span, None)
-                    .build_with_context(self.source_context),
+                    .build(),
                 );
             }
         }
@@ -322,7 +322,7 @@ impl AnchorScan<'_> {
                                     span,
                                 )
                                 .with_suggestion("rename this anchor to be unique", span, None)
-                                .build_with_context(self.source_context),
+                                .build(),
                             );
                         }
                         self.seen.insert(

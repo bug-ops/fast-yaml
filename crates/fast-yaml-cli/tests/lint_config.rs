@@ -1,10 +1,8 @@
 //! End-to-end tests for typed rule configuration in `fy lint --config` (#324, #327).
 
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
-
 use std::path::{Path, PathBuf};
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -15,7 +13,7 @@ fn fixture(relative: &str) -> PathBuf {
 }
 
 fn lint(config: &Path) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.args(["lint", "--config"]).arg(config);
     cmd
 }
@@ -25,7 +23,7 @@ fn issue_324_document_start_present_true_is_enforced() {
     lint(&fixture("valid/bool-forms.yaml"))
         .write_stdin("a: 1\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("document-start"))
         .stdout(predicate::str::contains("missing document start marker"));
 }
@@ -56,10 +54,6 @@ fn invalid_configs_fail_with_actionable_messages() {
         ("unknown-rule.yaml", &["no-such-rule"][..]),
         ("wrong-type.yaml", &["line-length", "max"][..]),
         ("unknown-option.yaml", &["line-length", "maxx"][..]),
-        (
-            "unsupported-yamllint-option.yaml",
-            &["indentation", "spaces", "yamllint"][..],
-        ),
         (
             "always-extra-allowed.yaml",
             &["quoted-strings", "extra-allowed"][..],
@@ -171,7 +165,7 @@ fn line_length_max_from_config_applies() {
     lint(&config)
         .write_stdin("key: this line is longer than twenty characters\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("line-length"));
 }
 
@@ -193,7 +187,7 @@ fn indent_size_from_config_applies() {
     lint(&config)
         .write_stdin("a:\n  b: 1\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("indentation"));
 }
 
@@ -216,8 +210,7 @@ fn cli_rejects_invalid_numeric_overrides() {
         ["--indent-size", "0"],
         ["--indent-size", "17"],
     ] {
-        Command::cargo_bin("fy")
-            .unwrap()
+        cargo_bin_cmd!("fy")
             .arg("lint")
             .args(args)
             .write_stdin("a: 1\n")

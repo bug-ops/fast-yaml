@@ -21,6 +21,9 @@ indexmap = { workspace = true }
 saphyr-parser = { workspace = true }
 thiserror = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 criterion = { workspace = true }
 indoc = { workspace = true }

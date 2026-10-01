@@ -183,7 +183,7 @@ mod tests {
     #[cfg(unix)]
     fn diagnostic(span: Span) -> Diagnostic {
         DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)
-            .build_without_context()
+            .build_without_excerpt()
     }
 
     #[test]

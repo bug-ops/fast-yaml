@@ -1,5 +1,7 @@
 //! Diagnostics for inputs that cannot be linted, so report formats never print nothing.
 
+use std::borrow::Cow;
+
 use fast_yaml_core::NormalizedInput;
 
 use crate::{
@@ -52,13 +54,13 @@ pub fn syntax_diagnostic(err: &LintError, source: &str) -> Diagnostic {
 /// assert_eq!((diagnostic.span.start.line, diagnostic.span.start.column), (1, 1));
 /// ```
 #[must_use]
-pub fn input_error_diagnostic(message: impl Into<String>) -> Diagnostic {
+pub fn input_error_diagnostic(message: impl Into<Cow<'static, str>>) -> Diagnostic {
     build(message, unlocated_span())
 }
 
-fn build(message: impl Into<String>, span: Span) -> Diagnostic {
+fn build(message: impl Into<Cow<'static, str>>, span: Span) -> Diagnostic {
     DiagnosticBuilder::new(DiagnosticCode::SYNTAX, Severity::Error, message, span)
-        .build_without_context()
+        .build_without_excerpt()
 }
 
 const fn unlocated_span() -> Span {

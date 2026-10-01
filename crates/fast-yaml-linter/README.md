@@ -51,6 +51,7 @@ YAML linter with rich diagnostics for the fast-yaml ecosystem.
 ### Complete Pipeline: YAML → Linter → Diagnostics → Formatter → Output
 
 ```rust
+use fast_yaml_linter::formatter::Findings;
 use fast_yaml_linter::{Linter, TextFormatter, Formatter};
 
 let yaml = r#"
@@ -63,11 +64,13 @@ name: duplicate  # Error: duplicate key
 let linter = Linter::with_all_rules();
 
 // Step 2: Run linter (YAML → Vec<Diagnostic>)
-let diagnostics = linter.lint(yaml)?;
+let source = linter.source(yaml)?;
+let diagnostics = linter.lint_source(&source)?;
 
-// Step 3: Format diagnostics (Vec<Diagnostic> → String)
+// Step 3: Format diagnostics (excerpts are cut from the source when printed)
+let context = source.context();
 let formatter = TextFormatter::with_color_auto();
-let output = formatter.format(&diagnostics, yaml);
+let output = formatter.format(Findings::FromSource { diagnostics: &diagnostics, source: &context });
 
 // Step 4: Display output
 println!("{}", output);
@@ -377,10 +380,11 @@ Each formatter converts `Vec<Diagnostic>` to a specific format:
 ### TextFormatter (rustc-style, for humans)
 
 ```rust
-use fast_yaml_linter::TextFormatter;
+use fast_yaml_linter::formatter::Findings;
+use fast_yaml_linter::{Formatter, TextFormatter};
 
 let formatter = TextFormatter::new().with_color(true);
-let output = formatter.format(&diagnostics, yaml);
+let output = formatter.format(Findings::FromSource { diagnostics: &diagnostics, source: &context });
 ```
 
 **Output**:
@@ -395,10 +399,11 @@ error[duplicate-key]: duplicate key 'name' found
 ### JsonFormatter (for IDEs/CI)
 
 ```rust
-use fast_yaml_linter::JsonFormatter;
+use fast_yaml_linter::formatter::Findings;
+use fast_yaml_linter::{Formatter, JsonFormatter};
 
-let formatter = JsonFormatter::new();
-let json = formatter.format(&diagnostics, yaml);
+let formatter = JsonFormatter::new(true);
+let json = formatter.format(Findings::FromSource { diagnostics: &diagnostics, source: &context });
 ```
 
 **Output**:

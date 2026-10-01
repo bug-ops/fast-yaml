@@ -82,7 +82,7 @@ impl super::LintRule for DocumentStartRule {
             MarkerPresence::Forbidden => documents
                 .iter()
                 .filter_map(|document| document.start.marker())
-                .map(|span| forbidden(context, severity, span))
+                .map(|span| forbidden(severity, span))
                 .collect(),
             MarkerPresence::Allowed => Vec::new(),
         }
@@ -104,10 +104,10 @@ fn missing(context: &LintContext<'_>, severity: Severity, first_token: Span) -> 
         span,
         Some("---\n".to_string()),
     )
-    .build_with_context(source_context)
+    .build()
 }
 
-fn forbidden(context: &LintContext<'_>, severity: Severity, span: Span) -> Diagnostic {
+fn forbidden(severity: Severity, span: Span) -> Diagnostic {
     DiagnosticBuilder::new(
         DiagnosticCode::DOCUMENT_START,
         severity,
@@ -115,7 +115,7 @@ fn forbidden(context: &LintContext<'_>, severity: Severity, span: Span) -> Diagn
         span,
     )
     .with_suggestion("Remove '---'", span, None)
-    .build_with_context(context.source_context())
+    .build()
 }
 
 #[cfg(test)]

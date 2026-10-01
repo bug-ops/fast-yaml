@@ -1,14 +1,12 @@
 //! Regression tests for #478 and #481: only a plain `<<` merges, and its value must be a mapping.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::time::Duration;
 
 fn run(args: &[&str], stdin: &str) -> std::process::Output {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(args)
         .write_stdin(stdin)
         .timeout(Duration::from_secs(10))

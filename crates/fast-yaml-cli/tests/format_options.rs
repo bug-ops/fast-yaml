@@ -1,13 +1,11 @@
 //! End-to-end tests for `fy format` option validation, depth limit and anchor names.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 
 fn format(args: &[&str], stdin: &str) -> (Option<i32>, String, String) {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .arg("format")
         .args(args)
         .write_stdin(stdin)

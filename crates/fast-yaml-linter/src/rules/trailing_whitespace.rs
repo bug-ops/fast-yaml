@@ -45,7 +45,7 @@ impl super::LintRule for TrailingWhitespaceRule {
                         span,
                     )
                     .with_suggestion("remove trailing whitespace", span, None)
-                    .build_with_context(context.source_context());
+                    .build();
 
                     diagnostics.push(diagnostic);
                 }

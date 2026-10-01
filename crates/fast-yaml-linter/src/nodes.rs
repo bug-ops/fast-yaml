@@ -70,6 +70,13 @@ impl ScalarNode {
     }
 }
 
+/// Whether a collection is a mapping or a sequence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CollectionKind {
+    Mapping,
+    Sequence,
+}
+
 /// One entry of the index.
 #[derive(Debug, Clone, Copy)]
 pub enum Node {
@@ -79,7 +86,11 @@ pub enum Node {
         role: NodeRole,
     },
     /// The start of a mapping or sequence.
-    Open,
+    Open {
+        kind: CollectionKind,
+    },
+    /// The end of the innermost open collection.
+    Close,
 }
 
 /// The scalars, aliases and collection starts of a source, in source order.
@@ -117,8 +128,12 @@ impl<'a> NodeIndex<'a> {
         }
     }
 
-    pub(crate) fn push_open(&mut self) {
-        self.push(Node::Open);
+    pub(crate) fn push_open(&mut self, kind: CollectionKind) {
+        self.push(Node::Open { kind });
+    }
+
+    pub(crate) fn push_close(&mut self) {
+        self.push(Node::Close);
     }
 
     pub(crate) fn push_alias(&mut self, range: ByteRange, role: NodeRole) {
@@ -242,7 +257,7 @@ mod tests {
                 scalar(range(start, start + 6), ScalarStyle::SingleQuoted),
                 "a'b",
             );
-            index.push_open();
+            index.push_open(CollectionKind::Mapping);
         }
         let texts: Vec<&str> = index
             .nodes()

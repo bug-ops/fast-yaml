@@ -3,15 +3,14 @@
 //! These tests ensure that existing single-file and stdin modes
 //! continue to work exactly as before batch mode was added.
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
 /// Helper to create fy command
-#[allow(deprecated)]
 fn fy() -> Command {
-    Command::cargo_bin("fy").unwrap()
+    cargo_bin_cmd!("fy")
 }
 
 #[test]

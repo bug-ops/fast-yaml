@@ -1,12 +1,10 @@
 //! End-to-end tests for yamllint-style config keys in `fy lint`: `extends`, `ignore`,
 //! `yaml-files` and the rule-name hint (#420).
 
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
-
 use std::fs;
 use std::path::Path;
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use tempfile::TempDir;
 
@@ -30,7 +28,7 @@ fn project(config: &str, files: &[&str]) -> TempDir {
 }
 
 fn fy(cwd: &Path, args: &[&str]) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.current_dir(cwd).arg("lint").args(args);
     cmd
 }
@@ -121,21 +119,18 @@ fn extends_a_missing_config_file_is_rejected() {
 }
 
 #[test]
-fn yamllint_rule_names_get_a_hint_and_per_rule_ignore_is_unsupported() {
+fn yamllint_rule_names_and_per_rule_ignore_are_accepted() {
     let dir = project("rules:\n  key-duplicates: enable\n", &[]);
-    fy(dir.path(), &[])
-        .write_stdin("a: 1\n")
-        .assert()
-        .code(1)
-        .stderr(predicate::str::contains("duplicate-key"));
+    fy(dir.path(), &[]).write_stdin("a: 1\n").assert().code(0);
 
     let dir = project("rules:\n  braces:\n    ignore: vendor/\n", &[]);
-    fy(dir.path(), &[])
-        .write_stdin("a: 1\n")
-        .assert()
-        .code(1)
-        .stderr(predicate::str::contains("braces"))
-        .stderr(predicate::str::contains("supported by yamllint"));
+    fy(dir.path(), &[]).write_stdin("a: 1\n").assert().code(0);
+
+    let dir = project(
+        "rules:\n  trailing-spaces: error\n  anchors: disable\n",
+        &[],
+    );
+    fy(dir.path(), &[]).write_stdin("a: 1 \n").assert().code(2);
 }
 
 #[test]
@@ -481,7 +476,7 @@ fn quoted_strings_options_are_accepted_in_a_config_file() {
     fy(dir.path(), &[])
         .write_stdin("\"a\": \"it's\"\n")
         .assert()
-        .success()
+        .code(2)
         .stdout(predicate::str::contains("quoted-strings").count(1));
 }
 

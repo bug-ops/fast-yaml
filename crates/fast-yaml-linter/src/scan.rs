@@ -11,7 +11,7 @@ use fast_yaml_core::{
     SetValues, Value, resolve_scalar,
 };
 
-use crate::nodes::{NodeIndex, ScalarNode, TagKind};
+use crate::nodes::{CollectionKind, NodeIndex, ScalarNode, TagKind};
 use crate::rules::node_roles::RoleTracker;
 use crate::set_members::{SetMember, SetMembers, may_contain_set};
 use crate::source::offset::{ByteOffset, ByteRange};
@@ -114,7 +114,9 @@ impl ScanNeeds {
                 DiagnosticCode::TRUTHY
                 | DiagnosticCode::QUOTED_STRINGS
                 | DiagnosticCode::FLOAT_VALUES
-                | DiagnosticCode::EMPTY_VALUES => Self::NODES,
+                | DiagnosticCode::EMPTY_VALUES
+                | DiagnosticCode::KEY_ORDERING
+                | DiagnosticCode::INDENTATION => Self::NODES,
                 DiagnosticCode::SET_VALUES => Self::SETS,
                 DiagnosticCode::BRACES
                 | DiagnosticCode::BRACKETS
@@ -370,13 +372,16 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
         match &item.event {
             Event::MappingStart { .. } => {
                 self.roles.start_mapping(self.source, range);
-                self.nodes.push_open();
+                self.nodes.push_open(CollectionKind::Mapping);
             }
             Event::SequenceStart { .. } => {
                 self.roles.start_sequence(self.source, range);
-                self.nodes.push_open();
+                self.nodes.push_open(CollectionKind::Sequence);
             }
-            Event::MappingEnd | Event::SequenceEnd => self.roles.leave(),
+            Event::MappingEnd | Event::SequenceEnd => {
+                self.roles.leave();
+                self.nodes.push_close();
+            }
             Event::Alias(_) => {
                 let role = self.roles.node();
                 self.nodes.push_alias(range, role);
@@ -769,5 +774,42 @@ mod tests {
         assert!(!scan.complete);
         assert!(scan.nodes.nodes().count() >= 3);
         assert_eq!(scan.comments.len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use crate::LintContext;
+    use crate::nodes::{CollectionKind, Node};
+
+    fn shape(source: &str) -> Vec<Option<CollectionKind>> {
+        LintContext::new(source)
+            .nodes()
+            .nodes()
+            .filter_map(|node| match node {
+                Node::Open { kind } => Some(Some(*kind)),
+                Node::Close => Some(None),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn collections_open_and_close_in_order() {
+        use CollectionKind::{Mapping, Sequence};
+        assert_eq!(
+            shape(
+                "a: [1, {b: 2}]
+"
+            ),
+            [
+                Some(Mapping),
+                Some(Sequence),
+                Some(Mapping),
+                None,
+                None,
+                None
+            ]
+        );
     }
 }

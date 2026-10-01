@@ -192,7 +192,7 @@ pub struct FileReport<'a> {
 /// let span = Span::new(Location::new(3, 5, 20), Location::new(3, 9, 24));
 /// let diagnostic =
 ///     DiagnosticBuilder::new(DiagnosticCode::TRUTHY, Severity::Warning, "truthy value", span)
-///         .build_without_context();
+///         .build_without_excerpt();
 /// let source = ReportSource::File(ReportPath::from_absolute(Path::new("/w/a.yaml"))?);
 /// let report = FileReport { source: &source, diagnostics: &[diagnostic] };
 ///

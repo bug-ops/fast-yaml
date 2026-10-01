@@ -230,10 +230,10 @@ mod edge_case_fixtures {
             );
         }
         assert!(
-            !diagnostics.iter().any(
+            diagnostics.iter().any(
                 |d| d.span.start.line == 7 && d.code.as_str() == DiagnosticCode::QUOTED_STRINGS
             ),
-            "\\u escape must not be flagged: {diagnostics:?}"
+            "a quoted \\u escape of a plain-safe text is redundantly quoted: {diagnostics:?}"
         );
     }
 
@@ -360,7 +360,7 @@ mod config_fixtures {
         assert_eq!(rules.braces.options.forbid, Forbid::NonEmpty);
         assert_eq!(rules.brackets.options.max_spaces_inside, Limit::Disabled);
         assert_eq!(rules.line_length.options.max, NonZeroUsize::new(120));
-        assert_eq!(rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(rules.indentation.options.indent_size().get(), 4);
         assert_eq!(rules.quoted_strings.options.quote_type, QuoteType::Single);
         assert!(!rules.comments_indentation.enabled);
         assert_eq!(rules.document_start.severity, Some(Severity::Error));
@@ -418,10 +418,6 @@ mod config_fixtures {
             ("unknown-rule.yaml", &["no-such-rule"][..]),
             ("wrong-type.yaml", &["line-length", "max"][..]),
             ("unknown-option.yaml", &["line-length", "maxx"][..]),
-            (
-                "unsupported-yamllint-option.yaml",
-                &["indentation", "spaces", "yamllint"][..],
-            ),
             ("bad-severity.yaml", &["braces", "loud"][..]),
             ("null-option.yaml", &["quoted-strings", "quote-type"][..]),
             (
@@ -496,27 +492,13 @@ mod config_fixtures {
     }
 
     #[test]
-    fn yamllint_rule_name_and_per_rule_ignore_are_explained() {
-        for (file, needles) in [
-            (
-                "yamllint-rule-name.yaml",
-                &["key-duplicates", "duplicate-key"][..],
-            ),
-            (
-                "per-rule-ignore.yaml",
-                &["braces", "ignore", "top-level"][..],
-            ),
-        ] {
-            let ConfigFileError::InvalidRules { source, .. } =
-                load(&format!("invalid/{file}")).unwrap_err()
-            else {
-                panic!("{file}: expected InvalidRules");
-            };
-            let message = source.to_string();
-            for needle in needles {
-                assert!(message.contains(needle), "{file}: {message}");
-            }
-        }
+    fn yamllint_rule_names_and_per_rule_ignore_load() {
+        let rules = load("valid/yamllint-rule-name.yaml").unwrap().rules;
+        assert!(rules.duplicate_key.enabled);
+        let rules = load("valid/per-rule-ignore.yaml").unwrap().rules;
+        assert!(rules.braces.ignore.is_some());
+        let rules = load("valid/check-multi-line-strings.yaml").unwrap().rules;
+        assert!(rules.indentation.options.check_multi_line_strings);
     }
 
     #[test]

@@ -63,7 +63,7 @@ mod tests {
     #[test]
     fn escapes_properties_and_data() {
         let span = Span::new(Location::new(1, 2, 1), Location::new(1, 5, 4));
-        let d = DiagnosticBuilder::new("r", Severity::Info, "50%\nx", span).build_without_context();
+        let d = DiagnosticBuilder::new("r", Severity::Info, "50%\nx", span).build_without_excerpt();
         let source =
             ReportSource::File(ReportPath::from_absolute(Path::new("/a,b/c.yaml")).unwrap());
         let report = FileReport {
@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn stdin_has_no_file_property() {
         let span = Span::new(Location::new(1, 1, 0), Location::new(2, 1, 4));
-        let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_context();
+        let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
         let report = FileReport {
             source: &ReportSource::Stdin,
             diagnostics: &[d],

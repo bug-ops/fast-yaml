@@ -3,7 +3,7 @@
 
 #![allow(clippy::missing_docs_in_private_items)]
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::fs;
 use tempfile::TempDir;
 
@@ -27,8 +27,7 @@ fn batch_dir(files: usize) -> TempDir {
 }
 
 fn run(args: &[&str], dir: &TempDir) -> (Option<i32>, String, String) {
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .args(args)
         .arg(dir.path())
         .output()

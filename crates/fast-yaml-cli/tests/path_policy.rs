@@ -1,15 +1,14 @@
 //! Regression tests for #497/#498: literal bracket paths and explicit non-YAML input are errors.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
 fn fy() -> Command {
-    Command::cargo_bin("fy").unwrap()
+    cargo_bin_cmd!("fy")
 }
 
 fn messy_dir() -> TempDir {

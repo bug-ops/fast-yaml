@@ -1,4 +1,4 @@
-//! Recovery of `%YAML` / `%TAG` directive lines from the source text.
+//! Recovery of directive lines (`%YAML`, `%TAG` and reserved `%NAME`) from the source text.
 //!
 //! The parser emits no directive events, so the formatter re-reads them from the lines
 //! preceding each explicit document start.
@@ -37,7 +37,7 @@ impl<'a> DirectiveScanner<'a> {
 
     /// Directive block (each line newline-terminated) preceding the `---` on 1-based `marker_line`.
     ///
-    /// Blank and comment lines between directives are skipped and reserved directives dropped.
+    /// Blank and comment lines between directives are skipped; reserved directives are kept.
     /// The block must start the stream or follow a `...` document end marker, otherwise its
     /// lines are content; `None` when nothing remains.
     pub(super) fn before(&mut self, marker_line: usize) -> Option<String> {
@@ -106,11 +106,11 @@ impl<'a> DirectiveScanner<'a> {
     }
 }
 
-/// Whether `line` is a `%YAML` or `%TAG` directive (`%` in column 0, exact name).
+/// Whether `line` is a directive: `%` in column 0 followed by a name, which may be reserved.
 fn is_directive(line: &str) -> bool {
-    line.strip_prefix("%YAML")
-        .or_else(|| line.strip_prefix("%TAG"))
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
+    line.strip_prefix('%')
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(|c| !c.is_whitespace())
 }
 
 /// Whether `line` is a `...` document end marker.
@@ -159,12 +159,18 @@ mod tests {
     }
 
     #[test]
-    fn reserved_directive_is_skipped_not_block_clearing() {
+    fn reserved_directive_is_kept_in_order() {
         assert_eq!(
-            before("a\n...\n%FOO x\n%YAML 1.1\n---\nb\n", 5).as_deref(),
-            Some("%YAML 1.1\n")
+            before("a\n...\n%FOO x # c\n%YAML 1.1\n---\nb\n", 5).as_deref(),
+            Some("%FOO x\n%YAML 1.1\n")
         );
-        assert_eq!(before("%FOO x\n---\nb\n", 2), None);
+        assert_eq!(before("%FOO x\n---\nb\n", 2).as_deref(), Some("%FOO x\n"));
+        assert_eq!(before("a\n%FOO x\n---\nb\n", 3), None);
+    }
+
+    #[test]
+    fn bare_percent_is_not_a_directive() {
+        assert_eq!(before("a\n...\n% x\n---\nb\n", 4), None);
     }
 
     #[test]

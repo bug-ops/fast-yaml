@@ -137,7 +137,7 @@ impl super::LintRule for EmptyLinesRule {
                                 ),
                                 span,
                             )
-                            .build_with_context(context.source_context()),
+                            .build(),
                         );
                     }
 
@@ -165,7 +165,7 @@ impl super::LintRule for EmptyLinesRule {
                     ),
                     span,
                 )
-                .build_with_context(context.source_context()),
+                .build(),
             );
         }
 

@@ -6,8 +6,8 @@ use serde_norway::Value;
 
 use super::test_support::config_with_rule;
 use super::{
-    EmptyInsideLimit, IndentSize, Limit, NoOptions, PatternList, RuleConfigError, RuleName,
-    RuleOptions, RulesConfig,
+    EmptyInsideLimit, IndentSequences, IndentSize, IndentSpaces, Limit, NoOptions, PatternList,
+    RuleConfigError, RuleName, RuleOptions, RulesConfig,
 };
 use crate::Linter;
 use crate::rules::{
@@ -41,7 +41,7 @@ fn messages(rule: RuleName, entry: &str, yaml: &str) -> Vec<String> {
         .unwrap()
         .into_iter()
         .filter(|d| d.code.as_str() == rule.as_str())
-        .map(|d| d.message)
+        .map(|d| d.message.into_owned())
         .collect()
 }
 
@@ -171,7 +171,16 @@ fn every_options_type_round_trips_with_non_default_values() {
         forbid_duplicated_merge_keys: false,
     });
     round_trip(&IndentationOptions {
-        indent_size: IndentSize::try_from(8u64).unwrap(),
+        indent_size: Some(IndentSize::try_from(8u64).unwrap()),
+        spaces: Some(IndentSpaces::Fixed(IndentSize::try_from(8u64).unwrap())),
+        indent_sequences: IndentSequences::Consistent,
+        check_multi_line_strings: true,
+    });
+    round_trip(&IndentationOptions {
+        indent_size: None,
+        spaces: Some(IndentSpaces::Consistent),
+        indent_sequences: IndentSequences::NotIndented,
+        check_multi_line_strings: false,
     });
     round_trip(&NoOptions::default());
     round_trip(&DuplicateKeysOptions::default());
@@ -517,6 +526,39 @@ fn indentation_indent_size_is_applied() {
     assert_eq!(
         messages(RuleName::Indentation, "{indent-size: 4}", "a:\n    b: 1\n"),
         [] as [String; 0]
+    );
+}
+
+#[test]
+fn indentation_spaces_and_indent_sequences_are_applied() {
+    let none = [] as [String; 0];
+    assert_eq!(
+        messages(
+            RuleName::Indentation,
+            "{spaces: consistent}",
+            "a:\n   b: 1\n   c: 2\n"
+        ),
+        none
+    );
+    assert_ne!(
+        messages(RuleName::Indentation, "{spaces: 2}", "a:\n   b: 1\n"),
+        none
+    );
+    assert_ne!(
+        messages(
+            RuleName::Indentation,
+            "{indent-sequences: false}",
+            "a:\n  - 1\n"
+        ),
+        none
+    );
+    assert_eq!(
+        messages(
+            RuleName::Indentation,
+            "{indent-sequences: whatever}",
+            "a:\n- 1\nb:\n  - 2\n"
+        ),
+        none
     );
 }
 

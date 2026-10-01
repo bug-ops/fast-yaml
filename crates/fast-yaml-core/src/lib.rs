@@ -47,6 +47,7 @@ pub mod encoding;
 pub mod error;
 /// Guarded parser event stream for language bindings.
 pub mod events;
+pub mod fs;
 /// Validated, BOM-normalized parser input.
 pub mod input;
 mod keys;

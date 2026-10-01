@@ -1,18 +1,23 @@
 //! Config file loading, discovery, and merging into `LintConfig`.
 
-use std::io::Read;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::fs::ReadFileError;
 use fast_yaml_core::limits::{
     Bounded, Bounds, LimitRangeError, MaxInputBytes, MaxScanAhead, ParseLimits,
 };
-use fast_yaml_core::{DecodeError, ParseError, Parser, decode_input_owned};
+use fast_yaml_core::{DecodeError, ParseError, Parser};
 use serde_norway::Value;
 
-use crate::config::rules::value_kind;
+use crate::config::ignore_source::{
+    IgnoreFileCause, TextReadError, ignore_file_lines, ignore_file_names, ignore_lines,
+    read_config_text, string_items,
+};
+use crate::config::rules::{ApplyMode, value_kind};
 use crate::config::{
-    IgnorePatterns, IndentSize, Preset, RuleConfigError, RuleName, RulesConfig, YamlFiles,
+    IgnoreBase, IgnorePatterns, IndentSize, LocaleName, Preset, RuleConfigError, RuleName,
+    RulesConfig, YamlFiles,
 };
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::linter::LintConfig;
@@ -43,6 +48,18 @@ pub const MAX_CONFIG_FILE_BYTES: usize = 1 << 20;
 /// together. The patterns are read when the config is loaded, so they end up in
 /// [`FileSelection::ignore`], anchored at the config file's directory.
 ///
+/// Each rule entry also accepts `ignore` (gitignore patterns, as a string with one pattern per
+/// line or a list) or `ignore-from-file` (file names), but not both: the rule is skipped for the
+/// files they match, anchored at the directory of the file that declares them and inherited
+/// through `extends` like the other options. Rules are keyed by their fast-yaml code or by the
+/// name yamllint uses (`key-duplicates`, `trailing-spaces`, `anchors`). `rule: enable` keeps the
+/// options, severity and ignore of an enabled entry inherited from a config file or preset, and
+/// resets any other (a disabled or fast-yaml default one) to yamllint's defaults at `error`.
+///
+/// `locale` is accepted for yamllint compatibility. `key-ordering` compares code points, as the
+/// `C`, `POSIX` and `C.UTF-8` locales do, so any other locale is rejected by [`ConfigFile::load`]
+/// while `key-ordering` is enabled and is otherwise inert. It is not inherited through `extends`.
+///
 /// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
 /// suffixes) that caps the input the linter accepts. The `max-scan-ahead` key is likewise an
 /// integer, in characters, that sets [`MaxScanAhead`]. Omit both from files shared with yamllint.
@@ -66,6 +83,8 @@ pub struct ConfigFile {
     pub max_scan_ahead: Option<MaxScanAhead>,
     /// The `ignore` and `yaml-files` settings.
     pub selection: FileSelection,
+    /// The file's own `locale`, or `None` when it has none; never inherited through `extends`.
+    pub locale: Option<LocaleName>,
 }
 
 /// The `ignore` and `yaml-files` settings of a config file.
@@ -95,6 +114,8 @@ pub enum TopLevelKey {
     MaxInputBytes,
     /// `max-scan-ahead`
     MaxScanAhead,
+    /// `locale`
+    Locale,
 }
 
 impl TopLevelKey {
@@ -109,6 +130,7 @@ impl TopLevelKey {
             Self::YamlFiles => "yaml-files",
             Self::MaxInputBytes => "max-input-bytes",
             Self::MaxScanAhead => "max-scan-ahead",
+            Self::Locale => "locale",
         }
     }
 
@@ -121,6 +143,7 @@ impl TopLevelKey {
             Self::YamlFiles,
             Self::MaxInputBytes,
             Self::MaxScanAhead,
+            Self::Locale,
         ]
         .into_iter()
         .find(|candidate| candidate.as_str() == key)
@@ -132,9 +155,6 @@ impl std::fmt::Display for TopLevelKey {
         f.write_str(self.as_str())
     }
 }
-
-/// Top-level keys yamllint accepts that fast-yaml does not implement.
-const YAMLLINT_TOP_LEVEL_KEYS: [&str; 1] = ["locale"];
 
 /// Errors from config file loading.
 #[derive(Debug, thiserror::Error)]
@@ -194,17 +214,17 @@ pub enum ConfigFileError {
         path: PathBuf,
     },
 
-    /// A top-level key is supported by yamllint but not by fast-yaml.
+    /// `locale` names a locale that `key-ordering` cannot honor while the rule is enabled.
     #[error(
-        "config file '{}': top-level key '{}' is supported by yamllint but not implemented by fast-yaml",
+        "config file '{}': locale '{}' is not supported while 'key-ordering' is enabled; keys are ordered by code point, as in the 'C', 'POSIX' and 'C.UTF-8' locales",
         .path.display(),
-        echo(.key, KEY_LIMIT)
+        echo(.locale, KEY_LIMIT)
     )]
-    UnsupportedKey {
+    UnsupportedLocale {
         /// Path that failed.
         path: PathBuf,
-        /// The unsupported key.
-        key: String,
+        /// The locale as written.
+        locale: String,
     },
 
     /// A limit key is not a positive integer (negative, fractional, suffixed or not a number).
@@ -234,7 +254,7 @@ pub enum ConfigFileError {
 
     /// A top-level key is not recognized.
     #[error(
-        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'ignore-from-file', 'yaml-files', 'max-input-bytes' or 'max-scan-ahead'",
+        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'ignore-from-file', 'yaml-files', 'locale', 'max-input-bytes' or 'max-scan-ahead'",
         .path.display(),
         echo(.key, KEY_LIMIT)
     )]
@@ -290,7 +310,7 @@ pub enum ConfigFileError {
         path: PathBuf,
     },
 
-    /// The value of `extends`, `ignore`, `ignore-from-file` or `yaml-files` is invalid.
+    /// The value of `extends`, `ignore`, `ignore-from-file`, `yaml-files` or `locale` is invalid.
     #[error(
         "config file '{}': invalid '{key}': {}",
         .path.display(),
@@ -316,6 +336,7 @@ struct TopLevel {
     yaml_files: Option<Vec<String>>,
     max_input_bytes: Option<MaxInputBytes>,
     max_scan_ahead: Option<MaxScanAhead>,
+    locale: Option<LocaleName>,
 }
 
 /// What `extends` names.
@@ -323,27 +344,6 @@ enum Extends {
     Preset(Preset),
     /// A config file, as written.
     File(PathBuf),
-}
-
-fn string_items(value: Value, what: &str) -> Result<Vec<String>, String> {
-    let Value::Sequence(items) = value else {
-        return Err(format!("expected a list of {what}"));
-    };
-    items
-        .into_iter()
-        .enumerate()
-        .map(|(index, item)| match item {
-            Value::String(text) => Ok(text),
-            _ => Err(format!("item {index} is not a string")),
-        })
-        .collect()
-}
-
-fn ignore_lines(value: Value) -> Result<Vec<String>, String> {
-    match value {
-        Value::String(text) => Ok(text.lines().map(str::to_owned).collect()),
-        other => string_items(other, "patterns or a string with one pattern per line"),
-    }
 }
 
 fn extends_of(value: &Value) -> Result<Extends, String> {
@@ -356,13 +356,6 @@ fn extends_of(value: &Value) -> Result<Extends, String> {
     }
 }
 
-fn ignore_file_names(value: Value) -> Result<Vec<String>, String> {
-    match value {
-        Value::String(name) => Ok(vec![name]),
-        other => string_items(other, "file names or one file name"),
-    }
-}
-
 /// Directory of the config file, where relative paths in it start.
 fn config_dir(path: &Path) -> &Path {
     path.parent()
@@ -370,52 +363,21 @@ fn config_dir(path: &Path) -> &Path {
         .unwrap_or_else(|| Path::new("."))
 }
 
-/// Reads a regular file of at most [`MAX_CONFIG_FILE_BYTES`], the only way config files are read.
-///
-/// The path is checked before it is opened, so a pipe is never opened (opening one would block),
-/// and the opened file is checked again. At most one byte over the cap is read, so an endless
-/// file cannot exhaust memory.
-fn read_bounded(path: &Path) -> Result<Vec<u8>, ConfigFileError> {
-    let io = |source: std::io::Error| ConfigFileError::Io {
-        path: path.to_owned(),
-        source,
-    };
-    let not_regular = || ConfigFileError::NotRegularFile {
-        path: path.to_owned(),
-    };
-    if !std::fs::metadata(path).map_err(io)?.is_file() {
-        return Err(not_regular());
-    }
-    let file = std::fs::File::open(path).map_err(io)?;
-    if !file.metadata().map_err(io)?.is_file() {
-        return Err(not_regular());
-    }
-    let mut bytes = Vec::new();
-    file.take(MAX_CONFIG_FILE_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io)?;
-    if bytes.len() > MAX_CONFIG_FILE_BYTES {
-        return Err(ConfigFileError::TooLarge {
-            path: path.to_owned(),
-        });
-    }
-    Ok(bytes)
+/// Reads a config file, mapping each way it can fail to the matching [`ConfigFileError`].
+fn read_text(path: &Path) -> Result<String, ConfigFileError> {
+    read_config_text(path).map_err(|error| ConfigFileError::from_read(path, error))
 }
 
-/// Lines of the `ignore-from-file` files.
-fn ignore_file_lines(path: &Path, names: &[String]) -> Result<Vec<String>, ConfigFileError> {
-    let mut lines = Vec::new();
-    for name in names {
-        let file_path = config_dir(path).join(name);
-        let text = decode_input_owned(read_bounded(&file_path)?).map_err(|source| {
-            ConfigFileError::Decode {
-                path: file_path.clone(),
-                source,
-            }
-        })?;
-        lines.extend(text.lines().map(str::to_owned));
-    }
-    Ok(lines)
+/// Lines of the `ignore-from-file` files, named relative to the config file's directory.
+fn ignore_files(path: &Path, names: &[String]) -> Result<Vec<String>, ConfigFileError> {
+    ignore_file_lines(config_dir(path), names).map_err(|error| match error.cause {
+        IgnoreFileCause::Text(cause) => ConfigFileError::from_read(&error.path, cause),
+        _ => ConfigFileError::InvalidKey {
+            path: path.to_owned(),
+            key: TopLevelKey::IgnoreFromFile,
+            message: error.to_string(),
+        },
+    })
 }
 
 /// Canonical directory of the config file, the anchor of `ignore` patterns.
@@ -429,6 +391,20 @@ fn config_root(path: &Path) -> Result<PathBuf, ConfigFileError> {
 }
 
 impl ConfigFileError {
+    fn from_read(path: &Path, error: TextReadError) -> Self {
+        let path = path.to_owned();
+        match error {
+            TextReadError::Decode(source) => Self::Decode { path, source },
+            TextReadError::Read(ReadFileError::NotRegular(_)) => Self::NotRegularFile { path },
+            TextReadError::Read(ReadFileError::TooLarge(_)) => Self::TooLarge { path },
+            TextReadError::Read(ReadFileError::Io(source)) => Self::Io { path, source },
+            TextReadError::Read(other) => Self::Io {
+                path,
+                source: std::io::Error::other(other),
+            },
+        }
+    }
+
     /// Replaces errors that may quote the file's text by [`ConfigFileError::Malformed`], for a
     /// file that the user's config merely points at. Every variant is classified, so a new one
     /// does not compile until it is.
@@ -438,7 +414,7 @@ impl ConfigFileError {
             | Self::Parse { path, .. }
             | Self::Rejected { path, .. }
             | Self::InvalidRules { path, .. }
-            | Self::UnsupportedKey { path, .. }
+            | Self::UnsupportedLocale { path, .. }
             | Self::LimitNotPositive { path, .. }
             | Self::LimitOutOfRange { path, .. }
             | Self::UnknownKey { path, .. }
@@ -468,7 +444,16 @@ impl ConfigFile {
     /// flow collection's continuation line is rejected, and the error names its line and column.
     /// Indent with spaces.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
-        Self::load_chain(path, &mut Vec::new())
+        let config = Self::load_chain(path, &mut Vec::new())?;
+        match &config.locale {
+            Some(LocaleName::Other(locale)) if config.rules.key_ordering.enabled => {
+                Err(ConfigFileError::UnsupportedLocale {
+                    path: path.to_owned(),
+                    locale: locale.clone(),
+                })
+            }
+            _ => Ok(config),
+        }
     }
 
     /// Loads `path`, with `chain` holding the canonical paths of the files it is extending from.
@@ -494,11 +479,7 @@ impl ConfigFile {
     }
 
     fn load_file(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
-        let content =
-            decode_input_owned(read_bounded(path)?).map_err(|source| ConfigFileError::Decode {
-                path: path.to_owned(),
-                source,
-            })?;
+        let content = read_text(path)?;
         // serde_norway has no depth or alias limits, so the core parser vets the text first.
         if let Err(source) = Parser::parse_all(&content) {
             return Err(ConfigFileError::Rejected {
@@ -524,10 +505,14 @@ impl ConfigFile {
             path: path.to_owned(),
             source,
         };
+        let root = config_root(path)?;
+        let ignore_base = IgnoreBase::Dir(config_dir(path));
         let (rules, base) = match top.extends {
             Some(Extends::Preset(preset)) => {
                 let mut rules = preset.rules();
-                rules.apply_over_preset(top.rules).map_err(invalid_rules)?;
+                rules
+                    .apply_over_preset(top.rules, ignore_base)
+                    .map_err(invalid_rules)?;
                 (rules, None)
             }
             Some(Extends::File(name)) => {
@@ -539,12 +524,16 @@ impl ConfigFile {
                         }
                     })?;
                 let mut rules = base.rules.clone();
-                rules.apply_over_preset(top.rules).map_err(invalid_rules)?;
+                rules
+                    .apply_over_preset(top.rules, ignore_base)
+                    .map_err(invalid_rules)?;
                 (rules, Some(base))
             }
             None => {
                 let mut rules = RulesConfig::default();
-                rules.apply(top.rules).map_err(invalid_rules)?;
+                rules
+                    .apply_entries(top.rules, ApplyMode::Patch, ignore_base)
+                    .map_err(invalid_rules)?;
                 (rules, None)
             }
         };
@@ -552,7 +541,12 @@ impl ConfigFile {
             |key, error: crate::config::InvalidPathPattern| ConfigFileError::InvalidKey {
                 path: path.to_owned(),
                 key,
-                message: error.to_string(),
+                // patterns read from a file are never echoed
+                message: if key == TopLevelKey::IgnoreFromFile {
+                    "the listed patterns cannot be combined".to_owned()
+                } else {
+                    error.to_string()
+                },
             };
         let ignore = match (top.ignore, top.ignore_from_file) {
             (Some(_), Some(_)) => {
@@ -563,15 +557,11 @@ impl ConfigFile {
                 });
             }
             (Some(lines), None) => Some((TopLevelKey::Ignore, lines)),
-            (None, Some(names)) => Some((
-                TopLevelKey::IgnoreFromFile,
-                ignore_file_lines(path, &names)?,
-            )),
+            (None, Some(names)) => Some((TopLevelKey::IgnoreFromFile, ignore_files(path, &names)?)),
             (None, None) => None,
         }
         .map(|(key, lines)| {
-            IgnorePatterns::new(&config_root(path)?, &lines)
-                .map_err(|error| invalid_key(key, error))
+            IgnorePatterns::new(&root, &lines).map_err(|error| invalid_key(key, error))
         })
         .transpose()?;
         let yaml_files = top
@@ -589,6 +579,7 @@ impl ConfigFile {
                 ignore: ignore.or(inherited.selection.ignore),
                 yaml_files,
             },
+            locale: top.locale,
         })
     }
 
@@ -603,16 +594,9 @@ impl ConfigFile {
                 other => format!("{other:?}"),
             };
             let Some(known) = TopLevelKey::parse(&key) else {
-                return Err(if YAMLLINT_TOP_LEVEL_KEYS.contains(&key.as_str()) {
-                    ConfigFileError::UnsupportedKey {
-                        path: path.to_owned(),
-                        key,
-                    }
-                } else {
-                    ConfigFileError::UnknownKey {
-                        path: path.to_owned(),
-                        key,
-                    }
+                return Err(ConfigFileError::UnknownKey {
+                    path: path.to_owned(),
+                    key,
                 });
             };
             let invalid = |message| ConfigFileError::InvalidKey {
@@ -623,19 +607,30 @@ impl ConfigFile {
             match known {
                 TopLevelKey::Rules => top.rules = value,
                 TopLevelKey::Extends => top.extends = Some(extends_of(&value).map_err(invalid)?),
-                TopLevelKey::Ignore => top.ignore = Some(ignore_lines(value).map_err(invalid)?),
+                TopLevelKey::Ignore => {
+                    top.ignore = Some(ignore_lines(value).map_err(|e| invalid(e.to_string()))?);
+                }
                 TopLevelKey::IgnoreFromFile => {
-                    top.ignore_from_file = Some(ignore_file_names(value).map_err(invalid)?);
+                    top.ignore_from_file =
+                        Some(ignore_file_names(value).map_err(|e| invalid(e.to_string()))?);
                 }
                 TopLevelKey::YamlFiles => {
-                    top.yaml_files =
-                        Some(string_items(value, "file name patterns").map_err(invalid)?);
+                    top.yaml_files = Some(
+                        string_items(value, "file name patterns")
+                            .map_err(|e| invalid(e.to_string()))?,
+                    );
                 }
                 TopLevelKey::MaxInputBytes => {
                     top.max_input_bytes = Some(parse_limit(path, known, &value)?);
                 }
                 TopLevelKey::MaxScanAhead => {
                     top.max_scan_ahead = Some(parse_limit(path, known, &value)?);
+                }
+                TopLevelKey::Locale => {
+                    let Value::String(name) = &value else {
+                        return Err(invalid("expected a string".to_owned()));
+                    };
+                    top.locale = Some(LocaleName::from(name.as_str()));
                 }
             }
         }
@@ -698,7 +693,8 @@ impl ConfigFile {
             config.rules.line_length.options.max = Some(max);
         }
         if let Some(size) = indent_size {
-            config.rules.indentation.options.indent_size = size;
+            config.rules.indentation.options.spaces =
+                Some(crate::config::IndentSpaces::Fixed(size));
         }
         if allow_duplicate_keys == Some(true) {
             config.rules.set_enabled(RuleName::DuplicateKey, false);
@@ -918,20 +914,6 @@ mod tests {
     }
 
     #[test]
-    fn test_yamllint_top_level_keys_are_unsupported() {
-        let err = load_str("locale: en_US.UTF-8\nrules: {}\n").unwrap_err();
-        assert!(
-            matches!(err, ConfigFileError::UnsupportedKey { .. }),
-            "{err:?}"
-        );
-        let message = err.to_string();
-        assert!(
-            message.contains("locale") && message.contains("yamllint"),
-            "{message}"
-        );
-    }
-
-    #[test]
     fn test_non_mapping_file_is_rejected() {
         assert!(matches!(
             load_str("- a\n- b\n"),
@@ -1046,7 +1028,7 @@ mod tests {
             Some(true),
         );
         assert_eq!(result.rules.line_length.options.max, NonZeroUsize::new(200));
-        assert_eq!(result.rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(result.rules.indentation.options.indent_size().get(), 4);
         assert!(!result.rules.duplicate_key.enabled);
     }
 
@@ -1057,7 +1039,7 @@ mod tests {
             .with_indent_size(indent(3));
         let result = ConfigFile::merge_cli_overrides(base, None, None, Some(false));
         assert_eq!(result.rules.line_length.options.max, NonZeroUsize::new(42));
-        assert_eq!(result.rules.indentation.options.indent_size.get(), 3);
+        assert_eq!(result.rules.indentation.options.indent_size().get(), 3);
         assert!(result.rules.duplicate_key.enabled);
     }
 
@@ -1479,7 +1461,7 @@ mod tests {
             ("rules: {braces: sekret-severity}\n", "sekret-severity"),
             ("max-input-bytes: sekret-value\n", "sekret-value"),
             ("max-input-bytes: 0\n# sekret-value\n", "sekret-value"),
-            ("locale: sekret-value\n", "locale"),
+            ("locale: [sekret-value]\n", "sekret-value"),
             ("extends: [sekret-value]\n", "sekret-value"),
             ("ignore: 5\n# sekret-value\n", "sekret-value"),
             ("ignore: ['[sekret-pattern']\n", "sekret-pattern"),

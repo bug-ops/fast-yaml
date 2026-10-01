@@ -4,11 +4,13 @@ use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::str::FromStr;
 
-use crate::config::{CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig};
+use crate::config::{
+    CanonicalPath, CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig,
+};
 use crate::directives::Directives;
 use crate::rules::{LintRule, MarkerPresence};
 use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
-use crate::{Diagnostic, LintContext, Severity, rules::RuleRegistry};
+use crate::{Diagnostic, DiagnosticCode, LintContext, LintSource, Severity, rules::RuleRegistry};
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
 use fast_yaml_core::{NormalizedInput, Parser, Value};
 
@@ -24,7 +26,7 @@ use fast_yaml_core::{NormalizedInput, Parser, Value};
 ///
 /// let config = LintConfig::default();
 /// assert_eq!(config.rules.line_length.options.max.map(|max| max.get()), Some(80));
-/// assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
+/// assert_eq!(config.rules.indentation.options.indent_size().get(), 2);
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct LintConfig {
@@ -82,11 +84,11 @@ impl LintConfig {
     /// use fast_yaml_linter::config::IndentSize;
     ///
     /// let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
-    /// assert_eq!(config.rules.indentation.options.indent_size.get(), 4);
+    /// assert_eq!(config.rules.indentation.options.indent_size().get(), 4);
     /// ```
     #[must_use]
     pub const fn with_indent_size(mut self, size: IndentSize) -> Self {
-        self.rules.indentation.options.indent_size = size;
+        self.rules.indentation.options.indent_size = Some(size);
         self
     }
 
@@ -196,7 +198,7 @@ impl LintConfig {
     /// let settings = RuleSettings::<NoOptions> {
     ///     enabled: false,
     ///     severity: Some(Severity::Error),
-    ///     options: NoOptions::default(),
+    ///     ..RuleSettings::default()
     /// };
     /// let config = LintConfig::new()
     ///     .with_custom_rule(CustomRuleCode::new("my-rule").unwrap(), settings);
@@ -250,6 +252,24 @@ impl LintConfig {
                     .map_or(default, |settings| settings.severity_or(default))
             },
             |name| self.rules.severity(name).unwrap_or(default),
+        )
+    }
+
+    /// Returns whether the built-in rule runs for the file at `path`, or for a source without
+    /// a path.
+    ///
+    /// A rule runs when it is enabled and its own `ignore` patterns do not match `path`. With
+    /// no path nothing is ignored, as in yamllint for standard input.
+    #[must_use]
+    pub fn is_active(&self, name: RuleName, path: Option<&CanonicalPath>) -> bool {
+        self.rules.is_enabled(name) && path.is_none_or(|path| !self.rules.is_ignored(name, path))
+    }
+
+    /// Like [`LintConfig::is_active`] for a registry code, which may name a custom rule.
+    fn is_code_active(&self, code: &str, path: Option<&CanonicalPath>) -> bool {
+        RuleName::from_str(code).map_or_else(
+            |_| self.is_rule_enabled(code),
+            |name| self.is_active(name, path),
         )
     }
 
@@ -395,18 +415,120 @@ impl Linter {
     /// let diagnostics = linter.lint(yaml).unwrap();
     /// ```
     pub fn lint(&self, source: &str) -> Result<Vec<Diagnostic>, LintError> {
-        self.config.max_input_bytes.check(source.len())?;
-        let normalized = NormalizedInput::new(source)?;
+        self.lint_source(&self.source(source)?)
+    }
+
+    /// Lints the source of the file at `path`, skipping the rules whose own `ignore` patterns
+    /// match it.
+    ///
+    /// Otherwise like [`Linter::lint`]. Per-rule `ignore` and `ignore-from-file` come from the
+    /// config file, or from [`RulesConfig::apply_at`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Linter::lint`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::{CanonicalPath, RulesConfig};
+    /// use fast_yaml_linter::{LintConfig, Linter};
+    ///
+    /// let dir = std::env::temp_dir().canonicalize().unwrap();
+    /// let mut rules = RulesConfig::default();
+    /// let yaml = "trailing-whitespace: {ignore: 'generated/'}";
+    /// rules.apply_at(serde_norway::Deserializer::from_str(yaml), &dir).unwrap();
+    /// let linter = Linter::with_config(LintConfig { rules, ..LintConfig::default() });
+    ///
+    /// let source = "a: 1 \n";
+    /// let kept = CanonicalPath::assume_canonical(dir.join("src/a.yaml"));
+    /// let skipped = CanonicalPath::assume_canonical(dir.join("generated/a.yaml"));
+    /// assert!(linter.lint_file(source, &kept).unwrap().iter().any(|d| d.code.as_str() == "trailing-whitespace"));
+    /// assert!(linter.lint_file(source, &skipped).unwrap().iter().all(|d| d.code.as_str() != "trailing-whitespace"));
+    /// ```
+    pub fn lint_file(
+        &self,
+        source: &str,
+        path: &CanonicalPath,
+    ) -> Result<Vec<Diagnostic>, LintError> {
+        self.lint_source_file(&self.source(source)?, path)
+    }
+
+    /// Validates `raw` for linting: checks [`LintConfig::max_input_bytes`] first, then strips
+    /// prefix byte order marks.
+    ///
+    /// # Errors
+    ///
+    /// Returns `LintError::InputTooLarge` if `raw` exceeds the configured limit, and
+    /// `LintError::ParseError` if it contains a character YAML does not allow.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::Linter;
+    ///
+    /// let linter = Linter::with_all_rules();
+    /// let source = linter.source("a: 1\n").unwrap();
+    /// assert!(linter.lint_source(&source).is_ok());
+    /// ```
+    pub fn source<'a>(&self, raw: &'a str) -> Result<LintSource<'a>, LintError> {
+        self.config.max_input_bytes.check(raw.len())?;
+        LintSource::new(raw)
+    }
+
+    /// Lints source text that is already validated.
+    ///
+    /// Use this with [`LintSource`] when the caller also prints excerpts of the text, so the
+    /// input is validated and stripped of byte order marks once.
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Linter::lint`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{LintSource, Linter};
+    ///
+    /// let source = LintSource::new("name: John\n").unwrap();
+    /// let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
+    /// ```
+    pub fn lint_source(&self, input: &LintSource<'_>) -> Result<Vec<Diagnostic>, LintError> {
+        self.run(input, None)
+    }
+
+    /// Lints source text that is already validated, as the file at `path`.
+    ///
+    /// The [`LintSource`] counterpart of [`Linter::lint_file`].
+    ///
+    /// # Errors
+    ///
+    /// Same as [`Linter::lint`].
+    pub fn lint_source_file(
+        &self,
+        input: &LintSource<'_>,
+        path: &CanonicalPath,
+    ) -> Result<Vec<Diagnostic>, LintError> {
+        self.run(input, Some(path))
+    }
+
+    fn run(
+        &self,
+        input: &LintSource<'_>,
+        path: Option<&CanonicalPath>,
+    ) -> Result<Vec<Diagnostic>, LintError> {
+        self.config.max_input_bytes.check(input.original_len())?;
+        let normalized = input.normalized();
         let source = normalized.as_str();
         let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
         let mut collector = ScanCollector::new(
-            &normalized,
+            normalized,
             source,
             context.source_context(),
-            self.scan_needs(),
+            self.scan_needs(path),
         );
         let docs = Parser::parse_normalized_observed(
-            &normalized,
+            normalized,
             &StreamBudget::new(self.config.parse_limits),
             lint_load_options(),
             |item| collector.observe(item),
@@ -421,7 +543,7 @@ impl Linter {
                 .rules()
                 .iter()
                 .map(AsRef::as_ref)
-                .filter(|rule| self.config.is_rule_enabled(rule.code()))
+                .filter(|rule| self.config.is_code_active(rule.code(), path))
                 .collect()
         };
 
@@ -455,17 +577,21 @@ impl Linter {
             }
         }
 
-        Ok(finish(diagnostics, directives))
+        let mut diagnostics = finish(diagnostics, directives);
+        if path.is_some_and(|path| self.config.rules.is_ignored(RuleName::LintDirective, path)) {
+            diagnostics.retain(|d| d.code.as_str() != DiagnosticCode::LINT_DIRECTIVE);
+        }
+        Ok(diagnostics)
     }
 
-    /// The scan products the enabled rules read.
-    fn scan_needs(&self) -> ScanNeeds {
+    /// The scan products the active rules read.
+    fn scan_needs(&self, path: Option<&CanonicalPath>) -> ScanNeeds {
         ScanNeeds::of_rules(
             self.registry
                 .rules()
                 .iter()
                 .map(|rule| rule.code())
-                .filter(|code| self.config.is_rule_enabled(code)),
+                .filter(|code| self.config.is_code_active(code, path)),
         )
     }
 
@@ -509,7 +635,7 @@ impl Linter {
             source,
             context.source_context(),
             self.config.parse_limits,
-            self.scan_needs(),
+            self.scan_needs(None),
         );
         if let Some(error) = failure {
             return Err(error.into());
@@ -637,7 +763,7 @@ mod tests {
                     "flagged",
                     span,
                 )
-                .build_with_context(context.source_context()),
+                .build(),
             ]
         }
     }
@@ -876,7 +1002,7 @@ mod tests {
     fn test_config_default() {
         let config = LintConfig::default();
         assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(80));
-        assert_eq!(config.rules.indentation.options.indent_size.get(), 2);
+        assert_eq!(config.rules.indentation.options.indent_size().get(), 2);
         assert_eq!(
             config.rules.document_start.options.present,
             MarkerPresence::Allowed
@@ -891,7 +1017,7 @@ mod tests {
             .with_indent_size(indent(4));
 
         assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(120));
-        assert_eq!(config.rules.indentation.options.indent_size.get(), 4);
+        assert_eq!(config.rules.indentation.options.indent_size().get(), 4);
     }
 
     #[test]
@@ -919,7 +1045,13 @@ mod tests {
         let config = LintConfig::new().with_indent_size(indent(4));
         let linter = Linter::with_config(config);
         assert_eq!(
-            linter.config().rules.indentation.options.indent_size.get(),
+            linter
+                .config()
+                .rules
+                .indentation
+                .options
+                .indent_size()
+                .get(),
             4
         );
         assert!(!linter.registry().rules().is_empty());

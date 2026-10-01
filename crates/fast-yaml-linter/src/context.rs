@@ -14,7 +14,6 @@ use fast_yaml_core::SourcePosition;
 use fast_yaml_core::limits::ParseLimits;
 #[cfg(test)]
 use saphyr_parser::{Marker, Span as SaphyrSpan};
-use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::sync::OnceLock;
 
@@ -35,6 +34,7 @@ use std::sync::OnceLock;
 /// assert_eq!(ctx.get_line(1), Some("line 1"));
 /// assert_eq!(ctx.get_line(2), Some("line 2"));
 /// ```
+#[derive(Debug)]
 pub struct SourceContext<'a> {
     source: &'a str,
     line_starts: Vec<usize>,
@@ -43,6 +43,7 @@ pub struct SourceContext<'a> {
 }
 
 /// Per-line char/byte column mapping strategy.
+#[derive(Debug)]
 enum LineIndex {
     /// All bytes are ASCII: char columns equal byte columns.
     Ascii,
@@ -51,6 +52,7 @@ enum LineIndex {
 }
 
 /// Byte offset of every char in a line, giving O(1) char column to byte and O(log n) back.
+#[derive(Debug)]
 pub struct CharStarts(Box<[usize]>);
 
 impl CharStarts {
@@ -290,7 +292,9 @@ impl<'a> SourceContext<'a> {
         let end_line = span.end.line;
 
         let first_line = start_line.saturating_sub(context_lines).max(1);
-        let last_line = (end_line + context_lines).min(self.line_starts.len());
+        let last_line = end_line
+            .saturating_add(context_lines)
+            .min(self.line_starts.len());
 
         let mut lines = Vec::with_capacity((last_line + 1).saturating_sub(first_line));
 
@@ -1043,7 +1047,6 @@ pub struct LintContext<'a> {
     parse_limits: ParseLimits,
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
-    key_index: OnceLock<KeyIndex<'a>>,
     flow_index: OnceLock<FlowIndex>,
     block_lines: OnceLock<Vec<RangeInclusive<usize>>>,
     /// 1-based line number where the current document starts within `source`.
@@ -1080,7 +1083,6 @@ impl<'a> LintContext<'a> {
             parse_limits: ParseLimits::default(),
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
-            key_index: OnceLock::new(),
             flow_index: OnceLock::new(),
             block_lines: OnceLock::new(),
             doc_start_line: 1,
@@ -1366,59 +1368,6 @@ impl<'a> LintContext<'a> {
             .get_or_init(|| FlowIndex::from_scan(self.scan_with(ScanNeeds::FLOW), self.source));
         FlowTokenizer::new(index, &self.source_context)
     }
-
-    /// Returns the lazily built first-key-per-line index, shared by all documents of a run.
-    pub(crate) fn key_index(&self) -> &KeyIndex<'a> {
-        self.key_index.get_or_init(|| KeyIndex::build(self))
-    }
-}
-
-/// Extracts the unquoted key preceding the first colon of a source line.
-///
-/// Leading sequence markers (`- `) are skipped, so the first key of a `- b: 1` item is found.
-/// Quotes are stripped only when the key is a complete quoted scalar.
-pub fn line_key(line: &str) -> Option<&str> {
-    let mut trimmed = line.trim_start();
-    while let Some(rest) = trimmed.strip_prefix("- ") {
-        trimmed = rest.trim_start();
-    }
-    let raw_key = trimmed.split_once(':')?.0.trim();
-    let unquoted = ['"', '\'']
-        .into_iter()
-        .find_map(|q| raw_key.strip_prefix(q)?.strip_suffix(q))
-        .unwrap_or(raw_key);
-    Some(unquoted)
-}
-
-/// Per-lint-run index from key text to the ascending 1-based lines whose first-colon key equals it.
-pub struct KeyIndex<'a>(HashMap<&'a str, Vec<usize>>);
-
-impl<'a> KeyIndex<'a> {
-    fn build(context: &LintContext<'a>) -> Self {
-        let mut map: HashMap<&str, Vec<usize>> = HashMap::new();
-        for (line_idx, (line, metadata)) in context
-            .lines()
-            .iter()
-            .zip(context.line_metadata())
-            .enumerate()
-        {
-            if metadata.is_empty || metadata.is_comment {
-                continue;
-            }
-            if let Some(key) = line_key(line) {
-                map.entry(key).or_default().push(line_idx + 1);
-            }
-        }
-        Self(map)
-    }
-
-    /// Locates `key` on the first indexed line at or after `*cursor` and advances `*cursor` past it.
-    pub(crate) fn locate(&self, key: &str, cursor: &mut usize) -> Option<usize> {
-        let lines = self.0.get(key)?;
-        let line_num = *lines.get(lines.partition_point(|&l| l < *cursor))?;
-        *cursor = line_num + 1;
-        Some(line_num)
-    }
 }
 
 #[cfg(test)]
@@ -1531,13 +1480,6 @@ mod lint_context_tests {
         assert!(metadata[0].is_empty);
         assert!(metadata[1].is_empty);
         assert!(metadata[2].is_empty);
-    }
-
-    #[test]
-    fn test_line_key_skips_sequence_markers() {
-        assert_eq!(line_key("  - b: 1"), Some("b"));
-        assert_eq!(line_key("- - 'c': 1"), Some("c"));
-        assert_eq!(line_key("- item"), None);
     }
 
     #[test]

@@ -76,20 +76,6 @@ class TestConfigErrors:
         with pytest.raises(ValueError, match="unknown rule 'no-such-rule'"):
             lint.LintConfig(rules={"no-such-rule": "error"})
 
-    @pytest.mark.parametrize(
-        ("yamllint", "ours"),
-        [
-            ("key-duplicates", "duplicate-key"),
-            ("trailing-spaces", "trailing-whitespace"),
-            ("anchors", "invalid-anchor"),
-        ],
-    )
-    def test_renamed_yamllint_rule_gets_hint(self, yamllint: str, ours: str):
-        with pytest.raises(
-            ValueError, match=f"unknown rule '{yamllint}'; yamllint's '{yamllint}' is '{ours}'"
-        ):
-            lint.LintConfig(rules={yamllint: "enable"})
-
     def test_unknown_rule_has_no_yamllint_hint(self):
         with pytest.raises(ValueError) as info:
             lint.LintConfig(rules={"no-such-rule": "enable"})
@@ -115,9 +101,10 @@ class TestConfigErrors:
         with pytest.raises(ValueError, match="mapping"):
             lint.LintConfig(rules="error")
 
-    def test_unsupported_yamllint_option(self):
-        with pytest.raises(ValueError, match="supported by yamllint but not implemented"):
-            lint.LintConfig(rules={"indentation": {"spaces": 2}})
+    def test_check_multi_line_strings_is_supported(self):
+        lint.LintConfig(rules={"indentation": {"check-multi-line-strings": True}})
+        with pytest.raises(ValueError, match="check-multi-line-string"):
+            lint.LintConfig(rules={"indentation": {"check-multi-line-string": True}})
 
     def test_document_end_present_false_forbids_marker(self):
         config = lint.LintConfig(rules={"document-end": {"present": False}})
@@ -407,3 +394,9 @@ class TestYamllintParityOptions:
             if d.code == "document-end"
         ]
         assert lines == [2]
+
+
+def test_entry_over_default_reports_at_yamllint_level():
+    config = lint.LintConfig(rules={"line-length": {"max": 5}, "comments": "warning"})
+    found = {d.code: str(d.severity) for d in lint.lint("key: value  # c\n", config)}
+    assert found["line-length"] == "error"

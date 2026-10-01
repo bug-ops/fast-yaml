@@ -451,14 +451,6 @@ impl LintFormat {
             Self::Parsable => LintOutput::Report(ReportFormat::Parsable),
         }
     }
-
-    /// The CI report format this value selects, if any.
-    pub const fn report(self) -> Option<fast_yaml_linter::formatter::ReportFormat> {
-        match self.output() {
-            LintOutput::Report(format) => Some(format),
-            LintOutput::Text | LintOutput::Json => None,
-        }
-    }
 }
 
 #[cfg(test)]

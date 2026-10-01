@@ -108,10 +108,7 @@ impl super::LintRule for FloatValuesRule {
             };
             let span = source_context.span_of_bytes(scalar.range);
             for msg in messages(text, float, options) {
-                diagnostics.push(
-                    DiagnosticBuilder::new(self.code(), severity, msg, span)
-                        .build_with_context(source_context),
-                );
+                diagnostics.push(DiagnosticBuilder::new(self.code(), severity, msg, span).build());
             }
         }
 
@@ -381,7 +378,7 @@ mod tests {
         FloatValuesRule
             .check(&LintContext::new(yaml), &value, &config)
             .into_iter()
-            .map(|d| d.message)
+            .map(|d| d.message.into_owned())
             .collect()
     }
 

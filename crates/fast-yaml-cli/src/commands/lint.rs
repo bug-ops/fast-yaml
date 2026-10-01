@@ -1,13 +1,16 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize};
 use fast_yaml_linter::formatter::{
-    FileReport, ReportFormat, ReportPath, ReportSource, input_error_diagnostic, syntax_diagnostic,
+    FileReport, Findings, ReportFormat, ReportPath, ReportSource, input_error_diagnostic,
+    syntax_diagnostic,
 };
 use fast_yaml_linter::{
-    ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
-    config::IndentSize,
+    ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, LintError, Linter, Severity,
+    TextFormatter,
 };
 use fast_yaml_parallel::ScanAheadPolicy;
+use std::io::{BufWriter, Write as _};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -86,13 +89,21 @@ fn write_file_report(
 }
 
 /// Writes a one-diagnostic report; a failure only warns so the caller's own error survives.
+///
+/// Text output stays on stderr only, where the caller's error already goes.
 fn write_report_or_warn(
     output: &OutputWriter,
-    format: ReportFormat,
+    kind: LintOutput,
     path: Option<&Path>,
     diagnostic: Diagnostic,
 ) {
-    if let Err(err) = write_file_report(output, format, path, &[diagnostic]) {
+    let written = match kind {
+        LintOutput::Text => return,
+        LintOutput::Json => output
+            .write_report(&JsonFormatter::new(true).format(Findings::Given(&[(diagnostic, None)]))),
+        LintOutput::Report(format) => write_file_report(output, format, path, &[diagnostic]),
+    };
+    if let Err(err) = written {
         error::stderr_line(format_args!("error: {err:#}"));
     }
 }
@@ -105,11 +116,12 @@ pub fn report_unresolved(
     output: Option<PathBuf>,
     err: DiscoveryError,
 ) -> anyhow::Error {
-    if let (Some(format), Some(path)) = (format.report(), err.path())
+    if !matches!(format.output(), LintOutput::Text)
+        && let Some(path) = err.path()
         && let Ok(output) = OutputWriter::from_args(output, false, None)
     {
         let diagnostic = input_error_diagnostic(err.to_string());
-        write_report_or_warn(&output, format, Some(path), diagnostic);
+        write_report_or_warn(&output, format.output(), Some(path), diagnostic);
     }
     err.into()
 }
@@ -209,21 +221,41 @@ impl LintCommand {
         match self.format.output() {
             LintOutput::Json => self
                 .output
-                .write_report(&JsonFormatter::new(true).format(&[], ""))?,
+                .write_report(&JsonFormatter::new(true).format(Findings::EMPTY))?,
             LintOutput::Text => {}
             LintOutput::Report(format) => self.output.write_report(&format.render(&[]))?,
         }
         Ok(ExitCode::Success)
     }
 
+    fn write_findings(&self, formatter: &dyn Formatter, findings: Findings<'_>) -> Result<()> {
+        let mut sink = self.output.sink()?;
+        let mut writer = BufWriter::new(&mut sink);
+        formatter
+            .write(&mut writer, findings)
+            .and_then(|()| writer.flush())
+            .context("Failed to write lint output")?;
+        drop(writer);
+        sink.finish()
+    }
+
+    fn report_lint_failure(&self, input: &InputSource, err: LintError) -> Result<ExitCode> {
+        let diagnostic = syntax_diagnostic(&err, input.as_str());
+        write_report_or_warn(
+            &self.output,
+            self.format.output(),
+            input.file_path(),
+            diagnostic,
+        );
+        Err(err).context("Failed to lint YAML")
+    }
+
     /// Reports an input that could not be read, so report formats never print nothing.
     ///
     /// Returns `err` unchanged for the caller to propagate.
     pub fn report_unreadable(&self, path: Option<&Path>, err: anyhow::Error) -> anyhow::Error {
-        if let Some(format) = self.format.report() {
-            let diagnostic = input_error_diagnostic(format!("{err:#}"));
-            write_report_or_warn(&self.output, format, path, diagnostic);
-        }
+        let diagnostic = input_error_diagnostic(format!("{err:#}"));
+        write_report_or_warn(&self.output, self.format.output(), path, diagnostic);
         err
     }
 
@@ -238,27 +270,36 @@ impl LintCommand {
             self.output.ensure_not_input(path)?;
         }
 
-        // Apply indent from CommonConfig formatter only when linter config is at default
-        let effective_indent = self.config.formatter.lint_indent_size();
-        let configured_indent = self.lint_config.rules.indentation.options.indent_size;
-        let lint_config = if configured_indent == IndentSize::default()
-            && effective_indent != IndentSize::default()
+        // A non-default formatter indent applies only while the lint config leaves the width unset
+        let formatter_indent = self.config.formatter.lint_indent_size();
+        let lint_config = if self.lint_config.rules.indentation.options.width_is_set()
+            || formatter_indent == IndentSize::default()
         {
-            self.lint_config.clone().with_indent_size(effective_indent)
-        } else {
             self.lint_config.clone()
+        } else {
+            self.lint_config.clone().with_indent_size(formatter_indent)
         };
 
         let linter = Linter::with_config(lint_config);
-        let diagnostics = match linter.lint(input.as_str()) {
+        let source = match linter.source(input.as_str()) {
+            Ok(source) => source,
+            Err(err) => return self.report_lint_failure(input, err),
+        };
+        let canonical = match input.file_path().map(|path| {
+            CanonicalPath::new(path)
+                .with_context(|| format!("failed to resolve '{}'", path.display()))
+        }) {
+            Some(Ok(path)) => Some(path),
+            Some(Err(err)) => return Err(self.report_unreadable(input.file_path(), err)),
+            None => None,
+        };
+        let linted = canonical.as_ref().map_or_else(
+            || linter.lint_source(&source),
+            |path| linter.lint_source_file(&source, path),
+        );
+        let diagnostics = match linted {
             Ok(diagnostics) => diagnostics,
-            Err(err) => {
-                if let Some(format) = self.format.report() {
-                    let diagnostic = syntax_diagnostic(&err, input.as_str());
-                    write_report_or_warn(&self.output, format, input.file_path(), diagnostic);
-                }
-                return Err(err).context("Failed to lint YAML");
-            }
+            Err(err) => return self.report_lint_failure(input, err),
         };
 
         let filtered_diagnostics: Vec<_> = if self.config.output.is_quiet() {
@@ -270,25 +311,27 @@ impl LintCommand {
             diagnostics
         };
 
+        let source_context = source.context();
+        let findings = Findings::FromSource {
+            diagnostics: &filtered_diagnostics,
+            source: &source_context,
+        };
         match self.format.output() {
             LintOutput::Text => {
                 let mut formatter = TextFormatter::new();
                 formatter.use_color = self.config.output.use_color();
-                self.output
-                    .write_report(&formatter.format(&filtered_diagnostics, input.as_str()))?;
+                self.write_findings(&formatter, findings)?;
             }
-            LintOutput::Json => {
-                let formatter = JsonFormatter::new(true);
-                self.output
-                    .write_report(&formatter.format(&filtered_diagnostics, input.as_str()))?;
-            }
+            LintOutput::Json => self.write_findings(&JsonFormatter::new(true), findings)?,
             LintOutput::Report(format) => {
-                write_file_report(
-                    &self.output,
-                    format,
-                    input.file_path(),
-                    &filtered_diagnostics,
-                )?;
+                let report_source = match &canonical {
+                    Some(path) => ReportSource::File(ReportPath::from_absolute(path.as_path())?),
+                    None => ReportSource::Stdin,
+                };
+                self.output.write_report(&format.render(&[FileReport {
+                    source: &report_source,
+                    diagnostics: &filtered_diagnostics,
+                }]))?;
             }
         }
 

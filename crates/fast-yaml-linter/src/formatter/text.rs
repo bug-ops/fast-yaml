@@ -1,7 +1,7 @@
 //! Human-readable text formatter (rustc-style).
 
-use crate::{Diagnostic, Formatter, Severity};
-use std::fmt::Write;
+use crate::{Formatter, Severity, formatter::Findings};
+use std::io;
 
 const ELLIPSIS: &str = "\u{2026}";
 
@@ -13,10 +13,11 @@ const ELLIPSIS: &str = "\u{2026}";
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_linter::formatter::Findings;
 /// use fast_yaml_linter::{TextFormatter, Formatter};
 ///
 /// let formatter = TextFormatter::new();
-/// let output = formatter.format(&[], "");
+/// let output = formatter.format(Findings::EMPTY);
 /// assert!(output.is_empty());
 /// ```
 pub struct TextFormatter {
@@ -121,96 +122,96 @@ impl Default for TextFormatter {
 }
 
 impl Formatter for TextFormatter {
-    fn format(&self, diagnostics: &[Diagnostic], _source: &str) -> String {
-        let mut output = String::new();
-
-        for diagnostic in diagnostics {
+    fn write(&self, out: &mut dyn io::Write, findings: Findings<'_>) -> io::Result<()> {
+        for finding in findings.iter() {
+            let diagnostic = finding.diagnostic();
             let severity_str = self.colorize(diagnostic.severity.as_str(), diagnostic.severity);
 
             writeln!(
-                output,
+                out,
                 "{}[{}]: {}",
                 severity_str,
                 diagnostic.code.as_str(),
                 diagnostic.message
-            )
-            .unwrap();
+            )?;
 
             writeln!(
-                output,
+                out,
                 "  --> input:{}:{}",
                 diagnostic.span.start.line, diagnostic.span.start.column
-            )
-            .unwrap();
+            )?;
 
             if self.show_context
-                && let Some(context) = &diagnostic.context
+                && let Some(context) = finding.context()
             {
-                writeln!(output, "   |").unwrap();
+                writeln!(out, "   |")?;
 
                 for line in &context.lines {
                     let line_num_width = 4;
                     let head = if line.column_offset > 0 { ELLIPSIS } else { "" };
                     let tail = if line.truncated_end { ELLIPSIS } else { "" };
                     writeln!(
-                        output,
+                        out,
                         "{:width$} | {head}{}{tail}",
                         line.line_number,
                         line.content,
                         width = line_num_width
-                    )
-                    .unwrap();
+                    )?;
 
                     if !line.highlights.is_empty() {
-                        write!(output, "{:width$} | ", "", width = line_num_width).unwrap();
+                        write!(out, "{:width$} | ", "", width = line_num_width)?;
 
                         for &(start, end) in &line.highlights {
                             let padding = start
                                 .saturating_sub(line.column_offset.saturating_add(1))
                                 .saturating_add(head.chars().count());
-                            let length = end.saturating_sub(start);
+                            let length = end.saturating_sub(start).max(1);
 
-                            output.push_str(&" ".repeat(padding));
-                            output.push_str(&"^".repeat(length));
+                            write!(out, "{:padding$}{:^<length$}", "", "")?;
                         }
 
-                        writeln!(output).unwrap();
+                        writeln!(out)?;
                     }
                 }
 
-                writeln!(output, "   |").unwrap();
+                writeln!(out, "   |")?;
             }
 
-            if !diagnostic.suggestions.is_empty() {
-                for suggestion in &diagnostic.suggestions {
-                    writeln!(output, "   = help: {}", suggestion.message).unwrap();
-                }
+            for suggestion in &diagnostic.suggestions {
+                writeln!(out, "   = help: {}", suggestion.message)?;
             }
 
-            writeln!(output).unwrap();
+            writeln!(out)?;
         }
 
-        let error_count = diagnostics
-            .iter()
-            .filter(|d| d.severity == Severity::Error)
-            .count();
-        let warning_count = diagnostics
-            .iter()
-            .filter(|d| d.severity == Severity::Warning)
-            .count();
+        let count = |severity| {
+            findings
+                .diagnostics()
+                .filter(|d| d.severity == severity)
+                .count()
+        };
+        let (error_count, warning_count) = (count(Severity::Error), count(Severity::Warning));
 
         if error_count > 0 || warning_count > 0 {
-            writeln!(output, "{error_count} errors, {warning_count} warnings").unwrap();
+            writeln!(out, "{error_count} errors, {warning_count} warnings")?;
         }
 
-        output
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DiagnosticBuilder, DiagnosticCode, Location, Span};
+    use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, Location, SourceContext, Span};
+
+    fn show(diagnostics: &[Diagnostic], source: &str) -> String {
+        let context = SourceContext::new(source);
+        TextFormatter::new().format(Findings::FromSource {
+            diagnostics,
+            source: &context,
+        })
+    }
 
     #[test]
     fn test_format_long_line_is_windowed_and_aligned() {
@@ -221,9 +222,9 @@ mod tests {
         );
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "long", span)
-                .build(&source);
+                .build();
 
-        let output = TextFormatter::new().format(&[diagnostic], &source);
+        let output = show(&[diagnostic], &source);
         assert!(output.len() < 2_000);
         let source_row = output.lines().find(|l| l.contains(ELLIPSIS)).unwrap();
         let caret_row = output.lines().find(|l| l.contains('^')).unwrap();
@@ -243,10 +244,10 @@ mod tests {
         let diagnostics: Vec<_> = (0..3)
             .map(|_| {
                 DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "long", span)
-                    .build(&source)
+                    .build()
             })
             .collect();
-        let output = TextFormatter::new().format(&diagnostics, &source);
+        let output = show(&diagnostics, &source);
         assert!(output.len() < 4_000);
     }
 
@@ -256,9 +257,8 @@ mod tests {
             Location::new(1, end_col, (end_col - 1) * bytes_per_char),
         );
         let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span)
-                .build(source);
-        TextFormatter::new().format(&[diagnostic], source)
+            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span).build();
+        show(&[diagnostic], source)
     }
 
     fn rows(output: &str) -> (&str, &str) {
@@ -324,7 +324,7 @@ mod tests {
     #[test]
     fn test_formatter_empty() {
         let formatter = TextFormatter::new();
-        let output = formatter.format(&[], "");
+        let output = formatter.format(Findings::EMPTY);
         assert_eq!(output, "");
     }
 
@@ -339,10 +339,9 @@ mod tests {
             "test diagnostic",
             span,
         )
-        .build(source);
+        .build();
 
-        let formatter = TextFormatter::new();
-        let output = formatter.format(&[diagnostic], source);
+        let output = show(&[diagnostic], source);
 
         assert!(output.contains("info[line-length]"));
         assert!(output.contains("test diagnostic"));
@@ -359,7 +358,7 @@ mod tests {
             "error",
             span,
         )
-        .build_without_context();
+        .build_without_excerpt();
 
         let warning = DiagnosticBuilder::new(
             DiagnosticCode::INDENTATION,
@@ -367,11 +366,84 @@ mod tests {
             "warning",
             span,
         )
-        .build_without_context();
+        .build_without_excerpt();
 
-        let formatter = TextFormatter::new();
-        let output = formatter.format(&[error, warning], source);
+        let output = show(&[error, warning], source);
 
         assert!(output.contains("1 errors, 1 warnings"));
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+    use crate::{
+        DiagnosticBuilder, DiagnosticCode, LintSource, Linter, Location, SourceContext, Span,
+    };
+
+    #[test]
+    fn write_produces_what_format_returns() {
+        let source = LintSource::new("a:   1\nb: [1,2 ,3]\n").unwrap();
+        let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
+        assert_ne!(diagnostics.len(), 0);
+        let context = source.context();
+        let findings = Findings::FromSource {
+            diagnostics: &diagnostics,
+            source: &context,
+        };
+
+        let mut written = Vec::new();
+        TextFormatter::new().write(&mut written, findings).unwrap();
+        assert_eq!(
+            String::from_utf8(written).unwrap(),
+            TextFormatter::new().format(findings)
+        );
+    }
+
+    #[test]
+    fn given_excerpts_print_like_excerpts_cut_from_the_source() {
+        let source = LintSource::new("a:   1\n").unwrap();
+        let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
+        let context = source.context();
+        let lazy = TextFormatter::new().format(Findings::FromSource {
+            diagnostics: &diagnostics,
+            source: &context,
+        });
+        let cut = Findings::cut(diagnostics, &context);
+        assert_eq!(TextFormatter::new().format(Findings::Given(&cut)), lazy);
+    }
+
+    #[test]
+    fn zero_width_span_gets_a_single_caret_at_its_column() {
+        let span = Span::new(Location::new(1, 3, 2), Location::new(1, 3, 2));
+        let diagnostic =
+            DiagnosticBuilder::new(DiagnosticCode::EMPTY_VALUES, Severity::Warning, "m", span)
+                .build();
+        let context = SourceContext::new("a: \n");
+        let output = TextFormatter::new().format(Findings::FromSource {
+            diagnostics: &[diagnostic],
+            source: &context,
+        });
+        let source_row = output.lines().find(|l| l.starts_with("   1 |")).unwrap();
+        let caret_row = output.lines().find(|l| l.contains('^')).unwrap();
+        assert_eq!(caret_row.matches('^').count(), 1);
+        assert_eq!(
+            caret_row.chars().position(|c| c == '^'),
+            source_row.chars().position(|c| c == ':').map(|p| p + 1)
+        );
+    }
+
+    #[test]
+    fn omitted_excerpt_prints_no_source_lines() {
+        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let diagnostic =
+            DiagnosticBuilder::new(DiagnosticCode::SYNTAX, Severity::Error, "bad", span)
+                .build_without_excerpt();
+        let context = SourceContext::new("a: [\n");
+        let output = TextFormatter::new().format(Findings::FromSource {
+            diagnostics: &[diagnostic],
+            source: &context,
+        });
+        assert!(!output.contains(" | "), "{output}");
     }
 }

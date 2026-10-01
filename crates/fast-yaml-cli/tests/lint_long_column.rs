@@ -1,9 +1,8 @@
 //! Regression test for #416: a diagnostic column beyond `u16::MAX` must not panic the text formatter.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::fs;
 
 const LONG: usize = 70_000;
@@ -13,8 +12,7 @@ fn assert_lint_reports_without_panic(content: &str) {
     let path = dir.path().join("long.yaml");
     fs::write(&path, content).unwrap();
 
-    let output = Command::cargo_bin("fy")
-        .unwrap()
+    let output = cargo_bin_cmd!("fy")
         .arg("lint")
         .arg(&path)
         .output()

@@ -62,6 +62,72 @@ fn build(root: &Path, lines: &[String]) -> Result<Gitignore, InvalidPathPattern>
         })
 }
 
+/// Returns whether one line is accepted by gitignore syntax.
+pub fn is_valid_pattern(line: &str) -> bool {
+    GitignoreBuilder::new("").add_line(None, line).is_ok()
+}
+
+/// An absolute path with symlinks resolved, the only path form [`Linter::lint_file`] accepts.
+///
+/// Per-rule `ignore` patterns are matched against it, so the same file is ignored no matter how
+/// it was spelled on the command line.
+///
+/// [`Linter::lint_file`]: crate::Linter::lint_file
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::CanonicalPath;
+///
+/// let dir = std::env::temp_dir().canonicalize().unwrap();
+/// let path = CanonicalPath::new(&dir.join("not-yet-created.yaml")).unwrap();
+/// assert_eq!(path.as_path(), dir.join("not-yet-created.yaml"));
+/// assert!(CanonicalPath::new(&dir.join("no-such-dir/a.yaml")).is_err());
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CanonicalPath(PathBuf);
+
+impl CanonicalPath {
+    /// Resolves `path` to an absolute path without symlinks.
+    ///
+    /// A file that does not exist is resolved through its directory, so a path can be named
+    /// before the file is written; the directory must exist.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error when neither the path nor its directory can be resolved.
+    pub fn new(path: &Path) -> std::io::Result<Self> {
+        match path.canonicalize() {
+            Ok(canonical) => Ok(Self(canonical)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                let name = path.file_name().ok_or(error)?;
+                let parent = path
+                    .parent()
+                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
+                Ok(Self(parent.canonicalize()?.join(name)))
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Wraps a path that the caller has already canonicalized, to avoid resolving it twice.
+    ///
+    /// The caller guarantees that `path` came from [`Path::canonicalize`] or
+    /// [`CanonicalPath::as_path`]; a path that is not canonical only makes `ignore` patterns
+    /// miss.
+    #[must_use]
+    pub const fn assume_canonical(path: PathBuf) -> Self {
+        Self(path)
+    }
+
+    /// Returns the path.
+    #[must_use]
+    pub fn as_path(&self) -> &Path {
+        &self.0
+    }
+}
+
 /// Files that the `ignore` config key excludes from linting.
 ///
 /// Patterns are anchored at the directory of the config file, so the same file is ignored

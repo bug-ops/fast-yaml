@@ -1,6 +1,9 @@
 //! Typed rule configuration, config files and builders.
 
 pub mod config_file;
+mod ignore_source;
+mod indent;
+mod locale;
 #[cfg(test)]
 mod options_tests;
 mod path_patterns;
@@ -12,13 +15,18 @@ pub use config_file::{
     ConfigFile, ConfigFileError, FileSelection, MAX_CONFIG_FILE_BYTES, MAX_EXTENDS_DEPTH,
     TopLevelKey,
 };
-pub use path_patterns::{IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, YamlFiles};
-pub use preset::{Preset, UnknownPresetError};
-pub(crate) use rules::default_rules;
-pub use rules::{
-    CustomRuleCode, NoOptions, OptionConflict, RuleConfigError, RuleName, RuleOptions,
-    RuleSettings, RulesConfig, UnknownRuleError,
+pub use indent::{IndentSequences, IndentSpaces};
+pub use locale::LocaleName;
+pub(crate) use path_patterns::is_valid_pattern;
+pub use path_patterns::{
+    CanonicalPath, IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, YamlFiles,
 };
+pub use preset::{Preset, UnknownPresetError};
+pub use rules::{
+    CustomRuleCode, EntryOrigin, NoOptions, OptionConflict, RuleConfigError, RuleIgnore, RuleName,
+    RuleOptions, RuleSettings, RulesConfig, UnknownRuleError,
+};
+pub(crate) use rules::{IgnoreBase, default_rules};
 pub use values::{
     AlwaysTrue, EmptyInsideLimit, IndentSize, InvalidIndentSize, InvalidPatternList,
     InvalidRegexPattern, Limit, MarkerPresence, PatternList,

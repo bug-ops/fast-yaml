@@ -1,8 +1,9 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::decode_input_owned;
+use fast_yaml_core::fs::{ReadFileError, read_bounded};
 use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_parallel::read_file;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 
 /// Source of input data
@@ -42,13 +43,13 @@ impl InputSource {
 
     /// Read from stdin; the read never buffers more than `max` bytes plus one
     pub fn from_stdin(max: MaxInputBytes) -> Result<Self> {
-        let mut bytes = Vec::new();
-        io::stdin()
-            .lock()
-            .take(max.get() as u64 + 1)
-            .read_to_end(&mut bytes)
-            .context("Failed to read from stdin")?;
-        max.check(bytes.len())
+        let bytes = read_bounded(io::stdin().lock(), max, 0)
+            .map_err(|error| match error {
+                // typed causes stay downcastable for the raise hint
+                ReadFileError::TooLarge(too_large) => anyhow::Error::new(too_large),
+                ReadFileError::Io(io) => anyhow::Error::new(io),
+                other => anyhow::Error::new(other),
+            })
             .context("Failed to read from stdin")?;
         let content = decode_input_owned(bytes).context("Failed to read from stdin")?;
 

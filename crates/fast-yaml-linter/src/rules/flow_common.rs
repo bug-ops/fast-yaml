@@ -5,7 +5,7 @@ use std::ops::Range;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    LintContext, Severity, SourceContext, Span,
+    LintContext, Severity, Span,
     config::{
         BoolOrName, EmptyInsideLimit, Limit, RuleOptions, RuleSettings, deserialize_bool_or_name,
     },
@@ -154,7 +154,6 @@ pub(crate) fn check_flow_collection(
     kind: FlowCollection,
 ) -> Vec<Diagnostic> {
     let source = context.source();
-    let source_context = context.source_context();
     let tokenizer = context.flow_tokenizer();
     let options = &settings.options;
 
@@ -169,8 +168,7 @@ pub(crate) fn check_flow_collection(
             let message = format!("{} forbidden (forbid: all)", kind.noun());
             for token in &opens {
                 diagnostics.push(
-                    DiagnosticBuilder::new(code, severity, message.as_str(), token.span)
-                        .build_with_context(source_context),
+                    DiagnosticBuilder::new(code, severity, message.clone(), token.span).build(),
                 );
             }
             return diagnostics;
@@ -180,8 +178,7 @@ pub(crate) fn check_flow_collection(
             for (open, close) in &pairs {
                 if !is_empty_collection(source, open.span.end.offset, close.span.start.offset) {
                     diagnostics.push(
-                        DiagnosticBuilder::new(code, severity, message.as_str(), open.span)
-                            .build_with_context(source_context),
+                        DiagnosticBuilder::new(code, severity, message.clone(), open.span).build(),
                     );
                 }
             }
@@ -208,7 +205,6 @@ pub(crate) fn check_flow_collection(
 
         let spacing = FlowSpacing {
             source,
-            source_ctx: source_context,
             inner: open.span.end.offset..close.span.start.offset,
             min: min_spaces,
             max: max_spaces,
@@ -284,7 +280,6 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
 /// Spacing limits for the interior of one flow collection.
 pub(crate) struct FlowSpacing<'a> {
     pub(crate) source: &'a str,
-    pub(crate) source_ctx: &'a SourceContext<'a>,
     /// Byte range between the opening and the closing delimiter.
     pub(crate) inner: Range<usize>,
     pub(crate) min: Limit,
@@ -337,7 +332,7 @@ impl FlowSpacing<'_> {
                 ),
                 span,
             )
-            .build_with_context(self.source_ctx),
+            .build(),
         )
     }
 }
@@ -356,16 +351,9 @@ mod tests {
         assert!(!is_empty_collection("{ key: value }", 1, 13));
     }
 
-    fn spacing<'a>(
-        source: &'a str,
-        ctx: &'a SourceContext<'a>,
-        inner: Range<usize>,
-        min: Limit,
-        max: Limit,
-    ) -> FlowSpacing<'a> {
+    fn spacing(source: &str, inner: Range<usize>, min: Limit, max: Limit) -> FlowSpacing<'_> {
         FlowSpacing {
             source,
-            source_ctx: ctx,
             inner,
             min,
             max,
@@ -396,13 +384,11 @@ mod tests {
     #[test]
     fn test_check_spaces_after_opening() {
         let source = "{ key: value}";
-        let ctx = SourceContext::new(source);
-        let ok = spacing(source, &ctx, 1..13, Limit::Max(0), Limit::Max(1));
+        let ok = spacing(source, 1..13, Limit::Max(0), Limit::Max(1));
         assert!(ok.after_opening(dummy_span()).is_none());
 
         let source2 = "{  key: value}";
-        let ctx2 = SourceContext::new(source2);
-        let bad = spacing(source2, &ctx2, 1..14, Limit::Max(0), Limit::Max(1));
+        let bad = spacing(source2, 1..14, Limit::Max(0), Limit::Max(1));
         let diag = bad.after_opening(dummy_span()).unwrap();
         assert_eq!(
             diag.message,
@@ -413,24 +399,21 @@ mod tests {
     #[test]
     fn test_check_spaces_before_closing() {
         let source = "{key: value }";
-        let ctx = SourceContext::new(source);
-        let ok = spacing(source, &ctx, 1..12, Limit::Max(0), Limit::Max(1));
+        let ok = spacing(source, 1..12, Limit::Max(0), Limit::Max(1));
         assert!(ok.before_closing(dummy_span()).is_none());
 
         let source2 = "{key: value  }";
-        let ctx2 = SourceContext::new(source2);
-        let bad = spacing(source2, &ctx2, 1..13, Limit::Max(0), Limit::Max(1));
+        let bad = spacing(source2, 1..13, Limit::Max(0), Limit::Max(1));
         assert!(bad.before_closing(dummy_span()).is_some());
     }
 
     #[test]
     fn test_reversed_or_invalid_ranges_do_not_panic() {
         let source = "{ é }";
-        let ctx = SourceContext::new(source);
 
         assert!(is_empty_collection(source, 5, 2));
         for (start, end) in [(5, 2), (3, 4), (4, 3)] {
-            let s = spacing(source, &ctx, start..end, Limit::Max(0), Limit::Max(0));
+            let s = spacing(source, start..end, Limit::Max(0), Limit::Max(0));
             assert!(s.after_opening(dummy_span()).is_none());
             assert!(s.before_closing(dummy_span()).is_none());
         }
@@ -439,8 +422,7 @@ mod tests {
     #[test]
     fn test_empty_range_reports_min_spaces_after_opening() {
         let source = "{}";
-        let ctx = SourceContext::new(source);
-        let s = spacing(source, &ctx, 1..1, Limit::Max(1), Limit::Disabled);
+        let s = spacing(source, 1..1, Limit::Max(1), Limit::Disabled);
 
         let diag = s.after_opening(dummy_span()).unwrap();
         assert_eq!(

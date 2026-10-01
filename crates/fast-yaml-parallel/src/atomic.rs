@@ -33,7 +33,17 @@ use std::path::{Path, PathBuf};
 ///   mid-write can leave it truncated or partial, and a read-only hard-linked file is refused.
 ///   A hard-linked target owned by someone else is replaced through the rename instead, which
 ///   breaks the link rather than writing into a file the caller may not control.
-/// - Extended attributes and ACLs of the old file are not preserved.
+/// - On Unix, the extended attributes of the old file are copied to the replacement, through
+///   file handles opened at `create` time (the old file is checked to be the resolved inode), after
+///   the owner is restored and before the mode is applied. A file system without xattr support
+///   is skipped silently, and so is an attribute that vanished or that the replacement already
+///   carries with the same value (a new file inherits, for example, its `SELinux` label). Permission
+///   denied is skipped for `com.apple.*` attributes, which the OS protects (for example
+///   `com.apple.provenance`), and for `security.selinux`, which confined domains such as
+///   containers may not set. Any other failure, including permission denied on other
+///   `security.*`, `system.*` or `trusted.*` names, fails the write instead of dropping the
+///   attribute silently. If the old file cannot be opened for reading, no attributes are copied.
+///   POSIX ACLs and Windows ACLs are not preserved beyond what xattrs carry.
 ///
 /// # Errors
 ///
@@ -136,7 +146,11 @@ impl AtomicFile {
         if let Some(old) = &existing {
             // Before chmod: changing the owner can clear mode bits
             #[cfg(unix)]
-            let permissions = restore_owner(temp.as_file(), old)?;
+            let permissions = {
+                let permissions = restore_owner(temp.as_file(), old)?;
+                copy_xattrs(old.source.as_ref(), temp.as_file())?;
+                permissions
+            };
             #[cfg(not(unix))]
             let permissions = old.permissions.clone();
             temp.as_file().set_permissions(permissions)?;
@@ -246,6 +260,73 @@ fn restore_owner(file: &fs::File, old: &Existing) -> io::Result<Permissions> {
     Ok(permissions)
 }
 
+/// Copies every extended attribute of `from` to `to`; see [`write_atomic`] for what is skipped.
+#[cfg(unix)]
+fn copy_xattrs(from: Option<&fs::File>, to: &fs::File) -> io::Result<()> {
+    use std::os::unix::ffi::OsStrExt;
+    use xattr::FileExt;
+
+    let unsupported = |e: &io::Error| {
+        e.kind() == io::ErrorKind::Unsupported || e.raw_os_error() == Some(libc::ENOTSUP)
+    };
+    let Some(from) = from else {
+        return Ok(());
+    };
+    let names = match from.list_xattr() {
+        Ok(names) => names,
+        Err(e) if unsupported(&e) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    for name in names {
+        let value = match from.get_xattr(&name) {
+            Ok(Some(value)) => value,
+            Ok(None) => continue,
+            Err(e) if unsupported(&e) || e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) => return Err(e),
+        };
+        if to.get_xattr(&name).ok().flatten().as_deref() == Some(value.as_slice()) {
+            continue;
+        }
+        match to.set_xattr(&name, &value) {
+            Err(e) if unsupported(&e) || permission_denied_is_tolerated(name.as_bytes(), &e) => {}
+            Err(e) => return Err(e),
+            Ok(()) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Whether failing to set the attribute `name` with `error` is expected and harmless.
+#[cfg(unix)]
+fn permission_denied_is_tolerated(name: &[u8], error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::PermissionDenied
+        && (name.starts_with(b"com.apple.") || name == b"security.selinux")
+}
+
+/// Opens the file `real` for reading its xattrs, if it is still the inode `metadata` describes.
+#[cfg(unix)]
+fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<fs::File>> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let file = match fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+        .open(real)
+    {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let opened = file.metadata()?;
+    if !opened.is_file() || (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
+        return Err(io::Error::other(format!(
+            "{} changed while it was being replaced",
+            real.display()
+        )));
+    }
+    Ok(Some(file))
+}
+
 /// Creates the temporary file; new targets get umask-filtered `0o666` instead of `0o600`.
 fn create_temp(dir: &Path, new_target: bool) -> io::Result<tempfile::NamedTempFile> {
     #[cfg(unix)]
@@ -270,6 +351,9 @@ struct Existing {
     /// `(dev, ino, nlink)`
     #[cfg(unix)]
     identity: (u64, u64, u64),
+    /// Read handle on the old inode, the source of its extended attributes.
+    #[cfg(unix)]
+    source: Option<fs::File>,
 }
 
 impl Existing {
@@ -282,6 +366,8 @@ impl Existing {
             owner: (metadata.uid(), metadata.gid()),
             #[cfg(unix)]
             identity: (metadata.dev(), metadata.ino(), metadata.nlink()),
+            #[cfg(unix)]
+            source: None,
         }
     }
 
@@ -309,7 +395,13 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
                     format!("not a regular file: {}", path.display()),
                 ));
             }
-            Ok((real, Some(Existing::of(&metadata))))
+            #[allow(unused_mut)]
+            let mut existing = Existing::of(&metadata);
+            #[cfg(unix)]
+            {
+                existing.source = open_xattr_source(&real, &metadata)?;
+            }
+            Ok((real, Some(existing)))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             if fs::symlink_metadata(path).is_ok() {
@@ -372,6 +464,129 @@ mod tests {
 
         fn mode(path: &Path) -> u32 {
             fs::metadata(path).unwrap().permissions().mode() & 0o777
+        }
+
+        const XATTR: &str = if cfg!(target_os = "linux") {
+            "user.fy.test"
+        } else {
+            "com.fy.test"
+        };
+
+        #[test]
+        fn xattrs_survive_replacement() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("x.yaml");
+            fs::write(&path, "a: 1\n").unwrap();
+            if xattr::set(&path, XATTR, b"kept").is_err() {
+                return;
+            }
+            let inode = fs::metadata(&path).unwrap().ino();
+            write_atomic(&path, b"a: 2\n").unwrap();
+            assert_ne!(fs::metadata(&path).unwrap().ino(), inode);
+            assert_eq!(
+                xattr::get(&path, XATTR).unwrap().as_deref(),
+                Some(&b"kept"[..])
+            );
+        }
+
+        #[test]
+        fn xattrs_come_from_the_inode_resolved_at_create() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("swap.yaml");
+            fs::write(&path, "a: 1\n").unwrap();
+            if xattr::set(&path, XATTR, b"original").is_err() {
+                return;
+            }
+            let mut file = AtomicFile::create(&path).unwrap();
+            fs::remove_file(&path).unwrap();
+            fs::write(&path, "planted\n").unwrap();
+            xattr::set(&path, XATTR, b"planted").unwrap();
+            file.write_all(b"a: 2\n").unwrap();
+            file.commit().unwrap();
+            assert_eq!(
+                xattr::get(&path, XATTR).unwrap().as_deref(),
+                Some(&b"original"[..])
+            );
+        }
+
+        #[test]
+        fn permission_denied_is_tolerated_only_for_known_names() {
+            let denied = io::Error::from(io::ErrorKind::PermissionDenied);
+            let other = io::Error::from(io::ErrorKind::InvalidInput);
+            assert!(permission_denied_is_tolerated(b"security.selinux", &denied));
+            assert!(permission_denied_is_tolerated(
+                b"com.apple.provenance",
+                &denied
+            ));
+            assert!(!permission_denied_is_tolerated(
+                b"security.capability",
+                &denied
+            ));
+            assert!(!permission_denied_is_tolerated(
+                b"system.posix_acl_access",
+                &denied
+            ));
+            assert!(!permission_denied_is_tolerated(b"trusted.x", &denied));
+            assert!(!permission_denied_is_tolerated(b"security.selinux", &other));
+        }
+
+        #[test]
+        fn identical_value_on_the_replacement_is_left_alone() {
+            let dir = tempfile::tempdir().unwrap();
+            let from = dir.path().join("from");
+            let to = dir.path().join("to");
+            fs::write(&from, "").unwrap();
+            fs::write(&to, "").unwrap();
+            if xattr::set(&from, XATTR, b"same").is_err() {
+                return;
+            }
+            xattr::set(&to, XATTR, b"same").unwrap();
+            let source = fs::File::open(&from).unwrap();
+            let target = fs::OpenOptions::new().write(true).open(&to).unwrap();
+            copy_xattrs(Some(&source), &target).unwrap();
+            assert_eq!(
+                xattr::get(&to, XATTR).unwrap().as_deref(),
+                Some(&b"same"[..])
+            );
+        }
+
+        #[test]
+        fn fifo_in_place_of_the_target_does_not_block() {
+            let dir = tempfile::tempdir().unwrap();
+            let fifo = dir.path().join("pipe.yaml");
+            assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let metadata = fs::metadata(&fifo).unwrap();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                tx.send(open_xattr_source(&fifo, &metadata).is_err()).ok();
+            });
+            let refused = rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("opening a FIFO must not block");
+            assert!(refused);
+        }
+
+        #[test]
+        fn xattrs_survive_read_only_replacement() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("ro.yaml");
+            fs::write(&path, "a: 1\n").unwrap();
+            if xattr::set(&path, XATTR, b"kept").is_err() {
+                return;
+            }
+            fs::set_permissions(&path, Permissions::from_mode(0o444)).unwrap();
+            write_atomic(&path, b"a: 2\n").unwrap();
+            assert_eq!(mode(&path), 0o444);
+            assert_eq!(
+                xattr::get(&path, XATTR).unwrap().as_deref(),
+                Some(&b"kept"[..])
+            );
         }
 
         #[test]
@@ -520,6 +735,7 @@ mod tests {
                 permissions: metadata.permissions(),
                 owner: (metadata.uid().wrapping_add(1), metadata.gid()),
                 identity: (metadata.dev(), metadata.ino(), 1),
+                source: None,
             };
             let temp = tempfile::tempfile_in(dir.path()).unwrap();
             // Unprivileged: EPERM is ignored; privileged: the chown simply succeeds

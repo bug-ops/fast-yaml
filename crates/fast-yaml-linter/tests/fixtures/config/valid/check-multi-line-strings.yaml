@@ -1,0 +1,3 @@
+rules:
+  indentation:
+    check-multi-line-strings: true

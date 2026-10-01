@@ -385,7 +385,7 @@ impl Directives {
                 .into_iter()
                 .map(|(span, message)| {
                     DiagnosticBuilder::new(DiagnosticCode::LINT_DIRECTIVE, severity, message, span)
-                        .build_with_context(ctx)
+                        .build()
                 })
                 .collect();
         }
@@ -816,7 +816,7 @@ mod tests {
             .unwrap();
         assert_eq!(warning.severity, Severity::Warning);
         assert_eq!(warning.span.start.line, 1);
-        assert!(warning.context.is_some());
+        assert_eq!(warning.excerpt, crate::Excerpt::SourceLines);
     }
 
     #[test]

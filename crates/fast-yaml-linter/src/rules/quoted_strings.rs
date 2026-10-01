@@ -9,11 +9,12 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
-use fast_yaml_core::{ResolvedScalar, ScalarStyle, Value, resolve_scalar};
+use fast_yaml_core::{ScalarStyle, Value};
+use regex::Regex;
+use std::sync::LazyLock;
 
 use super::LintRule;
 use super::node_roles::NodeRole;
-use super::truthy::NON_STANDARD_BOOLS;
 use crate::nodes::{Node, TagKind};
 
 /// Linting rule for quoted strings.
@@ -206,6 +207,7 @@ impl super::LintRule for QuotedStringsRule {
                 &check,
                 &ScalarEvent {
                     value: index.text(scalar),
+                    raw: index.source_text(scalar.range).unwrap_or_default(),
                     style: scalar.style,
                     role: scalar.role,
                     in_flow: scalar.in_flow,
@@ -244,6 +246,8 @@ struct ScalarCheck<'a> {
 /// One scalar event with the context the rule needs to judge it.
 struct ScalarEvent<'a> {
     value: &'a str,
+    /// The scalar token as written, quotes included.
+    raw: &'a str,
     style: ScalarStyle,
     role: NodeRole,
     in_flow: bool,
@@ -260,13 +264,10 @@ impl QuotedStringsRule {
         event: &ScalarEvent<'_>,
         diagnostics: &mut Vec<Diagnostic>,
     ) {
-        let ScalarCheck {
-            source,
-            source_ctx,
-            config,
-        } = *check;
+        let ScalarCheck { config, .. } = *check;
         let ScalarEvent {
             value,
+            raw,
             style,
             role,
             in_flow,
@@ -274,37 +275,30 @@ impl QuotedStringsRule {
             span: scalar_span,
         } = *event;
         let options = &config.rules.quoted_strings.options;
-        if core_tagged || (role == NodeRole::MappingKey && !options.check_keys) {
+        if core_tagged
+            || role == NodeRole::Root
+            || (role == NodeRole::MappingKey && !options.check_keys)
+        {
             return;
         }
         let severity = config
             .rules
             .quoted_strings
             .severity_or(self.default_severity());
-        let mut report = |message: &str| {
-            diagnostics.push(
-                DiagnosticBuilder::new(self.code(), severity, message, scalar_span)
-                    .build_with_context(source_ctx),
-            );
+        let mut report = |message: &'static str| {
+            diagnostics
+                .push(DiagnosticBuilder::new(self.code(), severity, message, scalar_span).build());
         };
 
         match style {
             ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
-                if options.required == QuoteRequirement::OnlyWhenNeeded {
-                    let has_escape = style == ScalarStyle::DoubleQuoted
-                        && (Self::has_yaml_escape(value)
-                            || Self::has_source_unicode_hex_escape(
-                                source,
-                                scalar_span.start.offset,
-                            ));
-                    let needed =
-                        has_escape || Self::needs_quotes(value) || (in_flow && value.contains(','));
-                    if !needed {
-                        if options.quotes_redundant_for(value) {
-                            report("string does not need quotes");
-                        }
-                        return;
+                if options.required == QuoteRequirement::OnlyWhenNeeded
+                    && !quotes_needed(value, raw, style, in_flow)
+                {
+                    if options.quotes_redundant_for(value) {
+                        report("string does not need quotes");
                     }
+                    return;
                 }
 
                 match (options.quote_type, style) {
@@ -327,7 +321,7 @@ impl QuotedStringsRule {
             }
 
             ScalarStyle::Plain
-                if !is_scalar_literal(value)
+                if yaml11_implicit(value) == Implicit::Str
                     && (options.required == QuoteRequirement::Always
                         || options.extra_required.is_match(value)) =>
             {
@@ -338,118 +332,92 @@ impl QuotedStringsRule {
             _ => {}
         }
     }
+}
 
-    /// Returns `true` if a double-quoted scalar's decoded value indicates it required escape
-    /// sequences in the source.
-    ///
-    /// Saphyr provides the already-decoded scalar value. A double-quoted string that contained
-    /// YAML escape sequences (`\n`, `\t`, `\r`, `\\`, `\"`, `\uXXXX`, etc.) will decode to
-    /// a string that either contains a backslash (from `\\`) or contains control characters
-    /// (from `\n`, `\t`, etc.). In either case, removing the quotes would produce a different
-    /// value, so the quotes are necessary.
-    fn has_yaml_escape(value: &str) -> bool {
-        value.contains('\\')
-            || value.chars().any(|c| {
-                matches!(
-                    c,
-                    '\n' | '\r' | '\t' | '\x00' | '\x07' | '\x08' | '\x0C' | '\x0B' | '\x1B'
-                )
-            })
-    }
+/// How a plain scalar loads under the YAML 1.1 resolver yamllint uses (`PyYAML` plus its own `int`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Implicit {
+    Str,
+    NonStr,
+}
 
-    /// Returns `true` if the raw double-quoted scalar in `source` at byte offset `start`
-    /// contains a `\u`, `\U`, or `\x` escape sequence.
-    ///
-    /// These escape sequences decode to Unicode/ASCII characters whose decoded form is
-    /// indistinguishable from plain text, so `has_yaml_escape` (which operates on the decoded
-    /// value) cannot detect them. We must inspect the raw source instead.
-    fn has_source_unicode_hex_escape(source: &str, start: usize) -> bool {
-        let Some(rest) = source
-            .as_bytes()
-            .get(start..)
-            .and_then(|bytes| bytes.strip_prefix(b"\""))
-        else {
-            return false;
-        };
-        let mut bytes = rest.iter();
-        while let Some(&b) = bytes.next() {
-            match b {
-                b'"' => return false,
-                b'\\' => match bytes.next() {
-                    Some(b'u' | b'U' | b'x') => return true,
-                    Some(_) => {}
-                    None => return false,
-                },
-                _ => {}
-            }
-        }
-        false
-    }
+#[expect(clippy::expect_used, reason = "the pattern is a constant")]
+static NON_STR_PLAIN: LazyLock<Regex> = LazyLock::new(|| {
+    let bool_ = "yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF";
+    let float = r"[-+]?[0-9][0-9_]*\.[0-9_]*(?:[eE][-+][0-9]+)?|\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN)";
+    let int = "[-+]?0b[0-1_]+|[-+]?0o?[0-7_]+|[-+]?0[0-7_]+|[-+]?(?:0|[1-9][0-9_]*)|[-+]?0x[0-9a-fA-F_]+|[-+]?[1-9][0-9_]*(?::[0-5]?[0-9])+";
+    let timestamp = r"[0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-[0-9][0-9]?-[0-9][0-9]?(?:[Tt]|[ \t]+)[0-9][0-9]?:[0-9]{2}:[0-9]{2}(?:\.[0-9]*)?(?:[ \t]*(?:Z|[-+][0-9][0-9]?(?::[0-9][0-9])?))?";
+    let other = r"<<|~|null|Null|NULL|=|!|&|\*";
+    Regex::new(&format!("^(?:{bool_}|{float}|{int}|{timestamp}|{other})$"))
+        .expect("the implicit resolver pattern is valid")
+});
 
-    /// Checks if a string needs quotes based on YAML syntax rules.
-    fn needs_quotes(s: &str) -> bool {
-        // Empty strings need quotes
-        if s.is_empty() {
-            return true;
-        }
-
-        if NON_STANDARD_BOOLS.contains(&s) || is_scalar_literal(s) {
-            return true;
-        }
-
-        // Strings starting with special chars need quotes
-        let first_char = s.chars().next().unwrap_or('\0');
-        if matches!(
-            first_char,
-            '@' | '`'
-                | '|'
-                | '>'
-                | '%'
-                | '*'
-                | '&'
-                | '!'
-                | '['
-                | ']'
-                | '{'
-                | '}'
-                | '#'
-                | ':'
-                | '-'
-                | '?'
-                | ','
-        ) {
-            return true;
-        }
-
-        // Strings with colons or hash signs need quotes
-        if s.contains(':') || s.contains('#') {
-            return true;
-        }
-
-        // Strings containing glob/template/cron special characters conventionally
-        // benefit from quoting even when YAML could parse them unquoted. Flagging
-        // them as "does not need quotes" produces false positives on real-world
-        // YAML (GitHub Actions, Helm charts, Kubernetes manifests, cron schedules).
-        if s.contains('*')
-            || s.contains('?')
-            || s.contains('{')
-            || s.contains('}')
-            || s.contains('[')
-            || s.contains(']')
-        {
-            return true;
-        }
-
-        false
+/// Mirrors the implicit resolvers of yamllint's `PyYAML` for `text`.
+fn yaml11_implicit(text: &str) -> Implicit {
+    if text.is_empty() || NON_STR_PLAIN.is_match(text) {
+        Implicit::NonStr
+    } else {
+        Implicit::Str
     }
 }
 
-/// Whether a plain `s` loads as anything but a string under the core schema.
-fn is_scalar_literal(s: &str) -> bool {
-    !matches!(
-        resolve_scalar(s, fast_yaml_core::ScalarStyle::Plain, None),
-        ResolvedScalar::Str(_)
+/// YAML 1.1 line breaks, which `PyYAML`'s scanner folds or splits on.
+const fn is_break(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{85}' | '\u{2028}' | '\u{2029}')
+}
+
+/// Characters the `PyYAML` reader accepts.
+const fn is_printable(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\r' | '\u{20}'..='\u{7e}' | '\u{85}' | '\u{a0}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..
     )
+}
+
+/// Whether the quoted scalar needs its quotes, as yamllint decides it.
+fn quotes_needed(value: &str, raw: &str, style: ScalarStyle, in_flow: bool) -> bool {
+    // PyYAML folds an unescaped NEL like a line feed; the YAML 1.2 loader keeps the character
+    let folded;
+    let value = if raw.contains('\u{85}') && !raw.contains('\\') {
+        folded = value.replace('\u{85}', " ");
+        folded.as_str()
+    } else {
+        value
+    };
+    value.is_empty()
+        || yaml11_implicit(value) == Implicit::NonStr
+        || (in_flow && value.contains([',', '[', ']', '{', '}']))
+        || (style == ScalarStyle::DoubleQuoted && has_backslash_line_end(raw))
+        || !loads_as_block_plain(value)
+}
+
+/// Whether a double-quoted token continues a line with a backslash.
+fn has_backslash_line_end(raw: &str) -> bool {
+    raw.contains("\\\n") || raw.contains("\\\r\n")
+}
+
+/// Whether `key: <value>` loads in the `PyYAML` block context as the one plain scalar `value`.
+fn loads_as_block_plain(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    let followed_by_blank = chars
+        .next()
+        .is_none_or(|c| c == ' ' || c == '\t' || is_break(c));
+    let starts_plain = match first {
+        '-' | '?' | ':' => !followed_by_blank,
+        ' ' | '\t' | ',' | '[' | ']' | '{' | '}' | '#' | '&' | '*' | '!' | '|' | '>' | '\''
+        | '"' | '%' | '@' | '`' => false,
+        c => !is_break(c),
+    };
+    starts_plain
+        && !value.ends_with([' ', ':'])
+        && !value.contains(": ")
+        && !value.contains(" #")
+        && !value
+            .chars()
+            .any(|c| c == '\t' || is_break(c) || !is_printable(c))
 }
 
 #[cfg(test)]
@@ -716,20 +684,89 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        // Quotes are needed because of the colon
-        assert_eq!(diagnostics, []);
+        // A colon not followed by a blank does not need quotes
+        assert_eq!(diagnostics.len(), 1);
     }
 
     #[test]
     fn test_quoted_strings_needs_quotes() {
-        assert!(QuotedStringsRule::needs_quotes(""));
-        assert!(QuotedStringsRule::needs_quotes("true"));
-        assert!(QuotedStringsRule::needs_quotes("123"));
-        assert!(QuotedStringsRule::needs_quotes("http://example.com"));
-        assert!(QuotedStringsRule::needs_quotes("#comment"));
+        let needed = |value: &str| quotes_needed(value, "", ScalarStyle::SingleQuoted, false);
+        for value in [
+            "",
+            "true",
+            "123",
+            "#comment",
+            "a: b",
+            "x:",
+            "a #b",
+            "-",
+            "- x",
+            "? x",
+            ": x",
+            "@x",
+            "a\tb",
+            "a\nb",
+            "a\u{2028}b",
+            " a",
+            "a ",
+            "\"Howdy!\" he cried.",
+            "{x}",
+            "1.0e+3",
+            ".nan",
+            "1_000.5",
+            "190:20:30.15",
+            "yes",
+            "~",
+            "<<",
+            "2001-12-14",
+            "0o17",
+        ] {
+            assert!(needed(value), "{value:?}");
+        }
+        for value in [
+            "simple",
+            "hello_world",
+            "http://example.com",
+            "5 * 5 = 25",
+            "How are you?",
+            "-x",
+            "a#b",
+            "a  b",
+            "c:\\path",
+            "é",
+            "1e3",
+            "1e+3",
+            "NaN",
+            "1.0e3",
+            "yEs",
+            "---",
+            "a,b",
+        ] {
+            assert!(!needed(value), "{value:?}");
+        }
+    }
 
-        assert!(!QuotedStringsRule::needs_quotes("simple"));
-        assert!(!QuotedStringsRule::needs_quotes("hello_world"));
+    #[test]
+    fn flow_indicators_need_quotes_only_in_flow() {
+        assert!(quotes_needed("a,b", "", ScalarStyle::SingleQuoted, true));
+        assert!(quotes_needed("a]", "", ScalarStyle::SingleQuoted, true));
+        assert!(!quotes_needed("a,b", "", ScalarStyle::SingleQuoted, false));
+    }
+
+    #[test]
+    fn backslash_line_continuation_needs_double_quotes() {
+        assert!(quotes_needed(
+            "foo bar",
+            "\"foo \\\n  bar\"",
+            ScalarStyle::DoubleQuoted,
+            false
+        ));
+        assert!(!quotes_needed(
+            "foo bar",
+            "\"foo\n  bar\"",
+            ScalarStyle::DoubleQuoted,
+            false
+        ));
     }
 
     // Regression tests for issue #175: false positive on double-quoted strings with escapes.
@@ -777,10 +814,7 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(
-            diagnostics.is_empty(),
-            "expected no diagnostics for double-quoted string with \\\\ escape, got: {diagnostics:?}"
-        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     // Regression tests for issue #113: false positives on quotes inside plain scalars.
@@ -887,8 +921,8 @@ mod tests {
 
     #[test]
     fn test_non_ascii_key_does_not_hide_unicode_escape() {
-        assert_eq!(run("—: \"\\u00e9\""), []);
-        assert_eq!(run("ключ: \"\\x41\""), []);
+        assert_eq!(run("—: \"\\u00e9\"").len(), 1);
+        assert_eq!(run("ключ: \"\\x41\"").len(), 1);
     }
 
     #[test]
@@ -909,7 +943,7 @@ mod tests {
         let span = diagnostics[0].span;
         assert_eq!((span.start.column, span.start.offset), (4, 6));
         assert_eq!((span.end.column, span.end.offset), (7, 10));
-        assert_eq!(run("🎉: \"\\u00e9\""), []);
+        assert_eq!(run("🎉: \"\\u00e9\"").len(), 1);
     }
 
     #[test]
@@ -943,10 +977,7 @@ mod tests {
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(
-            diagnostics.is_empty(),
-            "expected no diagnostics for \\u escape, got: {diagnostics:?}"
-        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     #[test]
@@ -958,10 +989,7 @@ mod tests {
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(
-            diagnostics.is_empty(),
-            "expected no diagnostics for \\U escape, got: {diagnostics:?}"
-        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     #[test]
@@ -973,15 +1001,12 @@ mod tests {
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
-        assert!(
-            diagnostics.is_empty(),
-            "expected no diagnostics for \\x escape, got: {diagnostics:?}"
-        );
+        assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
     #[test]
     fn quotes_that_preserve_a_float_type_are_needed() {
-        assert_eq!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n"), []);
+        assert_eq!(run("a: \"+.inf\"\nb: \".5\"\nc: \"-.5e3\"\n").len(), 1);
     }
 
     #[test]
@@ -1009,7 +1034,7 @@ mod tests {
         QuotedStringsRule
             .check(&LintContext::new(yaml), &value, &config)
             .into_iter()
-            .map(|d| d.message)
+            .map(|d| d.message.into_owned())
             .collect()
     }
 
@@ -1041,9 +1066,9 @@ mod tests {
     }
 
     #[test]
-    fn required_always_checks_root_scalar() {
-        assert_eq!(messages("word\n", "{required: always}").len(), 1);
-        assert_eq!(messages("12\n", "{required: always}"), [] as [String; 0]);
+    fn root_scalar_is_not_checked() {
+        assert_eq!(messages("word\n", "{required: always}"), [] as [String; 0]);
+        assert_eq!(messages("'word'\n", "{}"), [] as [String; 0]);
     }
 
     #[test]

@@ -142,6 +142,8 @@ fy lint --max-input-bytes 10MiB big.yaml  # Reject inputs over 10 MiB (KiB/MiB/G
 
 Every `fy` command rejects inputs over 100 MiB by default, like the library and bindings; `--max-input-bytes` (alias `--max-input-size`) raises or lowers it. `fy lint` also reads the limit from `max-input-bytes: <integer bytes>` in `.fast-yaml.yaml` (fast-yaml-only key, no size suffixes; leave it out of files shared with yamllint); the flag overrides the config key.
 
+`fy lint` reads yamllint-style configuration: `extends: default|relaxed|<file>`, yamllint rule names (`trailing-spaces`, `key-duplicates`, `anchors`), per-rule `ignore`/`ignore-from-file`, `locale: C` and the `indentation` options `spaces`, `indent-sequences` and `check-multi-line-strings`. `indentation`, `quoted-strings`, `key-ordering` and `empty-values` are checked against yamllint 1.38 output; remaining differences are listed in `specs/003-lint/spec.md`.
+
 > [!TIP]
 > Batch mode activates automatically for directories, globs, or multiple files. Supports parallel processing, include/exclude patterns, and respects `.gitignore`. A run that finds no YAML files exits 1.
 
@@ -209,7 +211,7 @@ a: 3
 - Matching is by the line where a diagnostic's span starts. An inline `disable-line` on the last line of a multi-line scalar or flow collection misses diagnostics reported on its first line.
 - Diagnostics inside block scalar bodies cannot carry a comment; use `disable` / `enable` around them.
 - `duplicate-key` is reported on the second occurrence of the key.
-- `document-start` and `empty-values` report at line 1 (`1:1`), so a full-line `disable-line` on line 1 (which targets line 2) misses them; use `disable` on line 1 or `disable-file`.
+- `document-start` reports at line 1 (`1:1`), so a full-line `disable-line` on line 1 (which targets line 2) misses it; use `disable` on line 1 or `disable-file`.
 - `lint-directive` is config-only and cannot be named in a directive.
 
 ### Parallel Processing (Document-Level)

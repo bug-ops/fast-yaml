@@ -7,20 +7,24 @@ use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_linter::config::{IndentSize, RuleName};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize, RuleName};
+use fast_yaml_linter::formatter::Findings;
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticCode as RustDiagnosticCode, DiagnosticContext as RustDiagnosticContext,
-    Formatter as RustFormatter, LintConfig as RustLintConfig, Linter as RustLinter,
-    Location as RustLocation, Severity as RustSeverity, Span as RustSpan,
-    Suggestion as RustSuggestion, TextFormatter as RustTextFormatter,
+    Excerpt as RustExcerpt, Formatter as RustFormatter, LintConfig as RustLintConfig,
+    LintError as RustLintError, Linter as RustLinter, Location as RustLocation,
+    Severity as RustSeverity, Span as RustSpan, Suggestion as RustSuggestion,
+    TextFormatter as RustTextFormatter,
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString};
 use serde_norway::{Mapping, Value};
+use std::borrow::Cow;
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::str::FromStr;
 
 #[cfg(feature = "json-output")]
@@ -417,8 +421,8 @@ impl PyDiagnostic {
     }
 }
 
-impl From<RustDiagnostic> for PyDiagnostic {
-    fn from(diagnostic: RustDiagnostic) -> Self {
+impl From<(RustDiagnostic, Option<RustDiagnosticContext>)> for PyDiagnostic {
+    fn from((diagnostic, context): (RustDiagnostic, Option<RustDiagnosticContext>)) -> Self {
         // Convert suggestions manually since Suggestion is not publicly exported
         let suggestions = diagnostic
             .suggestions
@@ -433,9 +437,9 @@ impl From<RustDiagnostic> for PyDiagnostic {
         Self {
             code: diagnostic.code.as_str().to_string(),
             severity: diagnostic.severity.into(),
-            message: diagnostic.message,
+            message: diagnostic.message.into_owned(),
             span: diagnostic.span.into(),
-            context: diagnostic.context.map(Into::into),
+            context: context.map(Into::into),
             suggestions,
         }
     }
@@ -463,7 +467,16 @@ fn parse_indent_size(size: i128) -> PyResult<IndentSize> {
 }
 
 fn parse_rule_name(code: &str) -> PyResult<RuleName> {
-    RuleName::from_str(code).map_err(|e| PyValueError::new_err(e.to_string()))
+    RuleName::from_config_key(code).map_err(|e| PyValueError::new_err(e.to_string()))
+}
+
+fn parse_path(path: Option<PathBuf>) -> PyResult<Option<CanonicalPath>> {
+    path.map(|path| {
+        CanonicalPath::new(&path).map_err(|e| {
+            PyValueError::new_err(format!("cannot resolve path '{}': {e}", path.display()))
+        })
+    })
+    .transpose()
 }
 
 /// Configuration for the linter.
@@ -539,10 +552,11 @@ impl PyLintConfig {
         if let Some(rules_obj) = rules {
             let value = ValueConverter::default()
                 .convert_rules(&rules_obj, |name| parse_rule_name(name).map(drop))?;
-            inner
-                .rules
-                .apply(value)
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+            let applied = match std::env::current_dir() {
+                Ok(dir) => inner.rules.apply_at(value, &dir),
+                Err(_) => inner.rules.apply(value),
+            };
+            applied.map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
 
         if let Some(disabled) = disabled_rules {
@@ -715,8 +729,8 @@ impl PyLintConfig {
 
     /// Gets the indentation size.
     #[getter]
-    const fn indent_size(&self) -> usize {
-        self.inner.rules.indentation.options.indent_size.get()
+    fn indent_size(&self) -> usize {
+        self.inner.rules.indentation.options.indent_size().get()
     }
 
     /// Gets the largest source accepted for linting, in bytes.
@@ -776,16 +790,25 @@ impl PyLinter {
     ///
     /// Args:
     ///     source: YAML source code as string
+    ///     path: Path of the file the source comes from, so rules whose `ignore`
+    ///         patterns match it are skipped; omit for standard input
     ///
     /// Returns:
     ///     List of diagnostics (errors, warnings, hints)
     ///
     /// Raises:
-    ///     `ValueError`: If YAML cannot be parsed at all, or the source exceeds `max_input_bytes`
-    ///         (default 100 MiB)
-    fn lint(&self, py: Python<'_>, source: &str) -> PyResult<Vec<PyDiagnostic>> {
+    ///     `ValueError`: If YAML cannot be parsed at all, the source exceeds `max_input_bytes`
+    ///         (default 100 MiB), or the directory of `path` does not exist
+    #[pyo3(signature = (source, path=None))]
+    fn lint(
+        &self,
+        py: Python<'_>,
+        source: &str,
+        path: Option<PathBuf>,
+    ) -> PyResult<Vec<PyDiagnostic>> {
+        let path = parse_path(path)?;
         // Release GIL during CPU-intensive linting
-        let result = py.detach(|| self.inner.lint(source));
+        let result = py.detach(|| lint_with_excerpts(&self.inner, source, path.as_ref()));
 
         result
             .map(|diagnostics| diagnostics.into_iter().map(Into::into).collect())
@@ -796,6 +819,88 @@ impl PyLinter {
     fn __repr__(&self) -> String {
         "Linter()".to_string()
     }
+}
+
+/// Rust diagnostics with the excerpts the Python diagnostics carry.
+fn given_findings(
+    diagnostics: &Bound<'_, PyList>,
+) -> PyResult<Vec<(RustDiagnostic, Option<RustDiagnosticContext>)>> {
+    diagnostics
+        .iter()
+        .map(|item| {
+            let py_diag: PyDiagnostic = item.extract()?;
+
+            let context = py_diag.context.map(|py_ctx| RustDiagnosticContext {
+                lines: py_ctx
+                    .lines
+                    .into_iter()
+                    .map(|py_line| RustContextLine {
+                        line_number: py_line.line_number,
+                        content: py_line.content,
+                        column_offset: py_line.column_offset,
+                        truncated_end: py_line.truncated_end,
+                        highlights: py_line.highlights,
+                    })
+                    .collect(),
+            });
+
+            let suggestions = py_diag
+                .suggestions
+                .into_iter()
+                .map(|py_suggestion| RustSuggestion {
+                    message: py_suggestion.message,
+                    span: RustSpan::new(
+                        RustLocation::new(
+                            py_suggestion.span.start.line,
+                            py_suggestion.span.start.column,
+                            py_suggestion.span.start.offset,
+                        ),
+                        RustLocation::new(
+                            py_suggestion.span.end.line,
+                            py_suggestion.span.end.column,
+                            py_suggestion.span.end.offset,
+                        ),
+                    ),
+                    replacement: py_suggestion.replacement,
+                })
+                .collect();
+
+            let diagnostic = RustDiagnostic {
+                code: RustDiagnosticCode::new(py_diag.code),
+                severity: py_diag.severity.inner,
+                message: Cow::Owned(py_diag.message),
+                span: RustSpan::new(
+                    RustLocation::new(
+                        py_diag.span.start.line,
+                        py_diag.span.start.column,
+                        py_diag.span.start.offset,
+                    ),
+                    RustLocation::new(
+                        py_diag.span.end.line,
+                        py_diag.span.end.column,
+                        py_diag.span.end.offset,
+                    ),
+                ),
+                excerpt: RustExcerpt::Omitted,
+                suggestions,
+            };
+            Ok((diagnostic, context))
+        })
+        .collect()
+}
+
+/// Lints `source` and cuts the excerpt of every diagnostic from the same BOM-free text.
+fn lint_with_excerpts(
+    linter: &RustLinter,
+    source: &str,
+    path: Option<&CanonicalPath>,
+) -> Result<Vec<(RustDiagnostic, Option<RustDiagnosticContext>)>, RustLintError> {
+    let input = linter.source(source)?;
+    let diagnostics = match path {
+        Some(path) => linter.lint_source_file(&input, path)?,
+        None => linter.lint_source(&input)?,
+    };
+    Ok(Findings::cut(diagnostics, &input.context()))
 }
 
 /// Format diagnostics as colored terminal output.
@@ -825,71 +930,9 @@ impl PyTextFormatter {
     /// Returns:
     ///     Formatted string
     fn format(&self, diagnostics: &Bound<'_, PyList>, source: &str) -> PyResult<String> {
-        let rust_diagnostics: Vec<RustDiagnostic> = diagnostics
-            .iter()
-            .map(|item| {
-                let py_diag: PyDiagnostic = item.extract()?;
-
-                // Convert context back to Rust type
-                let context = py_diag.context.map(|py_ctx| RustDiagnosticContext {
-                    lines: py_ctx
-                        .lines
-                        .into_iter()
-                        .map(|py_line| RustContextLine {
-                            line_number: py_line.line_number,
-                            content: py_line.content,
-                            column_offset: py_line.column_offset,
-                            truncated_end: py_line.truncated_end,
-                            highlights: py_line.highlights,
-                        })
-                        .collect(),
-                });
-
-                // Convert suggestions back to Rust type
-                let suggestions = py_diag
-                    .suggestions
-                    .into_iter()
-                    .map(|py_suggestion| RustSuggestion {
-                        message: py_suggestion.message,
-                        span: RustSpan::new(
-                            RustLocation::new(
-                                py_suggestion.span.start.line,
-                                py_suggestion.span.start.column,
-                                py_suggestion.span.start.offset,
-                            ),
-                            RustLocation::new(
-                                py_suggestion.span.end.line,
-                                py_suggestion.span.end.column,
-                                py_suggestion.span.end.offset,
-                            ),
-                        ),
-                        replacement: py_suggestion.replacement,
-                    })
-                    .collect();
-
-                Ok(RustDiagnostic {
-                    code: RustDiagnosticCode::new(py_diag.code),
-                    severity: py_diag.severity.inner,
-                    message: py_diag.message,
-                    span: RustSpan::new(
-                        RustLocation::new(
-                            py_diag.span.start.line,
-                            py_diag.span.start.column,
-                            py_diag.span.start.offset,
-                        ),
-                        RustLocation::new(
-                            py_diag.span.end.line,
-                            py_diag.span.end.column,
-                            py_diag.span.end.offset,
-                        ),
-                    ),
-                    context,
-                    suggestions,
-                })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        Ok(self.inner.format(&rust_diagnostics, source))
+        let _ = source;
+        let findings = given_findings(diagnostics)?;
+        Ok(self.inner.format(Findings::Given(&findings)))
     }
 }
 
@@ -912,71 +955,9 @@ impl PyJsonFormatter {
     }
 
     fn format(&self, diagnostics: &Bound<'_, PyList>, source: &str) -> PyResult<String> {
-        let rust_diagnostics: Vec<RustDiagnostic> = diagnostics
-            .iter()
-            .map(|item| {
-                let py_diag: PyDiagnostic = item.extract()?;
-
-                // Convert context back to Rust type
-                let context = py_diag.context.map(|py_ctx| RustDiagnosticContext {
-                    lines: py_ctx
-                        .lines
-                        .into_iter()
-                        .map(|py_line| RustContextLine {
-                            line_number: py_line.line_number,
-                            content: py_line.content,
-                            column_offset: py_line.column_offset,
-                            truncated_end: py_line.truncated_end,
-                            highlights: py_line.highlights,
-                        })
-                        .collect(),
-                });
-
-                // Convert suggestions back to Rust type
-                let suggestions = py_diag
-                    .suggestions
-                    .into_iter()
-                    .map(|py_suggestion| RustSuggestion {
-                        message: py_suggestion.message,
-                        span: RustSpan::new(
-                            RustLocation::new(
-                                py_suggestion.span.start.line,
-                                py_suggestion.span.start.column,
-                                py_suggestion.span.start.offset,
-                            ),
-                            RustLocation::new(
-                                py_suggestion.span.end.line,
-                                py_suggestion.span.end.column,
-                                py_suggestion.span.end.offset,
-                            ),
-                        ),
-                        replacement: py_suggestion.replacement,
-                    })
-                    .collect();
-
-                Ok(RustDiagnostic {
-                    code: RustDiagnosticCode::new(py_diag.code),
-                    severity: py_diag.severity.inner,
-                    message: py_diag.message,
-                    span: RustSpan::new(
-                        RustLocation::new(
-                            py_diag.span.start.line,
-                            py_diag.span.start.column,
-                            py_diag.span.start.offset,
-                        ),
-                        RustLocation::new(
-                            py_diag.span.end.line,
-                            py_diag.span.end.column,
-                            py_diag.span.end.offset,
-                        ),
-                    ),
-                    context,
-                    suggestions,
-                })
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        Ok(self.inner.format(&rust_diagnostics, source))
+        let _ = source;
+        let findings = given_findings(diagnostics)?;
+        Ok(self.inner.format(Findings::Given(&findings)))
     }
 }
 
@@ -1002,15 +983,21 @@ impl PyJsonFormatter {
 ///     ...     `print(f"{diag.severity.as_str()}`: {diag.message}")
 ///     error: duplicate key 'key' found
 #[pyfunction]
-#[pyo3(signature = (source, config=None))]
-fn lint(py: Python<'_>, source: &str, config: Option<PyLintConfig>) -> PyResult<Vec<PyDiagnostic>> {
+#[pyo3(signature = (source, config=None, *, path=None))]
+fn lint(
+    py: Python<'_>,
+    source: &str,
+    config: Option<PyLintConfig>,
+    path: Option<PathBuf>,
+) -> PyResult<Vec<PyDiagnostic>> {
+    let path = parse_path(path)?;
     // Release GIL during CPU-intensive linting
     let result = py.detach(|| {
         let linter = match config {
             Some(cfg) => RustLinter::with_config(cfg.inner),
             None => RustLinter::with_all_rules(),
         };
-        linter.lint(source)
+        lint_with_excerpts(&linter, source, path.as_ref())
     });
 
     result

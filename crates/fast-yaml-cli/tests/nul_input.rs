@@ -1,14 +1,12 @@
 //! Regression tests for #417 and #393: NUL input fails with a message; `.5` and `+.inf` are floats.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::cargo_bin_cmd;
 use std::time::Duration;
 
 fn run(args: &[&str], stdin: &[u8]) -> std::process::Output {
-    Command::cargo_bin("fy")
-        .unwrap()
+    cargo_bin_cmd!("fy")
         .args(args)
         .write_stdin(stdin)
         .timeout(Duration::from_secs(10))
@@ -58,11 +56,7 @@ fn file_and_directory_inputs_with_nul_fail_and_stay_unmodified() {
         vec!["format", "-i", file.to_str().unwrap()],
         vec!["format", "-i", dir.path().to_str().unwrap()],
     ] {
-        let output = Command::cargo_bin("fy")
-            .unwrap()
-            .args(&args)
-            .output()
-            .unwrap();
+        let output = cargo_bin_cmd!("fy").args(&args).output().unwrap();
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         assert!(
             String::from_utf8_lossy(&output.stderr).contains("NUL"),

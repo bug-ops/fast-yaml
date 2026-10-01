@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -567,12 +568,18 @@ class lint:  # noqa: N801
         def __init__(self, config: "lint.LintConfig | None" = None) -> None: ...
         @staticmethod
         def with_all_rules() -> "lint.Linter": ...
-        def lint(self, source: str) -> list["lint.Diagnostic"]:
+        def lint(
+            self, source: str, path: str | os.PathLike[str] | None = None
+        ) -> list["lint.Diagnostic"]:
             """Lint YAML source.
 
+            ``path`` is the file the source comes from; rules whose ``ignore`` patterns match
+            it are skipped.
+
             Raises:
-                ValueError: If the YAML cannot be parsed at all, or the source exceeds
-                    ``max_input_bytes`` (default 100 MiB)
+                ValueError: If the YAML cannot be parsed at all, the source exceeds
+                    ``max_input_bytes`` (default 100 MiB), or the directory of ``path`` does
+                    not exist
             """
             ...
         def __repr__(self) -> str: ...
@@ -590,12 +597,21 @@ class lint:  # noqa: N801
         def format(self, diagnostics: list["lint.Diagnostic"], source: str) -> str: ...
 
     @staticmethod
-    def lint(source: str, config: "lint.LintConfig | None" = None) -> list["lint.Diagnostic"]:
+    def lint(
+        source: str,
+        config: "lint.LintConfig | None" = None,
+        *,
+        path: str | os.PathLike[str] | None = None,
+    ) -> list["lint.Diagnostic"]:
         """Lint YAML source with optional configuration.
 
+        ``path`` is the file the source comes from; rules whose ``ignore`` patterns match it
+        are skipped.
+
         Raises:
-            ValueError: If the YAML cannot be parsed at all, or the source exceeds
-                ``max_input_bytes`` (default 100 MiB)
+            ValueError: If the YAML cannot be parsed at all, the source exceeds
+                ``max_input_bytes`` (default 100 MiB), or the directory of ``path`` does not
+                exist
         """
         ...
 

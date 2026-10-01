@@ -1,16 +1,15 @@
 //! End-to-end tests for the `--max-input-bytes` cap on single-file and stdin input.
 
 #![allow(clippy::missing_docs_in_private_items)]
-#![allow(deprecated)] // Command::cargo_bin is deprecated but still works
 
-use assert_cmd::Command;
+use assert_cmd::{Command, cargo_bin_cmd};
 use std::fs;
 use tempfile::TempDir;
 
 const YAML: &str = "key: value\n";
 
 fn fy(args: &[&str]) -> Command {
-    let mut cmd = Command::cargo_bin("fy").unwrap();
+    let mut cmd = cargo_bin_cmd!("fy");
     cmd.args(args);
     cmd
 }
