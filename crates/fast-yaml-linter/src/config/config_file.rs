@@ -429,16 +429,28 @@ fn config_root(path: &Path) -> Result<PathBuf, ConfigFileError> {
 }
 
 impl ConfigFileError {
-    /// Replaces errors that quote the file's text by [`ConfigFileError::Malformed`], for a file
-    /// that the user's config merely points at.
+    /// Replaces errors that may quote the file's text by [`ConfigFileError::Malformed`], for a
+    /// file that the user's config merely points at. Every variant is classified, so a new one
+    /// does not compile until it is.
     fn without_content(self) -> Self {
         match self {
-            Self::UnknownKey { path, .. }
-            | Self::UnsupportedKey { path, .. }
+            Self::Decode { path, .. }
             | Self::Parse { path, .. }
             | Self::Rejected { path, .. }
-            | Self::LimitNotPositive { path, .. } => Self::Malformed { path },
-            other => other,
+            | Self::InvalidRules { path, .. }
+            | Self::UnsupportedKey { path, .. }
+            | Self::LimitNotPositive { path, .. }
+            | Self::LimitOutOfRange { path, .. }
+            | Self::UnknownKey { path, .. }
+            | Self::InvalidKey { path, .. } => Self::Malformed { path },
+            Self::Io { .. }
+            | Self::NotAMapping { .. }
+            | Self::NotRegularFile { .. }
+            | Self::TooLarge { .. }
+            | Self::Malformed { .. }
+            | Self::Extended { .. }
+            | Self::ExtendsCycle { .. }
+            | Self::ExtendsTooDeep { .. } => self,
         }
     }
 }
@@ -1462,8 +1474,17 @@ mod tests {
         for (base, secret) in [
             ("sekret-key: 1\n", "sekret-key"),
             ("rules: [sekret-value\n", "sekret-value"),
+            ("rules: {sekret-rule: enable}\n", "sekret-rule"),
+            ("rules: {braces: {sekret-option: 1}}\n", "sekret-option"),
+            ("rules: {braces: sekret-severity}\n", "sekret-severity"),
             ("max-input-bytes: sekret-value\n", "sekret-value"),
+            ("max-input-bytes: 0\n# sekret-value\n", "sekret-value"),
             ("locale: sekret-value\n", "locale"),
+            ("extends: [sekret-value]\n", "sekret-value"),
+            ("ignore: 5\n# sekret-value\n", "sekret-value"),
+            ("ignore: ['[sekret-pattern']\n", "sekret-pattern"),
+            ("yaml-files: [sekret-value, 1]\n", "sekret-value"),
+            ("- sekret-value\n", "sekret-value"),
         ] {
             write_file(&dir, "base.yaml", base);
             let err = load_in(&dir, "extends: base.yaml\n").unwrap_err();
@@ -1474,8 +1495,13 @@ mod tests {
                 source = cause.source();
             }
             assert!(!chain.contains(secret), "{base}: {chain}");
-            assert!(chain.contains("base.yaml"), "{chain}");
+            assert!(chain.contains("base.yaml"), "{base}: {chain}");
         }
+        let mut bytes = b"a: 1\n#".to_vec();
+        bytes.extend_from_slice(&[0xff, 0xfe, 0xfd]);
+        std::fs::write(dir.path().join("base.yaml"), bytes).unwrap();
+        let err = load_in(&dir, "extends: base.yaml\n").unwrap_err();
+        assert!(innermost(err).to_string().contains("base.yaml"));
     }
 
     #[test]
