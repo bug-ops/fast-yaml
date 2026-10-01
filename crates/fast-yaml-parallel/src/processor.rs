@@ -6,7 +6,7 @@ use crate::chunker::{Chunk, chunk_documents};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use fast_yaml_core::limits::StreamBudget;
-use fast_yaml_core::{NormalizedInput, ParseError, ParseResult, Parser, Value};
+use fast_yaml_core::{LoadOptions, NormalizedInput, ParseError, ParseResult, Parser, Value};
 use rayon::prelude::*;
 
 /// Rejects a document count above the configured maximum.
@@ -49,10 +49,11 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
 
 fn parse_chunks(chunks: &[Chunk<'_>], config: &Config) -> Result<Vec<Value>> {
     let budget = StreamBudget::new(config.parse_limits());
+    let options = LoadOptions::new().with_keys(config.key_domain());
 
     // Parallelism is not worthwhile for small inputs
     if should_use_sequential(chunks, config) {
-        return parse_sequential(chunks, &budget);
+        return parse_sequential(chunks, &budget, options);
     }
 
     // Use global thread pool (fast path) or custom pool if explicitly configured
@@ -61,10 +62,10 @@ fn parse_chunks(chunks: &[Chunk<'_>], config: &Config) -> Result<Vec<Value>> {
         && workers != rayon::current_num_threads()
     {
         let pool = configure_thread_pool(config)?;
-        return pool.install(|| parse_chunks_parallel(chunks, &budget));
+        return pool.install(|| parse_chunks_parallel(chunks, &budget, options));
     }
 
-    parse_chunks_parallel(chunks, &budget)
+    parse_chunks_parallel(chunks, &budget, options)
 }
 
 /// Determines if sequential processing is more efficient.
@@ -91,10 +92,14 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
 }
 
 /// Parse chunks sequentially (fallback for small inputs).
-fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<Value>> {
+fn parse_sequential(
+    chunks: &[Chunk<'_>],
+    budget: &StreamBudget,
+    options: LoadOptions,
+) -> Result<Vec<Value>> {
     let mut docs = Vec::with_capacity(chunks.len());
     for chunk in chunks {
-        let parsed = parse_chunk(chunk, budget);
+        let parsed = parse_chunk(chunk, budget, options);
         docs.extend(collect_chunk(parsed, docs.len())?);
     }
     Ok(docs)
@@ -104,8 +109,12 @@ fn parse_sequential(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<V
 ///
 /// Error lines are relocated to whole-input coordinates; the document index is added by
 /// [`collect_chunk`] because a chunk may hold several documents.
-fn parse_chunk(chunk: &Chunk<'_>, budget: &StreamBudget) -> ParseResult<Vec<Value>> {
-    Parser::parse_normalized(&chunk.input, budget)
+fn parse_chunk(
+    chunk: &Chunk<'_>,
+    budget: &StreamBudget,
+    options: LoadOptions,
+) -> ParseResult<Vec<Value>> {
+    Parser::parse_normalized(&chunk.input, budget, options)
         .map_err(|source| source.relocated(chunk.origin.line, 0))
 }
 
@@ -135,10 +144,14 @@ fn configure_thread_pool(config: &Config) -> Result<rayon::ThreadPool> {
 /// Uses indexed parallel iterator to preserve document order; the error of the lowest-index
 /// failing chunk is returned. Whether a stream exceeds the shared alias budget is
 /// deterministic, but which chunk reports it depends on scheduling.
-fn parse_chunks_parallel(chunks: &[Chunk<'_>], budget: &StreamBudget) -> Result<Vec<Value>> {
+fn parse_chunks_parallel(
+    chunks: &[Chunk<'_>],
+    budget: &StreamBudget,
+    options: LoadOptions,
+) -> Result<Vec<Value>> {
     let parsed: Vec<ParseResult<Vec<Value>>> = chunks
         .par_iter()
-        .map(|chunk| parse_chunk(chunk, budget))
+        .map(|chunk| parse_chunk(chunk, budget, options))
         .collect();
     let mut docs = Vec::with_capacity(parsed.len());
     for chunk_docs in parsed {
@@ -310,11 +323,11 @@ mod tests {
             })
         };
         for chunk in &chunks {
-            assert!(parse_chunk(chunk, &fresh()).is_ok());
+            assert!(parse_chunk(chunk, &fresh(), LoadOptions::default()).is_ok());
         }
         for result in [
-            parse_sequential(&chunks, &fresh()),
-            parse_chunks_parallel(&chunks, &fresh()),
+            parse_sequential(&chunks, &fresh(), LoadOptions::default()),
+            parse_chunks_parallel(&chunks, &fresh(), LoadOptions::default()),
         ] {
             assert!(matches!(
                 result,
@@ -424,7 +437,7 @@ mod tests {
             },
         ];
 
-        let result = parse_sequential(&chunks, &budget());
+        let result = parse_sequential(&chunks, &budget(), LoadOptions::default());
         assert!(result.is_err());
 
         if let Err(Error::Parse { index, .. }) = result {
@@ -465,7 +478,7 @@ mod tests {
             },
         ];
 
-        let docs = parse_chunks_parallel(&chunks, &budget()).unwrap();
+        let docs = parse_chunks_parallel(&chunks, &budget(), LoadOptions::default()).unwrap();
         assert_eq!(docs.len(), 3);
     }
 
@@ -486,7 +499,7 @@ mod tests {
             },
         ];
 
-        let result = parse_chunks_parallel(&chunks, &budget());
+        let result = parse_chunks_parallel(&chunks, &budget(), LoadOptions::default());
         assert!(result.is_err());
 
         if let Err(Error::Parse { index, .. }) = result {
@@ -706,6 +719,34 @@ mod tests {
                 panic!("{input:?}: expected parse error");
             };
             assert_eq!(expected, source.to_string(), "{input:?}");
+        }
+    }
+
+    #[test]
+    fn test_key_domain_errors_match_parse_all_with_options() {
+        use fast_yaml_core::KeyDomain;
+        use fast_yaml_core::limits::ParseLimits;
+
+        for (domain, input) in [
+            (
+                KeyDomain::StringKeys,
+                "a: 1\n---\nb: 2\n---\nm:\n  1: x\n  '1': y\n",
+            ),
+            (KeyDomain::Python, "---\na: 1\n---\n{1: x, true: y}\n"),
+            (KeyDomain::Python, "{1: x, 1.0: y}\n"),
+        ] {
+            let options = LoadOptions::new().with_keys(domain);
+            let expected = Parser::parse_all_with_options(input, &ParseLimits::default(), options)
+                .unwrap_err()
+                .to_string();
+            for config in [sequential(), Config::default()] {
+                let config = config.with_key_domain(domain);
+                let Err(Error::Parse { source, .. }) = process_parallel(input, &config) else {
+                    panic!("{input:?}: expected key error");
+                };
+                assert_eq!(expected, source.to_string(), "{input:?}");
+            }
+            assert!(process_parallel(input, &sequential()).is_ok(), "{input:?}");
         }
     }
 }

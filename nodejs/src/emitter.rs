@@ -91,16 +91,22 @@ impl Default for DumpOptions {
 ///
 /// # Arguments
 ///
-/// * `data` - A JavaScript object to serialize (Object, Array, string, number, boolean, null)
+/// * `data` - A JavaScript object to serialize (Object, Array, Set, Map, string, number, boolean, null)
 /// * `options` - Optional serialization options
 ///
 /// # Returns
 ///
 /// A YAML string representation of the object
 ///
+/// # Sets and maps
+///
+/// A `Set` is written as a `!!set` and a `Map` as a mapping. `safeLoad` reads a `!!set` back as an
+/// object with `null` values (js-yaml's form), so the mapping is one-way.
+///
 /// # Errors
 ///
-/// Throws an error if the object contains non-serializable types.
+/// Throws an error if the object contains non-serializable types, or if two `Set` members or
+/// `Map` keys are the same YAML value.
 ///
 /// # Example
 ///
@@ -117,12 +123,12 @@ pub fn safe_dump(
     options: Option<DumpOptions>,
 ) -> napi::Result<String> {
     let opts = options.unwrap_or_default();
-    throw_or_default(env, dump_one(data, &opts))
+    throw_or_default(env, dump_one(env, data, &opts))
 }
 
-fn dump_one(data: Unknown, opts: &DumpOptions) -> napi::Result<String> {
+fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> napi::Result<String> {
     let mut budget = DumpBudget::default();
-    let mut yaml = js_to_yaml(data, &mut budget)?;
+    let mut yaml = js_to_yaml(env, data, &mut budget)?;
     if opts.sort_keys.unwrap_or(false) {
         yaml = sort_yaml_keys(&yaml);
     }
@@ -169,14 +175,14 @@ pub fn safe_dump_all(
     options: Option<DumpOptions>,
 ) -> napi::Result<String> {
     let opts = options.unwrap_or_default();
-    throw_or_default(env, dump_many(documents, &opts))
+    throw_or_default(env, dump_many(env, documents, &opts))
 }
 
-fn dump_many(documents: Vec<Unknown>, opts: &DumpOptions) -> napi::Result<String> {
+fn dump_many(env: Env, documents: Vec<Unknown>, opts: &DumpOptions) -> napi::Result<String> {
     let mut budget = DumpBudget::default();
     let mut yamls = Vec::with_capacity(documents.len());
     for doc in documents {
-        let mut yaml = js_to_yaml(doc, &mut budget)?;
+        let mut yaml = js_to_yaml(env, doc, &mut budget)?;
         if opts.sort_keys.unwrap_or(false) {
             yaml = sort_yaml_keys(&yaml);
         }

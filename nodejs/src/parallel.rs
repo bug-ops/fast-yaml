@@ -5,6 +5,7 @@
 use crate::conversion::yaml_to_js;
 use crate::limits::{max_documents, max_input_bytes, parse_limits, reject_legacy_max_input_size};
 use crate::options::{U32_MAX, checked_opt_uint};
+use fast_yaml_core::KeyDomain;
 use fast_yaml_parallel::{Config as RustParallelConfig, parse_parallel_with_config};
 use napi::{
     Env, Task,
@@ -49,7 +50,7 @@ pub struct ParallelConfig {
     /// Maximum number of documents allowed (integer, 1..=10000000, default: 100000).
     pub max_documents: Option<f64>,
 
-    /// Maximum collection nesting depth (integer, 1..=512, default: 256).
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections (`[]`, `{}`) stop at 255 levels whatever this is.
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
     pub max_depth: Option<f64>,
 
@@ -74,7 +75,7 @@ impl ParallelConfig {
         let thread_count = checked_opt_uint("threadCount", self.thread_count, 0, MAX_THREADS)?;
         let min_chunk_size = checked_opt_uint("minChunkSize", self.min_chunk_size, 1, U32_MAX)?;
 
-        let mut config = RustParallelConfig::new();
+        let mut config = RustParallelConfig::new().with_key_domain(KeyDomain::StringKeys);
 
         if let Some(count) = thread_count {
             config = config.with_workers(Some(count));

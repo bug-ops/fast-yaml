@@ -234,11 +234,10 @@ person:
       expect(() => safeLoad(doc)).toThrow(/merge key/);
     });
 
-    it('should keep only the last of duplicate plain << keys', () => {
-      const result = safeLoad('a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n') as {
-        m: Record<string, number>;
-      };
-      expect(result.m).toEqual({ y: 2 });
+    it('should reject duplicate plain << keys', () => {
+      expect(() => safeLoad('a: &a {x: 1}\nb: &b {y: 2}\nm:\n  <<: *a\n  <<: *b\n')).toThrow(
+        /duplicate merge key.*line 5, column 3/
+      );
     });
 
     it('should merge through an alias to a plain << key scalar', () => {
@@ -431,7 +430,14 @@ describe('merge tag and verbatim core tags', () => {
 
 describe('keys that share a JavaScript property name', () => {
   it.each(['1: a\n1.0: b\n', "1: a\n'1': b\n", "true: a\n'true': b\n"])('throws for %j', (doc) => {
-    expect(() => safeLoad(doc)).toThrow(/same JavaScript property/);
+    expect(() => safeLoad(doc)).toThrow(/is distinct in YAML but converts to the same string key/);
+  });
+
+  it('reports the position of the later key', () => {
+    expect(() => safeLoad("a: 1\nm:\n  1: x\n  '1': y\n")).toThrow(/at line 4, column 3/);
+    expect(() => safeLoadAll("a: 1\n---\n1: x\n'1': y\n")).toThrow(
+      /line 4, column 1 \(document 2\)/
+    );
   });
 
   it('keeps equal big-integer spellings as one key', () => {

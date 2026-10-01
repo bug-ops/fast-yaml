@@ -156,6 +156,11 @@ pub enum MergeError {
     /// The value is a `!!set`, which is not a mapping for merging purposes.
     #[error("merge key `<<` cannot merge a `!!set`")]
     SetSource,
+    /// A mapping has more than one `<<` key.
+    #[error(
+        "duplicate merge key `<<`; merge several mappings with one `<<` and a sequence, where earlier entries take precedence"
+    )]
+    DuplicateKey,
 }
 
 /// Representation-independent view of a `<<` value.
@@ -270,8 +275,8 @@ fn absorb<T: MergeTarget>(
 
 /// Fills `target` from a `<<` value followed by the explicit pairs of the mapping.
 ///
-/// `merge` is the single `<<` value (a repeated `<<` keeps only the last, like any
-/// duplicate key). Merged entries are added first; a key already present is skipped,
+/// `merge` is the single `<<` value; loading rejects a repeated `<<` unless
+/// [`DuplicateMergeKeys::LastWins`](crate::DuplicateMergeKeys::LastWins) keeps the last. Merged entries are added first; a key already present is skipped,
 /// so the earlier sequence item wins. Explicit pairs are then applied and always win.
 ///
 /// # Errors

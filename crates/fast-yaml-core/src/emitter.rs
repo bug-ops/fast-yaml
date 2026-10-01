@@ -2442,12 +2442,12 @@ mod tests {
         let doc = Value::Mapping(map);
         assert_eq!(
             Emitter::emit_str(&doc).unwrap(),
-            "a: 1.0E5\nb: 0.10\nc: 100000.0\n"
+            "a: 1.0E+5\nb: 0.10\nc: 100000.0\n"
         );
         let flow = EmitterConfig::new().with_default_flow_style(Some(true));
         assert_eq!(
             Emitter::emit_str_with_config(&doc, &flow).unwrap(),
-            "{a: 1.0E5, b: 0.10, c: 100000.0}\n"
+            "{a: 1.0E+5, b: 0.10, c: 100000.0}\n"
         );
     }
 

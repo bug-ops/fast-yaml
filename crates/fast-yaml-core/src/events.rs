@@ -404,7 +404,7 @@ mod tests {
 
     #[test]
     fn collection_starts_carry_anchor_and_tag() {
-        let all = default_events("&s !!set {a: 1}\n").unwrap();
+        let all = default_events("&s !!set {a}\n").unwrap();
         let Event::MappingStart { anchor, tag } = &all[2] else {
             panic!("mapping start expected, got {:?}", all[2]);
         };

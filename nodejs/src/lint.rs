@@ -218,7 +218,7 @@ pub struct LintConfig {
     /// under depth and size limits, so deeply nested or cyclic input is an `InvalidArg` error.
     #[napi(ts_type = "LintRulesConfig")]
     pub rules: Option<RuleInput>,
-    /// Maximum collection nesting depth (integer, 1..=512, default: 256).
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections (`[]`, `{}`) stop at 255 levels whatever this is.
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
     pub max_depth: Option<f64>,
     /// Maximum estimated alias-expansion bytes (integer, 1..=1073741824, default: 67108864).

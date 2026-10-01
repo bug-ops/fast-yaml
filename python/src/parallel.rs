@@ -11,10 +11,9 @@ use crate::conversion::value_to_python;
 use crate::limits;
 use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes};
-use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, MaxDocuments};
+use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, MaxDocuments};
 use fast_yaml_parallel::{
-    Config as RustParallelConfig, Error as ParallelError, parse_parallel as rust_parse_parallel,
-    parse_parallel_with_config,
+    Config as RustParallelConfig, Error as ParallelError, parse_parallel_with_config,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -88,7 +87,7 @@ impl PyParallelConfig {
             ));
         }
 
-        let config = RustParallelConfig::new()
+        let config = python_config()
             .with_workers(thread_count)
             .with_sequential_threshold(min_chunk_size)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
@@ -280,6 +279,11 @@ fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> usize {
     optimal.min(128)
 }
 
+/// Configuration whose keys follow Python dict equality, so `1` and `true` collide with a position.
+fn python_config() -> RustParallelConfig {
+    RustParallelConfig::new().with_key_domain(KeyDomain::Python)
+}
+
 /// Parse multi-document YAML in parallel.
 ///
 /// Automatically splits YAML documents at '---' boundaries and
@@ -316,7 +320,7 @@ fn parse_parallel(
 ) -> PyResult<Py<PyAny>> {
     let result = py.detach(|| match config {
         Some(cfg) => parse_parallel_with_config(source, &cfg.inner),
-        None => rust_parse_parallel(source),
+        None => parse_parallel_with_config(source, &python_config()),
     });
 
     let values = result.map_err(|e: ParallelError| PyValueError::new_err(e.to_string()))?;

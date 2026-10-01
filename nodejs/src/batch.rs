@@ -138,7 +138,7 @@ pub struct BatchConfig {
     pub width: Option<f64>,
     /// Sort dictionary keys alphabetically (default: false)
     pub sort_keys: Option<bool>,
-    /// Maximum collection nesting depth (integer, 1..=512, default: 256);
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections stop at 255 levels;
     /// applies to `processFiles` and `formatFiles`.
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` rejects input nested deeper than this limit.
     pub max_depth: Option<f64>,

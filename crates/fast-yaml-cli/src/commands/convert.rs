@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_core::value::quote_key;
-use fast_yaml_core::{BigInt, Emitter, Float, Mapping, Parser, Value};
+use fast_yaml_core::{BigInt, Emitter, Float, KeyDomain, LoadOptions, Mapping, Parser, Value};
 use serde_json;
 
 use crate::cli::ConvertFormat;
@@ -34,7 +34,8 @@ impl ConvertCommand {
     /// Convert YAML to JSON
     fn yaml_to_json(&self, input: &InputSource, output: &OutputWriter) -> Result<()> {
         // Parse all YAML documents to support multi-document streams
-        let docs = Parser::parse_all_with_limits(input.as_str(), &self.limits)
+        let options = LoadOptions::new().with_keys(KeyDomain::StringKeys);
+        let docs = Parser::parse_all_with_options(input.as_str(), &self.limits, options)
             .context("Failed to parse YAML")?;
 
         if docs.is_empty() {

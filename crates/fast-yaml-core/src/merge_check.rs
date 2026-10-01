@@ -1,15 +1,18 @@
-//! Event-based `<<` merge value validation shared by the loader and the streaming formatter.
+//! Event-based `<<` merge and `!!set` validation shared by the loader and the streaming formatter.
 //!
 //! Validating on the event stream, before the loader collapses equal keys, makes every entry
-//! point report the same error: the first invalid merge value in document order, positioned at
-//! its `<<` key.
+//! point report the same error: the first invalid merge value, repeated `<<` key or set member
+//! value in document order, positioned at its key.
 
 use std::collections::HashMap;
 
 use saphyr_parser::{Event, Span};
 
 use crate::error::{ParseError, SourcePosition};
+use crate::events::ScalarStyle;
 use crate::merge::{MergeError, MergeKeyTracker, NodeRole, is_core_set_tag};
+use crate::options::DuplicateMergeKeys;
+use crate::scalar::{ResolvedScalar, resolve_scalar_raw};
 
 /// What a finished node is, as far as merge validation cares.
 #[derive(Debug, Clone, Copy)]
@@ -17,6 +20,9 @@ enum NodeKind {
     Mapping,
     Set,
     Scalar,
+    Null,
+    /// A node whose anchor is defined but whose end has not been seen.
+    Open,
     /// Sequence, with the verdict of its items taken as merge sources.
     Sequence(Result<(), MergeError>),
 }
@@ -26,9 +32,15 @@ impl NodeKind {
         match self {
             Self::Mapping => Ok(()),
             Self::Set => Err(MergeError::SetSource),
-            Self::Scalar => Err(MergeError::NotMapping),
+            Self::Scalar | Self::Null | Self::Open => Err(MergeError::NotMapping),
             Self::Sequence(items) => items,
         }
+    }
+
+    /// Whether the node can be the value of a `!!set` member: only null, and a still-open node,
+    /// which is the loader's recursive alias to report.
+    const fn is_set_value(self) -> bool {
+        matches!(self, Self::Null | Self::Open)
     }
 
     const fn as_merge_item(self) -> Result<(), MergeError> {
@@ -41,10 +53,13 @@ impl NodeKind {
 
 #[derive(Debug)]
 enum OpenKind {
-    /// Mapping; `set` marks a `!!set`, `merge_key` the span of a just-seen `<<` key.
+    /// Mapping; `set` marks a `!!set`, `merge_key` the span of a just-seen `<<` key, `member`
+    /// that of a just-seen set member, and `merge_seen` whether the mapping has a `<<` already.
     Mapping {
         set: bool,
         merge_key: Option<Span>,
+        member: Option<Span>,
+        merge_seen: bool,
     },
     Sequence(Result<(), MergeError>),
 }
@@ -57,11 +72,13 @@ struct Open {
     span: Span,
 }
 
-/// Rejects `<<` values that cannot be merged, from the parser event stream.
+/// Rejects `<<` values that cannot be merged, repeated `<<` keys and `!!set` members that carry a
+/// value, from the parser event stream.
 ///
-/// Feed it every event of one stream, in order. It is the single implementation of merge-value
+/// Feed it every event of one stream, in order. It is the single implementation of this
 /// validation: the core loader, the streaming formatter and the Python loader all use it, so each
-/// reports the same first invalid merge in document order.
+/// reports the same first invalid node in document order. A repeated `<<` is an error unless the
+/// validator is created with [`DuplicateMergeKeys::LastWins`].
 ///
 /// Bindings reach it through [`EventStream`](crate::events::EventStream).
 #[derive(Debug, Default)]
@@ -70,16 +87,29 @@ pub struct MergeKeyValidator {
     open: Vec<Open>,
     anchors: HashMap<usize, NodeKind>,
     documents: usize,
+    duplicates: DuplicateMergeKeys,
 }
 
 impl MergeKeyValidator {
+    /// Creates a validator that treats a repeated `<<` as `duplicates` says.
+    ///
+    /// [`MergeKeyValidator::default`] rejects it.
+    #[must_use]
+    pub fn new(duplicates: DuplicateMergeKeys) -> Self {
+        Self {
+            duplicates,
+            ..Self::default()
+        }
+    }
+
     /// Feeds the next event with its span; returns the role of the node it starts, if any.
     ///
     /// Returns the role of the node the event starts, `None` for events that start no node.
     ///
     /// # Errors
     ///
-    /// Returns [`ParseError::Merge`] at the `<<` key of the first invalid merge value.
+    /// Returns [`ParseError::Merge`] at the `<<` key of the first invalid merge value or repeated
+    /// `<<` key, and [`ParseError::SetValue`] at the first `!!set` member that has a value.
     pub fn observe(
         &mut self,
         event: &Event<'_>,
@@ -100,7 +130,18 @@ impl MergeKeyValidator {
         span: Span,
     ) -> Result<(), ParseError> {
         match event {
-            Event::Scalar(_, _, anchor, _) => self.settle(role, NodeKind::Scalar, *anchor, span),
+            Event::Scalar(text, style, anchor, tag) => {
+                let kind = if *anchor > 0 || self.in_set() {
+                    match resolve_scalar_raw(text, ScalarStyle::from_saphyr(*style), tag.as_deref())
+                    {
+                        ResolvedScalar::Null => NodeKind::Null,
+                        _ => NodeKind::Scalar,
+                    }
+                } else {
+                    NodeKind::Scalar
+                };
+                self.settle(role, kind, *anchor, span)
+            }
             Event::Alias(id) => {
                 // An alias to an undefined anchor is the parser's error to report
                 let kind = self.anchors.get(id).copied().unwrap_or(NodeKind::Mapping);
@@ -113,6 +154,8 @@ impl MergeKeyValidator {
                     kind: OpenKind::Mapping {
                         set,
                         merge_key: None,
+                        member: None,
+                        merge_seen: false,
                     },
                     role,
                     anchor: *anchor,
@@ -134,10 +177,20 @@ impl MergeKeyValidator {
         }
     }
 
+    fn in_set(&self) -> bool {
+        matches!(
+            self.open.last(),
+            Some(Open {
+                kind: OpenKind::Mapping { set: true, .. },
+                ..
+            })
+        )
+    }
+
     /// An alias to a still-open node resolves to a non-mapping, like the loader does.
     fn reserve_anchor(&mut self, anchor: usize) {
         if anchor > 0 {
-            self.anchors.insert(anchor, NodeKind::Scalar);
+            self.anchors.insert(anchor, NodeKind::Open);
         }
     }
 
@@ -181,24 +234,60 @@ impl MergeKeyValidator {
         if anchor > 0 {
             self.anchors.insert(anchor, kind);
         }
+        let document = self.documents.saturating_sub(1);
+        let merge_error = |error, at: Span| {
+            let SourcePosition { line, column } = SourcePosition::from_span(at);
+            ParseError::Merge {
+                error,
+                line,
+                column,
+                document,
+            }
+        };
         match (role, self.open.last_mut().map(|open| &mut open.kind)) {
             (NodeRole::Item, Some(OpenKind::Sequence(verdict))) => {
                 if verdict.is_ok() {
                     *verdict = kind.as_merge_item();
                 }
             }
-            (NodeRole::MergeKey, Some(OpenKind::Mapping { merge_key, .. })) => {
+            (
+                NodeRole::MergeKey,
+                Some(OpenKind::Mapping {
+                    merge_key,
+                    merge_seen,
+                    ..
+                }),
+            ) => {
+                if *merge_seen && self.duplicates == DuplicateMergeKeys::Reject {
+                    return Err(merge_error(MergeError::DuplicateKey, span));
+                }
+                *merge_seen = true;
                 *merge_key = Some(span);
             }
-            (NodeRole::Value, Some(OpenKind::Mapping { merge_key, .. })) => {
+            (NodeRole::Key, Some(OpenKind::Mapping { member, .. })) => *member = Some(span),
+            (
+                NodeRole::Value,
+                Some(OpenKind::Mapping {
+                    set,
+                    merge_key,
+                    member,
+                    ..
+                }),
+            ) => {
                 if let Some(key) = merge_key.take() {
-                    let SourcePosition { line, column } = SourcePosition::from_span(key);
-                    kind.as_merge_value().map_err(|error| ParseError::Merge {
-                        error,
+                    kind.as_merge_value()
+                        .map_err(|error| merge_error(error, key))?;
+                }
+                if let Some(at) = member.take()
+                    && *set
+                    && !kind.is_set_value()
+                {
+                    let SourcePosition { line, column } = SourcePosition::from_span(at);
+                    return Err(ParseError::SetValue {
                         line,
                         column,
-                        document: self.documents.saturating_sub(1),
-                    })?;
+                        document,
+                    });
                 }
             }
             _ => {}
@@ -312,6 +401,15 @@ mod tests {
         "m: {&k <<: {x: 1}, *k : 1}\n",
         "m: {&k <<: {x: 1}, *k : {y: 2}}\n",
         "- <<: {x: 1}\n- <<: [ ]\n",
+        "m: {<<: {x: 1}, <<: {y: 2}}\n",
+        "k: &k <<\nm:\n  <<: {x: 1}\n  *k : {y: 2}\n",
+        "s: !!set {a: 1}\n",
+        "s: !!set {a: , b: ~}\n",
+        "&a !!set {x: *a}\n",
+        "n: &n ~\ns: !!set {a: *n}\n",
+        "n: &n [1]\ns: !!set {a: *n}\n",
+        "s: !!set {a: {b: 1}}\n",
+        "s: !!set {a: [b]}\n",
     ];
 
     #[test]
@@ -333,6 +431,59 @@ mod tests {
             if let (Err(parse), Err(crate::EmitError::Parse(emit))) = (parsed, formatted) {
                 assert_eq!(parse.to_string(), emit.to_string(), "{yaml}");
             }
+        }
+    }
+
+    #[test]
+    fn repeated_merge_key_is_rejected_at_the_second_key() {
+        for (yaml, line, column) in [
+            ("m: {<<: {x: 1}, <<: {y: 2}}", 1, 17),
+            ("m:\n  <<: {x: 1}\n  !!merge a: {y: 2}\n", 3, 11),
+            ("k: &k <<\nm:\n  <<: {x: 1}\n  *k : {y: 2}\n", 4, 3),
+        ] {
+            let (error, got_line, got_column, _) =
+                rejected(yaml).unwrap_or_else(|| panic!("{yaml}"));
+            assert_eq!(error, MergeError::DuplicateKey, "{yaml}");
+            assert_eq!((got_line, got_column), (line, column), "{yaml}");
+        }
+    }
+
+    #[test]
+    fn last_wins_policy_accepts_a_repeated_merge_key() {
+        let yaml = "m: {<<: {x: 1}, <<: {y: 2}}";
+        let mut validator = MergeKeyValidator::new(DuplicateMergeKeys::LastWins);
+        for event in Parser::new_from_str(yaml) {
+            let (event, span) = event.unwrap();
+            validator.observe(&event, span).unwrap();
+        }
+        let mut validator = MergeKeyValidator::new(DuplicateMergeKeys::LastWins);
+        let invalid = Parser::new_from_str("m: {<<: 1, <<: {y: 2}}").try_for_each(|event| {
+            let (event, span) = event.unwrap();
+            validator.observe(&event, span).map(drop)
+        });
+        assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn set_member_values_must_be_null() {
+        for yaml in [
+            "!!set {a: 1}",
+            "!!set {a: [b]}",
+            "!!set {a: {b}}",
+            "n: &n [1]\ns: !!set {a: *n}",
+            "n: &n {b}\ns: !!set {a: *n}",
+        ] {
+            assert!(
+                matches!(validate(yaml), Err(ParseError::SetValue { .. })),
+                "{yaml}"
+            );
+        }
+        for yaml in [
+            "!!set {a, b: , c: ~}",
+            "n: &n ~\ns: !!set {a: *n}",
+            "&a !!set {x: *a}",
+        ] {
+            assert!(validate(yaml).is_ok(), "{yaml}");
         }
     }
 

@@ -327,3 +327,15 @@ class TestMaxInputBytes:
     def test_bounds_accepted(self):
         lint.LintConfig(max_input_bytes=1)
         lint.LintConfig(max_input_bytes=MAX_INPUT_BYTES)
+
+
+@pytest.mark.parametrize("load", LOADERS)
+def test_flow_nesting_is_capped_at_255_whatever_max_depth_says(load):
+    def flow(depth):
+        return "[" * depth + "1" + "]" * depth
+
+    assert load(flow(255), max_depth=MAX_DEPTH) is not None
+    with pytest.raises(
+        ValueError, match="flow collection nesting exceeds the scanner limit of 255"
+    ):
+        load(flow(256), max_depth=MAX_DEPTH)

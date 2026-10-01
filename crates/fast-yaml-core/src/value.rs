@@ -127,9 +127,11 @@ impl From<ResolvedScalar<'_>> for Value {
 ///
 /// Equality and hashing use the normalized value only: every NaN is equal to every other NaN and
 /// `-0.0 == 0.0`. The remembered text is carried so a float read from JSON keeps its spelling
-/// (`1.0E5`, `0.1000000000000000055`) when emitted as YAML; the YAML loader never sets it. As a
-/// result `a == b` does not imply that `a` and `b` emit identically. There is deliberately no
-/// `Ord`, because NaN has no place in a total order.
+/// (`1.0E+5`, `0.1000000000000000055`) when emitted as YAML; the YAML loader never sets it. The
+/// text keeps its digits but is normalized for YAML 1.1 readers such as `PyYAML`: a dot-less
+/// mantissa gets `.0` and an unsigned exponent gets `+` (`1e5` becomes `1.0e+5`), and a leading
+/// dot gets a `0` (`-.5` becomes `-0.5`). As a result `a == b` does not imply that `a` and `b`
+/// emit identically. There is deliberately no `Ord`, because NaN has no place in a total order.
 ///
 /// # Examples
 ///
@@ -140,7 +142,8 @@ impl From<ResolvedScalar<'_>> for Value {
 /// let spelled = Float::parse("1.0E5").unwrap();
 /// assert_eq!(plain, spelled);
 /// assert_eq!(plain.to_string(), "100000.0");
-/// assert_eq!(spelled.to_string(), "1.0E5");
+/// assert_eq!(spelled.to_string(), "1.0E+5");
+/// assert_eq!(Float::from(1e300).to_string(), "1.0e+300");
 /// assert_eq!(Float::from(f64::NAN), Float::from(-f64::NAN));
 /// ```
 #[derive(Debug, Clone)]
@@ -160,7 +163,8 @@ impl Float {
     ///
     /// Returns `None` when `text` does not resolve to a float (for example an integer or a
     /// string), so the remembered text is always valid plain YAML that reads back as this value.
-    /// The spelling is dropped when it equals the default formatting.
+    /// The spelling is normalized for YAML 1.1 readers (see [`Float`]) and dropped when it equals
+    /// the default formatting.
     ///
     /// # Examples
     ///
@@ -169,6 +173,7 @@ impl Float {
     ///
     /// assert_eq!(Float::parse("2.50").unwrap().to_string(), "2.50");
     /// assert_eq!(Float::parse("2.5").unwrap().to_string(), "2.5");
+    /// assert_eq!(Float::parse("-.5e3").unwrap().to_string(), "-0.5e+3");
     /// assert!(Float::parse("12").is_none());
     /// assert!(Float::parse("1.5x").is_none());
     /// ```
@@ -177,8 +182,9 @@ impl Float {
         let ResolvedScalar::Float(value) = resolve_scalar(text, ScalarStyle::Plain, None) else {
             return None;
         };
+        let text = normalize_float_text(text);
         let default = Self::new(value);
-        Some(if default.spells(text) {
+        Some(if default.spells(&text) {
             default
         } else {
             Self {
@@ -247,18 +253,91 @@ impl Hash for Float {
 
 impl fmt::Display for Float {
     /// Writes the remembered spelling, or YAML core-schema text (`.inf`, `-.inf`, `.nan`,
-    /// otherwise the shortest round-trip form that always reads as a float).
+    /// otherwise the shortest round-trip form that YAML 1.1 and 1.2 readers both read as a float).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if let Some(text) = &self.text {
-            return f.write_str(text);
-        }
-        match self.value {
-            v if v.is_nan() => f.write_str(".nan"),
-            v if v == f64::INFINITY => f.write_str(".inf"),
-            v if v == f64::NEG_INFINITY => f.write_str("-.inf"),
-            v => write!(f, "{v:?}"),
+        match &self.text {
+            Some(text) => f.write_str(text),
+            None => with_default_text(self.value, |text| f.write_str(text)),
         }
     }
+}
+
+/// Fixed buffer that holds the shortest text of any finite `f64` without allocating.
+struct FloatBuf {
+    bytes: [u8; 40],
+    len: usize,
+}
+
+impl fmt::Write for FloatBuf {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let end = self.len + text.len();
+        self.bytes
+            .get_mut(self.len..end)
+            .ok_or(fmt::Error)?
+            .copy_from_slice(text.as_bytes());
+        self.len = end;
+        Ok(())
+    }
+}
+
+/// Runs `use_text` on the default YAML text of `value` (`.inf`, `-.inf`, `.nan`, otherwise the
+/// shortest round-trip form normalized for YAML 1.1 readers), allocating only when the text had
+/// to be rewritten.
+fn with_default_text<R>(value: f64, use_text: impl FnOnce(&str) -> R) -> R {
+    if value.is_nan() {
+        return use_text(".nan");
+    }
+    if value.is_infinite() {
+        return use_text(if value > 0.0 { ".inf" } else { "-.inf" });
+    }
+    let mut buf = FloatBuf {
+        bytes: [0; 40],
+        len: 0,
+    };
+    if fmt::write(&mut buf, format_args!("{value:?}")).is_ok()
+        && let Some(text) = buf
+            .bytes
+            .get(..buf.len)
+            .and_then(|bytes| std::str::from_utf8(bytes).ok())
+    {
+        return use_text(&normalize_float_text(text));
+    }
+    use_text(&normalize_float_text(&format!("{value:?}")))
+}
+
+/// Rewrites the text of a numeric float (not `.inf` or `.nan`) so YAML 1.1 readers also resolve it as a float: a leading dot gets
+/// a `0`, a mantissa with an exponent gets a dot, and an unsigned exponent gets `+`.
+fn normalize_float_text(text: &str) -> Cow<'_, str> {
+    let (sign, unsigned) = text.split_at(usize::from(text.starts_with(['+', '-'])));
+    let numeric = unsigned.strip_prefix('.').unwrap_or(unsigned);
+    if !numeric.starts_with(|c: char| c.is_ascii_digit()) {
+        return Cow::Borrowed(text);
+    }
+    let (mantissa, exponent) = unsigned
+        .find(['e', 'E'])
+        .map_or((unsigned, ""), |at| unsigned.split_at(at));
+    let (marker, digits) = exponent.split_at(exponent.len().min(1));
+    let leading_dot = mantissa.starts_with('.');
+    let dotless = !exponent.is_empty() && !mantissa.contains('.');
+    let unsigned_exponent = !exponent.is_empty() && !digits.starts_with(['+', '-']);
+    if !(leading_dot || dotless || unsigned_exponent) {
+        return Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 3);
+    out.push_str(sign);
+    if leading_dot {
+        out.push('0');
+    }
+    out.push_str(mantissa);
+    if dotless {
+        out.push_str(".0");
+    }
+    out.push_str(marker);
+    if unsigned_exponent {
+        out.push('+');
+    }
+    out.push_str(digits);
+    Cow::Owned(out)
 }
 
 /// Source spelling of a hexadecimal or octal integer.
@@ -720,12 +799,80 @@ mod tests {
         assert_eq!(Float::new(f64::NAN).to_string(), ".nan");
         assert_eq!(Float::new(1.0).to_string(), "1.0");
         assert_eq!(Float::new(-0.0).to_string(), "-0.0");
-        assert_eq!(Float::new(1e300).to_string(), "1e300");
+        assert_eq!(Float::new(1e300).to_string(), "1.0e+300");
+        assert_eq!(Float::new(1.5e-7).to_string(), "1.5e-7");
+        assert_eq!(Float::new(1e-7).to_string(), "1.0e-7");
+        assert_eq!(Float::new(-2.5e20).to_string(), "-2.5e+20");
+    }
+
+    #[test]
+    fn float_spelling_is_normalized_for_yaml_11_readers() {
+        for (written, shown) in [
+            ("1.0E5", "1.0E+5"),
+            ("1e5", "1.0e+5"),
+            ("-.5", "-0.5"),
+            (".5", "0.5"),
+            ("-.5e+5", "-0.5e+5"),
+            ("1.e5", "1.e+5"),
+            ("1.5E-3", "1.5E-3"),
+            ("0.10", "0.10"),
+            (".nan", ".nan"),
+            (".NaN", ".NaN"),
+            (".NAN", ".NAN"),
+            (".inf", ".inf"),
+            ("+.inf", "+.inf"),
+            (".Inf", ".Inf"),
+            (".INF", ".INF"),
+            ("-.INF", "-.INF"),
+            ("-.Inf", "-.Inf"),
+        ] {
+            assert_eq!(
+                Float::parse(written).unwrap().to_string(),
+                shown,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn float_text_matches_the_yaml_11_float_pattern() {
+        let yaml11 = |t: &str| {
+            let (m, e) = t
+                .split_once(['e', 'E'])
+                .map_or((t, None), |(m, e)| (m, Some(e)));
+            let m = m.strip_prefix(['+', '-']).unwrap_or(m);
+            let mantissa = m.split_once('.').is_some_and(|(i, f)| {
+                (i.is_empty() && !f.is_empty() || i.starts_with(|c: char| c.is_ascii_digit()))
+                    && i.chars().chain(f.chars()).all(|c| c.is_ascii_digit())
+            });
+            mantissa
+                && e.is_none_or(|e| {
+                    e.strip_prefix(['+', '-'])
+                        .is_some_and(|d| !d.is_empty() && d.chars().all(|c| c.is_ascii_digit()))
+                })
+        };
+        for v in [
+            1e300,
+            1.5e-7,
+            1e16,
+            123_456.0,
+            -0.0,
+            1e-300,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+        ] {
+            let text = Float::new(v).to_string();
+            assert!(yaml11(&text), "{text}");
+        }
+        for written in ["1e5", "-.5e5", "+.5", "2E10", "1.e3"] {
+            let text = Float::parse(written).unwrap().to_string();
+            assert!(yaml11(&text), "{written} -> {text}");
+        }
     }
 
     #[test]
     fn float_parse_keeps_only_a_distinct_spelling() {
-        assert_eq!(Float::parse("1.0E5").unwrap().to_string(), "1.0E5");
+        assert_eq!(Float::parse("1.0E5").unwrap().to_string(), "1.0E+5");
         assert_eq!(Float::parse(".inf").unwrap().to_string(), ".inf");
         assert_eq!(Float::parse("1.5").unwrap().text, None);
         for not_float in ["", "1", "abc", "0x1", "1.5.5"] {
@@ -838,12 +985,25 @@ mod tests {
 
     #[test]
     fn parse_keeps_non_default_spellings() {
-        for text in [
-            ".NaN", ".NAN", "+.inf", "-.Inf", ".INF", "1e400", "-1e400", "5e-324", "1e-400", "1.",
-            ".5", "+1.5", "1.50", "1.0E5", "-0.0e0",
+        for (text, shown) in [
+            (".NaN", ".NaN"),
+            (".NAN", ".NAN"),
+            ("+.inf", "+.inf"),
+            ("-.Inf", "-.Inf"),
+            (".INF", ".INF"),
+            ("1e400", "1.0e+400"),
+            ("-1e400", "-1.0e+400"),
+            ("5e-324", "5.0e-324"),
+            ("1e-400", "1.0e-400"),
+            ("1.", "1."),
+            (".5", "0.5"),
+            ("+1.5", "+1.5"),
+            ("1.50", "1.50"),
+            ("1.0E5", "1.0E+5"),
+            ("-0.0e0", "-0.0e+0"),
         ] {
             let float = Float::parse(text).unwrap_or_else(|| panic!("{text} is a float"));
-            assert_eq!(float.to_string(), text, "{text}");
+            assert_eq!(float.to_string(), shown, "{text}");
         }
     }
 

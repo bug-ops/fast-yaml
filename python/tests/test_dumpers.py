@@ -1,5 +1,7 @@
 """Tests for PyYAML-compatible dumper classes and dump functions."""
 
+import re
+
 import pytest
 
 import fast_yaml
@@ -521,3 +523,15 @@ def test_strings_with_a_bom_round_trip(flow):
 def test_nested_lists_survive_any_indent(indent):
     data = {"perms": [["read", "write"], [True, 13], [[1], []]], "m": [{"k": ["v"]}]}
     assert fast_yaml.safe_load(fast_yaml.safe_dump(data, indent=indent)) == data
+
+
+YAML_11_FLOAT = re.compile(
+    r"^[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?$|^\.[0-9_]+(?:[eE][-+][0-9]+)?$"
+)
+
+
+@pytest.mark.parametrize("value", [1e300, 1.5e-7, 1e16, -2.5e20, 1e-300, 123456.0, 0.5])
+def test_dumped_floats_match_the_yaml_11_float_pattern(value):
+    text = fast_yaml.safe_dump({"a": value}).split(": ", 1)[1].strip()
+    assert YAML_11_FLOAT.match(text), text
+    assert fast_yaml.safe_load(f"a: {text}") == {"a": value}

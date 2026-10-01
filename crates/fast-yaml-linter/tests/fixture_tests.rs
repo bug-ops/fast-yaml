@@ -103,6 +103,30 @@ mod invalid_fixtures {
 
         assert!(has_octal_errors, "Expected octal value violations");
     }
+
+    #[test]
+    fn test_invalid_duplicate_merge_keys_is_a_diagnostic() {
+        let yaml = include_str!("fixtures/invalid/duplicate_merge_keys.yaml");
+        let diagnostics = Linter::with_all_rules().lint(yaml).unwrap();
+
+        let duplicate = diagnostics
+            .iter()
+            .find(|d| d.code.as_str() == DiagnosticCode::DUPLICATE_KEY)
+            .expect("Expected a duplicate-key diagnostic for the repeated <<");
+        assert_eq!(duplicate.span.start.line, 7);
+    }
+
+    #[test]
+    fn test_invalid_set_member_value_aborts_linting() {
+        let yaml = include_str!("fixtures/invalid/set_member_value.yaml");
+        let err = Linter::with_all_rules().lint(yaml).unwrap_err();
+
+        assert!(
+            err.to_string()
+                .contains("!!set member has a non-null value"),
+            "{err}"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -70,6 +70,15 @@ pub(crate) struct KeyClash {
     kept: NumericKind,
     incoming: NumericKind,
     key: KeyText,
+    merged: bool,
+}
+
+impl KeyClash {
+    /// Marks the clash as involving a key absorbed from a `<<` source.
+    pub(crate) const fn through_merge(mut self) -> Self {
+        self.merged = true;
+        self
+    }
 }
 
 impl fmt::Display for KeyClash {
@@ -78,7 +87,11 @@ impl fmt::Display for KeyClash {
             f,
             "{} key {} is distinct in YAML but equal as a Python dict key to a key of type {}",
             self.incoming, self.key, self.kept
-        )
+        )?;
+        if self.merged {
+            f.write_str(" (through merge key `<<`)")?;
+        }
+        Ok(())
     }
 }
 
@@ -134,6 +147,7 @@ impl<'py> NumericKeys<'py> {
                     kept: other,
                     incoming: kind,
                     key: yaml_text(kind, key)?,
+                    merged: false,
                 }));
             }
         }

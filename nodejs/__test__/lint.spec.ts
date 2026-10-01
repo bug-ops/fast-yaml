@@ -276,3 +276,21 @@ describe('inline directives', () => {
     expect(dups[0].span.start.line).toBe(6);
   });
 });
+
+describe('merge keys and sets in lint', () => {
+  it('reports a repeated << as a duplicate-key diagnostic, not an exception', () => {
+    const result = lint('a: &a {x: 1}\nb: &b {y: 2}\nc: {<<: *a, <<: *b}\n');
+    expect(result.some((d) => d.code === 'duplicate-key')).toBe(true);
+  });
+
+  it('does not see a repeated << written through an alias (known blind spot)', () => {
+    const result = lint('a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n');
+    expect(result.some((d) => d.code === 'duplicate-key')).toBe(false);
+  });
+
+  it('rejects a !!set member with a value with its position', () => {
+    expect(() => lint('s: !!set {a: 1}\n')).toThrow(
+      /member has a non-null value.*line 1, column 11/
+    );
+  });
+});

@@ -1175,7 +1175,9 @@ fn test_convert_json_rejects_distinct_keys_with_the_same_json_key() {
         .assert()
         .failure()
         .code(1)
-        .stderr(predicate::str::contains("same JSON key \"1\""));
+        .stderr(predicate::str::contains(
+            "float key \"1\" is distinct in YAML but converts to the same string key as a key of type int at line 2, column 1",
+        ));
 }
 
 #[test]

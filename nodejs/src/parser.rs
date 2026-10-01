@@ -7,7 +7,8 @@ use crate::Schema;
 use crate::conversion::yaml_to_js;
 use crate::limits::parse_limits;
 use fast_yaml_core::limits::MaxInputBytes;
-use fast_yaml_core::{Parser, Value};
+use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::{KeyDomain, LoadOptions as CoreLoadOptions, ParseResult, Parser, Value};
 use napi::{Env, bindgen_prelude::*};
 use napi_derive::napi;
 
@@ -26,7 +27,7 @@ pub struct LoadOptions {
     /// Note: fast-yaml always allows duplicates; this is for API compatibility.
     pub allow_duplicate_keys: Option<bool>,
 
-    /// Maximum collection nesting depth (integer, 1..=512, default: 256).
+    /// Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections (`[]`, `{}`) stop at 255 levels whatever this is.
     /// Stack note: the calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (e.g. a worker with stackSizeMb 0.5) the process can abort and the overflow cannot be caught, while the default 256 is safe. The emitter keeps its own fixed depth of 256, so data parsed deeper may fail to dump.
     pub max_depth: Option<f64>,
 
@@ -39,6 +40,13 @@ impl LoadOptions {
     fn parse_limits(&self) -> napi::Result<fast_yaml_core::limits::ParseLimits> {
         parse_limits(self.max_depth, self.max_alias_bytes)
     }
+}
+
+/// Loads every document with JavaScript object keys: keys that differ in YAML but share a
+/// property name are a positioned error.
+fn load_documents(yaml: &str, limits: &ParseLimits) -> ParseResult<Vec<Value>> {
+    let options = CoreLoadOptions::new().with_keys(KeyDomain::StringKeys);
+    Parser::parse_all_with_options(yaml, limits, options)
 }
 
 /// Return a JS `undefined` sentinel after calling `env.throw_error`.
@@ -62,12 +70,15 @@ fn throw_and_undefined<'env>(env: &'env Env, msg: &str) -> napi::Result<Unknown<
 ///
 /// # Returns
 ///
-/// The parsed YAML document as JavaScript objects (Object, Array, string, number, boolean, null)
+/// The parsed YAML document as JavaScript objects (Object, Array, string, number, boolean, null).
+/// A `!!set` loads as an object whose members are keys with `null` values, like js-yaml.
 ///
 /// # Errors
 ///
 /// Throws an error if:
 /// - The YAML is invalid
+/// - A `!!set` member has a non-null value, a `<<` key is repeated in one mapping, or two keys differ in
+///   YAML but share a JavaScript property name (`1` and `"1"`); the message carries the position
 /// - Input exceeds size limit (100MB)
 ///
 /// # Security
@@ -100,7 +111,7 @@ pub fn safe_load(
     }
 
     // Parse YAML string
-    let docs = match Parser::parse_all_with_limits(&yaml_str, &limits) {
+    let docs = match load_documents(&yaml_str, &limits) {
         Ok(d) => d,
         Err(e) => return throw_and_undefined(env, &format!("YAML parse error: {e}")),
     };
@@ -173,7 +184,7 @@ pub fn safe_load_all(
     }
 
     // Parse YAML string
-    let docs = match Parser::parse_all_with_limits(&yaml_str, &limits) {
+    let docs = match load_documents(&yaml_str, &limits) {
         Ok(d) => d,
         Err(e) => {
             env.throw_error(&format!("YAML parse error: {e}"), None)?;

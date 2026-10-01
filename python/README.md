@@ -50,7 +50,7 @@ fast_yaml.safe_load(text, max_depth=512, max_alias_bytes=256 * 1024 * 1024)
 
 | Option | Default | Range |
 |--------|---------|-------|
-| `max_depth` | 256 | 1..=512 |
+| `max_depth` | 256 | 1..=512 (flow collections stop at 255 levels) |
 | `max_alias_bytes` | 64 MiB | 1..=1 GiB |
 | `max_input_bytes` (`ParallelConfig`, `LintConfig`, `BatchConfig`) | 100 MiB | 1..=1 GiB |
 | `max_documents` (`ParallelConfig`) | 100 000 | 1..=10 000 000 |
@@ -65,13 +65,15 @@ The alias budget is per stream, so parallel and batch runs can use up to workers
 
 ## Sets
 
+Floats are written with a dot and a signed exponent so YAML 1.1 readers such as PyYAML read them as floats (`1e300` becomes `1.0e+300`).
 `!!set` mappings load as Python `set` in `safe_load` and `parse_parallel`, and `dump` writes `set` and `frozenset` as `!!set`.
 A `!!set` cannot be a mapping key (raises `ValueError`, like any sequence or mapping key).
+A `!!set` member with a value (`!!set {a: 1}`) raises `ValueError` with its line and column, where PyYAML drops the value; a repeated `<<` key in one mapping raises too.
 
 ## Numeric Keys
 
 YAML treats `1`, `true` and `1.0` as three different keys, but a Python `dict` or `set` considers them equal.
-Instead of silently dropping one, `safe_load` raises `ValueError` with the key's line and column when a mapping or `!!set` holds such keys (`parse_parallel` raises the same error without a position); repeating a key of the same type is still an ordinary duplicate (last value wins).
+Instead of silently dropping one, `safe_load` raises `ValueError` with the key's line and column when a mapping or `!!set` holds such keys (`parse_parallel` raises the same error); repeating a key of the same type is still an ordinary duplicate (last value wins).
 This differs from PyYAML, which keeps only one of them.
 `.nan` keys collapse to a single entry, as in the Rust core.
 

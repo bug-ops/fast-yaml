@@ -244,6 +244,7 @@ safeLoad(deepYaml, { maxDepth: 400 });            // default 256, range 1..512
 safeLoad(aliasHeavyYaml, { maxAliasBytes: 2 ** 28 }); // default 64MiB, range 1..1GiB
 ```
 
+- Flow collections (`[]`, `{}`) stop at 255 levels whatever `maxDepth` is; deeper flow nesting throws `flow collection nesting exceeds the scanner limit of 255 levels`.
 - Values must be integers within the range; `0`, negatives, fractions, `NaN`, and out-of-range values throw `maxDepth must be between 1 and 512, got N`.
 - `maxAliasBytes` is an estimate of alias-expansion cost per call (per file in batch runs); JavaScript objects cost several times the estimate, so keep it modest on memory-constrained hosts.
 - `parseParallel` / `parseParallelAsync` also accept `maxDocuments` (integer, 1..10000000, default 100000) and `maxInputBytes`; `processFiles` accepts `maxInputBytes`; all throw the same `... must be between 1 and N, got V` error for invalid values.
@@ -297,6 +298,13 @@ safeLoad('null'); // null
 | `"string"`, `'string'` | `string`        |
 | `[a, b, c]`            | `Array`         |
 | `{a: 1, b: 2}`         | `Object`        |
+| `!!set {a, b}`         | `{a: null, b: null}` (js-yaml form) |
+
+Floats are written with a dot and a signed exponent so YAML 1.1 readers such as PyYAML read them as floats (`1e300` becomes `1.0e+300`). `safeDump` writes a JavaScript `Set` as a `!!set` and a `Map` as a mapping, so the round trip
+through `safeLoad` is one-way (a `!!set` loads as an object). Two `Set` members or `Map` keys that
+are the same YAML value (`null` and `undefined`) are an error. `safeLoad` rejects, with the
+position, a `!!set` member that has a value, a repeated `<<` key in one mapping, and keys that
+differ in YAML but share a property name (`1` and `"1"`).
 
 ## Security
 

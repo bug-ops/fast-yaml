@@ -4,8 +4,9 @@
 //! between `fast_yaml_core::Value` and NAPI-RS JavaScript values.
 
 use fast_yaml_core::value::quote_key;
-use fast_yaml_core::{DumpBudget, Float, LimitKind, Mapping, MaxDepth, Value};
+use fast_yaml_core::{DumpBudget, Float, LimitKind, Mapping, MaxDepth, Set, Value};
 use napi::{Result as NapiResult, bindgen_prelude::*};
+use std::collections::HashSet;
 
 /// Sets `key` on `object`; `__proto__` is defined as an own property so it cannot replace the prototype.
 fn set_own(env: Env, object: &mut Object, key: &str, value: Unknown) -> NapiResult<()> {
@@ -62,15 +63,10 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &Value) -> NapiResult<Unknown<'env
 
         Value::Set(set) => {
             let mut js_obj = Object::new(env)?;
-            let mut seen = std::collections::HashSet::with_capacity(set.len());
+            let mut seen = collision_table(set.iter(), set.len());
             for member in set {
                 let key_str = yaml_key_to_string(member)?;
-                if !seen.insert(key_str.clone()) {
-                    return Err(napi::Error::from_reason(format!(
-                        "distinct YAML keys convert to the same JavaScript property {}",
-                        quote_key(&key_str)
-                    )));
-                }
+                record_property(seen.as_mut(), &key_str)?;
                 set_own(*env, &mut js_obj, &key_str, Null.into_unknown(env)?)?;
             }
             js_obj.into_unknown(env)
@@ -78,21 +74,44 @@ pub fn yaml_to_js<'env>(env: &'env Env, yaml: &Value) -> NapiResult<Unknown<'env
 
         Value::Mapping(map) => {
             let mut js_obj = Object::new(env)?;
-            let mut seen = std::collections::HashSet::with_capacity(map.len());
+            let mut seen = collision_table(map.keys(), map.len());
             for (k, v) in map {
                 let key_str = yaml_key_to_string(k)?;
-                if !seen.insert(key_str.clone()) {
-                    return Err(napi::Error::from_reason(format!(
-                        "distinct YAML keys convert to the same JavaScript property {}",
-                        quote_key(&key_str)
-                    )));
-                }
+                record_property(seen.as_mut(), &key_str)?;
                 let js_value = yaml_to_js(env, v)?;
                 set_own(*env, &mut js_obj, &key_str, js_value)?;
             }
             js_obj.into_unknown(env)
         }
     }
+}
+
+/// Allocates a table of property names only when a key is not a string.
+///
+/// The loader already rejects keys that share a property name; this guards values built some
+/// other way, and string-only keys cannot collide.
+fn collision_table<'a>(
+    mut keys: impl Iterator<Item = &'a Value>,
+    capacity: usize,
+) -> Option<HashSet<String>> {
+    keys.any(|key| !matches!(key, Value::String(_)))
+        .then(|| HashSet::with_capacity(capacity))
+}
+
+/// Records a property name, failing when an earlier distinct YAML key produced it as well.
+///
+/// With no table every key is a string, so a name can only repeat as the same key, which the
+/// mapping has already collapsed.
+fn record_property(seen: Option<&mut HashSet<String>>, name: &str) -> NapiResult<()> {
+    if let Some(seen) = seen
+        && !seen.insert(name.to_owned())
+    {
+        return Err(napi::Error::from_reason(format!(
+            "distinct YAML keys convert to the same JavaScript property {}",
+            quote_key(name)
+        )));
+    }
+    Ok(())
 }
 
 /// Convert a YAML key to a string for use as JavaScript object property.
@@ -121,14 +140,20 @@ fn yaml_key_to_string(yaml: &Value) -> NapiResult<String> {
 /// - `string` → `Value::String`
 /// - `Array` → `Value::Sequence`
 /// - `Object` → `Value::Mapping`
+/// - `Set` → `Value::Set` (a `!!set`)
+/// - `Map` → `Value::Mapping`
+///
+/// A `Set` or `Map` is recognised by its `Symbol.toStringTag`, so one from another realm works
+/// too. An object that claims the tag without being one is an error.
 ///
 /// # Errors
 ///
-/// Returns an error if the JavaScript value contains non-serializable types or converting it
-/// would exceed `budget`.
-pub fn js_to_yaml(js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<Value> {
+/// Returns an error if the JavaScript value contains non-serializable types, two `Set` members
+/// or `Map` keys are the same YAML value, or converting it would exceed `budget`.
+pub fn js_to_yaml(env: Env, js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<Value> {
     let mut stack: Vec<OpenContainer> = Vec::new();
-    match classify(js_value, 0, budget)? {
+    let mut keyed = KeyedCollections::new(env);
+    match classify(js_value, 0, budget, &mut keyed)? {
         Classified::Scalar(value) => return Ok(value),
         Classified::Container(open) => stack.push(open),
     }
@@ -142,8 +167,8 @@ pub fn js_to_yaml(js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<Valu
             ));
         };
         if let Some(child) = top.next_child() {
-            match classify(child.value, depth, budget)? {
-                Classified::Scalar(value) => top.accept(child.key, value),
+            match classify(child.value, depth, budget, &mut keyed)? {
+                Classified::Scalar(value) => top.accept(child.key, value)?,
                 Classified::Container(open) => {
                     top.pending_key = child.key;
                     stack.push(open);
@@ -154,7 +179,7 @@ pub fn js_to_yaml(js_value: Unknown, budget: &mut DumpBudget) -> NapiResult<Valu
             match stack.last_mut() {
                 Some(parent) => {
                     let key = parent.pending_key.take();
-                    parent.accept(key, value);
+                    parent.accept(key, value)?;
                 }
                 None => return Ok(value),
             }
@@ -179,6 +204,12 @@ struct OpenContainer<'a> {
 enum Done {
     Sequence(Vec<Value>),
     Mapping(Mapping),
+    Set(Set),
+    /// A `Map`: children alternate key, value; `key` holds a key awaiting its value.
+    Map {
+        entries: Mapping,
+        key: Option<Value>,
+    },
 }
 
 impl<'a> OpenContainer<'a> {
@@ -186,21 +217,174 @@ impl<'a> OpenContainer<'a> {
         self.children.next()
     }
 
-    fn accept(&mut self, key: Option<String>, value: Value) {
+    fn accept(&mut self, key: Option<String>, value: Value) -> NapiResult<()> {
         match (&mut self.done, key) {
             (Done::Mapping(map), Some(key)) => {
                 map.insert(Value::String(key), value);
             }
             (Done::Sequence(items), _) => items.push(value),
             (Done::Mapping(_), None) => {}
+            (Done::Set(set), _) => {
+                if !set.insert(value) {
+                    return Err(napi::Error::from_reason(
+                        "cannot serialize to YAML: two Set members are the same YAML value",
+                    ));
+                }
+            }
+            (Done::Map { entries, key }, _) => match key.take() {
+                None => *key = Some(value),
+                Some(key) => {
+                    if entries.insert(key, value).is_some() {
+                        return Err(napi::Error::from_reason(
+                            "cannot serialize to YAML: two Map keys are the same YAML key",
+                        ));
+                    }
+                }
+            },
         }
+        Ok(())
     }
 
     fn finish(self) -> Value {
         match self.done {
             Done::Sequence(items) => Value::Sequence(items),
             Done::Mapping(map) => Value::Mapping(map),
+            Done::Set(set) => Value::Set(set),
+            Done::Map { entries, .. } => Value::Mapping(entries),
         }
+    }
+}
+
+/// Which keyed built-in a `Symbol.toStringTag` names.
+#[derive(Clone, Copy)]
+enum KeyedKind {
+    Set,
+    Map,
+}
+
+impl KeyedKind {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Set => "Set",
+            Self::Map => "Map",
+        }
+    }
+
+    /// Nodes charged per entry: a member, or a key and a value.
+    const fn nodes_per_entry(self) -> usize {
+        match self {
+            Self::Set => 1,
+            Self::Map => 2,
+        }
+    }
+}
+
+/// JavaScript run once per dump to capture the `Set` and `Map` intrinsics.
+///
+/// `size` and `entries` brand-check their receiver through the built-in `size` getter, so an
+/// object that only claims the tag throws a `TypeError`, a real `Set` or `Map` from any realm
+/// works, and the user's own `size`, `length` and `Symbol.iterator` are never consulted. `entries`
+/// takes at most `size` steps of the built-in iterator.
+const KEYED_INTRINSICS: &str = r"(() => {
+  const apply = Reflect.apply;
+  const sizeOf = (proto) => Object.getOwnPropertyDescriptor(proto, 'size').get;
+  const sizes = [sizeOf(Set.prototype), sizeOf(Map.prototype)];
+  const openers = [Set.prototype.values, Map.prototype.entries];
+  const nexts = [new Set().values().next, new Map().entries().next];
+  return {
+    size: (isMap, object) => apply(sizes[+isMap], object, []),
+    entries: (isMap, object, size) => {
+      const iterator = apply(openers[+isMap], object, []);
+      const out = [];
+      for (let i = 0; i < size; i++) {
+        const step = apply(nexts[+isMap], iterator, []);
+        if (step.done) break;
+        if (isMap) out.push(step.value[0], step.value[1]);
+        else out.push(step.value);
+      }
+      return out;
+    },
+  };
+})()";
+
+/// Handles needed to recognise and read a `Set` or `Map`, fetched on the first plain object.
+struct KeyedHandles<'a> {
+    to_string_tag: Unknown<'a>,
+    size: Function<'a, FnArgs<(bool, Object<'a>)>, f64>,
+    entries: Function<'a, FnArgs<(bool, Object<'a>, f64)>, Object<'a>>,
+}
+
+/// Recognises `Set` and `Map` objects by `Symbol.toStringTag`, which also holds across realms.
+struct KeyedCollections<'a> {
+    env: Env,
+    handles: Option<KeyedHandles<'a>>,
+}
+
+impl<'a> KeyedCollections<'a> {
+    const fn new(env: Env) -> Self {
+        Self { env, handles: None }
+    }
+
+    fn handles(&mut self) -> NapiResult<&KeyedHandles<'a>> {
+        if self.handles.is_none() {
+            let global = self.env.get_global()?;
+            let symbol: Function<Unknown, Unknown> = global.get_named_property("Symbol")?;
+            let intrinsics: Object = self.env.run_script(KEYED_INTRINSICS)?;
+            self.handles = Some(KeyedHandles {
+                to_string_tag: symbol.get_named_property("toStringTag")?,
+                size: intrinsics.get_named_property("size")?,
+                entries: intrinsics.get_named_property("entries")?,
+            });
+        }
+        self.handles
+            .as_ref()
+            .ok_or_else(|| napi::Error::from_reason("internal error: missing Set/Map handles"))
+    }
+
+    fn kind(&mut self, object: Object<'a>) -> NapiResult<Option<KeyedKind>> {
+        let tag: Unknown = object.get_property(self.handles()?.to_string_tag)?;
+        if tag.get_type()? != ValueType::String {
+            return Ok(None);
+        }
+        let tag: String = FromNapiValue::from_unknown(tag)?;
+        Ok(match tag.as_str() {
+            "Set" => Some(KeyedKind::Set),
+            "Map" => Some(KeyedKind::Map),
+            _ => None,
+        })
+    }
+
+    /// Reads the members of a `Set`, or the flattened keys and values of a `Map`, charging the
+    /// budget from the built-in `size` before anything is copied.
+    fn entries(
+        &mut self,
+        object: Object<'a>,
+        kind: KeyedKind,
+        budget: &mut DumpBudget,
+    ) -> NapiResult<Vec<Unknown<'a>>> {
+        let is_map = matches!(kind, KeyedKind::Map);
+        let handles = self.handles()?;
+        let size = handles.size.call(FnArgs::from((is_map, object)))?;
+        if !(size.fract() == 0.0 && (0.0..=f64::from(u32::MAX)).contains(&size)) {
+            return Err(napi::Error::from_reason(format!(
+                "cannot serialize to YAML: a {} reports an invalid size",
+                kind.name()
+            )));
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let count = size as usize;
+        budget
+            .charge_nodes(count.saturating_mul(kind.nodes_per_entry()))
+            .map_err(limit_error)?;
+        let list = handles.entries.call(FnArgs::from((is_map, object, size)))?;
+        let len = list.get_array_length()?;
+        if len as usize > count.saturating_mul(kind.nodes_per_entry()) {
+            return Err(napi::Error::from_reason(format!(
+                "cannot serialize to YAML: a {} yielded more entries than its size",
+                kind.name()
+            )));
+        }
+        (0..len).map(|i| list.get_element(i)).collect()
     }
 }
 
@@ -232,6 +416,7 @@ fn classify<'a>(
     js_value: Unknown<'a>,
     depth: usize,
     budget: &mut DumpBudget,
+    keyed: &mut KeyedCollections<'a>,
 ) -> NapiResult<Classified<'a>> {
     let js_type = js_value.get_type()?;
 
@@ -272,6 +457,26 @@ fn classify<'a>(
                     children: children.into_iter(),
                     pending_key: None,
                     done: Done::Sequence(Vec::with_capacity(len as usize)),
+                }));
+            }
+
+            if let Some(kind) = keyed.kind(js_obj)? {
+                let entries = keyed.entries(js_obj, kind, budget)?;
+                let capacity = entries.len() / kind.nodes_per_entry();
+                return Ok(Classified::Container(OpenContainer {
+                    children: entries
+                        .into_iter()
+                        .map(|value| Child { key: None, value })
+                        .collect::<Vec<_>>()
+                        .into_iter(),
+                    pending_key: None,
+                    done: match kind {
+                        KeyedKind::Set => Done::Set(Set::new()),
+                        KeyedKind::Map => Done::Map {
+                            entries: Mapping::with_capacity(capacity),
+                            key: None,
+                        },
+                    },
                 }));
             }
 

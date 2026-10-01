@@ -11,6 +11,18 @@ describe('Pre-allocation Optimizations', () => {
     }
   });
 
+  // Benchmark many small string-keyed mappings (the hot path for key collision checks)
+  bench('safeLoad - Many small mappings (5K)', () => {
+    const rows = Array.from(
+      { length: 5000 },
+      (_, i) => `- {id: ${i}, name: n${i}, kind: k, tags: [a, b], nested: {x: 1, y: 2}}`
+    ).join('\n');
+    const result = safeLoad(rows);
+    if (!Array.isArray(result) || result.length !== 5000) {
+      throw new Error('Expected array with 5000 elements');
+    }
+  });
+
   bench('safeDump - Large array (10K elements)', () => {
     const largeArray = Array.from({ length: 10000 }, (_, i) => ({ id: i, name: `item${i}` }));
     const yaml = safeDump(largeArray);

@@ -49,11 +49,14 @@ pub mod error;
 pub mod events;
 /// Validated, BOM-normalized parser input.
 pub mod input;
+mod keys;
 /// Resource limits (nesting depth, alias expansion) enforced while parsing.
 pub mod limits;
 /// YAML 1.1 merge key (`<<`) resolution shared by the core loader and bindings.
 pub mod merge;
 mod merge_check;
+/// Load-time policy: key domain and repeated merge keys.
+pub mod options;
 /// YAML parser for deserializing strings to documents.
 pub mod parser;
 /// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.
@@ -75,12 +78,14 @@ pub use encoding::{
 pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition, SyntaxError};
 pub use events::ScalarStyle;
 pub use input::NormalizedInput;
+pub use keys::{KeyError, KeyKind};
 pub use limits::{
     DumpBudget, Indent, InputTooLarge, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
     MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxTagBytes, ParseLimits,
     StreamBudget, Width,
 };
 pub use merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
+pub use options::{DuplicateMergeKeys, KeyDomain, LoadOptions};
 pub use parser::{Parser, strip_bom};
 pub use scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
 pub use value::{BigInt, Float, Mapping, Set, Value};
