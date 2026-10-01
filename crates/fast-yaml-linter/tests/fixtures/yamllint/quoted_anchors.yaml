@@ -1,0 +1,10 @@
+a: &x foo
+b: &y "bar"
+c: &z !!str baz
+d: !!str &w qux
+e: &v !foo quux
+f: !foo &u corge
+g: !<tag:yaml.org,2002:str> plain
+h: !<tag:yaml.org,2002:str> 'q'
+i: *x
+j: [&k one, &l "two", three]

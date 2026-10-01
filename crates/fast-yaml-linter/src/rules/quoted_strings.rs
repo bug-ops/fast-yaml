@@ -199,6 +199,9 @@ impl super::LintRule for QuotedStringsRule {
             let Node::Scalar(scalar) = node else {
                 continue;
             };
+            if scalar.anchored && anchor_precedes(check.source, scalar.range.start().get()) {
+                continue;
+            }
             self.check_scalar(
                 &check,
                 &ScalarEvent {
@@ -215,6 +218,20 @@ impl super::LintRule for QuotedStringsRule {
 
         diagnostics
     }
+}
+
+/// Whether the token written right before the scalar at byte `start` is its anchor.
+///
+/// yamllint looks at that one token only, so it skips `&a x` and `!!str &a x` but checks
+/// `&a !t x`.
+fn anchor_precedes(source: &str, start: usize) -> bool {
+    source.get(..start).is_some_and(|before| {
+        before
+            .trim_end()
+            .rsplit(char::is_whitespace)
+            .next()
+            .is_some_and(|token| token.trim_start_matches(['[', '{', ',']).starts_with('&'))
+    })
 }
 
 /// Source and configuration shared by every scalar check of one lint run.

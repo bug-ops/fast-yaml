@@ -235,6 +235,9 @@ enum Slot {
 }
 
 /// Builds the diagnostic message for a truthy spelling that is not allowed.
+///
+/// Every spelling of `true`/`false` outside `allowed` is reported, as yamllint does; with
+/// `allowed-values: [yes]` even `true` is a finding.
 fn message(slot: Slot, text: &str, allowed: &[&str]) -> Option<String> {
     if allowed.contains(&text) {
         return None;
@@ -243,16 +246,33 @@ fn message(slot: Slot, text: &str, allowed: &[&str]) -> Option<String> {
         Slot::Key => "key",
         Slot::Value => "value",
     };
+    let hint = |quote: &str| {
+        if allowed.is_empty() {
+            "no truthy value is allowed".to_owned()
+        } else {
+            let spellings: Vec<String> = allowed
+                .iter()
+                .map(|a| format!("{quote}{a}{quote}"))
+                .collect();
+            format!("use {}", spellings.join(" or "))
+        }
+    };
     if NON_STANDARD_BOOLS.contains(&text) {
         Some(format!(
-            "found non-standard truthy {noun} '{text}' (use {})",
-            allowed.join(" or ")
+            "found non-standard truthy {noun} '{text}' ({})",
+            hint("")
         ))
     } else if NON_CANONICAL_BOOLS.contains(&text) {
+        let hint = hint("'");
         Some(match slot {
-            Slot::Key => format!("found non-canonical boolean key '{text}', use 'true' or 'false'"),
-            Slot::Value => format!("found non-canonical boolean '{text}', use 'true' or 'false'"),
+            Slot::Key => format!("found non-canonical boolean key '{text}', {hint}"),
+            Slot::Value => format!("found non-canonical boolean '{text}', {hint}"),
         })
+    } else if TruthySpelling::CANONICAL.contains(&text) {
+        Some(format!(
+            "found truthy {noun} '{text}' that is not allowed ({})",
+            hint("")
+        ))
     } else {
         None
     }
@@ -365,6 +385,31 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = rule.check(&context, &value, &config);
         assert_eq!(diagnostics, []);
+    }
+
+    #[test]
+    fn test_truthy_reports_true_when_only_yes_is_allowed() {
+        let yaml = "a: true\nb: yes\nc: False\n";
+        let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes]}");
+        let diagnostics = TruthyRule.check(&LintContext::new(yaml), &Value::Null, &config);
+        let messages: Vec<&str> = diagnostics.iter().map(|d| d.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [
+                "found truthy value 'true' that is not allowed (use yes)",
+                "found non-canonical boolean 'False', use 'yes'"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_truthy_without_allowed_values_reports_every_spelling() {
+        let config = config_with_rule(RuleName::Truthy, "{allowed-values: []}");
+        let diagnostics = TruthyRule.check(&LintContext::new("a: true\n"), &Value::Null, &config);
+        assert_eq!(
+            diagnostics[0].message,
+            "found truthy value 'true' that is not allowed (no truthy value is allowed)"
+        );
     }
 
     #[test]

@@ -382,16 +382,22 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 self.nodes.push_alias(range, role);
             }
             Event::Scalar {
-                value, style, tag, ..
+                value,
+                style,
+                anchor,
+                tag,
             } => {
                 let in_flow = self.roles.in_flow();
                 let role = self.roles.node();
                 let tag = match tag {
                     None => TagKind::None,
-                    Some(tag) if core_tag_suffix(tag).is_some() => TagKind::Core,
+                    // A verbatim `!<tag:yaml.org,2002:str>` has no handle and counts as other
+                    Some(tag) if !tag.handle().is_empty() && core_tag_suffix(tag).is_some() => {
+                        TagKind::Core
+                    }
                     Some(_) => TagKind::Other,
                 };
-                let scalar = ScalarNode::new(range, *style, role, in_flow, tag);
+                let scalar = ScalarNode::new(range, *style, role, in_flow, tag, anchor.is_some());
                 self.nodes.push_scalar(scalar, value);
             }
             Event::StreamStart

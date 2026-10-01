@@ -43,6 +43,8 @@ pub struct ScalarNode {
     /// Whether the scalar sits inside a flow collection.
     pub in_flow: bool,
     pub tag: TagKind,
+    /// Whether the scalar defines an anchor.
+    pub anchored: bool,
     text: TextLoc,
 }
 
@@ -54,6 +56,7 @@ impl ScalarNode {
         role: NodeRole,
         in_flow: bool,
         tag: TagKind,
+        anchored: bool,
     ) -> Self {
         Self {
             range,
@@ -61,6 +64,7 @@ impl ScalarNode {
             role,
             in_flow,
             tag,
+            anchored,
             text: TextLoc::Whole,
         }
     }
@@ -179,7 +183,7 @@ mod tests {
     }
 
     fn scalar(range: ByteRange, style: ScalarStyle) -> ScalarNode {
-        ScalarNode::new(range, style, NodeRole::Root, false, TagKind::None)
+        ScalarNode::new(range, style, NodeRole::Root, false, TagKind::None, false)
     }
 
     fn text_of(source: &str, range: ByteRange, style: ScalarStyle, value: &str) -> (String, bool) {

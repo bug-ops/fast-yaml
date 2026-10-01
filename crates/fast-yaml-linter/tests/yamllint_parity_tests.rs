@@ -65,6 +65,15 @@ fn quoted_strings_skips_keys_and_core_tags_by_default() {
 }
 
 #[test]
+fn quoted_strings_skips_anchored_scalars_and_checks_verbatim_str_tags() {
+    let code = DiagnosticCode::QUOTED_STRINGS;
+    let required = "  quoted-strings: {required: true}\n";
+    assert_eq!(lines("quoted_anchors.yaml", required, code), [5, 7, 10]);
+    let needed = "  quoted-strings: {required: only-when-needed}\n";
+    assert_eq!(lines("quoted_anchors.yaml", needed, code), [8]);
+}
+
+#[test]
 fn quoted_strings_check_keys() {
     let code = DiagnosticCode::QUOTED_STRINGS;
     let rules = "  quoted-strings: {required: true, check-keys: true}\n";
@@ -119,6 +128,26 @@ fn duplicated_merge_keys_are_reported_only_when_forbidden() {
     assert_eq!(lines("merge_keys.yaml", forbidden, code), [7, 11]);
     let allowed = "  duplicate-key: {forbid-duplicated-merge-keys: false}\n";
     assert_eq!(lines("merge_keys.yaml", allowed, code), [11]);
+}
+
+#[test]
+fn truthy_reports_true_and_false_when_they_are_not_allowed() {
+    let code = DiagnosticCode::TRUTHY;
+    let yes_only = "  truthy: {allowed-values: [yes], check-keys: true}\n";
+    assert_eq!(
+        lines("truthy_allowed.yaml", yes_only, code),
+        [1, 2, 4, 5, 8, 9]
+    );
+    let none = "  truthy: {allowed-values: [], check-keys: true}\n";
+    assert_eq!(
+        lines("truthy_allowed.yaml", none, code),
+        [1, 2, 3, 4, 5, 8, 9, 10]
+    );
+    let default = "  truthy: {check-keys: true}\n";
+    assert_eq!(
+        lines("truthy_allowed.yaml", default, code),
+        [3, 4, 5, 8, 10]
+    );
 }
 
 #[test]
