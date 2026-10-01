@@ -9,6 +9,7 @@ use crate::echo::{KEY_LIMIT, echo};
 use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::nodes::{Node, TagKind};
+use crate::scan::YamlVersion;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
 use fast_yaml_core::{ScalarStyle, Value};
 
@@ -28,7 +29,9 @@ const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 /// Validates boolean value representations to ensure consistent usage.
 /// YAML 1.2 standardizes on `true` and `false`, but YAML 1.1 allowed
 /// many alternatives (yes/no, on/off) which can cause confusion. The single letters `y` and
-/// `n` are not reported, as in yamllint.
+/// `n` are not reported, as in yamllint. A document preceded by a `%YAML 1.2` directive is read
+/// as YAML 1.2, where only the spellings of `true`/`false` are booleans; the directive applies to
+/// that document only.
 ///
 /// Configuration options:
 /// - `allowed-values`: list of allowed truthy representations (default: `["true", "false"]`)
@@ -201,11 +204,22 @@ impl super::LintRule for TruthyRule {
         let source_context = context.source_context();
         let index = context.nodes();
 
+        let documents = context.documents();
+        let mut current = 0;
+
         let mut diagnostics = Vec::new();
         for node in index.nodes() {
             let Node::Scalar(scalar) = node else {
                 continue;
             };
+            let at = scalar.range.start().get();
+            while documents
+                .get(current + 1)
+                .is_some_and(|next| next.start.offset() <= at)
+            {
+                current += 1;
+            }
+            let schema = BooleanSchema::of(documents.get(current).and_then(|d| d.yaml_version));
             let slot = match scalar.role {
                 NodeRole::MappingKey if options.check_keys => Slot::Key,
                 NodeRole::MappingValue | NodeRole::SequenceItem | NodeRole::Root => Slot::Value,
@@ -214,13 +228,32 @@ impl super::LintRule for TruthyRule {
             if scalar.style != ScalarStyle::Plain || scalar.tag != TagKind::None {
                 continue;
             }
-            if let Some(msg) = message(slot, index.text(scalar), &allowed) {
+            if let Some(msg) = message(slot, schema, index.text(scalar), &allowed) {
                 let span = source_context.span_of_bytes(scalar.range);
                 diagnostics.push(DiagnosticBuilder::new(self.code(), severity, msg, span).build());
             }
         }
 
         diagnostics
+    }
+}
+
+/// The boolean spellings a document is read with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BooleanSchema {
+    /// No `%YAML 1.2` directive: yamllint's default, with `yes`/`no`/`on`/`off` as booleans.
+    Yaml11,
+    /// A `%YAML 1.2` directive: only `true`/`false` spellings are booleans.
+    Yaml12,
+}
+
+impl BooleanSchema {
+    fn of(version: Option<YamlVersion>) -> Self {
+        if version == Some(YamlVersion::V1_2) {
+            Self::Yaml12
+        } else {
+            Self::Yaml11
+        }
     }
 }
 
@@ -235,8 +268,10 @@ enum Slot {
 ///
 /// Every spelling of `true`/`false` outside `allowed` is reported, as yamllint does; with
 /// `allowed-values: [yes]` even `true` is a finding.
-fn message(slot: Slot, text: &str, allowed: &[&str]) -> Option<String> {
-    if allowed.contains(&text) {
+fn message(slot: Slot, schema: BooleanSchema, text: &str, allowed: &[&str]) -> Option<String> {
+    if allowed.contains(&text)
+        || (schema == BooleanSchema::Yaml12 && NON_STANDARD_BOOLS.contains(&text))
+    {
         return None;
     }
     let noun = match slot {

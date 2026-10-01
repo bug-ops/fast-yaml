@@ -91,3 +91,12 @@ fn line_length_inline_mapping_skips_anchors_tags_and_follows_flow_values() {
     let source = "---\nk: &x ffffffffffffffffffffffffffffffffffffffffffffffffffff\nk: !!str hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\nk: {b: cccccccccccccccccccccccccccccccccccccccccccccccc}\nk: [b, cccccccccccccccccccccccccccccccccccccccccccccccc]\n";
     assert_eq!(lines(source, INLINE_MAPPINGS, "line-length"), [2, 3, 5]);
 }
+
+#[test]
+fn truthy_reads_the_yaml_directive_per_document() {
+    let source = "%YAML 1.2\n---\na: yes\n...\n---\nb: yes\n";
+    assert_eq!(lines(source, "  truthy: enable\n", "truthy"), [6]);
+
+    let source = "%YAML 1.2\n# c\n\n---\na: yes\nc: True\n---\nb: on\n...\n%YAML 1.1\n---\nd: no\n";
+    assert_eq!(lines(source, "  truthy: enable\n", "truthy"), [6, 8, 12]);
+}

@@ -367,6 +367,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: `colons` ignores spaces between a key colon and a trailing comment when the value is empty (#616) (#PR)
 - **Linter**: `hyphens` reads block sequence entries from the token stream, so continuation lines and flow items that start with `-` are no longer reported, and `missing space after hyphen` is gone (#617) (#PR)
 - **Linter**: `line-length` `allow-non-breakable-inline-mappings` decides from the line's token stream like yamllint's `check_inline_mapping`, in both directions (#618) (#PR)
+- **Linter**: `truthy` stops reporting `yes`/`no`/`on`/`off` in a document preceded by `%YAML 1.2`, which applies to that document only (#606) (#PR)
 
 ### Security
 

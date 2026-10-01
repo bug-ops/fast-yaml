@@ -36,12 +36,41 @@ pub enum DocumentStart {
 }
 
 impl DocumentStart {
+    /// Byte offset where the document starts.
+    pub const fn offset(self) -> usize {
+        match self {
+            Self::Explicit(span) | Self::Implicit(span) => span.start.offset,
+        }
+    }
+
     /// The span of the explicit `---`, if any.
     pub const fn marker(self) -> Option<Span> {
         match self {
             Self::Explicit(span) => Some(span),
             Self::Implicit(_) => None,
         }
+    }
+}
+
+/// The version of a `%YAML` directive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YamlVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl YamlVersion {
+    /// YAML 1.2, whose core schema has no `yes`/`no`/`on`/`off` booleans.
+    pub const V1_2: Self = Self { major: 1, minor: 2 };
+
+    /// Reads a `%YAML <major>.<minor>` directive line.
+    fn of_directive(line: &str) -> Option<Self> {
+        let version = line.strip_prefix("%YAML")?.split_whitespace().next()?;
+        let (major, minor) = version.split_once('.')?;
+        Some(Self {
+            major: major.parse().ok()?,
+            minor: minor.parse().ok()?,
+        })
     }
 }
 
@@ -54,6 +83,8 @@ pub struct DocumentMarkers {
     pub end: Option<Span>,
     /// 1-based line where a forward key search for the document begins.
     pub first_line: usize,
+    /// The `%YAML` directive in front of the document's `---`; it applies to this document only.
+    pub yaml_version: Option<YamlVersion>,
 }
 
 /// Stand-in for the document of a source the parser reports no document for.
@@ -61,6 +92,7 @@ pub const IMPLICIT_DOCUMENT: DocumentMarkers = DocumentMarkers {
     start: DocumentStart::Implicit(Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0))),
     end: None,
     first_line: 1,
+    yaml_version: None,
 };
 
 /// Which kind of key a [`KeyRepeat`] repeats.
@@ -256,7 +288,7 @@ pub struct ScanCollector<'a, 'c, 'n> {
     remap: Option<Remap<'n>>,
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
-    open: Option<(DocumentStart, usize)>,
+    open: Option<(DocumentStart, usize, Option<YamlVersion>)>,
     needs: ScanNeeds,
     mappings: Vec<MappingKeys>,
     anchors: HashMap<AnchorId, AnchoredKey>,
@@ -345,7 +377,10 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 } else {
                     DocumentStart::Implicit(span)
                 };
-                self.open = Some((start, first_line));
+                let version = explicit
+                    .then(|| self.directive_version(span.start.line))
+                    .flatten();
+                self.open = Some((start, first_line, version));
             }
             Event::DocumentEnd => {
                 let range = self.byte_range(item);
@@ -353,18 +388,30 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                     .source
                     .get(range.start().get()..range.end().get())
                     .is_some_and(|text| text == "...");
-                let Some((start, first_line)) = self.open.take() else {
+                let Some((start, first_line, yaml_version)) = self.open.take() else {
                     return;
                 };
                 self.documents.push(DocumentMarkers {
                     start,
                     end: explicit.then(|| self.span(item)),
                     first_line,
+                    yaml_version,
                 });
             }
             _ if self.needs.covers(ScanNeeds::KEYS) => self.observe_keys(item),
             _ => {}
         }
+    }
+
+    /// The `%YAML` directive among the directive, comment and blank lines above `marker_line`.
+    fn directive_version(&self, marker_line: usize) -> Option<YamlVersion> {
+        (1..marker_line)
+            .rev()
+            .map_while(|line| self.context.get_line(line))
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .take_while(|line| line.starts_with('%'))
+            .find_map(YamlVersion::of_directive)
     }
 
     /// Adds the node of `item`, which covers `range`, to the index.

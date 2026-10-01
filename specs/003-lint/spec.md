@@ -257,6 +257,7 @@ THEN  a file without --- is reported at the preset's level (warning), as in yaml
 | FR-072 | `colons` SHALL NOT report spaces after a colon that is followed by end of line or by a comment (`push:  # c`). | must |
 | FR-073 | `hyphens` SHALL check only the hyphen of a block sequence entry, found in the rebuilt token stream (`indentation` shares it), against the token that follows on the same line; `-item`, a continuation line of a plain scalar and a flow item starting with `-` are not entries. | must |
 | FR-074 | `line-length` with `allow-non-breakable-inline-mappings` SHALL exempt a line only when, after the first block mapping start of the line scanned alone, a `:` is followed by a scalar token that has no space from its start to the end of the line (yamllint 1.38 `check_inline_mapping`): a `:` with no value, an anchored or tagged value and a flow value are judged by the next `:` and scalar. | must |
+| FR-075 | `truthy` SHALL read a document preceded by a `%YAML 1.2` directive as YAML 1.2 and not report `yes`/`no`/`on`/`off` (any case) in it; the directive SHALL NOT carry into the next document, and any other or absent version keeps the YAML 1.1 spellings. | must |
 
 ## 4. Key entities and types
 
