@@ -206,7 +206,7 @@ impl Parser {
     /// Parse all YAML documents of an already normalized input, showing every event to
     /// `on_event` as the loader consumes it.
     ///
-    /// `on_event` sees each [`EventItem`](crate::events::EventItem) in order, with its start and
+    /// `on_event` sees each [`EventItem`] in order, with its start and
     /// end position, its role and no parser types, so a caller can collect side data (comments,
     /// document markers) in the same pass that builds the values. Positions refer to
     /// `input.as_str()`.
