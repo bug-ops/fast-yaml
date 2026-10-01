@@ -1,10 +1,13 @@
 //! Peak heap of linting against loading (#579).
 //!
-//! Lint runs one loader pass; the node index and flow ranges are filled from its events, so with
-//! every rule enabled its peak stays close to the peak of loading alone. A diagnostic costs a
+//! Lint runs one loader pass that builds no value tree (only a custom document rule asks for one);
+//! the node index and flow ranges are filled from its events, so with every rule enabled its
+//! peak stays close to the peak of loading alone, and below it where the loaded tree is the
+//! larger of the two. A diagnostic costs a
 //! few hundred bytes, so an input that makes a diagnostic per scalar is bounded by a larger
 //! factor.
 
+use std::fmt::Write as _;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fast_yaml_core::{ParseLimits, Parser};
@@ -68,4 +71,14 @@ fn a_diagnostic_per_scalar_costs_a_bounded_amount() {
     // Every comma lacks a space after it, so the commas rule reports 500 000 diagnostics
     let input = format!("[{}1]\n", "1,".repeat(500 * 1024));
     assert_lint_within(&input, &LintConfig::default(), (3, 2));
+}
+
+#[test]
+fn lint_of_a_large_block_file_stays_below_loading_it() {
+    let _serial = exclusive();
+    let mut input = String::from("---\n");
+    for i in 0..120_000 {
+        writeln!(input, "key_{i}: value_{i}_xxxxxxxx").unwrap();
+    }
+    assert_lint_within(&input, &LintConfig::default(), (1, 1));
 }

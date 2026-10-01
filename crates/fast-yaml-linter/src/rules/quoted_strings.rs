@@ -1,5 +1,7 @@
 //! Rule to check quoted string style.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
@@ -9,11 +11,10 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
-use fast_yaml_core::{ScalarStyle, Value};
+use fast_yaml_core::ScalarStyle;
 use regex::Regex;
 use std::sync::LazyLock;
 
-use super::LintRule;
 use super::node_roles::NodeRole;
 use crate::nodes::{Node, TagKind};
 
@@ -31,16 +32,15 @@ use crate::nodes::{Node, TagKind};
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::QuotedStringsRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::QuotedStringsRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = QuotedStringsRule;
 /// let yaml = "name: 'John'";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &value, &config);
+/// let diagnostics = rule.check(&context, &config);
 /// assert!(!diagnostics.is_empty());  // Quotes are not needed for `John`
 /// ```
 pub struct QuotedStringsRule;
@@ -171,8 +171,8 @@ impl RuleOptions for QuotedStringsOptions {
 }
 
 impl super::LintRule for QuotedStringsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::QUOTED_STRINGS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::QuotedStrings)
     }
 
     fn name(&self) -> &'static str {
@@ -186,8 +186,10 @@ impl super::LintRule for QuotedStringsRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for QuotedStringsRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let mut diagnostics = Vec::new();
         let check = ScalarCheck {
             source: context.source(),
@@ -286,8 +288,15 @@ impl QuotedStringsRule {
             .quoted_strings
             .severity_or(self.default_severity());
         let mut report = |message: &'static str| {
-            diagnostics
-                .push(DiagnosticBuilder::new(self.code(), severity, message, scalar_span).build());
+            diagnostics.push(
+                DiagnosticBuilder::new(
+                    DiagnosticCode::QUOTED_STRINGS,
+                    severity,
+                    message,
+                    scalar_span,
+                )
+                .build(),
+            );
         };
 
         match style {
@@ -425,20 +434,19 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
     use fast_yaml_core::Parser;
 
     #[test]
     fn test_quoted_strings_any_type() {
         let yaml = "name: 'John'\ncity: \"NYC\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Both quotes should be flagged as unnecessary in only-when-needed mode
         assert_eq!(diagnostics.len(), 2);
     }
@@ -446,7 +454,6 @@ mod tests {
     #[test]
     fn test_quoted_strings_single_only() {
         let yaml = "name: \"John\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = config_with_rule(
@@ -455,7 +462,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("single quotes"));
     }
@@ -463,7 +470,6 @@ mod tests {
     #[test]
     fn test_quoted_strings_double_only() {
         let yaml = "name: 'John'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = config_with_rule(
@@ -472,7 +478,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("double quotes"));
     }
@@ -480,13 +486,12 @@ mod tests {
     #[test]
     fn test_quoted_strings_only_when_needed() {
         let yaml = "name: 'simple'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("does not need quotes"));
     }
@@ -494,13 +499,12 @@ mod tests {
     #[test]
     fn test_quoted_strings_needed_for_special_values() {
         let yaml = "value: 'true'\nnumber: '123'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // These should not be flagged as they need quotes
         assert_eq!(diagnostics, []);
     }
@@ -508,13 +512,12 @@ mod tests {
     #[test]
     fn test_quoted_strings_always() {
         let yaml = "name: John\nage: 30";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = config_with_rule(RuleName::QuotedStrings, "{required: always}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // "John" should be flagged (not age: 30, it's a number)
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("should be quoted"));
@@ -523,13 +526,12 @@ mod tests {
     #[test]
     fn test_quoted_strings_never() {
         let yaml = "name: 'John'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = config_with_rule(RuleName::QuotedStrings, "{required: never}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("should not be quoted"));
     }
@@ -537,13 +539,12 @@ mod tests {
     #[test]
     fn test_quoted_strings_extra_required() {
         let yaml = "command: 'run-script'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = config_with_rule(RuleName::QuotedStrings, "{extra-required: ['-']}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should not flag as unnecessary because it contains '-'
         assert_eq!(diagnostics, []);
     }
@@ -677,13 +678,12 @@ mod tests {
     #[test]
     fn test_quoted_strings_with_colon() {
         let yaml = "url: 'http://example.com'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // A colon not followed by a blank does not need quotes
         assert_eq!(diagnostics.len(), 1);
     }
@@ -775,13 +775,12 @@ mod tests {
     fn test_no_false_positive_escape_newline() {
         // "\n" is a newline escape — removing quotes would produce a literal 'n', not a newline.
         let yaml = "message: \"line1\\nline2\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for double-quoted string with \\n escape, got: {diagnostics:?}"
@@ -791,13 +790,12 @@ mod tests {
     #[test]
     fn test_no_false_positive_escape_tab() {
         let yaml = "data: \"col1\\tcol2\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for double-quoted string with \\t escape, got: {diagnostics:?}"
@@ -807,13 +805,12 @@ mod tests {
     #[test]
     fn test_no_false_positive_escape_backslash() {
         let yaml = r#"path: "C:\\Users\\foo""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -823,13 +820,12 @@ mod tests {
     fn test_no_false_positive_double_quotes_in_plain_scalar() {
         // The value `echo "hello"` is a plain scalar; the " chars are literal content.
         let yaml = r#"run: echo "hello""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for plain scalar with embedded double quotes, got: {diagnostics:?}"
@@ -840,13 +836,12 @@ mod tests {
     fn test_no_false_positive_single_quotes_in_plain_scalar() {
         // The value `${{ github.event_name == 'push' }}` is a plain scalar.
         let yaml = "if: ${{ github.event_name == 'push' }}";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for plain scalar with embedded single quotes, got: {diagnostics:?}"
@@ -859,13 +854,13 @@ mod tests {
     fn test_diagnostic_location_value_after_key() {
         // `key: "unnecessary"` — the quoted value starts at column 6 (1-indexed), offset 5.
         let yaml = r#"key: "unnecessary""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             !diagnostics.is_empty(),
             "expected at least one diagnostic for unnecessarily quoted value"
@@ -888,13 +883,13 @@ mod tests {
         // A quoted value at the start of a sequence: `- "val"` — value starts at column 3, offset 2.
         // Use a plain sequence to get a quoted scalar at a known offset.
         let yaml = "- \"val\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             !diagnostics.is_empty(),
             "expected diagnostic for unnecessarily quoted sequence value"
@@ -913,8 +908,7 @@ mod tests {
     }
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
-        QuotedStringsRule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+        QuotedStringsRule.check(&LintContext::new(yaml), &LintConfig::default())
     }
 
     // Regression tests for issue #308: non-ASCII text before a quoted scalar.
@@ -949,9 +943,8 @@ mod tests {
     #[test]
     fn test_non_ascii_quoted_key_span() {
         let yaml = "\"ключ\": 1";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         let config = config_with_rule(RuleName::QuotedStrings, "{check-keys: true}");
-        let diagnostics = QuotedStringsRule.check(&LintContext::new(yaml), &value, &config);
+        let diagnostics = QuotedStringsRule.check(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1);
         let span = diagnostics[0].span;
         assert_eq!((span.start.column, span.start.offset), (1, 0));
@@ -972,11 +965,10 @@ mod tests {
     fn test_no_false_positive_unicode_escape_u4() {
         // "\u0041BC" decodes to "ABC" — without quotes it becomes literal "\u0041BC"
         let yaml = r#"key: "\u0041BC""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -984,11 +976,10 @@ mod tests {
     fn test_no_false_positive_unicode_escape_u8() {
         // "\U00000041BC" decodes to "ABC" — without quotes it becomes literal
         let yaml = r#"key: "\U00000041BC""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -996,11 +987,10 @@ mod tests {
     fn test_no_false_positive_hex_escape() {
         // "\x41BC" decodes to "ABC" — without quotes it becomes literal "\x41BC"
         let yaml = r#"key: "\x41BC""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -1029,10 +1019,9 @@ mod tests {
     }
 
     fn messages(yaml: &str, options: &str) -> Vec<String> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         let config = config_with_rule(RuleName::QuotedStrings, options);
         QuotedStringsRule
-            .check(&LintContext::new(yaml), &value, &config)
+            .check(&LintContext::new(yaml), &config)
             .into_iter()
             .map(|d| d.message.into_owned())
             .collect()

@@ -1,5 +1,6 @@
 //! Secure atomic file replacement shared by the CLI and batch file processing.
 
+use fast_yaml_core::fs::DisplayPath;
 use std::fs::{self, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -118,7 +119,10 @@ impl AtomicFile {
         let temp = create_temp(dir, existing.is_none()).map_err(|e| {
             io::Error::new(
                 e.kind(),
-                format!("cannot create temporary file in {}: {e}", dir.display()),
+                format!(
+                    "cannot create temporary file in {}: {e}",
+                    DisplayPath::new(dir)
+                ),
             )
         })?;
         Ok(Self {
@@ -231,7 +235,7 @@ fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<(
     if !opened.is_file() || (opened.dev(), opened.ino(), opened.nlink()) != old.identity {
         return Err(io::Error::other(format!(
             "{} changed while it was being replaced",
-            target.display()
+            DisplayPath::new(target)
         )));
     }
     file.set_len(0)?;
@@ -321,7 +325,7 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
     if !opened.is_file() || (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
         return Err(io::Error::other(format!(
             "{} changed while it was being replaced",
-            real.display()
+            DisplayPath::new(real)
         )));
     }
     Ok(Some(file))
@@ -392,7 +396,7 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
             if !metadata.is_file() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("not a regular file: {}", path.display()),
+                    format!("not a regular file: {}", DisplayPath::new(path)),
                 ));
             }
             #[allow(unused_mut)]
@@ -407,7 +411,7 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
             if fs::symlink_metadata(path).is_ok() {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("refused: dangling symlink {}", path.display()),
+                    format!("refused: dangling symlink {}", DisplayPath::new(path)),
                 ));
             }
             Ok((path.to_path_buf(), None))

@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use fast_yaml_core::fs::{ReadFileError, read_regular_file};
+use fast_yaml_core::fs::{DisplayPath, ReadFileError, read_regular_file};
 use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_core::{DecodeError, decode_input_owned};
 use serde_norway::Value;
@@ -39,7 +39,7 @@ pub(super) enum IgnoreFileCause {
 
 /// An `ignore-from-file` file that could not be used.
 #[derive(Debug, thiserror::Error)]
-#[error("{}: {cause}", .path.display())]
+#[error("{}: {cause}", DisplayPath::new(.path))]
 pub(super) struct IgnoreFileError {
     pub path: PathBuf,
     pub cause: IgnoreFileCause,

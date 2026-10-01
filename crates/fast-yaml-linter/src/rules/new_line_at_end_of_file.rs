@@ -1,9 +1,10 @@
 //! Rule to check for newline at end of file.
 
+use super::RuleId;
+use crate::config::RuleName;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
 };
-use fast_yaml_core::Value;
 
 /// Linting rule for newline at end of file.
 ///
@@ -15,20 +16,19 @@ use fast_yaml_core::Value;
 ///
 /// ```
 /// use fast_yaml_core::Parser;
-/// use fast_yaml_linter::{rules::NewLineAtEndOfFileRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::NewLineAtEndOfFileRule, rules::SourceRule, LintConfig};
 ///
 /// let rule = NewLineAtEndOfFileRule;
 /// let yaml = "name: John\n";  // Ends with newline - OK
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &LintConfig::new());
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &LintConfig::new());
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct NewLineAtEndOfFileRule;
 
 impl super::LintRule for NewLineAtEndOfFileRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::NEW_LINE_AT_END_OF_FILE
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::NewLineAtEndOfFile)
     }
 
     fn name(&self) -> &'static str {
@@ -42,8 +42,10 @@ impl super::LintRule for NewLineAtEndOfFileRule {
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for NewLineAtEndOfFileRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         if source.is_empty() {
             return Vec::new();
@@ -60,7 +62,7 @@ impl super::LintRule for NewLineAtEndOfFileRule {
 
             vec![
                 DiagnosticBuilder::new(
-                    self.code(),
+                    DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
                     severity,
                     "no newline at end of file",
                     Span::new(eof, eof),
@@ -77,18 +79,16 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_newline_present() {
         let yaml = "name: John\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -96,11 +96,10 @@ mod tests {
     #[test]
     fn test_newline_missing() {
         let yaml = "name: John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "no newline at end of file");
@@ -108,14 +107,11 @@ mod tests {
 
     #[test]
     fn test_empty_file() {
-        use fast_yaml_core::Parser;
-
         let yaml = "";
-        let value = Parser::parse_str("null").unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -123,11 +119,10 @@ mod tests {
     #[test]
     fn test_multiple_newlines() {
         let yaml = "name: John\n\n\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -135,11 +130,10 @@ mod tests {
     #[test]
     fn test_windows_newline() {
         let yaml = "name: John\r\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         // Ends with \n so it's OK
         assert_eq!(diagnostics, []);
@@ -148,13 +142,12 @@ mod tests {
     #[test]
     fn test_severity_override() {
         let yaml = "name: John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLineAtEndOfFileRule;
         let config = config_with_rule(RuleName::NewLineAtEndOfFile, "{severity: error}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }

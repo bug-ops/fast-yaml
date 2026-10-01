@@ -1,17 +1,23 @@
 //! Rule to check spacing after list item hyphens.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span, tokenizer::TokenType,
+use crate::rules::token_stream::{
+    scanner,
+    tokens::{Kind, Token},
 };
-use fast_yaml_core::Value;
+use crate::{
+    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
+};
 
 /// Linting rule for hyphen spacing.
 ///
-/// Validates spacing after list item hyphens `-`.
+/// Validates spacing after the hyphen of a block sequence entry, read from the token stream
+/// like yamllint does: a `-` inside a plain scalar or a flow collection is not an entry, and
+/// neither is `-item`.
 ///
 /// Configuration options:
 /// - `max-spaces-after`: integer (default: 1)
@@ -19,16 +25,15 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::HyphensRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::HyphensRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = HyphensRule;
 /// let yaml = "- item1\n- item2";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct HyphensRule;
@@ -52,8 +57,8 @@ impl Default for HyphensOptions {
 impl RuleOptions for HyphensOptions {}
 
 impl super::LintRule for HyphensRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::HYPHENS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Hyphens)
     }
 
     fn name(&self) -> &'static str {
@@ -67,109 +72,62 @@ impl super::LintRule for HyphensRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
-        let source = context.source();
+impl super::SourceRule for HyphensRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+        let settings = &config.rules.hyphens;
+        let severity = settings.severity_or(Severity::Warning);
+        let max_spaces = settings.options.max_spaces_after;
         let source_context = context.source_context();
-        let tokenizer = context.flow_tokenizer();
 
-        let max_spaces_after = config.rules.hyphens.options.max_spaces_after;
-
-        let mut diagnostics = Vec::new();
-        let hyphens = tokenizer.tokens(TokenType::Hyphen);
-
-        for hyphen in hyphens {
-            if let Some(diag) = check_spaces_after_hyphen(
-                source,
-                source_context,
-                hyphen.span.start.offset,
-                max_spaces_after,
-                self.code(),
-                config,
-            ) {
-                diagnostics.push(diag);
-            }
+        if !may_hold_block_entry(context.source()) {
+            return Vec::new();
         }
 
+        let mut diagnostics = Vec::new();
+        let mut entry: Option<Token> = None;
+        scanner::scan(
+            context.source(),
+            context.nodes(),
+            context.scan_is_complete(),
+            |token| {
+                if let Some(hyphen) = entry.take()
+                    && hyphen.end.line == token.start.line
+                {
+                    let spaces = token.start.index - hyphen.end.index;
+                    if max_spaces.exceeded_by(spaces) {
+                        let loc = source_context.offset_to_location(hyphen.end.pointer);
+                        diagnostics.push(
+                            DiagnosticBuilder::new(
+                                DiagnosticCode::HYPHENS,
+                                severity,
+                                format!(
+                                    "too many spaces after hyphen (expected at most {max_spaces}, found {spaces})"
+                                ),
+                                Span::new(loc, loc),
+                            )
+                            .build(),
+                        );
+                    }
+                }
+                if token.kind == Kind::BlockEntry {
+                    entry = Some(*token);
+                }
+            },
+        );
         diagnostics
     }
 }
 
-/// Checks spaces after a hyphen.
-fn check_spaces_after_hyphen(
-    source: &str,
-    source_context: &SourceContext<'_>,
-    hyphen_offset: usize,
-    max_spaces: Limit,
-    code: &str,
-    config: &LintConfig,
-) -> Option<Diagnostic> {
-    if hyphen_offset + 1 >= source.len() {
-        return None;
-    }
-
-    // Skip document separators (---)
-    let starts_separator = source
-        .as_bytes()
-        .get(hyphen_offset..)
-        .is_some_and(|after| after.starts_with(b"---"));
-    if starts_separator {
-        let next = source.as_bytes().get(hyphen_offset + 3);
-        if next.is_none_or(|&b| b == b'\n' || b == b'\r' || b == b' ') {
-            return None;
-        }
-    }
-
-    // Count spaces after hyphen
-    let mut spaces = 0;
-    let mut offset = hyphen_offset + 1;
-
+/// Whether `source` has a `-` followed by a blank or the end of the text, the only way to write
+/// the hyphen of a block sequence entry; the token stream is not scanned for a source without one.
+fn may_hold_block_entry(source: &str) -> bool {
     let bytes = source.as_bytes();
-    while offset < bytes.len() {
-        if bytes.get(offset) == Some(&b' ') {
-            spaces += 1;
-            offset += 1;
-        } else {
-            break;
-        }
-    }
-
-    // Require at least one space after hyphen (unless it's at end of line)
-    if spaces == 0 && offset < bytes.len() {
-        let next_char = bytes.get(offset).copied().map(char::from);
-        if let Some(ch) = next_char
-            && ch != '\n'
-            && ch != '\r'
-        {
-            let severity = config.rules.hyphens.severity_or(Severity::Warning);
-            let loc = source_context.offset_to_location(hyphen_offset + 1);
-            let span = Span::new(loc, loc);
-
-            return Some(
-                DiagnosticBuilder::new(code, severity, "missing space after hyphen", span).build(),
-            );
-        }
-    }
-
-    if max_spaces.exceeded_by(spaces) {
-        let severity = config.rules.hyphens.severity_or(Severity::Warning);
-        let loc = source_context.offset_to_location(hyphen_offset + 1);
-        let span = Span::new(loc, loc);
-
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces after hyphen (expected at most {max_spaces}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        );
-    }
-
-    None
+    bytes.last() == Some(&b'-')
+        || bytes
+            .windows(2)
+            .any(|pair| matches!(pair, [b'-', b' ' | b'\t' | b'\r' | b'\n']))
 }
 
 #[cfg(test)]
@@ -177,47 +135,41 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_hyphens_default_valid() {
         let yaml = "- item1\n- item2\n- item3";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
-    fn test_hyphens_missing_space() {
+    fn test_hyphens_without_space_is_a_plain_scalar() {
         let yaml = "-item1\n-item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
-        assert_ne!(diagnostics, []);
-        assert!(diagnostics[0].message.contains("missing space"));
+        assert_eq!(rule.check(&context, &config), []);
     }
 
     #[test]
     fn test_hyphens_too_many_spaces() {
         let yaml = "-  item1\n-  item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces"));
     }
@@ -225,52 +177,48 @@ mod tests {
     #[test]
     fn test_hyphens_allow_multiple_spaces() {
         let yaml = "-  item1\n-  item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = config_with_rule(RuleName::Hyphens, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_hyphens_nested_lists() {
         let yaml = "- item1\n  - nested1\n  - nested2\n- item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_hyphens_indented_lists() {
         let yaml = "list:\n  - item1\n  - item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_hyphens_empty_list_item() {
         let yaml = "-\n-";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Empty list items (hyphen at end of line) are allowed
         assert_eq!(diagnostics, []);
     }
@@ -278,26 +226,24 @@ mod tests {
     #[test]
     fn test_hyphens_list_with_mappings() {
         let yaml = "- name: John\n  age: 30\n- name: Jane\n  age: 25";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_hyphens_no_false_positive_on_document_separator() {
         let yaml = "---\nkey: value\n---\nother: data";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "document separators should not trigger hyphens rule: {diagnostics:?}"
@@ -306,40 +252,30 @@ mod tests {
 
     #[test]
     fn test_hyphens_correct_location() {
-        // Violation at line 3, not line 1. Verify last violation is on line 3.
-        let yaml = "-item1\n-item2\n-item3";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let yaml = "- a\n-  b\n-   c\n";
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
-        assert_eq!(diagnostics.len(), 3, "expected 3 violations");
-        let last = diagnostics.last().unwrap();
-        assert_eq!(
-            last.span.start.line, 3,
-            "last violation should be on line 3, got: {}",
-            last.span.start.line
-        );
-        // First violation must be on line 1 (not 1:1 hardcoded for all)
-        assert_eq!(
-            diagnostics[0].span.start.line, 1,
-            "first violation should be on line 1"
-        );
+        let diagnostics = rule.check(&context, &config);
+        let found: Vec<_> = diagnostics
+            .iter()
+            .map(|d| (d.span.start.line, d.span.start.column))
+            .collect();
+        assert_eq!(found, [(2, 2), (3, 2)]);
     }
 
     #[test]
     fn test_hyphens_no_false_positive_after_multibyte_chars() {
         // ✓ is 3 bytes but 1 char; byte offset and char index diverge after it
         let yaml = "items:\n  - note: \"contains ✓ checkmark\"\n  - item1\n  - item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "valid list items after multibyte chars should not trigger hyphens rule: {diagnostics:?}"
@@ -347,16 +283,30 @@ mod tests {
     }
 
     #[test]
-    fn test_hyphens_mixed_violations() {
-        let yaml = "-item1\n-  item2\n- item3";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+    fn test_hyphens_ignores_dashes_that_are_not_entries() {
+        let yaml =
+            "---\nrun: security import \"x\"\n  -k \"y\"\n  -t cert\nd: [a,\n  -1]\ne: |\n  -x\n";
 
         let rule = HyphensRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
-        // Should have 2 violations (missing space and too many spaces)
-        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(rule.check(&context, &config), []);
+    }
+
+    #[test]
+    fn test_hyphens_nested_entry_and_comment() {
+        let yaml = "-   - a\n-  # c\n   b\n";
+
+        let rule = HyphensRule;
+        let config = LintConfig::default();
+
+        let context = LintContext::new(yaml);
+        let lines: Vec<_> = rule
+            .check(&context, &config)
+            .iter()
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(lines, [1]);
     }
 }

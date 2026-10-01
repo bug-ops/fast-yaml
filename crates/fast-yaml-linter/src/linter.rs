@@ -2,17 +2,16 @@
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
-use std::str::FromStr;
 
 use crate::config::{
     CanonicalPath, CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig,
 };
 use crate::directives::Directives;
-use crate::rules::{LintRule, MarkerPresence};
-use crate::scan::{ScanCollector, ScanNeeds, SourceScan, lint_load_options};
+use crate::rules::{DuplicateRule, LintDocument, MarkerPresence, Rule, RuleId};
+use crate::scan::{ScanCollector, ScanNeeds, lint_load_options};
 use crate::{Diagnostic, DiagnosticCode, LintContext, LintSource, Severity, rules::RuleRegistry};
+use fast_yaml_core::Parser;
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
-use fast_yaml_core::{NormalizedInput, Parser, Value};
 
 /// Configuration for the linter.
 ///
@@ -176,10 +175,11 @@ impl LintConfig {
     /// ```
     /// use fast_yaml_linter::LintConfig;
     /// use fast_yaml_linter::config::RuleName;
+    /// use fast_yaml_linter::rules::RuleId;
     ///
     /// let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
-    /// assert!(!config.is_rule_enabled("line-length"));
-    /// assert!(config.is_rule_enabled("duplicate-key"));
+    /// assert!(!config.is_rule_enabled(RuleId::BuiltIn(RuleName::LineLength)));
+    /// assert!(config.is_rule_enabled(RuleId::BuiltIn(RuleName::DuplicateKey)));
     /// ```
     #[must_use]
     pub const fn with_disabled_rule(mut self, rule: RuleName) -> Self {
@@ -194,16 +194,17 @@ impl LintConfig {
     /// ```
     /// use fast_yaml_linter::{LintConfig, Severity};
     /// use fast_yaml_linter::config::{CustomRuleCode, NoOptions, RuleSettings};
+    /// use fast_yaml_linter::rules::RuleId;
     ///
     /// let settings = RuleSettings::<NoOptions> {
     ///     enabled: false,
     ///     severity: Some(Severity::Error),
     ///     ..RuleSettings::default()
     /// };
-    /// let config = LintConfig::new()
-    ///     .with_custom_rule(CustomRuleCode::new("my-rule").unwrap(), settings);
-    /// assert!(!config.is_rule_enabled("my-rule"));
-    /// assert_eq!(config.severity_for("my-rule", Severity::Hint), Severity::Error);
+    /// let code = CustomRuleCode::new("my-rule").unwrap();
+    /// let config = LintConfig::new().with_custom_rule(code.clone(), settings);
+    /// assert!(!config.is_rule_enabled(RuleId::Custom(&code)));
+    /// assert_eq!(config.severity_for(RuleId::Custom(&code), Severity::Hint), Severity::Error);
     /// ```
     #[must_use]
     pub fn with_custom_rule(
@@ -215,44 +216,59 @@ impl LintConfig {
         self
     }
 
-    /// Returns whether the rule with this code is enabled.
+    /// Returns whether the rule is enabled.
     ///
-    /// Built-in rules are looked up by [`RuleName`], then custom rules; unknown codes are
-    /// enabled.
+    /// Built-in rules are looked up by [`RuleName`], custom rules by their code; a custom rule
+    /// without settings is enabled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::LintConfig;
+    /// use fast_yaml_linter::config::RuleName;
+    /// use fast_yaml_linter::rules::RuleId;
+    ///
+    /// let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
+    /// assert!(!config.is_rule_enabled(RuleId::BuiltIn(RuleName::LineLength)));
+    /// assert!(config.is_rule_enabled(RuleId::BuiltIn(RuleName::DuplicateKey)));
+    /// ```
     #[must_use]
-    pub fn is_rule_enabled(&self, code: &str) -> bool {
-        RuleName::from_str(code).map_or_else(
-            |_| {
-                self.custom_settings(code)
-                    .is_none_or(|settings| settings.enabled)
-            },
-            |name| self.rules.is_enabled(name),
-        )
+    pub fn is_rule_enabled(&self, id: RuleId<'_>) -> bool {
+        match id {
+            RuleId::BuiltIn(name) => self.rules.is_enabled(name),
+            RuleId::Custom(code) => self
+                .custom_rules
+                .get(code)
+                .is_none_or(|settings| settings.enabled),
+        }
     }
 
     /// Returns the configured severity of a rule, or `default` when none is set.
     ///
     /// Built-in rules are resolved through [`RulesConfig`], custom rules through
-    /// [`LintConfig::custom_rules`]. Custom [`LintRule`](crate::rules::LintRule) implementations call this with their own
-    /// code; built-in rules read their typed settings directly.
+    /// [`LintConfig::custom_rules`]. Custom [`LintRule`](crate::rules::LintRule) implementations
+    /// call this with their own id; built-in rules read their typed settings directly.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_linter::{LintConfig, Severity};
+    /// use fast_yaml_linter::config::CustomRuleCode;
+    /// use fast_yaml_linter::rules::RuleId;
     ///
     /// let config = LintConfig::new();
-    /// assert_eq!(config.severity_for("my-rule", Severity::Info), Severity::Info);
+    /// let code = CustomRuleCode::new("my-rule").unwrap();
+    /// assert_eq!(config.severity_for(RuleId::Custom(&code), Severity::Info), Severity::Info);
     /// ```
     #[must_use]
-    pub fn severity_for(&self, code: &str, default: Severity) -> Severity {
-        RuleName::from_str(code).map_or_else(
-            |_| {
-                self.custom_settings(code)
-                    .map_or(default, |settings| settings.severity_or(default))
-            },
-            |name| self.rules.severity(name).unwrap_or(default),
-        )
+    pub fn severity_for(&self, id: RuleId<'_>, default: Severity) -> Severity {
+        match id {
+            RuleId::BuiltIn(name) => self.rules.severity(name).unwrap_or(default),
+            RuleId::Custom(code) => self
+                .custom_rules
+                .get(code)
+                .map_or(default, |settings| settings.severity_or(default)),
+        }
     }
 
     /// Returns whether the built-in rule runs for the file at `path`, or for a source without
@@ -265,16 +281,12 @@ impl LintConfig {
         self.rules.is_enabled(name) && path.is_none_or(|path| !self.rules.is_ignored(name, path))
     }
 
-    /// Like [`LintConfig::is_active`] for a registry code, which may name a custom rule.
-    fn is_code_active(&self, code: &str, path: Option<&CanonicalPath>) -> bool {
-        RuleName::from_str(code).map_or_else(
-            |_| self.is_rule_enabled(code),
-            |name| self.is_active(name, path),
-        )
-    }
-
-    fn custom_settings(&self, code: &str) -> Option<&RuleSettings<NoOptions>> {
-        self.custom_rules.get(code)
+    /// Like [`LintConfig::is_active`] for a registered rule, which may be a custom one.
+    fn is_rule_active(&self, id: RuleId<'_>, path: Option<&CanonicalPath>) -> bool {
+        match id {
+            RuleId::BuiltIn(name) => self.is_active(name, path),
+            RuleId::Custom(_) => self.is_rule_enabled(id),
+        }
     }
 }
 
@@ -376,17 +388,24 @@ impl Linter {
 
     /// Adds a custom rule.
     ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateRule`] when a rule with the same id is already registered; the
+    /// built-in rules are registered by [`Linter::with_all_rules`] and [`Linter::with_config`].
+    ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::{Linter, rules::DuplicateKeysRule};
+    /// use fast_yaml_linter::Linter;
+    /// use fast_yaml_linter::rules::{DuplicateKeysRule, Rule};
     ///
     /// let mut linter = Linter::new();
-    /// linter.add_rule(Box::new(DuplicateKeysRule));
+    /// linter.add_rule(Rule::Source(Box::new(DuplicateKeysRule))).unwrap();
+    /// assert!(linter.add_rule(Rule::Source(Box::new(DuplicateKeysRule))).is_err());
     /// ```
-    pub fn add_rule(&mut self, rule: Box<dyn crate::rules::LintRule>) -> &mut Self {
-        self.registry.add(rule);
-        self
+    pub fn add_rule(&mut self, rule: Rule) -> Result<&mut Self, DuplicateRule> {
+        self.registry.add(rule)?;
+        Ok(self)
     }
 
     /// Lints YAML source code.
@@ -398,7 +417,7 @@ impl Linter {
     ///
     /// Every location (line, column, byte offset, suggestion spans) refers to `source` with
     /// document-prefix BOMs removed, the same text the parser reports syntax errors against; use
-    /// [`NormalizedInput::original_offset`] to map an offset back to `source`.
+    /// [`NormalizedInput::original_offset`](fast_yaml_core::NormalizedInput::original_offset) to map an offset back to `source`.
     ///
     /// # Errors
     ///
@@ -521,55 +540,67 @@ impl Linter {
         let normalized = input.normalized();
         let source = normalized.as_str();
         let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
-        let mut collector = ScanCollector::new(
-            normalized,
-            source,
-            context.source_context(),
-            self.scan_needs(path),
-        );
-        let docs = Parser::parse_normalized_observed(
-            normalized,
-            &StreamBudget::new(self.config.parse_limits),
-            lint_load_options(),
-            |item| collector.observe(item),
-        )?;
+        let active: Vec<&Rule> = self
+            .registry
+            .rules()
+            .iter()
+            .filter(|rule| self.config.is_rule_active(rule.info().id(), path))
+            .collect();
+        let needs = ScanNeeds::of_rules(active.iter().filter_map(|rule| match rule.info().id() {
+            RuleId::BuiltIn(name) => Some(name),
+            RuleId::Custom(_) => None,
+        }));
+        let mut collector = ScanCollector::new(normalized, source, context.source_context(), needs);
+        let budget = StreamBudget::new(self.config.parse_limits);
+        let docs = if active.iter().any(|rule| matches!(rule, Rule::Document(_))) {
+            Some(Parser::parse_normalized_observed(
+                normalized,
+                &budget,
+                lint_load_options(),
+                |item| collector.observe(item),
+            )?)
+        } else {
+            Parser::validate_normalized_observed(
+                normalized,
+                &budget,
+                lint_load_options(),
+                |item| collector.observe(item),
+            )?;
+            None
+        };
         let scan = collector.finish();
-        let mut context = context.with_scan(scan);
+        let context = context.with_scan(scan);
         let directives = Directives::from_context(&context, &self.config, &self.registry);
-        let rules: Vec<&dyn LintRule> = if directives.disables_file() {
+        let rules = if directives.disables_file() {
             Vec::new()
         } else {
-            self.registry
-                .rules()
-                .iter()
-                .map(AsRef::as_ref)
-                .filter(|rule| self.config.is_code_active(rule.code(), path))
-                .collect()
+            active
         };
 
         // The rules that read the documents run first, so the documents (the bulk of the heap)
         // are freed before the other rules allocate; results are merged in registry order.
-        let mut by_value: Vec<Option<Vec<Diagnostic>>> = rules.iter().map(|_| None).collect();
-        for (slot, rule) in by_value.iter_mut().zip(&rules) {
-            if !rule.needs_value() {
+        let mut by_document: Vec<Option<Vec<Diagnostic>>> = rules.iter().map(|_| None).collect();
+        for (slot, rule) in by_document.iter_mut().zip(&rules) {
+            let Rule::Document(rule) = rule else {
                 continue;
-            }
+            };
             let mut found = Vec::new();
-            for (idx, doc) in docs.iter().enumerate() {
-                let start_line = context.documents().get(idx).map_or(1, |d| d.first_line);
-                context.set_doc_start_line(start_line);
-                found.extend(rule.check(&context, doc, &self.config));
+            for (idx, value) in docs.iter().flatten().enumerate() {
+                let first_line = context.documents().get(idx).map_or(1, |d| d.first_line);
+                let document = LintDocument { value, first_line };
+                found.extend(rule.check(&context, document, &self.config));
             }
             *slot = Some(found);
         }
-        context.set_doc_start_line(1);
         drop(docs);
 
         let mut diagnostics = Vec::new();
-        for (slot, rule) in by_value.iter_mut().zip(&rules) {
-            let mut found = slot
-                .take()
-                .unwrap_or_else(|| rule.check(&context, &Value::Null, &self.config));
+        for (slot, rule) in by_document.iter_mut().zip(&rules) {
+            let mut found = match (slot.take(), rule) {
+                (Some(found), _) => found,
+                (None, Rule::Source(rule)) => rule.check(&context, &self.config),
+                (None, Rule::Document(_)) => Vec::new(),
+            };
             if diagnostics.is_empty() {
                 diagnostics = found;
             } else {
@@ -582,81 +613,6 @@ impl Linter {
             diagnostics.retain(|d| d.code.as_str() != DiagnosticCode::LINT_DIRECTIVE);
         }
         Ok(diagnostics)
-    }
-
-    /// The scan products the active rules read.
-    fn scan_needs(&self, path: Option<&CanonicalPath>) -> ScanNeeds {
-        ScanNeeds::of_rules(
-            self.registry
-                .rules()
-                .iter()
-                .map(|rule| rule.code())
-                .filter(|code| self.config.is_code_active(code, path)),
-        )
-    }
-
-    /// Lints a pre-parsed Value (avoids double parsing).
-    ///
-    /// Use this when you already have a parsed YAML value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::Linter;
-    /// use fast_yaml_core::Parser;
-    ///
-    /// let yaml = "name: John";
-    /// let value = Parser::parse_str(yaml).unwrap().unwrap();
-    ///
-    /// let linter = Linter::with_all_rules();
-    /// let diagnostics = linter.lint_value(yaml, &value).unwrap();
-    /// ```
-    ///
-    /// Locations use the same BOM-free coordinates as [`Linter::lint`].
-    ///
-    /// Comments and document markers are read from `source` itself under
-    /// [`LintConfig::parse_limits`], so `source` must load.
-    ///
-    /// # Errors
-    ///
-    /// Returns `LintError::InputTooLarge` if `source` exceeds [`LintConfig::max_input_bytes`],
-    /// and `LintError::ParseError` if `source` does not load (it exceeds the parse limits or is
-    /// not valid YAML) or contains a NUL character, which the
-    /// tokenizer would otherwise treat as end of input, or if the scanner reads more than
-    /// [`ParseLimits::max_scan_ahead`] past a node.
-    pub fn lint_value(&self, source: &str, value: &Value) -> Result<Vec<Diagnostic>, LintError> {
-        self.config.max_input_bytes.check(source.len())?;
-        let normalized = NormalizedInput::new(source)?;
-        let source = normalized.as_str();
-        let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
-        // Comments and markers come from the source itself, under the configured limits; a source
-        // that does not load is an error here, as it is in `lint`
-        let (scan, failure) = SourceScan::scan(
-            source,
-            context.source_context(),
-            self.config.parse_limits,
-            self.scan_needs(None),
-        );
-        if let Some(error) = failure {
-            return Err(error.into());
-        }
-        let context = context.with_scan(scan);
-        let directives = Directives::from_context(&context, &self.config, &self.registry);
-        let mut diagnostics = Vec::new();
-
-        for rule in self.registry.rules() {
-            if directives.disables_file() {
-                break;
-            }
-            if !self.config.is_rule_enabled(rule.code()) {
-                continue;
-            }
-
-            let mut rule_diagnostics = rule.check(&context, value, &self.config);
-            diagnostics.append(&mut rule_diagnostics);
-        }
-
-        Ok(finish(diagnostics, directives))
     }
 
     /// Gets the current configuration.
@@ -722,17 +678,24 @@ fn finish(mut diagnostics: Vec<Diagnostic>, directives: Directives) -> Vec<Diagn
 mod tests {
     use super::*;
     use crate::config::test_support::config_with_rule;
+    use crate::rules::{DocumentRule, LintRule, SourceRule};
     use std::fmt::Write as _;
 
     fn indent(size: u64) -> IndentSize {
         IndentSize::try_from(size).unwrap()
     }
 
-    struct AlwaysFlags;
+    struct AlwaysFlags(CustomRuleCode);
+
+    impl AlwaysFlags {
+        fn new() -> Self {
+            Self(CustomRuleCode::new("always-flags").unwrap())
+        }
+    }
 
     impl LintRule for AlwaysFlags {
-        fn code(&self) -> &'static str {
-            "always-flags"
+        fn id(&self) -> RuleId<'_> {
+            RuleId::Custom(&self.0)
         }
 
         fn name(&self) -> &'static str {
@@ -746,20 +709,17 @@ mod tests {
         fn default_severity(&self) -> Severity {
             Severity::Hint
         }
+    }
 
-        fn check(
-            &self,
-            context: &LintContext,
-            _value: &Value,
-            config: &LintConfig,
-        ) -> Vec<Diagnostic> {
+    impl SourceRule for AlwaysFlags {
+        fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
             let span = context
                 .source_context()
                 .span_at(context.source_context().line_start(1), 1);
             vec![
                 crate::DiagnosticBuilder::new(
-                    self.code(),
-                    config.severity_for(self.code(), self.default_severity()),
+                    self.0.as_str(),
+                    config.severity_for(self.id(), self.default_severity()),
                     "flagged",
                     span,
                 )
@@ -768,10 +728,82 @@ mod tests {
         }
     }
 
+    struct DocumentLines(CustomRuleCode);
+
+    impl LintRule for DocumentLines {
+        fn id(&self) -> RuleId<'_> {
+            RuleId::Custom(&self.0)
+        }
+
+        fn name(&self) -> &'static str {
+            "Document Lines"
+        }
+
+        fn description(&self) -> &'static str {
+            "Flags the first line of every document"
+        }
+
+        fn default_severity(&self) -> Severity {
+            Severity::Hint
+        }
+    }
+
+    impl DocumentRule for DocumentLines {
+        fn check(
+            &self,
+            context: &LintContext,
+            document: LintDocument<'_>,
+            _config: &LintConfig,
+        ) -> Vec<Diagnostic> {
+            let source_context = context.source_context();
+            let span = source_context.span_at(source_context.line_start(document.first_line), 1);
+            vec![
+                crate::DiagnosticBuilder::new(
+                    self.0.as_str(),
+                    self.default_severity(),
+                    format!("{:?}", document.value),
+                    span,
+                )
+                .build(),
+            ]
+        }
+    }
+
+    #[test]
+    fn test_document_rule_sees_every_document_with_its_first_line() {
+        let mut linter = Linter::with_config(LintConfig::new());
+        let code = CustomRuleCode::new("document-lines").unwrap();
+        linter
+            .add_rule(Rule::Document(Box::new(DocumentLines(code))))
+            .unwrap();
+        let diagnostics = linter.lint("a: 1\n---\nb: 2\n---\nc: 3\n").unwrap();
+        let found: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == "document-lines")
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(found, [1, 3, 5]);
+    }
+
+    #[test]
+    fn test_adding_a_rule_twice_is_an_error() {
+        let mut linter = Linter::new();
+        linter
+            .add_rule(Rule::Source(Box::new(AlwaysFlags::new())))
+            .unwrap();
+        assert!(
+            linter
+                .add_rule(Rule::Source(Box::new(AlwaysFlags::new())))
+                .is_err()
+        );
+    }
+
     #[test]
     fn test_custom_rule_runs_with_default_severity() {
         let mut linter = Linter::with_config(LintConfig::new());
-        linter.add_rule(Box::new(AlwaysFlags));
+        linter
+            .add_rule(Rule::Source(Box::new(AlwaysFlags::new())))
+            .unwrap();
         let diagnostics = linter.lint("a: 1\n").unwrap();
         let flagged: Vec<_> = diagnostics
             .iter()
@@ -790,7 +822,9 @@ mod tests {
         };
         let mut linter =
             Linter::with_config(LintConfig::new().with_custom_rule(code.clone(), overridden));
-        linter.add_rule(Box::new(AlwaysFlags));
+        linter
+            .add_rule(Rule::Source(Box::new(AlwaysFlags::new())))
+            .unwrap();
         let diagnostics = linter.lint("a: 1\n").unwrap();
         let flagged = diagnostics
             .iter()
@@ -803,7 +837,9 @@ mod tests {
             ..RuleSettings::default()
         };
         let mut linter = Linter::with_config(LintConfig::new().with_custom_rule(code, disabled));
-        linter.add_rule(Box::new(AlwaysFlags));
+        linter
+            .add_rule(Rule::Source(Box::new(AlwaysFlags::new())))
+            .unwrap();
         let diagnostics = linter.lint("a: 1\n").unwrap();
         assert!(
             !diagnostics
@@ -933,7 +969,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_and_lint_value_honor_max_scan_ahead() {
+    fn test_lint_honors_max_scan_ahead() {
         let limits = ParseLimits {
             max_scan_ahead: fast_yaml_core::limits::MaxScanAhead::new(8).unwrap(),
             ..ParseLimits::default()
@@ -952,20 +988,7 @@ mod tests {
             )
         };
         assert!(scan_ahead(linter.lint(source)));
-        assert!(scan_ahead(linter.lint_value(source, &Value::Null)));
-        assert!(linter.lint_value("a: 1\n", &Value::Null).is_ok());
-    }
-
-    #[test]
-    fn test_lint_value_honors_max_input_bytes() {
-        let max = MaxInputBytes::new(8).unwrap();
-        let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
-        let value = Value::Null;
-        assert!(linter.lint_value("a: 1\n", &value).is_ok());
-        assert!(matches!(
-            linter.lint_value("a: 1\nb: 2\n", &value),
-            Err(LintError::InputTooLarge(_))
-        ));
+        assert!(linter.lint("a: 1\n").is_ok());
     }
 
     #[test]
@@ -1024,8 +1047,8 @@ mod tests {
     fn test_config_disabled_rules() {
         let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
 
-        assert!(!config.is_rule_enabled("line-length"));
-        assert!(config.is_rule_enabled("duplicate-key"));
+        assert!(!config.is_rule_enabled(RuleId::BuiltIn(RuleName::LineLength)));
+        assert!(config.is_rule_enabled(RuleId::BuiltIn(RuleName::DuplicateKey)));
     }
 
     #[test]
@@ -1093,28 +1116,10 @@ mod tests {
     }
 
     #[test]
-    fn test_linter_lint_value() {
-        let yaml = "name: John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
-
-        let linter = Linter::with_all_rules();
-        let diagnostics = linter.lint_value(yaml, &value).unwrap();
-
-        assert!(
-            diagnostics
-                .iter()
-                .all(|d| d.severity != crate::Severity::Error)
-        );
-    }
-
-    #[test]
     fn test_linter_disabled_rule() {
         let yaml = "very_long_line: this line is definitely longer than eighty characters and should trigger a warning";
         let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
         let linter = Linter::with_config(config);
-
-        let mut linter = linter;
-        linter.add_rule(Box::new(crate::rules::LineLengthRule));
 
         let diagnostics = linter.lint(yaml).unwrap();
 
@@ -1300,9 +1305,6 @@ mod tests {
         let config = config_with_rule(RuleName::LineLength, "disable");
         let linter = Linter::with_config(config);
 
-        let mut linter = linter;
-        linter.add_rule(Box::new(crate::rules::LineLengthRule));
-
         let diagnostics = linter.lint(yaml).unwrap();
 
         assert!(
@@ -1368,22 +1370,16 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_value_rejects_nul() {
-        let value = Parser::parse_str("a: 1").unwrap().unwrap();
-        assert!(
-            Linter::with_all_rules()
-                .lint_value("a: 1\0\nb: 2", &value)
-                .is_err()
-        );
+    fn test_lint_rejects_nul() {
+        assert!(Linter::with_all_rules().lint("a: 1\0\nb: 2").is_err());
     }
 
     #[test]
-    fn test_lint_value_bom_uses_normalized_coordinates() {
+    fn test_lint_bom_uses_normalized_coordinates() {
         let linter = Linter::with_all_rules();
         let src = "a: 1";
-        let value = fast_yaml_core::Parser::parse_str(src).unwrap().unwrap();
-        let plain = linter.lint_value(src, &value).unwrap();
-        let bom = linter.lint_value("\u{FEFF}a: 1", &value).unwrap();
+        let plain = linter.lint(src).unwrap();
+        let bom = linter.lint("\u{FEFF}a: 1").unwrap();
         assert_same_coordinates(&plain, &bom, src);
     }
 
@@ -1421,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lint_value_applies_directives_under_the_configured_limits() {
+    fn test_lint_applies_directives_under_the_configured_limits() {
         use fast_yaml_core::limits::{MaxDepth, ParseLimits};
         use std::fmt::Write as _;
 
@@ -1430,18 +1426,17 @@ mod tests {
             writeln!(source, "{}k:", " ".repeat(depth)).unwrap();
         }
         writeln!(source, "{}v: 1 ", " ".repeat(300)).unwrap();
-        let value = Value::Null;
 
         let limits = |depth| ParseLimits {
             max_depth: MaxDepth::new(depth).unwrap(),
             ..ParseLimits::default()
         };
         let raised = Linter::with_config(LintConfig::new().with_parse_limits(limits(512)));
-        assert_eq!(raised.lint_value(&source, &value).unwrap(), []);
+        assert_eq!(raised.lint(&source).unwrap(), []);
 
         let lowered = Linter::with_config(LintConfig::new().with_parse_limits(limits(8)));
         assert!(matches!(
-            lowered.lint_value(&source, &value),
+            lowered.lint(&source),
             Err(LintError::ParseError(_))
         ));
     }

@@ -61,6 +61,23 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn control_characters_in_a_path_are_escaped() {
+        let span = Span::new(Location::new(1, 2, 1), Location::new(1, 5, 4));
+        let d = DiagnosticBuilder::new("r", Severity::Info, "m", span).build_without_excerpt();
+        let source = ReportSource::File(
+            ReportPath::from_absolute(Path::new("/w/a\u{1b}]0;x\u{7}.yaml")).unwrap(),
+        );
+        let report = FileReport {
+            source: &source,
+            diagnostics: &[d],
+        };
+        let out = render(&[report]);
+        assert!(!out.trim_end().chars().any(char::is_control), "{out:?}");
+        assert!(out.contains("file=/w/a\\u{1b}]0;x\\u{7}.yaml"), "{out:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn escapes_properties_and_data() {
         let span = Span::new(Location::new(1, 2, 1), Location::new(1, 5, 4));
         let d = DiagnosticBuilder::new("r", Severity::Info, "50%\nx", span).build_without_excerpt();

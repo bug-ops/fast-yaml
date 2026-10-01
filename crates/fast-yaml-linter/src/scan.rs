@@ -11,12 +11,13 @@ use fast_yaml_core::{
     SetValues, Value, resolve_scalar,
 };
 
+use crate::config::RuleName;
 use crate::nodes::{CollectionKind, NodeIndex, ScalarNode, TagKind};
 use crate::rules::node_roles::RoleTracker;
 use crate::set_members::{SetMember, SetMembers, may_contain_set};
 use crate::source::offset::{ByteOffset, ByteRange};
 use crate::tokenizer::ScalarRanges;
-use crate::{DiagnosticCode, Location, SourceContext, Span, comments::Comment};
+use crate::{Location, SourceContext, Span, comments::Comment};
 
 /// How the linter loads a document: a repeated `<<` and a `!!set` member with a value load, so
 /// the `duplicate-key` and `set-values` rules can report them instead of the load failing.
@@ -36,12 +37,41 @@ pub enum DocumentStart {
 }
 
 impl DocumentStart {
+    /// Byte offset where the document starts.
+    pub const fn offset(self) -> usize {
+        match self {
+            Self::Explicit(span) | Self::Implicit(span) => span.start.offset,
+        }
+    }
+
     /// The span of the explicit `---`, if any.
     pub const fn marker(self) -> Option<Span> {
         match self {
             Self::Explicit(span) => Some(span),
             Self::Implicit(_) => None,
         }
+    }
+}
+
+/// The version of a `%YAML` directive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct YamlVersion {
+    pub major: u32,
+    pub minor: u32,
+}
+
+impl YamlVersion {
+    /// YAML 1.2, whose core schema has no `yes`/`no`/`on`/`off` booleans.
+    pub const V1_2: Self = Self { major: 1, minor: 2 };
+
+    /// Reads a `%YAML <major>.<minor>` directive line.
+    fn of_directive(line: &str) -> Option<Self> {
+        let version = line.strip_prefix("%YAML")?.split_whitespace().next()?;
+        let (major, minor) = version.split_once('.')?;
+        Some(Self {
+            major: major.parse().ok()?,
+            minor: minor.parse().ok()?,
+        })
     }
 }
 
@@ -54,6 +84,8 @@ pub struct DocumentMarkers {
     pub end: Option<Span>,
     /// 1-based line where a forward key search for the document begins.
     pub first_line: usize,
+    /// The `%YAML` directive in front of the document's `---`; it applies to this document only.
+    pub yaml_version: Option<YamlVersion>,
 }
 
 /// Stand-in for the document of a source the parser reports no document for.
@@ -61,6 +93,7 @@ pub const IMPLICIT_DOCUMENT: DocumentMarkers = DocumentMarkers {
     start: DocumentStart::Implicit(Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0))),
     end: None,
     first_line: 1,
+    yaml_version: None,
 };
 
 /// Which kind of key a [`KeyRepeat`] repeats.
@@ -106,25 +139,35 @@ impl ScanNeeds {
     pub(crate) const FLOW: Self = Self(1 << 3);
     pub(crate) const ALL: Self = Self(Self::KEYS.0 | Self::NODES.0 | Self::SETS.0 | Self::FLOW.0);
 
-    /// What the rules with these codes read.
-    pub(crate) fn of_rules<'c>(codes: impl IntoIterator<Item = &'c str>) -> Self {
-        codes.into_iter().fold(Self::NONE, |needs, code| {
-            needs.union(match code {
-                DiagnosticCode::DUPLICATE_KEY => Self::KEYS,
-                DiagnosticCode::TRUTHY
-                | DiagnosticCode::QUOTED_STRINGS
-                | DiagnosticCode::FLOAT_VALUES
-                | DiagnosticCode::EMPTY_VALUES
-                | DiagnosticCode::KEY_ORDERING
-                | DiagnosticCode::INDENTATION => Self::NODES,
-                DiagnosticCode::SET_VALUES => Self::SETS,
-                DiagnosticCode::BRACES
-                | DiagnosticCode::BRACKETS
-                | DiagnosticCode::COLONS
-                | DiagnosticCode::COMMAS
-                | DiagnosticCode::HYPHENS
-                | DiagnosticCode::COMMENTS_INDENTATION => Self::FLOW,
-                _ => Self::NONE,
+    /// What the built-in rules in `names` read.
+    pub(crate) fn of_rules(names: impl IntoIterator<Item = RuleName>) -> Self {
+        names.into_iter().fold(Self::NONE, |needs, name| {
+            needs.union(match name {
+                RuleName::DuplicateKey => Self::KEYS,
+                RuleName::Truthy
+                | RuleName::QuotedStrings
+                | RuleName::FloatValues
+                | RuleName::EmptyValues
+                | RuleName::KeyOrdering
+                | RuleName::Indentation
+                | RuleName::Hyphens => Self::NODES,
+                RuleName::SetValues => Self::SETS,
+                RuleName::Braces
+                | RuleName::Brackets
+                | RuleName::Colons
+                | RuleName::Commas
+                | RuleName::CommentsIndentation => Self::FLOW,
+                RuleName::LineLength
+                | RuleName::TrailingWhitespace
+                | RuleName::DocumentStart
+                | RuleName::DocumentEnd
+                | RuleName::NewLineAtEndOfFile
+                | RuleName::Comments
+                | RuleName::EmptyLines
+                | RuleName::NewLines
+                | RuleName::OctalValues
+                | RuleName::InvalidAnchor
+                | RuleName::LintDirective => Self::NONE,
             })
         })
     }
@@ -221,14 +264,14 @@ impl<'a> SourceScan<'a> {
             Err(error) => return (Self::default(), Some(error)),
         };
         let mut collector = ScanCollector::new(&input, source, context, needs);
-        let loaded = Parser::parse_normalized_observed(
+        let loaded = Parser::validate_normalized_observed(
             &input,
             &StreamBudget::new(limits),
             lint_load_options(),
             |item| collector.observe(item),
         );
         match loaded {
-            Ok(_) => (collector.finish(), None),
+            Ok(()) => (collector.finish(), None),
             Err(error) => (collector.finish_failed(), Some(error)),
         }
     }
@@ -256,7 +299,7 @@ pub struct ScanCollector<'a, 'c, 'n> {
     remap: Option<Remap<'n>>,
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
-    open: Option<(DocumentStart, usize)>,
+    open: Option<(DocumentStart, usize, Option<YamlVersion>)>,
     needs: ScanNeeds,
     mappings: Vec<MappingKeys>,
     anchors: HashMap<AnchorId, AnchoredKey>,
@@ -345,7 +388,10 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 } else {
                     DocumentStart::Implicit(span)
                 };
-                self.open = Some((start, first_line));
+                let version = explicit
+                    .then(|| self.directive_version(span.start.line))
+                    .flatten();
+                self.open = Some((start, first_line, version));
             }
             Event::DocumentEnd => {
                 let range = self.byte_range(item);
@@ -353,18 +399,30 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                     .source
                     .get(range.start().get()..range.end().get())
                     .is_some_and(|text| text == "...");
-                let Some((start, first_line)) = self.open.take() else {
+                let Some((start, first_line, yaml_version)) = self.open.take() else {
                     return;
                 };
                 self.documents.push(DocumentMarkers {
                     start,
                     end: explicit.then(|| self.span(item)),
                     first_line,
+                    yaml_version,
                 });
             }
             _ if self.needs.covers(ScanNeeds::KEYS) => self.observe_keys(item),
             _ => {}
         }
+    }
+
+    /// The `%YAML` directive among the directive, comment and blank lines above `marker_line`.
+    fn directive_version(&self, marker_line: usize) -> Option<YamlVersion> {
+        (1..marker_line)
+            .rev()
+            .map_while(|line| self.context.get_line(line))
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .take_while(|line| line.starts_with('%'))
+            .find_map(YamlVersion::of_directive)
     }
 
     /// Adds the node of `item`, which covers `range`, to the index.
@@ -697,17 +755,18 @@ mod tests {
 
     #[test]
     fn rules_name_the_products_they_read() {
-        let needs = |codes: &[&'static str]| ScanNeeds::of_rules(codes.iter().copied());
-        assert_eq!(needs(&[DiagnosticCode::LINE_LENGTH]), ScanNeeds::NONE);
-        assert_eq!(needs(&[DiagnosticCode::DUPLICATE_KEY]), ScanNeeds::KEYS);
-        assert_eq!(needs(&[DiagnosticCode::TRUTHY]), ScanNeeds::NODES);
-        assert_eq!(needs(&[DiagnosticCode::SET_VALUES]), ScanNeeds::SETS);
-        assert_eq!(needs(&[DiagnosticCode::COMMAS]), ScanNeeds::FLOW);
+        let needs = |names: &[RuleName]| ScanNeeds::of_rules(names.iter().copied());
+        assert_eq!(needs(&[RuleName::LineLength]), ScanNeeds::NONE);
+        assert_eq!(needs(&[RuleName::DuplicateKey]), ScanNeeds::KEYS);
+        assert_eq!(needs(&[RuleName::Truthy]), ScanNeeds::NODES);
+        assert_eq!(needs(&[RuleName::Hyphens]), ScanNeeds::NODES);
+        assert_eq!(needs(&[RuleName::SetValues]), ScanNeeds::SETS);
+        assert_eq!(needs(&[RuleName::Commas]), ScanNeeds::FLOW);
         let all = needs(&[
-            DiagnosticCode::DUPLICATE_KEY,
-            DiagnosticCode::EMPTY_VALUES,
-            DiagnosticCode::SET_VALUES,
-            DiagnosticCode::BRACES,
+            RuleName::DuplicateKey,
+            RuleName::EmptyValues,
+            RuleName::SetValues,
+            RuleName::Braces,
         ]);
         assert_eq!(all, ScanNeeds::ALL);
         assert!(all.covers(ScanNeeds::NODES));

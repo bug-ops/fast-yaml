@@ -1,10 +1,12 @@
 //! Rule to check indentation, ported from yamllint's token-based `indentation` rule.
 //!
-//! The parser's events carry no indicators or implicit tokens, so the `scanner` module rebuilds the token
+//! The parser's events carry no indicators or implicit tokens, so the `token_stream` module rebuilds the token
 //! stream of `PyYAML` from the node index and the text between nodes, and the `machine` module runs
 //! yamllint's stack of enclosing structures over it. Findings, columns and messages match
 //! yamllint 1.38 for every document both parsers accept.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::{IndentSequences, IndentSize, IndentSpaces, RuleOptions};
@@ -12,12 +14,10 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
 };
-use fast_yaml_core::Value;
 
 mod machine;
-mod scanner;
-mod tokens;
 
+use super::token_stream::scanner;
 use machine::Machine;
 
 /// Rule to check that each line is indented as the structure it belongs to requires.
@@ -103,8 +103,8 @@ impl IndentationOptions {
 impl RuleOptions for IndentationOptions {}
 
 impl super::LintRule for IndentationRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::INDENTATION
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Indentation)
     }
 
     fn name(&self) -> &'static str {
@@ -118,8 +118,10 @@ impl super::LintRule for IndentationRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for IndentationRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let severity = config
             .rules
@@ -130,23 +132,14 @@ impl super::LintRule for IndentationRule {
             IndentSpaces::Fixed(size) => Some(size.get()),
             IndentSpaces::Consistent => None,
         };
-        let mut machine = Machine::new(
-            source,
-            spaces,
-            options.indent_sequences,
-            options.check_multi_line_strings,
-        );
-        scanner::scan(
-            source,
-            context.nodes(),
-            context.scan_is_complete(),
-            |token| {
-                machine.push(token);
-            },
-        );
+        let problems = if is_one_flush_left_line(source) {
+            Vec::new()
+        } else {
+            machine_problems(context, spaces, options)
+        };
 
         let mut diagnostics = mixed_whitespace(context, severity);
-        diagnostics.extend(machine.finish().into_iter().map(|problem| {
+        diagnostics.extend(problems.into_iter().map(|problem| {
             let width = source
                 .get(problem.offset..)
                 .and_then(|rest| rest.chars().next())
@@ -161,6 +154,39 @@ impl super::LintRule for IndentationRule {
         diagnostics.sort_by_key(|d| (d.span.start.line, d.span.start.column));
         diagnostics
     }
+}
+
+/// Whether `source` is ASCII text of a single line that starts in column 0.
+///
+/// The check compares a line with the ones around it, and the first token of a line only with the
+/// root indent, so such a source has nothing to report and the token stream is not scanned. This
+/// is what a minified JSON file is.
+fn is_one_flush_left_line(source: &str) -> bool {
+    let body = source.trim_end_matches(['\n', '\r']);
+    body.is_ascii()
+        && !body.starts_with([' ', '\t'])
+        && !body.bytes().any(|byte| matches!(byte, b'\n' | b'\r'))
+}
+
+/// Runs the indentation machine over the token stream of `context`.
+fn machine_problems(
+    context: &LintContext,
+    spaces: Option<usize>,
+    options: &IndentationOptions,
+) -> Vec<machine::Problem> {
+    let mut machine = Machine::new(
+        context.source(),
+        spaces,
+        options.indent_sequences,
+        options.check_multi_line_strings,
+    );
+    scanner::scan(
+        context.source(),
+        context.nodes(),
+        context.scan_is_complete(),
+        |token| machine.push(token),
+    );
+    machine.finish()
 }
 
 /// Reports lines whose indentation mixes tabs and spaces.
@@ -204,32 +230,86 @@ mod tests {
     use crate::{
         LintConfig, LintContext,
         config::{IndentSize, RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
-    fn parse(yaml: &str) -> Value {
-        Parser::parse_str(yaml).unwrap().unwrap()
+    #[test]
+    fn a_one_line_flush_left_source_is_recognized() {
+        for yes in [
+            "[1,2]",
+            "[1,2]\n",
+            "a: [1, 2]\r\n",
+            "--- {a: b}\n",
+            "# c",
+            "x",
+        ] {
+            assert!(is_one_flush_left_line(yes), "{yes:?}");
+        }
+        for no in [
+            " [1]",
+            "\t[1]",
+            "a: 1\nb: 2",
+            "a: 1\r\nb: 2",
+            "[\u{43a}]",
+            "a:\n  b",
+        ] {
+            assert!(!is_one_flush_left_line(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn the_machine_reports_nothing_for_one_flush_left_line() {
+        let options = IndentationOptions::default();
+        for source in [
+            "[1,2,3]\n",
+            "{a: 1, b: [2, 3], c: {d: e}}\n",
+            "a: [1, 2]\n",
+            "a: {b: [c, {d: e}]}\n",
+            "--- [1, 2]\n",
+            "[[], [[]], {}]\n",
+            "- a\n",
+            "- - a\n",
+            "? a\n",
+            "&x [1, *x]\n",
+            "!!seq [1]\n",
+            "'quoted': \"double\"\n",
+            "a: |\n",
+            "[a: 1, b: 2]\n",
+            "key: value # note\n",
+            "[1, 2] # note\n",
+            "{a: 1}\r\n",
+            "-1\n",
+            "a:\n",
+            "[\n",
+        ] {
+            assert!(is_one_flush_left_line(source), "{source:?}");
+            let context = LintContext::new(source);
+            assert_eq!(machine_problems(&context, None, &options), [], "{source:?}");
+            let context = LintContext::new(source);
+            assert_eq!(
+                machine_problems(&context, Some(4), &options),
+                [],
+                "{source:?}"
+            );
+        }
     }
 
     #[test]
     fn test_correct_2space_indent() {
         let yaml = "parent:\n  child: value\n  nested:\n    deep: ok\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &value, &config), []);
+        assert_eq!(rule.check(&ctx, &config), []);
     }
 
     #[test]
     fn test_wrong_indent_size() {
         let yaml = "parent:\n   child: value\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(2u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &value, &config);
+        let diagnostics = rule.check(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
         assert_eq!(diagnostics[0].span.start.line, 2);
@@ -237,16 +317,13 @@ mod tests {
 
     #[test]
     fn test_mixed_tabs_and_spaces() {
-        // Tab indentation is illegal YAML, so we parse a valid document and pass
-        // the invalid source to the rule directly (the rule only reads source text).
-        let valid_yaml = "parent:\n  child: value\n";
-        let value = parse(valid_yaml);
+        // Tab indentation is illegal YAML, so the rule gets the invalid source directly.
         // Source with mixed leading whitespace (tab then space).
         let mixed_source = "parent:\n\t child: value\n";
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(mixed_source);
-        let diagnostics = rule.check(&ctx, &value, &config);
+        let diagnostics = rule.check(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("mixed tabs and spaces"));
     }
@@ -254,31 +331,28 @@ mod tests {
     #[test]
     fn test_top_level_no_indent() {
         let yaml = "key: value\nother: 42\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &value, &config), []);
+        assert_eq!(rule.check(&ctx, &config), []);
     }
 
     #[test]
     fn test_indent_size_4_correct() {
         let yaml = "parent:\n    child: value\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &value, &config), []);
+        assert_eq!(rule.check(&ctx, &config), []);
     }
 
     #[test]
     fn test_indent_size_4_wrong() {
         let yaml = "parent:\n  child: value\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &value, &config);
+        let diagnostics = rule.check(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
     }
@@ -287,23 +361,20 @@ mod tests {
     fn test_tabs_only_no_diagnostic() {
         // Tab indentation is rejected by the YAML parser, but the rule should
         // not emit a wrong-indent-size diagnostic for tab-only leading whitespace.
-        let valid_yaml = "parent:\n  child: value\n";
-        let value = parse(valid_yaml);
         let tab_source = "parent:\n\tchild: value\n";
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(tab_source);
-        assert_eq!(rule.check(&ctx, &value, &config), []);
+        assert_eq!(rule.check(&ctx, &config), []);
     }
 
     #[test]
     fn test_severity_override() {
         let yaml = "parent:\n   child: value\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = config_with_rule(RuleName::Indentation, "{severity: error, spaces: 2}");
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &value, &config);
+        let diagnostics = rule.check(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
@@ -312,11 +383,10 @@ mod tests {
     fn test_multiple_violations() {
         // Lines 2 and 3 have 3-space indent (not multiple of 2); line 4 has 6-space (ok).
         let yaml = "parent:\n   child: value\n   nested:\n      deep: bad\n";
-        let value = parse(yaml);
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(2u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &value, &config);
+        let diagnostics = rule.check(&ctx, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
@@ -324,7 +394,7 @@ mod tests {
         let config = config_with_rule(RuleName::Indentation, options);
         let ctx = LintContext::new(yaml);
         IndentationRule
-            .check(&ctx, &parse(yaml), &config)
+            .check(&ctx, &config)
             .into_iter()
             .map(|d| {
                 format!(

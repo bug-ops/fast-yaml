@@ -1,7 +1,9 @@
 //! Human-readable text formatter (rustc-style).
 
 use crate::{Formatter, Severity, formatter::Findings};
-use std::io;
+use std::io::{self, Write as _};
+
+use super::WRITE_BUFFER;
 
 const ELLIPSIS: &str = "\u{2026}";
 
@@ -123,6 +125,9 @@ impl Default for TextFormatter {
 
 impl Formatter for TextFormatter {
     fn write(&self, out: &mut dyn io::Write, findings: Findings<'_>) -> io::Result<()> {
+        // The caller's writer is a trait object, so every small write of a diagnostic would be a
+        // virtual call; a local buffer keeps them inlined
+        let mut out = io::BufWriter::with_capacity(WRITE_BUFFER, out);
         for finding in findings.iter() {
             let diagnostic = finding.diagnostic();
             let severity_str = self.colorize(diagnostic.severity.as_str(), diagnostic.severity);
@@ -187,7 +192,7 @@ impl Formatter for TextFormatter {
         let count = |severity| {
             findings
                 .diagnostics()
-                .filter(|d| d.severity == severity)
+                .filter(|d| d.severity == severity && !d.is_limit_summary())
                 .count()
         };
         let (error_count, warning_count) = (count(Severity::Error), count(Severity::Warning));
@@ -196,7 +201,7 @@ impl Formatter for TextFormatter {
             writeln!(out, "{error_count} errors, {warning_count} warnings")?;
         }
 
-        Ok(())
+        out.flush()
     }
 }
 

@@ -298,7 +298,11 @@ impl FlowSpacing<'_> {
         }
 
         let content = self.source.get(self.inner.start..end)?;
-        let spaces = content.chars().take_while(|c| *c == ' ').count();
+        let rest = content.trim_start_matches(' ');
+        if rest.starts_with(['\n', '\r', '#']) {
+            return None;
+        }
+        let spaces = content.len() - rest.len();
         self.violation(spaces, opening_span)
     }
 
@@ -310,7 +314,11 @@ impl FlowSpacing<'_> {
         }
 
         let content = self.source.get(self.inner.start..end)?;
-        let spaces = content.chars().rev().take_while(|c| *c == ' ').count();
+        let trimmed = content.trim_end_matches(' ');
+        if trimmed.ends_with('\n') {
+            return None;
+        }
+        let spaces = content.len() - trimmed.len();
         self.violation(spaces, closing_span)
     }
 
@@ -405,6 +413,21 @@ mod tests {
         let source2 = "{key: value  }";
         let bad = spacing(source2, 1..13, Limit::Max(0), Limit::Max(1));
         assert!(bad.before_closing(dummy_span()).is_some());
+    }
+
+    #[test]
+    fn test_spacing_ignores_indentation_across_lines() {
+        let source = "{\n  a: 1\n  }";
+        let s = spacing(source, 1..source.len() - 1, Limit::Max(0), Limit::Max(0));
+        assert!(s.before_closing(dummy_span()).is_none());
+
+        let source = "{ \n a }";
+        let s = spacing(source, 1..source.len() - 1, Limit::Max(0), Limit::Max(0));
+        assert!(s.after_opening(dummy_span()).is_none());
+
+        let source = "{ # c\n a }";
+        let s = spacing(source, 1..source.len() - 1, Limit::Max(0), Limit::Max(0));
+        assert!(s.after_opening(dummy_span()).is_none());
     }
 
     #[test]

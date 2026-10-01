@@ -1,10 +1,11 @@
 //! Rule to check comment indentation.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use crate::context::LineMetadata;
 use crate::{
     CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
 };
-use fast_yaml_core::Value;
 
 /// Linting rule for comment indentation.
 ///
@@ -20,22 +21,21 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::CommentsIndentationRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::CommentsIndentationRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = CommentsIndentationRule;
 /// let yaml = "list:\n  - item1\n  # Comment at correct level\n  - item2";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct CommentsIndentationRule;
 
 impl super::LintRule for CommentsIndentationRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::COMMENTS_INDENTATION
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::CommentsIndentation)
     }
 
     fn name(&self) -> &'static str {
@@ -49,8 +49,10 @@ impl super::LintRule for CommentsIndentationRule {
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for CommentsIndentationRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let comments = context.comments();
         if comments.is_empty() {
             return Vec::new();
@@ -123,7 +125,7 @@ impl super::LintRule for CommentsIndentationRule {
 
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::COMMENTS_INDENTATION,
                         severity,
                         format!(
                             "comment indentation does not match surrounding content (expected {expected} spaces, found {comment_indent})"
@@ -211,12 +213,10 @@ impl ContentLines {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::LintRule;
-    use fast_yaml_core::Parser;
+    use crate::rules::SourceRule;
 
-    fn check_source(yaml: &str, parsed: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(parsed).unwrap().unwrap();
-        CommentsIndentationRule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+    fn check_source(yaml: &str, _parsed: &str) -> Vec<Diagnostic> {
+        CommentsIndentationRule.check(&LintContext::new(yaml), &LintConfig::default())
     }
 
     fn diag_count(yaml: &str) -> usize {
@@ -293,26 +293,24 @@ mod tests {
     #[test]
     fn test_comments_indentation_valid() {
         let yaml = "list:\n  - item1\n  # Comment at correct level\n  - item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_comments_indentation_invalid() {
         let yaml = "list:\n  - item1\n# Wrong indentation\n  - item2";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
@@ -324,13 +322,12 @@ mod tests {
     #[test]
     fn test_comments_indentation_inline_ignored() {
         let yaml = "key: value  # Inline comment";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Inline comments are not checked for indentation
         assert_eq!(diagnostics, []);
     }
@@ -338,78 +335,72 @@ mod tests {
     #[test]
     fn test_comments_indentation_nested() {
         let yaml = "root:\n  nested:\n    # Comment at level 2\n    key: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_comments_indentation_nested_invalid() {
         let yaml = "root:\n  nested:\n  # Comment at wrong level\n    key: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
     }
 
     #[test]
     fn test_comments_indentation_first_line() {
         let yaml = "# Comment at root level\nkey: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_comments_indentation_multiple_comments() {
         let yaml = "# Comment 1\n# Comment 2\nkey: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_comments_indentation_after_content() {
         let yaml = "key: value\n# Comment after content\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_comments_indentation_list() {
         let yaml = "items:\n  - one\n  # Comment\n  - two";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -419,13 +410,12 @@ mod tests {
     fn test_toplevel_comment_after_nested_block() {
         // Top-level comment after a nested block should not be flagged
         let yaml = "a:\n  b: 2\n# top-level comment\nc: 3\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "top-level comment after nested block should not produce diagnostics"
@@ -436,13 +426,12 @@ mod tests {
     fn test_toplevel_comment_at_start() {
         // Top-level comment before any content should not be flagged
         let yaml = "# top-level header\na: 1\nb: 2\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "top-level comment at file start should not produce diagnostics"
@@ -453,13 +442,12 @@ mod tests {
     fn test_toplevel_comment_between_top_level_keys() {
         // Top-level comment between two top-level keys should not be flagged
         let yaml = "a: 1\n# separator\nb: 2\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "top-level comment between top-level keys should not produce diagnostics"
@@ -470,13 +458,12 @@ mod tests {
     fn test_indented_comment_in_nested_block_still_checked() {
         // A comment indented to match nested block should still work correctly
         let yaml = "root:\n  nested:\n    # comment at level 2\n    key: value\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "correctly indented nested comment should not produce diagnostics"
@@ -487,13 +474,12 @@ mod tests {
     fn test_indented_comment_wrong_level_still_flagged() {
         // A comment with wrong indentation inside a nested block should still be flagged
         let yaml = "root:\n  nested:\n  # wrong level comment\n    key: value\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommentsIndentationRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             !diagnostics.is_empty(),
             "incorrectly indented nested comment should produce diagnostics"

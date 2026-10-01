@@ -3,7 +3,7 @@
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use fast_yaml_core::fs::ReadFileError;
+use fast_yaml_core::fs::{DisplayPath, ReadFileError};
 use fast_yaml_core::limits::{
     Bounded, Bounds, LimitRangeError, MaxInputBytes, MaxScanAhead, ParseLimits,
 };
@@ -16,8 +16,8 @@ use crate::config::ignore_source::{
 };
 use crate::config::rules::{ApplyMode, value_kind};
 use crate::config::{
-    IgnoreBase, IgnorePatterns, IndentSize, LocaleName, Preset, RuleConfigError, RuleName,
-    RulesConfig, YamlFiles,
+    IgnoreBase, IgnorePatterns, IndentSize, LocaleName, MaxDiagnostics, Preset, RuleConfigError,
+    RuleName, RulesConfig, YamlFiles,
 };
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::linter::LintConfig;
@@ -39,7 +39,7 @@ pub const MAX_CONFIG_FILE_BYTES: usize = 1 << 20;
 /// file that names it (yamllint resolves it against the working directory). The extended file is
 /// loaded first, recursively (at most [`MAX_EXTENDS_DEPTH`] files deep, cycles are rejected), and
 /// the rules of the extending file are applied over it like over a preset. `max-input-bytes`,
-/// `max-scan-ahead` and `ignore` are inherited when the extending file does not set them;
+/// `max-scan-ahead`, `max-diagnostics` and `ignore` are inherited when the extending file does not set them;
 /// `yaml-files` is not inherited, as in yamllint.
 ///
 /// `ignore` and `yaml-files` select the files `fy lint` visits and follow yamllint's semantics.
@@ -62,7 +62,9 @@ pub const MAX_CONFIG_FILE_BYTES: usize = 1 << 20;
 ///
 /// The `max-input-bytes` key is specific to fast-yaml: an integer number of bytes (no size
 /// suffixes) that caps the input the linter accepts. The `max-scan-ahead` key is likewise an
-/// integer, in characters, that sets [`MaxScanAhead`]. Omit both from files shared with yamllint.
+/// integer, in characters, that sets [`MaxScanAhead`]. The `max-diagnostics` key is a positive
+/// integer that caps the diagnostics `fy lint` prints per file ([`MaxDiagnostics`]). Omit all
+/// three from files shared with yamllint.
 ///
 /// # Examples
 ///
@@ -81,6 +83,11 @@ pub struct ConfigFile {
     pub max_input_bytes: Option<MaxInputBytes>,
     /// Scan-ahead limit from `max-scan-ahead`, or `None` when the file does not set it.
     pub max_scan_ahead: Option<MaxScanAhead>,
+    /// Per-file diagnostic cap from `max-diagnostics`, or `None` when the file does not set it.
+    ///
+    /// A CLI setting that [`ConfigFile::into_parts`] does not carry into the [`LintConfig`]; the
+    /// caller reads it before splitting the file.
+    pub max_diagnostics: Option<MaxDiagnostics>,
     /// The `ignore` and `yaml-files` settings.
     pub selection: FileSelection,
     /// The file's own `locale`, or `None` when it has none; never inherited through `extends`.
@@ -114,6 +121,8 @@ pub enum TopLevelKey {
     MaxInputBytes,
     /// `max-scan-ahead`
     MaxScanAhead,
+    /// `max-diagnostics`
+    MaxDiagnostics,
     /// `locale`
     Locale,
 }
@@ -130,6 +139,7 @@ impl TopLevelKey {
             Self::YamlFiles => "yaml-files",
             Self::MaxInputBytes => "max-input-bytes",
             Self::MaxScanAhead => "max-scan-ahead",
+            Self::MaxDiagnostics => "max-diagnostics",
             Self::Locale => "locale",
         }
     }
@@ -143,6 +153,7 @@ impl TopLevelKey {
             Self::YamlFiles,
             Self::MaxInputBytes,
             Self::MaxScanAhead,
+            Self::MaxDiagnostics,
             Self::Locale,
         ]
         .into_iter()
@@ -161,7 +172,7 @@ impl std::fmt::Display for TopLevelKey {
 #[non_exhaustive]
 pub enum ConfigFileError {
     /// I/O error reading config file.
-    #[error("failed to read config file '{}'", .path.display())]
+    #[error("failed to read config file '{}'", DisplayPath::new(.path))]
     Io {
         /// Path that failed.
         path: PathBuf,
@@ -170,7 +181,7 @@ pub enum ConfigFileError {
     },
 
     /// The config file is not UTF-8 text (unsupported encoding or invalid bytes).
-    #[error("failed to decode config file '{}'", .path.display())]
+    #[error("failed to decode config file '{}'", DisplayPath::new(.path))]
     Decode {
         /// Path that failed.
         path: PathBuf,
@@ -180,7 +191,7 @@ pub enum ConfigFileError {
 
     /// The config text parsed under the core parser but failed in `serde_norway`, for example
     /// on duplicate keys, several documents or a malformed scalar.
-    #[error("failed to parse config file '{}'", .path.display())]
+    #[error("failed to parse config file '{}'", DisplayPath::new(.path))]
     Parse {
         /// Path that failed.
         path: PathBuf,
@@ -190,7 +201,7 @@ pub enum ConfigFileError {
 
     /// The core parser rejected the config file: a syntax error, or nesting depth or alias
     /// expansion beyond the default parser limits.
-    #[error("failed to parse config file '{}'", .path.display())]
+    #[error("failed to parse config file '{}'", DisplayPath::new(.path))]
     Rejected {
         /// Path that failed.
         path: PathBuf,
@@ -199,7 +210,7 @@ pub enum ConfigFileError {
     },
 
     /// The `rules:` section is invalid.
-    #[error("invalid rules in config file '{}'", .path.display())]
+    #[error("invalid rules in config file '{}'", DisplayPath::new(.path))]
     InvalidRules {
         /// Path that failed.
         path: PathBuf,
@@ -208,7 +219,7 @@ pub enum ConfigFileError {
     },
 
     /// The file is not a mapping.
-    #[error("config file '{}': expected a mapping with a 'rules' key", .path.display())]
+    #[error("config file '{}': expected a mapping with a 'rules' key", DisplayPath::new(.path))]
     NotAMapping {
         /// Path that failed.
         path: PathBuf,
@@ -217,7 +228,7 @@ pub enum ConfigFileError {
     /// `locale` names a locale that `key-ordering` cannot honor while the rule is enabled.
     #[error(
         "config file '{}': locale '{}' is not supported while 'key-ordering' is enabled; keys are ordered by code point, as in the 'C', 'POSIX' and 'C.UTF-8' locales",
-        .path.display(),
+        DisplayPath::new(.path),
         echo(.locale, KEY_LIMIT)
     )]
     UnsupportedLocale {
@@ -230,7 +241,7 @@ pub enum ConfigFileError {
     /// A limit key is not a positive integer (negative, fractional, suffixed or not a number).
     #[error(
         "config file '{}': '{key}' must be a positive integer without a size suffix, got {found}",
-        .path.display()
+        DisplayPath::new(.path)
     )]
     LimitNotPositive {
         /// Path that failed.
@@ -242,7 +253,7 @@ pub enum ConfigFileError {
     },
 
     /// A limit key is outside the accepted range.
-    #[error("config file '{}': invalid '{key}'", .path.display())]
+    #[error("config file '{}': invalid '{key}'", DisplayPath::new(.path))]
     LimitOutOfRange {
         /// Path that failed.
         path: PathBuf,
@@ -254,8 +265,8 @@ pub enum ConfigFileError {
 
     /// A top-level key is not recognized.
     #[error(
-        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'ignore-from-file', 'yaml-files', 'locale', 'max-input-bytes' or 'max-scan-ahead'",
-        .path.display(),
+        "config file '{}': unknown top-level key '{}', expected 'rules', 'extends', 'ignore', 'ignore-from-file', 'yaml-files', 'locale', 'max-input-bytes', 'max-scan-ahead' or 'max-diagnostics'",
+        DisplayPath::new(.path),
         echo(.key, KEY_LIMIT)
     )]
     UnknownKey {
@@ -267,28 +278,28 @@ pub enum ConfigFileError {
 
     /// A config, `extends` or `ignore-from-file` path is not a regular file (a directory, a pipe
     /// or a device), so it is not opened.
-    #[error("'{}' is not a regular file", .path.display())]
+    #[error("'{}' is not a regular file", DisplayPath::new(.path))]
     NotRegularFile {
         /// The rejected path.
         path: PathBuf,
     },
 
     /// A config, `extends` or `ignore-from-file` file is larger than [`MAX_CONFIG_FILE_BYTES`].
-    #[error("'{}' is larger than {MAX_CONFIG_FILE_BYTES} bytes", .path.display())]
+    #[error("'{}' is larger than {MAX_CONFIG_FILE_BYTES} bytes", DisplayPath::new(.path))]
     TooLarge {
         /// The oversized file.
         path: PathBuf,
     },
 
     /// A file named by `extends` is not a valid config file; its content is not echoed.
-    #[error("'{}' is not a valid config file (its content is not shown)", .path.display())]
+    #[error("'{}' is not a valid config file (its content is not shown)", DisplayPath::new(.path))]
     Malformed {
         /// The extended file.
         path: PathBuf,
     },
 
     /// The file named by `extends` could not be loaded.
-    #[error("config file '{}': failed to load the file named by 'extends'", .path.display())]
+    #[error("config file '{}': failed to load the file named by 'extends'", DisplayPath::new(.path))]
     Extended {
         /// The extending config file.
         path: PathBuf,
@@ -297,14 +308,14 @@ pub enum ConfigFileError {
     },
 
     /// A config file is its own ancestor through `extends`.
-    #[error("config file '{}': 'extends' leads back to this file", .path.display())]
+    #[error("config file '{}': 'extends' leads back to this file", DisplayPath::new(.path))]
     ExtendsCycle {
         /// The file met twice.
         path: PathBuf,
     },
 
     /// The `extends` chain is longer than [`MAX_EXTENDS_DEPTH`] files.
-    #[error("config file '{}': 'extends' is nested more than {MAX_EXTENDS_DEPTH} files deep", .path.display())]
+    #[error("config file '{}': 'extends' is nested more than {MAX_EXTENDS_DEPTH} files deep", DisplayPath::new(.path))]
     ExtendsTooDeep {
         /// The first file beyond the limit.
         path: PathBuf,
@@ -313,7 +324,7 @@ pub enum ConfigFileError {
     /// The value of `extends`, `ignore`, `ignore-from-file`, `yaml-files` or `locale` is invalid.
     #[error(
         "config file '{}': invalid '{key}': {}",
-        .path.display(),
+        DisplayPath::new(.path),
         echo(.message, MESSAGE_LIMIT)
     )]
     InvalidKey {
@@ -336,6 +347,7 @@ struct TopLevel {
     yaml_files: Option<Vec<String>>,
     max_input_bytes: Option<MaxInputBytes>,
     max_scan_ahead: Option<MaxScanAhead>,
+    max_diagnostics: Option<MaxDiagnostics>,
     locale: Option<LocaleName>,
 }
 
@@ -478,7 +490,7 @@ impl ConfigFile {
         loaded
     }
 
-    fn load_file(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
+    fn read_entries(path: &Path) -> Result<serde_norway::Mapping, ConfigFileError> {
         let content = read_text(path)?;
         // serde_norway has no depth or alias limits, so the core parser vets the text first.
         if let Err(source) = Parser::parse_all(&content) {
@@ -491,15 +503,17 @@ impl ConfigFile {
             path: path.to_owned(),
             source,
         };
-        let entries = match serde_norway::from_str(&content).map_err(parse_error)? {
-            Value::Null => serde_norway::Mapping::new(),
-            Value::Mapping(entries) => entries,
-            _ => {
-                return Err(ConfigFileError::NotAMapping {
-                    path: path.to_owned(),
-                });
-            }
-        };
+        match serde_norway::from_str(&content).map_err(parse_error)? {
+            Value::Null => Ok(serde_norway::Mapping::new()),
+            Value::Mapping(entries) => Ok(entries),
+            _ => Err(ConfigFileError::NotAMapping {
+                path: path.to_owned(),
+            }),
+        }
+    }
+
+    fn load_file(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
+        let entries = Self::read_entries(path)?;
         let top = Self::collect_keys(path, entries)?;
         let invalid_rules = |source| ConfigFileError::InvalidRules {
             path: path.to_owned(),
@@ -575,6 +589,7 @@ impl ConfigFile {
             rules,
             max_input_bytes: top.max_input_bytes.or(inherited.max_input_bytes),
             max_scan_ahead: top.max_scan_ahead.or(inherited.max_scan_ahead),
+            max_diagnostics: top.max_diagnostics.or(inherited.max_diagnostics),
             selection: FileSelection {
                 ignore: ignore.or(inherited.selection.ignore),
                 yaml_files,
@@ -625,6 +640,9 @@ impl ConfigFile {
                 }
                 TopLevelKey::MaxScanAhead => {
                     top.max_scan_ahead = Some(parse_limit(path, known, &value)?);
+                }
+                TopLevelKey::MaxDiagnostics => {
+                    top.max_diagnostics = Some(parse_max_diagnostics(path, known, &value)?);
                 }
                 TopLevelKey::Locale => {
                     let Value::String(name) = &value else {
@@ -703,6 +721,31 @@ impl ConfigFile {
     }
 }
 
+fn not_positive(path: &Path, key: TopLevelKey, value: &Value) -> ConfigFileError {
+    ConfigFileError::LimitNotPositive {
+        path: path.to_owned(),
+        key,
+        found: match value {
+            Value::Number(n) => n.to_string(),
+            Value::String(text) => format!("'{}'", echo(text, KEY_LIMIT)),
+            other => value_kind(other).to_owned(),
+        },
+    }
+}
+
+fn parse_max_diagnostics(
+    path: &Path,
+    key: TopLevelKey,
+    value: &Value,
+) -> Result<MaxDiagnostics, ConfigFileError> {
+    value
+        .as_u64()
+        .map(|number| usize::try_from(number).unwrap_or(usize::MAX))
+        .and_then(NonZeroUsize::new)
+        .map(MaxDiagnostics::new)
+        .ok_or_else(|| not_positive(path, key, value))
+}
+
 fn parse_limit<K: Bounds>(
     path: &Path,
     key: TopLevelKey,
@@ -710,15 +753,7 @@ fn parse_limit<K: Bounds>(
 ) -> Result<Bounded<K>, ConfigFileError> {
     let number = value
         .as_u64()
-        .ok_or_else(|| ConfigFileError::LimitNotPositive {
-            path: path.to_owned(),
-            key,
-            found: match value {
-                Value::Number(n) => n.to_string(),
-                Value::String(text) => format!("'{}'", echo(text, KEY_LIMIT)),
-                other => value_kind(other).to_owned(),
-            },
-        })?;
+        .ok_or_else(|| not_positive(path, key, value))?;
     usize::try_from(number)
         .ok()
         .map_or(
@@ -773,6 +808,43 @@ mod tests {
         assert!(cfg.rules.line_length.enabled);
         assert_eq!(cfg.rules.line_length.options.max, NonZeroUsize::new(100));
         assert!(!cfg.rules.key_ordering.enabled);
+    }
+
+    #[test]
+    fn test_max_diagnostics_key_and_inheritance() {
+        let cfg = load_str("max-diagnostics: 25\n").unwrap();
+        assert_eq!(cfg.max_diagnostics.map(MaxDiagnostics::get), Some(25));
+        assert_eq!(load_str("rules: {}\n").unwrap().max_diagnostics, None);
+
+        let base = write_temp("max-diagnostics: 7\n");
+        let child = write_temp(&format!("extends: {}\n", base.path().display()));
+        let cfg = ConfigFile::load(child.path()).unwrap();
+        assert_eq!(cfg.max_diagnostics.map(MaxDiagnostics::get), Some(7));
+
+        let over = write_temp(&format!(
+            "extends: {}\nmax-diagnostics: 3\n",
+            base.path().display()
+        ));
+        let cfg = ConfigFile::load(over.path()).unwrap();
+        assert_eq!(cfg.max_diagnostics.map(MaxDiagnostics::get), Some(3));
+    }
+
+    #[test]
+    fn test_max_diagnostics_rejects_invalid_values() {
+        for (content, found) in [
+            ("max-diagnostics: 0\n", "got 0"),
+            ("max-diagnostics: -1\n", "got -1"),
+            ("max-diagnostics: 1.5\n", "got 1.5"),
+            ("max-diagnostics: many\n", "got 'many'"),
+            ("max-diagnostics: [1]\n", "got a list"),
+        ] {
+            let message = load_str(content).unwrap_err().to_string();
+            assert!(
+                message.contains("'max-diagnostics' must be a positive integer"),
+                "{message}"
+            );
+            assert!(message.contains(found), "{content:?}: {message}");
+        }
     }
 
     #[test]
@@ -977,7 +1049,7 @@ mod tests {
             .unwrap()
             .into_parts()
             .0;
-        assert!(!lint_config.is_rule_enabled("key-ordering"));
+        assert!(!lint_config.is_rule_enabled(crate::rules::RuleId::BuiltIn(RuleName::KeyOrdering)));
     }
 
     #[test]

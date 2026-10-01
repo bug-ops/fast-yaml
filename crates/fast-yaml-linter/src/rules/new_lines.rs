@@ -1,11 +1,12 @@
 //! Rule to check line ending type.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
 use crate::source::offset::ByteOffset;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
 
 /// Linting rule for line endings.
 ///
@@ -20,15 +21,14 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::NewLinesRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::NewLinesRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = NewLinesRule;
 /// let yaml = "key: value\nanother: value";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct NewLinesRule;
@@ -58,8 +58,8 @@ pub struct NewLinesOptions {
 impl RuleOptions for NewLinesOptions {}
 
 impl super::LintRule for NewLinesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::NEW_LINES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::NewLines)
     }
 
     fn name(&self) -> &'static str {
@@ -73,8 +73,10 @@ impl super::LintRule for NewLinesRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for NewLinesRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let expected = match config.rules.new_lines.options.line_ending {
             LineEndingType::Dos => LineEnding::Dos,
@@ -122,7 +124,7 @@ impl super::LintRule for NewLinesRule {
 
                     diagnostics.push(
                         DiagnosticBuilder::new(
-                            self.code(),
+                            DiagnosticCode::NEW_LINES,
                             severity,
                             format!(
                                 "wrong line ending (expected {expected_str}, found {actual_str})"
@@ -155,33 +157,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_new_lines_unix_valid() {
         let yaml = "key: value\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
 
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_new_lines_dos_in_unix() {
         let yaml = "key: value\r\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
 
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("wrong line ending"));
         assert!(diagnostics[0].message.contains("DOS"));
@@ -190,26 +189,24 @@ mod tests {
     #[test]
     fn test_new_lines_dos_valid() {
         let yaml = "key: value\r\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = config_with_rule(RuleName::NewLines, "{type: dos}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_new_lines_unix_in_dos() {
         let yaml = "key: value\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = config_with_rule(RuleName::NewLines, "{type: dos}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("wrong line ending"));
     }
@@ -217,13 +214,12 @@ mod tests {
     #[test]
     fn test_new_lines_mixed() {
         let yaml = "key: value\nanother: value\r\nthird: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should report the DOS line
         assert_ne!(diagnostics, []);
     }
@@ -231,13 +227,12 @@ mod tests {
     #[test]
     fn test_new_lines_platform() {
         let yaml = "key: value\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = config_with_rule(RuleName::NewLines, "{type: platform}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // On Unix platforms, this should be valid
         #[cfg(not(target_os = "windows"))]
         assert_eq!(diagnostics, []);
@@ -250,26 +245,24 @@ mod tests {
     #[test]
     fn test_new_lines_no_newlines() {
         let yaml = "key: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_new_lines_multiple_violations() {
         let yaml = "key: value\r\nanother: value\r\nthird: value\r\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = NewLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should report all DOS line endings
         assert_eq!(diagnostics.len(), 3);
     }

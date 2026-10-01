@@ -149,6 +149,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core/CLI**: `fy format` keeps reserved `%NAME` directives instead of dropping them (#605)
 - **CLI**: `fy format` and `fy convert` exit quietly with the result's code when stdout is closed (was `error: Failed to write to stdout`, exit 1) (#605)
 - **Linter**: lint is 10-35% slower in wall time on flow-heavy input (positioned node index, indentation port) with 26-48% lower RSS from lazy excerpts (#605)
+- **Linter**: `LintRule::code()` is replaced by `id() -> RuleId`, and `is_rule_enabled`/`severity_for` take a `RuleId` (#609) (#623)
+- **Linter**: `LintRule` is metadata-only, rules implement `SourceRule` or `DocumentRule` as a `Rule`, `add_rule` rejects a duplicate id, and `RuleRegistry::get`/`rules` take a `RuleId` and return `Rule` (#609) (#623)
+- **Linter**: `Linter::lint_value` and the `LintContext` doc-start-line API are removed; a `DocumentRule` gets `LintDocument { value, first_line }` instead (#609) (#623)
+- **Linter**: `syntax` and `diagnostic-limit` are no longer accepted as custom rule codes (#603) (#623)
 
 ### Added
 
@@ -187,6 +191,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: top-level `locale` (C, POSIX, C.UTF-8; other values are an error only while `key-ordering` is enabled) (#605)
 - **Linter**: `indentation` options `spaces` (number or `consistent`), `indent-sequences` (`true`/`false`/`whatever`/`consistent`) and `check-multi-line-strings` (#605)
 - **Core**: `fs::read_regular_file`, a bounded reader that never blocks on a FIFO, shared by config, ignore and input reads (#605)
+- **Core**: `Parser::validate_normalized_observed` checks and observes events without building the documents (#609) (#623)
+- **CLI/Linter**: `fy lint --max-diagnostics N` and the `max-diagnostics` config key cap the diagnostics shown per file with one `diagnostic-limit` summary, off by default and never changing the exit code (#603) (#623)
 
 ### Changed
 
@@ -246,6 +252,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `parse_parallel` shares one alias-expansion and `%TAG` budget across all chunks (new public `StreamBudget` and `Parser::parse_all_with_budget`), closing an alias-bomb bypass (#387) (#405)
 - **Parallel**: `write_atomic` preserves extended attributes on Unix, skipping unsupported ones and denied `com.apple.*`/`security.selinux`; ACLs are not preserved (#605)
 - **Core/Linter**: file reads open with `O_NONBLOCK` after a regular-file check, and `ignore-from-file` is capped at 32 files and 1024 lines and does not echo file content in errors (#605)
+- **CLI/Linter/Parallel**: file names are escaped (`\u{1b}`, bidi overrides, U+2028/2029) in text, parsable and github output, batch error lines, verbose headers and path errors, and `echo()` now escapes bidi overrides and U+2028/2029 in messages too (#607) (#623)
 
 ### Fixed
 
@@ -363,6 +370,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fy format` preserves explicit tags (`!!str`, `!custom`, `!<...>`) on scalars, sequences, and mappings (#354)
 - `fy format` no longer adds blank lines to `|+` keep-chomp block scalars on each run (#354)
 - `fy format` emits collection and block-scalar mapping keys with valid `? ` explicit-key syntax (#354)
+- **Linter**: `braces` and `brackets` ignore the indentation before a closing bracket on its own line and trailing space after an opening one (#615) (#623)
+- **Linter**: `colons` ignores spaces between a key colon and a trailing comment when the value is empty (#616) (#623)
+- **Linter**: `hyphens` reads block sequence entries from the token stream, so continuation lines and flow items that start with `-` are no longer reported, and `missing space after hyphen` is gone (#617) (#623)
+- **Linter**: `line-length` `allow-non-breakable-inline-mappings` decides from the line's token stream like yamllint's `check_inline_mapping`, in both directions (#618) (#623)
+- **Linter**: `truthy` stops reporting `yes`/`no`/`on`/`off` in a document preceded by `%YAML 1.2`, which applies to that document only (#606) (#623)
+- **Linter**: `fy lint` builds no value tree unless a custom `DocumentRule` is enabled, cutting the peak heap on large block files by about half (#609) (#623)
+- **CLI**: `fy format -o` and `fy convert -o` refuse an output that is the input file, as `fy lint -o` does (#604) (#623)
+- **Linter**: lint wall time on flow-heavy input is back within noise of the baseline: the text and JSON formatters buffer their small writes, `indentation` skips a one-line source that starts in column 0 and `hyphens` a source without a block entry (#600) (#623)
 
 ### Security
 

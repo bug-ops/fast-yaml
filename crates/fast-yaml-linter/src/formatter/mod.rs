@@ -15,6 +15,9 @@ mod sarif;
 
 use std::io;
 
+/// Size of the buffer a formatter puts between its many small writes and the caller's writer.
+const WRITE_BUFFER: usize = 64 * 1024;
+
 pub use findings::{Finding, Findings};
 pub use report::{FileReport, NotAbsolute, ReportFormat, ReportPath, ReportSource};
 pub use syntax::{input_error_diagnostic, syntax_diagnostic};

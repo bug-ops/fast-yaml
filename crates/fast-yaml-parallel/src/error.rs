@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use fast_yaml_core::DecodeError;
 use fast_yaml_core::ParseError as CoreParseError;
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_core::limits::InputTooLarge;
 use thiserror::Error;
 
@@ -24,7 +25,7 @@ pub enum Error {
     },
 
     /// File I/O error.
-    #[error("failed to read '{path}': {source}")]
+    #[error("failed to read '{}': {source}", DisplayPath::new(.path))]
     Io {
         /// Path to the file that failed.
         path: PathBuf,
@@ -48,7 +49,7 @@ pub enum Error {
     /// Failed to format a file.
     ///
     /// The message includes the source error because bindings surface only `Display`.
-    #[error("failed to format '{path}': {source}")]
+    #[error("failed to format '{}': {source}", DisplayPath::new(.path))]
     Format {
         /// Path to the file that failed.
         path: PathBuf,
@@ -59,7 +60,7 @@ pub enum Error {
     },
 
     /// A file contains no YAML document.
-    #[error("empty document in '{path}'")]
+    #[error("empty document in '{}'", DisplayPath::new(.path))]
     EmptyDocument {
         /// Path to the empty file.
         path: PathBuf,
@@ -78,7 +79,7 @@ pub enum Error {
     },
 
     /// Failed to write file.
-    #[error("failed to write '{path}': {source}")]
+    #[error("failed to write '{}': {source}", DisplayPath::new(.path))]
     Write {
         /// Path to the file that failed.
         path: PathBuf,

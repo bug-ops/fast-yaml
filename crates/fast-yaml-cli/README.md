@@ -154,6 +154,8 @@ fy lint --format sarif . > results.sarif   # SARIF 2.1.0 for code scanning
 fy lint --format parsable .    # path:line:col: [level] message (code)
 ```
 
+`fy lint --max-diagnostics N` (or the `max-diagnostics` key of `.fast-yaml.yaml`) shows at most N diagnostics per file and then one `diagnostic-limit` summary whose severity is the highest of the omitted diagnostics. It limits output only: the exit code still follows every diagnostic, and the text footer counts the diagnostics shown.
+
 `parsable` prints `info` and `hint` diagnostics as `warning`, like yamllint's two levels. Report formats list files in path order. Lines and columns (and the offsets of the `syntax` diagnostic) refer to the file text with a leading byte order mark removed. A file that cannot be parsed or read is reported as a `syntax` error, and the exit code and stderr message stay the same as with `--format text`. GitHub shows at most 10 annotations per level per step. The `github` format writes `file=` as an absolute path, which the runner maps relative to the workspace.
 
 ### Parser resource limits

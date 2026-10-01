@@ -1,18 +1,18 @@
 //! Rule to check line length limits.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use std::num::NonZeroUsize;
 
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
+use crate::rules::token_stream::{scanner, tokens::Kind};
+use crate::scan::{ScanNeeds, SourceScan};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
-use fast_yaml_core::events::{Event, EventStream};
 use fast_yaml_core::limits::ParseLimits;
-use fast_yaml_core::{NormalizedInput, Value};
-
-use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
 
 /// Rule to check line length limits.
 ///
@@ -98,71 +98,42 @@ fn is_whole_flow_collection(line: &str) -> bool {
         || (content.starts_with('{') && content.ends_with('}'))
 }
 
-/// Whether `line` holds a block mapping whose first plain or quoted value, without anchor or tag,
-/// has no space from its start to the end of the line (yamllint's inline mapping check).
+/// Whether `line` is exempt as an inline mapping, as in yamllint's `check_inline_mapping`: after
+/// the first block mapping start, the first `:` that is followed by a scalar token has no space
+/// from the start of that scalar to the end of the line.
 ///
-/// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
+/// Tokens are those of the line scanned on its own; a `:` followed by an anchor, a tag or a
+/// collection start is skipped, and a line that does not scan far enough has no such pair.
 fn is_inline_mapping_of_one_word(line: &str) -> bool {
     if is_whole_flow_collection(line) {
         return false;
     }
-    let Ok(input) = NormalizedInput::new(line) else {
-        return false;
-    };
-    let line = input.as_str();
     let context = SourceContext::new(line);
-    let mut roles = RoleTracker::default();
-    let mut seen_mapping = false;
-    for item in EventStream::new(&input, ParseLimits::default()) {
-        let Ok(item) = item else {
-            break;
-        };
-        let range = context.byte_range_between(item.at, item.end);
-        match item.event {
-            Event::MappingStart { .. } => {
-                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
-                {
-                    return false;
-                }
-                seen_mapping = true;
-                roles.start_mapping(line, range);
-            }
-            Event::SequenceStart { .. } => {
-                // Whatever a root flow sequence holds is flow too, so no block mapping follows
-                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
-                {
-                    return false;
-                }
-                roles.start_sequence(line, range);
-            }
-            Event::MappingEnd | Event::SequenceEnd => roles.leave(),
-            Event::Alias(_) => {
-                roles.node();
-            }
-            Event::Scalar { anchor, tag, .. } => {
-                let role = roles.node();
-                if role == NodeRole::MappingValue
-                    && seen_mapping
-                    && anchor.is_none()
-                    && tag.is_none()
-                {
-                    return line
-                        .get(range.start().get()..)
-                        .is_some_and(|rest| !rest.contains(' '));
-                }
-            }
-            Event::StreamStart
-            | Event::StreamEnd
-            | Event::DocumentStart { .. }
-            | Event::DocumentEnd => {}
+    let (scan, _) = SourceScan::scan(line, &context, ParseLimits::default(), ScanNeeds::NODES);
+    let mut tokens = Vec::new();
+    scanner::scan(line, &scan.nodes, scan.complete, |token| {
+        tokens.push(*token);
+    });
+    let mut rest = tokens
+        .into_iter()
+        .skip_while(|token| token.kind != Kind::BlockMappingStart)
+        .skip(1);
+    while let Some(token) = rest.next() {
+        if token.kind == Kind::Value
+            && let Some(value) = rest.next()
+            && matches!(value.kind, Kind::Scalar { .. })
+        {
+            return line
+                .get(value.start.pointer..)
+                .is_some_and(|text| !text.contains(' '));
         }
     }
     false
 }
 
 impl super::LintRule for LineLengthRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::LINE_LENGTH
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::LineLength)
     }
 
     fn name(&self) -> &'static str {
@@ -176,8 +147,10 @@ impl super::LintRule for LineLengthRule {
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for LineLengthRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.line_length.options;
         let Some(max_length) = options.max.map(NonZeroUsize::get) else {
             return Vec::new();
@@ -216,19 +189,17 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_line_within_limit() {
         let yaml = "key: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -236,12 +207,11 @@ mod tests {
     #[test]
     fn test_no_limit_configured() {
         let yaml = "key: this is a very long line that would normally exceed any reasonable limit but should not trigger warnings";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(None);
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -249,12 +219,11 @@ mod tests {
     #[test]
     fn test_line_exceeds_limit() {
         let yaml = "key: this is a very long value that definitely exceeds eighty characters without any doubt whatsoever";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("exceeds maximum length"));
@@ -265,12 +234,11 @@ mod tests {
     fn test_line_at_exact_limit() {
         // This line is exactly 77 characters long
         let yaml = "name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(77));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // Exactly at limit should not trigger
         assert_eq!(diagnostics, []);
@@ -280,12 +248,11 @@ mod tests {
     fn test_line_one_over_limit() {
         // This line is 78 characters long
         let yaml = "name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(77));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // One over should trigger
         assert_eq!(diagnostics.len(), 1);
@@ -296,12 +263,11 @@ mod tests {
         let yaml = "first: this is a very long line that exceeds the maximum character limit\n\
                     second: another extremely long line that also exceeds the character limit\n\
                     short: ok";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(50));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 2);
     }
@@ -310,12 +276,11 @@ mod tests {
     fn test_utf8_multibyte_characters() {
         // 5 Japanese characters (日本語日本語日本語日本語日本語) + "key: " = ~29 chars
         let yaml = "key: 日本語日本語日本語日本語日本語日本語日本語日本語";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(20));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // Should count characters, not bytes
         assert_eq!(diagnostics.len(), 1);
@@ -324,12 +289,11 @@ mod tests {
     #[test]
     fn test_empty_lines_ignored() {
         let yaml = "key: value\n\n\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(5));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // Should only report the first line (10 chars), not the empty lines
         assert_eq!(diagnostics.len(), 1);
@@ -338,12 +302,11 @@ mod tests {
     #[test]
     fn test_severity_override() {
         let yaml = "key: this is a very long value that definitely exceeds eighty characters without any doubt";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = config_with_rule(RuleName::LineLength, "{max: 10, severity: error}");
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
@@ -352,12 +315,11 @@ mod tests {
     #[test]
     fn test_diagnostic_location_accuracy() {
         let yaml = "first: ok\nvery_long_key_name: this is a very long value that definitely exceeds fifty chars\nthird: ok";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(50));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].span.start.line, 2); // Second line
@@ -366,7 +328,7 @@ mod tests {
     fn flagged(yaml: &str, options: &str) -> Vec<usize> {
         let config = config_with_rule(RuleName::LineLength, options);
         LineLengthRule
-            .check(&LintContext::new(yaml), &Value::Null, &config)
+            .check(&LintContext::new(yaml), &config)
             .iter()
             .map(|d| d.span.start.line)
             .collect()

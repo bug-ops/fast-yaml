@@ -21,8 +21,8 @@ use crate::rules::{
     BracesRule, BracketsRule, ColonsRule, CommasRule, CommentsIndentationRule, CommentsRule,
     DocumentEndRule, DocumentStartRule, DuplicateKeysRule, EmptyLinesRule, EmptyValuesRule,
     FloatValuesRule, HyphensRule, IndentationRule, InvalidAnchorsRule, KeyOrderingRule,
-    LineLengthRule, LintDirectiveRule, LintRule, NewLineAtEndOfFileRule, NewLinesRule,
-    OctalValuesRule, QuotedStringsRule, SetValuesRule, TrailingWhitespaceRule, TruthyRule,
+    LineLengthRule, LintDirectiveRule, NewLineAtEndOfFileRule, NewLinesRule, OctalValuesRule,
+    QuotedStringsRule, Rule, SetValuesRule, TrailingWhitespaceRule, TruthyRule,
 };
 use crate::rules::{
     ColonsOptions, CommasOptions, CommentsOptions, DocumentEndOptions, DocumentStartOptions,
@@ -31,6 +31,7 @@ use crate::rules::{
     KeyOrderingOptions, LineLengthOptions, NewLinesOptions, OctalValuesOptions,
     QuotedStringsOptions, TruthyOptions,
 };
+use fast_yaml_core::fs::DisplayPath;
 
 /// Options of a built-in rule.
 ///
@@ -324,13 +325,16 @@ impl CustomRuleCode {
     ///
     /// # Errors
     ///
-    /// Returns an error when the code is empty or equals a built-in rule name.
+    /// Returns an error when the code is empty, equals a built-in rule name or is one of the
+    /// codes the linter reserves for its own diagnostics (`syntax`, `diagnostic-limit`).
     pub fn new(code: impl Into<String>) -> Result<Self, RuleConfigError> {
         let code = code.into();
         if code.is_empty() {
             return Err(RuleConfigError::EmptyRuleCode);
         }
-        if RuleName::from_str(&code).is_ok() {
+        if RuleName::from_str(&code).is_ok()
+            || [DiagnosticCode::SYNTAX, DiagnosticCode::DIAGNOSTIC_LIMIT].contains(&code.as_str())
+        {
             return Err(RuleConfigError::ReservedRuleCode { code });
         }
         Ok(Self(code))
@@ -656,7 +660,10 @@ impl IgnoreSource {
                 .map_err(|error| invalid(&error))?,
         };
         let root = dir.canonicalize().map_err(|error| {
-            invalid(&format_args!("cannot resolve '{}': {error}", dir.display()))
+            invalid(&format_args!(
+                "cannot resolve '{}': {error}",
+                DisplayPath::new(dir)
+            ))
         })?;
         RuleIgnore::new(&root, lines).map_err(|error| {
             // patterns read from a file are never echoed
@@ -865,8 +872,8 @@ macro_rules! builtin_rules {
         }
 
         /// Instantiates every built-in rule in registry order.
-        pub fn default_rules() -> Vec<Box<dyn LintRule>> {
-            vec![$(Box::new($rule) as Box<dyn LintRule>,)+]
+        pub fn default_rules() -> Vec<Rule> {
+            vec![$(Rule::Source(Box::new($rule)),)+]
         }
     };
 }
@@ -1151,7 +1158,11 @@ mod tests {
     #[test]
     fn registry_and_rule_names_are_a_bijection() {
         let registry = RuleRegistry::with_default_rules();
-        let codes: Vec<&str> = registry.rules().iter().map(|rule| rule.code()).collect();
+        let codes: Vec<&str> = registry
+            .rules()
+            .iter()
+            .map(|rule| rule.info().id().as_str())
+            .collect();
         let names: Vec<&str> = RuleName::ALL.iter().map(|name| name.as_str()).collect();
         assert_eq!(codes, names);
         assert_eq!(RuleName::ALL.len(), 25);
@@ -1484,14 +1495,15 @@ mod tests {
     #[test]
     fn severity_for_resolves_builtin_rules() {
         use crate::LintConfig;
+        use crate::rules::RuleId;
         let mut config = LintConfig::default();
         apply(&mut config.rules, "braces: error").unwrap();
         assert_eq!(
-            config.severity_for("braces", Severity::Hint),
+            config.severity_for(RuleId::BuiltIn(RuleName::Braces), Severity::Hint),
             Severity::Error
         );
         assert_eq!(
-            config.severity_for("colons", Severity::Hint),
+            config.severity_for(RuleId::BuiltIn(RuleName::Colons), Severity::Hint),
             Severity::Hint
         );
     }
@@ -1507,6 +1519,12 @@ mod tests {
             Err(RuleConfigError::ReservedRuleCode { .. })
         ));
         assert_eq!(CustomRuleCode::new("mine").unwrap().as_str(), "mine");
+        for reserved in ["syntax", "diagnostic-limit"] {
+            assert!(matches!(
+                CustomRuleCode::new(reserved),
+                Err(RuleConfigError::ReservedRuleCode { .. })
+            ));
+        }
     }
 
     #[test]

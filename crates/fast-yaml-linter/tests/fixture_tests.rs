@@ -52,8 +52,7 @@ mod invalid_fixtures {
     fn test_invalid_long_lines() {
         let yaml = include_str!("fixtures/invalid/long_lines.yaml");
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
-        let mut linter = Linter::with_config(config);
-        linter.add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule));
+        let linter = Linter::with_config(config);
 
         let diagnostics = linter.lint(yaml).unwrap();
 
@@ -252,8 +251,7 @@ mod integration_tests {
     fn test_linter_with_disabled_rules() {
         let yaml = include_str!("fixtures/valid/simple.yaml");
         let config = LintConfig::new().with_disabled_rule(RuleName::LineLength);
-        let mut linter = Linter::with_config(config);
-        linter.add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule));
+        let linter = Linter::with_config(config);
 
         let diagnostics = linter.lint(yaml).unwrap();
 
@@ -271,8 +269,7 @@ mod integration_tests {
     fn test_diagnostic_location_accuracy() {
         let yaml = include_str!("fixtures/invalid/long_lines.yaml");
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
-        let mut linter = Linter::with_config(config);
-        linter.add_rule(Box::new(fast_yaml_linter::rules::LineLengthRule));
+        let linter = Linter::with_config(config);
 
         let diagnostics = linter.lint(yaml).unwrap();
 

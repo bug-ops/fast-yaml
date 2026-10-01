@@ -16,15 +16,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
 use fast_yaml_core::{LimitKind, ParseError};
-use fast_yaml_linter::config::CanonicalPath;
+use fast_yaml_linter::config::{CanonicalPath, MaxDiagnostics};
 use fast_yaml_linter::formatter::{
     FileReport as ReportedFile, Findings, JsonDiagnostic, ReportFormat, input_error_diagnostic,
     syntax_diagnostic,
 };
 use fast_yaml_linter::{
-    Diagnostic, DiagnosticContext, Formatter, LintConfig, LintError, LintSource, Linter, Severity,
+    Diagnostic, DiagnosticContext, Formatter, LintConfig, LintError, LintSource, Linter,
     TextFormatter,
 };
 use fast_yaml_parallel::{
@@ -35,7 +36,7 @@ use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
 
 use crate::cli::{LintFormat, LintOutput};
-use crate::commands::lint::report_source;
+use crate::commands::lint::{ReportFilter, report_source};
 use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
@@ -77,8 +78,12 @@ impl fmt::Display for FileFailure {
                 source: source @ ParallelError::Io { .. },
                 ..
             } => write!(f, "error: {source}")?,
-            Self::Read { path, source } => write!(f, "error: '{}': {source}", path.display())?,
-            Self::Lint { path, source } => write!(f, "error: '{}': {source}", path.display())?,
+            Self::Read { path, source } => {
+                write!(f, "error: '{}': {source}", DisplayPath::new(path))?;
+            }
+            Self::Lint { path, source } => {
+                write!(f, "error: '{}': {source}", DisplayPath::new(path))?;
+            }
         }
         self.hint().map_or(Ok(()), |hint| write!(f, " ({hint})"))
     }
@@ -203,11 +208,11 @@ fn lint_one<F: OutputFormat>(
     path: &Path,
     linter: &Linters,
     format: &F,
-    is_quiet: bool,
+    filter: ReportFilter,
 ) -> FileReport<F::Payload, F::Salvage> {
     FileReport {
         path: path.to_path_buf(),
-        outcome: lint_content(path, linter, format, is_quiet),
+        outcome: lint_content(path, linter, format, filter),
     }
 }
 
@@ -215,7 +220,7 @@ fn lint_content<F: OutputFormat>(
     path: &Path,
     linter: &Linters,
     format: &F,
-    is_quiet: bool,
+    filter: ReportFilter,
 ) -> Result<Linted<F::Payload>, Failed<F::Salvage>> {
     let failed = |failure: FileFailure, content: Option<&str>| Failed {
         salvage: format.salvage(&failure, content),
@@ -243,12 +248,10 @@ fn lint_content<F: OutputFormat>(
     let source = linter.source(&content).map_err(lint_failed)?;
     // discovery yields canonical paths
     let canonical = CanonicalPath::assume_canonical(path.to_path_buf());
-    let mut diagnostics = linter.lint(&source, &canonical).map_err(lint_failed)?;
-    if is_quiet {
-        diagnostics.retain(|d| d.severity == Severity::Error);
-    }
+    let diagnostics = linter.lint(&source, &canonical).map_err(lint_failed)?;
+    let (diagnostics, has_errors) = filter.apply(diagnostics);
     Ok(Linted {
-        has_errors: diagnostics.iter().any(|d| d.severity == Severity::Error),
+        has_errors,
         payload: format.payload(diagnostics, &source),
     })
 }
@@ -265,6 +268,7 @@ pub fn execute_lint_batch(
     format: LintFormat,
     scan_ahead: ScanAheadPolicy,
     output: &OutputWriter,
+    max_diagnostics: Option<MaxDiagnostics>,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -281,7 +285,10 @@ pub fn execute_lint_batch(
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
     output.ensure_not_inputs(file_paths.iter().map(PathBuf::as_path))?;
     let linter = Linters::new(lint_config, scan_ahead, workers);
-    let is_quiet = common.output.is_quiet();
+    let filter = ReportFilter {
+        quiet: common.output.is_quiet(),
+        max_diagnostics,
+    };
     let mut sink = output.sink()?;
 
     let any_errors = match format.output() {
@@ -292,23 +299,16 @@ pub fn execute_lint_batch(
             &TextOutput {
                 use_color: common.output.use_color(),
             },
-            is_quiet,
+            filter,
             &mut sink,
         ),
-        LintOutput::Json => run_batch(
-            &pool,
-            &file_paths,
-            &linter,
-            &JsonOutput,
-            is_quiet,
-            &mut sink,
-        ),
+        LintOutput::Json => run_batch(&pool, &file_paths, &linter, &JsonOutput, filter, &mut sink),
         LintOutput::Report(format) => run_batch(
             &pool,
             &file_paths,
             &linter,
             &ReportOutput { format },
-            is_quiet,
+            filter,
             &mut sink,
         ),
     }?;
@@ -328,14 +328,14 @@ fn run_batch<F: OutputFormat>(
     file_paths: &[PathBuf],
     linter: &Linters,
     format: &F,
-    is_quiet: bool,
+    filter: ReportFilter,
     sink: &mut OutputSink,
 ) -> Result<bool> {
     let window = pool
         .current_num_threads()
         .saturating_mul(WINDOW_PER_WORKER)
         .max(1);
-    let lint_nth = |index: usize| lint_one(&file_paths[index], linter, format, is_quiet);
+    let lint_nth = |index: usize| lint_one(&file_paths[index], linter, format, filter);
 
     run_ordered(pool, file_paths.len(), window, &lint_nth, |reports| {
         format.emit(sink, stderr_sink(), reports)
@@ -484,7 +484,7 @@ impl OutputFormat for TextOutput {
                 }) => {
                     any_errors |= has_errors;
                     if !rendered.is_empty() {
-                        writeln!(out, "{}:", path.display())
+                        writeln!(out, "{}:", DisplayPath::new(&path))
                             .and_then(|()| write!(out, "{rendered}"))
                             .and_then(|()| out.flush())
                             .context("Failed to write lint output")?;
@@ -638,7 +638,7 @@ impl OutputFormat for JsonOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fast_yaml_linter::{DiagnosticBuilder, Location, Span};
+    use fast_yaml_linter::{DiagnosticBuilder, Location, Severity, Span};
     use std::io;
     use std::sync::atomic::AtomicUsize;
 

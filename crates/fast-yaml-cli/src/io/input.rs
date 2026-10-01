@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::decode_input_owned;
-use fast_yaml_core::fs::{ReadFileError, read_bounded};
+use fast_yaml_core::fs::{DisplayPath, ReadFileError, read_bounded};
 use fast_yaml_core::limits::MaxInputBytes;
 use fast_yaml_parallel::read_file;
 use std::io;
@@ -33,7 +33,7 @@ impl InputSource {
     /// Read from file; the read never buffers more than `max` bytes plus one
     pub fn from_file(path: &Path, max: MaxInputBytes) -> Result<Self> {
         let content = read_file(path, max)
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+            .with_context(|| format!("Failed to read file: {}", DisplayPath::new(path)))?;
 
         Ok(Self {
             content,

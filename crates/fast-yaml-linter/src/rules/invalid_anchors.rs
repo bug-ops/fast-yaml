@@ -1,5 +1,7 @@
 //! Rule to detect duplicate and unused anchor definitions in YAML documents.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AlwaysTrue, RuleOptions};
@@ -9,7 +11,6 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
-use fast_yaml_core::Value;
 use std::collections::HashMap;
 
 /// Rule to detect duplicate and unused anchor definitions.
@@ -57,8 +58,8 @@ impl Default for InvalidAnchorsOptions {
 impl RuleOptions for InvalidAnchorsOptions {}
 
 impl super::LintRule for InvalidAnchorsRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::INVALID_ANCHOR
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::InvalidAnchor)
     }
 
     fn name(&self) -> &'static str {
@@ -72,8 +73,10 @@ impl super::LintRule for InvalidAnchorsRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for InvalidAnchorsRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let severity = config
             .rules
             .invalid_anchor
@@ -462,13 +465,11 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
-        InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+        InvalidAnchorsRule.check(&LintContext::new(yaml), &LintConfig::default())
     }
 
     #[test]
@@ -557,9 +558,8 @@ mod tests {
     }
 
     fn run_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
         let config = config_with_rule(RuleName::InvalidAnchor, options);
-        InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &config)
+        InvalidAnchorsRule.check(&LintContext::new(yaml), &config)
     }
 
     #[test]
@@ -634,9 +634,8 @@ mod tests {
     #[test]
     fn test_severity_override() {
         let yaml = "a: &anchor value1\nb: &anchor value2\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
         let config = config_with_rule(RuleName::InvalidAnchor, "{severity: error}");
-        let diagnostics = InvalidAnchorsRule.check(&LintContext::new(yaml), &value, &config);
+        let diagnostics = InvalidAnchorsRule.check(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }

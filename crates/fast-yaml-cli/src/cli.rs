@@ -4,7 +4,7 @@ use fast_yaml_core::limits::{
     ParseLimits, Width,
 };
 #[cfg(feature = "linter")]
-use fast_yaml_linter::config::IndentSize;
+use fast_yaml_linter::config::{IndentSize, MaxDiagnostics};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -389,6 +389,11 @@ pub enum Command {
         /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
         #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         allow_duplicate_keys: Option<bool>,
+
+        /// Show at most N diagnostics per file, then one summary line; output only, the exit
+        /// code is unaffected (overrides the `max-diagnostics` config key)
+        #[arg(long, value_name = "N")]
+        max_diagnostics: Option<MaxDiagnostics>,
 
         #[command(flatten)]
         batch: BatchArgs,

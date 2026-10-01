@@ -43,8 +43,7 @@ YAML linter with rich diagnostics for the fast-yaml ecosystem.
 - **Rich diagnostics**: Source context with highlighting
 - **Pluggable rules**: Extensible rule system
 - **Multiple output formats**: Text (rustc-style), JSON, GitHub annotations, parsable, SARIF
-- **Zero-cost abstractions**: Efficient linting without double-parsing
-- **Pre-parsed documents**: `lint_value()` accepts already-parsed YAML to avoid double parsing
+- **No value tree by default**: linting reads one guarded parser pass and builds documents only for custom `DocumentRule`s
 
 ## Rust Usage
 
@@ -83,25 +82,44 @@ println!("{}", output);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-### Avoid Double Parsing with `lint_value()`
+### Custom Rules
+
+A rule is metadata (`LintRule`) plus either a `SourceRule`, which reads the source text and the
+scan products, or a `DocumentRule`, which walks the value tree of each document. Linting builds
+the documents only when an enabled `DocumentRule` is registered.
 
 ```rust
-use fast_yaml_linter::Linter;
-use fast_yaml_core::Parser;
+use fast_yaml_linter::config::CustomRuleCode;
+use fast_yaml_linter::rules::{LintRule, Rule, RuleId, SourceRule};
+use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Linter, Severity};
 
-let yaml = "name: test";
+struct NoTodo(CustomRuleCode);
 
-// Parse once
-let value = Parser::parse_str(yaml)?;
+impl LintRule for NoTodo {
+    fn id(&self) -> RuleId<'_> {
+        RuleId::Custom(&self.0)
+    }
+    fn name(&self) -> &str {
+        "No TODO"
+    }
+    fn description(&self) -> &str {
+        "Reports TODO markers"
+    }
+    fn default_severity(&self) -> Severity {
+        Severity::Info
+    }
+}
 
-// Lint the pre-parsed value (no re-parsing)
-let linter = Linter::with_all_rules();
-let diagnostics = linter.lint_value(yaml, &value)?;
+impl SourceRule for NoTodo {
+    fn check(&self, _context: &LintContext, _config: &LintConfig) -> Vec<Diagnostic> {
+        Vec::new()
+    }
+}
+
+let mut linter = Linter::with_all_rules();
+linter.add_rule(Rule::Source(Box::new(NoTodo(CustomRuleCode::new("no-todo")?))))?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
-
-> [!TIP]
-> Use `lint_value()` when you already have a parsed document to avoid parsing twice.
 
 ## Python Usage
 
@@ -187,7 +205,7 @@ The linter includes 21+ rules covering syntax, style, and best practices:
 
 ## Inline Directives
 
-`Linter::lint` and `Linter::lint_value` honor suppression comments in the YAML source:
+`Linter::lint` honors suppression comments in the YAML source:
 
 ```yaml
 # fy: disable-file
@@ -328,7 +346,7 @@ rules:
   against the directory of the file that names it (yamllint: against the working directory).
   That file is loaded first and may extend another one, up to 8 files deep; a cycle is an
   error. The extending file's rules apply over it like over a preset, and `max-input-bytes`,
-  `max-scan-ahead` and `ignore` are inherited unless set again (`yaml-files` is not, as in
+  `max-scan-ahead`, `max-diagnostics` and `ignore` are inherited unless set again (`yaml-files` is not, as in
   yamllint).
 - Under `extends`, a rule the preset disables is enabled again by `enable`, a severity name or a
   mapping without `enabled`, and reports `error` unless a severity is given.
@@ -354,7 +372,7 @@ rules:
 
 Custom rules added with `Linter::add_rule` are configured with
 `LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through
-`LintConfig::severity_for`.
+`LintConfig::severity_for(RuleId, default)`.
 
 ### Python
 

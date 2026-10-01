@@ -2,7 +2,7 @@
 
 use std::fmt;
 use std::marker::PhantomData;
-use std::num::NonZeroU8;
+use std::num::{NonZeroU8, NonZeroUsize};
 use std::str::FromStr;
 
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
@@ -773,5 +773,65 @@ mod tests {
         let size = IndentSize::try_from(8u64).unwrap();
         let value = serde_norway::to_value(size).unwrap();
         assert_eq!(serde_norway::from_value::<IndentSize>(value).unwrap(), size);
+    }
+}
+
+/// The most diagnostics `fy lint` prints for one file before it summarizes the rest.
+///
+/// The cap bounds output volume only: the linter still builds the full list, and the exit code is
+/// computed before the list is cut. It is read from the `--max-diagnostics` flag or the
+/// `max-diagnostics` config key by the CLI and is never part of a
+/// [`LintConfig`](crate::LintConfig). Absence means no cap, so the type has no "unlimited" value.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::config::MaxDiagnostics;
+///
+/// let max: MaxDiagnostics = "100".parse().unwrap();
+/// assert_eq!(max.get(), 100);
+/// assert!("0".parse::<MaxDiagnostics>().is_err());
+/// assert!("many".parse::<MaxDiagnostics>().is_err());
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct MaxDiagnostics(NonZeroUsize);
+
+impl MaxDiagnostics {
+    /// Wraps a positive limit.
+    #[must_use]
+    pub const fn new(limit: NonZeroUsize) -> Self {
+        Self(limit)
+    }
+
+    /// Returns the limit.
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0.get()
+    }
+}
+
+impl fmt::Display for MaxDiagnostics {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+/// Error returned for a diagnostic cap that is not a positive integer.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("expected a positive integer, got '{}'", echo(.input, KEY_LIMIT))]
+pub struct InvalidMaxDiagnostics {
+    /// The rejected text.
+    pub input: String,
+}
+
+impl FromStr for MaxDiagnostics {
+    type Err = InvalidMaxDiagnostics;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<NonZeroUsize>()
+            .map(Self)
+            .map_err(|_| InvalidMaxDiagnostics {
+                input: s.to_owned(),
+            })
     }
 }

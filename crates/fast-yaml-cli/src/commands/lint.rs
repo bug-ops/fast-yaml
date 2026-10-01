@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead};
-use fast_yaml_linter::config::{CanonicalPath, IndentSize};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize, MaxDiagnostics};
 use fast_yaml_linter::formatter::{
     FileReport, Findings, ReportFormat, ReportPath, ReportSource, input_error_diagnostic,
     syntax_diagnostic,
@@ -34,6 +35,8 @@ pub struct LintArgs {
     pub format: LintFormat,
     /// Allow duplicate keys override (from `--allow-duplicate-keys`).
     pub allow_duplicate_keys: Option<bool>,
+    /// Per-file diagnostic cap override (from `--max-diagnostics`).
+    pub max_diagnostics: Option<MaxDiagnostics>,
     /// Input size limit override (from `--max-input-bytes`).
     pub max_input_bytes: Option<MaxInputBytes>,
     /// Scan-ahead limit override (from `--max-scan-ahead`).
@@ -55,7 +58,38 @@ pub struct LintCommand {
     pub scan_ahead: ScanAheadPolicy,
     /// Where reports go (exposed for batch reuse).
     pub output: OutputWriter,
+    /// Per-file diagnostic cap from the flag or the config file (exposed for batch reuse).
+    pub max_diagnostics: Option<MaxDiagnostics>,
     format: LintFormat,
+}
+
+/// What `fy lint` shows of one file's diagnostics, shared by the single-file and batch paths.
+#[derive(Debug, Clone, Copy)]
+pub struct ReportFilter {
+    /// `--quiet`: only errors are shown.
+    pub quiet: bool,
+    /// `--max-diagnostics`: the most diagnostics shown per file.
+    pub max_diagnostics: Option<MaxDiagnostics>,
+}
+
+impl ReportFilter {
+    /// Applies `--quiet`, then reports whether an error is left, then applies the cap.
+    ///
+    /// The exit code follows the errors that remain after `--quiet` but before the cap, so
+    /// omitting diagnostics from the output never turns a failing run into a passing one. The
+    /// cap summary carries the highest omitted severity, so a quiet run never shows a non-error
+    /// line.
+    #[must_use]
+    pub fn apply(self, mut diagnostics: Vec<Diagnostic>) -> (Vec<Diagnostic>, bool) {
+        if self.quiet {
+            diagnostics.retain(|d| d.severity == Severity::Error);
+        }
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
+        if let Some(max) = self.max_diagnostics {
+            max.truncate(&mut diagnostics);
+        }
+        (diagnostics, has_errors)
+    }
 }
 
 /// Builds the report source for `path` (stdin when `None`): absolute, symlinks resolved.
@@ -70,7 +104,7 @@ pub fn report_source(path: Option<&Path>) -> Result<ReportSource> {
     let absolute = match path.canonicalize() {
         Ok(canonical) => canonical,
         Err(_) => std::path::absolute(path)
-            .with_context(|| format!("failed to resolve '{}'", path.display()))?,
+            .with_context(|| format!("failed to resolve '{}'", DisplayPath::new(path)))?,
     };
     Ok(ReportSource::File(ReportPath::from_absolute(&absolute)?))
 }
@@ -139,6 +173,7 @@ impl LintCommand {
     /// Returns error if an explicit `--config` path cannot be read or parsed.
     pub fn build(config: CommonConfig, args: LintArgs, input: &InputSource) -> Result<Self> {
         let file = Self::load_config_file(args.config_path, args.no_config, input)?;
+        let max_diagnostics = args.max_diagnostics.or(file.max_diagnostics);
         let max_input_bytes = args
             .max_input_bytes
             .or(file.max_input_bytes)
@@ -161,6 +196,7 @@ impl LintCommand {
             file_filter,
             scan_ahead,
             output: OutputWriter::from_args(args.output, false, None)?,
+            max_diagnostics,
             format: args.format,
         })
     }
@@ -177,8 +213,9 @@ impl LintCommand {
 
         if let Some(path) = config_path {
             // Explicit --config: hard error if missing or invalid
-            let cfg = ConfigFile::load(&path)
-                .with_context(|| format!("failed to load config file '{}'", path.display()))?;
+            let cfg = ConfigFile::load(&path).with_context(|| {
+                format!("failed to load config file '{}'", DisplayPath::new(&path))
+            })?;
             return Ok(cfg);
         }
 
@@ -191,9 +228,15 @@ impl LintCommand {
         });
 
         if let Some(discovered) = ConfigFile::discover(&start_dir) {
-            error::stderr_line(format_args!("using config file: {}", discovered.display()));
+            error::stderr_line(format_args!(
+                "using config file: {}",
+                DisplayPath::new(&discovered)
+            ));
             let cfg = ConfigFile::load(&discovered).with_context(|| {
-                format!("failed to load config file '{}'", discovered.display())
+                format!(
+                    "failed to load config file '{}'",
+                    DisplayPath::new(&discovered)
+                )
             })?;
             return Ok(cfg);
         }
@@ -287,7 +330,7 @@ impl LintCommand {
         };
         let canonical = match input.file_path().map(|path| {
             CanonicalPath::new(path)
-                .with_context(|| format!("failed to resolve '{}'", path.display()))
+                .with_context(|| format!("failed to resolve '{}'", DisplayPath::new(path)))
         }) {
             Some(Ok(path)) => Some(path),
             Some(Err(err)) => return Err(self.report_unreadable(input.file_path(), err)),
@@ -302,14 +345,11 @@ impl LintCommand {
             Err(err) => return self.report_lint_failure(input, err),
         };
 
-        let filtered_diagnostics: Vec<_> = if self.config.output.is_quiet() {
-            diagnostics
-                .into_iter()
-                .filter(|d| d.severity == Severity::Error)
-                .collect()
-        } else {
-            diagnostics
-        };
+        let (filtered_diagnostics, has_errors) = ReportFilter {
+            quiet: self.config.output.is_quiet(),
+            max_diagnostics: self.max_diagnostics,
+        }
+        .apply(diagnostics);
 
         let source_context = source.context();
         let findings = Findings::FromSource {
@@ -338,17 +378,13 @@ impl LintCommand {
         if self.config.output.is_verbose() && !matches!(self.format.output(), LintOutput::Json) {
             let elapsed = start_time.elapsed();
             if let Some(path) = input.file_path() {
-                error::stderr_line(format_args!("\nFile: {}", path.display()));
+                error::stderr_line(format_args!("\nFile: {}", DisplayPath::new(path)));
             }
             error::stderr_line(format_args!(
                 "Lint time: {:.2}ms",
                 elapsed.as_secs_f64() * 1000.0
             ));
         }
-
-        let has_errors = filtered_diagnostics
-            .iter()
-            .any(|d| d.severity == Severity::Error);
 
         if has_errors {
             Ok(ExitCode::LintErrors)
@@ -401,6 +437,7 @@ mod tests {
                 indent_size: None,
                 format,
                 allow_duplicate_keys,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -438,6 +475,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -591,6 +629,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -615,6 +654,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -640,6 +680,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -671,6 +712,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Json,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -698,6 +740,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
@@ -727,6 +770,7 @@ mod tests {
                 indent_size: None,
                 format: LintFormat::Text,
                 allow_duplicate_keys: None,
+                max_diagnostics: None,
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),

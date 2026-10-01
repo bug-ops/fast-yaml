@@ -1,14 +1,13 @@
 //! Rule to check octal value representations.
 
+use super::{LintRule, RuleId};
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
 use crate::context::lines_of;
 use crate::source::offset::ByteOffset;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
-
-use super::LintRule as _;
 
 /// Returns the portion of a YAML source line before any inline comment.
 ///
@@ -42,15 +41,14 @@ fn strip_inline_comment(line: &str) -> &str {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::OctalValuesRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::OctalValuesRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = OctalValuesRule;
 /// let yaml = "code: '010'";  // Quoted, so valid
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct OctalValuesRule;
@@ -77,8 +75,8 @@ impl Default for OctalValuesOptions {
 impl RuleOptions for OctalValuesOptions {}
 
 impl super::LintRule for OctalValuesRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::OCTAL_VALUES
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::OctalValues)
     }
 
     fn name(&self) -> &'static str {
@@ -92,8 +90,10 @@ impl super::LintRule for OctalValuesRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for OctalValuesRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let options = &config.rules.octal_values.options;
         let forbid_implicit = options.forbid_implicit_octal;
@@ -182,7 +182,7 @@ impl OctalValuesRule {
                 );
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::OCTAL_VALUES,
                         severity,
                         format!(
                             "found explicit octal value '{value_token}' (use quoted string to avoid ambiguity)"
@@ -211,7 +211,7 @@ impl OctalValuesRule {
                 );
                 diagnostics.push(
                     DiagnosticBuilder::new(
-                        self.code(),
+                        DiagnosticCode::OCTAL_VALUES,
                         severity,
                         format!(
                             "found implicit octal value '{value_token}' (use quoted string or explicit '0o' prefix)"
@@ -230,33 +230,31 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
     use fast_yaml_core::Parser;
 
     #[test]
     fn test_octal_values_quoted_valid() {
         let yaml = "code: '010'";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_octal_values_implicit_octal() {
         let yaml = "code: 010";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
@@ -264,13 +262,12 @@ mod tests {
     #[test]
     fn test_octal_values_explicit_octal() {
         let yaml = "code: 0o10";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("explicit octal"));
     }
@@ -278,78 +275,72 @@ mod tests {
     #[test]
     fn test_octal_values_allow_implicit() {
         let yaml = "code: 010";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = config_with_rule(RuleName::OctalValues, "{forbid-implicit-octal: false}");
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_octal_values_allow_explicit() {
         let yaml = "code: 0o10";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = config_with_rule(RuleName::OctalValues, "{forbid-explicit-octal: false}");
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_octal_values_decimal_valid() {
         let yaml = "code: 10";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_octal_values_hex_valid() {
         let yaml = "code: 0x10";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_octal_values_zero_valid() {
         let yaml = "code: 0";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_octal_values_invalid_octal_digits() {
         let yaml = "code: 089";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         // 089 is not valid octal (8 and 9 are not octal digits), so should be allowed
         assert_eq!(diagnostics, []);
     }
@@ -357,13 +348,12 @@ mod tests {
     #[test]
     fn test_octal_values_list_item() {
         let yaml = "items:\n  - 010";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
@@ -371,13 +361,12 @@ mod tests {
     #[test]
     fn test_octal_values_with_comment() {
         let yaml = "code: 010  # This is a comment";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("implicit octal"));
     }
@@ -385,13 +374,12 @@ mod tests {
     #[test]
     fn test_octal_values_multiple() {
         let yaml = "code1: 010\ncode2: 0o20";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
@@ -401,13 +389,12 @@ mod tests {
     fn test_octal_values_no_false_positive_in_comment_line() {
         // A pure comment line containing 0o755 must not trigger a diagnostic.
         let yaml = "# permissions: 0o755 is octal\nmode: 7";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for octal pattern in comment line, got: {diagnostics:?}"
@@ -418,13 +405,12 @@ mod tests {
     fn test_octal_values_no_false_positive_in_inline_comment() {
         // An inline comment after a valid value must not trigger a diagnostic.
         let yaml = "mode: 7 # was 0o755 before";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for octal pattern in inline comment, got: {diagnostics:?}"
@@ -437,13 +423,13 @@ mod tests {
     fn test_octal_values_explicit_correct_position() {
         // "mode: 0o755" — the value '0o755' starts at column 7 (1-indexed), offset 6.
         let yaml = "mode: 0o755";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert!(!diagnostics.is_empty(), "expected a diagnostic for 0o755");
         let span = diagnostics[0].span;
         assert_eq!(
@@ -462,13 +448,13 @@ mod tests {
     fn test_octal_values_implicit_correct_position() {
         // "perm: 0755" — the value '0755' starts at column 7 (1-indexed), offset 6.
         let yaml = "perm: 0755";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = OctalValuesRule;
         let config = LintConfig::default();
 
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
         assert!(!diagnostics.is_empty(), "expected a diagnostic for 0755");
         let span = diagnostics[0].span;
         assert_eq!(

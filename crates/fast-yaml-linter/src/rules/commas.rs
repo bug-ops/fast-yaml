@@ -1,5 +1,7 @@
 //! Rule to check spacing around commas in flow collections.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
@@ -7,7 +9,6 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span, tokenizer::TokenType,
 };
-use fast_yaml_core::Value;
 
 /// Linting rule for comma spacing.
 ///
@@ -21,16 +22,15 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::CommasRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::CommasRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = CommasRule;
 /// let yaml = "list: [1, 2, 3]";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct CommasRule;
@@ -60,8 +60,8 @@ impl Default for CommasOptions {
 impl RuleOptions for CommasOptions {}
 
 impl super::LintRule for CommasRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::COMMAS
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::Commas)
     }
 
     fn name(&self) -> &'static str {
@@ -75,8 +75,10 @@ impl super::LintRule for CommasRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for CommasRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let source_context = context.source_context();
         let tokenizer = context.flow_tokenizer();
@@ -96,7 +98,7 @@ impl super::LintRule for CommasRule {
                 source_context,
                 comma.span.start.offset,
                 max_spaces_before,
-                self.code(),
+                DiagnosticCode::COMMAS,
                 config,
             ) {
                 diagnostics.push(diag);
@@ -109,7 +111,7 @@ impl super::LintRule for CommasRule {
                 comma.span.start.offset,
                 min_spaces_after,
                 max_spaces_after,
-                self.code(),
+                DiagnosticCode::COMMAS,
                 config,
             ) {
                 diagnostics.push(diag);
@@ -245,33 +247,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_commas_default_valid() {
         let yaml = "list: [1, 2, 3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_commas_too_many_spaces_before() {
         let yaml = "list: [1 , 2 , 3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces before"));
     }
@@ -279,13 +278,12 @@ mod tests {
     #[test]
     fn test_commas_too_few_spaces_after() {
         let yaml = "list: [1,2,3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too few spaces after"));
     }
@@ -293,13 +291,12 @@ mod tests {
     #[test]
     fn test_commas_too_many_spaces_after() {
         let yaml = "list: [1,  2,  3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces after"));
     }
@@ -307,7 +304,6 @@ mod tests {
     #[test]
     fn test_commas_allow_no_spaces_after() {
         let yaml = "list: [1,2,3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = config_with_rule(
@@ -316,59 +312,55 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_commas_allow_multiple_spaces_after() {
         let yaml = "list: [1,  2,  3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = config_with_rule(RuleName::Commas, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_commas_flow_mapping() {
         let yaml = "{name: John, age: 30}";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_commas_nested_flow() {
         let yaml = "data: [[1, 2], [3, 4]]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_commas_multiline_flow() {
         let yaml = "list: [\n  1,\n  2,\n  3\n]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Commas followed by newlines should be handled gracefully
         assert!(
             diagnostics.is_empty() || diagnostics.iter().all(|d| !d.message.contains("too few"))
@@ -379,13 +371,12 @@ mod tests {
     fn test_commas_correct_location() {
         // Violation at line 2, not line 1
         let yaml = "first: ok\nlist: [1,2,3]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
             diagnostics[0].span.start.line, 2,
@@ -397,13 +388,12 @@ mod tests {
     #[test]
     fn test_commas_multiple_violations() {
         let yaml = "list: [1 ,2,3 , 4]";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should have multiple violations
         assert!(diagnostics.len() >= 2);
     }
@@ -412,7 +402,6 @@ mod tests {
     #[test]
     fn test_commas_no_false_positive_in_block_scalar() {
         let yaml = "run: |\n  echo \"a, b, c\"\n  for i in 1,2,3; do echo $i; done\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = CommasRule;
         let config = config_with_rule(
@@ -421,7 +410,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "no false positives in block scalar: {diagnostics:?}"

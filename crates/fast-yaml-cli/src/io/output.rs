@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_parallel::AtomicFile;
 
 /// Destination for output data
@@ -40,9 +41,13 @@ fn detect_special_device(path: &Path) -> Option<OutputDestination> {
 impl OutputWriter {
     /// Create writer from CLI arguments.
     ///
+    /// Unless `in_place` is set, a destination that is the same file as `input_file` is refused,
+    /// since an explicit `--output` must never overwrite the input it was read from.
+    ///
     /// # Errors
     ///
-    /// Returns an error if `in_place` is `true` and `input_file` is `None`.
+    /// Returns an error if `in_place` is `true` and `input_file` is `None`, or if `--output` is
+    /// the same file as `input_file` and `in_place` is `false`.
     pub fn from_args(
         output: Option<PathBuf>,
         in_place: bool,
@@ -60,7 +65,11 @@ impl OutputWriter {
             OutputDestination::Stdout
         };
 
-        Ok(Self { destination })
+        let writer = Self { destination };
+        if let (false, Some(input)) = (in_place, input_file) {
+            writer.ensure_not_input(input)?;
+        }
+        Ok(writer)
     }
 
     /// Create stdout writer for tests
@@ -124,7 +133,7 @@ impl OutputWriter {
         let kind = match &self.destination {
             OutputDestination::File(path) => SinkKind::File(
                 AtomicFile::create(path)
-                    .with_context(|| format!("Failed to write file: {}", path.display()))?,
+                    .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))?,
             ),
             OutputDestination::Stdout => SinkKind::Stdout,
             OutputDestination::Stderr => SinkKind::Stderr,
@@ -157,7 +166,7 @@ impl OutputWriter {
         if inputs.into_iter().any(|input| identity.is(input)) {
             anyhow::bail!(
                 "--output '{}' is also an input file; refusing to overwrite it",
-                destination.display()
+                DisplayPath::new(destination)
             );
         }
         Ok(())
@@ -166,7 +175,7 @@ impl OutputWriter {
     /// Write to file via the shared secure atomic writer
     fn write_file(path: &Path, content: &str) -> Result<()> {
         fast_yaml_parallel::write_atomic(path, content.as_bytes())
-            .with_context(|| format!("Failed to write file: {}", path.display()))
+            .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))
     }
 }
 

@@ -1,5 +1,7 @@
 //! Rule to check key ordering in mappings.
 
+use super::RuleId;
+use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use super::node_roles::NodeRole;
@@ -7,7 +9,6 @@ use crate::config::{PatternList, RuleOptions};
 use crate::nodes::{CollectionKind, Node, TagKind};
 use crate::source::offset::ByteRange;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
 
 /// Linting rule for key ordering.
 ///
@@ -26,16 +27,15 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::KeyOrderingRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::KeyOrderingRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = KeyOrderingRule;
 /// let yaml = "name: John\nage: 30";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &value, &config);
+/// let diagnostics = rule.check(&context, &config);
 /// assert!(!diagnostics.is_empty());  // Keys are not in alphabetical order
 /// ```
 pub struct KeyOrderingRule;
@@ -78,8 +78,8 @@ fn compare(key: &str, earlier: &str, case_sensitive: bool) -> std::cmp::Ordering
 }
 
 impl super::LintRule for KeyOrderingRule {
-    fn code(&self) -> &str {
-        DiagnosticCode::KEY_ORDERING
+    fn id(&self) -> RuleId<'_> {
+        RuleId::BuiltIn(RuleName::KeyOrdering)
     }
 
     fn name(&self) -> &'static str {
@@ -93,8 +93,10 @@ impl super::LintRule for KeyOrderingRule {
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for KeyOrderingRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.key_ordering.options;
         let index = context.nodes();
         let source_context = context.source_context();
@@ -164,13 +166,11 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     fn check_config(yaml: &str, config: &LintConfig) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
-        KeyOrderingRule.check(&LintContext::new(yaml), &value, config)
+        KeyOrderingRule.check(&LintContext::new(yaml), config)
     }
 
     fn check_yaml(yaml: &str) -> Vec<Diagnostic> {

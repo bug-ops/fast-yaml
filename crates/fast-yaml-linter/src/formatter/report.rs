@@ -3,13 +3,15 @@
 use std::fmt::{self, Write as _};
 use std::path::{Path, PathBuf};
 
+use fast_yaml_core::fs::DisplayPath;
+
 use crate::Diagnostic;
 
 use super::{github, parsable};
 
 /// Error returned when a [`ReportPath`] is built from a relative path.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("report path '{}' is not absolute", .0.display())]
+#[error("report path '{}' is not absolute", DisplayPath::new(.0))]
 pub struct NotAbsolute(PathBuf);
 
 /// Absolute path of a linted file, as printed by the report formats.
@@ -85,7 +87,7 @@ impl ReportPath {
 
 impl fmt::Display for ReportPath {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.display().fmt(f)
+        DisplayPath::new(&self.0).fmt(f)
     }
 }
 
