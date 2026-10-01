@@ -225,7 +225,7 @@ fy parse --max-input-bytes 500MiB huge.yaml
 |--------|-------|-------------|---------|
 | `--jobs` | `-j` | Number of parallel workers (0 = auto) | auto-detect |
 | `--stdin-files` | - | Read file paths from stdin; a missing path, directory, non-YAML file or line over 4096 bytes is an error | - |
-| `--include` | - | Include pattern (glob, case-insensitive) | `*.yaml`, `*.yml`, `.yamllint` |
+| `--include` | - | Include pattern (glob, case-insensitive) | `*.yaml`, `*.yml` (`lint` also `.yamllint`) |
 | `--exclude` | - | Exclude pattern (glob, case-insensitive) | none |
 | `--no-recursive` | - | Disable recursive directory traversal | recursive |
 | `--dry-run` | `-n` | Preview changes without modifying; exits 5 if any file would change | - |

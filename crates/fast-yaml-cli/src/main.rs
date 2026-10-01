@@ -234,6 +234,9 @@ fn run() -> Result<ExitCode> {
                         &stdin_fallback,
                     )?;
                     target.discovery.file_filter = cmd.file_filter.clone();
+                    if target.discovery.include == discovery::IncludePatterns::Default {
+                        target.discovery.include = discovery::IncludePatterns::DefaultWithYamllint;
+                    }
                     commands::lint_batch::execute_lint_batch(
                         &common_config,
                         &target,
