@@ -20,6 +20,16 @@ pub enum InputOrigin {
     Stdin,
 }
 
+impl InputOrigin {
+    /// The file path when the input is a file.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::File(path) => Some(path),
+            Self::Stdin => None,
+        }
+    }
+}
+
 impl InputSource {
     /// Read input from file or stdin based on arguments, reading at most `max` bytes
     #[allow(clippy::option_if_let_else)]
@@ -66,10 +76,7 @@ impl InputSource {
 
     /// Get file path if input is from file
     pub fn file_path(&self) -> Option<&Path> {
-        match &self.origin {
-            InputOrigin::File(path) => Some(path),
-            InputOrigin::Stdin => None,
-        }
+        self.origin.path()
     }
 }
 

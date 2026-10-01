@@ -47,7 +47,7 @@ mod invocation;
 mod io;
 mod reporter;
 
-use cli::{Cli, Command};
+use cli::{Cli, Command, ResolvedCli};
 use commands::format::{EditIntent, FormatCommand, WriteMode};
 use commands::format_batch::BatchWrite;
 use config::{CommonConfig, FormatterConfig};
@@ -79,12 +79,11 @@ fn main() {
 }
 
 fn run_reporting_errors() -> i32 {
-    let exit_code = match run() {
+    let cli = Cli::parse_validated();
+    let output_config = config::OutputConfig::from_cli(cli.verbosity, cli.no_color);
+    let exit_code = match run(cli) {
         Ok(code) => code,
         Err(err) => {
-            // Use OutputConfig to determine color usage
-            let cli = Cli::parse_validated();
-            let output_config = config::OutputConfig::from_cli(cli.verbosity, cli.no_color);
             error::stderr_line(format_args!(
                 "{}",
                 format_error(&err, output_config.use_color())
@@ -95,9 +94,7 @@ fn run_reporting_errors() -> i32 {
     exit_code.as_i32()
 }
 
-fn run() -> Result<ExitCode> {
-    let cli = Cli::parse_validated();
-
+fn run(cli: ResolvedCli) -> Result<ExitCode> {
     let common_config = CommonConfig::from_cli(&cli);
     let max_input = cli.max_input();
     let max_scan_ahead = cli.scan_ahead();
@@ -191,8 +188,7 @@ fn run() -> Result<ExitCode> {
         Some(Command::Lint {
             paths,
             stdin_files,
-            config: config_path,
-            no_config,
+            config,
             max_line_length,
             indent_size,
             format,
@@ -206,8 +202,7 @@ fn run() -> Result<ExitCode> {
             let target = Target::resolve(paths, stdin_files, &batch)
                 .map_err(|err| commands::lint::report_unresolved(format, output.clone(), err))?;
             let args = commands::lint::LintArgs {
-                config_path,
-                no_config,
+                config: config.source(),
                 max_line_length,
                 indent_size,
                 format,
@@ -221,18 +216,22 @@ fn run() -> Result<ExitCode> {
 
             match target {
                 Target::Stdin => {
-                    let placeholder = empty_input(io::input::InputOrigin::Stdin);
-                    let cmd =
-                        commands::lint::LintCommand::build(common_config, args, &placeholder)?;
+                    let cmd = commands::lint::LintCommand::build(
+                        common_config,
+                        args,
+                        &io::input::InputOrigin::Stdin,
+                    )?;
                     let input = InputSource::from_stdin(cmd.lint_config.max_input_bytes)
                         .map_err(|err| cmd.report_unreadable(None, err))?;
                     cmd.execute(&input)?
                 }
                 Target::File(path) => {
                     // Config first: an ignored file must not be read.
-                    let placeholder = empty_input(io::input::InputOrigin::File(path.clone()));
-                    let cmd =
-                        commands::lint::LintCommand::build(common_config, args, &placeholder)?;
+                    let cmd = commands::lint::LintCommand::build(
+                        common_config,
+                        args,
+                        &io::input::InputOrigin::File(path.clone()),
+                    )?;
                     if cmd.is_ignored(&path) {
                         cmd.execute_ignored()?
                     } else {
@@ -242,13 +241,12 @@ fn run() -> Result<ExitCode> {
                     }
                 }
                 Target::Batch(mut target) => {
-                    // Synthetic stdin input: config discovery is CWD-based, same as yamllint.
-                    let stdin_fallback = empty_input(io::input::InputOrigin::Stdin);
+                    // Config discovery is CWD-based, same as yamllint.
                     let format = args.format;
                     let cmd = commands::lint::LintCommand::build(
                         common_config.clone(),
                         args,
-                        &stdin_fallback,
+                        &io::input::InputOrigin::Stdin,
                     )?;
                     target.discovery.file_filter = cmd.file_filter.clone();
                     if target.discovery.include == discovery::IncludePatterns::Default {
@@ -283,13 +281,4 @@ fn stdin_write_mode(intent: EditIntent) -> Result<WriteMode> {
         anyhow::bail!("--in-place (-i) requires a file argument");
     }
     WriteMode::new(intent, None)
-}
-
-/// Content-free input that only tells config discovery where the run started.
-#[cfg(feature = "linter")]
-const fn empty_input(origin: io::input::InputOrigin) -> InputSource {
-    InputSource {
-        content: String::new(),
-        origin,
-    }
 }

@@ -1,3 +1,5 @@
+#[cfg(feature = "linter")]
+use crate::commands::lint::ConfigSource;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{
     Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDocuments, MaxInputBytes, MaxScanAhead,
@@ -24,11 +26,11 @@ use crate::io::{OutputTarget, WriteTarget};
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Option<Command>,
+    command: Option<Command>,
 
     /// Disable colored output
     #[arg(long, global = true)]
-    pub no_color: bool,
+    no_color: bool,
 
     /// Quiet mode (errors only)
     #[arg(short, long, global = true)]
@@ -42,7 +44,7 @@ pub struct Cli {
     /// Accepts KiB, MiB and GiB suffixes. Applies to single inputs and to batch runs;
     /// for `lint` it overrides the `max-input-bytes` config key
     #[arg(long, global = true, alias = "max-input-size", value_name = "BYTES", value_parser = parse_max_input_bytes)]
-    pub max_input_bytes: Option<MaxInputBytes>,
+    max_input_bytes: Option<MaxInputBytes>,
 
     /// Maximum characters the parser may read past the last node it reported (min: 1, max: 1GiB,
     /// default: 4MiB). Accepts KiB, MiB and GiB suffixes. Bounds parser memory (about 190x this
@@ -54,14 +56,26 @@ pub struct Cli {
     /// default one at a time, so the result matches a single-file run; with the flag the limit
     /// is used as is
     #[arg(long, global = true, value_name = "CHARS", value_parser = parse_max_scan_ahead)]
-    pub max_scan_ahead: Option<MaxScanAhead>,
-
-    /// Verbosity resolved from `--quiet`/`--verbose` by [`Cli::validate`]; `Normal` before that.
-    #[arg(skip)]
-    pub verbosity: Verbosity,
+    max_scan_ahead: Option<MaxScanAhead>,
 }
 
-impl Cli {
+/// The parsed command line after validation: the only form the rest of the program sees, so a
+/// `--quiet`/`--verbose` conflict can never reach a command.
+#[derive(Debug)]
+pub struct ResolvedCli {
+    /// The subcommand; `None` formats stdin to stdout.
+    pub command: Option<Command>,
+    /// `--no-color` was given.
+    pub no_color: bool,
+    /// Verbosity resolved from `--quiet`/`--verbose`.
+    pub verbosity: Verbosity,
+    /// `--max-input-bytes`, if given.
+    pub max_input_bytes: Option<MaxInputBytes>,
+    /// `--max-scan-ahead`, if given.
+    pub max_scan_ahead: Option<MaxScanAhead>,
+}
+
+impl ResolvedCli {
     /// Input size limit of commands that have no config file key: the flag or the default.
     #[must_use]
     pub fn max_input(&self) -> MaxInputBytes {
@@ -73,16 +87,18 @@ impl Cli {
     pub fn scan_ahead(&self) -> MaxScanAhead {
         self.max_scan_ahead.unwrap_or_default()
     }
+}
 
+impl Cli {
     /// Parses the process arguments, exiting with code 2 on any usage error.
     #[must_use]
-    pub fn parse_validated() -> Self {
+    pub fn parse_validated() -> ResolvedCli {
         Self::try_parse()
             .and_then(Self::validate)
             .unwrap_or_else(|err| err.exit())
     }
 
-    /// Resolves [`verbosity`](Self::verbosity), rejecting `--quiet` together with `--verbose`.
+    /// Resolves the parsed flags, rejecting `--quiet` together with `--verbose`.
     ///
     /// clap cannot enforce this for global flags given on both sides of the subcommand
     /// (`fy -q parse -v`), so it is checked on the merged result.
@@ -90,8 +106,8 @@ impl Cli {
     /// # Errors
     ///
     /// Returns an argument-conflict error when both flags are set.
-    pub fn validate(mut self) -> Result<Self, clap::Error> {
-        self.verbosity = match (self.quiet, self.verbose) {
+    pub fn validate(self) -> Result<ResolvedCli, clap::Error> {
+        let verbosity = match (self.quiet, self.verbose) {
             (true, true) => {
                 return Err(Self::command().error(
                     clap::error::ErrorKind::ArgumentConflict,
@@ -102,7 +118,39 @@ impl Cli {
             (false, true) => Verbosity::Verbose,
             (false, false) => Verbosity::Normal,
         };
-        Ok(self)
+        Ok(ResolvedCli {
+            command: self.command,
+            no_color: self.no_color,
+            verbosity,
+            max_input_bytes: self.max_input_bytes,
+            max_scan_ahead: self.max_scan_ahead,
+        })
+    }
+}
+
+/// Config file flags of `fy lint`.
+#[cfg(feature = "linter")]
+#[derive(Args, Debug, Clone, Default)]
+pub struct ConfigArgs {
+    /// Path to config file (default: auto-discover .fast-yaml.yaml)
+    #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
+    config: Option<PathBuf>,
+
+    /// Disable config file auto-discovery
+    #[arg(long, conflicts_with = "config")]
+    no_config: bool,
+}
+
+#[cfg(feature = "linter")]
+impl ConfigArgs {
+    /// Resolves the flags into the single source they name.
+    #[must_use]
+    pub fn source(self) -> ConfigSource {
+        match (self.config, self.no_config) {
+            (Some(path), _) => ConfigSource::Explicit(path),
+            (None, true) => ConfigSource::Disabled,
+            (None, false) => ConfigSource::Discover,
+        }
     }
 }
 
@@ -404,13 +452,8 @@ pub enum Command {
         #[arg(long, conflicts_with = "paths")]
         stdin_files: bool,
 
-        /// Path to config file (default: auto-discover .fast-yaml.yaml)
-        #[arg(long, value_name = "FILE", conflicts_with = "no_config")]
-        config: Option<PathBuf>,
-
-        /// Disable config file auto-discovery
-        #[arg(long, conflicts_with = "config")]
-        no_config: bool,
+        #[command(flatten)]
+        config: ConfigArgs,
 
         /// Maximum line length (overrides config file)
         #[arg(long)]

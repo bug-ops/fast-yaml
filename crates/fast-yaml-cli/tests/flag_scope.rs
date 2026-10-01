@@ -110,6 +110,12 @@ fn dry_run_wins_over_in_place() {
 
 #[cfg(feature = "linter")]
 #[test]
+fn config_and_no_config_conflict() {
+    usage_error(&["lint", "--config", "c.yaml", "--no-config"]);
+}
+
+#[cfg(feature = "linter")]
+#[test]
 fn lint_has_output_but_no_in_place() {
     let dir = TempDir::new().unwrap();
     let input = dir.path().join("a.yaml");

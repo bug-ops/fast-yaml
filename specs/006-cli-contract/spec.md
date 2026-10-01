@@ -200,7 +200,8 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 
 | Entity | Description |
 |--------|-------------|
-| `Cli`, `Command` | clap derive structs; global flags live on `Cli`. |
+| `Cli`, `Command`, `ResolvedCli` | clap derive structs; global flags live on `Cli`, and `Cli::validate` resolves them into `ResolvedCli` (verbosity decided), the only form commands see. |
+| `ConfigSource` | `Explicit(path)`, `Disabled`, `Discover` for `fy lint`; `--config` and `--no-config` conflict in clap. |
 | `ExitCode` | `Success=0`, `ParseError=1`, `LintErrors=2`, `IoError=3` and `InvalidArgs=4` (defined, never produced), `WouldChange=5`. |
 | `Verbosity` | `Quiet`, `Normal`, `Verbose`, resolved from `-q/-v` after parsing. |
 | `Target` | `Stdin`, `File`, `Batch` resolved from paths and flags. |

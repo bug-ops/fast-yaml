@@ -459,3 +459,28 @@ fn emitting_at_max_depth_fits_a_small_stack() {
         std::mem::forget(doc);
     });
 }
+
+#[test]
+fn entries_after_a_dash_keep_their_column_when_empty_collections_intervene() {
+    for input in [
+        "- []\n- k: v\n",
+        "- - []\n  - a\n",
+        "- {}\n- - a\n",
+        "- &a\n  k: v\n",
+        "- - a\n",
+        "- - k: v\n",
+        "- - - k: v\n",
+        "- - {}\n  - k: v\n",
+    ] {
+        check(input, 2, input);
+        for indent in [3, 4, 8] {
+            let once = fmt(input, indent);
+            assert_eq!(fmt(&once, indent), once, "{input:?} at indent {indent}");
+            assert_eq!(
+                Parser::parse_all(input).unwrap(),
+                Parser::parse_all(&once).unwrap(),
+                "{input:?} at indent {indent}"
+            );
+        }
+    }
+}

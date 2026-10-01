@@ -199,6 +199,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **CLI/Core**: `fy lint` resolves `--config`/`--no-config` into a `ConfigSource` and builds from the input origin, `Cli::validate` returns a `ResolvedCli`, and the streaming formatter tracks the after-dash position with one `Cursor` enum (#613) (#PR)
 - **Parallel/Python**: `Workers::Auto` runs at most 128 threads even inside a larger Rayon pool, and `dump_parallel` takes its auto thread count from it, so `RAYON_NUM_THREADS` is honored (#610) (#PR)
 - **CLI/Python**: `fy` builds without default features, the unused `num_cpus` dependency is dropped, the native `_core.dump`/`dump_all` (their `stream`/`dumper` arguments were ignored) are removed, and CI runs a clippy feature powerset (#612) (#PR)
 - **Docs**: removed `docs/CI-CD-QUICKSTART.md` and the unused `Makefile.toml` (cargo-make); maintainer CI notes moved to `CONTRIBUTING.md` (#596)
