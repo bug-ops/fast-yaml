@@ -285,6 +285,10 @@ impl ConfigFile {
     /// Returns `ConfigFileError` on I/O failure, when the core parser rejects the file (syntax error or
     /// the default [`fast_yaml_core::limits::ParseLimits`] exceeded), or when `rules:` contains an
     /// unknown rule, an unknown or mistyped option, or an invalid severity.
+    ///
+    /// The file must be valid YAML 1.2, like every input of `fy`: a tab as the indentation of a
+    /// flow collection's continuation line is rejected, and the error names its line and column.
+    /// Indent with spaces.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
         let bytes = std::fs::read(path).map_err(|source| ConfigFileError::Io {
             path: path.to_owned(),
@@ -606,6 +610,18 @@ mod tests {
             load_str("rules: [broken yaml: {"),
             Err(ConfigFileError::Rejected { .. })
         ));
+    }
+
+    #[test]
+    fn test_tab_indented_flow_collection_is_rejected_with_its_position() {
+        let err = load_str("rules: {\n\tline-length: {max: 10}\n}\n").unwrap_err();
+        assert!(matches!(err, ConfigFileError::Rejected { .. }), "{err:?}");
+        let message = format!("{err:?}");
+        assert!(message.contains("tab"), "{message}");
+        assert!(
+            message.contains("line: 2") || message.contains("line 2"),
+            "{message}"
+        );
     }
 
     #[test]
