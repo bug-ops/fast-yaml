@@ -20,7 +20,7 @@ use fast_yaml_linter::{
 };
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyString};
+use pyo3::types::{PyBool, PyList, PyString};
 use serde_norway::{Mapping, Value};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
@@ -470,13 +470,42 @@ fn parse_rule_name(code: &str) -> PyResult<RuleName> {
     RuleName::from_config_key(code).map_err(|e| PyValueError::new_err(e.to_string()))
 }
 
-fn parse_path(path: Option<PathBuf>) -> PyResult<Option<CanonicalPath>> {
-    path.map(|path| {
-        CanonicalPath::new(&path).map_err(|e| {
+fn matching_path(
+    config: &RustLintConfig,
+    path: Option<PathBuf>,
+) -> PyResult<Option<CanonicalPath>> {
+    path.map_or(Ok(None), |path| {
+        config.matching_path(&path).map_err(|e| {
             PyValueError::new_err(format!("cannot resolve path '{}': {e}", path.display()))
         })
     })
-    .transpose()
+}
+
+/// The `max_line_length` argument of `LintConfig`: omitted keeps the rule default, `None`
+/// removes the limit, an integer sets it.
+#[derive(Clone, Copy)]
+enum MaxLineLengthArg {
+    Unset,
+    NoLimit,
+    Max(NonZeroUsize),
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for MaxLineLengthArg {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        if obj.is_none() {
+            return Ok(Self::NoLimit);
+        }
+        if obj.is_instance_of::<PyBool>() {
+            return Err(PyTypeError::new_err(
+                "max_line_length must be an int, not bool",
+            ));
+        }
+        parse_max_line_length(Some(obj.extract()?))?
+            .map(Self::Max)
+            .ok_or_else(|| PyValueError::new_err("max_line_length must be a positive integer"))
+    }
 }
 
 /// Configuration for the linter.
@@ -500,8 +529,8 @@ pub struct PyLintConfig {
 impl PyLintConfig {
     #[new]
     #[pyo3(signature = (
-        max_line_length=Some(80),
-        indent_size=2,
+        max_line_length=MaxLineLengthArg::Unset,
+        indent_size=None,
         require_document_start=false,
         require_document_end=false,
         allow_duplicate_keys=false,
@@ -515,8 +544,8 @@ impl PyLintConfig {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        max_line_length: Option<i128>,
-        indent_size: i128,
+        max_line_length: MaxLineLengthArg,
+        indent_size: Option<i128>,
         require_document_start: bool,
         require_document_end: bool,
         allow_duplicate_keys: bool,
@@ -531,14 +560,31 @@ impl PyLintConfig {
         let parse_limits =
             limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         let mut inner = RustLintConfig::new()
-            .with_max_line_length(parse_max_line_length(max_line_length)?)
-            .with_indent_size(parse_indent_size(indent_size)?)
             .with_parse_limits(parse_limits)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
             )?);
+        // The old fixed default width; a `rules` patch or `indent_size` still replaces it
+        inner.rules.indentation.options.indent_size = Some(IndentSize::default());
 
+        if let Some(rules_obj) = rules {
+            let value = ValueConverter::default()
+                .convert_rules(&rules_obj, |name| parse_rule_name(name).map(drop))?;
+            inner
+                .rules
+                .apply_in_cwd(value)
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        }
+
+        match max_line_length {
+            MaxLineLengthArg::Unset => {}
+            MaxLineLengthArg::NoLimit => inner = inner.with_max_line_length(None),
+            MaxLineLengthArg::Max(max) => inner = inner.with_max_line_length(Some(max)),
+        }
+        if let Some(size) = indent_size {
+            inner = inner.with_indent_size(parse_indent_size(size)?);
+        }
         if require_document_start {
             inner = inner.with_document_start(MarkerPresence::Required);
         }
@@ -547,16 +593,6 @@ impl PyLintConfig {
         }
         if allow_duplicate_keys {
             inner = inner.with_disabled_rule(RuleName::DuplicateKey);
-        }
-
-        if let Some(rules_obj) = rules {
-            let value = ValueConverter::default()
-                .convert_rules(&rules_obj, |name| parse_rule_name(name).map(drop))?;
-            let applied = match std::env::current_dir() {
-                Ok(dir) => inner.rules.apply_at(value, &dir),
-                Err(_) => inner.rules.apply(value),
-            };
-            applied.map_err(|e| PyValueError::new_err(e.to_string()))?;
         }
 
         if let Some(disabled) = disabled_rules {
@@ -711,7 +747,7 @@ impl PyLintConfig {
         let mut inner = self.inner.clone();
         inner
             .rules
-            .apply_rule(name, Value::Mapping(entry))
+            .apply_rule_in_cwd(name, Value::Mapping(entry))
             .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self { inner })
     }
@@ -798,7 +834,8 @@ impl PyLinter {
     ///
     /// Raises:
     ///     `ValueError`: If YAML cannot be parsed at all, the source exceeds `max_input_bytes`
-    ///         (default 100 MiB), or the directory of `path` does not exist
+    ///         (default 100 MiB), or `path` cannot be resolved while a rule has `ignore`
+    ///         patterns (the file system is not consulted otherwise)
     #[pyo3(signature = (source, path=None))]
     fn lint(
         &self,
@@ -806,7 +843,7 @@ impl PyLinter {
         source: &str,
         path: Option<PathBuf>,
     ) -> PyResult<Vec<PyDiagnostic>> {
-        let path = parse_path(path)?;
+        let path = matching_path(self.inner.config(), path)?;
         // Release GIL during CPU-intensive linting
         let result = py.detach(|| lint_with_excerpts(&self.inner, source, path.as_ref()));
 
@@ -990,15 +1027,13 @@ fn lint(
     config: Option<PyLintConfig>,
     path: Option<PathBuf>,
 ) -> PyResult<Vec<PyDiagnostic>> {
-    let path = parse_path(path)?;
+    let linter = match config {
+        Some(cfg) => RustLinter::with_config(cfg.inner),
+        None => RustLinter::with_all_rules(),
+    };
+    let path = matching_path(linter.config(), path)?;
     // Release GIL during CPU-intensive linting
-    let result = py.detach(|| {
-        let linter = match config {
-            Some(cfg) => RustLinter::with_config(cfg.inner),
-            None => RustLinter::with_all_rules(),
-        };
-        lint_with_excerpts(&linter, source, path.as_ref())
-    });
+    let result = py.detach(|| lint_with_excerpts(&linter, source, path.as_ref()));
 
     result
         .map(|diagnostics| diagnostics.into_iter().map(Into::into).collect())

@@ -467,7 +467,9 @@ class lint:  # noqa: N801
         kebab-case option keys
         (e.g. ``{"line-length": {"max": 120}}``). Unknown rules, option keys,
         wrong types and invalid severities raise ``ValueError``. Order of
-        application: keyword arguments, then ``rules``, then ``disabled_rules``.
+        application: ``rules``, then the keyword arguments you set (the boolean
+        ones only when ``True``), then ``disabled_rules``. Omitted ``max_line_length``
+        and ``indent_size`` keep the defaults (80 and 2, which ``rules`` can replace); ``max_line_length=None`` removes the limit.
 
         ``max_input_bytes`` (1..=1 GiB, default 100 MiB) rejects larger sources
         with ``ValueError``. It bounds linting work on oversized input; the
@@ -480,8 +482,8 @@ class lint:  # noqa: N801
 
         def __init__(
             self,
-            max_line_length: int | None = 80,
-            indent_size: int = 2,
+            max_line_length: int | None = ...,
+            indent_size: int | None = None,
             require_document_start: bool = False,
             require_document_end: bool = False,
             allow_duplicate_keys: bool = False,

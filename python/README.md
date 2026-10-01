@@ -117,8 +117,11 @@ diagnostics = lint.lint("a: 1\n", config)
 lint.LintConfig(rules={"quoted-strings": {"quote-type": "singel"}})
 ```
 
-Keyword arguments are applied first, then `rules`, then `disabled_rules` (which always wins).
-`max_line_length=None` (or `{"line-length": {"max": None}}`) removes the line length limit.
+The `rules` patch is applied first, then the keyword arguments you set (`max_line_length`,
+`indent_size`, and `require_document_*` / `allow_duplicate_keys` when `True`; `False` changes nothing), then `disabled_rules` (which always
+wins); so `indent_size=2` beats `rules={"indentation": {"spaces": 4}}`. Omitted `max_line_length` and
+`indent_size` leave the defaults (80 and 2, which a `rules` patch can replace); `max_line_length=None` (or
+`{"line-length": {"max": None}}`) removes the line length limit.
 
 ## Batch Processing
 

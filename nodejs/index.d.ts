@@ -436,7 +436,7 @@ export interface LintConfig {
   /** Disabled rule codes. */
   disabledRules?: Array<string>
   /**
-   * Per-rule configuration patch, applied after the fields above.
+   * Per-rule configuration patch, applied first: the fields above win over it.
    *
    * Each key is a rule code; the value is a severity string (case-insensitive),
    * or an object with `enabled`, `severity` and the rule's own options

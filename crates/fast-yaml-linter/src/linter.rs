@@ -2,9 +2,12 @@
 
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
+use std::path::Path;
+use std::str::FromStr;
 
 use crate::config::{
-    CanonicalPath, CustomRuleCode, IndentSize, NoOptions, RuleName, RuleSettings, RulesConfig,
+    CanonicalPath, CustomRuleCode, IndentSize, IndentSpaces, NoOptions, RuleName, RuleSettings,
+    RulesConfig,
 };
 use crate::directives::Directives;
 use crate::rules::{DuplicateRule, LintDocument, MarkerPresence, Rule, RuleId};
@@ -76,6 +79,9 @@ impl LintConfig {
 
     /// Sets the expected indentation size.
     ///
+    /// Replaces a width chosen earlier, including `spaces` from a `rules` patch, so the last
+    /// call wins.
+    ///
     /// # Examples
     ///
     /// ```
@@ -88,6 +94,7 @@ impl LintConfig {
     #[must_use]
     pub const fn with_indent_size(mut self, size: IndentSize) -> Self {
         self.rules.indentation.options.indent_size = Some(size);
+        self.rules.indentation.options.spaces = Some(IndentSpaces::Fixed(size));
         self
     }
 
@@ -127,6 +134,33 @@ impl LintConfig {
     pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
         self.parse_limits = limits;
         self
+    }
+
+    /// Resolves `path` for per-rule `ignore` matching, or `None` when no rule has `ignore`.
+    ///
+    /// The file system is only consulted when a pattern can match, so a path that does not
+    /// exist (or an empty one) is fine for a source that is already in memory.
+    ///
+    /// # Errors
+    ///
+    /// Returns the I/O error of [`CanonicalPath::new`] when a rule has `ignore` and neither
+    /// the path nor its directory can be resolved.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::path::Path;
+    /// use fast_yaml_linter::LintConfig;
+    ///
+    /// let config = LintConfig::new();
+    /// assert!(config.matching_path(Path::new("no-such-dir/a.yaml")).unwrap().is_none());
+    /// ```
+    pub fn matching_path(&self, path: &Path) -> std::io::Result<Option<CanonicalPath>> {
+        if self.rules.has_ignore() {
+            CanonicalPath::new(path).map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     /// Sets the largest source, in bytes, accepted for linting.
@@ -1041,6 +1075,45 @@ mod tests {
 
         assert_eq!(config.rules.line_length.options.max, NonZeroUsize::new(120));
         assert_eq!(config.rules.indentation.options.indent_size().get(), 4);
+    }
+
+    #[test]
+    fn test_with_indent_size_replaces_spaces_from_a_rules_patch() {
+        let mut config = LintConfig::new();
+        config
+            .rules
+            .apply(serde_norway::Deserializer::from_str(
+                "indentation: {spaces: 4}",
+            ))
+            .unwrap();
+        assert_eq!(config.rules.indentation.options.indent_size().get(), 4);
+
+        let config = config.with_indent_size(indent(2));
+        assert_eq!(config.rules.indentation.options.indent_size().get(), 2);
+    }
+
+    #[test]
+    fn test_matching_path_skips_the_file_system_without_ignore() {
+        let missing = Path::new("no-such-dir/a.yaml");
+        assert!(LintConfig::new().matching_path(missing).unwrap().is_none());
+
+        let mut config = LintConfig::new();
+        let base = std::env::temp_dir().canonicalize().unwrap();
+        config
+            .rules
+            .apply_rule_at(
+                RuleName::Colons,
+                serde_norway::Deserializer::from_str("{ignore: 'gen/'}"),
+                &base,
+            )
+            .unwrap();
+        assert!(config.matching_path(missing).is_err());
+        assert!(
+            config
+                .matching_path(&base.join("a.yaml"))
+                .unwrap()
+                .is_some()
+        );
     }
 
     #[test]

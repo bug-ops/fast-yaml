@@ -3,6 +3,8 @@
 #![allow(clippy::missing_docs_in_private_items)]
 
 use assert_cmd::{Command, cargo_bin_cmd};
+#[cfg(feature = "linter")]
+use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
@@ -106,6 +108,24 @@ fn dry_run_wins_over_in_place() {
         .assert()
         .code(5);
     assert_eq!(fs::read_to_string(&input).unwrap(), "a:    1\n");
+}
+
+#[cfg(feature = "linter")]
+#[test]
+fn indent_size_flag_beats_config_indentation_spaces() {
+    let dir = TempDir::new().unwrap();
+    let config = dir.path().join("cfg.yaml");
+    fs::write(&config, "rules:\n  indentation: {spaces: 4}\n").unwrap();
+    let input = dir.path().join("a.yaml");
+    fs::write(&input, "a:\n    b: 1\n").unwrap();
+    let (config, input) = (config.to_str().unwrap(), input.to_str().unwrap());
+
+    fy(&["lint", "--config", config, input])
+        .assert()
+        .stdout(predicate::str::contains("indentation").not());
+    fy(&["lint", "--config", config, "--indent-size", "2", input])
+        .assert()
+        .stdout(predicate::str::contains("indentation"));
 }
 
 #[cfg(feature = "linter")]

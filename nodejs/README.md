@@ -229,9 +229,9 @@ in the `fast-yaml-linter` README). Unknown rules, unknown options, wrong types a
 (except `line-length.max`, where `null` removes the limit) throw an `Error` naming the rule and
 option.
 
-Fields are applied in order: `maxLineLength`, `indentSize`, `requireDocumentStart`,
-`requireDocumentEnd`, `allowDuplicateKeys`, then the `rules` patch, then `disabledRules`, which
-wins. Unset `maxLineLength` keeps the rule default; `0` and an `indentSize` outside 1 to 16
+Fields are applied in order: the `rules` patch, then `maxLineLength`, `indentSize`,
+`requireDocumentStart`, `requireDocumentEnd`, `allowDuplicateKeys` (the last three only when `true`), then `disabledRules`, which
+wins; so `indentSize: 2` beats `rules.indentation.spaces: 4`. Unset `maxLineLength` keeps the rule default; `0` and an `indentSize` outside 1 to 16
 throw. `requireDocument*: false` leaves the rule unchanged.
 
 ## Parse Limits
