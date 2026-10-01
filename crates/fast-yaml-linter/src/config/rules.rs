@@ -328,6 +328,23 @@ fn apply_entry<O: RuleOptions>(
     }
 }
 
+/// The two spellings of a rule's severity key.
+#[derive(Clone, Copy)]
+enum SeveritySpelling {
+    Severity,
+    /// yamllint's name for `severity`.
+    Level,
+}
+
+impl SeveritySpelling {
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Severity => "severity",
+            Self::Level => "level",
+        }
+    }
+}
+
 fn apply_mapping<O: RuleOptions>(
     rule: RuleName,
     settings: &mut RuleSettings<O>,
@@ -335,7 +352,7 @@ fn apply_mapping<O: RuleOptions>(
 ) -> Result<(), RuleConfigError> {
     let mut overlay = Mapping::new();
     let mut bool_word_keys = Vec::new();
-    let mut severity_key: Option<&'static str> = None;
+    let mut severity_key: Option<SeveritySpelling> = None;
     for (key, value) in map {
         let Value::String(key) = key else {
             return Err(RuleConfigError::InvalidEntry {
@@ -360,13 +377,19 @@ fn apply_mapping<O: RuleOptions>(
             },
             "severity" | "level" => match value {
                 Value::String(text) => {
-                    let spelling = if key == "level" { "level" } else { "severity" };
+                    let spelling = if key == "level" {
+                        SeveritySpelling::Level
+                    } else {
+                        SeveritySpelling::Severity
+                    };
                     if let Some(first) = severity_key.replace(spelling) {
                         return Err(RuleConfigError::InvalidOption {
                             rule,
                             key,
                             message: format!(
-                                "`{first}` and `{spelling}` are aliases and cannot both be set"
+                                "`{}` and `{}` are aliases and cannot both be set",
+                                first.key(),
+                                spelling.key()
                             ),
                         });
                     }
