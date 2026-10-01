@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -156,10 +157,14 @@ pub fn execute_lint_batch(
     let reader = SmartReader::with_threshold(u64::MAX);
     let window = workers.saturating_mul(WINDOW_PER_WORKER).max(1);
     let lint_nth = |index: usize| {
-        let path = file_paths
-            .get(index)
-            .map_or_else(PathBuf::new, PathBuf::clone);
-        lint_one(&path, &reader, lint_config, format, is_quiet, use_color)
+        lint_one(
+            &file_paths[index],
+            &reader,
+            lint_config,
+            format,
+            is_quiet,
+            use_color,
+        )
     };
 
     let stdout = io::stdout();
@@ -188,7 +193,7 @@ fn run_ordered<T: Send, R>(
 ) -> R {
     let cancelled = AtomicBool::new(false);
     pool.in_place_scope(|scope| {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::channel::<(usize, std::thread::Result<T>)>();
         let mut ordered = Ordered {
             scope,
             sender,
@@ -210,15 +215,15 @@ fn run_ordered<T: Send, R>(
 /// Iterator over the results of a [`run_ordered`] call, in index order.
 struct Ordered<'a, 'scope, T, W> {
     scope: &'a Scope<'scope>,
-    sender: Sender<(usize, T)>,
-    receiver: Receiver<(usize, T)>,
+    sender: Sender<(usize, std::thread::Result<T>)>,
+    receiver: Receiver<(usize, std::thread::Result<T>)>,
     work: &'scope W,
     cancelled: &'scope AtomicBool,
     count: usize,
     window: usize,
     launched: usize,
     consumed: usize,
-    finished: HashMap<usize, T>,
+    finished: HashMap<usize, std::thread::Result<T>>,
 }
 
 impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Ordered<'_, 'scope, T, W> {
@@ -231,8 +236,11 @@ impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Ordered<'_, 'scope, T, 
             let (work, cancelled) = (self.work, self.cancelled);
             self.scope.spawn(move |_| {
                 if !cancelled.load(Ordering::Relaxed) {
+                    // A panic is carried to the consumer, which re-raises it at this index;
+                    // the sender is never dropped before then, so waiting would hang
+                    let outcome = catch_unwind(AssertUnwindSafe(|| work(index)));
                     // The consumer may be gone after an early return
-                    let _ = sender.send((index, work(index)));
+                    let _ = sender.send((index, outcome));
                 }
             });
         }
@@ -255,8 +263,13 @@ impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Iterator for Ordered<'_
             self.finished.insert(index, item);
         };
         self.consumed += 1;
-        self.top_up();
-        Some(item)
+        match item {
+            Ok(item) => {
+                self.top_up();
+                Some(item)
+            }
+            Err(payload) => resume_unwind(payload),
+        }
     }
 }
 
@@ -577,5 +590,24 @@ mod tests {
         assert!(run_ordered(&pool(2), 0, 4, &work, |items| items.next()).is_none());
         let first = run_ordered(&pool(2), 1000, 4, &work, |items| items.next());
         assert_eq!(first, Some(0));
+    }
+
+    #[test]
+    fn run_ordered_re_raises_a_worker_panic_instead_of_hanging() {
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            let work = |index: usize| {
+                assert!(index != 3, "worker failed");
+                index
+            };
+            let result = catch_unwind(AssertUnwindSafe(|| {
+                run_ordered(&pool(2), 20, 4, &work, |items| items.collect::<Vec<_>>())
+            }));
+            let _ = done.send(result.is_err());
+        });
+        let panicked = finished
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("run_ordered hung after a worker panic");
+        assert!(panicked);
     }
 }
