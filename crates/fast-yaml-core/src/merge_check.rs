@@ -11,7 +11,7 @@ use saphyr_parser::{Event, Span};
 use crate::error::{ParseError, SourcePosition};
 use crate::events::ScalarStyle;
 use crate::merge::{MergeError, MergeKeyTracker, NodeRole, is_core_set_tag};
-use crate::options::DuplicateMergeKeys;
+use crate::options::{DuplicateMergeKeys, LoadOptions, SetValues};
 use crate::scalar::{ResolvedScalar, resolve_scalar_raw};
 
 /// What a finished node is, as far as merge validation cares.
@@ -88,16 +88,19 @@ pub struct MergeKeyValidator {
     anchors: HashMap<usize, NodeKind>,
     documents: usize,
     duplicates: DuplicateMergeKeys,
+    set_values: SetValues,
 }
 
 impl MergeKeyValidator {
-    /// Creates a validator that treats a repeated `<<` as `duplicates` says.
+    /// Creates a validator that treats a repeated `<<` and a `!!set` member value as `options`
+    /// say.
     ///
-    /// [`MergeKeyValidator::default`] rejects it.
+    /// [`MergeKeyValidator::default`] rejects both.
     #[must_use]
-    pub fn new(duplicates: DuplicateMergeKeys) -> Self {
+    pub fn new(options: LoadOptions) -> Self {
         Self {
-            duplicates,
+            duplicates: options.duplicate_merge_keys,
+            set_values: options.set_values,
             ..Self::default()
         }
     }
@@ -280,6 +283,7 @@ impl MergeKeyValidator {
                 }
                 if let Some(at) = member.take()
                     && *set
+                    && self.set_values == SetValues::Reject
                     && !kind.is_set_value()
                 {
                     let SourcePosition { line, column } = SourcePosition::from_span(at);
@@ -451,17 +455,34 @@ mod tests {
     #[test]
     fn last_wins_policy_accepts_a_repeated_merge_key() {
         let yaml = "m: {<<: {x: 1}, <<: {y: 2}}";
-        let mut validator = MergeKeyValidator::new(DuplicateMergeKeys::LastWins);
+        let mut validator = MergeKeyValidator::new(
+            LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins),
+        );
         for event in Parser::new_from_str(yaml) {
             let (event, span) = event.unwrap();
             validator.observe(&event, span).unwrap();
         }
-        let mut validator = MergeKeyValidator::new(DuplicateMergeKeys::LastWins);
+        let mut validator = MergeKeyValidator::new(
+            LoadOptions::new().with_duplicate_merge_keys(DuplicateMergeKeys::LastWins),
+        );
         let invalid = Parser::new_from_str("m: {<<: 1, <<: {y: 2}}").try_for_each(|event| {
             let (event, span) = event.unwrap();
             validator.observe(&event, span).map(drop)
         });
         assert!(invalid.is_err());
+    }
+
+    #[test]
+    fn ignore_policy_accepts_set_member_values_only() {
+        let mut validator =
+            MergeKeyValidator::new(LoadOptions::new().with_set_values(SetValues::Ignore));
+        for event in Parser::new_from_str("s: !!set {a: 1, b: [c]}\nm: {<<: 1}") {
+            let (event, span) = event.unwrap();
+            if validator.observe(&event, span).is_err() {
+                return;
+            }
+        }
+        panic!("the invalid merge value must still be rejected");
     }
 
     #[test]

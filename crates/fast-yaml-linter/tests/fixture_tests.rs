@@ -117,15 +117,42 @@ mod invalid_fixtures {
     }
 
     #[test]
-    fn test_invalid_set_member_value_aborts_linting() {
-        let yaml = include_str!("fixtures/invalid/set_member_value.yaml");
-        let err = Linter::with_all_rules().lint(yaml).unwrap_err();
+    fn test_invalid_duplicate_merge_key_through_alias_is_a_diagnostic() {
+        let yaml = include_str!("fixtures/invalid/duplicate_merge_keys_alias.yaml");
+        let diagnostics = Linter::with_all_rules().lint(yaml).unwrap();
 
-        assert!(
-            err.to_string()
-                .contains("!!set member has a non-null value"),
-            "{err}"
-        );
+        let duplicate = diagnostics
+            .iter()
+            .find(|d| d.code.as_str() == DiagnosticCode::DUPLICATE_KEY)
+            .expect("Expected a duplicate-key diagnostic for the alias-written <<");
+        assert_eq!(duplicate.span.start.line, 5);
+    }
+
+    #[test]
+    fn test_invalid_set_member_values_report_every_member() {
+        let yaml = include_str!("fixtures/invalid/set_member_values_many.yaml");
+        let diagnostics = Linter::with_all_rules().lint(yaml).unwrap();
+
+        let lines: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == DiagnosticCode::SET_VALUES)
+            .map(|d| d.span.start.line)
+            .collect();
+        assert_eq!(lines, vec![2, 4]);
+    }
+
+    #[test]
+    fn test_invalid_set_member_value_is_a_diagnostic() {
+        let yaml = include_str!("fixtures/invalid/set_member_value.yaml");
+        let diagnostics = Linter::with_all_rules().lint(yaml).unwrap();
+
+        let set_values: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.code.as_str() == "set-values")
+            .collect();
+        assert_eq!(set_values.len(), 1, "{diagnostics:?}");
+        assert_eq!(set_values[0].severity, Severity::Error);
+        assert_eq!(set_values[0].span.start.line, 2);
     }
 }
 

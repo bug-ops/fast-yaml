@@ -52,6 +52,7 @@ export interface RuleOptionsByRule {
   'line-length': { max?: number | null }
   'new-lines': { type?: 'unix' | 'dos' | 'platform' }
   'new-line-at-end-of-file': {}
+  'set-values': {}
   'octal-values': { 'forbid-implicit-octal'?: boolean; 'forbid-explicit-octal'?: boolean }
   'quoted-strings': {
     'quote-type'?: 'any' | 'single' | 'double'

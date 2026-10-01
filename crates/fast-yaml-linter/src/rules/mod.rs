@@ -9,6 +9,7 @@ mod colons;
 mod commas;
 mod comments;
 mod comments_indentation;
+mod core_schema;
 mod document_end;
 mod document_start;
 mod duplicate_keys;
@@ -27,6 +28,7 @@ mod new_lines;
 mod node_roles;
 mod octal_values;
 mod quoted_strings;
+mod set_values;
 mod trailing_whitespace;
 mod truthy;
 
@@ -54,6 +56,7 @@ pub use new_line_at_end_of_file::NewLineAtEndOfFileRule;
 pub use new_lines::{LineEndingType, NewLinesOptions, NewLinesRule};
 pub use octal_values::{OctalValuesOptions, OctalValuesRule};
 pub use quoted_strings::{QuoteRequirement, QuoteType, QuotedStringsOptions, QuotedStringsRule};
+pub use set_values::SetValuesRule;
 pub use trailing_whitespace::TrailingWhitespaceRule;
 pub(crate) use truthy::NON_STANDARD_BOOLS;
 pub use truthy::{TruthyOptions, TruthyRule, TruthySpelling, UnknownTruthySpelling};
@@ -198,7 +201,7 @@ impl RuleRegistry {
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 24);
+    /// assert_eq!(registry.rules().len(), 25);
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
@@ -277,7 +280,7 @@ mod tests {
     #[test]
     fn test_registry_with_default_rules() {
         let registry = RuleRegistry::with_default_rules();
-        assert_eq!(registry.rules().len(), 24);
+        assert_eq!(registry.rules().len(), 25);
     }
 
     #[test]
@@ -304,6 +307,6 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let registry = RuleRegistry::default();
-        assert_eq!(registry.rules().len(), 24);
+        assert_eq!(registry.rules().len(), 25);
     }
 }

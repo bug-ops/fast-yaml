@@ -1,13 +1,16 @@
 use anyhow::{Context, Result};
 use fast_yaml_core::limits::{MaxInputBytes, ParseLimits};
+use fast_yaml_linter::formatter::{
+    FileReport, ReportFormat, ReportPath, ReportSource, input_error_diagnostic, syntax_diagnostic,
+};
 use fast_yaml_linter::{
-    ConfigFile, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
+    ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, Linter, Severity, TextFormatter,
     config::IndentSize,
 };
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use crate::cli::LintFormat;
+use crate::cli::{LintFormat, LintOutput};
 use crate::config::CommonConfig;
 use crate::error::ExitCode;
 use crate::file_filter::FileFilter;
@@ -40,6 +43,46 @@ pub struct LintCommand {
     /// Files the config file selects or drops (exposed for batch discovery).
     pub file_filter: FileFilter,
     format: LintFormat,
+}
+
+/// Builds the report source for `path` (stdin when `None`): absolute, symlinks resolved.
+///
+/// # Errors
+///
+/// Returns error if the path cannot be made absolute.
+pub fn report_source(path: Option<&Path>) -> Result<ReportSource> {
+    let Some(path) = path else {
+        return Ok(ReportSource::Stdin);
+    };
+    let absolute = match path.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(_) => std::path::absolute(path)
+            .with_context(|| format!("failed to resolve '{}'", path.display()))?,
+    };
+    Ok(ReportSource::File(ReportPath::from_absolute(&absolute)?))
+}
+
+fn print_report(
+    format: ReportFormat,
+    path: Option<&Path>,
+    diagnostics: &[Diagnostic],
+) -> Result<()> {
+    let source = report_source(path)?;
+    print!(
+        "{}",
+        format.render(&[FileReport {
+            source: &source,
+            diagnostics,
+        }])
+    );
+    Ok(())
+}
+
+/// Prints a one-diagnostic report; a failure only warns so the caller's own error survives.
+fn print_report_or_warn(format: ReportFormat, path: Option<&Path>, diagnostic: Diagnostic) {
+    if let Err(err) = print_report(format, path, &[diagnostic]) {
+        eprintln!("error: {err:#}");
+    }
 }
 
 fn split_config(config: ConfigFile) -> (LintConfig, FileFilter) {
@@ -126,10 +169,22 @@ impl LintCommand {
     /// Reports a file that the config file ignores: no diagnostics and a success exit code.
     #[must_use]
     pub fn execute_ignored(&self) -> ExitCode {
-        if matches!(self.format, LintFormat::Json) {
-            print!("{}", JsonFormatter::new(true).format(&[], ""));
+        match self.format.output() {
+            LintOutput::Json => print!("{}", JsonFormatter::new(true).format(&[], "")),
+            LintOutput::Text => {}
+            LintOutput::Report(format) => print!("{}", format.render(&[])),
         }
         ExitCode::Success
+    }
+
+    /// Reports an input that could not be read, so report formats never print nothing.
+    ///
+    /// Returns `err` unchanged for the caller to propagate.
+    pub fn report_unreadable(&self, path: Option<&Path>, err: anyhow::Error) -> anyhow::Error {
+        if let Some(format) = self.format.report() {
+            print_report_or_warn(format, path, input_error_diagnostic(format!("{err:#}")));
+        }
+        err
     }
 
     /// Execute lint command
@@ -152,7 +207,16 @@ impl LintCommand {
         };
 
         let linter = Linter::with_config(lint_config);
-        let diagnostics = linter.lint(input.as_str()).context("Failed to lint YAML")?;
+        let diagnostics = match linter.lint(input.as_str()) {
+            Ok(diagnostics) => diagnostics,
+            Err(err) => {
+                if let Some(format) = self.format.report() {
+                    let diagnostic = syntax_diagnostic(&err, input.as_str());
+                    print_report_or_warn(format, input.file_path(), diagnostic);
+                }
+                return Err(err).context("Failed to lint YAML");
+            }
+        };
 
         let filtered_diagnostics: Vec<_> = if self.config.output.is_quiet() {
             diagnostics
@@ -163,21 +227,28 @@ impl LintCommand {
             diagnostics
         };
 
-        let output = match self.format {
-            LintFormat::Text => {
+        match self.format.output() {
+            LintOutput::Text => {
                 let mut formatter = TextFormatter::new();
                 formatter.use_color = self.config.output.use_color();
-                formatter.format(&filtered_diagnostics, input.as_str())
+                print!(
+                    "{}",
+                    formatter.format(&filtered_diagnostics, input.as_str())
+                );
             }
-            LintFormat::Json => {
+            LintOutput::Json => {
                 let formatter = JsonFormatter::new(true);
-                formatter.format(&filtered_diagnostics, input.as_str())
+                print!(
+                    "{}",
+                    formatter.format(&filtered_diagnostics, input.as_str())
+                );
             }
-        };
+            LintOutput::Report(format) => {
+                print_report(format, input.file_path(), &filtered_diagnostics)?;
+            }
+        }
 
-        print!("{output}");
-
-        if self.config.output.is_verbose() && !matches!(self.format, LintFormat::Json) {
+        if self.config.output.is_verbose() && !matches!(self.format.output(), LintOutput::Json) {
             let elapsed = start_time.elapsed();
             if let Some(path) = input.file_path() {
                 eprintln!("\nFile: {}", path.display());

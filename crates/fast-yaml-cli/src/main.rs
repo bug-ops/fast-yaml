@@ -183,7 +183,8 @@ fn run() -> Result<ExitCode> {
                     let placeholder = empty_input(io::input::InputOrigin::Stdin);
                     let cmd =
                         commands::lint::LintCommand::build(common_config, args, &placeholder)?;
-                    let input = InputSource::from_stdin(cmd.lint_config.max_input_bytes)?;
+                    let input = InputSource::from_stdin(cmd.lint_config.max_input_bytes)
+                        .map_err(|err| cmd.report_unreadable(None, err))?;
                     cmd.execute(&input)?
                 }
                 Target::File(path) => {
@@ -194,7 +195,8 @@ fn run() -> Result<ExitCode> {
                     if cmd.is_ignored(&path) {
                         cmd.execute_ignored()
                     } else {
-                        let input = InputSource::from_file(&path, cmd.lint_config.max_input_bytes)?;
+                        let input = InputSource::from_file(&path, cmd.lint_config.max_input_bytes)
+                            .map_err(|err| cmd.report_unreadable(Some(&path), err))?;
                         cmd.execute(&input)?
                     }
                 }

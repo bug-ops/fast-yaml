@@ -2,15 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::core_schema::{is_merge_key, is_set};
 use super::node_roles::{NodeRole, RoleTracker};
 use crate::config::RuleOptions;
+use crate::echo::{KEY_LIMIT, echo};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span,
 };
 use fast_yaml_core::Value;
-use saphyr_parser::{Event, Parser as SaphyrParser};
-use std::collections::HashMap;
+use saphyr_parser::{Event, Parser as SaphyrParser, Span as SaphyrSpan};
+use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// Rule to detect duplicate keys in YAML mappings.
 ///
@@ -57,62 +60,163 @@ impl super::LintRule for DuplicateKeysRule {
     }
 }
 
+/// What a mapping key stands for when two keys of one mapping are compared.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum KeyIdentity {
+    /// A `<<` or `!!merge` key, or an alias to one, in a mapping that is not a `!!set`.
+    Merge,
+    /// An anchored collection key, or an alias to one; collections are only equal through their
+    /// anchor.
+    Anchor(usize),
+    /// A scalar, or an alias to one, by its text.
+    Text(Rc<str>),
+}
+
 /// A repeated key occurrence.
 struct DuplicateKey {
-    key: String,
+    key: KeyIdentity,
     first_line: usize,
     span: Span,
 }
 
+/// Keys seen so far in one open mapping (identity -> 1-indexed line of first occurrence).
+#[derive(Default)]
+struct MappingKeys {
+    set: bool,
+    seen: HashMap<KeyIdentity, usize>,
+}
+
+/// Anchors defined so far in the current document.
+#[derive(Default)]
+struct Anchors {
+    identities: HashMap<usize, KeyIdentity>,
+    merge: HashSet<usize>,
+}
+
+impl Anchors {
+    fn identity_of_alias(&self, id: usize, set: bool) -> Option<KeyIdentity> {
+        if !set && self.merge.contains(&id) {
+            return Some(KeyIdentity::Merge);
+        }
+        self.identities.get(&id).cloned()
+    }
+}
+
+/// Collects duplicate key occurrences, one mapping scope at a time.
+#[derive(Default)]
+struct Collector {
+    mappings: Vec<MappingKeys>,
+    anchors: Anchors,
+    duplicates: Vec<DuplicateKey>,
+}
+
+impl Collector {
+    /// Records `identity` as a key of the innermost mapping, reporting it when already seen.
+    fn key(&mut self, identity: KeyIdentity, span: SaphyrSpan, source_context: &SourceContext<'_>) {
+        let Some(keys) = self.mappings.last_mut() else {
+            return;
+        };
+        if let Some(&first_line) = keys.seen.get(&identity) {
+            self.duplicates.push(DuplicateKey {
+                key: identity,
+                first_line,
+                span: source_context.span_of(span),
+            });
+        } else {
+            keys.seen.insert(identity, span.start.line());
+        }
+    }
+
+    /// Notes an anchored collection; as a key it is compared through its anchor.
+    fn collection(
+        &mut self,
+        role: NodeRole,
+        anchor: usize,
+        span: SaphyrSpan,
+        source_context: &SourceContext<'_>,
+    ) {
+        if anchor == 0 {
+            return;
+        }
+        let identity = KeyIdentity::Anchor(anchor);
+        self.anchors.identities.insert(anchor, identity.clone());
+        if role == NodeRole::MappingKey {
+            self.key(identity, span, source_context);
+        }
+    }
+}
+
 /// Parses raw YAML events and collects duplicate key occurrences.
 fn collect_duplicates(source: &str, source_context: &SourceContext<'_>) -> Vec<DuplicateKey> {
-    let mut duplicates = Vec::new();
+    let mut collector = Collector::default();
     let mut roles = RoleTracker::default();
-    // Keys seen so far (key -> 1-indexed line of first occurrence), one map per open mapping.
-    let mut seen: Vec<HashMap<String, usize>> = Vec::new();
-
     let mut parser = SaphyrParser::new_from_str(source);
 
     while let Some(Ok((event, span))) = parser.next_event() {
         match event {
-            Event::MappingStart(..) => {
-                roles.start_mapping(source, source_context.byte_range_of(span));
-                seen.push(HashMap::new());
+            Event::DocumentStart(_) => collector.anchors = Anchors::default(),
+            Event::MappingStart(anchor, ref tag) => {
+                let role = roles.start_mapping(source, source_context.byte_range_of(span));
+                collector.collection(role, anchor, span, source_context);
+                collector.mappings.push(MappingKeys {
+                    set: is_set(tag.as_deref()),
+                    ..MappingKeys::default()
+                });
             }
-            Event::SequenceStart(..) => {
-                roles.start_sequence(source, source_context.byte_range_of(span));
+            Event::SequenceStart(anchor, _) => {
+                let role = roles.start_sequence(source, source_context.byte_range_of(span));
+                collector.collection(role, anchor, span, source_context);
             }
             Event::MappingEnd => {
                 roles.leave();
-                seen.pop();
+                collector.mappings.pop();
             }
             Event::SequenceEnd => roles.leave(),
-            Event::Scalar(ref value, ..) => {
+            Event::Scalar(ref value, style, anchor, ref tag) => {
+                let is_key = roles.node() == NodeRole::MappingKey;
+                if anchor == 0 && !is_key {
+                    continue;
+                }
+                let merge = is_merge_key(value, style, tag.as_deref());
+                let text: Rc<str> = Rc::from(value.as_ref());
+                if anchor > 0 {
+                    collector
+                        .anchors
+                        .identities
+                        .insert(anchor, KeyIdentity::Text(Rc::clone(&text)));
+                    if merge {
+                        collector.anchors.merge.insert(anchor);
+                    }
+                }
+                if !is_key {
+                    continue;
+                }
+                let Some(keys) = collector.mappings.last() else {
+                    continue;
+                };
+                let identity = if merge && !keys.set {
+                    KeyIdentity::Merge
+                } else {
+                    KeyIdentity::Text(text)
+                };
+                collector.key(identity, span, source_context);
+            }
+            Event::Alias(id) => {
                 if roles.node() != NodeRole::MappingKey {
                     continue;
                 }
-                let Some(keys) = seen.last_mut() else {
+                let Some(keys) = collector.mappings.last() else {
                     continue;
                 };
-                let key = value.as_ref().to_owned();
-                if let Some(&first_line) = keys.get(&key) {
-                    duplicates.push(DuplicateKey {
-                        key,
-                        first_line,
-                        span: source_context.span_of(span),
-                    });
-                } else {
-                    keys.insert(key, span.start.line());
+                if let Some(identity) = collector.anchors.identity_of_alias(id, keys.set) {
+                    collector.key(identity, span, source_context);
                 }
-            }
-            Event::Alias(..) => {
-                roles.node();
             }
             _ => {}
         }
     }
 
-    duplicates
+    collector.duplicates
 }
 
 fn scan_duplicate_keys(
@@ -128,10 +232,15 @@ fn scan_duplicate_keys(
                  first_line,
                  span,
              }| {
+                let what = match key {
+                    KeyIdentity::Merge => "merge key '<<'".to_owned(),
+                    KeyIdentity::Anchor(_) => "alias key".to_owned(),
+                    KeyIdentity::Text(text) => format!("key '{}'", echo(&text, KEY_LIMIT)),
+                };
                 DiagnosticBuilder::new(
                     DiagnosticCode::DUPLICATE_KEY,
                     severity,
-                    format!("duplicate key '{key}' (first defined at line {first_line})"),
+                    format!("duplicate {what} (first defined at line {first_line})"),
                     span,
                 )
                 .with_suggestion("remove this duplicate key or rename it", span, None)
@@ -145,12 +254,13 @@ fn scan_duplicate_keys(
 mod tests {
     use super::*;
     use crate::rules::LintRule;
-    use fast_yaml_core::Parser;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap_or(Value::Null);
-        let rule = DuplicateKeysRule;
-        rule.check(&LintContext::new(yaml), &value, &LintConfig::default())
+        DuplicateKeysRule.check(
+            &LintContext::new(yaml),
+            &Value::Null,
+            &LintConfig::default(),
+        )
     }
 
     #[test]
@@ -335,5 +445,80 @@ mod tests {
         let diags = run("? {x: 1}\n: v\nk: 1\nk: 2\n");
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].span.start.line, 4);
+    }
+
+    #[test]
+    fn test_alias_written_duplicate_merge_key_is_reported() {
+        let diags = run("a: &a {x: 1}\nb: &b {y: 2}\nc: {&k <<: *a, *k : *b}\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate merge key '<<'"));
+    }
+
+    #[test]
+    fn test_merge_tag_and_plain_merge_key_collide() {
+        let diags = run("a: &a {x: 1}\nb: &b {y: 2}\nc: {<<: *a, !!merge x: *b}\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate merge key '<<'"));
+    }
+
+    #[test]
+    fn test_plain_duplicate_merge_key_message() {
+        let diags = run("a: &a {x: 1}\nc:\n  <<: *a\n  <<: *a\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate merge key '<<'"));
+        assert!(diags[0].message.contains("first defined at line 3"));
+    }
+
+    #[test]
+    fn test_quoted_merge_text_is_not_a_merge_key() {
+        assert!(run("a: &a {x: 1}\nc: {\"<<\": 1, <<: *a}\n").is_empty());
+    }
+
+    #[test]
+    fn test_alias_key_to_scalar_collides_with_its_text() {
+        let diags = run("x: &k a\nm:\n  *k : 1\n  a: 2\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key 'a'"));
+    }
+
+    #[test]
+    fn test_anchored_scalar_key_collides_with_its_alias() {
+        let diags = run("{&k a: 1, *k : 2}");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key 'a'"));
+    }
+
+    #[test]
+    fn test_repeated_alias_to_collection_is_reported() {
+        let diags = run("c: &c [1]\nm:\n  *c : 1\n  *c : 2\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate alias key"));
+    }
+
+    #[test]
+    fn test_merge_key_inside_set_is_an_ordinary_key() {
+        assert!(run("!!set {<<, a}\n").is_empty());
+        let diags = run("!!set {<<, <<}\n");
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("duplicate key '<<'"));
+    }
+
+    #[test]
+    fn test_anchored_collection_key_collides_with_its_alias() {
+        assert_eq!(run("{&c [1]: a, *c : b}").len(), 1);
+        assert_eq!(run("{&c {x: 1}: a, *c : b}").len(), 1);
+        assert!(run("{&c [1]: a, &d [1]: b}").is_empty());
+    }
+
+    #[test]
+    fn test_long_alias_key_is_truncated_in_the_message() {
+        let yaml = format!("{{&k {}: 1, *k : 2}}", "a".repeat(10_000));
+        let diags = run(&yaml);
+        assert_eq!(diags.len(), 1);
+        assert!(
+            diags[0].message.chars().count() < 200,
+            "{}",
+            diags[0].message
+        );
     }
 }

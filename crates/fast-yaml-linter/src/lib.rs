@@ -54,6 +54,3 @@ pub use severity::{ParseSeverityError, Severity};
 
 #[cfg(feature = "json-output")]
 pub use formatter::JsonFormatter;
-
-#[cfg(feature = "sarif-output")]
-pub use formatter::SarifFormatter;

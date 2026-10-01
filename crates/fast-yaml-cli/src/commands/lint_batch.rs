@@ -4,11 +4,13 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use fast_yaml_linter::formatter::{FileReport, input_error_diagnostic, syntax_diagnostic};
 use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
 use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader};
 use rayon::prelude::*;
 
-use crate::cli::LintFormat;
+use crate::cli::{LintFormat, LintOutput};
+use crate::commands::lint::report_source;
 use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
@@ -57,8 +59,9 @@ pub fn execute_lint_batch(
 
     // Process files in parallel, collecting (path, content, diagnostics, has_errors) tuples.
     // Read/lint errors are printed to stderr directly; has_errors=true is set in that case.
+    let reports = format.report().is_some();
     let reader = SmartReader::with_threshold(u64::MAX);
-    let results: Vec<(PathBuf, String, Vec<Diagnostic>, bool)> = pool.install(|| {
+    let mut results: Vec<(PathBuf, String, Vec<Diagnostic>, bool)> = pool.install(|| {
         file_paths
             .par_iter()
             .map(|path| {
@@ -69,7 +72,12 @@ pub fn execute_lint_batch(
                     Ok(c) => c,
                     Err(e) => {
                         eprintln!("{}", read_error_line(path, &e));
-                        return (path.clone(), String::new(), vec![], true);
+                        let diagnostics = if reports {
+                            vec![input_error_diagnostic(e.to_string())]
+                        } else {
+                            vec![]
+                        };
+                        return (path.clone(), String::new(), diagnostics, true);
                     }
                 };
 
@@ -80,7 +88,12 @@ pub fn execute_lint_batch(
                         let hint =
                             RaiseHint::of(&e).map_or_else(String::new, |h| format!(" ({h})"));
                         eprintln!("error: '{}': {e}{hint}", path.display());
-                        return (path.clone(), content, vec![], true);
+                        let diagnostics = if reports {
+                            vec![syntax_diagnostic(&e, &content)]
+                        } else {
+                            vec![]
+                        };
+                        return (path.clone(), content, diagnostics, true);
                     }
                 };
 
@@ -99,10 +112,14 @@ pub fn execute_lint_batch(
             .collect()
     });
 
-    let any_errors = results.iter().any(|(_, _, _, has_errors)| *has_errors);
+    if reports {
+        results.sort_by(|a, b| a.0.cmp(&b.0));
+    }
 
-    match format {
-        LintFormat::Text => {
+    let mut any_errors = results.iter().any(|(_, _, _, has_errors)| *has_errors);
+
+    match format.output() {
+        LintOutput::Text => {
             for (path, content, diagnostics, _) in &results {
                 if diagnostics.is_empty() {
                     continue;
@@ -116,7 +133,7 @@ pub fn execute_lint_batch(
                 }
             }
         }
-        LintFormat::Json => {
+        LintOutput::Json => {
             // Collect all diagnostics into a single JSON array with a `file` field.
             let all: Vec<serde_json::Value> = results
                 .iter()
@@ -133,6 +150,26 @@ pub fn execute_lint_batch(
                 .collect();
             let json = serde_json::to_string_pretty(&all).unwrap_or_else(|_| "[]".to_string());
             println!("{json}");
+        }
+        LintOutput::Report(report_format) => {
+            let mut resolved = Vec::with_capacity(results.len());
+            for (path, _, diagnostics, _) in &results {
+                match report_source(Some(path)) {
+                    Ok(source) => resolved.push((source, diagnostics)),
+                    Err(err) => {
+                        eprintln!("error: {err:#}");
+                        any_errors = true;
+                    }
+                }
+            }
+            let files: Vec<FileReport<'_>> = resolved
+                .iter()
+                .map(|(source, diagnostics)| FileReport {
+                    source,
+                    diagnostics,
+                })
+                .collect();
+            print!("{}", report_format.render(&files));
         }
     }
 

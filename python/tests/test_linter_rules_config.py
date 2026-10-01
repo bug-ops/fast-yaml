@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
+from _fy_support import fy_binary
 
 from fast_yaml._core import lint
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def codes(diagnostics: list[lint.Diagnostic]) -> list[str]:
@@ -270,26 +267,13 @@ class TestKwargSemantics:
         )
 
 
-def _fy_binary() -> str:
-    if env := os.environ.get("FY_BIN"):
-        return env
-    built = REPO_ROOT / "target" / "debug" / "fy"
-    if built.exists():
-        return str(built)
-    found = shutil.which("fy")
-    if found is None:
-        pytest.skip("fy binary not built; set FY_BIN or run cargo build --bin fy, see #422")
-    return found
-
-
 def _cli_diagnostics(config_yaml: str, source: str, tmp_path: Path) -> list[tuple]:
     config_path = tmp_path / "config.yaml"
     config_path.write_text(config_yaml)
     result = subprocess.run(
-        [_fy_binary(), "lint", "--format", "json", "--config", str(config_path)],
-        input=source,
+        [fy_binary(), "lint", "--format", "json", "--config", str(config_path)],
+        input=source.encode(),
         capture_output=True,
-        text=True,
         check=False,
     )
     assert result.returncode in (0, 2), result.stderr
@@ -343,7 +327,7 @@ class TestCliParity:
         config_path = tmp_path / "config.yaml"
         config_path.write_text("rules:\n  quoted-strings: {quote-type: singel}\n")
         result = subprocess.run(
-            [_fy_binary(), "lint", "--config", str(config_path)],
+            [fy_binary(), "lint", "--config", str(config_path)],
             input="a: 1\n",
             capture_output=True,
             text=True,
