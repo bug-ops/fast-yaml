@@ -156,6 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Docs**: removed `docs/CI-CD-QUICKSTART.md` and the unused `Makefile.toml` (cargo-make); maintainer CI notes moved to `CONTRIBUTING.md`
 - **Linter**: the flow rules share one `FlowIndex` per lint run instead of building a tokenizer index each (#576)
 - **Linter/CLI**: the `syntax` diagnostic of the CI report formats uses BOM-free line, column and offset like every other span, and `fy lint` batch lists report formats through the same ordered pipeline (#576)
 - **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#576)

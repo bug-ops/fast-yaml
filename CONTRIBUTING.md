@@ -13,6 +13,7 @@ Thank you for your interest in contributing to fast-yaml. This document provides
 - [Commit Messages](#commit-messages)
 - [Pull Request Process](#pull-request-process)
 - [Project Structure](#project-structure)
+- [Maintainers](#maintainers)
 
 ## Getting Started
 
@@ -40,7 +41,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 **NodeJS toolchain (for NodeJS bindings):**
 ```bash
-# Install Node.js 18+ and npm (via nvm or your preferred method)
+# Install Node.js 22+ and npm (via nvm or your preferred method)
 # Biome is installed via npm in the nodejs/ directory
 ```
 
@@ -467,6 +468,11 @@ cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 - **Comprehensive Testing**: Maintain ≥60% overall coverage
 - **Clear Documentation**: Document all public APIs
 - **Security by Default**: All dependencies audited
+
+## Maintainers
+
+- Coverage uploads need the `CODECOV_TOKEN` repository secret
+- Branch protection on `main` should require the `CI Success` check, which gates all other CI jobs in `.github/workflows/ci.yml`
 
 ## Getting Help
 
