@@ -267,7 +267,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | 4 | Tab after colon | `a:\t1` rejected on all surfaces; likely `saphyr-parser` limitation although YAML 1.2.2 allows tab separation | [NEEDS CLARIFICATION: accepted limitation?] **Proposed:** document as a known limitation and track upstream. |
 | 5 | Integer grammar | Signed hex/octal and `0O`/`0X` accepted, beyond the 1.2.2 Core Schema; absent from README (-007) | [NEEDS CLARIFICATION: permanent extensions?] |
 | 6 | Silent tag loss | Unsupported/custom tags dropped; out-of-range `!!int` becomes a string without diagnostic (-019) | [NEEDS CLARIFICATION: warn, or document as designed?] |
-| 7 | `fy parse` ignored flags | Global `-f`, `-o`, `-i` are accepted and ignored by `parse` (e.g. `-o out.txt` creates no file) (-010) | [NEEDS CLARIFICATION: reject or implement?] **Proposed:** reject unsupported flags per command with a usage error. |
+| 7 | `fy parse` ignored flags | Resolved: `-f` is removed and `-o`/`-i` exist only on the subcommands that write, so `fy parse -o out.txt` is a usage error (exit 2) (-010) | closed |
 | 8 | `--stats` scope | Counts the first document only (`parse_str_with_limits` returns first doc): `multi.yaml` reports Keys 1, Max depth 1 although document 2 is deeper | Compute over all documents |
 | 9 | Error message stability | Syntax reasons are verbatim `saphyr-parser` text; only the flow-nesting text is pinned by a test (-011) | Add golden tests for common messages |
 | 10 | File-read error chain | `caused by[0]` and `caused by[1]` repeat the same message (-017) | De-duplicate |

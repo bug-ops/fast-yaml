@@ -214,12 +214,18 @@ fy parse --max-input-bytes 500MiB huge.yaml
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--in-place` | `-i` | Edit file in-place | - |
-| `--output` | `-o` | Write to file | stdout |
-| `--format` | `-f` | Output format (yaml/json/compact) | yaml |
 | `--no-color` | - | Disable colored output | - |
 | `--quiet` | `-q` | Suppress non-error output | - |
 | `--verbose` | `-v` | Enable verbose output | - |
+
+### Write Options
+
+`-o` and `-i` go after the subcommand that declares them; `fy -o out.yaml format` and `fy parse -o out.yaml` are usage errors (exit 2).
+
+| Option | Short | Commands | Description | Default |
+|--------|-------|----------|-------------|---------|
+| `--output` | `-o` | `format`, `convert`, `lint` | Write to file | stdout |
+| `--in-place` | `-i` | `format`, `convert` | Edit file in-place (conflicts with `-o`) | - |
 
 ### Batch Mode Options
 

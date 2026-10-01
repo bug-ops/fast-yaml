@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use crate::config::Verbosity;
 use crate::discovery::DiscoveryConfig;
+use crate::io::{OutputTarget, WriteTarget};
 
 /// Fast YAML processor with validation and linting
 #[derive(Parser, Debug)]
@@ -20,22 +21,9 @@ use crate::discovery::DiscoveryConfig;
     author,
     long_about = None
 )]
-#[allow(clippy::struct_excessive_bools)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
-
-    /// Edit file in-place (requires file argument)
-    #[arg(short = 'i', long, global = true)]
-    pub in_place: bool,
-
-    /// Output file (default: stdout)
-    #[arg(short, long, global = true, value_name = "FILE")]
-    pub output: Option<PathBuf>,
-
-    /// Output format
-    #[arg(short = 'f', long, value_enum, default_value = "yaml")]
-    pub format: OutputFormat,
 
     /// Disable colored output
     #[arg(long, global = true)]
@@ -114,6 +102,45 @@ impl Cli {
             (false, false) => Verbosity::Normal,
         };
         Ok(self)
+    }
+}
+
+/// Report destination flag of the subcommands that write output.
+#[derive(Args, Debug, Clone, Default)]
+pub struct OutputArgs {
+    /// Output file (default: stdout)
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+}
+
+impl OutputArgs {
+    /// Resolves the flag into the destination it names.
+    #[must_use]
+    pub fn target(self) -> OutputTarget {
+        self.output.map_or(OutputTarget::Stdout, OutputTarget::File)
+    }
+}
+
+/// Write-destination flags of the subcommands that can also rewrite their input.
+#[derive(Args, Debug, Clone, Default)]
+pub struct WriteArgs {
+    #[command(flatten)]
+    output: OutputArgs,
+
+    /// Edit file in-place (requires file argument)
+    #[arg(short = 'i', long, conflicts_with = "output")]
+    in_place: bool,
+}
+
+impl WriteArgs {
+    /// Resolves the flags into the single destination they name.
+    #[must_use]
+    pub fn target(self) -> WriteTarget {
+        if self.in_place {
+            WriteTarget::InPlace
+        } else {
+            WriteTarget::Output(self.output.target())
+        }
     }
 }
 
@@ -319,6 +346,9 @@ pub enum Command {
         #[arg(short = 'n', long, conflicts_with = "output")]
         dry_run: bool,
 
+        #[command(flatten)]
+        write: WriteArgs,
+
         /// Suppress the error when YAML comments are detected.
         /// Comments are not preserved by the formatter and will be stripped.
         /// Without this flag, formatting a file that contains comments exits with an error.
@@ -342,6 +372,9 @@ pub enum Command {
         /// Pretty-print JSON output
         #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
         pretty: bool,
+
+        #[command(flatten)]
+        write: WriteArgs,
 
         #[command(flatten)]
         limits: ParseLimitArgs,
@@ -399,15 +432,11 @@ pub enum Command {
         batch: BatchArgs,
 
         #[command(flatten)]
+        output: OutputArgs,
+
+        #[command(flatten)]
         limits: ParseLimitArgs,
     },
-}
-
-#[derive(ValueEnum, Clone, Debug)]
-pub enum OutputFormat {
-    Yaml,
-    Json,
-    Compact,
 }
 
 #[derive(ValueEnum, Clone, Debug)]

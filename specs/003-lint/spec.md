@@ -219,8 +219,8 @@ THEN  a file without --- is reported at the preset's level (warning), as in yaml
 | FR-034 | `--format parsable` SHALL print `PATH:LINE:COL: [LEVEL] MESSAGE (CODE)` per diagnostic where LEVEL is `error` for errors and `warning` for all other severities; stdin is named `stdin`; newlines in messages and paths SHALL be flattened to spaces. | must |
 | FR-035 | In `json`, `github`, `sarif`, `parsable` formats an unreadable or missing file or a syntax/limit error SHALL still print one `syntax` diagnostic (a one-element array in `json`, exit code unchanged), so these formats never print nothing for a failing input; in batch mode every failing file, including syntax and encoding errors, SHALL appear in every one of these formats. `text` keeps the error on stderr only (D-3). | must |
 | FR-036 | `--quiet` SHALL drop all non-error diagnostics before output and exit-code evaluation. | should |
-| FR-037 | Exit codes: 0 no error-severity diagnostics; 2 at least one error-severity diagnostic, or a syntax error in batch mode; 1 syntax/limit error for a single input, unreadable or missing path, `--config` failure, or `--in-place`; clap usage errors exit 2. Warnings, info and hints never change the exit code. | must |
-| FR-038 | `--in-place` SHALL be rejected for lint with `--in-place is not supported by fy lint (auto-fix is not implemented)`. | must |
+| FR-037 | Exit codes: 0 no error-severity diagnostics; 2 at least one error-severity diagnostic, or a syntax error in batch mode; 1 syntax/limit error for a single input, unreadable or missing path, `--config` failure; clap usage errors exit 2. Warnings, info and hints never change the exit code. | must |
+| FR-038 | `lint` SHALL NOT declare `--in-place`; `fy lint -i` is a clap usage error (exit 2) because auto-fix is not implemented. | must |
 | FR-039 | Report formats SHALL name files by absolute path (symlinks resolved) so annotations match regardless of working directory. | should |
 
 ### 3.5 Batch lint

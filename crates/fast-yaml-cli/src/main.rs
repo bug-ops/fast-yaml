@@ -53,7 +53,7 @@ use commands::format_batch::BatchWrite;
 use config::{CommonConfig, FormatterConfig};
 use error::{ExitCode, format_error};
 use invocation::Target;
-use io::{InputSource, OutputWriter};
+use io::{InputSource, OutputTarget, OutputWriter, WriteTarget};
 
 /// Stack size of the command thread; deep values recurse per level (larger frames with
 /// `preserve_order`) and would overflow the 1 MiB Windows main-thread stack.
@@ -126,6 +126,7 @@ fn run() -> Result<ExitCode> {
             stdin_files,
             batch,
             dry_run,
+            write,
             strip_comments,
         }) => {
             let comments = if strip_comments {
@@ -133,7 +134,7 @@ fn run() -> Result<ExitCode> {
             } else {
                 CommentPolicy::Reject
             };
-            let intent = EditIntent::from_flags(dry_run, cli.in_place);
+            let intent = EditIntent::resolve(dry_run, write.target());
             let common = common_config.with_formatter(
                 FormatterConfig::new()
                     .with_indent(indent)
@@ -145,20 +146,20 @@ fn run() -> Result<ExitCode> {
 
             match Target::resolve(paths, stdin_files, &batch)? {
                 Target::Stdin => {
-                    let mode = stdin_write_mode(intent, cli.output)?;
+                    let mode = stdin_write_mode(intent)?;
                     FormatCommand::new(common, comments)
                         .run(&InputSource::from_stdin(max_input)?, &mode)?
                 }
                 Target::File(path) => {
                     let input = InputSource::from_file(&path, max_input)?;
-                    let mode = WriteMode::new(intent, cli.output, Some(&path))?;
+                    let mode = WriteMode::new(intent, Some(&path))?;
                     FormatCommand::new(common, comments).run(&input, &mode)?
                 }
                 Target::Batch(target) => {
                     let write = match intent {
                         EditIntent::Preview => BatchWrite::DryRun,
-                        EditIntent::InPlace => BatchWrite::InPlace,
-                        EditIntent::Print => anyhow::bail!(
+                        EditIntent::Write(WriteTarget::InPlace) => BatchWrite::InPlace,
+                        EditIntent::Write(WriteTarget::Output(_)) => anyhow::bail!(
                             "use -i to format files in-place or --dry-run to preview changes"
                         ),
                     };
@@ -173,11 +174,11 @@ fn run() -> Result<ExitCode> {
             to,
             file,
             pretty,
+            write,
             limits,
         }) => {
             let input = InputSource::from_args(file, max_input)?;
-            let output =
-                OutputWriter::from_args(cli.output.clone(), cli.in_place, input.file_path())?;
+            let output = OutputWriter::for_write(write.target(), input.file_path())?;
             let cmd = commands::convert::ConvertCommand::new(
                 to,
                 pretty,
@@ -198,16 +199,12 @@ fn run() -> Result<ExitCode> {
             allow_duplicate_keys,
             max_diagnostics,
             batch,
+            output,
             limits,
         }) => {
-            if cli.in_place {
-                anyhow::bail!(
-                    "--in-place is not supported by `fy lint` (auto-fix is not implemented)"
-                );
-            }
-            let target = Target::resolve(paths, stdin_files, &batch).map_err(|err| {
-                commands::lint::report_unresolved(format, cli.output.clone(), err)
-            })?;
+            let output = output.target();
+            let target = Target::resolve(paths, stdin_files, &batch)
+                .map_err(|err| commands::lint::report_unresolved(format, output.clone(), err))?;
             let args = commands::lint::LintArgs {
                 config_path,
                 no_config,
@@ -219,7 +216,7 @@ fn run() -> Result<ExitCode> {
                 max_input_bytes: cli.max_input_bytes,
                 max_scan_ahead: cli.max_scan_ahead,
                 limits,
-                output: cli.output.clone(),
+                output,
             };
 
             match target {
@@ -270,7 +267,8 @@ fn run() -> Result<ExitCode> {
             }
         }
         None => {
-            let mode = stdin_write_mode(EditIntent::from_flags(false, cli.in_place), cli.output)?;
+            let mode =
+                stdin_write_mode(EditIntent::Write(WriteTarget::Output(OutputTarget::Stdout)))?;
             FormatCommand::new(common_config, CommentPolicy::Reject)
                 .run(&InputSource::from_stdin(max_input)?, &mode)?
         }
@@ -280,11 +278,11 @@ fn run() -> Result<ExitCode> {
 }
 
 /// Resolves the write mode for stdin input, which has no file to edit in place.
-fn stdin_write_mode(intent: EditIntent, output: Option<std::path::PathBuf>) -> Result<WriteMode> {
-    if intent == EditIntent::InPlace {
+fn stdin_write_mode(intent: EditIntent) -> Result<WriteMode> {
+    if intent == EditIntent::Write(WriteTarget::InPlace) {
         anyhow::bail!("--in-place (-i) requires a file argument");
     }
-    WriteMode::new(intent, output, None)
+    WriteMode::new(intent, None)
 }
 
 /// Content-free input that only tells config discovery where the run started.

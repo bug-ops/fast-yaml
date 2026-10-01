@@ -180,7 +180,7 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | ID | Metric | Target |
 |----|--------|--------|
 | SC-001 | `vitest` in `nodejs/` on a fresh `build:test` binary | 100% pass |
-| SC-002 | Same fixtures through `safeLoad` and `fy parse -f json` | identical data (except documented number model) |
+| SC-002 | Same fixtures through `safeLoad` and `fy convert json` | identical data (except documented number model) |
 | SC-003 | Lint diagnostics vs `fy lint --format json` | identical code, line, column, severity |
 | SC-004 | Inputs within limits | never abort the Node process; failures are thrown errors |
 | SC-005 | Performance vs js-yaml | no contractual figure until a reproducible benchmark exists |

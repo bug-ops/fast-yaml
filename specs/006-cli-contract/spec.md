@@ -97,7 +97,7 @@ THEN  nothing is printed, m.yaml now reads "a: 1", exit code 0
 WHEN  I run `echo 'a: 1' | fy format -i`
 THEN  stderr is "error: --in-place (-i) requires a file argument", exit code 1
 WHEN  I run `fy lint -i w.yaml`
-THEN  stderr is "error: --in-place is not supported by `fy lint` (auto-fix is not implemented)", exit code 1
+THEN  clap rejects the unknown flag (`lint` has no `-i`; auto-fix is not implemented), exit code 2
 ```
 
 ### US-006: Bound resources from the command line (P2)
@@ -132,22 +132,23 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | FR-002 | WHEN no subcommand is given, THE SYSTEM SHALL format stdin to stdout with `CommentPolicy::Reject`, as `fy format` would. | must |
 | FR-003 | WHEN an unknown subcommand is given (including `validate`), THE SYSTEM SHALL exit 2 with clap's message and a similar-subcommand tip. | must |
 | FR-004 | THE SYSTEM SHALL print `fy <version>` for `-V/--version` and help for `-h/--help` and `fy help <sub>`, exit 0. | must |
-| FR-005 | THE SYSTEM SHALL accept `-i`, `-o`, `--no-color`, `-q`, `-v`, `--max-input-bytes`, `--max-scan-ahead` before or after the subcommand (global flags). | must |
+| FR-005 | THE SYSTEM SHALL accept `--no-color`, `-q`, `-v`, `--max-input-bytes`, `--max-scan-ahead` before or after the subcommand (global flags). | must |
+| FR-007 | THE SYSTEM SHALL accept the write flags `-o` (`format`, `convert`, `lint`) and `-i` (`format`, `convert`) only after the subcommand that declares them; anywhere else (`fy -o x`, `fy -o x lint`, `fy parse -o x`, `fy lint -i`) they are a usage error (exit 2), and `fy convert -i -o` conflicts. | must |
 | FR-006 | WHEN both `--quiet` and `--verbose` are present anywhere in argv, THE SYSTEM SHALL exit 2 with `the argument '--quiet' cannot be used with '--verbose'`. | must |
 
-### 3.2 Which global flag applies to which command
+### 3.2 Which flag applies to which command
 
 | Flag | parse | format | convert | lint |
 |------|-------|--------|---------|------|
-| `-i/--in-place` | ignored | rewrite (needs a file; atomic) | rewrite file | error: not supported (exit 1) |
-| `-o/--output FILE` | ignored | single input or stdin: write there; conflicts with `-n` | write there | write the report there, atomically; refused when FILE is an input |
+| `-i/--in-place` | not accepted | rewrite (needs a file; atomic) | rewrite file | not accepted |
+| `-o/--output FILE` | not accepted | single input or stdin: write there; conflicts with `-n` | write there | write the report there, atomically; refused when FILE is an input |
 | `-q` | no output on success | hides summary unless a file failed | no effect | only error-severity diagnostics shown |
 | `-v` | timing line on stderr | no effect | no effect | `File:` and `Lint time:` on stderr (not with `--format json`) |
 | `--no-color` | yes | yes | yes | yes |
 | `--max-input-bytes` | yes | yes | yes | yes (overrides config key) |
 | `--max-scan-ahead` | yes | yes | YAML input only | yes (overrides config key) |
 
-`-f/--format yaml|json|compact` is declared only at top level (`fy -f json parse x` parses, `fy parse x -f json` is a usage error) and has no effect (see section 8).
+The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-i` belong to the subcommands that write.
 
 ### 3.3 Input and output conventions
 
@@ -203,7 +204,7 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | `ExitCode` | `Success=0`, `ParseError=1`, `LintErrors=2`, `IoError=3` and `InvalidArgs=4` (defined, never produced), `WouldChange=5`. |
 | `Verbosity` | `Quiet`, `Normal`, `Verbose`, resolved from `-q/-v` after parsing. |
 | `Target` | `Stdin`, `File`, `Batch` resolved from paths and flags. |
-| `EditIntent`, `WriteMode` | Encode `-n`, `-i`, `-o` precedence for format as a type, not booleans. |
+| `OutputTarget`, `WriteTarget`, `EditIntent`, `WriteMode` | Encode the `-o`/`-i` destination and the `-n` precedence for format as types, not booleans; `-n` wins over `-i` in `EditIntent::resolve`. |
 | `InputSource`, `OutputWriter` | File or stdin input; stdout/stderr/atomic-file output. |
 | `MaxInputBytes`, `MaxScanAhead`, `MaxDepth`, `MaxAliasBytes`, `Indent`, `Width` | Range-checked newtypes from `fast-yaml-core::limits`. |
 | `PathError`, `RaiseHint` | Discovery errors and limit hints rendered by `format_error`. |
@@ -213,15 +214,17 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 | Scenario | Expected behaviour |
 |----------|--------------------|
 | `fy parse -` | `-` is a file name, not stdin: `failed to read '-': No such file or directory`, exit 1. |
-| `fy parse -i ok.yaml` | Flag ignored, validation succeeds, exit 0. |
-| `fy parse -o out.txt ok.yaml` | `-o` ignored: no file is created. |
+| `fy parse -i ok.yaml` | Usage error (`unexpected argument '-i'`), exit 2. |
+| `fy parse -o out.txt ok.yaml` | Usage error, exit 2; no file is created. |
+| `fy -o out.txt lint w.yaml` | Usage error, exit 2: `-o` follows the subcommand. |
 | `fy lint -o out.txt w.yaml` | Report written to `out.txt` (atomically), nothing on stdout (verified). |
 | `fy lint -o w.yaml w.yaml` | `error: --output 'w.yaml' is also an input file; refusing to overwrite it`, exit 1, file untouched (verified). |
 | `fy parse --max-documents 2 three.yaml` (3 documents) | `YAML resource limit exceeded at line 4, column 1: document count exceeds 2 (document 3)` + `hint: raise with --max-documents`, exit 1 (verified; same for format, convert, lint). |
 | `fy lint DIR 2>&1 \| head -1` | No panic; exit code of the diagnostics. |
 | `fy format -n -o x f.yaml` | Usage error: `--dry-run` cannot be used with `--output`, exit 2. |
 | `fy format -i -n m.yaml` | `-n` wins; nothing written. |
-| `fy convert json -i f.yaml` | Replaces `f.yaml` with JSON under the same name; `-i` silently beats `-o`. |
+| `fy convert json -i f.yaml` | Replaces `f.yaml` with JSON under the same name. |
+| `fy convert json -i -o x f.yaml` | Usage error: `--in-place` cannot be used with `--output`, exit 2. |
 | `fy format d/a.yaml` where file has comments | `file contains YAML comments that formatting would strip; use --strip-comments to allow this`, exit 1. |
 | `fy lint --config nope.yml ok.yaml` | `failed to load config file 'nope.yml'`, exit 1. |
 | `fy lint --max-line-length 0` | Usage error (non-zero type), exit 2. |
@@ -261,8 +264,8 @@ THEN  stdout has `::warning file=<abs>/w.yaml,line=1,col=4,endLine=1,endColumn=7
 |---|-------|--------------------|----------|
 | 1 | Lint syntax-error exit code (P1, GAP-CLI-017) | Single file/stdin: exit 1. The same file in a batch: exit 2. | [NEEDS CLARIFICATION] One code for all lint syntax errors (2, matching findings) or a separate code? **Proposed:** distinct codes for findings, syntax error and usage/IO, applied uniformly, one integration test per code. |
 | 2 | Unused codes 3 and 4 (P2, GAP-CLI-018) | `IoError` and `InvalidArgs` exist in the enum but no path emits them; 2 is shared by usage errors and lint findings. | [NEEDS CLARIFICATION] Implement a distinct usage/IO code or delete 3/4 from enum and docs? **Proposed:** distinct codes for findings, syntax error and usage/IO, applied uniformly, one integration test per code. |
-| 3 | Top-level `-f/--format` is dead (P2, GAP-CLI-001) | Accepted, never read; not global. | Remove (pre-1.0, allowed) or implement JSON output for `parse`? |
-| 4 | `-o` and `-i` ignored by `parse` (P2, GAP-CLI-005) | No error, no file (`lint -o` now writes the report). `-i` beats `-o` in convert; `-n` beats `-i` in format (GAP-CLI-007). | [NEEDS CLARIFICATION] Reject unsupported flags per command with a usage error? **Proposed:** reject unsupported flags per command with a usage error. |
+| 3 | Top-level `-f/--format` (P2, GAP-CLI-001) | Resolved: removed. | closed |
+| 4 | `-o` and `-i` ignored by `parse` (P2, GAP-CLI-005) | Resolved: write flags exist only on the subcommands that write; `-n` still beats `-i` in `format`. | closed |
 | 5 | `-` is not stdin (P3, GAP-CLI-008) | `fy parse -` fails with ENOENT although `-o -` means stdout. | Accept `-` as stdin? |
 | 6 | `--format json` lint hides syntax failures (P2, GAP-CLI-011) | Failure is stderr-only; stdout empty or `[]`. | Emit a diagnostic object like SARIF does? |
 | 7 | `using config file:` always on stderr (P3, GAP-CLI-020) | Printed even with `-q` and machine formats. | Print only with `-v`? |

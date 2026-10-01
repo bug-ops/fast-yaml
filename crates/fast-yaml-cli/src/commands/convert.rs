@@ -220,6 +220,7 @@ fn json_to_value(json: &serde_json::Value) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::io::OutputTarget;
     use crate::io::input::InputOrigin;
 
     fn parse_json_number(raw: &str) -> Value {
@@ -299,7 +300,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.json");
-        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_path.clone()));
 
         let cmd = ConvertCommand::new(ConvertFormat::Json, true, ParseLimits::default());
         let result = cmd.execute(&input, &output);
@@ -326,7 +327,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.json");
-        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_path.clone()));
 
         let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
         cmd.execute(&input, &output).unwrap();
@@ -345,7 +346,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.yaml");
-        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_path.clone()));
 
         let cmd = ConvertCommand::new(ConvertFormat::Yaml, true, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
@@ -413,7 +414,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.json");
-        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_path.clone()));
 
         let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
@@ -457,7 +458,7 @@ mod tests {
         };
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.yaml");
-        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_path.clone()));
         let cmd = ConvertCommand::new(ConvertFormat::Yaml, false, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
 
@@ -482,7 +483,7 @@ mod tests {
         };
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_path = temp_dir.path().join("output.json");
-        let output = OutputWriter::from_args(Some(temp_path.clone()), false, None).unwrap();
+        let output = OutputWriter::new(OutputTarget::File(temp_path.clone()));
         let cmd = ConvertCommand::new(ConvertFormat::Json, false, ParseLimits::default());
         assert!(cmd.execute(&input, &output).is_ok());
         let json_str = std::fs::read_to_string(&temp_path).unwrap();

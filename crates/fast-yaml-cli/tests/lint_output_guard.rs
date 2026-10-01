@@ -25,7 +25,7 @@ fn any_batch_file_as_the_destination_is_refused_and_left_intact() {
     for name in ["f000.yaml", "f020.yaml", "f039.yaml"] {
         let target = dir.path().join(name);
         let out = fy()
-            .args(["-o", target.to_str().unwrap(), "lint"])
+            .args(["lint", "-o", target.to_str().unwrap()])
             .arg(dir.path())
             .output()
             .unwrap();
@@ -42,7 +42,7 @@ fn a_destination_outside_the_batch_is_written() {
     let out_dir = TempDir::new().unwrap();
     let target = out_dir.path().join("report.json");
     let out = fy()
-        .args(["-o", target.to_str().unwrap(), "lint", "--format", "json"])
+        .args(["lint", "-o", target.to_str().unwrap(), "--format", "json"])
         .arg(dir.path())
         .output()
         .unwrap();
@@ -58,7 +58,7 @@ fn a_hard_link_to_a_batch_file_is_refused() {
     let alias = out_dir.path().join("alias.yaml");
     fs::hard_link(dir.path().join("f005.yaml"), &alias).unwrap();
     let out = fy()
-        .args(["-o", alias.to_str().unwrap(), "lint"])
+        .args(["lint", "-o", alias.to_str().unwrap()])
         .arg(dir.path())
         .output()
         .unwrap();

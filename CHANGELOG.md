@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **CLI**: top-level `-f/--format` is removed, and `-o`/`-i` exist only on the subcommands that write (`format`, `convert`; `lint` has `-o` only), so `fy -o x lint`, bare `fy -o x`, `fy parse -o|-i`, `fy lint -i` and `fy convert -i -o` exit 2 (#611) (#PR)
 - **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#576)
 - **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#576)
 - **Linter**: `line-length` lets a one-word line through by default (#576)

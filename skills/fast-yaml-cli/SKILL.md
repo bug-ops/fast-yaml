@@ -82,26 +82,11 @@ All subcommands support these flags, usable before or after the subcommand name:
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--output FILE` | `-o` | stdout | Write output to FILE instead of stdout |
-| `--in-place` | `-i` | — | Edit file in-place (requires file argument; not supported by `lint`) |
 | `--no-color` | — | — | Disable colored output (useful in CI) |
 | `--quiet` | `-q` | — | Quiet mode: errors only (no info messages) |
 | `--verbose` | `-v` | — | Verbose output (e.g., processing details in batch mode) |
 
-### Top-Level Output Format Flag
-
-The top-level output format flag **must be placed BEFORE the subcommand name** (unlike the above flags):
-
-```bash
-fy --format json parse file.yaml    # ✓ correct
-fy parse file.yaml --format json    # ✗ error: unexpected argument '--format'
-```
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--format FORMAT` | `-f` | `yaml` | Output format for subcommand output: `yaml`, `json`, or `compact` |
-
-**Note:** This is distinct from the `lint` subcommand's own `--format` flag (which selects lint output format as `text` or `json` and must come AFTER `lint`). Both flags share the same name but control different things — the top-level `--format` affects how all subcommands render their output, while `fy lint --format json` specifically selects structured lint diagnostics.
+`-o/--output` and `-i/--in-place` are not global: each belongs to the subcommands that write (`format`, `convert`; `lint` has only `-o`) and goes after the subcommand name. `fy parse -o x`, `fy -o x lint` and `fy lint -i` are usage errors (exit 2).
 
 ### parse
 
@@ -130,8 +115,8 @@ echo "name: Alice" | fy parse
 # Parse file with statistics
 fy parse config.yaml --stats
 
-# Validate and output as JSON
-fy parse config.yaml -f json
+# Validate and print the data as JSON
+fy convert json config.yaml
 ```
 
 ### format
@@ -161,6 +146,8 @@ fy format [OPTIONS] [PATHS]...
 | `--no-recursive` | — | — | Don't recurse into subdirectories (batch mode only) |
 | `-n, --dry-run` | — | — | Show what would be changed without modifying files (batch mode only) |
 | `--strip-comments` | — | — | Suppress error if comments are detected (comments are stripped) |
+| `-o, --output FILE` | — | stdout | Write the formatted YAML to FILE (single input or stdin); conflicts with `-n` and `-i` |
+| `-i, --in-place` | — | — | Rewrite the input file(s) (requires a file argument) |
 
 **Modes:**
 
@@ -219,6 +206,8 @@ fy convert [OPTIONS] <TO> [FILE]
 
 **Options:**
 - `--pretty [PRETTY]`: Pretty-print JSON output (default: `true`). Set to `false` for compact JSON: `--pretty false`
+- `-o, --output FILE`: Write to FILE instead of stdout
+- `-i, --in-place`: Replace the input file (conflicts with `-o`)
 
 **Output:**
 - YAML→JSON: formatted JSON (with `--pretty true`) or compact JSON (with `--pretty false`)
@@ -263,6 +252,7 @@ fy lint [OPTIONS] [PATHS]...
 | `--max-line-length N` | — | — | Override config file's max line length |
 | `--indent-size N` | — | — | Override config file's indent size |
 | `--format FORMAT` | — | `text` | Output format: `text` (human-readable) or `json` (structured) |
+| `-o, --output FILE` | — | stdout | Write the report to FILE (refused when FILE is an input) |
 | `--allow-duplicate-keys [BOOL]` | — | — | Allow duplicate keys (opt-in); `true`/`false` or flag alone for `true` |
 | `--include PATTERN` | — | — | Include files matching glob (can repeat) |
 | `--exclude PATTERN` | — | — | Exclude files matching glob (can repeat) |

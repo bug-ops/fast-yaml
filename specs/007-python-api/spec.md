@@ -224,7 +224,7 @@ Python version policy: `requires-python >=3.10`; large-int conversion respects `
 | ID | Metric | Target |
 |----|--------|--------|
 | SC-001 | `pytest python/tests` on a freshly built wheel | 100% pass; includes yaml-test-suite and YAML 1.2.2 compliance tests |
-| SC-002 | Same document parsed by `safe_load` and by `fy parse -f json` | identical data for all cases in the shared fixtures |
+| SC-002 | Same document parsed by `safe_load` and by `fy convert json` | identical data for all cases in the shared fixtures |
 | SC-003 | Lint diagnostics (code, line, column, severity) vs `fy lint --format json` | identical on shared fixtures |
 | SC-004 | Any input within limits | never aborts the interpreter (errors surface as exceptions) |
 | SC-005 | Parse throughput vs PyYAML | measured claim only; no contractual figure until a reproducible benchmark exists (see open questions) |

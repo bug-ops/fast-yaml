@@ -19,7 +19,7 @@ use crate::cli::{LintFormat, LintOutput, ParseLimitArgs};
 use crate::config::CommonConfig;
 use crate::error::{self, DiscoveryError, ExitCode};
 use crate::file_filter::FileFilter;
-use crate::io::{InputSource, OutputWriter};
+use crate::io::{InputSource, OutputTarget, OutputWriter};
 
 /// CLI arguments for the lint command, separated from `CommonConfig`.
 pub struct LintArgs {
@@ -43,8 +43,8 @@ pub struct LintArgs {
     pub max_scan_ahead: Option<MaxScanAhead>,
     /// Depth and alias limits from the flags.
     pub limits: ParseLimitArgs,
-    /// Report destination (from `--output`); stdout when `None`.
-    pub output: Option<PathBuf>,
+    /// Report destination (from `--output`).
+    pub output: OutputTarget,
 }
 
 /// Lint command implementation
@@ -147,15 +147,19 @@ fn write_report_or_warn(
 /// Returns `err` as the error to propagate; its exit code is unchanged.
 pub fn report_unresolved(
     format: LintFormat,
-    output: Option<PathBuf>,
+    output: OutputTarget,
     err: DiscoveryError,
 ) -> anyhow::Error {
     if !matches!(format.output(), LintOutput::Text)
         && let Some(path) = err.path()
-        && let Ok(output) = OutputWriter::from_args(output, false, None)
     {
         let diagnostic = input_error_diagnostic(err.to_string());
-        write_report_or_warn(&output, format.output(), Some(path), diagnostic);
+        write_report_or_warn(
+            &OutputWriter::new(output),
+            format.output(),
+            Some(path),
+            diagnostic,
+        );
     }
     err.into()
 }
@@ -195,7 +199,7 @@ impl LintCommand {
             lint_config,
             file_filter,
             scan_ahead,
-            output: OutputWriter::from_args(args.output, false, None)?,
+            output: OutputWriter::new(args.output),
             max_diagnostics,
             format: args.format,
         })
@@ -441,7 +445,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             input,
         )
@@ -479,7 +483,7 @@ mod tests {
                 max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         )
@@ -633,7 +637,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         )
@@ -658,7 +662,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         );
@@ -684,7 +688,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         )
@@ -716,7 +720,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         )
@@ -744,7 +748,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         )
@@ -774,7 +778,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
-                output: None,
+                output: OutputTarget::Stdout,
             },
             &stdin_input(""),
         )
