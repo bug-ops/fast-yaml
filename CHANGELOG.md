@@ -315,6 +315,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforce a per-stream alias-expansion budget (64 MiB estimated, counting nodes, scalar and tag bytes) to stop alias-bomb memory exhaustion (#369)
 - Fail with `ValueError`/`Error` instead of overflowing the stack when dumping self-referential or over-deep Python/Node.js structures; Node.js `safeDump`/`safeDumpAll` conversion errors now throw (#369)
 
+### Documentation
+
+- **Specs**: feature specifications added under `specs/` (parse, format, lint, convert, batch, CLI, Python, Node.js, limits)
+
 ## [0.6.6] - 2026-08-26
 
 ### Fixed
