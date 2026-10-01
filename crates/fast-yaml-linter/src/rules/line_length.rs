@@ -9,7 +9,7 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
 use fast_yaml_core::events::{Event, EventStream};
-use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::limits::{MaxScanAhead, ParseLimits};
 use fast_yaml_core::{NormalizedInput, Value};
 
 use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
@@ -63,24 +63,29 @@ impl LineLengthOptions {
         if !(self.allow_non_breakable_words || self.allow_non_breakable_inline_mappings) {
             return false;
         }
-        let chars: Vec<char> = line.chars().collect();
-        let mut start = chars.iter().take_while(|&&c| c == ' ').count();
-        if start == chars.len() {
+        let indent = line.bytes().take_while(|&b| b == b' ').count();
+        let Some(rest) = line.get(indent..).filter(|rest| !rest.is_empty()) else {
             return false;
-        }
-        match chars.get(start) {
-            Some('#') => {
-                start += chars.iter().skip(start).take_while(|&&c| c == '#').count() + 1;
-            }
-            Some('-') => start += 2,
-            _ => {}
-        }
-        if !chars.get(start..).is_some_and(|rest| rest.contains(&' ')) {
+        };
+        let marker_chars = match rest.chars().next() {
+            Some('#') => rest.chars().take_while(|&c| c == '#').count() + 1,
+            Some('-') => 2,
+            _ => 0,
+        };
+        let content = rest
+            .char_indices()
+            .nth(marker_chars)
+            .and_then(|(at, _)| rest.get(at..));
+        if content.is_none_or(|content| !content.contains(' ')) {
             return true;
         }
         self.allow_non_breakable_inline_mappings && is_inline_mapping_of_one_word(line)
     }
 }
+
+/// Chars the scanner may read past a node of a single line; a longer one is no inline mapping, and
+/// the cap keeps a multi-megabyte line from buffering its tokens.
+const LINE_SCAN_AHEAD: usize = 64 * 1024;
 
 /// Whether `line` holds a block mapping whose first plain or quoted value, without anchor or tag,
 /// has no space from its start to the end of the line (yamllint's inline mapping check).
@@ -94,7 +99,11 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
     let context = SourceContext::new(line);
     let mut roles = RoleTracker::default();
     let mut seen_mapping = false;
-    for item in EventStream::new(&input, ParseLimits::default()) {
+    let limits = ParseLimits {
+        max_scan_ahead: MaxScanAhead::new(LINE_SCAN_AHEAD).unwrap_or_default(),
+        ..ParseLimits::default()
+    };
+    for item in EventStream::new(&input, limits) {
         let Ok(item) = item else {
             break;
         };
@@ -109,6 +118,11 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
                 roles.start_mapping(line, range);
             }
             Event::SequenceStart { .. } => {
+                // Whatever a root flow sequence holds is flow too, so no block mapping follows
+                if !seen_mapping && CollectionStyle::of_start(line, range) == CollectionStyle::Flow
+                {
+                    return false;
+                }
                 roles.start_sequence(line, range);
             }
             Event::MappingEnd | Event::SequenceEnd => roles.leave(),

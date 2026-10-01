@@ -291,7 +291,7 @@ impl<'a> SourceContext<'a> {
         let first_line = start_line.saturating_sub(context_lines).max(1);
         let last_line = (end_line + context_lines).min(self.line_starts.len());
 
-        let mut lines = Vec::new();
+        let mut lines = Vec::with_capacity((last_line + 1).saturating_sub(first_line));
 
         for line_num in first_line..=last_line {
             if let Some(content) = self.get_line(line_num) {
@@ -303,25 +303,23 @@ impl<'a> SourceContext<'a> {
                     )
                 });
                 let window = ContextWindow::of(content, anchor);
-                let mut highlights = Vec::new();
-
-                if line_num >= start_line && line_num <= end_line {
-                    let start_col = if line_num == start_line {
-                        span.start.column
-                    } else {
-                        1
-                    };
-
-                    let end_col = if line_num == end_line {
-                        span.end.column
-                    } else {
-                        usize::MAX
-                    };
-
-                    if let Some(highlight) = window.clip(start_col, end_col) {
-                        highlights.push(highlight);
-                    }
-                }
+                let highlight = (line_num >= start_line && line_num <= end_line)
+                    .then(|| {
+                        let start_col = if line_num == start_line {
+                            span.start.column
+                        } else {
+                            1
+                        };
+                        let end_col = if line_num == end_line {
+                            span.end.column
+                        } else {
+                            usize::MAX
+                        };
+                        window.clip(start_col, end_col)
+                    })
+                    .flatten();
+                // Collecting the option sizes the vector exactly; a pushed vector grows to four
+                let highlights: Vec<(usize, usize)> = highlight.into_iter().collect();
 
                 lines.push(ContextLine {
                     line_number: line_num,

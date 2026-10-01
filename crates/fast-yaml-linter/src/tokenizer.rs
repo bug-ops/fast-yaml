@@ -91,8 +91,9 @@ enum Quote {
 ///
 /// State is carried across queries, so successive queries with increasing columns on one
 /// line cost O(line length) in total.
-struct PlainScalarScanner {
-    chars: Vec<char>,
+struct PlainScalarScanner<'a> {
+    chars: std::iter::Peekable<std::str::Chars<'a>>,
+    len: usize,
     i: usize,
     quote: Quote,
     escape_next: bool,
@@ -101,10 +102,11 @@ struct PlainScalarScanner {
     in_plain_scalar: bool,
 }
 
-impl PlainScalarScanner {
-    fn new(line: &str) -> Self {
+impl<'a> PlainScalarScanner<'a> {
+    fn new(line: &'a str) -> Self {
         Self {
-            chars: line.chars().collect(),
+            chars: line.chars().peekable(),
+            len: line.chars().count(),
             i: 0,
             quote: Quote::None,
             escape_next: false,
@@ -125,12 +127,12 @@ impl PlainScalarScanner {
     /// This prevents false positives on template expressions like `${{ var }}`
     /// that appear as plain scalar values.
     fn contains(&mut self, col: usize) -> bool {
-        if col >= self.chars.len() {
+        if col >= self.len {
             return false;
         }
 
         while self.i < col
-            && let Some(&ch) = self.chars.get(self.i)
+            && let Some(ch) = self.chars.next()
         {
             if self.escape_next {
                 self.escape_next = false;
@@ -192,7 +194,7 @@ impl PlainScalarScanner {
                         self.at_value_start = false;
                     }
                     '#' => {
-                        self.i = self.chars.len();
+                        self.i = self.len;
                         break;
                     }
                     _ => {
@@ -212,14 +214,15 @@ impl PlainScalarScanner {
                     '\'' => self.quote = Quote::Single,
                     '{' | '[' => self.flow_depth += 1,
                     '}' | ']' => self.flow_depth = self.flow_depth.saturating_sub(1),
-                    ':' if matches!(self.chars.get(self.i + 1), Some(' ' | '\t')) => {
+                    ':' if matches!(self.chars.peek(), Some(' ' | '\t')) => {
                         self.at_value_start = true;
+                        self.chars.next();
                         self.i += 2; // consume `: `
                         continue;
                     }
                     ',' if self.flow_depth > 0 => self.at_value_start = true,
                     '#' => {
-                        self.i = self.chars.len();
+                        self.i = self.len;
                         break;
                     }
                     _ => {}
@@ -371,7 +374,7 @@ struct LineCursor<'a> {
     text: &'a str,
     start: ByteOffset,
     chars: std::iter::Enumerate<std::str::CharIndices<'a>>,
-    scanner: Option<PlainScalarScanner>,
+    scanner: Option<PlainScalarScanner<'a>>,
 }
 
 /// Tokens of one type in source order, found as the iterator advances.
