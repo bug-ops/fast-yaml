@@ -3,8 +3,9 @@
 //! Every path is checked against the filesystem here, so single-file and batch runs fail
 //! identically on a missing path.
 
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
+
+use fast_yaml_parallel::Workers;
 
 use crate::cli::BatchArgs;
 use crate::discovery::{BatchSource, DiscoveryConfig, InputPath};
@@ -17,8 +18,8 @@ pub struct BatchTarget {
     pub source: BatchSource,
     /// Include/exclude/recursion settings
     pub discovery: DiscoveryConfig,
-    /// Explicit worker count, `None` to auto-detect
-    pub workers: Option<NonZeroUsize>,
+    /// Worker setting; the CLI never selects [`Workers::Sequential`]
+    pub workers: Workers,
 }
 
 impl BatchTarget {
@@ -26,7 +27,7 @@ impl BatchTarget {
         Self {
             source,
             discovery: args.discovery_config(),
-            workers: args.workers(),
+            workers: args.jobs,
         }
     }
 }
@@ -86,7 +87,11 @@ mod tests {
             include: include.iter().map(|s| (*s).to_string()).collect(),
             exclude: vec![],
             no_recursive: false,
-            jobs,
+            jobs: if jobs == 0 {
+                Workers::Auto
+            } else {
+                Workers::try_from(jobs).unwrap()
+            },
         }
     }
 
@@ -143,7 +148,7 @@ mod tests {
         assert!(matches!(target, Target::Batch(_)));
 
         let target = Target::resolve(vec![file], false, &args(&[], 2)).unwrap();
-        assert!(matches!(&target, Target::Batch(b) if b.workers.is_some()));
+        assert!(matches!(&target, Target::Batch(b) if matches!(b.workers, Workers::Fixed(_))));
     }
 
     #[test]

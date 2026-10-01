@@ -169,7 +169,7 @@ console.log(`Changed ${result.changed} files`);
 
 ```typescript
 interface BatchConfig {
-  workers?: number;           // Worker threads (null = auto)
+  workers?: number;           // Worker threads (omit = auto, 0 = sequential, max 128)
   maxInputBytes?: number;     // Max file size, 1..1073741824 (default: 100MiB)
   indent?: number;            // Indentation (default: 2)
   width?: number;             // Line width (default: 80)

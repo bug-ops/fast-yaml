@@ -1,7 +1,7 @@
 //! Stress tests for parallel processing with large inputs and high concurrency.
 
 use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes, ParseLimits};
-use fast_yaml_parallel::{Config, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, Workers, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write;
 
 #[test]
@@ -110,7 +110,7 @@ fn test_maximum_thread_count() {
     let yaml = "---\ntest: 1\n---\ntest: 2\n---\ntest: 3\n---\ntest: 4";
 
     // Test with very high thread count (should be capped by Rayon)
-    let config = Config::new().with_workers(Some(128));
+    let config = Config::new().with_workers(Workers::try_from(128).unwrap());
     let docs = parse_parallel_with_config(yaml, &config).unwrap();
     assert_eq!(docs.len(), 4);
 }
@@ -126,11 +126,11 @@ fn test_single_thread_vs_multi_thread() {
     }
 
     // Parse with single thread
-    let config_single = Config::new().with_workers(Some(1));
+    let config_single = Config::new().with_workers(Workers::try_from(1).unwrap());
     let docs_single = parse_parallel_with_config(&yaml, &config_single).unwrap();
 
     // Parse with multiple threads
-    let config_multi = Config::new().with_workers(Some(8));
+    let config_multi = Config::new().with_workers(Workers::try_from(8).unwrap());
     let docs_multi = parse_parallel_with_config(&yaml, &config_multi).unwrap();
 
     // Results should be identical
@@ -274,16 +274,12 @@ fn test_document_count_limit_applies_without_config() {
 }
 
 #[test]
-fn test_thread_count_capping() {
-    // Request excessive threads (should be capped at 128 internally)
-    let yaml = "---\nfoo: 1\n---\nbar: 2";
-    let config = Config::new().with_workers(Some(10_000));
+fn test_thread_count_is_bounded_by_the_type() {
+    assert!(Workers::try_from(10_000).is_err());
 
-    // Should not crash or create 10k threads - capping happens internally
-    let result = parse_parallel_with_config(yaml, &config);
-    assert!(result.is_ok());
-    assert_eq!(result.unwrap().len(), 2);
-    // Note: Thread count is capped internally to 128 max
+    let yaml = "---\nfoo: 1\n---\nbar: 2";
+    let config = Config::new().with_workers(Workers::try_from(128).unwrap());
+    assert_eq!(parse_parallel_with_config(yaml, &config).unwrap().len(), 2);
 }
 
 #[test]

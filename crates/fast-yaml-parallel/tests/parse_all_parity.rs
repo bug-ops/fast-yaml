@@ -1,7 +1,7 @@
 //! Differential tests: `parse_parallel` must be observationally equal to `Parser::parse_all`.
 
 use fast_yaml_core::Parser;
-use fast_yaml_parallel::{Config, Error, parse_parallel, parse_parallel_with_config};
+use fast_yaml_parallel::{Config, Error, Workers, parse_parallel, parse_parallel_with_config};
 use std::fmt::Write as _;
 
 const ERROR_INPUTS: &[&str] = &[
@@ -91,7 +91,7 @@ fn matches_parse_all_default_config() {
 #[test]
 fn matches_parse_all_forced_parallel_path() {
     let config = Config::new()
-        .with_workers(Some(2))
+        .with_workers(Workers::try_from(2).unwrap())
         .with_sequential_threshold(0);
     for input in INPUTS {
         assert_parity(input, &config);
@@ -100,7 +100,7 @@ fn matches_parse_all_forced_parallel_path() {
 
 #[test]
 fn matches_parse_all_forced_sequential_path() {
-    let config = Config::new().with_workers(Some(0));
+    let config = Config::new().with_workers(Workers::Sequential);
     for input in INPUTS {
         assert_parity(input, &config);
     }
@@ -109,9 +109,9 @@ fn matches_parse_all_forced_sequential_path() {
 #[test]
 fn errors_exactly_when_parse_all_errors() {
     let configs = [
-        Config::new().with_workers(Some(0)),
+        Config::new().with_workers(Workers::Sequential),
         Config::new()
-            .with_workers(Some(2))
+            .with_workers(Workers::try_from(2).unwrap())
             .with_sequential_threshold(0),
     ];
     for input in ERROR_INPUTS {
@@ -155,7 +155,7 @@ fn merge_error_location_uses_stream_document_index() {
     let expected = Parser::parse_all(input).unwrap_err();
     assert_eq!(expected.document_index(), 2);
     let config = Config::new()
-        .with_workers(Some(2))
+        .with_workers(Workers::try_from(2).unwrap())
         .with_sequential_threshold(0);
     for result in [
         parse_parallel(input),
@@ -178,7 +178,7 @@ fn merge_error_location_with_crlf_and_multibyte_text_before_it() {
         "{expected}"
     );
     let config = Config::new()
-        .with_workers(Some(2))
+        .with_workers(Workers::try_from(2).unwrap())
         .with_sequential_threshold(0);
     let Err(Error::Parse { source, .. }) = parse_parallel_with_config(input, &config) else {
         panic!("expected Error::Parse");
@@ -194,7 +194,7 @@ fn parse_error_index_with_empty_documents_on_parallel_path() {
     }
     input.push_str("---\nbad: 'unclosed\n");
     let config = Config::new()
-        .with_workers(Some(2))
+        .with_workers(Workers::try_from(2).unwrap())
         .with_sequential_threshold(0);
     assert!(Parser::parse_all(&input).is_err());
     let err = parse_parallel_with_config(&input, &config).unwrap_err();
@@ -218,9 +218,9 @@ fn merge_error_position_is_whole_input_on_parallel_path() {
     assert_eq!(expected, (19, 3));
     let configs = [
         Config::new()
-            .with_workers(Some(2))
+            .with_workers(Workers::try_from(2).unwrap())
             .with_sequential_threshold(0),
-        Config::new().with_workers(Some(0)),
+        Config::new().with_workers(Workers::Sequential),
     ];
     for config in &configs {
         match parse_parallel_with_config(&input, config).unwrap_err() {
@@ -236,7 +236,7 @@ fn merge_error_position_is_whole_input_on_parallel_path() {
 #[test]
 fn scanner_and_limit_errors_agree_on_document_index_with_parse_all() {
     let config = Config::new()
-        .with_workers(Some(2))
+        .with_workers(Workers::try_from(2).unwrap())
         .with_sequential_threshold(0);
     for input in [
         "a: 1\n---\nb: 2\n---\nc: \0\n",

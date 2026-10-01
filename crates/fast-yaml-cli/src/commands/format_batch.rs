@@ -1,6 +1,5 @@
 //! Batch format command execution.
 
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -56,7 +55,7 @@ pub fn execute_batch(
 
     let processor = FileProcessor::with_config(
         ParallelConfig::new()
-            .with_workers(target.workers.map(NonZeroUsize::get))
+            .with_workers(target.workers)
             .with_max_input_bytes(max_input)
             .with_scan_ahead_policy(scan_ahead),
     );

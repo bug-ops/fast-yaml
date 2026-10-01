@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Parallel**: `Config::with_workers` takes `Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)`), `Config::workers()` returns it, and `shared_pool` and `ScanAheadLane::for_policy` take `WorkerCount` (1..=128) instead of `Option<usize>`/`NonZeroUsize` (#610) (#PR)
+- **CLI/Python/Node.js**: `-j`, `workers` and `thread_count` above 128 are rejected on every surface (the CLI `lint` previously spawned an uncapped pool, and the library silently capped), with one message shape (#610) (#PR)
 - **CLI**: top-level `-f/--format` is removed, and `-o`/`-i` exist only on the subcommands that write (`format`, `convert`; `lint` has `-o` only), so `fy -o x lint`, bare `fy -o x`, `fy parse -o|-i`, `fy lint -i` and `fy convert -i -o` exit 2 (#611) (#PR)
 - **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#576)
 - **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#576)
@@ -197,6 +199,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Parallel/Python**: `Workers::Auto` runs at most 128 threads even inside a larger Rayon pool, and `dump_parallel` takes its auto thread count from it, so `RAYON_NUM_THREADS` is honored (#610) (#PR)
+- **CLI/Python**: `fy` builds without default features, the unused `num_cpus` dependency is dropped, the native `_core.dump`/`dump_all` (their `stream`/`dumper` arguments were ignored) are removed, and CI runs a clippy feature powerset (#612) (#PR)
 - **Docs**: removed `docs/CI-CD-QUICKSTART.md` and the unused `Makefile.toml` (cargo-make); maintainer CI notes moved to `CONTRIBUTING.md` (#596)
 - **CLI/Parallel**: batch runs scale the default scan-ahead limit per worker and retry a rejected file at the full limit (#577) (#595)
 - **Linter**: rules share the loader pass, so `fy lint` of a long flow line uses about 1.1-1.25x the memory of `fy parse` (was 3.5x) (#579) (#578) (#573) (#595)

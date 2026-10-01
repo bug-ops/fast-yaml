@@ -160,7 +160,7 @@ print(f"Changed {result.changed} files")
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `workers` | Auto | Number of worker threads |
+| `workers` | Auto | `None` = auto, `0` = sequential, `1`-`128` = worker threads (larger values raise `ValueError`) |
 | `max_input_bytes` | 100 MiB | Maximum file size, 1..=1 GiB |
 | `indent` | 2 | Indentation width |
 | `width` | 80 | Line width |

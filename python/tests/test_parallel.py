@@ -602,3 +602,14 @@ class TestSharedPool:
         assert parallel.dump_parallel(docs, config) == parallel.dump_parallel(
             docs, parallel.ParallelConfig(thread_count=0)
         )
+
+
+class TestThreadCountBounds:
+    def test_thread_count_above_the_cap_is_rejected(self):
+        with pytest.raises(ValueError, match="thread_count must be between 0 and 128, got 129"):
+            parallel.ParallelConfig(thread_count=129)
+        with pytest.raises(ValueError, match="thread_count must be between 0 and 128, got 129"):
+            parallel.ParallelConfig().with_thread_count(129)
+
+    def test_thread_count_cap_is_accepted(self):
+        assert parallel.ParallelConfig(thread_count=128) is not None

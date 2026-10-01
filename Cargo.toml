@@ -45,7 +45,6 @@ memchr = { version = "2.8" }
 napi = { version = "3.11" }
 napi-build = { version = "2.3" }
 napi-derive = { version = "3.6" }
-num_cpus = { version = "1.17" }
 pyo3 = { version = "0.29" }
 rayon = { version = "1.12" }
 regex = { version = "1.13" }

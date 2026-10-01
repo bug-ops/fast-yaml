@@ -113,8 +113,17 @@ class TestBatchConfig:
 
     def test_workers_limit(self):
         """Test workers limit enforcement."""
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="workers must be between 0 and 128, got 1000"):
             batch.BatchConfig(workers=1000)
+        with pytest.raises(ValueError, match="workers must be between 0 and 128, got 129"):
+            batch.BatchConfig().with_workers(129)
+        assert batch.BatchConfig(workers=128) is not None
+
+    def test_repr_shows_the_workers_setting(self):
+        """Auto prints None, sequential 0, a fixed pool its size."""
+        assert "workers=None" in repr(batch.BatchConfig())
+        assert "workers=0" in repr(batch.BatchConfig(workers=0))
+        assert "workers=4" in repr(batch.BatchConfig().with_workers(4))
 
     def test_max_input_bytes_limit(self):
         """Test max input bytes limit."""

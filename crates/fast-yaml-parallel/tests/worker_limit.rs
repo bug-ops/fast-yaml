@@ -7,7 +7,8 @@ use std::sync::Mutex;
 use std::thread::ThreadId;
 
 use fast_yaml_parallel::{
-    CommentPolicy, Config, FileProcessor, parse_parallel_with_config, shared_pool,
+    CommentPolicy, Config, FileProcessor, WorkerCount, Workers, parse_parallel_with_config,
+    shared_pool,
 };
 use tempfile::TempDir;
 
@@ -25,7 +26,8 @@ fn threads_used(workers: usize, count: usize) -> HashSet<ThreadId> {
     let dir = TempDir::new().unwrap();
     let paths = files(&dir, count);
     let seen = Mutex::new(HashSet::new());
-    let processor = FileProcessor::with_config(Config::new().with_workers(Some(workers)));
+    let processor =
+        FileProcessor::with_config(Config::new().with_workers(Workers::try_from(workers).unwrap()));
     let result = processor.process(&paths, |_, _| {
         std::thread::sleep(std::time::Duration::from_millis(5));
         seen.lock().unwrap().insert(std::thread::current().id());
@@ -52,7 +54,9 @@ fn worker_count_sets_the_pool_the_batch_runs_in() {
     let paths = files(&dir, 24);
     for workers in [1, 2] {
         let observed = Mutex::new(HashSet::new());
-        let processor = FileProcessor::with_config(Config::new().with_workers(Some(workers)));
+        let processor = FileProcessor::with_config(
+            Config::new().with_workers(Workers::try_from(workers).unwrap()),
+        );
         let result = processor.process(&paths, |_, _| {
             observed
                 .lock()
@@ -69,7 +73,8 @@ fn worker_count_sets_the_pool_the_batch_runs_in() {
 fn format_files_honors_the_worker_count() {
     let dir = TempDir::new().unwrap();
     let paths = files(&dir, 24);
-    let processor = FileProcessor::with_config(Config::new().with_workers(Some(1)));
+    let processor =
+        FileProcessor::with_config(Config::new().with_workers(Workers::try_from(1).unwrap()));
     let out = processor.format_files(
         &paths,
         &fast_yaml_core::EmitterConfig::new(),
@@ -82,14 +87,13 @@ fn format_files_honors_the_worker_count() {
 #[test]
 fn parse_parallel_runs_inside_the_configured_pool() {
     let input = "---\nk: 1\n".repeat(64);
-    let config = Config::new().with_workers(Some(3));
+    let config = Config::new().with_workers(Workers::try_from(3).unwrap());
     let docs = parse_parallel_with_config(&input, &config).unwrap();
     assert_eq!(docs.len(), 64);
 }
 
 #[test]
 fn shared_pool_has_the_requested_size() {
-    let two = std::num::NonZeroUsize::new(2).unwrap();
-    let pool = shared_pool(two).unwrap();
+    let pool = shared_pool(WorkerCount::new(2).unwrap()).unwrap();
     assert_eq!(pool.install(rayon::current_num_threads), 2);
 }

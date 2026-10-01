@@ -4,6 +4,7 @@ use std::fmt::Display;
 
 use fast_yaml_core::limits::{AliasBytes, Bounded, Bounds, Depth, Documents, ScanAhead};
 use fast_yaml_core::{Indent, ParseLimits, Width};
+use fast_yaml_parallel::Workers;
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyBool;
@@ -13,6 +14,23 @@ pub fn range_error(option: &str, min: usize, max: usize, got: impl Display) -> P
     PyValueError::new_err(format!(
         "{option} must be between {min} and {max}, got {got}"
     ))
+}
+
+/// Converts the optional worker count of a Python option: `None` is auto, `0` sequential,
+/// `1..=128` a fixed pool; larger values raise `ValueError`.
+pub fn workers(option: &str, value: Option<usize>) -> PyResult<Workers> {
+    value.map_or(Ok(Workers::Auto), |n| {
+        Workers::from_count(n).map_err(|e| range_error(option, e.min, e.max, e.value))
+    })
+}
+
+/// The Python-visible value of `workers`: `None` for auto, `0` for sequential.
+pub const fn workers_value(workers: Workers) -> Option<usize> {
+    match workers {
+        Workers::Auto => None,
+        Workers::Sequential => Some(0),
+        Workers::Fixed(count) => Some(count.get()),
+    }
 }
 
 /// Extracts `arg` as `usize`: negative and oversized integers raise `ValueError`, `bool` and non-integers `TypeError`.

@@ -6,7 +6,9 @@ use std::path::PathBuf;
 use fast_yaml_core::EmitterConfig;
 use fast_yaml_core::limits::MaxScanAhead;
 use fast_yaml_core::{LimitKind, ParseError, Parser};
-use fast_yaml_parallel::{CommentPolicy, Config, FileProcessor, ScanAheadLane, ScanAheadPolicy};
+use fast_yaml_parallel::{
+    CommentPolicy, Config, FileProcessor, ScanAheadLane, ScanAheadPolicy, WorkerCount, Workers,
+};
 use tempfile::TempDir;
 
 /// About 1.8 Mi characters: over a 1 Mi scaled limit, under the 4 Mi default.
@@ -30,7 +32,7 @@ fn formatted_ok(workers: usize, policy: ScanAheadPolicy, emitter: &EmitterConfig
     let paths = batch(&dir);
     let processor = FileProcessor::with_config(
         Config::new()
-            .with_workers(Some(workers))
+            .with_workers(Workers::try_from(workers).unwrap())
             .with_scan_ahead_policy(policy),
     );
     processor
@@ -65,10 +67,7 @@ fn a_fixed_limit_is_final_and_the_scaled_default_is_not() {
 #[test]
 fn a_file_between_the_limits_is_rejected_first_and_accepted_through_the_lane() {
     let text = between_limits();
-    let lane = ScanAheadLane::for_policy(
-        ScanAheadPolicy::Scaled,
-        std::num::NonZeroUsize::new(8).unwrap(),
-    );
+    let lane = ScanAheadLane::for_policy(ScanAheadPolicy::Scaled, WorkerCount::new(8).unwrap());
     assert!(lane.first_limit().get() < MaxScanAhead::DEFAULT.get());
 
     let attempts = std::sync::Mutex::new(Vec::new());

@@ -5,6 +5,7 @@ use fast_yaml_core::limits::{
 };
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::{IndentSize, MaxDiagnostics};
+use fast_yaml_parallel::Workers;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -159,9 +160,9 @@ pub struct BatchArgs {
     #[arg(long)]
     pub no_recursive: bool,
 
-    /// Number of parallel jobs (0 = auto-detect)
-    #[arg(short = 'j', long, default_value = "0")]
-    pub jobs: usize,
+    /// Number of parallel jobs (0 = auto, 1-128)
+    #[arg(short = 'j', long, default_value = "0", value_name = "N", value_parser = parse_jobs)]
+    pub jobs: Workers,
 }
 
 impl BatchArgs {
@@ -181,16 +182,12 @@ impl BatchArgs {
         config
     }
 
-    /// Returns the explicit worker count, or `None` to auto-detect.
-    #[must_use]
-    pub const fn workers(&self) -> Option<NonZeroUsize> {
-        NonZeroUsize::new(self.jobs)
-    }
-
     /// Returns `true` when any flag only makes sense for a batch run.
     #[must_use]
     pub const fn requests_batch(&self) -> bool {
-        !self.include.is_empty() || !self.exclude.is_empty() || self.jobs > 0
+        !self.include.is_empty()
+            || !self.exclude.is_empty()
+            || matches!(self.jobs, Workers::Fixed(_))
     }
 }
 
@@ -252,6 +249,14 @@ fn parse_indent(raw: &str) -> Result<Indent, String> {
 
 fn parse_width(raw: &str) -> Result<Width, String> {
     Width::new(parse_number(raw)?).map_err(range_error)
+}
+
+/// Parses `-j`: `0` selects [`Workers::Auto`] (the CLI never runs sequentially), `1..=128` a pool.
+fn parse_jobs(raw: &str) -> Result<Workers, String> {
+    match Workers::from_count(parse_number(raw)?).map_err(range_error)? {
+        Workers::Sequential => Ok(Workers::Auto),
+        workers => Ok(workers),
+    }
 }
 
 fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
@@ -601,6 +606,17 @@ mod tests {
                 .contains("too large")
         );
         assert!(parse_byte_size("18446744073709551615KiB").is_err());
+    }
+
+    #[test]
+    fn jobs_zero_is_auto_and_bounds_are_enforced() {
+        assert_eq!(parse_jobs("0").unwrap(), Workers::Auto);
+        assert!(matches!(parse_jobs("128").unwrap(), Workers::Fixed(n) if n.get() == 128));
+        assert_eq!(
+            parse_jobs("129").unwrap_err(),
+            "must be between 0 and 128, got 129"
+        );
+        assert!(parse_jobs("-1").is_err());
     }
 
     #[test]

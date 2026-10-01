@@ -231,7 +231,7 @@ fy parse --max-input-bytes 500MiB huge.yaml
 
 | Option | Short | Description | Default |
 |--------|-------|-------------|---------|
-| `--jobs` | `-j` | Number of parallel workers (0 = auto) | auto-detect |
+| `--jobs` | `-j` | Number of parallel workers (0 = auto, 1-128) | auto-detect |
 | `--stdin-files` | - | Read file paths from stdin; a missing path, directory, non-YAML file or line over 4096 bytes is an error | - |
 | `--include` | - | Include pattern (glob, case-insensitive) | `*.yaml`, `*.yml` (`lint` also `.yamllint`) |
 | `--exclude` | - | Exclude pattern (glob, case-insensitive) | none |

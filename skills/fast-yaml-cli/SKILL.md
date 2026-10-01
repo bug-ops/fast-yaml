@@ -139,7 +139,7 @@ fy format [OPTIONS] [PATHS]...
 |------|-------|---------|-------------|
 | `--indent INDENT` | — | `2` | Indentation width: 2–8 spaces |
 | `--width WIDTH` | — | `80` | Maximum line width (for formatting decisions) |
-| `-j, --jobs JOBS` | — | `0` | Parallel workers: 0 = auto-detect, >0 = explicit count |
+| `-j, --jobs JOBS` | — | `0` | Parallel workers: 0 = auto, 1-128 = explicit count |
 | `--stdin-files` | — | — | Read file paths from stdin (one per line) — forces batch mode |
 | `--include PATTERN` | — | — | Include files matching glob (can repeat) |
 | `--exclude PATTERN` | — | — | Exclude files matching glob (can repeat) |
@@ -257,7 +257,7 @@ fy lint [OPTIONS] [PATHS]...
 | `--include PATTERN` | — | — | Include files matching glob (can repeat) |
 | `--exclude PATTERN` | — | — | Exclude files matching glob (can repeat) |
 | `--no-recursive` | — | — | Don't recurse into subdirectories |
-| `-j, --jobs JOBS` | — | `0` | Parallel workers: 0 = auto-detect |
+| `-j, --jobs JOBS` | — | `0` | Parallel workers: 0 = auto, 1-128 |
 
 **Config File Discovery:**
 

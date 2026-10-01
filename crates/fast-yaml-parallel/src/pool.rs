@@ -5,15 +5,15 @@
 
 #![allow(clippy::redundant_pub_crate)]
 
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
 
 use crate::config::Config;
 use crate::error::{Error, Result};
+use crate::workers::WorkerCount;
 
-static POOL: Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>> = Mutex::new(None);
+static POOL: Mutex<Option<(WorkerCount, Arc<ThreadPool>)>> = Mutex::new(None);
 
 /// Returns the process-wide pool with exactly `workers` threads, building it on first use.
 ///
@@ -32,28 +32,26 @@ static POOL: Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>> = Mutex::new(None);
 /// # Examples
 ///
 /// ```
-/// use std::num::NonZeroUsize;
-/// use fast_yaml_parallel::shared_pool;
+/// use fast_yaml_parallel::{WorkerCount, shared_pool};
 ///
-/// let workers = NonZeroUsize::new(2).unwrap();
-/// let pool = shared_pool(workers)?;
+/// let pool = shared_pool(WorkerCount::new(2)?)?;
 /// assert_eq!(pool.install(rayon::current_num_threads), 2);
-/// # Ok::<(), fast_yaml_parallel::Error>(())
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
-pub fn shared_pool(workers: NonZeroUsize) -> Result<Arc<ThreadPool>> {
+pub fn shared_pool(workers: WorkerCount) -> Result<Arc<ThreadPool>> {
     build(workers).map_err(Error::ThreadPool)
 }
 
 /// Failure to spawn the pool's threads; shared so one failure can be reported for many files.
 pub(crate) type BuildError = Arc<ThreadPoolBuildError>;
 
-fn build(workers: NonZeroUsize) -> std::result::Result<Arc<ThreadPool>, BuildError> {
+fn build(workers: WorkerCount) -> std::result::Result<Arc<ThreadPool>, BuildError> {
     build_in(&POOL, workers)
 }
 
 fn build_in(
-    slot: &Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>>,
-    workers: NonZeroUsize,
+    slot: &Mutex<Option<(WorkerCount, Arc<ThreadPool>)>>,
+    workers: WorkerCount,
 ) -> std::result::Result<Arc<ThreadPool>, BuildError> {
     let mut slot = slot.lock().unwrap_or_else(PoisonError::into_inner);
     if let Some((count, pool)) = slot.as_ref()
@@ -71,28 +69,25 @@ fn build_in(
     Ok(pool)
 }
 
-/// The pool `config` asks for, or `None` when the global Rayon pool already fits.
+/// The pool `config` asks for, or `None` when the current Rayon pool already fits.
 ///
-/// `None` also covers auto and sequential (`Some(0)`) settings, which callers handle without
-/// a pool.
+/// `None` also covers sequential settings, which callers handle without a pool.
 pub(crate) fn for_config(
     config: &Config,
 ) -> std::result::Result<Option<Arc<ThreadPool>>, BuildError> {
-    match config.pool_workers() {
-        Some(workers) if workers.get() != rayon::current_num_threads() => build(workers).map(Some),
-        _ => Ok(None),
-    }
+    config.workers().dedicated_pool().map(build).transpose()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workers::Workers;
 
-    fn count(n: usize) -> NonZeroUsize {
-        NonZeroUsize::new(n).unwrap()
+    fn count(n: usize) -> WorkerCount {
+        WorkerCount::new(n).unwrap()
     }
 
-    fn fresh() -> Mutex<Option<(NonZeroUsize, Arc<ThreadPool>)>> {
+    fn fresh() -> Mutex<Option<(WorkerCount, Arc<ThreadPool>)>> {
         Mutex::new(None)
     }
 
@@ -119,9 +114,29 @@ mod tests {
     fn test_for_config_needs_no_pool_for_auto_and_sequential() {
         assert!(for_config(&Config::new()).unwrap().is_none());
         assert!(
-            for_config(&Config::new().with_workers(Some(0)))
+            for_config(&Config::new().with_workers(Workers::Sequential))
                 .unwrap()
                 .is_none()
         );
+    }
+
+    fn pool_of(threads: usize) -> ThreadPool {
+        ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn test_auto_inside_an_oversized_pool_builds_one_capped_pool() {
+        pool_of(130).install(|| {
+            let pool = for_config(&Config::new()).unwrap().unwrap();
+            assert_eq!(pool.install(rayon::current_num_threads), 128);
+        });
+    }
+
+    #[test]
+    fn test_auto_builds_no_pool_up_to_the_cap() {
+        pool_of(128).install(|| assert!(for_config(&Config::new()).unwrap().is_none()));
     }
 }
