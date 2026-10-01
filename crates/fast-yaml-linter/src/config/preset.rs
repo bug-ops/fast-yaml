@@ -42,9 +42,14 @@ pub struct UnknownPresetError {
 ///   dates are strings to it, and its `only-when-needed` check keeps fast-yaml's character
 ///   heuristics instead of yamllint's re-scan of the value;
 /// - `document-start` and `document-end` report a source with no document (empty or only
-///   comments) as one document without markers, and report the last document's missing `...`
-///   at the end of the file, where yamllint reports the line before; a bare document after `...`
-///   is accepted, where `PyYAML` (and so yamllint) rejects it;
+///   comments) as one document without markers, where yamllint reports nothing, and report the
+///   last document's missing `...` at the end of the file, where yamllint reports the line before;
+///   a bare document after `...` is accepted, where `PyYAML` (and so yamllint) rejects it;
+/// - `document-start: forbidden` leaves a `---` after a `%` directive alone, where yamllint flags
+///   it;
+/// - `quoted-strings` checks a scalar with an anchor, which yamllint skips, and skips a verbatim
+///   `!<tag:yaml.org,2002:str>` scalar, which yamllint checks (only the `!!` spelling is skipped
+///   there);
 /// - `key-ordering` locates keys in the source text instead of reading tokens, which differs on
 ///   flow mappings and numeric keys;
 /// - the default `yaml-files` do not include `.yamllint`.

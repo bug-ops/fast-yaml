@@ -415,7 +415,11 @@ class lint:  # noqa: N801
         def __hash__(self) -> int: ...
 
     class Location:
-        """A position in the source file."""
+        """A position in the source text.
+
+        ``offset`` is a byte offset in the text with document-prefix BOMs removed
+        (also for suggestion spans); ``line`` and ``column`` refer to the same text.
+        """
 
         line: int
         column: int
@@ -490,7 +494,8 @@ class lint:  # noqa: N801
         """Configuration for the linter.
 
         ``rules`` maps rule codes to a severity string or an entry mapping with
-        optional ``severity``, ``enabled`` and kebab-case option keys
+        optional ``severity`` (also spelled ``level``, not both), ``enabled`` and
+        kebab-case option keys
         (e.g. ``{"line-length": {"max": 120}}``). Unknown rules, option keys,
         wrong types and invalid severities raise ``ValueError``. Order of
         application: keyword arguments, then ``rules``, then ``disabled_rules``.

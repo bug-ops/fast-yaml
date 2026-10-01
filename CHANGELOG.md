@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Linter**: the `comment_parser` module is removed; `Comment` is `Comment<'a> { text, span, kind }` with a `CommentKind` enum instead of `content`/`is_inline`/`is_shebang`, and comments come from parser events (#438)
 - **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
 - **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331 (#550)
-- **Linter**: `FlowTokenizer::new` takes a prebuilt `FlowIndex` and `LintContext::flow_tokenizer` is added (#386)
+- **Linter**: `FlowTokenizer::new` takes a prebuilt `&FlowIndex` instead of the source text (#386)
 - **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
 - **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)
 - **Python**: `saphyr-parser` is no longer a dependency of the bindings (#542) (#562)
@@ -109,6 +109,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: public `FlowIndex` and `LintContext::flow_tokenizer`, so the flow rules share one tokenizer index per lint run (#386)
 - **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#536)
 - **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#536)
 - **Core**: `CommentScanner` and `Parser::parse_normalized_observed` let a caller find comments in the same parser pass that loads the documents (#438)
@@ -139,7 +140,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#539)
 - **Linter**: `duplicate-key` compares resolved key values like the loaders (`99`/`+99`, `0x10`/`16` collide, `"1"`/`1` and `<<`/`"<<"` do not), which deliberately differs from yamllint's key-text comparison (#545)
 - **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#438)
-- **Linter**: the flow rules share one `FlowIndex` per lint run instead of one tokenizer index each (#386)
 - **Core**: faster `NormalizedInput` scan and no per-float allocation in `Float::parse` and `to_saphyr` (#558) (#562)
 - **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
 - **Node.js**: `safeLoad`/`safeLoadAll`/`load`/`loadAll`/`parseParallel` return env-bound values without a lifetime transmute, and napi coercions use safe `FromNapiValue::from_unknown` (#342) (#330) (#534)
