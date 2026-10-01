@@ -47,9 +47,6 @@ pub struct UnknownPresetError {
 /// - `anchors` (`invalid-anchor`) reports duplicated anchors unless `forbid-duplicated-anchors`
 ///   is `false`, where yamllint's default is not to; it finds anchors and aliases in the source
 ///   text;
-/// - `quoted-strings` checks a scalar with an anchor, which yamllint skips, and skips a verbatim
-///   `!<tag:yaml.org,2002:str>` scalar, which yamllint checks (only the `!!` spelling is skipped
-///   there);
 /// - `key-ordering` locates keys in the source text instead of reading tokens, which differs on
 ///   nested flow mappings (only a flow mapping that is the whole root of a document is checked),
 ///   numeric keys and the first key of a mapping in a sequence item (`- b: 1`); `locale` is not
