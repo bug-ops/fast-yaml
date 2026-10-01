@@ -59,60 +59,68 @@ jobs:
             ci:
               - '.github/workflows/**'
 
-  # Parallel format checks using matrix
-  format:
-    name: Format (${{ matrix.lang }})
+  # Format checks - one job per language so downstream jobs can depend on the relevant one
+  format-rust:
+    name: Format (rust)
     needs: [changes]
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    strategy:
-      fail-fast: true
-      matrix:
-        lang: [rust, python, nodejs]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      # Rust formatting
       - name: Install nightly Rust
-        if: matrix.lang == 'rust'
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
         with:
           toolchain: nightly
           components: rustfmt
 
       - name: Check Rust formatting
-        if: matrix.lang == 'rust'
         run: cargo +nightly fmt --all -- --check
 
-      # Python formatting
+  format-python:
+    name: Format (python)
+    needs: [changes]
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Set up Python
-        if: matrix.lang == 'python'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
 
       - name: Install uv
-        if: matrix.lang == 'python'
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           enable-cache: true
 
       - name: Check Python formatting
-        if: matrix.lang == 'python'
         run: cd python && uv run ruff format --check .
 
-      # NodeJS formatting
+  format-nodejs:
+    name: Format (nodejs)
+    needs: [changes]
+    if: needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Set up pnpm
-        if: matrix.lang == 'nodejs'
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 10
 
       - name: Set up Node.js
-        if: matrix.lang == 'nodejs'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '24'
@@ -120,14 +128,12 @@ jobs:
           cache-dependency-path: nodejs/pnpm-lock.yaml
 
       - name: Install NodeJS dependencies
-        if: matrix.lang == 'nodejs'
         run: cd nodejs && pnpm install --no-frozen-lockfile
 
       - name: Check NodeJS formatting
-        if: matrix.lang == 'nodejs'
         run: cd nodejs && pnpm run format:check
 
-  # Clippy linting - runs in parallel with format
+  # Clippy linting - runs in parallel with format; gate for all test jobs
   lint:
     name: Clippy Lint
     needs: [changes]
@@ -249,12 +255,9 @@ jobs:
   # Cross-platform Rust tests
   test-rust:
     name: Test Rust (${{ matrix.os }}${{ matrix.rust == 'beta' && ', beta' || '' }})
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-rust, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -313,12 +316,9 @@ jobs:
   # Core crate alone: workspace-wide runs unify the `arena` feature on, hiding no-arena cfg regressions
   test-core-no-arena:
     name: Test Core (no arena)
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-rust, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -356,12 +356,9 @@ jobs:
   # Code coverage (Linux only)
   coverage:
     name: Code Coverage
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-rust, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -485,12 +482,9 @@ jobs:
   # Python bindings tests (optimized matrix)
   test-python:
     name: Test Python (${{ matrix.os }}, ${{ matrix.python-version }})
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-python, python-quality, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -563,12 +557,9 @@ jobs:
   # NodeJS bindings tests
   test-nodejs:
     name: Test NodeJS (${{ matrix.os }}, Node ${{ matrix.node-version }})
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-nodejs, nodejs-quality, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -633,12 +624,9 @@ jobs:
   # Python coverage (Linux only)
   python-coverage:
     name: Python Coverage
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-python, python-quality, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -705,12 +693,9 @@ jobs:
   # NodeJS coverage (Linux only)
   nodejs-coverage:
     name: NodeJS Coverage
-    needs: [changes, format, lint]
-    if: |
-      always() &&
-      needs.format.result == 'success' &&
-      (needs.lint.result == 'success' || needs.lint.result == 'skipped') &&
-      (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true')
+    needs: [changes, format-nodejs, nodejs-quality, lint]
+    # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
+    if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -855,13 +840,15 @@ jobs:
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [format, lint, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
+    needs: [format-rust, format-python, format-nodejs, lint, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all jobs
         run: |
-          echo "Format: ${{ needs.format.result }}"
+          echo "Format (rust): ${{ needs.format-rust.result }}"
+          echo "Format (python): ${{ needs.format-python.result }}"
+          echo "Format (nodejs): ${{ needs.format-nodejs.result }}"
           echo "Lint: ${{ needs.lint.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "Test Rust: ${{ needs.test-rust.result }}"
@@ -876,16 +863,9 @@ jobs:
           echo "NodeJS Coverage: ${{ needs.nodejs-coverage.result }}"
 
           # Docs-only changes (specs/, *.md, docs/) match no filter, so every job is skipped
-          for job in format; do
-            result="${{ needs.format.result }}"
-            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              echo "❌ $job failed: $result"
-              exit 1
-            fi
-          done
-
-          # These jobs can be skipped if path filter excludes them
-          for result in "${{ needs.lint.result }}" "${{ needs.security.result }}" \
+          # All jobs can be skipped if the path filter excludes them
+          for result in "${{ needs.format-rust.result }}" "${{ needs.format-python.result }}" \
+                        "${{ needs.format-nodejs.result }}" "${{ needs.lint.result }}" "${{ needs.security.result }}" \
                         "${{ needs.test-rust.result }}" "${{ needs.test-core-no-arena.result }}" \
                         "${{ needs.coverage.result }}" \
                         "${{ needs.msrv.result }}" "${{ needs.test-python.result }}" \
