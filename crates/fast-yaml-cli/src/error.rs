@@ -69,6 +69,21 @@ pub enum PathError {
     },
 }
 
+impl PathError {
+    /// The path that cannot be used.
+    #[must_use]
+    pub fn path(&self) -> &std::path::Path {
+        match self {
+            Self::IoError { path, .. }
+            | Self::PermissionDenied { path }
+            | Self::BrokenSymlink { path }
+            | Self::PathNotFound { path }
+            | Self::NotAFile { path }
+            | Self::NotIncluded { path } => path,
+        }
+    }
+}
+
 /// Why a `--stdin-files` line was rejected.
 #[derive(Debug, Error)]
 pub enum StdinLineCause {
@@ -82,6 +97,17 @@ pub enum StdinLineCause {
     /// The path on the line cannot be used
     #[error(transparent)]
     Path(#[from] PathError),
+}
+
+impl DiscoveryError {
+    /// The single input path that failed, when the error is about one.
+    #[must_use]
+    pub fn path(&self) -> Option<&std::path::Path> {
+        match self {
+            Self::Path(error) => Some(error.path()),
+            _ => None,
+        }
+    }
 }
 
 /// Errors that can occur during file discovery.

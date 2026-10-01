@@ -183,7 +183,9 @@ fn run() -> Result<ExitCode> {
                     "--in-place is not supported by `fy lint` (auto-fix is not implemented)"
                 );
             }
-            let target = Target::resolve(paths, stdin_files, &batch)?;
+            let target = Target::resolve(paths, stdin_files, &batch).map_err(|err| {
+                commands::lint::report_unresolved(format, cli.output.clone(), err)
+            })?;
             let args = commands::lint::LintArgs {
                 config_path,
                 no_config,
@@ -194,6 +196,7 @@ fn run() -> Result<ExitCode> {
                 max_input_bytes: cli.max_input_bytes,
                 max_scan_ahead: cli.max_scan_ahead,
                 limits,
+                output: cli.output.clone(),
             };
 
             match target {
@@ -211,7 +214,7 @@ fn run() -> Result<ExitCode> {
                     let cmd =
                         commands::lint::LintCommand::build(common_config, args, &placeholder)?;
                     if cmd.is_ignored(&path) {
-                        cmd.execute_ignored()
+                        cmd.execute_ignored()?
                     } else {
                         let input = InputSource::from_file(&path, cmd.lint_config.max_input_bytes)
                             .map_err(|err| cmd.report_unreadable(Some(&path), err))?;
@@ -234,6 +237,7 @@ fn run() -> Result<ExitCode> {
                         &cmd.lint_config,
                         format,
                         cmd.scan_ahead,
+                        &cmd.output,
                     )?
                 }
             }

@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::{LintFormat, LintOutput, ParseLimitArgs};
 use crate::config::CommonConfig;
-use crate::error::ExitCode;
+use crate::error::{DiscoveryError, ExitCode};
 use crate::file_filter::FileFilter;
-use crate::io::InputSource;
+use crate::io::{InputSource, OutputWriter};
 
 /// CLI arguments for the lint command, separated from `CommonConfig`.
 pub struct LintArgs {
@@ -37,6 +37,8 @@ pub struct LintArgs {
     pub max_scan_ahead: Option<MaxScanAhead>,
     /// Depth and alias limits from the flags.
     pub limits: ParseLimitArgs,
+    /// Report destination (from `--output`); stdout when `None`.
+    pub output: Option<PathBuf>,
 }
 
 /// Lint command implementation
@@ -48,6 +50,8 @@ pub struct LintCommand {
     pub file_filter: FileFilter,
     /// Whether batch workers scale the scan-ahead limit (no explicit limit was given).
     pub scan_ahead: ScanAheadPolicy,
+    /// Where reports go (exposed for batch reuse).
+    pub output: OutputWriter,
     format: LintFormat,
 }
 
@@ -68,27 +72,46 @@ pub fn report_source(path: Option<&Path>) -> Result<ReportSource> {
     Ok(ReportSource::File(ReportPath::from_absolute(&absolute)?))
 }
 
-fn print_report(
+fn write_file_report(
+    output: &OutputWriter,
     format: ReportFormat,
     path: Option<&Path>,
     diagnostics: &[Diagnostic],
 ) -> Result<()> {
     let source = report_source(path)?;
-    print!(
-        "{}",
-        format.render(&[FileReport {
-            source: &source,
-            diagnostics,
-        }])
-    );
-    Ok(())
+    output.write_report(&format.render(&[FileReport {
+        source: &source,
+        diagnostics,
+    }]))
 }
 
-/// Prints a one-diagnostic report; a failure only warns so the caller's own error survives.
-fn print_report_or_warn(format: ReportFormat, path: Option<&Path>, diagnostic: Diagnostic) {
-    if let Err(err) = print_report(format, path, &[diagnostic]) {
+/// Writes a one-diagnostic report; a failure only warns so the caller's own error survives.
+fn write_report_or_warn(
+    output: &OutputWriter,
+    format: ReportFormat,
+    path: Option<&Path>,
+    diagnostic: Diagnostic,
+) {
+    if let Err(err) = write_file_report(output, format, path, &[diagnostic]) {
         eprintln!("error: {err:#}");
     }
+}
+
+/// Reports an input path that could not be resolved, so report formats never print nothing.
+///
+/// Returns `err` as the error to propagate; its exit code is unchanged.
+pub fn report_unresolved(
+    format: LintFormat,
+    output: Option<PathBuf>,
+    err: DiscoveryError,
+) -> anyhow::Error {
+    if let (Some(format), Some(path)) = (format.report(), err.path())
+        && let Ok(output) = OutputWriter::from_args(output, false, None)
+    {
+        let diagnostic = input_error_diagnostic(err.to_string());
+        write_report_or_warn(&output, format, Some(path), diagnostic);
+    }
+    err.into()
 }
 
 fn split_config(config: ConfigFile) -> (LintConfig, FileFilter) {
@@ -129,6 +152,7 @@ impl LintCommand {
             lint_config,
             file_filter,
             scan_ahead,
+            output: OutputWriter::from_args(args.output, false, None)?,
             format: args.format,
         })
     }
@@ -181,14 +205,19 @@ impl LintCommand {
     }
 
     /// Reports a file that the config file ignores: no diagnostics and a success exit code.
-    #[must_use]
-    pub fn execute_ignored(&self) -> ExitCode {
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the report cannot be written.
+    pub fn execute_ignored(&self) -> Result<ExitCode> {
         match self.format.output() {
-            LintOutput::Json => print!("{}", JsonFormatter::new(true).format(&[], "")),
+            LintOutput::Json => self
+                .output
+                .write_report(&JsonFormatter::new(true).format(&[], ""))?,
             LintOutput::Text => {}
-            LintOutput::Report(format) => print!("{}", format.render(&[])),
+            LintOutput::Report(format) => self.output.write_report(&format.render(&[]))?,
         }
-        ExitCode::Success
+        Ok(ExitCode::Success)
     }
 
     /// Reports an input that could not be read, so report formats never print nothing.
@@ -196,7 +225,8 @@ impl LintCommand {
     /// Returns `err` unchanged for the caller to propagate.
     pub fn report_unreadable(&self, path: Option<&Path>, err: anyhow::Error) -> anyhow::Error {
         if let Some(format) = self.format.report() {
-            print_report_or_warn(format, path, input_error_diagnostic(format!("{err:#}")));
+            let diagnostic = input_error_diagnostic(format!("{err:#}"));
+            write_report_or_warn(&self.output, format, path, diagnostic);
         }
         err
     }
@@ -226,7 +256,7 @@ impl LintCommand {
             Err(err) => {
                 if let Some(format) = self.format.report() {
                     let diagnostic = syntax_diagnostic(&err, input.as_str());
-                    print_report_or_warn(format, input.file_path(), diagnostic);
+                    write_report_or_warn(&self.output, format, input.file_path(), diagnostic);
                 }
                 return Err(err).context("Failed to lint YAML");
             }
@@ -245,20 +275,21 @@ impl LintCommand {
             LintOutput::Text => {
                 let mut formatter = TextFormatter::new();
                 formatter.use_color = self.config.output.use_color();
-                print!(
-                    "{}",
-                    formatter.format(&filtered_diagnostics, input.as_str())
-                );
+                self.output
+                    .write_report(&formatter.format(&filtered_diagnostics, input.as_str()))?;
             }
             LintOutput::Json => {
                 let formatter = JsonFormatter::new(true);
-                print!(
-                    "{}",
-                    formatter.format(&filtered_diagnostics, input.as_str())
-                );
+                self.output
+                    .write_report(&formatter.format(&filtered_diagnostics, input.as_str()))?;
             }
             LintOutput::Report(format) => {
-                print_report(format, input.file_path(), &filtered_diagnostics)?;
+                write_file_report(
+                    &self.output,
+                    format,
+                    input.file_path(),
+                    &filtered_diagnostics,
+                )?;
             }
         }
 
@@ -328,6 +359,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             input,
         )
@@ -364,6 +396,7 @@ mod tests {
                 max_input_bytes: flag.map(|n| MaxInputBytes::new(n).unwrap()),
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         )
@@ -516,6 +549,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         )
@@ -539,6 +573,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         );
@@ -563,6 +598,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         )
@@ -593,6 +629,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         )
@@ -619,6 +656,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         )
@@ -647,6 +685,7 @@ mod tests {
                 max_input_bytes: None,
                 max_scan_ahead: None,
                 limits: ParseLimitArgs::default(),
+                output: None,
             },
             &stdin_input(""),
         )

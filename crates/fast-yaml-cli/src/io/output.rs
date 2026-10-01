@@ -98,10 +98,95 @@ impl OutputWriter {
         Ok(())
     }
 
+    /// Write a finished report; a closed stdout or stderr ends the output silently.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error on any I/O failure other than a closed pipe.
+    pub fn write_report(&self, content: &str) -> Result<()> {
+        let mut sink = self.sink();
+        sink.write_all(content.as_bytes())
+            .and_then(|()| sink.flush())
+            .context("Failed to write lint output")?;
+        sink.finish()
+    }
+
+    /// Opens a streaming writer for output produced piece by piece.
+    ///
+    /// Stdout and stderr are written as the pieces arrive and stop silently once the reader
+    /// closes the pipe. A file destination is buffered and replaced atomically by
+    /// [`OutputSink::finish`].
+    pub const fn sink(&self) -> OutputSink<'_> {
+        OutputSink {
+            destination: &self.destination,
+            buffer: Vec::new(),
+            reader_gone: false,
+        }
+    }
+
     /// Write to file via the shared secure atomic writer
     fn write_file(path: &Path, content: &str) -> Result<()> {
         fast_yaml_parallel::write_atomic(path, content.as_bytes())
             .with_context(|| format!("Failed to write file: {}", path.display()))
+    }
+}
+
+/// Streaming writer over an [`OutputWriter`] destination that survives a closed pipe.
+///
+/// Once the reader of stdout or stderr is gone (`EPIPE`), every later write succeeds without
+/// writing, so the producer finishes its work and the caller keeps its own exit status.
+#[derive(Debug)]
+pub struct OutputSink<'a> {
+    destination: &'a OutputDestination,
+    buffer: Vec<u8>,
+    reader_gone: bool,
+}
+
+impl OutputSink<'_> {
+    /// Commits buffered output to a file destination; stream destinations have nothing left.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written.
+    pub fn finish(self) -> Result<()> {
+        match self.destination {
+            OutputDestination::File(path) => fast_yaml_parallel::write_atomic(path, &self.buffer)
+                .with_context(|| format!("Failed to write file: {}", path.display())),
+            OutputDestination::Stdout | OutputDestination::Stderr => Ok(()),
+        }
+    }
+
+    fn stream(&mut self, op: impl FnOnce(&mut dyn Write) -> io::Result<()>) -> io::Result<()> {
+        if self.reader_gone {
+            return Ok(());
+        }
+        let result = match self.destination {
+            OutputDestination::Stdout => op(&mut io::stdout().lock()),
+            OutputDestination::Stderr => op(&mut io::stderr().lock()),
+            OutputDestination::File(_) => return Ok(()),
+        };
+        match result {
+            Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
+                self.reader_gone = true;
+                Ok(())
+            }
+            other => other,
+        }
+    }
+}
+
+impl Write for OutputSink<'_> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if matches!(self.destination, OutputDestination::File(_)) {
+            self.buffer.extend_from_slice(buf);
+        } else {
+            self.stream(|w| w.write_all(buf))?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream(|w| w.flush())
     }
 }
 

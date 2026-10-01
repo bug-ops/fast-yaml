@@ -37,6 +37,8 @@ use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
 use crate::invocation::BatchTarget;
+use crate::io::OutputWriter;
+use crate::io::output::OutputSink;
 
 /// Files that may be started but not yet reported, per worker. Finished files hold only their
 /// diagnostics, so the window can be wide enough to keep workers busy behind one slow file.
@@ -248,6 +250,7 @@ pub fn execute_lint_batch(
     lint_config: &LintConfig,
     format: LintFormat,
     scan_ahead: ScanAheadPolicy,
+    output: &OutputWriter,
 ) -> Result<ExitCode> {
     let discovery = FileDiscovery::new(target.discovery.clone())
         .context("Failed to initialize file discovery")?;
@@ -264,6 +267,7 @@ pub fn execute_lint_batch(
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
     let linter = Linters::new(lint_config, scan_ahead, workers);
     let is_quiet = common.output.is_quiet();
+    let mut sink = output.sink();
 
     let any_errors = match format.output() {
         LintOutput::Text => run_batch(
@@ -274,16 +278,26 @@ pub fn execute_lint_batch(
                 use_color: common.output.use_color(),
             },
             is_quiet,
+            &mut sink,
         ),
-        LintOutput::Json => run_batch(&pool, &file_paths, &linter, &JsonOutput, is_quiet),
+        LintOutput::Json => run_batch(
+            &pool,
+            &file_paths,
+            &linter,
+            &JsonOutput,
+            is_quiet,
+            &mut sink,
+        ),
         LintOutput::Report(format) => run_batch(
             &pool,
             &file_paths,
             &linter,
             &ReportOutput { format },
             is_quiet,
+            &mut sink,
         ),
     }?;
+    sink.finish()?;
 
     if any_errors {
         Ok(ExitCode::LintErrors)
@@ -292,13 +306,15 @@ pub fn execute_lint_batch(
     }
 }
 
-/// Lints `file_paths` on the pool and writes the reports of `format` to stdout and stderr.
+/// Lints `file_paths` on the pool, writing the reports of `format` to `sink` and failures to
+/// stderr.
 fn run_batch<F: OutputFormat>(
     pool: &ThreadPool,
     file_paths: &[PathBuf],
     linter: &Linters,
     format: &F,
     is_quiet: bool,
+    sink: &mut OutputSink<'_>,
 ) -> Result<bool> {
     let window = pool
         .current_num_threads()
@@ -306,9 +322,8 @@ fn run_batch<F: OutputFormat>(
         .max(1);
     let lint_nth = |index: usize| lint_one(&file_paths[index], linter, format, is_quiet);
 
-    let stdout = io::stdout();
     run_ordered(pool, file_paths.len(), window, &lint_nth, |reports| {
-        format.emit(stdout.lock(), io::stderr().lock(), reports)
+        format.emit(sink, io::stderr().lock(), reports)
     })
 }
 
