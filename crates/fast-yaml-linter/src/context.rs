@@ -11,6 +11,7 @@ use crate::{
     tokenizer::{FlowIndex, FlowTokenizer},
 };
 use fast_yaml_core::SourcePosition;
+use fast_yaml_core::limits::ParseLimits;
 #[cfg(test)]
 use saphyr_parser::{Marker, Span as SaphyrSpan};
 use std::collections::HashMap;
@@ -1038,6 +1039,8 @@ pub struct LintContext<'a> {
     scan: OnceLock<SourceScan<'a>>,
     /// Scan with every product, for what the lint scan did not collect.
     full_scan: OnceLock<SourceScan<'a>>,
+    /// Limits of the lazy scans a context runs itself.
+    parse_limits: ParseLimits,
     lines: OnceLock<Vec<&'a str>>,
     line_metadata: OnceLock<Vec<LineMetadata>>,
     key_index: OnceLock<KeyIndex<'a>>,
@@ -1074,6 +1077,7 @@ impl<'a> LintContext<'a> {
             source_context: SourceContext::new(source),
             scan: OnceLock::new(),
             full_scan: OnceLock::new(),
+            parse_limits: ParseLimits::default(),
             lines: OnceLock::new(),
             line_metadata: OnceLock::new(),
             key_index: OnceLock::new(),
@@ -1081,6 +1085,32 @@ impl<'a> LintContext<'a> {
             block_lines: OnceLock::new(),
             doc_start_line: 1,
         }
+    }
+
+    /// Sets the limits of the lazy loader pass this context runs for what it was not given.
+    ///
+    /// [`Linter`](crate::Linter) passes its configured
+    /// [`LintConfig::parse_limits`](crate::LintConfig::parse_limits), so a raised limit applies to
+    /// every pass; a context built with [`new`](Self::new) uses the defaults. Call it before the
+    /// first read of the context.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::limits::{MaxScanAhead, ParseLimits};
+    /// use fast_yaml_linter::LintContext;
+    ///
+    /// let limits = ParseLimits {
+    ///     max_scan_ahead: MaxScanAhead::new(8 * 1024 * 1024).unwrap(),
+    ///     ..ParseLimits::default()
+    /// };
+    /// let context = LintContext::new("key: value  # note").with_parse_limits(limits);
+    /// assert_eq!(context.comments().len(), 1);
+    /// ```
+    #[must_use]
+    pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
+        self.parse_limits = limits;
+        self
     }
 
     /// Returns a copy of this context with `doc_start_line` set to `line`.
@@ -1160,8 +1190,9 @@ impl<'a> LintContext<'a> {
     }
 
     fn scan(&self) -> &SourceScan<'a> {
-        self.scan
-            .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
+        self.scan.get_or_init(|| {
+            SourceScan::of_source(self.source, &self.source_context, self.parse_limits)
+        })
     }
 
     /// Whether the scan parsed the whole source, so its comments are complete.
@@ -1175,8 +1206,9 @@ impl<'a> LintContext<'a> {
         if scan.gathered.covers(needs) {
             scan
         } else {
-            self.full_scan
-                .get_or_init(|| SourceScan::of_source(self.source, &self.source_context))
+            self.full_scan.get_or_init(|| {
+                SourceScan::of_source(self.source, &self.source_context, self.parse_limits)
+            })
         }
     }
 

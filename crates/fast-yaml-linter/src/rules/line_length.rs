@@ -9,7 +9,7 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
 use fast_yaml_core::events::{Event, EventStream};
-use fast_yaml_core::limits::{MaxScanAhead, ParseLimits};
+use fast_yaml_core::limits::ParseLimits;
 use fast_yaml_core::{NormalizedInput, Value};
 
 use super::node_roles::{CollectionStyle, NodeRole, RoleTracker};
@@ -83,15 +83,29 @@ impl LineLengthOptions {
     }
 }
 
-/// Chars the scanner may read past a node of a single line; a longer one is no inline mapping, and
-/// the cap keeps a multi-megabyte line from buffering its tokens.
-const LINE_SCAN_AHEAD: usize = 64 * 1024;
+/// Whether `line` is, from its first content char to its last, one flow collection (`[...]` or
+/// `{...}`, after indentation and `- ` markers), which is never an inline mapping.
+///
+/// Decided from the text, so a multi-megabyte flow line is not handed to the parser, whose
+/// scanner buffers tokens far beyond the line's size.
+fn is_whole_flow_collection(line: &str) -> bool {
+    let mut content = line.trim_start_matches(' ');
+    while let Some(rest) = content.strip_prefix("- ") {
+        content = rest.trim_start_matches(' ');
+    }
+    let content = content.trim_end();
+    (content.starts_with('[') && content.ends_with(']'))
+        || (content.starts_with('{') && content.ends_with('}'))
+}
 
 /// Whether `line` holds a block mapping whose first plain or quoted value, without anchor or tag,
 /// has no space from its start to the end of the line (yamllint's inline mapping check).
 ///
 /// A line that does not parse on its own, or whose first mapping is a flow mapping, is not one.
 fn is_inline_mapping_of_one_word(line: &str) -> bool {
+    if is_whole_flow_collection(line) {
+        return false;
+    }
     let Ok(input) = NormalizedInput::new(line) else {
         return false;
     };
@@ -99,11 +113,7 @@ fn is_inline_mapping_of_one_word(line: &str) -> bool {
     let context = SourceContext::new(line);
     let mut roles = RoleTracker::default();
     let mut seen_mapping = false;
-    let limits = ParseLimits {
-        max_scan_ahead: MaxScanAhead::new(LINE_SCAN_AHEAD).unwrap_or_default(),
-        ..ParseLimits::default()
-    };
-    for item in EventStream::new(&input, limits) {
+    for item in EventStream::new(&input, ParseLimits::default()) {
         let Ok(item) = item else {
             break;
         };
@@ -419,6 +429,30 @@ mod tests {
         ] {
             assert_eq!(flagged(&yaml, on), [1], "{yaml:?}");
         }
+    }
+
+    #[test]
+    fn a_very_long_single_word_stays_exempt_in_an_inline_mapping() {
+        let on = "{max: 20, allow-non-breakable-inline-mappings: true}";
+        let word = "QUJD".repeat(50_000);
+        for yaml in [format!("key: {word}\n"), format!("- key: \"{word}\"\n")] {
+            assert!(flagged(&yaml, on).is_empty(), "{} bytes", yaml.len());
+        }
+    }
+
+    #[test]
+    fn a_line_that_is_one_flow_collection_is_not_an_inline_mapping() {
+        let on = "{max: 20, allow-non-breakable-inline-mappings: true}";
+        for yaml in [
+            "[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n",
+            "- {a: 1, b: 2, c: 3, d: 4}\n",
+        ] {
+            assert_eq!(flagged(yaml, on), [1], "{yaml:?}");
+        }
+        assert_eq!(
+            flagged("[a, b]: http://localhost/very/very/very/long/url\n", on).len(),
+            0
+        );
     }
 
     #[test]

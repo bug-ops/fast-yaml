@@ -231,12 +231,12 @@ impl<'a> SourceScan<'a> {
         }
     }
 
-    /// Lazy form of [`scan`](Self::scan) with the default limits and every product, for a
+    /// Lazy form of [`scan`](Self::scan) under `limits` with every product, for a
     /// context nobody scanned.
     ///
     /// The result is incomplete when the source does not parse.
-    pub fn of_source(source: &'a str, context: &SourceContext<'_>) -> Self {
-        Self::scan(source, context, ParseLimits::default(), ScanNeeds::ALL).0
+    pub fn of_source(source: &'a str, context: &SourceContext<'_>, limits: ParseLimits) -> Self {
+        Self::scan(source, context, limits, ScanNeeds::ALL).0
     }
 }
 
@@ -738,6 +738,27 @@ mod tests {
         let context = context.with_scan(none);
         assert!(context.nodes().nodes().count() > 0);
         assert!(context.in_block_scalar(3));
+    }
+
+    #[test]
+    fn fallback_scan_uses_the_configured_limits() {
+        use fast_yaml_core::limits::MaxDepth;
+
+        let deep = (0..300).fold(String::new(), |mut text, level| {
+            text.push_str(&" ".repeat(level));
+            text.push_str("a:\n");
+            text
+        });
+        let default = LintContext::new(&deep);
+        assert!(!default.scan_is_complete());
+
+        let raised = ParseLimits {
+            max_depth: MaxDepth::new(400).unwrap(),
+            ..ParseLimits::default()
+        };
+        let context = LintContext::new(&deep).with_parse_limits(raised);
+        assert!(context.scan_is_complete());
+        assert!(context.nodes().nodes().count() > 300);
     }
 
     #[test]

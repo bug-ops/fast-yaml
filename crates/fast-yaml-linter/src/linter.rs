@@ -398,7 +398,7 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let context = LintContext::new(source);
+        let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
         let mut collector = ScanCollector::new(
             &normalized,
             source,
@@ -502,7 +502,7 @@ impl Linter {
         self.config.max_input_bytes.check(source.len())?;
         let normalized = NormalizedInput::new(source)?;
         let source = normalized.as_str();
-        let context = LintContext::new(source);
+        let context = LintContext::new(source).with_parse_limits(self.config.parse_limits);
         // Comments and markers come from the source itself, under the configured limits; a source
         // that does not load is an error here, as it is in `lint`
         let (scan, failure) = SourceScan::scan(

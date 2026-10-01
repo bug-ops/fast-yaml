@@ -646,15 +646,19 @@ fn collect_masked_ranges(source: &str, scalars: &ScalarRanges) -> Vec<ByteRange>
 mod tests {
     use super::*;
     use crate::{Location, Span};
+    use fast_yaml_core::limits::ParseLimits;
 
     impl FlowIndex {
         fn new(source: &str, context: &SourceContext<'_>) -> Self {
-            Self::from_scan(&SourceScan::of_source(source, context), source)
+            Self::from_scan(
+                &SourceScan::of_source(source, context, ParseLimits::default()),
+                source,
+            )
         }
     }
 
     fn collect_scalar_ranges(source: &str, context: &SourceContext<'_>) -> ScalarRanges {
-        SourceScan::of_source(source, context).scalars
+        SourceScan::of_source(source, context, ParseLimits::default()).scalars
     }
 
     impl FlowTokenizer<'_> {
