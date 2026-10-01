@@ -9,19 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#536)
-- **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#536)
-- **Linter**: `line-length` lets a one-word line through by default (#536)
-- **Linter**: `document-start`/`document-end` check every document (#536)
-- **Linter**: `QuotedStringsOptions`, `LineLengthOptions` and `DuplicateKeysOptions` gain fields (#536)
-- **Core**: `events::EventItem` gains `end`, the position where the event's token ends (#438)
-- **Linter**: `duplicate-key` now compares resolved values (`99`/`+99` collide, `"1"`/`1` do not), where yamllint compares text (#545)
-- **Linter**: `duplicate-key` gains `forbid-duplicated-merge-keys`, on by default (the yamllint presets turn it off), so a repeated `<<` stays reported (#545) (#536)
-- **Linter**: `Linter::lint_value` returns `LintError::ParseError` when `source` does not load under the configured limits (#438)
-- **Linter**: `comment_parser` is removed and `Comment<'a> { text, span, kind: CommentKind }` replaces `content`/`is_inline`/`is_shebang` (#438)
-- **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#533)
-- **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331; map an offset back with `NormalizedInput::original_offset` (#550)
-- **Linter**: `FlowTokenizer::new` takes a prebuilt `&FlowIndex` instead of the source text (#386)
+- **Linter**: `truthy` no longer reports or accepts `y`/`n`/`Y`/`N` (#576)
+- **Linter**: `quoted-strings` skips mapping keys (unless `check-keys`) and `!!`-tagged scalars (#576)
+- **Linter**: `line-length` lets a one-word line through by default (#576)
+- **Linter**: `document-start`/`document-end` check every document (#576)
+- **Linter**: `QuotedStringsOptions`, `LineLengthOptions` and `DuplicateKeysOptions` gain fields (#576)
+- **Core**: `events::EventItem` gains `end`, the position where the event's token ends (#576)
+- **Linter**: `duplicate-key` now compares resolved values (`99`/`+99` collide, `"1"`/`1` do not), where yamllint compares text (#576)
+- **Linter**: `duplicate-key` gains `forbid-duplicated-merge-keys`, on by default (the yamllint presets turn it off), so a repeated `<<` stays reported (#576)
+- **Linter**: `Linter::lint_value` returns `LintError::ParseError` when `source` does not load under the configured limits (#576)
+- **Linter**: `comment_parser` is removed and `Comment<'a> { text, span, kind: CommentKind }` replaces `content`/`is_inline`/`is_shebang` (#576)
+- **Linter**: `flow_common::check_spaces_after_opening` and `check_spaces_before_closing` are no longer public (#576)
+- **Linter/CLI/Python/Node.js**: every `Span` field (line, column, byte offset, suggestion spans) refers to the text with document-prefix BOMs removed, so offsets no longer include the BOM bytes; this reverses the original-file offsets of #331; map an offset back with `NormalizedInput::original_offset` (#576)
+- **Linter**: `FlowTokenizer::new` takes a prebuilt `&FlowIndex` instead of the source text (#576)
 - **Core**: `LimitGuard`, `MergeKeyValidator`, `ParseError::scanner` and `From<Span> for SourcePosition` are removed from the public API in favor of `events::EventStream`, and `resolve_scalar`/`core_tag_suffix` take `ScalarStyle` and `events::Tag` (#542) (#562)
 - **Parallel**: an unindented root block scalar keeps a column-0 `---` as content, so the document count changes, and `Chunk.index` is removed (#552) (#562)
 - **Python**: `saphyr-parser` is no longer a dependency of the bindings (#542) (#562)
@@ -112,10 +112,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Linter**: public `FlowIndex` and `LintContext::flow_tokenizer`, so the flow rules share one tokenizer index per lint run (#386)
-- **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#536)
-- **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#536)
-- **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#438)
+- **Linter**: public `FlowIndex` and `LintContext::flow_tokenizer`, so the flow rules share one tokenizer index per lint run (#576)
+- **Linter/CLI/Python/Node.js**: `level` as an alias of `severity`, `quoted-strings` `allow-quoted-quotes`/`check-keys`, `duplicate-key` `forbid-duplicated-merge-keys` (on by default, off in the presets) and `line-length` `allow-non-breakable-words`/`allow-non-breakable-inline-mappings` (#576)
+- **CLI**: `fy lint --stdin-files` reads the file list from stdin like `fy format` (#576)
+- **Core**: `CommentScanner` and `Parser::parse_normalized_observed` (taking `EventItem`s) let a caller find comments in the same parser pass that loads the documents (#576)
 - **Core**: new `events` module with `EventStream`, `Event`, `ScalarStyle`, `Tag` and `AnchorId`, and a root `ScalarStyle` re-export (#542) (#562)
 - **Core**: `MaxInputBytes` documents the flow-collection memory amplification of saphyr-parser (#553) (#562)
 - **Node.js**: `safeDump` writes a `Set` as a `!!set` and a `Map` as a mapping, including ones from another realm, instead of dropping their contents (#547) (#541) (#564)
@@ -139,8 +139,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#539)
-- **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#438)
+- **CLI**: `fy lint` batch mode streams results through a bounded window of files, so memory no longer holds every file's content and a slow file does not idle the workers, and stdout and stderr follow file order (#576)
+- **Linter**: `Linter::lint` finds comments and document markers in the loader's parser pass instead of a line-based scan plus a second parse for directives (#576)
 - **Core**: faster `NormalizedInput` scan and no per-float allocation in `Float::parse` and `to_saphyr` (#558) (#562)
 - **CLI**: `OutputConfig::from_cli` takes a `Verbosity` enum instead of `quiet`/`verbose` bools, color detection takes an injected env lookup, and `ReportEvent::BatchSummary` carries `BatchStats` (#330) (#534)
 - **Node.js**: `safeLoad`/`safeLoadAll`/`load`/`loadAll`/`parseParallel` return env-bound values without a lifetime transmute, and napi coercions use safe `FromNapiValue::from_unknown` (#342) (#330) (#534)
@@ -183,8 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Linter**: `comments-indentation` skips a comment that follows a block scalar, as yamllint does (#438)
-- **Linter**: `comments`, `comments-indentation` and inline directives no longer treat a `#` inside a multi-line quoted or block scalar as a comment, and document start lines are read from parser events instead of `---` lines (#438)
+- **Linter**: `comments-indentation` skips a comment that follows a block scalar, as yamllint does (#576)
+- **Linter**: `comments`, `comments-indentation` and inline directives no longer treat a `#` inside a multi-line quoted or block scalar as a comment, and document start lines are read from parser events instead of `---` lines (#576)
 - **Parallel**: `parse_parallel` agrees with `parse_all` on a root block scalar followed by `---`, and parse errors report the document index (#552) (#562)
 - **Core/CLI**: flow nesting beyond 255 levels is a `FlowNesting` limit error that `--max-depth` cannot raise (#556) (#564)
 - **Core**: a repeated mapping key keeps its first position with the last value for every key form, as Python `safe_load` does (#522) (#530)
