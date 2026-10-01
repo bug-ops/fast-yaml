@@ -30,6 +30,12 @@ pub enum ScanAheadPolicy {
     /// Workers parse at the configured limit divided by their number (never below 1 MiB);
     /// a file the smaller limit rejects is retried at the configured limit, one file at a
     /// time. Use it only when the limit was not chosen explicitly.
+    ///
+    /// The memory bound depends on the worker count: with at most four workers the first
+    /// attempts together stay within the configured limit, above that the 1 MiB floor makes
+    /// the aggregate `workers` x 1 MiB (128 MiB of look-ahead for 128 workers), plus one
+    /// full-limit retry at a time. The lane is per batch run, so two concurrent runs can each
+    /// hold a retry.
     Scaled,
 }
 
@@ -124,6 +130,7 @@ impl ScanAheadLane {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     fn workers(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).unwrap()
@@ -186,5 +193,32 @@ mod tests {
         );
         assert_eq!(other, Err("syntax"));
         assert_eq!(calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn test_at_most_one_retry_holds_the_lane_at_a_time() {
+        let lane = ScanAheadLane::scaled(MaxScanAhead::DEFAULT, workers(8));
+        let (active, peak) = (AtomicUsize::new(0), AtomicUsize::new(0));
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    let result: Result<(), &str> = lane.run(
+                        |limit| {
+                            if limit == lane.first_limit() {
+                                return Err("too long");
+                            }
+                            let now = active.fetch_add(1, Ordering::SeqCst) + 1;
+                            peak.fetch_max(now, Ordering::SeqCst);
+                            std::thread::sleep(Duration::from_millis(10));
+                            active.fetch_sub(1, Ordering::SeqCst);
+                            Ok(())
+                        },
+                        |_| true,
+                    );
+                    assert!(result.is_ok());
+                });
+            }
+        });
+        assert_eq!(peak.load(Ordering::SeqCst), 1);
     }
 }

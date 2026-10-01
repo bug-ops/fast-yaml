@@ -999,4 +999,23 @@ mod tests {
         // Should succeed
         assert!(result.is_success());
     }
+
+    #[test]
+    fn test_scaled_policy_lowers_the_first_scan_ahead_limit() {
+        use crate::scan_ahead::ScanAheadPolicy;
+        use fast_yaml_core::limits::MaxScanAhead;
+
+        let emitter = EmitterConfig::new();
+        let lane = |policy| {
+            FileProcessor::with_config(
+                Config::new()
+                    .with_workers(Some(8))
+                    .with_scan_ahead_policy(policy),
+            )
+            .lane(&emitter)
+            .first_limit()
+        };
+        assert_eq!(lane(ScanAheadPolicy::Fixed), MaxScanAhead::DEFAULT);
+        assert!(lane(ScanAheadPolicy::Scaled).get() < MaxScanAhead::DEFAULT.get());
+    }
 }
