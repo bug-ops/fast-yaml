@@ -7,6 +7,7 @@
 //! the worker interleaving.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::io::{self, Write};
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
@@ -15,7 +16,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use anyhow::{Context, Result};
-use fast_yaml_linter::{Diagnostic, Formatter, LintConfig, Linter, Severity, TextFormatter};
+use fast_yaml_linter::{
+    Diagnostic, Formatter, LintConfig, LintError, Linter, Severity, TextFormatter,
+};
 use fast_yaml_parallel::{Error as ParallelError, FileContent, SmartReader};
 use rayon::{Scope, ThreadPool};
 use serde::ser::{SerializeSeq, Serializer};
@@ -31,94 +34,121 @@ use crate::invocation::BatchTarget;
 /// diagnostics, so the window can be wide enough to keep workers busy behind one slow file.
 const WINDOW_PER_WORKER: usize = 16;
 
-/// Formats a read failure for stderr; `Io` already names the path, the other variants do not.
-fn read_error_line(path: &Path, err: &ParallelError) -> String {
-    let hint = RaiseHint::of(err).map_or_else(String::new, |h| format!(" ({h})"));
-    match err {
-        ParallelError::Io { .. } => format!("error: {err}{hint}"),
-        _ => format!("error: '{}': {err}{hint}", path.display()),
-    }
-}
-
-/// What linting one file produced, in the shape the output format needs.
-///
-/// The file content is dropped inside the worker: text output is rendered there while the
-/// content is alive, and JSON output needs only the diagnostics.
-enum FileOutcome {
-    /// The file could not be read or parsed; the message goes to stderr.
-    Failed { message: String },
-    /// Text output, empty when the file has nothing to report.
-    Text { has_errors: bool, rendered: String },
-    /// Diagnostics for the JSON array.
-    Json {
-        has_errors: bool,
-        diagnostics: Vec<Diagnostic>,
+/// Why a file could not be linted; the file is reported on stderr and counts as an error.
+#[derive(Debug)]
+enum FileFailure {
+    Read {
+        path: PathBuf,
+        source: ParallelError,
+    },
+    Lint {
+        path: PathBuf,
+        source: LintError,
     },
 }
 
-struct FileReport {
-    path: PathBuf,
-    outcome: FileOutcome,
-}
-
-fn lint_one(
-    path: &Path,
-    reader: &SmartReader,
-    lint_config: &LintConfig,
-    format: LintFormat,
-    is_quiet: bool,
-    use_color: bool,
-) -> FileReport {
-    let outcome = lint_content(path, reader, lint_config, format, is_quiet, use_color)
-        .unwrap_or_else(|message| FileOutcome::Failed { message });
-    FileReport {
-        path: path.to_path_buf(),
-        outcome,
+impl FileFailure {
+    fn hint(&self) -> Option<RaiseHint> {
+        match self {
+            Self::Read { source, .. } => RaiseHint::of(source),
+            Self::Lint { source, .. } => RaiseHint::of(source),
+        }
     }
 }
 
-fn lint_content(
+impl fmt::Display for FileFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            // `Io` already names the path, the other variants do not
+            Self::Read {
+                source: source @ ParallelError::Io { .. },
+                ..
+            } => write!(f, "error: {source}")?,
+            Self::Read { path, source } => write!(f, "error: '{}': {source}", path.display())?,
+            Self::Lint { path, source } => write!(f, "error: '{}': {source}", path.display())?,
+        }
+        self.hint().map_or(Ok(()), |hint| write!(f, " ({hint})"))
+    }
+}
+
+/// A linted file: whether it has errors, and what its output format keeps of the diagnostics.
+///
+/// The file content is dropped inside the worker; text output is rendered there while the
+/// content is alive.
+struct Linted<P> {
+    has_errors: bool,
+    payload: P,
+}
+
+struct FileReport<P> {
+    path: PathBuf,
+    outcome: Result<Linted<P>, FileFailure>,
+}
+
+/// An output format: what a worker keeps of a file's diagnostics, and how the reports are
+/// written. One type per format, so a report can only reach the emitter of its own format.
+trait OutputFormat: Sync {
+    type Payload: Send;
+
+    /// Reduces the diagnostics of a file with this `content` to what the emitter needs.
+    fn payload(&self, diagnostics: Vec<Diagnostic>, content: &str) -> Self::Payload;
+
+    /// Writes the reports in file order, failures to `err` and results to `out`, and returns
+    /// whether any file had an error. A write error stops the run.
+    fn emit<W: Write, E: Write>(
+        &self,
+        out: W,
+        err: E,
+        reports: impl Iterator<Item = FileReport<Self::Payload>>,
+    ) -> Result<bool>;
+}
+
+/// Human-readable output, rendered by the worker.
+struct TextOutput {
+    use_color: bool,
+}
+
+/// One JSON array of all diagnostics.
+struct JsonOutput;
+
+fn lint_one<F: OutputFormat>(
     path: &Path,
     reader: &SmartReader,
-    lint_config: &LintConfig,
-    format: LintFormat,
+    linter: &Linter,
+    format: &F,
     is_quiet: bool,
-    use_color: bool,
-) -> Result<FileOutcome, String> {
-    let content = reader
-        .read(path, lint_config.max_input_bytes)
-        .and_then(FileContent::into_string)
-        .map_err(|e| read_error_line(path, &e))?;
+) -> FileReport<F::Payload> {
+    FileReport {
+        path: path.to_path_buf(),
+        outcome: lint_content(path, reader, linter, format, is_quiet),
+    }
+}
 
-    let mut diagnostics = Linter::with_config(lint_config.clone())
-        .lint(&content)
-        .map_err(|e| {
-            let hint = RaiseHint::of(&e).map_or_else(String::new, |h| format!(" ({h})"));
-            format!("error: '{}': {e}{hint}", path.display())
+fn lint_content<F: OutputFormat>(
+    path: &Path,
+    reader: &SmartReader,
+    linter: &Linter,
+    format: &F,
+    is_quiet: bool,
+) -> Result<Linted<F::Payload>, FileFailure> {
+    let content = reader
+        .read(path, linter.config().max_input_bytes)
+        .and_then(FileContent::into_string)
+        .map_err(|source| FileFailure::Read {
+            path: path.to_path_buf(),
+            source,
         })?;
+
+    let mut diagnostics = linter.lint(&content).map_err(|source| FileFailure::Lint {
+        path: path.to_path_buf(),
+        source,
+    })?;
     if is_quiet {
         diagnostics.retain(|d| d.severity == Severity::Error);
     }
-    let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
-
-    Ok(match format {
-        LintFormat::Text => {
-            let mut formatter = TextFormatter::new();
-            formatter.use_color = use_color;
-            let rendered = if diagnostics.is_empty() {
-                String::new()
-            } else {
-                formatter.format(&diagnostics, &content)
-            };
-            FileOutcome::Text {
-                has_errors,
-                rendered,
-            }
-        }
-        LintFormat::Json => FileOutcome::Json {
-            has_errors,
-            diagnostics,
-        },
+    Ok(Linted {
+        has_errors: diagnostics.iter().any(|d| d.severity == Severity::Error),
+        payload: format.payload(diagnostics, &content),
     })
 }
 
@@ -149,34 +179,49 @@ pub fn execute_lint_batch(
         .build()
         .context("Failed to build thread pool")?;
 
-    let use_color = common.output.use_color();
+    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
+    let linter = Linter::with_config(lint_config.clone());
     let is_quiet = common.output.is_quiet();
 
-    let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
-
-    let reader = SmartReader::with_threshold(u64::MAX);
-    let window = workers.saturating_mul(WINDOW_PER_WORKER).max(1);
-    let lint_nth = |index: usize| {
-        lint_one(
-            &file_paths[index],
-            &reader,
-            lint_config,
-            format,
+    let any_errors = match format {
+        LintFormat::Text => run_batch(
+            &pool,
+            &file_paths,
+            &linter,
+            &TextOutput {
+                use_color: common.output.use_color(),
+            },
             is_quiet,
-            use_color,
-        )
-    };
-
-    let stdout = io::stdout();
-    let any_errors = run_ordered(&pool, file_paths.len(), window, &lint_nth, |reports| {
-        emit(format, stdout.lock(), io::stderr().lock(), reports)
-    })?;
+        ),
+        LintFormat::Json => run_batch(&pool, &file_paths, &linter, &JsonOutput, is_quiet),
+    }?;
 
     if any_errors {
         Ok(ExitCode::LintErrors)
     } else {
         Ok(ExitCode::Success)
     }
+}
+
+/// Lints `file_paths` on the pool and writes the reports of `format` to stdout and stderr.
+fn run_batch<F: OutputFormat>(
+    pool: &ThreadPool,
+    file_paths: &[PathBuf],
+    linter: &Linter,
+    format: &F,
+    is_quiet: bool,
+) -> Result<bool> {
+    let reader = SmartReader::with_threshold(u64::MAX);
+    let window = pool
+        .current_num_threads()
+        .saturating_mul(WINDOW_PER_WORKER)
+        .max(1);
+    let lint_nth = |index: usize| lint_one(&file_paths[index], &reader, linter, format, is_quiet);
+
+    let stdout = io::stdout();
+    run_ordered(pool, file_paths.len(), window, &lint_nth, |reports| {
+        format.emit(stdout.lock(), io::stderr().lock(), reports)
+    })
 }
 
 /// Runs `work(0..count)` on the pool and hands the results to `consume` in index order.
@@ -192,6 +237,8 @@ fn run_ordered<T: Send, R>(
     consume: impl FnOnce(&mut dyn Iterator<Item = T>) -> R,
 ) -> R {
     let cancelled = AtomicBool::new(false);
+    // Also stops the queued work when `consume` unwinds, for instance on a re-raised panic
+    let _cancel = CancelOnDrop(&cancelled);
     pool.in_place_scope(|scope| {
         let (sender, receiver) = mpsc::channel::<(usize, std::thread::Result<T>)>();
         let mut ordered = Ordered {
@@ -206,10 +253,17 @@ fn run_ordered<T: Send, R>(
             consumed: 0,
             finished: HashMap::new(),
         };
-        let result = consume(&mut ordered);
-        cancelled.store(true, Ordering::Relaxed);
-        result
+        consume(&mut ordered)
     })
+}
+
+/// Sets the flag when dropped.
+struct CancelOnDrop<'a>(&'a AtomicBool);
+
+impl Drop for CancelOnDrop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Iterator over the results of a [`run_ordered`] call, in index order.
@@ -273,97 +327,103 @@ impl<'scope, T: Send + 'scope, W: Fn(usize) -> T + Sync> Iterator for Ordered<'_
     }
 }
 
-/// Writes the reports in file order and returns whether any file had an error.
-///
-/// Failures go to `err`, results to `out`; a write error stops the run.
-fn emit<W: Write, E: Write>(
-    format: LintFormat,
-    out: W,
-    err: E,
-    reports: impl Iterator<Item = FileReport>,
-) -> Result<bool> {
-    match format {
-        LintFormat::Text => emit_text(out, err, reports),
-        LintFormat::Json => emit_json(out, err, reports),
-    }
-}
+impl OutputFormat for TextOutput {
+    type Payload = String;
 
-fn emit_text<W: Write, E: Write>(
-    mut out: W,
-    mut err: E,
-    reports: impl Iterator<Item = FileReport>,
-) -> Result<bool> {
-    let mut any_errors = false;
-    for FileReport { path, outcome } in reports {
-        match outcome {
-            FileOutcome::Failed { message } => {
-                any_errors = true;
-                writeln!(err, "{message}").context("Failed to write to stderr")?;
-            }
-            FileOutcome::Text {
-                has_errors,
-                rendered,
-            } => {
-                any_errors |= has_errors;
-                if !rendered.is_empty() {
-                    writeln!(out, "{}:", path.display())
-                        .and_then(|()| write!(out, "{rendered}"))
-                        .and_then(|()| out.flush())
-                        .context("Failed to write lint output")?;
-                }
-            }
-            FileOutcome::Json { .. } => {}
+    fn payload(&self, diagnostics: Vec<Diagnostic>, content: &str) -> String {
+        if diagnostics.is_empty() {
+            return String::new();
         }
+        let mut formatter = TextFormatter::new();
+        formatter.use_color = self.use_color;
+        formatter.format(&diagnostics, content)
     }
-    Ok(any_errors)
-}
 
-/// Streams one JSON array of all diagnostics, each with a `file` field, in the layout of
-/// `serde_json::to_string_pretty` (`[]` when there are none) followed by a newline.
-fn emit_json<W: Write, E: Write>(
-    out: W,
-    mut err: E,
-    reports: impl Iterator<Item = FileReport>,
-) -> Result<bool> {
-    let mut serializer = serde_json::Serializer::with_formatter(out, PrettyFormatter::new());
-    let mut array = (&mut serializer)
-        .serialize_seq(None)
-        .context("Failed to write lint output")?;
-    let mut any_errors = false;
-
-    for FileReport { path, outcome } in reports {
-        match outcome {
-            FileOutcome::Failed { message } => {
-                any_errors = true;
-                writeln!(err, "{message}").context("Failed to write to stderr")?;
-            }
-            FileOutcome::Json {
-                has_errors,
-                diagnostics,
-            } => {
-                any_errors |= has_errors;
-                let file = path.display().to_string();
-                for diagnostic in &diagnostics {
-                    let mut value = serde_json::to_value(diagnostic)
-                        .context("Failed to serialize a diagnostic")?;
-                    if let serde_json::Value::Object(map) = &mut value {
-                        map.insert("file".to_owned(), serde_json::Value::String(file.clone()));
+    fn emit<W: Write, E: Write>(
+        &self,
+        mut out: W,
+        mut err: E,
+        reports: impl Iterator<Item = FileReport<String>>,
+    ) -> Result<bool> {
+        let mut any_errors = false;
+        for FileReport { path, outcome } in reports {
+            match outcome {
+                Err(failure) => {
+                    any_errors = true;
+                    writeln!(err, "{failure}").context("Failed to write to stderr")?;
+                }
+                Ok(Linted {
+                    has_errors,
+                    payload: rendered,
+                }) => {
+                    any_errors |= has_errors;
+                    if !rendered.is_empty() {
+                        writeln!(out, "{}:", path.display())
+                            .and_then(|()| write!(out, "{rendered}"))
+                            .and_then(|()| out.flush())
+                            .context("Failed to write lint output")?;
                     }
-                    array
-                        .serialize_element(&value)
-                        .context("Failed to write lint output")?;
                 }
             }
-            FileOutcome::Text { .. } => {}
         }
+        Ok(any_errors)
+    }
+}
+
+impl OutputFormat for JsonOutput {
+    type Payload = Vec<Diagnostic>;
+
+    fn payload(&self, diagnostics: Vec<Diagnostic>, _content: &str) -> Vec<Diagnostic> {
+        diagnostics
     }
 
-    array.end().context("Failed to write lint output")?;
-    let mut out = serializer.into_inner();
-    writeln!(out)
-        .and_then(|()| out.flush())
-        .context("Failed to write lint output")?;
-    Ok(any_errors)
+    /// Streams the array in the layout of `serde_json::to_string_pretty` (`[]` when there are
+    /// no diagnostics), each diagnostic with a `file` field, followed by a newline.
+    fn emit<W: Write, E: Write>(
+        &self,
+        out: W,
+        mut err: E,
+        reports: impl Iterator<Item = FileReport<Vec<Diagnostic>>>,
+    ) -> Result<bool> {
+        let mut serializer = serde_json::Serializer::with_formatter(out, PrettyFormatter::new());
+        let mut array = (&mut serializer)
+            .serialize_seq(None)
+            .context("Failed to write lint output")?;
+        let mut any_errors = false;
+
+        for FileReport { path, outcome } in reports {
+            match outcome {
+                Err(failure) => {
+                    any_errors = true;
+                    writeln!(err, "{failure}").context("Failed to write to stderr")?;
+                }
+                Ok(Linted {
+                    has_errors,
+                    payload: diagnostics,
+                }) => {
+                    any_errors |= has_errors;
+                    let file = path.display().to_string();
+                    for diagnostic in &diagnostics {
+                        let mut value = serde_json::to_value(diagnostic)
+                            .context("Failed to serialize a diagnostic")?;
+                        if let serde_json::Value::Object(map) = &mut value {
+                            map.insert("file".to_owned(), serde_json::Value::String(file.clone()));
+                        }
+                        array
+                            .serialize_element(&value)
+                            .context("Failed to write lint output")?;
+                    }
+                }
+            }
+        }
+
+        array.end().context("Failed to write lint output")?;
+        let mut out = serializer.into_inner();
+        writeln!(out)
+            .and_then(|()| out.flush())
+            .context("Failed to write lint output")?;
+        Ok(any_errors)
+    }
 }
 
 #[cfg(test)]
@@ -379,29 +439,36 @@ mod tests {
             .build("a: 1\n")
     }
 
-    fn json_report(path: &str, diagnostics: Vec<Diagnostic>) -> FileReport {
-        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
+    fn linted<P>(path: &str, payload: P, has_errors: bool) -> FileReport<P> {
         FileReport {
             path: PathBuf::from(path),
-            outcome: FileOutcome::Json {
+            outcome: Ok(Linted {
                 has_errors,
-                diagnostics,
-            },
+                payload,
+            }),
         }
     }
 
-    fn failed(message: &str) -> FileReport {
+    fn json_report(path: &str, diagnostics: Vec<Diagnostic>) -> FileReport<Vec<Diagnostic>> {
+        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
+        linted(path, diagnostics, has_errors)
+    }
+
+    fn failed<P>(path: &str) -> FileReport<P> {
         FileReport {
-            path: PathBuf::from("bad.yaml"),
-            outcome: FileOutcome::Failed {
-                message: message.to_owned(),
-            },
+            path: PathBuf::from(path),
+            outcome: Err(FileFailure::Lint {
+                path: PathBuf::from(path),
+                source: Linter::with_all_rules().lint("a: [").unwrap_err(),
+            }),
         }
     }
 
-    fn json_of(reports: Vec<FileReport>) -> (String, String, bool) {
+    fn json_of(reports: Vec<FileReport<Vec<Diagnostic>>>) -> (String, String, bool) {
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let any = emit(LintFormat::Json, &mut out, &mut err, reports.into_iter()).unwrap();
+        let any = JsonOutput
+            .emit(&mut out, &mut err, reports.into_iter())
+            .unwrap();
         (
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
@@ -458,9 +525,12 @@ mod tests {
 
     #[test]
     fn failures_go_to_stderr_in_order_and_count_as_errors() {
-        let (out, err, any) = json_of(vec![failed("first"), failed("second")]);
+        let (out, err, any) = json_of(vec![failed("first.yaml"), failed("second.yaml")]);
         assert_eq!(out, "[]\n");
-        assert_eq!(err, "first\nsecond\n");
+        let lines: Vec<&str> = err.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("error: 'first.yaml': "), "{err}");
+        assert!(lines[1].starts_with("error: 'second.yaml': "), "{err}");
         assert!(any);
     }
 
@@ -471,6 +541,22 @@ mod tests {
             vec![diagnostic(1, Severity::Warning)],
         )]);
         assert!(!any);
+    }
+
+    #[test]
+    fn a_limit_failure_carries_its_raise_hint_once() {
+        let limits = fast_yaml_core::limits::ParseLimits {
+            max_depth: fast_yaml_core::limits::MaxDepth::new(1).unwrap(),
+            ..fast_yaml_core::limits::ParseLimits::default()
+        };
+        let linter = Linter::with_config(LintConfig::new().with_parse_limits(limits));
+        let failure = FileFailure::Lint {
+            path: PathBuf::from("deep.yaml"),
+            source: linter.lint("a: [[1]]\n").unwrap_err(),
+        };
+        let text = failure.to_string();
+        assert!(text.starts_with("error: 'deep.yaml': "), "{text}");
+        assert_eq!(text.matches("raise with --max-depth").count(), 1, "{text}");
     }
 
     struct BrokenPipe;
@@ -488,57 +574,43 @@ mod tests {
     #[test]
     fn json_write_errors_are_propagated() {
         let reports = vec![json_report("a.yaml", vec![diagnostic(1, Severity::Error)])];
-        let result = emit(
-            LintFormat::Json,
-            BrokenPipe,
-            Vec::new(),
-            reports.into_iter(),
+        assert!(
+            JsonOutput
+                .emit(BrokenPipe, Vec::new(), reports.into_iter())
+                .is_err()
         );
-        assert!(result.is_err());
-        assert!(emit(LintFormat::Json, BrokenPipe, Vec::new(), std::iter::empty()).is_err());
+        assert!(
+            JsonOutput
+                .emit(BrokenPipe, Vec::new(), std::iter::empty())
+                .is_err()
+        );
     }
 
     #[test]
     fn text_output_names_each_file_and_skips_clean_ones() {
         let reports = vec![
-            FileReport {
-                path: PathBuf::from("dirty.yaml"),
-                outcome: FileOutcome::Text {
-                    has_errors: true,
-                    rendered: "details\n".to_owned(),
-                },
-            },
-            FileReport {
-                path: PathBuf::from("clean.yaml"),
-                outcome: FileOutcome::Text {
-                    has_errors: false,
-                    rendered: String::new(),
-                },
-            },
-            failed("boom"),
+            linted("dirty.yaml", "details\n".to_owned(), true),
+            linted("clean.yaml", String::new(), false),
+            failed("bad.yaml"),
         ];
         let (mut out, mut err) = (Vec::new(), Vec::new());
-        let any = emit(LintFormat::Text, &mut out, &mut err, reports.into_iter()).unwrap();
+        let any = TextOutput { use_color: false }
+            .emit(&mut out, &mut err, reports.into_iter())
+            .unwrap();
         assert!(any);
         assert_eq!(String::from_utf8(out).unwrap(), "dirty.yaml:\ndetails\n");
-        assert_eq!(String::from_utf8(err).unwrap(), "boom\n");
+        assert!(
+            String::from_utf8(err)
+                .unwrap()
+                .starts_with("error: 'bad.yaml': ")
+        );
     }
 
     #[test]
     fn text_write_errors_are_propagated() {
-        let reports = vec![FileReport {
-            path: PathBuf::from("dirty.yaml"),
-            outcome: FileOutcome::Text {
-                has_errors: true,
-                rendered: "details\n".to_owned(),
-            },
-        }];
-        let result = emit(
-            LintFormat::Text,
-            BrokenPipe,
-            Vec::new(),
-            reports.into_iter(),
-        );
+        let reports = vec![linted("dirty.yaml", "details\n".to_owned(), true)];
+        let result =
+            TextOutput { use_color: false }.emit(BrokenPipe, Vec::new(), reports.into_iter());
         assert!(result.is_err());
     }
 
