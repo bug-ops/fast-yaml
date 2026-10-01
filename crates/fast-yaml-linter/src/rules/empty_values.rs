@@ -10,7 +10,7 @@ use crate::echo::{KEY_LIMIT, echo};
 use crate::nodes::{Node, ScalarNode, TagKind};
 use crate::source::offset::ByteOffset;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::{ScalarStyle, Value};
+use fast_yaml_core::ScalarStyle;
 
 /// Linting rule for empty values.
 ///
@@ -25,13 +25,12 @@ use fast_yaml_core::{ScalarStyle, Value};
 ///
 /// ```
 /// use fast_yaml_core::Parser;
-/// use fast_yaml_linter::{rules::EmptyValuesRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::EmptyValuesRule, rules::SourceRule, LintConfig};
 ///
 /// let rule = EmptyValuesRule;
 /// let yaml = "key: null";  // Explicit null is OK
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &LintConfig::new());
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &LintConfig::new());
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct EmptyValuesRule;
@@ -76,8 +75,10 @@ impl super::LintRule for EmptyValuesRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for EmptyValuesRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.empty_values.options;
         if !options.forbid_in_block_mappings
             && !options.forbid_in_flow_mappings
@@ -261,18 +262,18 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
     use fast_yaml_core::Parser;
 
     #[test]
     fn test_empty_value_block_mapping() {
         let yaml = "key:";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("empty value"));
@@ -281,11 +282,10 @@ mod tests {
     #[test]
     fn test_explicit_null_ok() {
         let yaml = "key: null";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -293,11 +293,10 @@ mod tests {
     #[test]
     fn test_explicit_tilde_ok() {
         let yaml = "key: ~";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -305,24 +304,23 @@ mod tests {
     #[test]
     fn test_empty_value_with_config() {
         let yaml = "key:";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let config = config_with_rule(RuleName::EmptyValues, "{forbid-in-block-mappings: false}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_nested_empty_values() {
         let yaml = "parent:\n  child:";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         // Should detect empty value for 'child'
         assert_ne!(diagnostics, []);
@@ -331,11 +329,10 @@ mod tests {
     #[test]
     fn test_value_with_content() {
         let yaml = "key: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -343,11 +340,11 @@ mod tests {
     #[test]
     fn test_empty_value_flow_mapping() {
         let yaml = "{key:}";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         // Should detect empty value in flow mapping
         assert_eq!(diagnostics.len(), 1);
@@ -357,13 +354,12 @@ mod tests {
     #[test]
     fn test_empty_value_flow_mapping_config() {
         let yaml = "{key:}";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let config = config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should not detect when forbid_in_flow_mappings is false
         assert_eq!(diagnostics, []);
     }
@@ -371,11 +367,10 @@ mod tests {
     #[test]
     fn test_empty_value_block_sequence() {
         let yaml = "-\n-";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         let positions: Vec<_> = diagnostics
             .iter()
@@ -387,11 +382,10 @@ mod tests {
     #[test]
     fn test_explicit_tag_null_ok() {
         let yaml = "key: !!null null";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert!(
             diagnostics.is_empty(),
@@ -402,11 +396,11 @@ mod tests {
     #[test]
     fn test_explicit_tag_str_ok() {
         let yaml = "key: !!str value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
+        let _value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert!(
             diagnostics.is_empty(),
@@ -417,11 +411,10 @@ mod tests {
     #[test]
     fn test_explicit_tag_int_ok() {
         let yaml = "key: !!int 42";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert!(
             diagnostics.is_empty(),
@@ -434,11 +427,10 @@ mod tests {
         // Regression for #174: key "a" must not match inside "parent" on line 1.
         // Diagnostic for "a" must point to line 2, not line 1.
         let yaml = "parent:\n  a:\n  b: 1\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
@@ -455,11 +447,10 @@ mod tests {
     fn test_empty_value_position_prefix_key() {
         // Key "pa" must not match inside "parent" on line 1.
         let yaml = "parent:\n  pa:\n  b: 1\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &LintConfig::new());
+        let diagnostics = rule.check(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
@@ -469,9 +460,8 @@ mod tests {
     }
 
     fn empty_positions(yaml: &str) -> Vec<(usize, usize)> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         EmptyValuesRule
-            .check(&LintContext::new(yaml), &value, &LintConfig::new())
+            .check(&LintContext::new(yaml), &LintConfig::new())
             .iter()
             .map(|d| (d.span.start.line, d.span.start.column))
             .collect()
@@ -515,8 +505,7 @@ mod tests {
         let only_block =
             config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
         let yaml = "k: [a: ]\nm:\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
-        let diags = EmptyValuesRule.check(&LintContext::new(yaml), &value, &only_block);
+        let diags = EmptyValuesRule.check(&LintContext::new(yaml), &only_block);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].span.start.line, 2);
     }
@@ -559,8 +548,7 @@ mod tests {
     #[test]
     fn test_long_key_is_truncated_in_message() {
         let yaml = format!("{}:\n", "k".repeat(300));
-        let value = Parser::parse_str(&yaml).unwrap().unwrap();
-        let diags = EmptyValuesRule.check(&LintContext::new(&yaml), &value, &LintConfig::new());
+        let diags = EmptyValuesRule.check(&LintContext::new(&yaml), &LintConfig::new());
         assert!(diags[0].message.len() < 120, "{}", diags[0].message);
     }
 
@@ -575,13 +563,12 @@ mod tests {
     #[test]
     fn test_config_forbid_in_block_sequences() {
         let yaml = "-\n-";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyValuesRule;
         let config = config_with_rule(RuleName::EmptyValues, "{forbid-in-block-sequences: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 

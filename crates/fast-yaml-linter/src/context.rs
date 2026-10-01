@@ -1049,8 +1049,6 @@ pub struct LintContext<'a> {
     line_metadata: OnceLock<Vec<LineMetadata>>,
     flow_index: OnceLock<FlowIndex>,
     block_lines: OnceLock<Vec<RangeInclusive<usize>>>,
-    /// 1-based line number where the current document starts within `source`.
-    doc_start_line: usize,
 }
 
 impl<'a> LintContext<'a> {
@@ -1063,7 +1061,7 @@ impl<'a> LintContext<'a> {
     /// guarded loader pass: the one [`Linter`](crate::Linter) runs while it loads the documents,
     /// or, for a context built here, a lazy pass under the default
     /// [`ParseLimits`](fast_yaml_core::limits::ParseLimits) (see
-    /// [`LintRule::check`](crate::rules::LintRule::check)).
+    /// [`SourceRule::check`](crate::rules::SourceRule::check)).
     ///
     /// # Examples
     ///
@@ -1085,7 +1083,6 @@ impl<'a> LintContext<'a> {
             line_metadata: OnceLock::new(),
             flow_index: OnceLock::new(),
             block_lines: OnceLock::new(),
-            doc_start_line: 1,
         }
     }
 
@@ -1113,37 +1110,6 @@ impl<'a> LintContext<'a> {
     pub const fn with_parse_limits(mut self, limits: ParseLimits) -> Self {
         self.parse_limits = limits;
         self
-    }
-
-    /// Returns a copy of this context with `doc_start_line` set to `line`.
-    ///
-    /// Used by the linter when processing individual documents within a
-    /// multi-document stream so that rules which scan forward from a cursor
-    /// can start at the correct document boundary.
-    #[must_use]
-    pub const fn with_doc_start_line(mut self, line: usize) -> Self {
-        self.doc_start_line = line;
-        self
-    }
-
-    /// Sets the document start line in-place.
-    ///
-    /// Prefer this over [`with_doc_start_line`](Self::with_doc_start_line) when you already have
-    /// a fully constructed `LintContext` and want to reuse it across multiple documents in a
-    /// multi-document stream. Mutating only `doc_start_line` avoids rebuilding the underlying
-    /// [`SourceContext`] and recomputing cached data, eliminating `O(source_len)` work per document.
-    pub const fn set_doc_start_line(&mut self, line: usize) {
-        self.doc_start_line = line;
-    }
-
-    /// Returns the 1-based line number where the current document begins.
-    ///
-    /// For a single-document source this is always 1. For multi-document
-    /// streams the linter sets this to the document's actual start line so
-    /// that rules can initialize their forward-scan cursors correctly.
-    #[must_use]
-    pub const fn doc_start_line(&self) -> usize {
-        self.doc_start_line
     }
 
     /// Returns the original source text.

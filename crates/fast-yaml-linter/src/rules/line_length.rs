@@ -1,6 +1,6 @@
 //! Rule to check line length limits.
 
-use super::RuleId;
+use super::{LintRule, RuleId};
 use crate::config::RuleName;
 use std::num::NonZeroUsize;
 
@@ -12,7 +12,6 @@ use crate::scan::{ScanNeeds, SourceScan};
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
 };
-use fast_yaml_core::Value;
 use fast_yaml_core::limits::ParseLimits;
 
 /// Rule to check line length limits.
@@ -146,8 +145,10 @@ impl super::LintRule for LineLengthRule {
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for LineLengthRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.line_length.options;
         let Some(max_length) = options.max.map(NonZeroUsize::get) else {
             return Vec::new();
@@ -186,19 +187,17 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_line_within_limit() {
         let yaml = "key: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -206,12 +205,11 @@ mod tests {
     #[test]
     fn test_no_limit_configured() {
         let yaml = "key: this is a very long line that would normally exceed any reasonable limit but should not trigger warnings";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(None);
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -219,12 +217,11 @@ mod tests {
     #[test]
     fn test_line_exceeds_limit() {
         let yaml = "key: this is a very long value that definitely exceeds eighty characters without any doubt whatsoever";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("exceeds maximum length"));
@@ -235,12 +232,11 @@ mod tests {
     fn test_line_at_exact_limit() {
         // This line is exactly 77 characters long
         let yaml = "name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(77));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // Exactly at limit should not trigger
         assert_eq!(diagnostics, []);
@@ -250,12 +246,11 @@ mod tests {
     fn test_line_one_over_limit() {
         // This line is 78 characters long
         let yaml = "name: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(77));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // One over should trigger
         assert_eq!(diagnostics.len(), 1);
@@ -266,12 +261,11 @@ mod tests {
         let yaml = "first: this is a very long line that exceeds the maximum character limit\n\
                     second: another extremely long line that also exceeds the character limit\n\
                     short: ok";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(50));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 2);
     }
@@ -280,12 +274,11 @@ mod tests {
     fn test_utf8_multibyte_characters() {
         // 5 Japanese characters (日本語日本語日本語日本語日本語) + "key: " = ~29 chars
         let yaml = "key: 日本語日本語日本語日本語日本語日本語日本語日本語";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(20));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // Should count characters, not bytes
         assert_eq!(diagnostics.len(), 1);
@@ -294,12 +287,11 @@ mod tests {
     #[test]
     fn test_empty_lines_ignored() {
         let yaml = "key: value\n\n\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(5));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         // Should only report the first line (10 chars), not the empty lines
         assert_eq!(diagnostics.len(), 1);
@@ -308,12 +300,11 @@ mod tests {
     #[test]
     fn test_severity_override() {
         let yaml = "key: this is a very long value that definitely exceeds eighty characters without any doubt";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = config_with_rule(RuleName::LineLength, "{max: 10, severity: error}");
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
@@ -322,12 +313,11 @@ mod tests {
     #[test]
     fn test_diagnostic_location_accuracy() {
         let yaml = "first: ok\nvery_long_key_name: this is a very long value that definitely exceeds fifty chars\nthird: ok";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(50));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &value, &config);
+        let diagnostics = rule.check(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].span.start.line, 2); // Second line
@@ -336,7 +326,7 @@ mod tests {
     fn flagged(yaml: &str, options: &str) -> Vec<usize> {
         let config = config_with_rule(RuleName::LineLength, options);
         LineLengthRule
-            .check(&LintContext::new(yaml), &Value::Null, &config)
+            .check(&LintContext::new(yaml), &config)
             .iter()
             .map(|d| d.span.start.line)
             .collect()

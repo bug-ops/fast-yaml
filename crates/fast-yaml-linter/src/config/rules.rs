@@ -21,8 +21,8 @@ use crate::rules::{
     BracesRule, BracketsRule, ColonsRule, CommasRule, CommentsIndentationRule, CommentsRule,
     DocumentEndRule, DocumentStartRule, DuplicateKeysRule, EmptyLinesRule, EmptyValuesRule,
     FloatValuesRule, HyphensRule, IndentationRule, InvalidAnchorsRule, KeyOrderingRule,
-    LineLengthRule, LintDirectiveRule, LintRule, NewLineAtEndOfFileRule, NewLinesRule,
-    OctalValuesRule, QuotedStringsRule, SetValuesRule, TrailingWhitespaceRule, TruthyRule,
+    LineLengthRule, LintDirectiveRule, NewLineAtEndOfFileRule, NewLinesRule, OctalValuesRule,
+    QuotedStringsRule, Rule, SetValuesRule, TrailingWhitespaceRule, TruthyRule,
 };
 use crate::rules::{
     ColonsOptions, CommasOptions, CommentsOptions, DocumentEndOptions, DocumentStartOptions,
@@ -865,8 +865,8 @@ macro_rules! builtin_rules {
         }
 
         /// Instantiates every built-in rule in registry order.
-        pub fn default_rules() -> Vec<Box<dyn LintRule>> {
-            vec![$(Box::new($rule) as Box<dyn LintRule>,)+]
+        pub fn default_rules() -> Vec<Rule> {
+            vec![$(Rule::Source(Box::new($rule)),)+]
         }
     };
 }
@@ -1154,7 +1154,7 @@ mod tests {
         let codes: Vec<&str> = registry
             .rules()
             .iter()
-            .map(|rule| rule.id().as_str())
+            .map(|rule| rule.info().id().as_str())
             .collect();
         let names: Vec<&str> = RuleName::ALL.iter().map(|name| name.as_str()).collect();
         assert_eq!(codes, names);

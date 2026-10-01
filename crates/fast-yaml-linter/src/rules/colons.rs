@@ -9,7 +9,6 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
     SourceContext, Span, tokenizer::TokenType,
 };
-use fast_yaml_core::Value;
 
 /// Linting rule for colon spacing.
 ///
@@ -26,16 +25,15 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::ColonsRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::ColonsRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = ColonsRule;
 /// let yaml = "name: John";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct ColonsRule;
@@ -77,8 +75,10 @@ impl super::LintRule for ColonsRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for ColonsRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let source_context = context.source_context();
         let tokenizer = context.flow_tokenizer();
@@ -259,33 +259,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_colons_default_valid() {
         let yaml = "name: John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_colons_too_many_spaces_before() {
         let yaml = "name : John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces before"));
     }
@@ -293,13 +290,12 @@ mod tests {
     #[test]
     fn test_colons_too_many_spaces_after() {
         let yaml = "name:  John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces after"));
     }
@@ -307,26 +303,24 @@ mod tests {
     #[test]
     fn test_colons_allow_more_spaces_after() {
         let yaml = "name:  John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = config_with_rule(RuleName::Colons, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_colons_url_ignored() {
         let yaml = r#"url: "http://example.com""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should only flag the mapping colon, not the one in the URL
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
@@ -334,26 +328,24 @@ mod tests {
     #[test]
     fn test_colons_https_url_ignored() {
         let yaml = r#"url: "https://example.com""#;
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
 
     #[test]
     fn test_colons_time_ignored() {
         let yaml = "time: 12:30:45";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should only flag the mapping colon, not the ones in the time
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
@@ -361,13 +353,12 @@ mod tests {
     #[test]
     fn test_colons_flow_mapping() {
         let yaml = "{name: John, age: 30}";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -375,13 +366,12 @@ mod tests {
     fn test_colons_correct_location() {
         // Violation at line 3, not line 1
         let yaml = "line1: ok\nline2: ok\nline3 : bad";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
             diagnostics[0].span.start.line, 3,
@@ -393,13 +383,12 @@ mod tests {
     #[test]
     fn test_colons_multiple_violations() {
         let yaml = "name : John\nage :  30";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // At least 2 violations (spaces before colons)
         assert!(diagnostics.len() >= 2);
     }
@@ -409,13 +398,12 @@ mod tests {
     fn test_colons_trailing_whitespace_no_false_positive() {
         // "nested:  " has two trailing spaces but no inline value — must not fire.
         let yaml = "nested:  \n  a: 1\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = ColonsRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for trailing whitespace after key colon, got: {diagnostics:?}"

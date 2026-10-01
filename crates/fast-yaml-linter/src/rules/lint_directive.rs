@@ -3,7 +3,6 @@
 use super::RuleId;
 use crate::config::RuleName;
 use crate::{Diagnostic, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
 
 /// Settings holder for problems in inline lint directives.
 ///
@@ -28,13 +27,10 @@ impl super::LintRule for LintDirectiveRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(
-        &self,
-        _context: &LintContext,
-        _value: &Value,
-        _config: &LintConfig,
-    ) -> Vec<Diagnostic> {
+impl super::SourceRule for LintDirectiveRule {
+    fn check(&self, _context: &LintContext, _config: &LintConfig) -> Vec<Diagnostic> {
         Vec::new()
     }
 }

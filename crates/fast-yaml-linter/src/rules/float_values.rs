@@ -1,6 +1,6 @@
 //! Rule to check float value representations.
 
-use super::RuleId;
+use super::{LintRule, RuleId};
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,7 @@ use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::nodes::{Node, TagKind};
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::{ResolvedScalar, ScalarStyle, Value, resolve_scalar};
+use fast_yaml_core::{ResolvedScalar, ScalarStyle, resolve_scalar};
 
 /// Linting rule for float values.
 ///
@@ -24,16 +24,15 @@ use fast_yaml_core::{ResolvedScalar, ScalarStyle, Value, resolve_scalar};
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::FloatValuesRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::FloatValuesRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = FloatValuesRule;
 /// let yaml = "value: 0.5";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &value, &config);
+/// let diagnostics = rule.check(&context, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct FloatValuesRule;
@@ -82,8 +81,10 @@ impl super::LintRule for FloatValuesRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for FloatValuesRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.float_values.options;
         let severity = config
             .rules
@@ -159,33 +160,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_float_values_valid() {
         let yaml = "value: 0.5\npi: 3.14159";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_float_values_missing_numeral() {
         let yaml = "value: .5";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
@@ -197,7 +195,6 @@ mod tests {
     #[test]
     fn test_float_values_allow_missing_numeral() {
         let yaml = "value: .5";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = config_with_rule(
@@ -206,20 +203,19 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_float_values_scientific_notation() {
         let yaml = "value: 1.5e10\nanother: 3.14e-5";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = config_with_rule(RuleName::FloatValues, "{forbid-scientific-notation: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("scientific notation"));
     }
@@ -227,26 +223,24 @@ mod tests {
     #[test]
     fn test_float_values_allow_scientific_notation() {
         let yaml = "value: 1.5e10";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_float_values_nan() {
         let yaml = "value: .nan\nanother: .NaN";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = config_with_rule(RuleName::FloatValues, "{forbid-nan: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("NaN"));
     }
@@ -254,13 +248,12 @@ mod tests {
     #[test]
     fn test_float_values_infinity() {
         let yaml = "value: .inf\nneg: -.inf\npos: +.inf";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = config_with_rule(RuleName::FloatValues, "{forbid-inf: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 3);
         assert!(diagnostics[0].message.contains("Infinity"));
     }
@@ -268,20 +261,18 @@ mod tests {
     #[test]
     fn test_float_values_allow_nan_inf() {
         let yaml = "value: .nan\ninf: .inf";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_float_values_quoted() {
         let yaml = "value: '.5'\nscientific: \"1.5e10\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = config_with_rule(
@@ -290,7 +281,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Quoted values should be ignored
         assert_eq!(diagnostics, []);
     }
@@ -298,7 +289,6 @@ mod tests {
     #[test]
     fn test_float_values_list_item() {
         let yaml = "items:\n  - .5\n  - 1.5e10";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = config_with_rule(
@@ -307,33 +297,31 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
     #[test]
     fn test_float_values_with_comment() {
         let yaml = "value: .5  # half";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
     }
 
     #[test]
     fn test_float_values_signed_missing_numeral() {
         let yaml = "bad1: .5\nbad2: -.5\nbad3: +.5\ngood: 0.5";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(
             diagnostics.len(),
             3,
@@ -344,13 +332,12 @@ mod tests {
     #[test]
     fn test_float_values_signed_suggestion() {
         let yaml = "neg: -.5\npos: +.5";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2, "expected diagnostics for -.5 and +.5");
         assert!(
             diagnostics[0].message.contains("-0.5"),
@@ -367,21 +354,19 @@ mod tests {
     #[test]
     fn test_float_values_integer_not_flagged() {
         let yaml = "value: 5\nanother: 100";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = FloatValuesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     fn lint_messages(yaml: &str, options: &str) -> Vec<String> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         let config = config_with_rule(RuleName::FloatValues, options);
         FloatValuesRule
-            .check(&LintContext::new(yaml), &value, &config)
+            .check(&LintContext::new(yaml), &config)
             .into_iter()
             .map(|d| d.message.into_owned())
             .collect()

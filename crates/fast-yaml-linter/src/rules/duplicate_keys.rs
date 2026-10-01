@@ -1,6 +1,6 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
-use super::RuleId;
+use super::{LintRule, RuleId};
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
@@ -8,7 +8,6 @@ use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::scan::{KeyRepeat, RepeatedKey};
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
 
 /// Rule to detect duplicate keys in YAML mappings.
 ///
@@ -75,8 +74,10 @@ impl super::LintRule for DuplicateKeysRule {
     fn default_severity(&self) -> Severity {
         Severity::Error
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for DuplicateKeysRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let severity = config
             .rules
             .duplicate_key
@@ -120,15 +121,12 @@ impl super::LintRule for DuplicateKeysRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::LintRule;
+    use crate::rules::SourceRule;
     use fast_yaml_core::Parser;
+    use fast_yaml_core::Value;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        DuplicateKeysRule.check(
-            &LintContext::new(yaml),
-            &Value::Null,
-            &LintConfig::default(),
-        )
+        DuplicateKeysRule.check(&LintContext::new(yaml), &LintConfig::default())
     }
 
     #[test]
@@ -392,18 +390,14 @@ mod tests {
     #[test]
     fn test_invalid_merge_value_stops_the_scan_without_panicking() {
         let yaml = "a: 1\na: 2\nb: {<<: 1}\nc: 1\nc: 2\n";
-        let diags = DuplicateKeysRule.check(
-            &LintContext::new(yaml),
-            &Value::Null,
-            &LintConfig::default(),
-        );
+        let diags = DuplicateKeysRule.check(&LintContext::new(yaml), &LintConfig::default());
         assert_eq!(diags.len(), 1);
     }
 
     fn run_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
         use crate::config::{RuleName, test_support::config_with_rule};
         let config = config_with_rule(RuleName::DuplicateKey, options);
-        DuplicateKeysRule.check(&LintContext::new(yaml), &Value::Null, &config)
+        DuplicateKeysRule.check(&LintContext::new(yaml), &config)
     }
 
     #[test]

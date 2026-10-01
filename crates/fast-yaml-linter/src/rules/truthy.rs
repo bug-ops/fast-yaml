@@ -1,6 +1,6 @@
 //! Rule to check truthy value representations.
 
-use super::RuleId;
+use super::{LintRule, RuleId};
 use crate::config::RuleName;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -13,7 +13,7 @@ use crate::config::RuleOptions;
 use crate::nodes::{Node, TagKind};
 use crate::scan::YamlVersion;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::{ScalarStyle, Value};
+use fast_yaml_core::ScalarStyle;
 
 /// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
 ///
@@ -42,16 +42,15 @@ const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::TruthyRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::TruthyRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = TruthyRule;
 /// let yaml = "enabled: true";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &value, &config);
+/// let diagnostics = rule.check(&context, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct TruthyRule;
@@ -198,8 +197,10 @@ impl super::LintRule for TruthyRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for TruthyRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let options = &config.rules.truthy.options;
         let allowed: Vec<&str> = options.allowed_values.iter().map(|v| v.as_str()).collect();
         let severity = config.rules.truthy.severity_or(self.default_severity());
@@ -319,33 +320,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_truthy_standard_values() {
         let yaml = "enabled: true\ndisabled: false";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_truthy_yes_no() {
         let yaml = "enabled: yes\ndisabled: no";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("yes"));
         assert!(diagnostics[1].message.contains("no"));
@@ -354,13 +352,12 @@ mod tests {
     #[test]
     fn test_truthy_on_off() {
         let yaml = "enabled: on\ndisabled: off";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("on"));
         assert!(diagnostics[1].message.contains("off"));
@@ -369,13 +366,12 @@ mod tests {
     #[test]
     fn test_truthy_capitalized() {
         let yaml = "enabled: True\ndisabled: FALSE";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         // Must use "non-canonical" message, not "non-standard", since True/FALSE are valid YAML 1.2.2
         assert!(diagnostics[0].message.contains("non-canonical"));
@@ -387,22 +383,12 @@ mod tests {
         // yes/no → "non-standard"; True/FALSE → "non-canonical"
         let yaml_nonstandard = "enabled: yes";
         let yaml_noncanonical = "enabled: True";
-        let value_nonstandard = Parser::parse_str(yaml_nonstandard).unwrap().unwrap();
-        let value_noncanonical = Parser::parse_str(yaml_noncanonical).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
-        let diags_nonstandard = rule.check(
-            &LintContext::new(yaml_nonstandard),
-            &value_nonstandard,
-            &config,
-        );
-        let diags_noncanonical = rule.check(
-            &LintContext::new(yaml_noncanonical),
-            &value_noncanonical,
-            &config,
-        );
+        let diags_nonstandard = rule.check(&LintContext::new(yaml_nonstandard), &config);
+        let diags_noncanonical = rule.check(&LintContext::new(yaml_noncanonical), &config);
 
         assert!(diags_nonstandard[0].message.contains("non-standard"));
         assert!(!diags_nonstandard[0].message.contains("non-canonical"));
@@ -413,13 +399,12 @@ mod tests {
     #[test]
     fn test_truthy_quoted_allowed() {
         let yaml = "enabled: 'yes'\ndisabled: \"no\"";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -427,7 +412,7 @@ mod tests {
     fn test_truthy_reports_true_when_only_yes_is_allowed() {
         let yaml = "a: true\nb: yes\nc: False\n";
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes]}");
-        let diagnostics = TruthyRule.check(&LintContext::new(yaml), &Value::Null, &config);
+        let diagnostics = TruthyRule.check(&LintContext::new(yaml), &config);
         let messages: Vec<&str> = diagnostics.iter().map(|d| &*d.message).collect();
         assert_eq!(
             messages,
@@ -441,7 +426,7 @@ mod tests {
     #[test]
     fn test_truthy_without_allowed_values_reports_every_spelling() {
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: []}");
-        let diagnostics = TruthyRule.check(&LintContext::new("a: true\n"), &Value::Null, &config);
+        let diagnostics = TruthyRule.check(&LintContext::new("a: true\n"), &config);
         assert_eq!(
             diagnostics[0].message,
             "found truthy value 'true' that is not allowed (no truthy value is allowed)"
@@ -451,26 +436,24 @@ mod tests {
     #[test]
     fn test_truthy_custom_allowed_values() {
         let yaml = "enabled: yes\ndisabled: no";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes, no]}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_truthy_list_items() {
         let yaml = "items:\n  - yes\n  - no\n  - true";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("yes"));
         assert!(diagnostics[1].message.contains("no"));
@@ -479,13 +462,12 @@ mod tests {
     #[test]
     fn test_truthy_check_keys() {
         let yaml = "yes: value\nno: other";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("key"));
         assert!(diagnostics[1].message.contains("key"));
@@ -494,26 +476,24 @@ mod tests {
     #[test]
     fn test_truthy_ignore_keys_by_default() {
         let yaml = "yes: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_truthy_with_comment() {
         let yaml = "enabled: yes  # This is a comment";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = TruthyRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("yes"));
     }
@@ -539,9 +519,8 @@ mod tests {
     }
 
     fn truthy_spans(yaml: &str, config: &LintConfig) -> Vec<(usize, usize, usize)> {
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
         TruthyRule
-            .check(&LintContext::new(yaml), &value, config)
+            .check(&LintContext::new(yaml), config)
             .iter()
             .map(|d| (d.span.start.line, d.span.start.column, d.span.end.column))
             .collect()

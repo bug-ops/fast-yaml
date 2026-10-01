@@ -104,18 +104,24 @@ impl fmt::Display for RuleId<'_> {
     }
 }
 
-/// Trait for implementing lint rules.
+/// Metadata every lint rule exposes: its identity, name, description and default severity.
 ///
-/// All lint rules must implement this trait to be used with the linter.
-/// Rules check YAML source and values, returning diagnostics for any issues found.
+/// A rule also implements [`SourceRule`], which reads the source text and what the loader pass
+/// collected, or [`DocumentRule`], which walks the value tree of each document, and is registered
+/// as a [`Rule`].
+///
+/// # Contract
+///
+/// Implementors must return the same [`RuleId`] on every call. A [`RuleId::BuiltIn`] id makes the
+/// rule share that built-in rule's settings and scan products, so a custom rule returns
+/// [`RuleId::Custom`] with a [`CustomRuleCode`]. Callers may assume the metadata is cheap.
 ///
 /// # Examples
 ///
 /// ```
 /// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity};
 /// use fast_yaml_linter::config::CustomRuleCode;
-/// use fast_yaml_linter::rules::{LintRule, RuleId};
-/// use fast_yaml_core::Value;
+/// use fast_yaml_linter::rules::{LintRule, Rule, RuleId, SourceRule};
 ///
 /// struct ExampleRule(CustomRuleCode);
 ///
@@ -135,11 +141,17 @@ impl fmt::Display for RuleId<'_> {
 ///     fn default_severity(&self) -> Severity {
 ///         Severity::Warning
 ///     }
+/// }
 ///
-///     fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+/// impl SourceRule for ExampleRule {
+///     fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
 ///         Vec::new()
 ///     }
 /// }
+///
+/// let code = CustomRuleCode::new("example-rule").unwrap();
+/// let rule = Rule::Source(Box::new(ExampleRule(code)));
+/// assert_eq!(rule.info().id().as_str(), "example-rule");
 /// ```
 pub trait LintRule: Send + Sync {
     /// Identity of this rule.
@@ -158,35 +170,155 @@ pub trait LintRule: Send + Sync {
 
     /// Default severity level.
     fn default_severity(&self) -> Severity;
+}
 
-    /// Returns true if this rule requires walking the parsed Value tree.
+/// A rule that reads the source text and what the loader pass collected, never the value tree.
+///
+/// Runs once for the whole input. Every built-in rule is a source rule, so linting builds no
+/// value tree unless a [`DocumentRule`] is registered and enabled.
+///
+/// # Contract
+///
+/// Built-in rules read what `context` collected from the loader pass of the source. A context
+/// that [`Linter`](crate::Linter) did not scan loads the source on first use under the default
+/// [`ParseLimits`](fast_yaml_core::limits::ParseLimits), so no rule can drive an unguarded
+/// parser (#563).
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::{LintConfig, LintContext};
+/// use fast_yaml_linter::rules::{DuplicateKeysRule, SourceRule};
+///
+/// let diagnostics = DuplicateKeysRule.check(&LintContext::new("a: 1\na: 2\n"), &LintConfig::default());
+/// assert_eq!(diagnostics.len(), 1);
+/// ```
+pub trait SourceRule: LintRule {
+    /// Checks the source and returns the diagnostics found, empty if there are none.
     ///
-    /// Rules that return `true` are run once per document in a multi-document
-    /// stream. Rules that return `false` (the default) scan source text and are
-    /// run once for the full input.
-    fn needs_value(&self) -> bool {
-        false
+    /// `context` gives access to the source, comments and scan products; `config` holds the
+    /// linter settings.
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic>;
+}
+
+/// One parsed document handed to a [`DocumentRule`].
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::Value;
+/// use fast_yaml_linter::rules::LintDocument;
+///
+/// let value = Value::Null;
+/// let document = LintDocument { value: &value, first_line: 1 };
+/// assert_eq!(document.first_line, 1);
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct LintDocument<'a> {
+    /// The loaded value of the document.
+    pub value: &'a Value,
+    /// 1-based line where the document's content begins, after its `---` marker.
+    pub first_line: usize,
+}
+
+/// A rule that walks the value tree of each document.
+///
+/// Runs once per document of the stream. Registering and enabling one makes the linter build the
+/// documents, which costs memory proportional to the input, so prefer a [`SourceRule`] when the
+/// scan products are enough.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::Value;
+/// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity};
+/// use fast_yaml_linter::config::CustomRuleCode;
+/// use fast_yaml_linter::rules::{DocumentRule, LintDocument, LintRule, RuleId};
+///
+/// struct NoNull(CustomRuleCode);
+///
+/// impl LintRule for NoNull {
+///     fn id(&self) -> RuleId<'_> {
+///         RuleId::Custom(&self.0)
+///     }
+///     fn name(&self) -> &str {
+///         "No Null"
+///     }
+///     fn description(&self) -> &str {
+///         "Rejects a null document"
+///     }
+///     fn default_severity(&self) -> Severity {
+///         Severity::Warning
+///     }
+/// }
+///
+/// impl DocumentRule for NoNull {
+///     fn check(
+///         &self,
+///         _context: &LintContext,
+///         document: LintDocument<'_>,
+///         _config: &LintConfig,
+///     ) -> Vec<Diagnostic> {
+///         assert!(document.first_line >= 1);
+///         Vec::new()
+///     }
+/// }
+/// ```
+pub trait DocumentRule: LintRule {
+    /// Checks one document and returns the diagnostics found, empty if there are none.
+    fn check(
+        &self,
+        context: &LintContext,
+        document: LintDocument<'_>,
+        config: &LintConfig,
+    ) -> Vec<Diagnostic>;
+}
+
+/// A registered rule, by the input it reads.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::rules::{DuplicateKeysRule, Rule};
+///
+/// let rule = Rule::Source(Box::new(DuplicateKeysRule));
+/// assert_eq!(rule.info().id().as_str(), "duplicate-key");
+/// ```
+pub enum Rule {
+    /// A rule that reads the source text only.
+    Source(Box<dyn SourceRule>),
+    /// A rule that walks the value tree of each document.
+    Document(Box<dyn DocumentRule>),
+}
+
+impl Rule {
+    /// The metadata of the rule.
+    #[must_use]
+    pub fn info(&self) -> &dyn LintRule {
+        match self {
+            Self::Source(rule) => &**rule,
+            Self::Document(rule) => &**rule,
+        }
     }
+}
 
-    /// Checks the source and returns diagnostics.
-    ///
-    /// # Parameters
-    ///
-    /// - `context`: The lint context providing access to source, comments, and metadata
-    /// - `value`: The parsed YAML value tree
-    /// - `config`: Linter configuration
-    ///
-    /// # Returns
-    ///
-    /// A vector of diagnostics found by this rule. Empty if no issues.
-    ///
-    /// # Contract
-    ///
-    /// Built-in rules read what `context` collected from the loader pass of the source. A context
-    /// that [`Linter`](crate::Linter) did not scan loads the source on first use under the default
-    /// [`ParseLimits`](fast_yaml_core::limits::ParseLimits), so no rule can drive an unguarded
-    /// parser (#563).
-    fn check(&self, context: &LintContext, value: &Value, config: &LintConfig) -> Vec<Diagnostic>;
+/// A rule with this id is already registered.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::rules::{DuplicateKeysRule, Rule, RuleRegistry};
+///
+/// let mut registry = RuleRegistry::new();
+/// registry.add(Rule::Source(Box::new(DuplicateKeysRule))).unwrap();
+/// let error = registry.add(Rule::Source(Box::new(DuplicateKeysRule))).err().unwrap();
+/// assert_eq!(error.code, "duplicate-key");
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("a rule with the code '{code}' is already registered")]
+pub struct DuplicateRule {
+    /// The code of the rule that is registered twice.
+    pub code: String,
 }
 
 /// Registry of all available lint rules.
@@ -202,7 +334,7 @@ pub trait LintRule: Send + Sync {
 /// assert!(!registry.rules().is_empty());
 /// ```
 pub struct RuleRegistry {
-    rules: Vec<Box<dyn LintRule>>,
+    rules: Vec<Rule>,
 }
 
 impl RuleRegistry {
@@ -217,7 +349,7 @@ impl RuleRegistry {
     /// assert!(registry.rules().is_empty());
     /// ```
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { rules: Vec::new() }
     }
 
@@ -257,27 +389,36 @@ impl RuleRegistry {
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {
-        let mut registry = Self::new();
-        for rule in crate::config::default_rules() {
-            registry.add(rule);
+        Self {
+            rules: crate::config::default_rules(),
         }
-        registry
     }
 
     /// Adds a rule to the registry.
     ///
+    /// # Errors
+    ///
+    /// Returns [`DuplicateRule`] when a rule with the same id is registered, since both would
+    /// report the same findings under one set of settings.
+    ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::rules::{RuleRegistry, DuplicateKeysRule};
+    /// use fast_yaml_linter::rules::{DuplicateKeysRule, Rule, RuleRegistry};
     ///
     /// let mut registry = RuleRegistry::new();
-    /// registry.add(Box::new(DuplicateKeysRule));
+    /// registry.add(Rule::Source(Box::new(DuplicateKeysRule))).unwrap();
     /// assert_eq!(registry.rules().len(), 1);
     /// ```
-    pub fn add(&mut self, rule: Box<dyn LintRule>) -> &mut Self {
+    pub fn add(&mut self, rule: Rule) -> Result<&mut Self, DuplicateRule> {
+        let id = rule.info().id();
+        if self.rules.iter().any(|known| known.info().id() == id) {
+            return Err(DuplicateRule {
+                code: id.as_str().to_owned(),
+            });
+        }
         self.rules.push(rule);
-        self
+        Ok(self)
     }
 
     /// Gets all registered rules.
@@ -291,7 +432,7 @@ impl RuleRegistry {
     /// assert!(!registry.rules().is_empty());
     /// ```
     #[must_use]
-    pub fn rules(&self) -> &[Box<dyn LintRule>] {
+    pub fn rules(&self) -> &[Rule] {
         &self.rules
     }
 
@@ -308,11 +449,8 @@ impl RuleRegistry {
     /// assert!(rule.is_some());
     /// ```
     #[must_use]
-    pub fn get(&self, code: &str) -> Option<&dyn LintRule> {
-        self.rules
-            .iter()
-            .find(|r| r.id().as_str() == code)
-            .map(|b| &**b)
+    pub fn get(&self, code: &str) -> Option<&Rule> {
+        self.rules.iter().find(|r| r.info().id().as_str() == code)
     }
 }
 
@@ -341,8 +479,21 @@ mod tests {
     #[test]
     fn test_registry_add() {
         let mut registry = RuleRegistry::new();
-        registry.add(Box::new(DuplicateKeysRule));
+        registry
+            .add(Rule::Source(Box::new(DuplicateKeysRule)))
+            .unwrap();
         assert_eq!(registry.rules().len(), 1);
+    }
+
+    #[test]
+    fn test_registry_rejects_a_duplicate_id() {
+        let mut registry = RuleRegistry::with_default_rules();
+        let error = registry
+            .add(Rule::Source(Box::new(DuplicateKeysRule)))
+            .err()
+            .unwrap();
+        assert_eq!(error.code, "duplicate-key");
+        assert_eq!(registry.rules().len(), 25);
     }
 
     #[test]
@@ -350,7 +501,7 @@ mod tests {
         let registry = RuleRegistry::with_default_rules();
         let rule = registry.get("duplicate-key");
         assert!(rule.is_some());
-        assert_eq!(rule.unwrap().id().as_str(), "duplicate-key");
+        assert_eq!(rule.unwrap().info().id().as_str(), "duplicate-key");
     }
 
     #[test]

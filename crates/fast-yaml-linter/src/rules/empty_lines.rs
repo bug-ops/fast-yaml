@@ -1,6 +1,6 @@
 //! Rule to check empty lines.
 
-use super::RuleId;
+use super::{LintRule, RuleId};
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,6 @@ use crate::context::source_lines;
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
 };
-use fast_yaml_core::Value;
 
 /// Linting rule for empty lines.
 ///
@@ -26,15 +25,14 @@ use fast_yaml_core::Value;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{rules::EmptyLinesRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::EmptyLinesRule, rules::SourceRule, LintConfig};
 /// use fast_yaml_core::Parser;
 ///
 /// let rule = EmptyLinesRule;
 /// let yaml = "key: value\n\nanother: value";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct EmptyLinesRule;
@@ -79,8 +77,10 @@ impl super::LintRule for EmptyLinesRule {
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for EmptyLinesRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let source = context.source();
         let options = &config.rules.empty_lines.options;
         let (max, max_start, max_end) = (options.max, options.max_start, options.max_end);
@@ -180,33 +180,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_empty_lines_valid() {
         let yaml = "key: value\n\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_too_many() {
         let yaml = "key: value\n\n\n\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
@@ -218,26 +215,24 @@ mod tests {
     #[test]
     fn test_empty_lines_custom_max() {
         let yaml = "key: value\n\n\n\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = config_with_rule(RuleName::EmptyLines, "{max: 5}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_at_start() {
         let yaml = "\n\nkey: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("at document start"));
     }
@@ -245,26 +240,24 @@ mod tests {
     #[test]
     fn test_empty_lines_at_start_allowed() {
         let yaml = "\n\nkey: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = config_with_rule(RuleName::EmptyLines, "{max-start: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_at_end() {
         let yaml = "key: value\n\n\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("at document end"));
     }
@@ -272,65 +265,60 @@ mod tests {
     #[test]
     fn test_empty_lines_at_end_allowed() {
         let yaml = "key: value\n\n\n";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = config_with_rule(RuleName::EmptyLines, "{max-end: 3}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_no_empty() {
         let yaml = "key: value\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_single_empty() {
         let yaml = "key: value\n\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_max_zero() {
         let yaml = "key: value\n\nanother: value";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = config_with_rule(RuleName::EmptyLines, "{max: 0}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_ne!(diagnostics, []);
     }
 
     #[test]
     fn test_empty_lines_multiple_blocks() {
         let yaml = "key1: value1\n\n\n\nkey2: value2\n\n\n\nkey3: value3";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = EmptyLinesRule;
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         // Should report 2 violations (two blocks with 3 empty lines each)
         assert_eq!(diagnostics.len(), 2);
     }

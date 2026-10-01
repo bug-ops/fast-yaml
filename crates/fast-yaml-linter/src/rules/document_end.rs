@@ -11,7 +11,6 @@ use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
     Span,
 };
-use fast_yaml_core::Value;
 
 /// Linting rule for document end marker.
 ///
@@ -27,15 +26,14 @@ use fast_yaml_core::Value;
 ///
 /// ```
 /// use fast_yaml_core::Parser;
-/// use fast_yaml_linter::{rules::DocumentEndRule, rules::LintRule, LintConfig};
+/// use fast_yaml_linter::{rules::DocumentEndRule, rules::SourceRule, LintConfig};
 ///
 /// let rule = DocumentEndRule;
 /// let yaml = "name: John\n...";
-/// let value = Parser::parse_str(yaml).unwrap().unwrap();
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &value, &config);
+/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentEndRule;
@@ -66,8 +64,10 @@ impl super::LintRule for DocumentEndRule {
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for DocumentEndRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         match config.rules.document_end.options.present {
             MarkerPresence::Allowed => Vec::new(),
             MarkerPresence::Required => {
@@ -157,33 +157,30 @@ mod tests {
     use super::*;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
-        rules::LintRule,
+        rules::SourceRule,
     };
-    use fast_yaml_core::Parser;
 
     #[test]
     fn test_document_end_required_present() {
         let yaml = "name: John\n...";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_document_end_required_missing() {
         let yaml = "name: John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "missing document end marker '...'");
     }
@@ -196,48 +193,43 @@ mod tests {
         let rule = DocumentEndRule;
         let config = LintConfig::new(); // Default: not required
 
-        let value_with = Parser::parse_str(yaml_with).unwrap().unwrap();
         let context_with = LintContext::new(yaml_with);
-        let diag_with = rule.check(&context_with, &value_with, &config);
+        let diag_with = rule.check(&context_with, &config);
         assert_eq!(diag_with, []);
 
-        let value_without = Parser::parse_str(yaml_without).unwrap().unwrap();
         let context_without = LintContext::new(yaml_without);
-        let diag_without = rule.check(&context_without, &value_without, &config);
+        let diag_without = rule.check(&context_without, &config);
         assert_eq!(diag_without, []);
     }
 
     #[test]
     fn test_document_end_with_comments_after() {
         let yaml = "name: John\n...\n# comment";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     #[test]
     fn test_severity_override() {
         let yaml = "name: John";
-        let value = Parser::parse_str(yaml).unwrap().unwrap();
 
         let rule = DocumentEndRule;
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true, severity: error}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &value, &config);
+        let diagnostics = rule.check(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     fn forbidden(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str("a: 1").unwrap().unwrap();
         let config = config_with_rule(RuleName::DocumentEnd, "{present: false}");
-        DocumentEndRule.check(&LintContext::new(yaml), &value, &config)
+        DocumentEndRule.check(&LintContext::new(yaml), &config)
     }
 
     #[test]
@@ -291,9 +283,8 @@ mod tests {
     }
 
     fn required(yaml: &str) -> Vec<Diagnostic> {
-        let value = Parser::parse_str("a: 1").unwrap().unwrap();
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
-        DocumentEndRule.check(&LintContext::new(yaml), &value, &config)
+        DocumentEndRule.check(&LintContext::new(yaml), &config)
     }
 
     fn required_lines(yaml: &str) -> Vec<(usize, usize)> {

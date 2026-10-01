@@ -1,11 +1,10 @@
 //! Rule to detect `!!set` members that carry a value.
 
-use super::RuleId;
+use super::{LintRule, RuleId};
 use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::set_members::SetMember;
 use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
 
 /// Rule to detect `!!set` members that carry a value.
 ///
@@ -39,8 +38,10 @@ impl super::LintRule for SetValuesRule {
     fn default_severity(&self) -> Severity {
         Severity::Error
     }
+}
 
-    fn check(&self, context: &LintContext, _value: &Value, config: &LintConfig) -> Vec<Diagnostic> {
+impl super::SourceRule for SetValuesRule {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
         let severity = config.rules.set_values.severity_or(self.default_severity());
         let source_context = context.source_context();
         context
@@ -62,15 +63,11 @@ impl super::LintRule for SetValuesRule {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::rules::LintRule;
+    use crate::rules::SourceRule;
     use crate::set_members::may_contain_set;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        SetValuesRule.check(
-            &LintContext::new(yaml),
-            &Value::Null,
-            &LintConfig::default(),
-        )
+        SetValuesRule.check(&LintContext::new(yaml), &LintConfig::default())
     }
 
     fn lines(yaml: &str) -> Vec<usize> {

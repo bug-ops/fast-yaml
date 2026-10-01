@@ -150,6 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI**: `fy format` and `fy convert` exit quietly with the result's code when stdout is closed (was `error: Failed to write to stdout`, exit 1) (#605)
 - **Linter**: lint is 10-35% slower in wall time on flow-heavy input (positioned node index, indentation port) with 26-48% lower RSS from lazy excerpts (#605)
 - **Linter**: `LintRule::code()` is replaced by `id() -> RuleId` (`RuleId::BuiltIn(RuleName) | Custom(&CustomRuleCode)`), and `LintConfig::is_rule_enabled`/`severity_for` take a `RuleId` instead of a string (#609) (#PR)
+- **Linter**: `LintRule` is metadata-only and rules implement `SourceRule` or `DocumentRule`, registered as `Rule`; `RuleRegistry::add` and `Linter::add_rule` take a `Rule` and reject a duplicate id, and `needs_value` is removed (#609) (#PR)
+- **Linter**: `Linter::lint_value` and the `LintContext` doc-start-line API are removed; a `DocumentRule` gets `LintDocument { value, first_line }` instead (#609) (#PR)
 
 ### Added
 
