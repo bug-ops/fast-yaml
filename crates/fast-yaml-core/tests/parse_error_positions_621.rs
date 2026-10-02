@@ -124,3 +124,12 @@ fn document_index_arithmetic_does_not_overflow() {
     assert_eq!(last.after(1), last);
     assert_eq!(last.number(), usize::MAX);
 }
+
+#[test]
+fn relocating_by_a_huge_amount_saturates() {
+    let err = Parser::parse_all("m:\n  <<: 1\n")
+        .unwrap_err()
+        .relocated(usize::MAX, usize::MAX);
+    assert_eq!(err.position(), at(usize::MAX, 3));
+    assert_eq!(err.document_index(), DocumentIndex::new(usize::MAX));
+}

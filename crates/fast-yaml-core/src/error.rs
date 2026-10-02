@@ -340,7 +340,8 @@ impl ParseError {
     /// ```
     #[must_use]
     pub fn relocated(self, lines: usize, documents: usize) -> Self {
-        let line_down = |at: SourcePosition| SourcePosition::new(at.line + lines, at.column);
+        let line_down =
+            |at: SourcePosition| SourcePosition::new(at.line.saturating_add(lines), at.column);
         match self {
             Self::Syntax(mut e) => {
                 e.position = line_down(e.position);
