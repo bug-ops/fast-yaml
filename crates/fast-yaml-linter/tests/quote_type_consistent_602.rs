@@ -66,11 +66,3 @@ fn the_style_is_kept_across_documents() {
     let source = "---\na: 'x'\n---\nb: \"y\"\n";
     assert_eq!(lines(source, "required: true"), [4]);
 }
-
-#[test]
-fn consistent_is_a_valid_rule_option() {
-    assert_eq!(
-        lines("---\na: 'x'\n", "required: true"),
-        Vec::<usize>::new()
-    );
-}

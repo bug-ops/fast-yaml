@@ -128,7 +128,10 @@ impl IndentationOptions {
     }
 }
 
-impl RuleOptions for IndentationOptions {}
+impl RuleOptions for IndentationOptions {
+    // `indent-size` in a later config layer replaces the `spaces` an earlier one set
+    const SUPERSEDES: &'static [(&'static str, &'static str)] = &[("indent-size", "spaces")];
+}
 
 impl super::LintRule for IndentationRule {
     fn id(&self) -> RuleId<'_> {

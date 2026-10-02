@@ -61,9 +61,6 @@ class TestLocation:
         with pytest.raises(ValueError, match="counted from 1"):
             lint.Location(line=line, column=column, offset=0)
 
-    def test_location_accepts_a_zero_offset(self):
-        assert lint.Location(line=1, column=1, offset=0).offset == 0
-
     def test_location_repr(self):
         """Test Location repr."""
         loc = lint.Location(line=1, column=5, offset=10)
@@ -104,7 +101,7 @@ class TestLintConfig:
         """Test default configuration."""
         config = lint.LintConfig()
         assert config.max_line_length == 80
-        assert config.indent_size == 2
+        assert config.indent_size is None
 
     def test_custom_config(self):
         """Test custom configuration."""

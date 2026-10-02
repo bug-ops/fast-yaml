@@ -120,7 +120,7 @@ lint.LintConfig(rules={"quoted-strings": {"quote-type": "singel"}})
 The `rules` patch is applied first, then the keyword arguments you set (`max_line_length`,
 `indent_size`, and `require_document_*` / `allow_duplicate_keys` when `True`; `False` changes nothing), then `disabled_rules` (which always
 wins); so `indent_size=2` beats `rules={"indentation": {"spaces": 4}}`. An omitted `max_line_length`
-keeps the default 80 and an omitted `indent_size` leaves the width `consistent`, as for `lint(source)`
+keeps the default 80 and an omitted `indent_size` leaves the width `consistent` (the `indent_size` property is then `None`), as for `lint(source)`
 without a config (a `rules` patch can replace both); `max_line_length=None` (or
 `{"line-length": {"max": None}}`) removes the line length limit.
 

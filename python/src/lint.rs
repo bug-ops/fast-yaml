@@ -7,7 +7,7 @@ use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_linter::config::{CanonicalPath, IndentSize, RuleName};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize, IndentSpaces, RuleName};
 use fast_yaml_linter::formatter::Findings;
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
@@ -774,10 +774,13 @@ impl PyLintConfig {
             .map(NonZeroUsize::get)
     }
 
-    /// Gets the indentation size.
+    /// Gets the fixed indentation size, or `None` while the width is `consistent`.
     #[getter]
-    fn indent_size(&self) -> usize {
-        self.inner.rules.indentation.options.indent_size().get()
+    const fn indent_size(&self) -> Option<usize> {
+        match self.inner.rules.indentation.options.width() {
+            IndentSpaces::Fixed(size) => Some(size.get()),
+            IndentSpaces::Consistent => None,
+        }
     }
 
     /// Gets the largest source accepted for linting, in bytes.
@@ -787,12 +790,12 @@ impl PyLintConfig {
     }
 
     fn __repr__(&self) -> String {
-        let max = self
-            .max_line_length()
-            .map_or_else(|| "None".to_string(), |max| max.to_string());
+        let shown =
+            |value: Option<usize>| value.map_or_else(|| "None".to_string(), |v| v.to_string());
         format!(
-            "LintConfig(max_line_length={max}, indent_size={}, max_input_bytes={})",
-            self.indent_size(),
+            "LintConfig(max_line_length={}, indent_size={}, max_input_bytes={})",
+            shown(self.max_line_length()),
+            shown(self.indent_size()),
             self.max_input_bytes()
         )
     }

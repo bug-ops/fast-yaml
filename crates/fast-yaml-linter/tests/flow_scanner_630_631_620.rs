@@ -118,3 +118,50 @@ fn nested_collections_keep_their_depth_across_continuation_lines() {
 fn a_flow_collection_opened_at_the_start_of_a_line_is_not_a_continuation() {
     assert_eq!(lines("---\n- {a: 1,\n  b: 2 }\n", TIGHT, "braces"), [3]);
 }
+
+#[test]
+fn plain_scalars_at_the_root_and_in_keys_are_not_flow_collections() {
+    for source in [
+        "if [ -n \"$X\" ]; then\n",
+        "--- plain {{ x }}\n",
+        "plain {{ x }} text\n",
+        "%YAML 1.2\n--- plain [ x ]\n",
+        "a [ b ]: 1\n",
+        "plain [ x ]\n---\nother { y }\n",
+        "? a [ b ]\n: v { c }\n",
+    ] {
+        for code in ["braces", "brackets"] {
+            assert_eq!(
+                lines(source, TIGHT, code),
+                Vec::<usize>::new(),
+                "{code}: {source:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_plain_scalar_continued_on_the_next_line_stays_text() {
+    for source in ["k: foo\n  bar { x }\n", "- a\n  b [ c ]\n"] {
+        for code in ["braces", "brackets"] {
+            assert_eq!(
+                lines(source, TIGHT, code),
+                Vec::<usize>::new(),
+                "{code}: {source:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn flow_collections_with_empty_values_are_still_checked() {
+    assert_eq!(lines("k: { y, z }\n", TIGHT, "braces"), [1, 1]);
+    assert_eq!(lines("- !!map { y }\n", TIGHT, "braces"), [1, 1]);
+}
+
+#[test]
+fn a_tag_or_anchor_before_a_flow_collection_keeps_it_checked() {
+    let source = "---\n- !<tag:example.com,2000:app/foo> [ x ]\n- !<a,b> { y }\n- &anc [ z ]\n";
+    assert_eq!(lines(source, TIGHT, "brackets"), [2, 2, 4, 4]);
+    assert_eq!(lines(source, TIGHT, "braces"), [3, 3]);
+}

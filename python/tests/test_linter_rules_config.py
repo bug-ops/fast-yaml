@@ -248,7 +248,7 @@ class TestKwargSemantics:
     def test_repr(self):
         assert (
             repr(lint.LintConfig())
-            == "LintConfig(max_line_length=80, indent_size=2, max_input_bytes=104857600)"
+            == "LintConfig(max_line_length=80, indent_size=None, max_input_bytes=104857600)"
         )
         assert (
             repr(lint.LintConfig(max_line_length=None, indent_size=4))
@@ -444,6 +444,18 @@ class TestShorthandPrecedence:
         source = "a:\n    b: 1\nc:\n  d: 2\n"
         assert "indentation" in {d.code for d in lint.lint(source, lint.LintConfig())}
         assert "indentation" in {d.code for d in lint.lint(source)}
+
+    def test_indent_size_is_none_while_the_width_is_consistent(self):
+        assert lint.LintConfig().indent_size is None
+        config = lint.LintConfig(rules={"indentation": {"spaces": "consistent"}})
+        assert config.indent_size is None
+
+    def test_indent_size_round_trips_without_changing_the_width(self):
+        source = "a:\n    b: 1\n"
+        for config in (lint.LintConfig(), lint.LintConfig(indent_size=4)):
+            copy = lint.LintConfig(indent_size=config.indent_size)
+            assert copy.indent_size == config.indent_size
+            assert lint.lint(source, copy) == lint.lint(source, config)
 
     def test_rules_set_the_fixed_indent_size(self):
         source = "a:\n  b: 1\n"

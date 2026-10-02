@@ -309,6 +309,7 @@ fn parse_jobs(raw: &str) -> Result<Workers, String> {
 }
 
 /// Parses `--max-line-length`: `1..=u32::MAX`, the range the Node.js binding accepts.
+#[cfg(feature = "linter")]
 fn parse_max_line_length(raw: &str) -> Result<NonZeroUsize, String> {
     let value = parse_number(raw)?;
     u32::try_from(value)
@@ -687,6 +688,7 @@ mod tests {
         assert!(parse_jobs("-1").is_err());
     }
 
+    #[cfg(feature = "linter")]
     #[test]
     fn max_line_length_names_its_range() {
         assert_eq!(parse_max_line_length("1").unwrap().get(), 1);

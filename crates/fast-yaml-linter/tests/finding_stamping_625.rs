@@ -174,7 +174,7 @@ fn every_built_in_rule_follows_its_configured_severity() {
     for level in ["error", "warning", "info", "hint"] {
         let expected: Severity = level.parse().unwrap();
         let found = lint_with_every_rule_at(level);
-        assert!(!found.is_empty());
+        assert_ne!(found.len(), 0, "no diagnostics at severity {level}");
         for diagnostic in &found {
             assert_eq!(
                 diagnostic.severity,

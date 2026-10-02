@@ -5,6 +5,7 @@
 #![cfg(unix)]
 
 use assert_cmd::{Command, cargo_bin_cmd};
+#[cfg(feature = "linter")]
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;

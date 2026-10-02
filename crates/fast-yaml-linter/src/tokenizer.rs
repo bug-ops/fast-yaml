@@ -62,6 +62,10 @@ pub struct FlowIndex {
     block_scalars: Vec<ByteRange>,
     flow_ranges: Vec<ByteRange>,
     masked_ranges: Vec<ByteRange>,
+    /// Plain scalars that hold a flow indicator, such as `if [ -n "$X" ]; then`.
+    plain_with_indicators: Vec<ByteRange>,
+    /// Where the parser stopped on a syntax error; the text from here on is read heuristically.
+    unparsed_from: Option<ByteOffset>,
 }
 
 impl FlowIndex {
@@ -76,6 +80,8 @@ impl FlowIndex {
             block_scalars: scalars.block.clone(),
             flow_ranges: scalars.flow.clone(),
             masked_ranges: collect_masked_ranges(source, scalars),
+            plain_with_indicators: scalars.plain_with_indicators.clone(),
+            unparsed_from: scalars.unparsed_from,
         }
     }
 }
@@ -96,6 +102,8 @@ enum Phase {
     ValueStart,
     /// In the anchor or tag of the node that follows, which is still to start.
     Property,
+    /// In a verbatim tag `!<...>`, which may hold blanks, commas and flow indicators.
+    Verbatim,
     /// In a block-context plain scalar.
     Plain,
 }
@@ -219,6 +227,13 @@ impl<'a> PlainScalarScanner<'a> {
             Quote::None => {}
         }
 
+        if self.phase == Phase::Verbatim {
+            if ch == '>' {
+                self.phase = Phase::Property;
+            }
+            return Step::One;
+        }
+
         if self.phase == Phase::Property {
             if !matches!(ch, ',' | '[' | ']' | '{' | '}') {
                 if matches!(ch, ' ' | '\t') {
@@ -283,9 +298,10 @@ impl<'a> PlainScalarScanner<'a> {
     }
 
     /// Reads a char where the node of a value may start.
-    const fn step_value_start(&mut self, ch: char) -> Step {
+    fn step_value_start(&mut self, ch: char) -> Step {
         match ch {
             ' ' | '\t' => {}
+            '!' if self.chars.peek() == Some(&'<') => self.phase = Phase::Verbatim,
             '&' | '!' => self.phase = Phase::Property,
             '"' | '\'' => {
                 self.quote = if ch == '"' {
@@ -405,13 +421,27 @@ impl<'a> FlowTokenizer<'a> {
         {
             return false;
         }
-        // Skip braces/brackets that appear inside block-context plain scalars
-        // (e.g. template expressions like `${{ var }}`).
-        !(Self::is_bracket(token_type)
-            && cursor
-                .scanner
-                .get_or_insert_with(|| PlainScalarScanner::new(cursor.text))
-                .contains(char_col))
+        if !Self::is_bracket(token_type) {
+            return true;
+        }
+        // A bracket inside a plain scalar (a template such as `${{ var }}`, a root scalar, a
+        // continuation line) is text. The parser reports where every plain scalar lies, so for
+        // the text it read this is exact; past a syntax error the line is read heuristically.
+        if Self::in_ranges(&self.index.plain_with_indicators, offset) {
+            return false;
+        }
+        if !self.is_unparsed(offset) {
+            return true;
+        }
+        !cursor
+            .scanner
+            .get_or_insert_with(|| PlainScalarScanner::new(cursor.text))
+            .contains(char_col)
+    }
+
+    /// Whether `offset` lies past the point where the parser stopped on a syntax error.
+    fn is_unparsed(&self, offset: ByteOffset) -> bool {
+        self.index.unparsed_from.is_some_and(|from| offset >= from)
     }
 
     /// Checks if a byte offset falls inside a block scalar range.
@@ -511,10 +541,19 @@ pub struct Tokens<'t, 'a> {
     carry: usize,
 }
 
+impl Tokens<'_, '_> {
+    /// Whether brackets are told from plain scalars by the line scanner: only after a syntax
+    /// error, since for the text the parser read it reports where the plain scalars lie.
+    const fn reads_heuristically(&self) -> bool {
+        FlowTokenizer::is_bracket(self.token_type) && self.tokenizer.index.unparsed_from.is_some()
+    }
+}
+
 impl Iterator for Tokens<'_, '_> {
     type Item = Token;
 
     fn next(&mut self) -> Option<Token> {
+        let heuristic = self.reads_heuristically();
         loop {
             let Some(cursor) = &mut self.line else {
                 let number = self.next_line;
@@ -533,15 +572,14 @@ impl Iterator for Tokens<'_, '_> {
                         text,
                         start,
                         chars: text.char_indices().enumerate(),
-                        scanner: (FlowTokenizer::is_bracket(self.token_type)
-                            && self.tokenizer.is_in_flow_interior(start))
-                        .then(|| PlainScalarScanner::continuing(text, carry.max(1))),
+                        scanner: (heuristic && self.tokenizer.is_in_flow_interior(start))
+                            .then(|| PlainScalarScanner::continuing(text, carry.max(1))),
                     });
                 continue;
             };
             let Some((char_col, (byte_col, c))) = cursor.chars.next() else {
                 // The next line goes on in this line's flow collection at the depth this one ends
-                if FlowTokenizer::is_bracket(self.token_type)
+                if heuristic
                     && self.next_line <= self.tokenizer.context.line_count()
                     && self
                         .tokenizer
@@ -584,6 +622,9 @@ pub struct ScalarRanges {
     flow: Vec<ByteRange>,
     /// Byte offset from which the parser produced no events because of a syntax error.
     unparsed_from: Option<ByteOffset>,
+    /// Plain scalars that contain `[`, `]`, `{` or `}`; the indicators inside are text, not flow
+    /// syntax. Only these are kept, so the list stays short.
+    pub(crate) plain_with_indicators: Vec<ByteRange>,
     flow_open: Vec<ByteOffset>,
     parsed_until: ByteOffset,
 }
@@ -609,7 +650,7 @@ impl ScalarRanges {
                         .push(ByteRange::new(open, range.start().add_bytes(1)));
                 }
             }
-            (Event::Scalar { style, .. }, _) => match style {
+            (Event::Scalar { style, value, .. }, _) => match style {
                 ScalarStyle::Literal | ScalarStyle::Folded => {
                     debug_assert!(
                         self.block
@@ -621,6 +662,17 @@ impl ScalarRanges {
                 }
                 ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted => {
                     self.quoted.push(range);
+                }
+                // An empty value (`{ y }`, `k:`) has a range that may reach the next token
+                ScalarStyle::Plain if !value.is_empty() => {
+                    let has_indicator = source
+                        .get(range.start().get()..range.end().get())
+                        .is_some_and(|text| {
+                            text.bytes().any(|b| matches!(b, b'[' | b']' | b'{' | b'}'))
+                        });
+                    if has_indicator {
+                        self.plain_with_indicators.push(range);
+                    }
                 }
                 ScalarStyle::Plain => {}
             },
@@ -1071,6 +1123,15 @@ mod tests {
         cols.extend(char_cols(line, '['));
         cols.sort_unstable();
         assert_eq!(scan(line, &cols), vec![false, false]);
+    }
+
+    #[test]
+    fn test_scanner_verbatim_tag_with_a_comma_does_not_end_the_property() {
+        let line = "- !<tag:example.com,2000:app/foo> [ x ]";
+        let cols = char_cols(line, '[');
+        assert_eq!(scan(line, &cols), vec![false]);
+        let plain = "- !<a,b> text [ x ]";
+        assert_eq!(scan(plain, &char_cols(plain, '[')), vec![true]);
     }
 
     #[test]

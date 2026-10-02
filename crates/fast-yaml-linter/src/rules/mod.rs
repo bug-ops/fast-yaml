@@ -458,8 +458,8 @@ impl RuleRegistry {
         Self { rules: Vec::new() }
     }
 
-    /// Registers every built-in rule, one for each [`RuleName`](crate::config::RuleName), in the
-    /// order of [`RuleName::ALL`](crate::config::RuleName::ALL).
+    /// Registers every built-in rule, one for each [`RuleName`], in the
+    /// order of [`RuleName::ALL`].
     ///
     /// # Examples
     ///

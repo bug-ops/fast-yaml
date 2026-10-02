@@ -95,13 +95,13 @@ impl DocumentIndex {
     /// The ordinal of the document, counted from 1, as shown in messages.
     #[must_use]
     pub const fn number(self) -> usize {
-        self.0 + 1
+        self.0.saturating_add(1)
     }
 
     /// The index `documents` documents later.
     #[must_use]
     pub const fn after(self, documents: usize) -> Self {
-        Self(self.0 + documents)
+        Self(self.0.saturating_add(documents))
     }
 }
 
