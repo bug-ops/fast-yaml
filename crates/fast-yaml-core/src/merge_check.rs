@@ -4,6 +4,7 @@
 //! point report the same error: the first invalid merge value, repeated `<<` key or set member
 //! value in document order, positioned at its key.
 
+use crate::DocumentIndex;
 use std::collections::HashMap;
 
 use saphyr_parser::{Event, Span};
@@ -237,15 +238,11 @@ impl MergeKeyValidator {
         if anchor > 0 {
             self.anchors.insert(anchor, kind);
         }
-        let document = self.documents.saturating_sub(1);
-        let merge_error = |error, at: Span| {
-            let SourcePosition { line, column } = SourcePosition::from_span(at);
-            ParseError::Merge {
-                error,
-                line,
-                column,
-                document,
-            }
+        let document = DocumentIndex::new(self.documents.saturating_sub(1));
+        let merge_error = |error, at: Span| ParseError::Merge {
+            error,
+            at: SourcePosition::from_span(at),
+            document,
         };
         match (role, self.open.last_mut().map(|open| &mut open.kind)) {
             (NodeRole::Item, Some(OpenKind::Sequence(verdict))) => {
@@ -286,10 +283,8 @@ impl MergeKeyValidator {
                     && self.set_values == SetValues::Reject
                     && !kind.is_set_value()
                 {
-                    let SourcePosition { line, column } = SourcePosition::from_span(at);
                     return Err(ParseError::SetValue {
-                        line,
-                        column,
+                        at: SourcePosition::from_span(at),
                         document,
                     });
                 }
@@ -322,10 +317,9 @@ mod tests {
         match validate(yaml) {
             Err(ParseError::Merge {
                 error,
-                line,
-                column,
+                at,
                 document,
-            }) => Some((error, line, column, document)),
+            }) => Some((error, at.line, at.column, document.get())),
             _ => None,
         }
     }
@@ -549,7 +543,7 @@ mod tests {
                     validate(&bad),
                     Err(ParseError::Merge {
                         error: MergeError::NotMapping,
-                        line: 2,
+                        at: SourcePosition { line: 2, .. },
                         ..
                     })
                 ),

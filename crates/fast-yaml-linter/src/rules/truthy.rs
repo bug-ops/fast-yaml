@@ -1,6 +1,6 @@
 //! Rule to check truthy value representations.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -12,7 +12,7 @@ use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::nodes::{Node, TagKind};
 use crate::scan::YamlVersion;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 use fast_yaml_core::ScalarStyle;
 
 /// YAML 1.1-only boolean representations — not valid in YAML 1.2.2 Core Schema.
@@ -50,7 +50,7 @@ const NON_CANONICAL_BOOLS: &[&str] = &["True", "False", "TRUE", "FALSE"];
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &config);
+/// let diagnostics = rule.diagnose(&context, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct TruthyRule;
@@ -200,10 +200,9 @@ impl super::LintRule for TruthyRule {
 }
 
 impl super::SourceRule for TruthyRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let options = &config.rules.truthy.options;
         let allowed: Vec<&str> = options.allowed_values.iter().map(|v| v.as_str()).collect();
-        let severity = config.rules.truthy.severity_or(self.default_severity());
         let source_context = context.source_context();
         let index = context.nodes();
 
@@ -233,9 +232,7 @@ impl super::SourceRule for TruthyRule {
             }
             if let Some(msg) = message(slot, schema, index.text(scalar), &allowed) {
                 let span = source_context.span_of_bytes(scalar.range);
-                diagnostics.push(
-                    DiagnosticBuilder::new(DiagnosticCode::TRUTHY, severity, msg, span).build(),
-                );
+                diagnostics.push(Finding::new(msg, span));
             }
         }
 
@@ -331,7 +328,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -343,7 +340,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("yes"));
         assert!(diagnostics[1].message.contains("no"));
@@ -357,7 +354,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("on"));
         assert!(diagnostics[1].message.contains("off"));
@@ -371,7 +368,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         // Must use "non-canonical" message, not "non-standard", since True/FALSE are valid YAML 1.2.2
         assert!(diagnostics[0].message.contains("non-canonical"));
@@ -387,8 +384,8 @@ mod tests {
         let rule = TruthyRule;
         let config = LintConfig::default();
 
-        let diags_nonstandard = rule.check(&LintContext::new(yaml_nonstandard), &config);
-        let diags_noncanonical = rule.check(&LintContext::new(yaml_noncanonical), &config);
+        let diags_nonstandard = rule.diagnose(&LintContext::new(yaml_nonstandard), &config);
+        let diags_noncanonical = rule.diagnose(&LintContext::new(yaml_noncanonical), &config);
 
         assert!(diags_nonstandard[0].message.contains("non-standard"));
         assert!(!diags_nonstandard[0].message.contains("non-canonical"));
@@ -404,7 +401,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -412,7 +409,7 @@ mod tests {
     fn test_truthy_reports_true_when_only_yes_is_allowed() {
         let yaml = "a: true\nb: yes\nc: False\n";
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes]}");
-        let diagnostics = TruthyRule.check(&LintContext::new(yaml), &config);
+        let diagnostics = TruthyRule.diagnose(&LintContext::new(yaml), &config);
         let messages: Vec<&str> = diagnostics.iter().map(|d| &*d.message).collect();
         assert_eq!(
             messages,
@@ -426,7 +423,7 @@ mod tests {
     #[test]
     fn test_truthy_without_allowed_values_reports_every_spelling() {
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: []}");
-        let diagnostics = TruthyRule.check(&LintContext::new("a: true\n"), &config);
+        let diagnostics = TruthyRule.diagnose(&LintContext::new("a: true\n"), &config);
         assert_eq!(
             diagnostics[0].message,
             "found truthy value 'true' that is not allowed (no truthy value is allowed)"
@@ -441,7 +438,7 @@ mod tests {
         let config = config_with_rule(RuleName::Truthy, "{allowed-values: [yes, no]}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -453,7 +450,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("yes"));
         assert!(diagnostics[1].message.contains("no"));
@@ -467,7 +464,7 @@ mod tests {
         let config = config_with_rule(RuleName::Truthy, "{check-keys: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("key"));
         assert!(diagnostics[1].message.contains("key"));
@@ -481,7 +478,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -493,7 +490,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("yes"));
     }
@@ -520,9 +517,15 @@ mod tests {
 
     fn truthy_spans(yaml: &str, config: &LintConfig) -> Vec<(usize, usize, usize)> {
         TruthyRule
-            .check(&LintContext::new(yaml), config)
+            .diagnose(&LintContext::new(yaml), config)
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column, d.span.end.column))
+            .map(|d| {
+                (
+                    d.span.start.line(),
+                    d.span.start.column(),
+                    d.span.end.column(),
+                )
+            })
             .collect()
     }
 

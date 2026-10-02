@@ -108,8 +108,8 @@ struct Region {
 impl Region {
     /// Builds the region of `d`, clamping the end to the start so it never precedes it.
     fn of(d: &Diagnostic) -> Self {
-        let start = (d.span.start.line, d.span.start.column);
-        let (end_line, end_column) = start.max((d.span.end.line, d.span.end.column));
+        let start = (d.span.start.line(), d.span.start.column());
+        let (end_line, end_column) = start.max((d.span.end.line(), d.span.end.column()));
         Self {
             start_line: start.0,
             start_column: start.1,

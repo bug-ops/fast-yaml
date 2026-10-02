@@ -1,13 +1,13 @@
 //! Rule to detect duplicate keys in YAML mappings.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::scan::{KeyRepeat, RepeatedKey};
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Rule to detect duplicate keys in YAML mappings.
 ///
@@ -77,11 +77,7 @@ impl super::LintRule for DuplicateKeysRule {
 }
 
 impl super::SourceRule for DuplicateKeysRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
-        let severity = config
-            .rules
-            .duplicate_key
-            .severity_or(self.default_severity());
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let forbid_merge_repeats = config
             .rules
             .duplicate_key
@@ -104,14 +100,15 @@ impl super::SourceRule for DuplicateKeysRule {
                         RepeatedKey::Alias => "alias key".to_owned(),
                         RepeatedKey::Ordinary => format!("key '{}'", echo(key, KEY_LIMIT)),
                     };
-                    DiagnosticBuilder::new(
-                        DiagnosticCode::DUPLICATE_KEY,
-                        severity,
+                    Finding::new(
                         format!("duplicate {what} (first defined at line {first_line})"),
                         *span,
                     )
-                    .with_suggestion("remove this duplicate key or rename it", *span, None)
-                    .build()
+                    .with_suggestion(
+                        "remove this duplicate key or rename it",
+                        *span,
+                        None,
+                    )
                 },
             )
             .collect()
@@ -121,12 +118,13 @@ impl super::SourceRule for DuplicateKeysRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::rules::SourceRule;
     use fast_yaml_core::Parser;
     use fast_yaml_core::Value;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        DuplicateKeysRule.check(&LintContext::new(yaml), &LintConfig::default())
+        DuplicateKeysRule.diagnose(&LintContext::new(yaml), &LintConfig::default())
     }
 
     #[test]
@@ -139,7 +137,7 @@ mod tests {
         let diags = run("key: first\nkey: second\n");
         assert_eq!(diags.len(), 1, "expected 1 diagnostic, got {}", diags.len());
         assert!(diags[0].message.contains("duplicate key 'key'"));
-        assert_eq!(diags[0].span.start.line, 2);
+        assert_eq!(diags[0].span.start.line(), 2);
     }
 
     #[test]
@@ -206,7 +204,7 @@ mod tests {
         let diags = run("name: John\nage: 30\nname: Jane\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("first defined at line 1"));
-        assert_eq!(diags[0].span.start.line, 3);
+        assert_eq!(diags[0].span.start.line(), 3);
     }
 
     /// Regression test for #131: duplicate-key column must be 1-indexed.
@@ -216,9 +214,10 @@ mod tests {
         let diags = run("dup: 1\ndup: 2\n");
         assert_eq!(diags.len(), 1);
         assert_eq!(
-            diags[0].span.start.column, 1,
+            diags[0].span.start.column(),
+            1,
             "column should be 1-indexed; got {}",
-            diags[0].span.start.column
+            diags[0].span.start.column()
         );
     }
 
@@ -229,9 +228,10 @@ mod tests {
         let diags = run("parent:\n  key: 1\n  key: 2\n");
         assert_eq!(diags.len(), 1);
         assert_eq!(
-            diags[0].span.start.column, 3,
+            diags[0].span.start.column(),
+            3,
             "column should be 1-indexed at indent 2; got {}",
-            diags[0].span.start.column
+            diags[0].span.start.column()
         );
     }
 
@@ -242,10 +242,10 @@ mod tests {
         assert_eq!(diags.len(), 1);
         let span = diags[0].span;
         assert_eq!(
-            (span.start.line, span.start.column, span.start.offset),
+            (span.start.line(), span.start.column(), span.start.offset()),
             (2, 1, 12)
         );
-        assert_eq!((span.end.column, span.end.offset), (5, 20));
+        assert_eq!((span.end.column(), span.end.offset()), (5, 20));
     }
 
     #[test]
@@ -253,15 +253,15 @@ mod tests {
         let diags = run("{é: 1, é: 2}");
         assert_eq!(diags.len(), 1);
         let span = diags[0].span;
-        assert_eq!((span.start.column, span.start.offset), (8, 8));
-        assert_eq!((span.end.column, span.end.offset), (9, 10));
+        assert_eq!((span.start.column(), span.start.offset()), (8, 8));
+        assert_eq!((span.end.column(), span.end.offset()), (9, 10));
     }
 
     #[test]
     fn test_crlf_duplicate_key_offset() {
         let diags = run("a: 1\r\na: 2\r\n");
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].span.start.offset, 6);
+        assert_eq!(diags[0].span.start.offset(), 6);
     }
 
     /// Regression test for #188: duplicate keys after `<<: *anchor` must be detected.
@@ -313,7 +313,7 @@ mod tests {
     fn test_duplicate_after_collection_key() {
         let diags = run("? {x: 1}\n: v\nk: 1\nk: 2\n");
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].span.start.line, 4);
+        assert_eq!(diags[0].span.start.line(), 4);
     }
 
     #[test]
@@ -390,14 +390,14 @@ mod tests {
     #[test]
     fn test_invalid_merge_value_stops_the_scan_without_panicking() {
         let yaml = "a: 1\na: 2\nb: {<<: 1}\nc: 1\nc: 2\n";
-        let diags = DuplicateKeysRule.check(&LintContext::new(yaml), &LintConfig::default());
+        let diags = DuplicateKeysRule.diagnose(&LintContext::new(yaml), &LintConfig::default());
         assert_eq!(diags.len(), 1);
     }
 
     fn run_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
         use crate::config::{RuleName, test_support::config_with_rule};
         let config = config_with_rule(RuleName::DuplicateKey, options);
-        DuplicateKeysRule.check(&LintContext::new(yaml), &config)
+        DuplicateKeysRule.diagnose(&LintContext::new(yaml), &config)
     }
 
     #[test]

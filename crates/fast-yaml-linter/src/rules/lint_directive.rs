@@ -2,7 +2,7 @@
 
 use super::RuleId;
 use crate::config::RuleName;
-use crate::{Diagnostic, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Settings holder for problems in inline lint directives.
 ///
@@ -30,7 +30,7 @@ impl super::LintRule for LintDirectiveRule {
 }
 
 impl super::SourceRule for LintDirectiveRule {
-    fn check(&self, _context: &LintContext, _config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, _context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
         Vec::new()
     }
 }

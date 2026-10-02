@@ -9,9 +9,7 @@ use crate::rules::token_stream::{
     scanner,
     tokens::{Kind, Token},
 };
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, Span};
 
 /// Linting rule for hyphen spacing.
 ///
@@ -33,7 +31,7 @@ use crate::{
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct HyphensRule;
@@ -75,9 +73,8 @@ impl super::LintRule for HyphensRule {
 }
 
 impl super::SourceRule for HyphensRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let settings = &config.rules.hyphens;
-        let severity = settings.severity_or(Severity::Warning);
         let max_spaces = settings.options.max_spaces_after;
         let source_context = context.source_context();
 
@@ -99,15 +96,9 @@ impl super::SourceRule for HyphensRule {
                     if max_spaces.exceeded_by(spaces) {
                         let loc = source_context.offset_to_location(hyphen.end.pointer);
                         diagnostics.push(
-                            DiagnosticBuilder::new(
-                                DiagnosticCode::HYPHENS,
-                                severity,
-                                format!(
+                            Finding::new(format!(
                                     "too many spaces after hyphen (expected at most {max_spaces}, found {spaces})"
-                                ),
-                                Span::new(loc, loc),
-                            )
-                            .build(),
+                                ), Span::new(loc, loc)),
                         );
                     }
                 }
@@ -146,7 +137,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -158,7 +149,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        assert_eq!(rule.check(&context, &config), []);
+        assert_eq!(rule.diagnose(&context, &config), []);
     }
 
     #[test]
@@ -169,7 +160,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces"));
     }
@@ -182,7 +173,7 @@ mod tests {
         let config = config_with_rule(RuleName::Hyphens, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -194,7 +185,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -206,7 +197,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -218,7 +209,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Empty list items (hyphen at end of line) are allowed
         assert_eq!(diagnostics, []);
     }
@@ -231,7 +222,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -243,7 +234,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "document separators should not trigger hyphens rule: {diagnostics:?}"
@@ -258,10 +249,10 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         let found: Vec<_> = diagnostics
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column))
+            .map(|d| (d.span.start.line(), d.span.start.column()))
             .collect();
         assert_eq!(found, [(2, 2), (3, 2)]);
     }
@@ -275,7 +266,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "valid list items after multibyte chars should not trigger hyphens rule: {diagnostics:?}"
@@ -291,7 +282,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        assert_eq!(rule.check(&context, &config), []);
+        assert_eq!(rule.diagnose(&context, &config), []);
     }
 
     #[test]
@@ -303,9 +294,9 @@ mod tests {
 
         let context = LintContext::new(yaml);
         let lines: Vec<_> = rule
-            .check(&context, &config)
+            .diagnose(&context, &config)
             .iter()
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect();
         assert_eq!(lines, [1]);
     }

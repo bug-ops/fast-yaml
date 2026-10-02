@@ -113,9 +113,8 @@ mod tests {
             index: 1,
             source: CoreParseError::LimitExceeded {
                 kind: LimitKind::Depth(MaxDepth::DEFAULT),
-                line: 1,
-                column: 1,
-                document: 1,
+                at: fast_yaml_core::SourcePosition::new(1, 1),
+                document: fast_yaml_core::DocumentIndex::new(1),
             },
         };
         let text = err.to_string();

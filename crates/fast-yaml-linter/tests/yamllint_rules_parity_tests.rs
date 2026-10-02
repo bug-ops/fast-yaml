@@ -17,7 +17,7 @@ fn positions(source: &str, rules: &str, code: &str) -> Vec<(usize, usize)> {
         .unwrap()
         .iter()
         .filter(|d| d.code.as_str() == code)
-        .map(|d| (d.span.start.line, d.span.start.column))
+        .map(|d| (d.span.start.line(), d.span.start.column()))
         .collect()
 }
 

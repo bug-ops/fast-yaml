@@ -5,15 +5,12 @@
 //! yamllint's stack of enclosing structures over it. Findings, columns and messages match
 //! yamllint 1.38 for every document both parsers accept.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::{IndentSequences, IndentSize, IndentSpaces, RuleOptions};
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Finding, LintConfig, LintContext, Location, Severity, Span};
 
 mod machine;
 
@@ -28,9 +25,10 @@ pub struct IndentationRule;
 
 /// Options of the indentation rule.
 ///
-/// Both widths are unset until a config file, a flag or the formatter indent sets one; an unset
-/// width is `consistent`, as in yamllint. `spaces` is yamllint's key and takes `consistent`; `indent-size` is the
-/// fast-yaml key for a fixed width, and `spaces` wins when both are set.
+/// The width of a level is one setting, [`spaces`](Self::spaces): `None` until a config file, a
+/// flag or the formatter indent chooses one, which reads as `consistent` as in yamllint. In a
+/// config file `spaces` is yamllint's key and takes `consistent`; `indent-size` is the fast-yaml
+/// key for a fixed width and sets `spaces` to it, `spaces` winning when both are written.
 ///
 /// # Examples
 ///
@@ -44,26 +42,57 @@ pub struct IndentationRule;
 ///
 /// let consistent: IndentationOptions = serde_norway::from_str("spaces: consistent").unwrap();
 /// assert_eq!(consistent.width(), IndentSpaces::Consistent);
+///
+/// let fixed: IndentationOptions = serde_norway::from_str("indent-size: 4").unwrap();
+/// assert_eq!(fixed.indent_size().get(), 4);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct IndentationOptions {
-    /// Spaces per indentation level; `None` when not set.
-    #[serde(
-        deserialize_with = "some_value",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub indent_size: Option<IndentSize>,
     /// Width of an indentation level, or `consistent`; `None` when not set.
-    #[serde(
-        deserialize_with = "some_value",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub spaces: Option<IndentSpaces>,
     /// Whether a sequence nested in a mapping is indented under its key.
     pub indent_sequences: IndentSequences,
     /// Whether the lines of a multi-line scalar must be indented like its first line.
     pub check_multi_line_strings: bool,
+}
+
+/// The keys of [`IndentationOptions`] as written in a config file.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
+struct IndentationOptionsKeys {
+    #[serde(deserialize_with = "some_value")]
+    indent_size: Option<IndentSize>,
+    #[serde(deserialize_with = "some_value")]
+    spaces: Option<IndentSpaces>,
+    indent_sequences: IndentSequences,
+    check_multi_line_strings: bool,
+}
+
+impl Default for IndentationOptionsKeys {
+    fn default() -> Self {
+        let defaults = IndentationOptions::default();
+        Self {
+            indent_size: None,
+            spaces: defaults.spaces,
+            indent_sequences: defaults.indent_sequences,
+            check_multi_line_strings: defaults.check_multi_line_strings,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for IndentationOptions {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let keys = IndentationOptionsKeys::deserialize(deserializer)?;
+        Ok(Self {
+            spaces: keys
+                .spaces
+                .or_else(|| keys.indent_size.map(IndentSpaces::Fixed)),
+            indent_sequences: keys.indent_sequences,
+            check_multi_line_strings: keys.check_multi_line_strings,
+        })
+    }
 }
 
 /// Reads a present key as `Some`, so an explicit `null` is an error like for other options.
@@ -77,16 +106,15 @@ impl IndentationOptions {
     /// Whether a config file or a flag chose a width.
     #[must_use]
     pub const fn width_is_set(&self) -> bool {
-        self.indent_size.is_some() || self.spaces.is_some()
+        self.spaces.is_some()
     }
 
-    /// The width of a level: `spaces`, else the fixed `indent-size`, else `consistent`.
+    /// The width of a level: `spaces`, or `consistent` when it is not set.
     #[must_use]
     pub const fn width(&self) -> IndentSpaces {
-        match (self.spaces, self.indent_size) {
-            (Some(spaces), _) => spaces,
-            (None, Some(size)) => IndentSpaces::Fixed(size),
-            (None, None) => IndentSpaces::Consistent,
+        match self.spaces {
+            Some(spaces) => spaces,
+            None => IndentSpaces::Consistent,
         }
     }
 
@@ -100,7 +128,10 @@ impl IndentationOptions {
     }
 }
 
-impl RuleOptions for IndentationOptions {}
+impl RuleOptions for IndentationOptions {
+    // `indent-size` in a later config layer replaces the `spaces` an earlier one set
+    const SUPERSEDES: &'static [(&'static str, &'static str)] = &[("indent-size", "spaces")];
+}
 
 impl super::LintRule for IndentationRule {
     fn id(&self) -> RuleId<'_> {
@@ -121,12 +152,8 @@ impl super::LintRule for IndentationRule {
 }
 
 impl super::SourceRule for IndentationRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
-        let severity = config
-            .rules
-            .indentation
-            .severity_or(self.default_severity());
         let options = &config.rules.indentation.options;
         let spaces = match options.width() {
             IndentSpaces::Fixed(size) => Some(size.get()),
@@ -138,7 +165,7 @@ impl super::SourceRule for IndentationRule {
             machine_problems(context, spaces, options)
         };
 
-        let mut diagnostics = mixed_whitespace(context, severity);
+        let mut diagnostics = mixed_whitespace(context);
         diagnostics.extend(problems.into_iter().map(|problem| {
             let width = source
                 .get(problem.offset..)
@@ -148,10 +175,9 @@ impl super::SourceRule for IndentationRule {
                 Location::new(problem.line, problem.column, problem.offset),
                 Location::new(problem.line, problem.column + 1, problem.offset + width),
             );
-            DiagnosticBuilder::new(DiagnosticCode::INDENTATION, severity, problem.message, span)
-                .build()
+            Finding::new(problem.message, span)
         }));
-        diagnostics.sort_by_key(|d| (d.span.start.line, d.span.start.column));
+        diagnostics.sort_by_key(|d| (d.span().start.line(), d.span().start.column()));
         diagnostics
     }
 }
@@ -190,7 +216,7 @@ fn machine_problems(
 }
 
 /// Reports lines whose indentation mixes tabs and spaces.
-fn mixed_whitespace(context: &LintContext, severity: Severity) -> Vec<Diagnostic> {
+fn mixed_whitespace(context: &LintContext) -> Vec<Finding> {
     let ctx = context.source_context();
     let mut diagnostics = Vec::new();
     for line_num in 1..=ctx.line_count() {
@@ -211,15 +237,10 @@ fn mixed_whitespace(context: &LintContext, severity: Severity) -> Vec<Diagnostic
             Location::new(line_num, 1, line_offset),
             Location::new(line_num, width + 1, line_offset + width),
         );
-        diagnostics.push(
-            DiagnosticBuilder::new(
-                DiagnosticCode::INDENTATION,
-                severity,
-                "mixed tabs and spaces in indentation".to_string(),
-                span,
-            )
-            .build(),
-        );
+        diagnostics.push(Finding::new(
+            "mixed tabs and spaces in indentation".to_string(),
+            span,
+        ));
     }
     diagnostics
 }
@@ -300,7 +321,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -309,10 +330,10 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(2u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
-        assert_eq!(diagnostics[0].span.start.line, 2);
+        assert_eq!(diagnostics[0].span.start.line(), 2);
     }
 
     #[test]
@@ -323,7 +344,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(mixed_source);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("mixed tabs and spaces"));
     }
@@ -334,7 +355,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -343,7 +364,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -352,7 +373,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
     }
@@ -365,7 +386,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(tab_source);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -374,7 +395,7 @@ mod tests {
         let rule = IndentationRule;
         let config = config_with_rule(RuleName::Indentation, "{severity: error, spaces: 2}");
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
@@ -386,7 +407,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(2u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
@@ -394,12 +415,14 @@ mod tests {
         let config = config_with_rule(RuleName::Indentation, options);
         let ctx = LintContext::new(yaml);
         IndentationRule
-            .check(&ctx, &config)
+            .diagnose(&ctx, &config)
             .into_iter()
             .map(|d| {
                 format!(
                     "{}:{} {}",
-                    d.span.start.line, d.span.start.column, d.message
+                    d.span.start.line(),
+                    d.span.start.column(),
+                    d.message
                 )
             })
             .collect()
@@ -473,5 +496,61 @@ mod tests {
             messages("ключ:\n  значение: 1\n  другое: 2\n", "{spaces: 2}"),
             [] as [String; 0]
         );
+    }
+
+    fn options(yaml: &str) -> IndentationOptions {
+        serde_norway::from_str(yaml).unwrap()
+    }
+
+    fn fixed(width: u64) -> IndentSpaces {
+        IndentSpaces::Fixed(IndentSize::try_from(width).unwrap())
+    }
+
+    #[test]
+    fn test_unset_width_is_consistent_and_not_set() {
+        let unset = IndentationOptions::default();
+        assert_eq!(unset.spaces, None);
+        assert!(!unset.width_is_set());
+        assert_eq!(unset.width(), IndentSpaces::Consistent);
+        assert_eq!(options("{}"), unset);
+    }
+
+    #[test]
+    fn test_indent_size_key_sets_a_fixed_width() {
+        let parsed = options("indent-size: 4");
+        assert_eq!(parsed.spaces, Some(fixed(4)));
+        assert!(parsed.width_is_set());
+    }
+
+    #[test]
+    fn test_spaces_wins_over_indent_size() {
+        assert_eq!(
+            options("{spaces: 2, indent-size: 4}").spaces,
+            Some(fixed(2))
+        );
+        assert_eq!(
+            options("{spaces: consistent, indent-size: 4}").spaces,
+            Some(IndentSpaces::Consistent)
+        );
+    }
+
+    #[test]
+    fn test_width_serializes_as_spaces_only() {
+        let text = serde_norway::to_string(&options("indent-size: 4")).unwrap();
+        assert!(text.contains("spaces: 4"), "{text}");
+        assert!(!text.contains("indent-size"), "{text}");
+        assert!(
+            !serde_norway::to_string(&IndentationOptions::default())
+                .unwrap()
+                .contains("spaces")
+        );
+    }
+
+    #[test]
+    fn test_null_and_unknown_keys_are_errors() {
+        assert!(serde_norway::from_str::<IndentationOptions>("indent-size: null").is_err());
+        assert!(serde_norway::from_str::<IndentationOptions>("spaces: null").is_err());
+        assert!(serde_norway::from_str::<IndentationOptions>("indent: 2").is_err());
+        assert!(serde_norway::from_str::<IndentationOptions>("indent-size: 17").is_err());
     }
 }

@@ -388,13 +388,16 @@ class lint:  # noqa: N801
 
         ``offset`` is a byte offset in the text with document-prefix BOMs removed
         (also for suggestion spans); ``line`` and ``column`` refer to the same text.
+        ``line`` and ``column`` count from 1; ``offset`` counts from 0.
         """
 
         line: int
         column: int
         offset: int
 
-        def __init__(self, line: int, column: int, offset: int) -> None: ...
+        def __init__(self, line: int, column: int, offset: int) -> None:
+            """Raises ``ValueError`` when ``line`` or ``column`` is 0."""
+            ...
         def __repr__(self) -> str: ...
         def __eq__(self, other: object) -> bool: ...
 
@@ -468,9 +471,11 @@ class lint:  # noqa: N801
         (e.g. ``{"line-length": {"max": 120}}``). Unknown rules, option keys,
         wrong types and invalid severities raise ``ValueError``. Order of
         application: ``rules``, then the keyword arguments you set (the boolean
-        ones only when ``True``), then ``disabled_rules``. Omitted ``max_line_length``
-        and ``indent_size`` keep the defaults (80 and 2, which ``rules`` can
-        replace); ``max_line_length=None`` removes the limit.
+        ones only when ``True``), then ``disabled_rules``. An omitted ``max_line_length``
+        keeps the default 80 (which ``rules`` can replace) and ``None`` removes
+        the limit; an omitted ``indent_size`` leaves the width ``consistent`` (the property
+        then reads ``None``), as for ``lint(source)`` without a config, and ``rules`` can set
+        a fixed width.
 
         ``max_input_bytes`` (1..=1 GiB, default 100 MiB) rejects larger sources
         with ``ValueError``. It bounds linting work on oversized input; the
@@ -478,7 +483,7 @@ class lint:  # noqa: N801
         """
 
         max_line_length: int | None
-        indent_size: int
+        indent_size: int | None
         max_input_bytes: int
 
         def __init__(

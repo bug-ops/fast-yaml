@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `Location` fields are private; read them with `line()`, `column()` and `offset()`. Line and column are stored as the new `OneBased` type, so a location never holds line or column 0; `Location::new` raises a 0 to 1 and `Location::try_new` rejects it (#621) (#637)
+- **Python**: `Location(line, column, offset)` raises `ValueError` when `line` or `column` is 0 (#621) (#637)
+- **Core**: `ParseError::{LimitExceeded, Merge, SetValue, Key}` carry `at: SourcePosition` and `document: DocumentIndex` instead of `line`, `column` and a `usize` document; `ParseError::document_index`, `SyntaxError::document`, `SyntaxError::recursive_alias`, `EventStream::document` and `LimitGuard::document` use the new `DocumentIndex` (0-based) type (#621) (#637)
+- **Linter**: `SourceRule::check` and `DocumentRule::check` return `Vec<Finding>` instead of `Vec<Diagnostic>`; `Linter` gives each finding the code of the rule that returned it and the severity configured for that rule, so a rule no longer builds a `Diagnostic` or reads its own severity. Custom rules replace `DiagnosticBuilder::new(code, severity, message, span).build()` with `Finding::new(message, span)`, and `diagnose` returns diagnostics for tests (#625) (#637)
+- **Linter**: `rules::flow_common` helpers and the built-in rule helpers no longer take a diagnostic code or severity (#625) (#637)
+- **CLI**: `ExitCode::ParseError` is renamed `Failure` and the never-produced `IoError` (3) and `InvalidArgs` (4) are removed; exit codes 0, 1, 2 and 5 are unchanged (#628) (#637)
+- **CLI**: `--max-line-length` accepts `1..=4294967295`, as the Node.js binding does, and `0` or a larger value reports `must be between 1 and 4294967295, got N` (#634) (#637)
+- **Node.js**: `lint` reports an out-of-range `maxLineLength` or `indentSize` as `InvalidArg` with the `<name> must be between N and M, got V` message shared by the other numeric options (#628) (#637)
+- **Linter**: `IndentationOptions::indent_size` is removed; the width is the single field `spaces`, `indent-size` stays a config key that sets it, and a serialized config carries `spaces` only (#626) (#637)
+- **Python**: `LintConfig()` leaves the indentation width `consistent`, like `lint(source)` without a config, instead of a fixed 2, and `LintConfig.indent_size` is `None` (also in `repr`) while the width is `consistent` instead of 2 (#626) (#637)
 - **CLI**: `using config file: <path>` is printed only with `-v` (it was always on stderr, even with `-q`) (#614) (#622)
 - **Python/Node.js/Linter**: dedicated options now win over the `rules` patch on every surface (#601) (#622)
 - **Parallel**: `Config::with_workers` takes `Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)`), `Config::workers()` returns it, and `shared_pool` and `ScanAheadLane::for_policy` take `WorkerCount` (1..=128) instead of `Option<usize>`/`NonZeroUsize` (#610) (#622)
@@ -161,6 +171,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: `OneBased`, a line or column number that is never 0, and `Location::try_new` (#621) (#637)
+- **Core**: `DocumentIndex`, a 0-based document index distinct from the 1-based `SourcePosition`, and `SourcePosition::new` with a `Display` of `line L, column C` (#621) (#637)
+- **Linter**: `Finding`, the result of a rule before the linter adds its code and severity, and `SourceRule::diagnose` / `DocumentRule::diagnose` (#625) (#637)
+- **CLI**: `fy lint|format|convert -o /dev/null` discards the output (`NUL` on Windows) instead of failing with `not a regular file` (#634) (#637)
+- **Linter**: `quoted-strings` supports `quote-type: consistent`, holding the file to the style of its first quoted string like yamllint >= 1.35 (#602) (#637)
 - **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#622)
 - **Linter/Python/Node.js**: `RulesConfig::apply_rule_at`, `has_ignore` and `LintConfig::matching_path`; Python `with_rule_config` accepts per-rule `ignore`, and `lint` `path` no longer touches the file system unless a rule has `ignore` (#619) (#622)
 - **Linter**: config `extends` and `ignore-from-file`, `key-ordering` `ignored-keys` and `invalid-anchor` duplicate/unused/undeclared options (#571) (#572) (#595)
@@ -266,6 +281,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `commas` checks the comma before the closing brace of a flow mapping (`{a: b,}`), which was skipped because the parser starts the mapping end at the comma; `braces` and `brackets` report the gap inside an empty collection (`[ ]`, `{ }`) once, not twice, like yamllint (#637)
+- **Linter**: `braces` and `brackets` no longer report a plain scalar at the document root, in an implicit key or continued on the next line (`if [ -n "$X" ]; then`, `a [ b ]: 1`), nor miss a flow collection after a verbatim tag that holds a comma; the parser's own plain scalar ranges decide, and the line scanner reads only the text after a syntax error (#630) (#637)
+- **Linter**: `indent-size` in a later config layer replaces the `spaces` an earlier layer or preset set, instead of being ignored (#626) (#637)
+- **CLI**: `parse --stats` goes through the reporter, so a closed stdout no longer panics (#628) (#637)
+- **Linter**: the `RuleRegistry::with_default_rules` docs no longer list a stale subset of the rules (#628) (#637)
+- **Linter/Python**: `lint(source, LintConfig())` and `lint(source)` report the same indentation findings, as do Node `lint(source, {})` and `fy lint` (#626) (#637)
+- **Linter**: `braces`, `brackets` and `colons` no longer report plain scalars in block sequence entries (`- a [ b ]`, `- :year`) and read a value after an anchor or tag (`k: &a [ x ]`) as the flow collection it is (#630) (#637)
+- **Linter**: `commas` ignores the spaces between a comma and a trailing comment inside a flow collection (#631) (#637)
+- **Linter**: `braces` and `brackets` check a continuation line of a multi-line flow collection that ends in a plain scalar before the closing delimiter (#620) (#637)
 - **Core**: formatter keeps a `%TAG` prefix that starts with `#` instead of cutting it as a comment, so the output parses again (#636)
 - **CLI**: `run_ordered` cancellation test no longer depends on panic-hook timing on Windows (#636)
 - **CI**: fuzz job creates the corpus directory for targets not covered by the seed script (`validate_differential`) (#635)

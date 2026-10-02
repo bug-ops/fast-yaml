@@ -143,7 +143,8 @@ impl Formatter for TextFormatter {
             writeln!(
                 out,
                 "  --> input:{}:{}",
-                diagnostic.span.start.line, diagnostic.span.start.column
+                diagnostic.span.start.line(),
+                diagnostic.span.start.column()
             )?;
 
             if self.show_context

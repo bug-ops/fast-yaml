@@ -78,7 +78,9 @@ pub use emitter::{Emitter, EmitterConfig};
 pub use encoding::{
     DecodeError, EncodingEvidence, UnsupportedEncoding, decode_input, decode_input_owned,
 };
-pub use error::{EmitError, EmitResult, ParseError, ParseResult, SourcePosition, SyntaxError};
+pub use error::{
+    DocumentIndex, EmitError, EmitResult, ParseError, ParseResult, SourcePosition, SyntaxError,
+};
 pub use events::ScalarStyle;
 pub use input::NormalizedInput;
 pub use keys::{KeyError, KeyKind};

@@ -47,6 +47,12 @@ pub trait RuleOptions:
     /// Option names where `null` is a meaningful value rather than an error.
     const NULLABLE: &'static [&'static str] = &[];
 
+    /// Pairs `(patch key, current key)`: a patch that sets the first key without the second
+    /// replaces the value the second key holds, so the newer layer wins over an older one.
+    ///
+    /// Within one patch that sets both, the second key wins, as the option's docs say.
+    const SUPERSEDES: &'static [(&'static str, &'static str)] = &[];
+
     /// Lists options whose current value cannot take effect together with the others.
     ///
     /// Only conflicts on an option that the applied patch sets are reported, so a value left
@@ -703,6 +709,12 @@ fn overlay_options<O: RuleOptions>(
         .keys()
         .filter_map(|key| key.as_str().map(str::to_owned))
         .collect();
+    for (new_key, old_key) in O::SUPERSEDES {
+        let sets = |wanted: &str| patch_keys.iter().any(|key| key == wanted);
+        if sets(new_key) && !sets(old_key) {
+            current.remove(*old_key);
+        }
+    }
     for (key, value) in overlay {
         current.insert(key, value);
     }

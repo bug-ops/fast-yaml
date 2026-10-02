@@ -308,6 +308,22 @@ fn parse_jobs(raw: &str) -> Result<Workers, String> {
     }
 }
 
+/// Parses `--max-line-length`: `1..=u32::MAX`, the range the Node.js binding accepts.
+#[cfg(feature = "linter")]
+fn parse_max_line_length(raw: &str) -> Result<NonZeroUsize, String> {
+    let value = parse_number(raw)?;
+    u32::try_from(value)
+        .ok()
+        .and_then(|_| NonZeroUsize::new(value))
+        .ok_or_else(|| {
+            range_error(LimitRangeError {
+                value,
+                min: 1,
+                max: u32::MAX as usize,
+            })
+        })
+}
+
 fn parse_max_depth(raw: &str) -> Result<MaxDepth, String> {
     MaxDepth::new(parse_number(raw)?).map_err(range_error)
 }
@@ -417,7 +433,7 @@ pub struct LintFlags {
     pub config: ConfigArgs,
 
     /// Maximum line length (overrides config file)
-    #[arg(long)]
+    #[arg(long, value_name = "N", value_parser = parse_max_line_length)]
     pub max_line_length: Option<NonZeroUsize>,
 
     /// Indentation size (overrides config file)
@@ -670,6 +686,25 @@ mod tests {
             "must be between 0 and 128, got 129"
         );
         assert!(parse_jobs("-1").is_err());
+    }
+
+    #[cfg(feature = "linter")]
+    #[test]
+    fn max_line_length_names_its_range() {
+        assert_eq!(parse_max_line_length("1").unwrap().get(), 1);
+        assert_eq!(
+            parse_max_line_length("4294967295").unwrap().get(),
+            u32::MAX as usize
+        );
+        assert_eq!(
+            parse_max_line_length("0").unwrap_err(),
+            "must be between 1 and 4294967295, got 0"
+        );
+        assert_eq!(
+            parse_max_line_length("4294967296").unwrap_err(),
+            "must be between 1 and 4294967295, got 4294967296"
+        );
+        assert!(parse_max_line_length("x").is_err());
     }
 
     #[test]

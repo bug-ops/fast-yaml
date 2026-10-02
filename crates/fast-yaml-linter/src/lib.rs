@@ -57,12 +57,12 @@ pub use config::{ConfigFile, ConfigFileError};
 pub use context::{LineMetadata, LintContext, MAX_CONTEXT_COLUMNS, SourceContext};
 pub use diagnostic::{
     ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Excerpt,
-    Suggestion,
+    Finding, Suggestion,
 };
 pub use formatter::{Formatter, TextFormatter};
 pub use lint_source::LintSource;
 pub use linter::{LintConfig, LintError, Linter};
-pub use location::{Location, Span};
+pub use location::{Location, OneBased, Span};
 pub use severity::{ParseSeverityError, Severity};
 
 #[cfg(feature = "json-output")]

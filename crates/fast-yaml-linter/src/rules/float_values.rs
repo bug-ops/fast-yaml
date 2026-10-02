@@ -1,13 +1,13 @@
 //! Rule to check float value representations.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::nodes::{Node, TagKind};
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 use fast_yaml_core::{ResolvedScalar, ScalarStyle, resolve_scalar};
 
 /// Linting rule for float values.
@@ -32,7 +32,7 @@ use fast_yaml_core::{ResolvedScalar, ScalarStyle, resolve_scalar};
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &config);
+/// let diagnostics = rule.diagnose(&context, &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct FloatValuesRule;
@@ -84,12 +84,8 @@ impl super::LintRule for FloatValuesRule {
 }
 
 impl super::SourceRule for FloatValuesRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let options = &config.rules.float_values.options;
-        let severity = config
-            .rules
-            .float_values
-            .severity_or(self.default_severity());
         let source_context = context.source_context();
         let index = context.nodes();
 
@@ -111,10 +107,7 @@ impl super::SourceRule for FloatValuesRule {
             };
             let span = source_context.span_of_bytes(scalar.range);
             for msg in messages(text, float, options) {
-                diagnostics.push(
-                    DiagnosticBuilder::new(DiagnosticCode::FLOAT_VALUES, severity, msg, span)
-                        .build(),
-                );
+                diagnostics.push(Finding::new(msg, span));
             }
         }
 
@@ -171,7 +164,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -183,7 +176,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
@@ -203,7 +196,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -215,7 +208,7 @@ mod tests {
         let config = config_with_rule(RuleName::FloatValues, "{forbid-scientific-notation: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("scientific notation"));
     }
@@ -228,7 +221,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -240,7 +233,7 @@ mod tests {
         let config = config_with_rule(RuleName::FloatValues, "{forbid-nan: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
         assert!(diagnostics[0].message.contains("NaN"));
     }
@@ -253,7 +246,7 @@ mod tests {
         let config = config_with_rule(RuleName::FloatValues, "{forbid-inf: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 3);
         assert!(diagnostics[0].message.contains("Infinity"));
     }
@@ -266,7 +259,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -281,7 +274,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Quoted values should be ignored
         assert_eq!(diagnostics, []);
     }
@@ -297,7 +290,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
@@ -309,7 +302,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
     }
 
@@ -321,7 +314,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(
             diagnostics.len(),
             3,
@@ -337,7 +330,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2, "expected diagnostics for -.5 and +.5");
         assert!(
             diagnostics[0].message.contains("-0.5"),
@@ -359,14 +352,14 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
     fn lint_messages(yaml: &str, options: &str) -> Vec<String> {
         let config = config_with_rule(RuleName::FloatValues, options);
         FloatValuesRule
-            .check(&LintContext::new(yaml), &config)
+            .diagnose(&LintContext::new(yaml), &config)
             .into_iter()
             .map(|d| d.message.into_owned())
             .collect()

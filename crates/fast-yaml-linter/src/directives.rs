@@ -12,10 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
-use crate::rules::RuleRegistry;
+use crate::rules::{LintDirectiveRule, RuleRegistry, stamp};
 use crate::{
-    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
+    CommentKind, Diagnostic, DiagnosticCode, Finding, LintConfig, LintContext, SourceContext, Span,
 };
 
 /// yamllint rule names that do not match a fast-yaml code 1:1.
@@ -317,7 +316,8 @@ impl Directives {
 
         for comment in context.comments() {
             let full_line = comment.is_full_line();
-            let Some(text) = source.get(comment.span.start.offset..comment.span.end.offset) else {
+            let Some(text) = source.get(comment.span.start.offset()..comment.span.end.offset())
+            else {
                 continue;
             };
             let (kind, mut problem) = match parse(text, is_known) {
@@ -328,7 +328,7 @@ impl Directives {
                 }
                 Parsed::Directive { kind, problem } => (kind, problem),
             };
-            let line = comment.span.start.line;
+            let line = comment.span.start.line();
 
             let misplaced = match kind {
                 DirectiveKind::Disable(_) | DirectiveKind::Enable(_)
@@ -377,17 +377,12 @@ impl Directives {
         }
 
         if config.rules.is_enabled(RuleName::LintDirective) {
-            let severity = config
-                .rules
-                .severity(RuleName::LintDirective)
-                .unwrap_or(Severity::Warning);
-            this.warnings = problems
+            // Same path as every other built-in rule: the code and severity come from the rule
+            let findings = problems
                 .into_iter()
-                .map(|(span, message)| {
-                    DiagnosticBuilder::new(DiagnosticCode::LINT_DIRECTIVE, severity, message, span)
-                        .build()
-                })
+                .map(|(span, message)| Finding::new(message, span))
                 .collect();
+            this.warnings = stamp(&LintDirectiveRule, config, findings);
         }
         this
     }
@@ -406,7 +401,7 @@ impl Directives {
     }
 
     fn is_suppressed(&self, diagnostic: &Diagnostic) -> bool {
-        let line = diagnostic.span.start.line;
+        let line = diagnostic.span.start.line();
         let idx = self.blocks.partition_point(|(l, _)| *l <= line);
         let blocked = idx
             .checked_sub(1)
@@ -449,7 +444,7 @@ fn first_content_line(ctx: &SourceContext<'_>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Linter;
+    use crate::{Linter, Severity};
 
     fn known(name: &str) -> bool {
         is_known_code(name)
@@ -486,7 +481,7 @@ mod tests {
         diagnostics
             .iter()
             .filter(|d| d.code.as_str() == code)
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect()
     }
 
@@ -753,7 +748,7 @@ mod tests {
         let lines: Vec<usize> = lint(source)
             .iter()
             .filter(|d| d.code.as_str() == "duplicate-key")
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect();
         assert_eq!(lines, [2, 8]);
     }
@@ -814,7 +809,7 @@ mod tests {
             .find(|d| d.code.as_str() == "lint-directive")
             .unwrap();
         assert_eq!(warning.severity, Severity::Warning);
-        assert_eq!(warning.span.start.line, 1);
+        assert_eq!(warning.span.start.line(), 1);
         assert_eq!(warning.excerpt, crate::Excerpt::SourceLines);
     }
 
@@ -869,9 +864,9 @@ mod tests {
             .iter()
             .find(|d| d.code.as_str() == "lint-directive")
             .unwrap();
-        assert_eq!(warning.span.start.offset, 0);
+        assert_eq!(warning.span.start.offset(), 0);
         assert_eq!(
-            &source[3 + warning.span.start.offset..3 + warning.span.end.offset],
+            &source[3 + warning.span.start.offset()..3 + warning.span.end.offset()],
             "# fy: disable bogus"
         );
     }

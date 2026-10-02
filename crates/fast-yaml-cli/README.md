@@ -272,11 +272,11 @@ RUST_LOG=fast_yaml_parallel=debug fy format -n configs/
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | Parse error |
-| 2 | Lint errors found |
-| 3 | I/O error |
-| 4 | Invalid arguments |
+| 1 | Run-time failure: invalid YAML, I/O, configuration, discovery or a size limit; for `fy format`, any file in a batch that failed |
+| 2 | Invalid arguments (a usage error from the argument parser), or `fy lint` found errors, or a lint batch had a file it could not read or parse |
 | 5 | `fy format --dry-run`: at least one file would change (1 takes precedence if any file failed) |
+
+Codes 3 and 4 are not used.
 
 ## Examples
 

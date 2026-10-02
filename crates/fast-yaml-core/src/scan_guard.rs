@@ -6,6 +6,7 @@
 //! ended, and the input turns into an exhausted one once the gap passes the limit. Nothing here
 //! models YAML syntax, so every input shape is bounded alike.
 
+use crate::DocumentIndex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -342,9 +343,8 @@ impl<'a> GuardedParser<'a> {
         if self.state.exceeded.load(Ordering::Relaxed) {
             return Some(Err(ParseError::LimitExceeded {
                 kind: LimitKind::ScanAhead(self.limit),
-                line: self.last.line,
-                column: self.last.column,
-                document: self.cursor.index(),
+                at: self.last,
+                document: DocumentIndex::new(self.cursor.index()),
             }));
         }
         Some(match next? {
@@ -353,7 +353,10 @@ impl<'a> GuardedParser<'a> {
                 self.cover(span);
                 Ok((event, span))
             }
-            Err(error) => Err(ParseError::scanner(&error, self.cursor.index())),
+            Err(error) => Err(ParseError::scanner(
+                &error,
+                DocumentIndex::new(self.cursor.index()),
+            )),
         })
     }
 
@@ -514,15 +517,14 @@ mod tests {
         let (_, items) = drain(text, MaxScanAhead::new(4).unwrap());
         let Some(Err(ParseError::LimitExceeded {
             kind: LimitKind::ScanAhead(limit),
-            line,
+            at,
             document,
-            ..
         })) = items.into_iter().last()
         else {
             panic!("scan-ahead error expected");
         };
-        assert_eq!((limit.get(), document), (4, 0));
-        assert!(line <= 3);
+        assert_eq!((limit.get(), document.get()), (4, 0));
+        assert!(at.line <= 3);
     }
 
     fn yamlish() -> impl Strategy<Value = String> {

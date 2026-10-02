@@ -1,16 +1,13 @@
 //! Rule to detect duplicate and unused anchor definitions in YAML documents.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AlwaysTrue, RuleOptions};
 use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, SourceContext, Span};
 use std::collections::HashMap;
 
 /// Rule to detect duplicate and unused anchor definitions.
@@ -76,15 +73,10 @@ impl super::LintRule for InvalidAnchorsRule {
 }
 
 impl super::SourceRule for InvalidAnchorsRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
-        let severity = config
-            .rules
-            .invalid_anchor
-            .severity_or(self.default_severity());
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         scan_anchors(
             context.source(),
             context.source_context(),
-            severity,
             config.rules.invalid_anchor.options,
         )
     }
@@ -134,12 +126,10 @@ impl ScanState {
 fn scan_anchors(
     source: &str,
     source_context: &SourceContext<'_>,
-    severity: Severity,
     options: InvalidAnchorsOptions,
-) -> Vec<Diagnostic> {
+) -> Vec<Finding> {
     let mut scan = AnchorScan {
         source_context,
-        severity,
         options,
         state: ScanState::new(),
         seen: HashMap::new(),
@@ -209,11 +199,10 @@ fn scan_anchors(
 /// Line scanner that accumulates anchor definitions and duplicate diagnostics.
 struct AnchorScan<'a> {
     source_context: &'a SourceContext<'a>,
-    severity: Severity,
     options: InvalidAnchorsOptions,
     state: ScanState,
     seen: HashMap<String, Anchor>,
-    diagnostics: Vec<Diagnostic>,
+    diagnostics: Vec<Finding>,
 }
 
 /// An anchor definition of the current document.
@@ -231,17 +220,18 @@ impl AnchorScan<'_> {
         if self.options.forbid_unused_anchors {
             let mut unused: Vec<(&String, &Anchor)> =
                 self.seen.iter().filter(|(_, a)| !a.used).collect();
-            unused.sort_by_key(|(_, anchor)| anchor.span.start.offset);
+            unused.sort_by_key(|(_, anchor)| anchor.span.start.offset());
             for (name, anchor) in unused {
                 self.diagnostics.push(
-                    DiagnosticBuilder::new(
-                        DiagnosticCode::INVALID_ANCHOR,
-                        self.severity,
+                    Finding::new(
                         format!("anchor '&{name}' is never used by an alias"),
                         anchor.span,
                     )
-                    .with_suggestion("remove the anchor or reference it", anchor.span, None)
-                    .build(),
+                    .with_suggestion(
+                        "remove the anchor or reference it",
+                        anchor.span,
+                        None,
+                    ),
                 );
             }
         }
@@ -314,9 +304,7 @@ impl AnchorScan<'_> {
                         let first_line = self.seen.get(name).map_or(line_number, |a| a.first_line);
                         if self.options.forbid_duplicated_anchors && self.seen.contains_key(name) {
                             self.diagnostics.push(
-                                DiagnosticBuilder::new(
-                                    DiagnosticCode::INVALID_ANCHOR,
-                                    self.severity,
+                                Finding::new(
                                     format!(
                                         "anchor '&{name}' is defined multiple times; \
                                          the earlier definition is shadowed \
@@ -324,8 +312,11 @@ impl AnchorScan<'_> {
                                     ),
                                     span,
                                 )
-                                .with_suggestion("rename this anchor to be unique", span, None)
-                                .build(),
+                                .with_suggestion(
+                                    "rename this anchor to be unique",
+                                    span,
+                                    None,
+                                ),
                             );
                         }
                         self.seen.insert(
@@ -463,13 +454,14 @@ fn find_anchor_name_end(bytes: &[u8], start: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
         rules::SourceRule,
     };
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        InvalidAnchorsRule.check(&LintContext::new(yaml), &LintConfig::default())
+        InvalidAnchorsRule.diagnose(&LintContext::new(yaml), &LintConfig::default())
     }
 
     #[test]
@@ -482,7 +474,7 @@ mod tests {
         let diags = run("a: &anchor value1\nb: &anchor value2\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("anchor '&anchor'"));
-        assert_eq!(diags[0].span.start.line, 2);
+        assert_eq!(diags[0].span.start.line(), 2);
         assert_eq!(diags[0].severity, Severity::Warning);
     }
 
@@ -521,7 +513,7 @@ mod tests {
         let diags = run("x: &foo 1\ny: other\nz: &foo 2\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("first defined at line 1"));
-        assert_eq!(diags[0].span.start.line, 3);
+        assert_eq!(diags[0].span.start.line(), 3);
     }
 
     #[test]
@@ -559,7 +551,7 @@ mod tests {
 
     fn run_with(yaml: &str, options: &str) -> Vec<Diagnostic> {
         let config = config_with_rule(RuleName::InvalidAnchor, options);
-        InvalidAnchorsRule.check(&LintContext::new(yaml), &config)
+        InvalidAnchorsRule.diagnose(&LintContext::new(yaml), &config)
     }
 
     #[test]
@@ -576,7 +568,7 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].message, "anchor '&b' is never used by an alias");
         assert_eq!(
-            (found[0].span.start.line, found[0].span.start.column),
+            (found[0].span.start.line(), found[0].span.start.column()),
             (2, 3)
         );
         assert_eq!(run("- &a 1\n- &b 2\n"), []);
@@ -587,10 +579,10 @@ mod tests {
         let options = "{forbid-unused-anchors: true}";
         let found = run_with("- &a 1\n- *a\n---\n- &a 2\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.line, 4);
+        assert_eq!(found[0].span.start.line(), 4);
         let found = run_with("- &a 1\n...\n---\n- &b 2\n- *b\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.line, 1);
+        assert_eq!(found[0].span.start.line(), 1);
     }
 
     #[test]
@@ -600,7 +592,7 @@ mod tests {
         assert_eq!(run_with("- &a 1\n- {k: *a}\n", options), []);
         let found = run_with("--- &a x\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.column, 5);
+        assert_eq!(found[0].span.start.column(), 5);
     }
 
     #[test]
@@ -615,7 +607,7 @@ mod tests {
         let options = "{forbid-unused-anchors: true, forbid-duplicated-anchors: false}";
         let found = run_with("- &a 1\n- *a\n- &a 2\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.line, 3);
+        assert_eq!(found[0].span.start.line(), 3);
     }
 
     #[test]
@@ -635,7 +627,7 @@ mod tests {
     fn test_severity_override() {
         let yaml = "a: &anchor value1\nb: &anchor value2\n";
         let config = config_with_rule(RuleName::InvalidAnchor, "{severity: error}");
-        let diagnostics = InvalidAnchorsRule.check(&LintContext::new(yaml), &config);
+        let diagnostics = InvalidAnchorsRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }

@@ -7,7 +7,7 @@ use crate::limits;
 use crate::rule_input::ValueConverter;
 use fast_yaml_core::ParseLimits;
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_linter::config::{CanonicalPath, IndentSize, RuleName};
+use fast_yaml_linter::config::{CanonicalPath, IndentSize, IndentSpaces, RuleName};
 use fast_yaml_linter::formatter::Findings;
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
@@ -152,12 +152,17 @@ pub struct PyLocation {
 impl PyLocation {
     #[new]
     #[pyo3(signature = (line, column, offset))]
-    const fn new(line: usize, column: usize, offset: usize) -> Self {
-        Self {
+    fn new(line: usize, column: usize, offset: usize) -> PyResult<Self> {
+        if line == 0 || column == 0 {
+            return Err(PyValueError::new_err(
+                "line and column are counted from 1, got 0",
+            ));
+        }
+        Ok(Self {
             line,
             column,
             offset,
-        }
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -172,12 +177,20 @@ impl PyLocation {
     }
 }
 
+impl PyLocation {
+    /// The Rust location, rejecting a line or column of 0 that a `Location` cannot hold.
+    fn to_rust(&self) -> PyResult<RustLocation> {
+        RustLocation::try_new(self.line, self.column, self.offset)
+            .ok_or_else(|| PyValueError::new_err("line and column are counted from 1, got 0"))
+    }
+}
+
 impl From<RustLocation> for PyLocation {
     fn from(loc: RustLocation) -> Self {
         Self {
-            line: loc.line,
-            column: loc.column,
-            offset: loc.offset,
+            line: loc.line(),
+            column: loc.column(),
+            offset: loc.offset(),
         }
     }
 }
@@ -565,8 +578,6 @@ impl PyLintConfig {
                 "max_input_bytes",
                 max_input_bytes,
             )?);
-        // The old fixed default width; a `rules` patch or `indent_size` still replaces it
-        inner.rules.indentation.options.indent_size = Some(IndentSize::default());
 
         if let Some(rules_obj) = rules {
             let value = ValueConverter::default()
@@ -763,10 +774,13 @@ impl PyLintConfig {
             .map(NonZeroUsize::get)
     }
 
-    /// Gets the indentation size.
+    /// Gets the fixed indentation size, or `None` while the width is `consistent`.
     #[getter]
-    fn indent_size(&self) -> usize {
-        self.inner.rules.indentation.options.indent_size().get()
+    const fn indent_size(&self) -> Option<usize> {
+        match self.inner.rules.indentation.options.width() {
+            IndentSpaces::Fixed(size) => Some(size.get()),
+            IndentSpaces::Consistent => None,
+        }
     }
 
     /// Gets the largest source accepted for linting, in bytes.
@@ -776,12 +790,12 @@ impl PyLintConfig {
     }
 
     fn __repr__(&self) -> String {
-        let max = self
-            .max_line_length()
-            .map_or_else(|| "None".to_string(), |max| max.to_string());
+        let shown =
+            |value: Option<usize>| value.map_or_else(|| "None".to_string(), |v| v.to_string());
         format!(
-            "LintConfig(max_line_length={max}, indent_size={}, max_input_bytes={})",
-            self.indent_size(),
+            "LintConfig(max_line_length={}, indent_size={}, max_input_bytes={})",
+            shown(self.max_line_length()),
+            shown(self.indent_size()),
             self.max_input_bytes()
         )
     }
@@ -884,40 +898,23 @@ fn given_findings(
             let suggestions = py_diag
                 .suggestions
                 .into_iter()
-                .map(|py_suggestion| RustSuggestion {
-                    message: py_suggestion.message,
-                    span: RustSpan::new(
-                        RustLocation::new(
-                            py_suggestion.span.start.line,
-                            py_suggestion.span.start.column,
-                            py_suggestion.span.start.offset,
+                .map(|py_suggestion| -> PyResult<RustSuggestion> {
+                    Ok(RustSuggestion {
+                        message: py_suggestion.message,
+                        span: RustSpan::new(
+                            py_suggestion.span.start.to_rust()?,
+                            py_suggestion.span.end.to_rust()?,
                         ),
-                        RustLocation::new(
-                            py_suggestion.span.end.line,
-                            py_suggestion.span.end.column,
-                            py_suggestion.span.end.offset,
-                        ),
-                    ),
-                    replacement: py_suggestion.replacement,
+                        replacement: py_suggestion.replacement,
+                    })
                 })
-                .collect();
+                .collect::<PyResult<Vec<_>>>()?;
 
             let diagnostic = RustDiagnostic {
                 code: RustDiagnosticCode::new(py_diag.code),
                 severity: py_diag.severity.inner,
                 message: Cow::Owned(py_diag.message),
-                span: RustSpan::new(
-                    RustLocation::new(
-                        py_diag.span.start.line,
-                        py_diag.span.start.column,
-                        py_diag.span.start.offset,
-                    ),
-                    RustLocation::new(
-                        py_diag.span.end.line,
-                        py_diag.span.end.column,
-                        py_diag.span.end.offset,
-                    ),
-                ),
+                span: RustSpan::new(py_diag.span.start.to_rust()?, py_diag.span.end.to_rust()?),
                 excerpt: RustExcerpt::Omitted,
                 suggestions,
             };

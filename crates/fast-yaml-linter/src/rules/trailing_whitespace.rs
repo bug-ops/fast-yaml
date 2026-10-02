@@ -1,8 +1,8 @@
 //! Rule to detect trailing whitespace.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Rule to detect trailing whitespace.
 pub struct TrailingWhitespaceRule;
@@ -26,7 +26,7 @@ impl super::LintRule for TrailingWhitespaceRule {
 }
 
 impl super::SourceRule for TrailingWhitespaceRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
         let mut diagnostics = Vec::new();
         let ctx = context.source_context();
 
@@ -38,17 +38,8 @@ impl super::SourceRule for TrailingWhitespaceRule {
                     let start = ctx.line_start(line_num).add_bytes(trimmed.len());
                     let span = ctx.span_at(start, line.len() - trimmed.len());
 
-                    let diagnostic = DiagnosticBuilder::new(
-                        DiagnosticCode::TRAILING_WHITESPACE,
-                        config
-                            .rules
-                            .trailing_whitespace
-                            .severity_or(self.default_severity()),
-                        "trailing whitespace detected".to_string(),
-                        span,
-                    )
-                    .with_suggestion("remove trailing whitespace", span, None)
-                    .build();
+                    let diagnostic = Finding::new("trailing whitespace detected".to_string(), span)
+                        .with_suggestion("remove trailing whitespace", span, None);
 
                     diagnostics.push(diagnostic);
                 }
@@ -74,7 +65,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -86,7 +77,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("trailing whitespace"));
@@ -99,7 +90,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
     }
@@ -111,7 +102,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 2);
     }
@@ -123,7 +114,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         // Empty lines should not trigger
         assert_eq!(diagnostics, []);
@@ -137,7 +128,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert!(
             diagnostics.is_empty(),
@@ -153,10 +144,10 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.start.line, 1);
+        assert_eq!(diagnostics[0].span.start.line(), 1);
     }
 
     #[test]
@@ -166,7 +157,7 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = config_with_rule(RuleName::TrailingWhitespace, "{severity: error}");
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
@@ -179,9 +170,9 @@ mod tests {
         let rule = TrailingWhitespaceRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.start.line, 2);
+        assert_eq!(diagnostics[0].span.start.line(), 2);
     }
 }

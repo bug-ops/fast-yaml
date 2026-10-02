@@ -73,7 +73,7 @@ fn main() {
         Ok(handle) => handle.join().unwrap_or(PANIC_EXIT_STATUS),
         Err(err) => {
             error::stderr_line(format_args!("error: failed to start command thread: {err}"));
-            ExitCode::ParseError.as_i32()
+            ExitCode::Failure.as_i32()
         }
     };
 
@@ -90,7 +90,7 @@ fn run_reporting_errors() -> i32 {
                 "{}",
                 format_error(&err, output_config.use_color())
             ));
-            ExitCode::ParseError
+            ExitCode::Failure
         }
     };
     exit_code.as_i32()

@@ -92,9 +92,10 @@ pub struct LintConfig { rules: RulesConfig, custom_rules: HashMap<CustomRuleCode
 pub struct RuleSettings<O> { enabled: bool, severity: Option<Severity>, options: O }
 pub trait LintRule: Send + Sync { fn id(&self) -> RuleId<'_>; fn name(&self) -> &str; fn description(&self) -> &str;
     fn default_severity(&self) -> Severity; }
-pub trait SourceRule: LintRule { fn check(&self, ctx: &LintContext, cfg: &LintConfig) -> Vec<Diagnostic>; }
+pub trait SourceRule: LintRule { fn check(&self, ctx: &LintContext, cfg: &LintConfig) -> Vec<Finding>;
+    fn diagnose(&self, ctx: &LintContext, cfg: &LintConfig) -> Vec<Diagnostic>; /* provided: stamps code and severity */ }
 pub trait DocumentRule: LintRule {
-    fn check(&self, ctx: &LintContext, doc: LintDocument<'_>, cfg: &LintConfig) -> Vec<Diagnostic>; }
+    fn check(&self, ctx: &LintContext, doc: LintDocument<'_>, cfg: &LintConfig) -> Vec<Finding>; }
 ```
 
 Config file grammar: `extends`, `rules`, `ignore`, `ignore-from-file`, `yaml-files`, `max-input-bytes`, `max-scan-ahead`, `max-diagnostics` (see spec FR-012..FR-015). Without `extends` rules start from `RulesConfig::default()` (all on); with a preset, from `Preset::rules()`; with a file path, from the extended file's resolved rules (`apply_over_preset`). `ConfigFile::load` walks the chain with a visited list (`MAX_EXTENDS_DEPTH` = 8) and reads each file through `read_bounded` (`MAX_CONFIG_FILE_BYTES` = 1 MiB).

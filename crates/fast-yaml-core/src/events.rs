@@ -5,6 +5,7 @@
 //! merge key validation, so a binding builds its own value tree without depending on the
 //! underlying parser crate and cannot skip a safety check.
 
+use crate::DocumentIndex;
 use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -247,7 +248,7 @@ impl<'a> EventStream<'a> {
     ///
     /// Between two documents this is the index of the document that follows.
     #[must_use]
-    pub const fn document(&self) -> usize {
+    pub const fn document(&self) -> DocumentIndex {
         self.guard.document()
     }
 
@@ -329,7 +330,7 @@ pub(crate) fn item_of<'a>(
 impl fmt::Debug for EventStream<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("EventStream")
-            .field("document", &self.document())
+            .field("document", &self.document().get())
             .field("done", &self.done)
             .finish_non_exhaustive()
     }
@@ -586,11 +587,11 @@ mod tests {
         let mut seen = Vec::new();
         while let Some(item) = events.next() {
             if let Event::Scalar { .. } = item.unwrap().event {
-                seen.push(events.document());
+                seen.push(events.document().get());
             }
         }
         assert_eq!(seen, [0, 1]);
-        assert_eq!(events.document(), 2);
+        assert_eq!(events.document().get(), 2);
     }
 
     #[test]
@@ -598,7 +599,7 @@ mod tests {
         let input = NormalizedInput::new("a\n---\n[\n").unwrap();
         let mut events = stream(&input);
         assert!(events.any(|item| item.is_err()));
-        assert_eq!(events.document(), 1);
+        assert_eq!(events.document().get(), 1);
     }
 
     #[test]

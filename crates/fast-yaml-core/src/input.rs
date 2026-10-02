@@ -4,6 +4,7 @@
 //! which is the only way to obtain one. The parser, the loader and the streaming formatter accept
 //! nothing else, so text can neither skip validation nor be normalized twice.
 
+use crate::DocumentIndex;
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -266,7 +267,7 @@ const DOCUMENT_SCAN_BUDGET: MaxScanAhead = match MaxScanAhead::new(64 * 1024) {
 /// column-0 `---` lines after it give the documents that followed. That count is a heuristic: it
 /// also counts such lines inside block scalars and quotes and ignores lone `\r` line breaks, so on
 /// this error path the reported document can be off.
-fn document_at(prefix: &str) -> usize {
+fn document_at(prefix: &str) -> DocumentIndex {
     let mut parser = GuardedParser::new(prefix, DOCUMENT_SCAN_BUDGET);
     let mut cursor = DocumentCursor::default();
     let end = position_at(prefix, prefix.len());
@@ -288,12 +289,14 @@ fn document_at(prefix: &str) -> usize {
                     .skip(parser.last_position().line)
                     .filter(|line| is_document_start(line))
                     .count();
-                return cursor.index() + markers.saturating_sub(usize::from(!cursor.is_open()));
+                return DocumentIndex::new(
+                    cursor.index() + markers.saturating_sub(usize::from(!cursor.is_open())),
+                );
             }
             Err(_) => break,
         }
     }
-    cursor.index()
+    DocumentIndex::new(cursor.index())
 }
 
 fn is_document_start(line: &str) -> bool {
@@ -443,7 +446,7 @@ mod tests {
             ("---\n\x01", 0),
         ] {
             let err = NormalizedInput::new(text).unwrap_err();
-            assert_eq!(err.document_index(), document, "{text:?}");
+            assert_eq!(err.document_index().get(), document, "{text:?}");
         }
     }
 

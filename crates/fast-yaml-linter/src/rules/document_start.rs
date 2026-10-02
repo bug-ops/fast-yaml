@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{MarkerPresence, RuleOptions};
 use crate::scan::DocumentStart;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, Span};
 
 /// Linting rule for document start marker.
 ///
@@ -31,7 +29,7 @@ use crate::{
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentStartRule;
@@ -65,8 +63,7 @@ impl super::LintRule for DocumentStartRule {
 }
 
 impl super::SourceRule for DocumentStartRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
-        let severity = config.rules.document_start.severity_or(Severity::Warning);
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         if context.documents().is_empty() && context.scan_is_complete() {
             return Vec::new();
         }
@@ -75,16 +72,14 @@ impl super::SourceRule for DocumentStartRule {
             MarkerPresence::Required => documents
                 .iter()
                 .filter_map(|document| match document.start {
-                    DocumentStart::Implicit(first_token) => {
-                        Some(missing(context, severity, first_token))
-                    }
+                    DocumentStart::Implicit(first_token) => Some(missing(context, first_token)),
                     DocumentStart::Explicit(_) => None,
                 })
                 .collect(),
             MarkerPresence::Forbidden => documents
                 .iter()
                 .filter_map(|document| document.start.marker())
-                .map(|span| forbidden(severity, span))
+                .map(forbidden)
                 .collect(),
             MarkerPresence::Allowed => Vec::new(),
         }
@@ -92,37 +87,28 @@ impl super::SourceRule for DocumentStartRule {
 }
 
 /// Reports a document that starts without `---`, at the line of its first token.
-fn missing(context: &LintContext<'_>, severity: Severity, first_token: Span) -> Diagnostic {
+fn missing(context: &LintContext<'_>, first_token: Span) -> Finding {
     let source_context = context.source_context();
-    let span = source_context.span_at(source_context.line_start(first_token.start.line), 0);
-    DiagnosticBuilder::new(
-        DiagnosticCode::DOCUMENT_START,
-        severity,
-        "missing document start marker '---'",
-        span,
-    )
-    .with_suggestion(
+    let span = source_context.span_at(source_context.line_start(first_token.start.line()), 0);
+    Finding::new("missing document start marker '---'", span).with_suggestion(
         "Add '---' before this document",
         span,
         Some("---\n".to_string()),
     )
-    .build()
 }
 
-fn forbidden(severity: Severity, span: Span) -> Diagnostic {
-    DiagnosticBuilder::new(
-        DiagnosticCode::DOCUMENT_START,
-        severity,
-        "document start marker '---' is forbidden",
+fn forbidden(span: Span) -> Finding {
+    Finding::new("document start marker '---' is forbidden", span).with_suggestion(
+        "Remove '---'",
         span,
+        None,
     )
-    .with_suggestion("Remove '---'", span, None)
-    .build()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
         rules::SourceRule,
@@ -136,7 +122,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentStart, "{present: required}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -148,7 +134,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentStart, "{present: required}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
             diagnostics[0].message,
@@ -164,7 +150,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentStart, "{present: forbidden}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
             diagnostics[0].message,
@@ -180,7 +166,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentStart, "{present: required}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -193,11 +179,11 @@ mod tests {
         let config = LintConfig::new(); // Default is "allowed"
 
         let context_with = LintContext::new(yaml_with);
-        let diag_with = rule.check(&context_with, &config);
+        let diag_with = rule.diagnose(&context_with, &config);
         assert_eq!(diag_with, []);
 
         let context_without = LintContext::new(yaml_without);
-        let diag_without = rule.check(&context_without, &config);
+        let diag_without = rule.diagnose(&context_without, &config);
         assert_eq!(diag_without, []);
     }
 
@@ -207,7 +193,7 @@ mod tests {
     fn count(yaml: &str, cfg: &str) -> usize {
         let config = config_with_rule(RuleName::DocumentStart, cfg);
         DocumentStartRule
-            .check(&LintContext::new(yaml), &config)
+            .diagnose(&LintContext::new(yaml), &config)
             .len()
     }
 
@@ -260,20 +246,20 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     fn diagnostics(yaml: &str, cfg: &str) -> Vec<Diagnostic> {
         let config = config_with_rule(RuleName::DocumentStart, cfg);
-        DocumentStartRule.check(&LintContext::new(yaml), &config)
+        DocumentStartRule.diagnose(&LintContext::new(yaml), &config)
     }
 
     fn lines(yaml: &str, cfg: &str) -> Vec<usize> {
         diagnostics(yaml, cfg)
             .iter()
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect()
     }
 
@@ -294,8 +280,11 @@ mod tests {
         assert_eq!(found.len(), 1);
         let suggestion = &found[0].suggestions[0];
         assert_eq!(suggestion.replacement.as_deref(), Some("---\n"));
-        assert_eq!(suggestion.span.start.offset, "---\na: 1\n...\n# c\n".len());
-        assert_eq!(suggestion.span.start.offset, suggestion.span.end.offset);
+        assert_eq!(
+            suggestion.span.start.offset(),
+            "---\na: 1\n...\n# c\n".len()
+        );
+        assert_eq!(suggestion.span.start.offset(), suggestion.span.end.offset());
     }
 
     #[test]

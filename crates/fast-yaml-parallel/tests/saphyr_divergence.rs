@@ -170,7 +170,7 @@ fn merged_chunk_reports_the_stream_document_index() {
             let Err(Error::Parse { index, source }) = result else {
                 panic!("expected parse error: {input:?}");
             };
-            assert_eq!(index, expected.document_index(), "{input:?}");
+            assert_eq!(index, expected.document_index().get(), "{input:?}");
             assert_eq!(source.position(), expected.position(), "{input:?}");
         }
     }
