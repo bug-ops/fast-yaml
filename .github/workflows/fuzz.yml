@@ -76,6 +76,7 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           scripts/fuzz-seed-corpus.sh
+          mkdir -p "fuzz/corpus/${TARGET}"
           find yaml-test-suite -name in.yaml -type f -print0 |
             while IFS= read -r -d '' file; do
               cp "$file" "fuzz/corpus/${TARGET}/suite_$(printf '%s' "$file" | tr '/' '_')"
