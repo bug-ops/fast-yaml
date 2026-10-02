@@ -136,14 +136,11 @@ fn diagnose_gives_the_same_result_as_the_linter() {
 
 /// Source that trips most rules of the default and strict settings.
 const MESSY: &str = "a:   1\na: 2\nb: [ 1,2 ]\nc: {x: 1,y: 2 }\nd:  yes\ne: 'quoted'\nf: 0755\n\
-g:\nh: .NaN\n #off\n#bad comment\nkey :  value   \n\n\n\n\ni: 1";
+g:\nh: .NaN\n #off\n#bad comment\n# fy: nope\nkey :  value   \n\n\n\n\ni: 1";
 
 fn lint_with_every_rule_at(level: &str) -> Vec<fast_yaml_linter::Diagnostic> {
     let mut rules = String::from("rules:\n");
     for name in RuleName::ALL {
-        if name == RuleName::LintDirective {
-            continue;
-        }
         let key = name.as_str();
         writeln!(rules, "  {key}: {{enabled: true, severity: {level}}}").unwrap();
     }
@@ -184,4 +181,32 @@ fn every_built_in_rule_follows_its_configured_severity() {
             );
         }
     }
+}
+
+#[test]
+fn lint_directive_reports_under_its_own_code_and_default_severity() {
+    let diagnostics = Linter::new().lint("# fy: nope\na: 1\n").unwrap();
+    let directive: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code.as_str() == "lint-directive")
+        .collect();
+    assert_eq!(directive.len(), 1);
+    assert_eq!(directive[0].severity, Severity::Warning);
+}
+
+#[test]
+fn lint_directive_follows_its_configured_severity() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    std::fs::write(&path, "rules:\n  lint-directive: error\n").unwrap();
+    let (config, _) = ConfigFile::load(&path).unwrap().into_parts();
+    let diagnostics = Linter::with_config(config)
+        .lint("# fy: nope\na: 1\n")
+        .unwrap();
+    let severities: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code.as_str() == "lint-directive")
+        .map(|d| d.severity)
+        .collect();
+    assert_eq!(severities, [Severity::Error]);
 }

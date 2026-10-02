@@ -12,10 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
-use crate::rules::RuleRegistry;
+use crate::rules::{LintDirectiveRule, RuleRegistry, stamp};
 use crate::{
-    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
+    CommentKind, Diagnostic, DiagnosticCode, Finding, LintConfig, LintContext, SourceContext, Span,
 };
 
 /// yamllint rule names that do not match a fast-yaml code 1:1.
@@ -378,17 +377,12 @@ impl Directives {
         }
 
         if config.rules.is_enabled(RuleName::LintDirective) {
-            let severity = config
-                .rules
-                .severity(RuleName::LintDirective)
-                .unwrap_or(Severity::Warning);
-            this.warnings = problems
+            // Same path as every other built-in rule: the code and severity come from the rule
+            let findings = problems
                 .into_iter()
-                .map(|(span, message)| {
-                    DiagnosticBuilder::new(DiagnosticCode::LINT_DIRECTIVE, severity, message, span)
-                        .build()
-                })
+                .map(|(span, message)| Finding::new(message, span))
                 .collect();
+            this.warnings = stamp(&LintDirectiveRule, config, findings);
         }
         this
     }
@@ -450,7 +444,7 @@ fn first_content_line(ctx: &SourceContext<'_>) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Linter;
+    use crate::{Linter, Severity};
 
     fn known(name: &str) -> bool {
         is_known_code(name)
