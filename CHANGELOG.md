@@ -140,7 +140,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Build/CI**: Python wheels and test matrices reduced, Actions pinned to SHAs, format/quality jobs gate tests, workflow dependency bumps (#432) (#472) (#535) (#597)
 - **Docs**: removed `docs/CI-CD-QUICKSTART.md` and `Makefile.toml`; CI notes moved to `CONTRIBUTING.md` (#596)
 - **Dependencies**: saphyr 0.1.0 (later dropped), `ordered-float` 5.5 and Rust minor/patch updates (#294) (#299) (#300) (#304) (#305) (#399)
-- **Dependencies**: `napi` 3.14, `napi-build` 2.6, Rust lockfile refresh, Node.js dev tooling (`@biomejs/biome`, `@napi-rs/cli`, `@types/node`) (#PR)
+- **Dependencies**: `napi` 3.14, `napi-build` 2.6, Rust lockfile refresh, Node.js dev tooling (`@biomejs/biome`, `@napi-rs/cli`, `@types/node`) (#645)
 
 ### Fixed
 
