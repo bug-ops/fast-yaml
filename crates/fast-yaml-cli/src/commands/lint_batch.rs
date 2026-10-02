@@ -930,7 +930,10 @@ mod tests {
             };
             let stop = |items: &mut dyn Iterator<Item = usize>| {
                 assert_eq!(items.next(), Some(0));
-                assert!(!panics, "consumer failed");
+                if panics {
+                    // Skips the panic hook, whose backtrace capture is slow enough to let the worker run ahead
+                    resume_unwind(Box::new("consumer failed"));
+                }
             };
             let outcome = catch_unwind(AssertUnwindSafe(|| {
                 run_ordered(&pool(1), 1000, 64, &work, stop);

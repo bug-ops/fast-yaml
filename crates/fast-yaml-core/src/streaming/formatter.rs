@@ -1548,6 +1548,12 @@ mod tests {
     }
 
     #[test]
+    fn tag_prefix_starting_with_hash_survives_formatting() {
+        let out = assert_stable("%TAG !e! #x\n---\na: !e!y 1\n");
+        assert!(out.starts_with("%TAG !e! #x\n"), "{out:?}");
+    }
+
+    #[test]
     fn ordinary_tag_directive_still_formats() {
         let out = fmt("%TAG !e! tag:e.com,2000:\n---\nk: !e!x v\n");
         assert!(out.contains("tag:e.com,2000:x"), "{out}");

@@ -120,10 +120,17 @@ fn is_document_end(line: &str) -> bool {
 }
 
 /// Cuts a trailing comment; a `#` not preceded by a blank belongs to the token.
+///
+/// The parser reads a `#` in the prefix position of `%TAG` as the prefix itself, so a comment
+/// there must stay.
 fn strip_directive_comment(line: &str) -> &str {
+    let tokens_before_comment = if line.starts_with("%TAG") { 3 } else { 1 };
     let cut = line
         .match_indices('#')
-        .find(|&(i, _)| line[..i].ends_with([' ', '\t']))
+        .find(|&(i, _)| {
+            line[..i].ends_with([' ', '\t'])
+                && line[..i].split_whitespace().count() >= tokens_before_comment
+        })
         .map_or(line.len(), |(i, _)| i);
     line[..cut].trim_end()
 }
@@ -146,6 +153,16 @@ mod tests {
         assert_eq!(
             strip_directive_comment("%TAG !e! tag:x#y"),
             "%TAG !e! tag:x#y"
+        );
+    }
+
+    #[test]
+    fn tag_prefix_starting_with_hash_is_not_a_comment() {
+        assert_eq!(strip_directive_comment("%TAG !e! #x"), "%TAG !e! #x");
+        assert_eq!(strip_directive_comment("%TAG !e! #x # c"), "%TAG !e! #x");
+        assert_eq!(
+            strip_directive_comment("%TAG !e! tag:x # c"),
+            "%TAG !e! tag:x"
         );
     }
 
