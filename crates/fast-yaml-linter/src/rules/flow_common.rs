@@ -204,7 +204,10 @@ pub(crate) fn check_flow_collection(
             kind,
         };
         diagnostics.extend(spacing.after_opening(open.span));
-        diagnostics.extend(spacing.before_closing(close.span));
+        // An empty collection has one gap, reported once, as yamllint does
+        if !is_empty {
+            diagnostics.extend(spacing.before_closing(close.span));
+        }
     }
 
     diagnostics

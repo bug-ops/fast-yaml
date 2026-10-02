@@ -642,12 +642,16 @@ impl ScalarRanges {
             (Event::SequenceStart { .. } | Event::MappingStart { .. }, Some(b'[' | b'{')) => {
                 self.flow_open.push(range.start());
             }
-            (Event::SequenceEnd | Event::MappingEnd, Some(b']' | b'}')) => {
+            (Event::SequenceEnd | Event::MappingEnd, Some(_)) => {
+                // The parser starts the end of a mapping with a trailing comma (`{a: b,}`) at the
+                // comma, so the closing indicator is looked up from there
+                let close = closing_indicator(source, range.start().get());
                 if let Some(open) = self.flow_open.pop()
                     && self.flow_open.is_empty()
+                    && let Some(close) = close
                 {
                     self.flow
-                        .push(ByteRange::new(open, range.start().add_bytes(1)));
+                        .push(ByteRange::new(open, ByteOffset::new(close + 1)));
                 }
             }
             (Event::Scalar { style, value, .. }, _) => match style {
@@ -688,6 +692,27 @@ impl ScalarRanges {
                 .push(ByteRange::new(open, ByteOffset::new(source_len)));
         }
     }
+}
+
+/// The offset of the `]` or `}` that closes a flow collection, found from `from`, which may lie
+/// on a trailing comma, whitespace or a comment before it.
+fn closing_indicator(source: &str, from: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    let mut at = from;
+    while let Some(&byte) = bytes.get(at) {
+        match byte {
+            b']' | b'}' => return Some(at),
+            b',' | b' ' | b'\t' | b'\r' | b'\n' => at += 1,
+            b'#' => {
+                at += bytes
+                    .get(at..)
+                    .and_then(|rest| rest.iter().position(|b| matches!(b, b'\n' | b'\r')))
+                    .unwrap_or(bytes.len() - at);
+            }
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// Scanner state of [`collect_masked_ranges`].

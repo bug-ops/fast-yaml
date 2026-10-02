@@ -281,6 +281,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `commas` checks the comma before the closing brace of a flow mapping (`{a: b,}`), which was skipped because the parser starts the mapping end at the comma; `braces` and `brackets` report the gap inside an empty collection (`[ ]`, `{ }`) once, not twice, like yamllint (#637)
 - **Linter**: `braces` and `brackets` no longer report a plain scalar at the document root, in an implicit key or continued on the next line (`if [ -n "$X" ]; then`, `a [ b ]: 1`), nor miss a flow collection after a verbatim tag that holds a comma; the parser's own plain scalar ranges decide, and the line scanner reads only the text after a syntax error (#630) (#637)
 - **Linter**: `indent-size` in a later config layer replaces the `spaces` an earlier layer or preset set, instead of being ignored (#626) (#637)
 - **CLI**: `parse --stats` goes through the reporter, so a closed stdout no longer panics (#628) (#637)

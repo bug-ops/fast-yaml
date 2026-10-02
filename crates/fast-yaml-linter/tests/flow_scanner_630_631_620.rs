@@ -165,3 +165,30 @@ fn a_tag_or_anchor_before_a_flow_collection_keeps_it_checked() {
     assert_eq!(lines(source, TIGHT, "brackets"), [2, 2, 4, 4]);
     assert_eq!(lines(source, TIGHT, "braces"), [3, 3]);
 }
+
+#[test]
+fn a_trailing_comma_before_the_closing_indicator_is_checked_in_a_mapping_too() {
+    for source in [
+        "---\nk: {a: b,}\n",
+        "---\nk: {a,}\n",
+        "---\nk: {a: \"b\",}\n",
+        "---\nk: [a,]\n",
+    ] {
+        assert_eq!(lines(source, "", "commas"), [2], "{source:?}");
+    }
+    assert_eq!(
+        lines("---\nk: {a: b, # c\n}\n", "", "commas"),
+        Vec::<usize>::new()
+    );
+    assert_eq!(
+        lines("---\nk: {a: b,\n}\n", "", "commas"),
+        Vec::<usize>::new()
+    );
+}
+
+#[test]
+fn an_empty_flow_collection_with_spaces_is_reported_once() {
+    let source = "---\nk: [ ]\nj: { }\nl: [  ]\n";
+    assert_eq!(lines(source, "", "brackets"), [2, 4]);
+    assert_eq!(lines(source, "", "braces"), [3]);
+}
