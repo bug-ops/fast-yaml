@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span, tokenizer::TokenType,
+    Finding, LintConfig, LintContext, Severity, SourceContext, Span, tokenizer::TokenType,
 };
 
 /// Linting rule for colon spacing.
@@ -33,7 +32,7 @@ use crate::{
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct ColonsRule;
@@ -78,7 +77,7 @@ impl super::LintRule for ColonsRule {
 }
 
 impl super::SourceRule for ColonsRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
         let source_context = context.source_context();
         let tokenizer = context.flow_tokenizer();
@@ -102,8 +101,6 @@ impl super::SourceRule for ColonsRule {
                 source_context,
                 colon.span.start.offset,
                 max_spaces_before,
-                DiagnosticCode::COLONS,
-                config,
             ) {
                 diagnostics.push(diag);
             }
@@ -114,8 +111,6 @@ impl super::SourceRule for ColonsRule {
                 source_context,
                 colon.span.start.offset,
                 max_spaces_after,
-                DiagnosticCode::COLONS,
-                config,
             ) {
                 diagnostics.push(diag);
             }
@@ -156,9 +151,7 @@ fn check_spaces_before_colon(
     source_context: &SourceContext<'_>,
     colon_offset: usize,
     max_spaces: Limit,
-    code: &str,
-    config: &LintConfig,
-) -> Option<Diagnostic> {
+) -> Option<Finding> {
     if colon_offset == 0 {
         return None;
     }
@@ -178,21 +171,13 @@ fn check_spaces_before_colon(
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let severity = config.rules.colons.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(colon_offset);
         let span = Span::new(loc, loc);
 
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces before colon (expected at most {max_spaces}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        );
+        return Some(Finding::new(
+            format!("too many spaces before colon (expected at most {max_spaces}, found {spaces})"),
+            span,
+        ));
     }
 
     None
@@ -204,9 +189,7 @@ fn check_spaces_after_colon(
     source_context: &SourceContext<'_>,
     colon_offset: usize,
     max_spaces: Limit,
-    code: &str,
-    config: &LintConfig,
-) -> Option<Diagnostic> {
+) -> Option<Finding> {
     let bytes = source.as_bytes();
     if colon_offset + 1 >= bytes.len() {
         return None;
@@ -234,21 +217,13 @@ fn check_spaces_after_colon(
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let severity = config.rules.colons.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(colon_offset + 1);
         let span = Span::new(loc, loc);
 
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces after colon (expected at most {max_spaces}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        );
+        return Some(Finding::new(
+            format!("too many spaces after colon (expected at most {max_spaces}, found {spaces})"),
+            span,
+        ));
     }
 
     None
@@ -270,7 +245,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -282,7 +257,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces before"));
     }
@@ -295,7 +270,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces after"));
     }
@@ -308,7 +283,7 @@ mod tests {
         let config = config_with_rule(RuleName::Colons, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -320,7 +295,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should only flag the mapping colon, not the one in the URL
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
@@ -333,7 +308,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
 
@@ -345,7 +320,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should only flag the mapping colon, not the ones in the time
         assert!(diagnostics.is_empty() || diagnostics.len() <= 1);
     }
@@ -358,7 +333,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -371,7 +346,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
             diagnostics[0].span.start.line, 3,
@@ -388,7 +363,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // At least 2 violations (spaces before colons)
         assert!(diagnostics.len() >= 2);
     }
@@ -403,7 +378,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for trailing whitespace after key colon, got: {diagnostics:?}"

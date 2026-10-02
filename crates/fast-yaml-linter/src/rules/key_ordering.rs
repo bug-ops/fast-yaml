@@ -8,7 +8,7 @@ use super::node_roles::NodeRole;
 use crate::config::{PatternList, RuleOptions};
 use crate::nodes::{CollectionKind, Node, TagKind};
 use crate::source::offset::ByteRange;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Linting rule for key ordering.
 ///
@@ -35,7 +35,7 @@ use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintConte
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &config);
+/// let diagnostics = rule.diagnose(&context, &config);
 /// assert!(!diagnostics.is_empty());  // Keys are not in alphabetical order
 /// ```
 pub struct KeyOrderingRule;
@@ -96,11 +96,10 @@ impl super::LintRule for KeyOrderingRule {
 }
 
 impl super::SourceRule for KeyOrderingRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let options = &config.rules.key_ordering.options;
         let index = context.nodes();
         let source_context = context.source_context();
-        let severity = config.rules.key_ordering.severity_or(Severity::Info);
         let mut diagnostics = Vec::new();
         // One entry per open collection; `None` for sequences.
         let mut stack: Vec<Option<Vec<Accepted<'_>>>> = Vec::new();
@@ -141,18 +140,13 @@ impl super::SourceRule for KeyOrderingRule {
                         continue;
                     };
                     let line = source_context.span_of_bytes(prev.range).start.line;
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            DiagnosticCode::KEY_ORDERING,
-                            severity,
-                            format!(
-                                "key '{key}' should be ordered before '{}' (line {line})",
-                                prev.text
-                            ),
-                            source_context.span_of_bytes(scalar.range),
-                        )
-                        .build(),
-                    );
+                    diagnostics.push(Finding::new(
+                        format!(
+                            "key '{key}' should be ordered before '{}' (line {line})",
+                            prev.text
+                        ),
+                        source_context.span_of_bytes(scalar.range),
+                    ));
                 }
                 Node::Scalar(_) | Node::Alias { .. } => {}
             }
@@ -164,13 +158,14 @@ impl super::SourceRule for KeyOrderingRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
         rules::SourceRule,
     };
 
     fn check_config(yaml: &str, config: &LintConfig) -> Vec<Diagnostic> {
-        KeyOrderingRule.check(&LintContext::new(yaml), config)
+        KeyOrderingRule.diagnose(&LintContext::new(yaml), config)
     }
 
     fn check_yaml(yaml: &str) -> Vec<Diagnostic> {

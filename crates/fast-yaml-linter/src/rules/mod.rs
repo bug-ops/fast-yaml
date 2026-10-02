@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::config::{CustomRuleCode, RuleName};
-use crate::{Diagnostic, LintConfig, LintContext, Severity};
+use crate::{Diagnostic, DiagnosticCode, Finding, LintConfig, LintContext, Severity};
 use fast_yaml_core::Value;
 
 mod braces;
@@ -167,7 +167,7 @@ impl fmt::Display for RuleId<'_> {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Severity};
+/// use fast_yaml_linter::{Finding, LintConfig, LintContext, Severity};
 /// use fast_yaml_linter::config::CustomRuleCode;
 /// use fast_yaml_linter::rules::{LintRule, Rule, RuleId, SourceRule};
 ///
@@ -192,7 +192,7 @@ impl fmt::Display for RuleId<'_> {
 /// }
 ///
 /// impl SourceRule for ExampleRule {
-///     fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+///     fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
 ///         Vec::new()
 ///     }
 /// }
@@ -242,15 +242,23 @@ pub trait LintRule: Send + Sync {
 /// use fast_yaml_linter::{LintConfig, LintContext};
 /// use fast_yaml_linter::rules::{DuplicateKeysRule, SourceRule};
 ///
-/// let diagnostics = DuplicateKeysRule.check(&LintContext::new("a: 1\na: 2\n"), &LintConfig::default());
+/// let context = LintContext::new("a: 1\na: 2\n");
+/// let diagnostics = DuplicateKeysRule.diagnose(&context, &LintConfig::default());
 /// assert_eq!(diagnostics.len(), 1);
+/// assert_eq!(diagnostics[0].code.as_str(), "duplicate-key");
 /// ```
 pub trait SourceRule: LintRule {
-    /// Checks the source and returns the diagnostics found, empty if there are none.
+    /// Checks the source and returns the findings, empty if there are none.
     ///
     /// `context` gives access to the source, comments and scan products; `config` holds the
-    /// linter settings.
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic>;
+    /// linter settings. The linter gives each finding the code and the configured severity of
+    /// this rule, so the rule does not read its own severity setting.
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding>;
+
+    /// Runs [`check`](Self::check) and turns the findings into diagnostics as the linter does.
+    fn diagnose(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+        stamp(self, config, self.check(context, config))
+    }
 }
 
 /// One parsed document handed to a [`DocumentRule`].
@@ -283,7 +291,7 @@ pub struct LintDocument<'a> {
 ///
 /// ```
 /// use fast_yaml_core::Value;
-/// use fast_yaml_linter::{Diagnostic, DiagnosticBuilder, LintConfig, LintContext, Linter, Location, Severity, Span};
+/// use fast_yaml_linter::{Finding, LintConfig, LintContext, Linter, Location, Severity, Span};
 /// use fast_yaml_linter::config::CustomRuleCode;
 /// use fast_yaml_linter::rules::{DocumentRule, LintDocument, LintRule, Rule, RuleId};
 ///
@@ -310,14 +318,14 @@ pub struct LintDocument<'a> {
 ///         context: &LintContext,
 ///         document: LintDocument<'_>,
 ///         _config: &LintConfig,
-///     ) -> Vec<Diagnostic> {
+///     ) -> Vec<Finding> {
 ///         if *document.value != Value::Null {
 ///             return Vec::new();
 ///         }
 ///         let line = document.first_line;
 ///         let offset = context.source_context().get_line_offset(line);
 ///         let span = Span::new(Location::new(line, 1, offset), Location::new(line, 2, offset + 1));
-///         vec![DiagnosticBuilder::new(self.0.as_str(), Severity::Warning, "null document", span).build()]
+///         vec![Finding::new("null document", span)]
 ///     }
 /// }
 ///
@@ -329,13 +337,46 @@ pub struct LintDocument<'a> {
 /// assert_eq!(found[0].span.start.line, 3);
 /// ```
 pub trait DocumentRule: LintRule {
-    /// Checks one document and returns the diagnostics found, empty if there are none.
+    /// Checks one document and returns the findings, empty if there are none.
+    ///
+    /// The linter gives each finding the code and the configured severity of this rule.
     fn check(
         &self,
         context: &LintContext,
         document: LintDocument<'_>,
         config: &LintConfig,
-    ) -> Vec<Diagnostic>;
+    ) -> Vec<Finding>;
+
+    /// Runs [`check`](Self::check) and turns the findings into diagnostics as the linter does.
+    fn diagnose(
+        &self,
+        context: &LintContext,
+        document: LintDocument<'_>,
+        config: &LintConfig,
+    ) -> Vec<Diagnostic> {
+        stamp(self, config, self.check(context, document, config))
+    }
+}
+
+/// Gives `findings` the code of `rule` and the severity configured for it.
+///
+/// This is the one place a diagnostic gets its code and severity, so a rule can neither report
+/// under another code nor ignore a configured severity.
+pub(crate) fn stamp<R: LintRule + ?Sized>(
+    rule: &R,
+    config: &LintConfig,
+    findings: Vec<Finding>,
+) -> Vec<Diagnostic> {
+    if findings.is_empty() {
+        return Vec::new();
+    }
+    let id = rule.id();
+    let severity = config.severity_for(id, rule.default_severity());
+    let code = DiagnosticCode::from(id.as_str());
+    findings
+        .into_iter()
+        .map(|finding| finding.into_diagnostic(code.clone(), severity))
+        .collect()
 }
 
 /// A registered rule, by the input it reads.

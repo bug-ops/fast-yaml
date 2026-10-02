@@ -5,11 +5,10 @@ use std::ops::Range;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    LintContext, Severity, Span,
+    Finding, LintContext, Span,
     config::{
         BoolOrName, EmptyInsideLimit, Limit, RuleOptions, RuleSettings, deserialize_bool_or_name,
     },
-    diagnostic::{Diagnostic, DiagnosticBuilder},
     tokenizer::{Token, TokenType},
 };
 
@@ -149,10 +148,8 @@ impl RuleOptions for FlowCollectionOptions {}
 pub(crate) fn check_flow_collection(
     context: &LintContext,
     settings: &RuleSettings<FlowCollectionOptions>,
-    code: &'static str,
-    default_severity: Severity,
     kind: FlowCollection,
-) -> Vec<Diagnostic> {
+) -> Vec<Finding> {
     let source = context.source();
     let tokenizer = context.flow_tokenizer();
     let options = &settings.options;
@@ -160,16 +157,13 @@ pub(crate) fn check_flow_collection(
     let opens = tokenizer.find_all(kind.open());
     let closes = tokenizer.find_all(kind.close());
     let pairs = pair_delimiters(&opens, &closes);
-    let severity = settings.severity_or(default_severity);
     let mut diagnostics = Vec::new();
 
     match options.forbid {
         Forbid::All => {
             let message = format!("{} forbidden (forbid: all)", kind.noun());
             for token in &opens {
-                diagnostics.push(
-                    DiagnosticBuilder::new(code, severity, message.clone(), token.span).build(),
-                );
+                diagnostics.push(Finding::new(message.clone(), token.span));
             }
             return diagnostics;
         }
@@ -177,9 +171,7 @@ pub(crate) fn check_flow_collection(
             let message = format!("non-empty {} forbidden (forbid: non-empty)", kind.noun());
             for (open, close) in &pairs {
                 if !is_empty_collection(source, open.span.end.offset, close.span.start.offset) {
-                    diagnostics.push(
-                        DiagnosticBuilder::new(code, severity, message.clone(), open.span).build(),
-                    );
+                    diagnostics.push(Finding::new(message.clone(), open.span));
                 }
             }
             return diagnostics;
@@ -208,8 +200,6 @@ pub(crate) fn check_flow_collection(
             inner: open.span.end.offset..close.span.start.offset,
             min: min_spaces,
             max: max_spaces,
-            code,
-            severity,
             kind,
         };
         diagnostics.extend(spacing.after_opening(open.span));
@@ -284,14 +274,12 @@ pub(crate) struct FlowSpacing<'a> {
     pub(crate) inner: Range<usize>,
     pub(crate) min: Limit,
     pub(crate) max: Limit,
-    pub(crate) code: &'static str,
-    pub(crate) severity: Severity,
     pub(crate) kind: FlowCollection,
 }
 
 impl FlowSpacing<'_> {
     /// Checks the spaces right after the opening delimiter.
-    pub(crate) fn after_opening(&self, opening_span: Span) -> Option<Diagnostic> {
+    pub(crate) fn after_opening(&self, opening_span: Span) -> Option<Finding> {
         let end = self.inner.end.min(self.source.len());
         if self.inner.start > end {
             return None;
@@ -307,7 +295,7 @@ impl FlowSpacing<'_> {
     }
 
     /// Checks the spaces right before the closing delimiter.
-    pub(crate) fn before_closing(&self, closing_span: Span) -> Option<Diagnostic> {
+    pub(crate) fn before_closing(&self, closing_span: Span) -> Option<Finding> {
         let end = self.inner.end.min(self.source.len());
         if self.inner.start >= end {
             return None;
@@ -322,7 +310,7 @@ impl FlowSpacing<'_> {
         self.violation(spaces, closing_span)
     }
 
-    fn violation(&self, spaces: usize, span: Span) -> Option<Diagnostic> {
+    fn violation(&self, spaces: usize, span: Span) -> Option<Finding> {
         let (problem, bound, limit) = if self.min.unmet_by(spaces) {
             ("few", "least", self.min)
         } else if self.max.exceeded_by(spaces) {
@@ -331,17 +319,12 @@ impl FlowSpacing<'_> {
             return None;
         };
         let name = self.kind.name();
-        Some(
-            DiagnosticBuilder::new(
-                self.code,
-                self.severity,
-                format!(
-                    "too {problem} spaces inside {name} (expected at {bound} {limit}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        )
+        Some(Finding::new(
+            format!(
+                "too {problem} spaces inside {name} (expected at {bound} {limit}, found {spaces})"
+            ),
+            span,
+        ))
     }
 }
 
@@ -365,8 +348,6 @@ mod tests {
             inner,
             min,
             max,
-            code: "test",
-            severity: Severity::Warning,
             kind: FlowCollection::Mapping,
         }
     }
@@ -399,7 +380,7 @@ mod tests {
         let bad = spacing(source2, 1..14, Limit::Max(0), Limit::Max(1));
         let diag = bad.after_opening(dummy_span()).unwrap();
         assert_eq!(
-            diag.message,
+            diag.message(),
             "too many spaces inside braces (expected at most 1, found 2)"
         );
     }
@@ -449,7 +430,7 @@ mod tests {
 
         let diag = s.after_opening(dummy_span()).unwrap();
         assert_eq!(
-            diag.message,
+            diag.message(),
             "too few spaces inside braces (expected at least 1, found 0)"
         );
         assert!(s.before_closing(dummy_span()).is_none());

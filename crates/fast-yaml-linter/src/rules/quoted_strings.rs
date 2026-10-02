@@ -1,16 +1,13 @@
 //! Rule to check quoted string style.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{
     BoolOrName, OptionConflict, PatternList, RuleOptions, deserialize_bool_or_name,
 };
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, SourceContext, Span};
 use fast_yaml_core::ScalarStyle;
 use regex::Regex;
 use std::cell::Cell;
@@ -41,7 +38,7 @@ use crate::nodes::{Node, TagKind};
 ///
 /// let config = LintConfig::default();
 /// let context = fast_yaml_linter::LintContext::new(yaml);
-/// let diagnostics = rule.check(&context, &config);
+/// let diagnostics = rule.diagnose(&context, &config);
 /// assert!(!diagnostics.is_empty());  // Quotes are not needed for `John`
 /// ```
 pub struct QuotedStringsRule;
@@ -192,7 +189,7 @@ impl super::LintRule for QuotedStringsRule {
 }
 
 impl super::SourceRule for QuotedStringsRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let mut diagnostics = Vec::new();
         let check = ScalarCheck {
             source: context.source(),
@@ -209,7 +206,7 @@ impl super::SourceRule for QuotedStringsRule {
             if scalar.anchored && anchor_precedes(check.source, scalar.range.start().get()) {
                 continue;
             }
-            self.check_scalar(
+            Self::check_scalar(
                 &check,
                 &ScalarEvent {
                     value: index.text(scalar),
@@ -267,10 +264,9 @@ struct ScalarEvent<'a> {
 impl QuotedStringsRule {
     /// Checks a single scalar event and appends diagnostics as needed.
     fn check_scalar(
-        &self,
         check: &ScalarCheck<'_>,
         event: &ScalarEvent<'_>,
-        diagnostics: &mut Vec<Diagnostic>,
+        diagnostics: &mut Vec<Finding>,
     ) {
         let ScalarCheck { config, .. } = *check;
         let ScalarEvent {
@@ -289,20 +285,8 @@ impl QuotedStringsRule {
         {
             return;
         }
-        let severity = config
-            .rules
-            .quoted_strings
-            .severity_or(self.default_severity());
         let mut report = |message: &'static str| {
-            diagnostics.push(
-                DiagnosticBuilder::new(
-                    DiagnosticCode::QUOTED_STRINGS,
-                    severity,
-                    message,
-                    scalar_span,
-                )
-                .build(),
-            );
+            diagnostics.push(Finding::new(message, scalar_span));
         };
 
         match style {
@@ -452,6 +436,7 @@ fn loads_as_block_plain(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
         rules::SourceRule,
@@ -466,7 +451,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Both quotes should be flagged as unnecessary in only-when-needed mode
         assert_eq!(diagnostics.len(), 2);
     }
@@ -482,7 +467,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("single quotes"));
     }
@@ -498,7 +483,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("double quotes"));
     }
@@ -511,7 +496,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("does not need quotes"));
     }
@@ -524,7 +509,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // These should not be flagged as they need quotes
         assert_eq!(diagnostics, []);
     }
@@ -537,7 +522,7 @@ mod tests {
         let config = config_with_rule(RuleName::QuotedStrings, "{required: always}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // "John" should be flagged (not age: 30, it's a number)
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("should be quoted"));
@@ -551,7 +536,7 @@ mod tests {
         let config = config_with_rule(RuleName::QuotedStrings, "{required: never}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("should not be quoted"));
     }
@@ -564,7 +549,7 @@ mod tests {
         let config = config_with_rule(RuleName::QuotedStrings, "{extra-required: ['-']}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should not flag as unnecessary because it contains '-'
         assert_eq!(diagnostics, []);
     }
@@ -703,7 +688,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // A colon not followed by a blank does not need quotes
         assert_eq!(diagnostics.len(), 1);
     }
@@ -800,7 +785,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for double-quoted string with \\n escape, got: {diagnostics:?}"
@@ -815,7 +800,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for double-quoted string with \\t escape, got: {diagnostics:?}"
@@ -830,7 +815,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -845,7 +830,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for plain scalar with embedded double quotes, got: {diagnostics:?}"
@@ -861,7 +846,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "expected no diagnostics for plain scalar with embedded single quotes, got: {diagnostics:?}"
@@ -880,7 +865,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             !diagnostics.is_empty(),
             "expected at least one diagnostic for unnecessarily quoted value"
@@ -909,7 +894,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             !diagnostics.is_empty(),
             "expected diagnostic for unnecessarily quoted sequence value"
@@ -928,7 +913,7 @@ mod tests {
     }
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        QuotedStringsRule.check(&LintContext::new(yaml), &LintConfig::default())
+        QuotedStringsRule.diagnose(&LintContext::new(yaml), &LintConfig::default())
     }
 
     // Regression tests for issue #308: non-ASCII text before a quoted scalar.
@@ -964,7 +949,7 @@ mod tests {
     fn test_non_ascii_quoted_key_span() {
         let yaml = "\"ключ\": 1";
         let config = config_with_rule(RuleName::QuotedStrings, "{check-keys: true}");
-        let diagnostics = QuotedStringsRule.check(&LintContext::new(yaml), &config);
+        let diagnostics = QuotedStringsRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1);
         let span = diagnostics[0].span;
         assert_eq!((span.start.column, span.start.offset), (1, 0));
@@ -988,7 +973,7 @@ mod tests {
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -999,7 +984,7 @@ mod tests {
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -1010,7 +995,7 @@ mod tests {
         let rule = QuotedStringsRule;
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -1041,7 +1026,7 @@ mod tests {
     fn messages(yaml: &str, options: &str) -> Vec<String> {
         let config = config_with_rule(RuleName::QuotedStrings, options);
         QuotedStringsRule
-            .check(&LintContext::new(yaml), &config)
+            .diagnose(&LintContext::new(yaml), &config)
             .into_iter()
             .map(|d| d.message.into_owned())
             .collect()

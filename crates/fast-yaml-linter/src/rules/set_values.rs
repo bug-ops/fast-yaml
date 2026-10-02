@@ -1,10 +1,10 @@
 //! Rule to detect `!!set` members that carry a value.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::set_members::SetMember;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Rule to detect `!!set` members that carry a value.
 ///
@@ -41,8 +41,7 @@ impl super::LintRule for SetValuesRule {
 }
 
 impl super::SourceRule for SetValuesRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
-        let severity = config.rules.set_values.severity_or(self.default_severity());
+    fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
         let source_context = context.source_context();
         context
             .set_members()
@@ -54,7 +53,7 @@ impl super::SourceRule for SetValuesRule {
                     .map_or_else(String::new, |key| format!(" '{}'", echo(key, KEY_LIMIT)));
                 let message =
                     format!("!!set member{member} has a value; set members are keys only");
-                DiagnosticBuilder::new(DiagnosticCode::SET_VALUES, severity, message, span).build()
+                Finding::new(message, span)
             })
             .collect()
     }
@@ -63,11 +62,12 @@ impl super::SourceRule for SetValuesRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::rules::SourceRule;
     use crate::set_members::may_contain_set;
 
     fn run(yaml: &str) -> Vec<Diagnostic> {
-        SetValuesRule.check(&LintContext::new(yaml), &LintConfig::default())
+        SetValuesRule.diagnose(&LintContext::new(yaml), &LintConfig::default())
     }
 
     fn lines(yaml: &str) -> Vec<usize> {

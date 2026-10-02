@@ -538,6 +538,123 @@ impl DiagnosticBuilder {
     }
 }
 
+/// A problem a rule found, before the linter gives it the code and severity of that rule.
+///
+/// A rule returns findings; [`Linter`](crate::Linter) turns each into a [`Diagnostic`] whose
+/// code is the id of the rule that returned it and whose severity is the one configured for that
+/// rule, so a rule cannot report under another rule's code or ignore a configured severity.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::{Excerpt, Finding, Location, Span};
+///
+/// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+/// let finding = Finding::new("line too long", span);
+/// assert_eq!(finding.message(), "line too long");
+/// assert_eq!(finding.excerpt(), Excerpt::SourceLines);
+/// assert_eq!(finding.without_excerpt().excerpt(), Excerpt::Omitted);
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Finding {
+    message: Cow<'static, str>,
+    span: Span,
+    suggestions: Vec<Suggestion>,
+    excerpt: Excerpt,
+}
+
+impl Finding {
+    /// Creates a finding that formatters show with the source lines around its span.
+    ///
+    /// A `&'static str` message is borrowed, so a fixed message costs no allocation.
+    #[must_use]
+    pub fn new(message: impl Into<Cow<'static, str>>, span: Span) -> Self {
+        Self {
+            message: message.into(),
+            span,
+            suggestions: Vec::new(),
+            excerpt: Excerpt::SourceLines,
+        }
+    }
+
+    /// Adds a suggestion.
+    #[must_use]
+    pub fn with_suggestion(
+        mut self,
+        message: impl Into<String>,
+        span: Span,
+        replacement: Option<String>,
+    ) -> Self {
+        self.suggestions.push(Suggestion {
+            message: message.into(),
+            span,
+            replacement,
+        });
+        self
+    }
+
+    /// Makes formatters show no source lines for the finding.
+    ///
+    /// Use this when the span does not refer to a source that is available at print time.
+    #[must_use]
+    pub const fn without_excerpt(mut self) -> Self {
+        self.excerpt = Excerpt::Omitted;
+        self
+    }
+
+    /// The message.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// The span the finding covers.
+    #[must_use]
+    pub const fn span(&self) -> Span {
+        self.span
+    }
+
+    /// The suggested fixes.
+    #[must_use]
+    pub fn suggestions(&self) -> &[Suggestion] {
+        &self.suggestions
+    }
+
+    /// Whether formatters show the source lines around the span.
+    #[must_use]
+    pub const fn excerpt(&self) -> Excerpt {
+        self.excerpt
+    }
+
+    /// Gives the finding the code and severity of the rule that returned it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::{DiagnosticCode, Finding, Location, Severity, Span};
+    ///
+    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+    /// let diagnostic = Finding::new("m", span).into_diagnostic(DiagnosticCode::COLONS, Severity::Error);
+    /// assert_eq!(diagnostic.code.as_str(), "colons");
+    /// assert_eq!(diagnostic.severity, Severity::Error);
+    /// ```
+    #[must_use]
+    pub fn into_diagnostic(
+        self,
+        code: impl Into<DiagnosticCode>,
+        severity: Severity,
+    ) -> Diagnostic {
+        Diagnostic {
+            code: code.into(),
+            severity,
+            message: self.message,
+            span: self.span,
+            excerpt: self.excerpt,
+            suggestions: self.suggestions,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

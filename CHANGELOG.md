@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `SourceRule::check` and `DocumentRule::check` return `Vec<Finding>` instead of `Vec<Diagnostic>`; `Linter` gives each finding the code of the rule that returned it and the severity configured for that rule, so a rule no longer builds a `Diagnostic` or reads its own severity. Custom rules replace `DiagnosticBuilder::new(code, severity, message, span).build()` with `Finding::new(message, span)`, and `diagnose` returns diagnostics for tests (#625)
+- **Linter**: `rules::flow_common` helpers and the built-in rule helpers no longer take a diagnostic code or severity (#625)
 - **CLI**: `ExitCode::ParseError` is renamed `Failure` and the never-produced `IoError` (3) and `InvalidArgs` (4) are removed; exit codes 0, 1, 2 and 5 are unchanged (#628)
 - **CLI**: `--max-line-length` accepts `1..=4294967295`, as the Node.js binding does, and `0` or a larger value reports `must be between 1 and 4294967295, got N` (#634)
 - **Node.js**: `lint` reports an out-of-range `maxLineLength` or `indentSize` as `InvalidArg` with the `<name> must be between N and M, got V` message shared by the other numeric options (#628)
@@ -166,6 +168,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: `Finding`, the result of a rule before the linter adds its code and severity, and `SourceRule::diagnose` / `DocumentRule::diagnose` (#625)
 - **CLI**: `fy lint|format|convert -o /dev/null` discards the output (`NUL` on Windows) instead of failing with `not a regular file` (#634)
 - **Linter**: `quoted-strings` supports `quote-type: consistent`, holding the file to the style of its first quoted string like yamllint >= 1.35 (#602)
 - **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#622)

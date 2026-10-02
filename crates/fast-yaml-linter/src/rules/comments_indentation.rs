@@ -1,11 +1,9 @@
 //! Rule to check comment indentation.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use crate::context::LineMetadata;
-use crate::{
-    CommentKind, Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-};
+use crate::{CommentKind, Finding, LintConfig, LintContext, Severity};
 
 /// Linting rule for comment indentation.
 ///
@@ -28,7 +26,7 @@ use crate::{
 /// let yaml = "list:\n  - item1\n  # Comment at correct level\n  - item2";
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct CommentsIndentationRule;
@@ -52,7 +50,7 @@ impl super::LintRule for CommentsIndentationRule {
 }
 
 impl super::SourceRule for CommentsIndentationRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
         let comments = context.comments();
         if comments.is_empty() {
             return Vec::new();
@@ -118,21 +116,11 @@ impl super::SourceRule for CommentsIndentationRule {
 
             if comment_indent != next_indent && comment_indent != prev_indent {
                 let expected = next_indent;
-                let severity = config
-                    .rules
-                    .comments_indentation
-                    .severity_or(self.default_severity());
 
                 diagnostics.push(
-                    DiagnosticBuilder::new(
-                        DiagnosticCode::COMMENTS_INDENTATION,
-                        severity,
-                        format!(
+                    Finding::new(format!(
                             "comment indentation does not match surrounding content (expected {expected} spaces, found {comment_indent})"
-                        ),
-                        comment.span,
-                    )
-                    .build(),
+                        ), comment.span),
                 );
             }
         }
@@ -213,10 +201,11 @@ impl ContentLines {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::rules::SourceRule;
 
     fn check_source(yaml: &str, _parsed: &str) -> Vec<Diagnostic> {
-        CommentsIndentationRule.check(&LintContext::new(yaml), &LintConfig::default())
+        CommentsIndentationRule.diagnose(&LintContext::new(yaml), &LintConfig::default())
     }
 
     fn diag_count(yaml: &str) -> usize {
@@ -298,7 +287,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -310,7 +299,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
@@ -327,7 +316,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Inline comments are not checked for indentation
         assert_eq!(diagnostics, []);
     }
@@ -340,7 +329,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -352,7 +341,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
     }
 
@@ -364,7 +353,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -376,7 +365,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -388,7 +377,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -400,7 +389,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -415,7 +404,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "top-level comment after nested block should not produce diagnostics"
@@ -431,7 +420,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "top-level comment at file start should not produce diagnostics"
@@ -447,7 +436,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "top-level comment between top-level keys should not produce diagnostics"
@@ -463,7 +452,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "correctly indented nested comment should not produce diagnostics"
@@ -479,7 +468,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             !diagnostics.is_empty(),
             "incorrectly indented nested comment should produce diagnostics"

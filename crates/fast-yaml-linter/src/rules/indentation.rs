@@ -5,15 +5,12 @@
 //! yamllint's stack of enclosing structures over it. Findings, columns and messages match
 //! yamllint 1.38 for every document both parsers accept.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::{IndentSequences, IndentSize, IndentSpaces, RuleOptions};
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Finding, LintConfig, LintContext, Location, Severity, Span};
 
 mod machine;
 
@@ -152,12 +149,8 @@ impl super::LintRule for IndentationRule {
 }
 
 impl super::SourceRule for IndentationRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
-        let severity = config
-            .rules
-            .indentation
-            .severity_or(self.default_severity());
         let options = &config.rules.indentation.options;
         let spaces = match options.width() {
             IndentSpaces::Fixed(size) => Some(size.get()),
@@ -169,7 +162,7 @@ impl super::SourceRule for IndentationRule {
             machine_problems(context, spaces, options)
         };
 
-        let mut diagnostics = mixed_whitespace(context, severity);
+        let mut diagnostics = mixed_whitespace(context);
         diagnostics.extend(problems.into_iter().map(|problem| {
             let width = source
                 .get(problem.offset..)
@@ -179,10 +172,9 @@ impl super::SourceRule for IndentationRule {
                 Location::new(problem.line, problem.column, problem.offset),
                 Location::new(problem.line, problem.column + 1, problem.offset + width),
             );
-            DiagnosticBuilder::new(DiagnosticCode::INDENTATION, severity, problem.message, span)
-                .build()
+            Finding::new(problem.message, span)
         }));
-        diagnostics.sort_by_key(|d| (d.span.start.line, d.span.start.column));
+        diagnostics.sort_by_key(|d| (d.span().start.line, d.span().start.column));
         diagnostics
     }
 }
@@ -221,7 +213,7 @@ fn machine_problems(
 }
 
 /// Reports lines whose indentation mixes tabs and spaces.
-fn mixed_whitespace(context: &LintContext, severity: Severity) -> Vec<Diagnostic> {
+fn mixed_whitespace(context: &LintContext) -> Vec<Finding> {
     let ctx = context.source_context();
     let mut diagnostics = Vec::new();
     for line_num in 1..=ctx.line_count() {
@@ -242,15 +234,10 @@ fn mixed_whitespace(context: &LintContext, severity: Severity) -> Vec<Diagnostic
             Location::new(line_num, 1, line_offset),
             Location::new(line_num, width + 1, line_offset + width),
         );
-        diagnostics.push(
-            DiagnosticBuilder::new(
-                DiagnosticCode::INDENTATION,
-                severity,
-                "mixed tabs and spaces in indentation".to_string(),
-                span,
-            )
-            .build(),
-        );
+        diagnostics.push(Finding::new(
+            "mixed tabs and spaces in indentation".to_string(),
+            span,
+        ));
     }
     diagnostics
 }
@@ -331,7 +318,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -340,7 +327,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(2u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
         assert_eq!(diagnostics[0].span.start.line, 2);
@@ -354,7 +341,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(mixed_source);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("mixed tabs and spaces"));
     }
@@ -365,7 +352,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -374,7 +361,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -383,7 +370,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(4u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
     }
@@ -396,7 +383,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::default();
         let ctx = LintContext::new(tab_source);
-        assert_eq!(rule.check(&ctx, &config), []);
+        assert_eq!(rule.diagnose(&ctx, &config), []);
     }
 
     #[test]
@@ -405,7 +392,7 @@ mod tests {
         let rule = IndentationRule;
         let config = config_with_rule(RuleName::Indentation, "{severity: error, spaces: 2}");
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
@@ -417,7 +404,7 @@ mod tests {
         let rule = IndentationRule;
         let config = LintConfig::new().with_indent_size(IndentSize::try_from(2u64).unwrap());
         let ctx = LintContext::new(yaml);
-        let diagnostics = rule.check(&ctx, &config);
+        let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
@@ -425,7 +412,7 @@ mod tests {
         let config = config_with_rule(RuleName::Indentation, options);
         let ctx = LintContext::new(yaml);
         IndentationRule
-            .check(&ctx, &config)
+            .diagnose(&ctx, &config)
             .into_iter()
             .map(|d| {
                 format!(

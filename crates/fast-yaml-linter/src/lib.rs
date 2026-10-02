@@ -57,7 +57,7 @@ pub use config::{ConfigFile, ConfigFileError};
 pub use context::{LineMetadata, LintContext, MAX_CONTEXT_COLUMNS, SourceContext};
 pub use diagnostic::{
     ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Excerpt,
-    Suggestion,
+    Finding, Suggestion,
 };
 pub use formatter::{Formatter, TextFormatter};
 pub use lint_source::LintSource;

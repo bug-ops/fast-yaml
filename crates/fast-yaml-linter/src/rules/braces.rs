@@ -1,9 +1,9 @@
 //! Rule to check flow mapping braces `{}` formatting.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use crate::{
-    Diagnostic, DiagnosticCode, LintConfig, LintContext, Severity,
+    Finding, LintConfig, LintContext, Severity,
     rules::flow_common::{FlowCollection, check_flow_collection},
 };
 
@@ -29,7 +29,7 @@ use crate::{
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct BracesRule;
@@ -53,14 +53,8 @@ impl super::LintRule for BracesRule {
 }
 
 impl super::SourceRule for BracesRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
-        check_flow_collection(
-            context,
-            &config.rules.braces,
-            DiagnosticCode::BRACES,
-            self.default_severity(),
-            FlowCollection::Mapping,
-        )
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
+        check_flow_collection(context, &config.rules.braces, FlowCollection::Mapping)
     }
 }
 
@@ -80,7 +74,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -92,7 +86,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{forbid: all}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("forbidden"));
     }
@@ -105,7 +99,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("non-empty"));
     }
@@ -118,7 +112,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -130,7 +124,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{min-spaces-inside: 1}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too few spaces"));
     }
@@ -143,7 +137,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{max-spaces-inside: 0}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces"));
     }
@@ -159,7 +153,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -171,7 +165,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -186,7 +180,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -198,7 +192,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -220,7 +214,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{max-spaces-inside: 0}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         // The opening-side diagnostic must point to the `{`, not line 1 col 1
         let open_diag = diagnostics.iter().find(|d| d.span.start.offset > 0);
@@ -244,7 +238,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{max-spaces-inside: 0}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Two violations: space after `{` and space before `}`
         assert_eq!(diagnostics.len(), 2);
         // They must point to different locations
@@ -263,7 +257,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "unexpected diagnostics on template expression: {diagnostics:?}"
@@ -278,7 +272,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "unexpected diagnostics on Jinja2-style template: {diagnostics:?}"
@@ -297,7 +291,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "no false positives in block scalar: {diagnostics:?}"
@@ -309,7 +303,7 @@ mod tests {
     fn test_braces_non_ascii_prefix_block_scalar_no_panic() {
         let yaml = "# ———\nrun: |\n  echo\n  ok\n  tail }\nc: {a: b}\n";
         let context = LintContext::new(yaml);
-        let diagnostics = BracesRule.check(&context, &LintConfig::default());
+        let diagnostics = BracesRule.diagnose(&context, &LintConfig::default());
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 
@@ -318,7 +312,7 @@ mod tests {
         let yaml = "a: {b: {}}\n";
         let context = LintContext::new(yaml);
         let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
-        let diagnostics = BracesRule.check(&context, &config);
+        let diagnostics = BracesRule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         assert_eq!(diagnostics[0].span.start.column, 4);
     }
@@ -328,7 +322,7 @@ mod tests {
         let yaml = "a: {}\n";
         let context = LintContext::new(yaml);
         let config = config_with_rule(RuleName::Braces, "{min-spaces-inside: 1}");
-        let diagnostics = BracesRule.check(&context, &config);
+        let diagnostics = BracesRule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
     }
 
@@ -336,7 +330,7 @@ mod tests {
     fn test_braces_non_ascii_key_location() {
         let yaml = "—: { a: 1 }\n";
         let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
-        let diagnostics = BracesRule.check(&LintContext::new(yaml), &config);
+        let diagnostics = BracesRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let start = diagnostics[0].span.start;
         assert_eq!((start.column, start.offset), (4, 5));
@@ -346,7 +340,7 @@ mod tests {
     fn test_braces_multiline_pairs() {
         let yaml = "a: {\n  b: 1}\nc: {d: 2}\n";
         let context = LintContext::new(yaml);
-        let diagnostics = BracesRule.check(&context, &LintConfig::default());
+        let diagnostics = BracesRule.diagnose(&context, &LintConfig::default());
         assert!(diagnostics.is_empty(), "{diagnostics:?}");
     }
 }

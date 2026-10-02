@@ -91,7 +91,7 @@ the documents only when an enabled `DocumentRule` is registered.
 ```rust
 use fast_yaml_linter::config::CustomRuleCode;
 use fast_yaml_linter::rules::{LintRule, Rule, RuleId, SourceRule};
-use fast_yaml_linter::{Diagnostic, LintConfig, LintContext, Linter, Severity};
+use fast_yaml_linter::{Finding, LintConfig, LintContext, Linter, Severity};
 
 struct NoTodo(CustomRuleCode);
 
@@ -111,7 +111,7 @@ impl LintRule for NoTodo {
 }
 
 impl SourceRule for NoTodo {
-    fn check(&self, _context: &LintContext, _config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, _context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
         Vec::new()
     }
 }
@@ -371,8 +371,9 @@ rules:
   `locale` and per-rule `ignore` are rejected explicitly.
 
 Custom rules added with `Linter::add_rule` are configured with
-`LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)` and read their severity through
-`LintConfig::severity_for(RuleId, default)`.
+`LintConfig::with_custom_rule(CustomRuleCode, RuleSettings)`. A rule returns `Finding`s; the
+linter gives each the rule's code and the severity configured for it (`LintConfig::severity_for`),
+falling back to the rule's `default_severity`.
 
 ### Python
 

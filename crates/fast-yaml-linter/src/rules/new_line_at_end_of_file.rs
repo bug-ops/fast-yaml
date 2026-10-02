@@ -2,9 +2,7 @@
 
 use super::RuleId;
 use crate::config::RuleName;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, Span};
 
 /// Linting rule for newline at end of file.
 ///
@@ -21,7 +19,7 @@ use crate::{
 /// let rule = NewLineAtEndOfFileRule;
 /// let yaml = "name: John\n";  // Ends with newline - OK
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &LintConfig::new());
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &LintConfig::new());
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct NewLineAtEndOfFileRule;
@@ -45,7 +43,7 @@ impl super::LintRule for NewLineAtEndOfFileRule {
 }
 
 impl super::SourceRule for NewLineAtEndOfFileRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
         if source.is_empty() {
             return Vec::new();
@@ -54,21 +52,14 @@ impl super::SourceRule for NewLineAtEndOfFileRule {
         if source.ends_with(['\n', '\r']) {
             Vec::new()
         } else {
-            let severity = config
-                .rules
-                .new_line_at_end_of_file
-                .severity_or(Severity::Info);
             let eof = context.source_context().offset_to_location(source.len());
 
             vec![
-                DiagnosticBuilder::new(
-                    DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
-                    severity,
-                    "no newline at end of file",
+                Finding::new("no newline at end of file", Span::new(eof, eof)).with_suggestion(
+                    "Add newline",
                     Span::new(eof, eof),
-                )
-                .with_suggestion("Add newline", Span::new(eof, eof), Some("\n".to_string()))
-                .build(),
+                    Some("\n".to_string()),
+                ),
             ]
         }
     }
@@ -88,7 +79,7 @@ mod tests {
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -99,7 +90,7 @@ mod tests {
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "no newline at end of file");
@@ -111,7 +102,7 @@ mod tests {
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -122,7 +113,7 @@ mod tests {
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -133,7 +124,7 @@ mod tests {
 
         let rule = NewLineAtEndOfFileRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         // Ends with \n so it's OK
         assert_eq!(diagnostics, []);
@@ -147,7 +138,7 @@ mod tests {
         let config = config_with_rule(RuleName::NewLineAtEndOfFile, "{severity: error}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }

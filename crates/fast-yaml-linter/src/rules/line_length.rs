@@ -1,6 +1,6 @@
 //! Rule to check line length limits.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use std::num::NonZeroUsize;
 
@@ -9,9 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::RuleOptions;
 use crate::rules::token_stream::{scanner, tokens::Kind};
 use crate::scan::{ScanNeeds, SourceScan};
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, SourceContext,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, SourceContext};
 use fast_yaml_core::limits::ParseLimits;
 
 /// Rule to check line length limits.
@@ -150,7 +148,7 @@ impl super::LintRule for LineLengthRule {
 }
 
 impl super::SourceRule for LineLengthRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let options = &config.rules.line_length.options;
         let Some(max_length) = options.max.map(NonZeroUsize::get) else {
             return Vec::new();
@@ -165,15 +163,12 @@ impl super::SourceRule for LineLengthRule {
                 if line_len > max_length && !options.is_non_breakable(line_content) {
                     let span = ctx.span_at(ctx.line_start(line_num), line_content.len());
 
-                    let diagnostic = DiagnosticBuilder::new(
-                        DiagnosticCode::LINE_LENGTH,
-                        config.rules.line_length.severity_or(self.default_severity()),
+                    let diagnostic = Finding::new(
                         format!(
                             "line exceeds maximum length of {max_length} characters (current: {line_len})"
                         ),
                         span,
-                    )
-                    .build();
+                    );
 
                     diagnostics.push(diagnostic);
                 }
@@ -199,7 +194,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::default();
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -211,7 +206,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(None);
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics, []);
     }
@@ -223,7 +218,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(80));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("exceeds maximum length"));
@@ -238,7 +233,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(77));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         // Exactly at limit should not trigger
         assert_eq!(diagnostics, []);
@@ -252,7 +247,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(77));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         // One over should trigger
         assert_eq!(diagnostics.len(), 1);
@@ -267,7 +262,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(50));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 2);
     }
@@ -280,7 +275,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(20));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         // Should count characters, not bytes
         assert_eq!(diagnostics.len(), 1);
@@ -293,7 +288,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(5));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         // Should only report the first line (10 chars), not the empty lines
         assert_eq!(diagnostics.len(), 1);
@@ -306,7 +301,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = config_with_rule(RuleName::LineLength, "{max: 10, severity: error}");
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
@@ -319,7 +314,7 @@ mod tests {
         let rule = LineLengthRule;
         let config = LintConfig::new().with_max_line_length(NonZeroUsize::new(50));
         let lint_context = LintContext::new(yaml);
-        let diagnostics = rule.check(&lint_context, &config);
+        let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].span.start.line, 2); // Second line
@@ -328,7 +323,7 @@ mod tests {
     fn flagged(yaml: &str, options: &str) -> Vec<usize> {
         let config = config_with_rule(RuleName::LineLength, options);
         LineLengthRule
-            .check(&LintContext::new(yaml), &config)
+            .diagnose(&LintContext::new(yaml), &config)
             .iter()
             .map(|d| d.span.start.line)
             .collect()

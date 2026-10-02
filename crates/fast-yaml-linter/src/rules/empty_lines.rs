@@ -1,14 +1,12 @@
 //! Rule to check empty lines.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
 use crate::context::source_lines;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity, Span,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, Span};
 
 /// Linting rule for empty lines.
 ///
@@ -32,7 +30,7 @@ use crate::{
 /// let yaml = "key: value\n\nanother: value";
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct EmptyLinesRule;
@@ -80,7 +78,7 @@ impl super::LintRule for EmptyLinesRule {
 }
 
 impl super::SourceRule for EmptyLinesRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
         let options = &config.rules.empty_lines.options;
         let (max, max_start, max_end) = (options.max, options.max_start, options.max_end);
@@ -115,11 +113,6 @@ impl super::SourceRule for EmptyLinesRule {
                     };
 
                     if limit.exceeded_by(empty_count) {
-                        let severity = config
-                            .rules
-                            .empty_lines
-                            .severity_or(self.default_severity());
-
                         let location =
                             source_context.location_at(source_context.line_start(empty_start_line));
                         let span = Span::new(location, location);
@@ -131,15 +124,9 @@ impl super::SourceRule for EmptyLinesRule {
                         };
 
                         diagnostics.push(
-                            DiagnosticBuilder::new(
-                                DiagnosticCode::EMPTY_LINES,
-                                severity,
-                                format!(
+                            Finding::new(format!(
                                     "too many consecutive empty lines {position} (expected at most {limit}, found {empty_count})"
-                                ),
-                                span,
-                            )
-                            .build(),
+                                ), span),
                         );
                     }
 
@@ -150,24 +137,13 @@ impl super::SourceRule for EmptyLinesRule {
 
         // Check trailing empty lines at end
         if empty_count > 0 && max_end.exceeded_by(empty_count) {
-            let severity = config
-                .rules
-                .empty_lines
-                .severity_or(self.default_severity());
-
             let location = source_context.location_at(source_context.line_start(empty_start_line));
             let span = Span::new(location, location);
 
             diagnostics.push(
-                DiagnosticBuilder::new(
-                    DiagnosticCode::EMPTY_LINES,
-                    severity,
-                    format!(
+                Finding::new(format!(
                         "too many consecutive empty lines at document end (expected at most {max_end}, found {empty_count})"
-                    ),
-                    span,
-                )
-                .build(),
+                    ), span),
             );
         }
 
@@ -191,7 +167,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -203,7 +179,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(
             diagnostics[0]
@@ -220,7 +196,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyLines, "{max: 5}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -232,7 +208,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("at document start"));
     }
@@ -245,7 +221,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyLines, "{max-start: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -257,7 +233,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("at document end"));
     }
@@ -270,7 +246,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyLines, "{max-end: 3}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -282,7 +258,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -294,7 +270,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -306,7 +282,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyLines, "{max: 0}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
     }
 
@@ -318,7 +294,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should report 2 violations (two blocks with 3 empty lines each)
         assert_eq!(diagnostics.len(), 2);
     }

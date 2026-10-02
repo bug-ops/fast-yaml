@@ -6,8 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
 use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity,
-    SourceContext, Span, tokenizer::TokenType,
+    Finding, LintConfig, LintContext, Severity, SourceContext, Span, tokenizer::TokenType,
 };
 
 /// Linting rule for comma spacing.
@@ -30,7 +29,7 @@ use crate::{
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct CommasRule;
@@ -78,7 +77,7 @@ impl super::LintRule for CommasRule {
 }
 
 impl super::SourceRule for CommasRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
         let source_context = context.source_context();
         let tokenizer = context.flow_tokenizer();
@@ -98,8 +97,6 @@ impl super::SourceRule for CommasRule {
                 source_context,
                 comma.span.start.offset,
                 max_spaces_before,
-                DiagnosticCode::COMMAS,
-                config,
             ) {
                 diagnostics.push(diag);
             }
@@ -111,8 +108,6 @@ impl super::SourceRule for CommasRule {
                 comma.span.start.offset,
                 min_spaces_after,
                 max_spaces_after,
-                DiagnosticCode::COMMAS,
-                config,
             ) {
                 diagnostics.push(diag);
             }
@@ -128,9 +123,7 @@ fn check_spaces_before_comma(
     source_context: &SourceContext<'_>,
     comma_offset: usize,
     max_spaces: Limit,
-    code: &str,
-    config: &LintConfig,
-) -> Option<Diagnostic> {
+) -> Option<Finding> {
     if comma_offset == 0 {
         return None;
     }
@@ -150,21 +143,13 @@ fn check_spaces_before_comma(
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let severity = config.rules.commas.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(comma_offset);
         let span = Span::new(loc, loc);
 
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces before comma (expected at most {max_spaces}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        );
+        return Some(Finding::new(
+            format!("too many spaces before comma (expected at most {max_spaces}, found {spaces})"),
+            span,
+        ));
     }
 
     None
@@ -177,9 +162,7 @@ fn check_spaces_after_comma(
     comma_offset: usize,
     min_spaces: Limit,
     max_spaces: Limit,
-    code: &str,
-    config: &LintConfig,
-) -> Option<Diagnostic> {
+) -> Option<Finding> {
     let bytes = source.as_bytes();
     if comma_offset + 1 >= bytes.len() {
         return None;
@@ -210,39 +193,23 @@ fn check_spaces_after_comma(
 
     // Don't check min spaces if followed by newline
     if min_spaces.unmet_by(spaces) && !has_newline {
-        let severity = config.rules.commas.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(comma_offset + 1);
         let span = Span::new(loc, loc);
 
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too few spaces after comma (expected at least {min_spaces}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        );
+        return Some(Finding::new(
+            format!("too few spaces after comma (expected at least {min_spaces}, found {spaces})"),
+            span,
+        ));
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let severity = config.rules.commas.severity_or(Severity::Warning);
         let loc = source_context.offset_to_location(comma_offset + 1);
         let span = Span::new(loc, loc);
 
-        return Some(
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                format!(
-                    "too many spaces after comma (expected at most {max_spaces}, found {spaces})"
-                ),
-                span,
-            )
-            .build(),
-        );
+        return Some(Finding::new(
+            format!("too many spaces after comma (expected at most {max_spaces}, found {spaces})"),
+            span,
+        ));
     }
 
     None
@@ -264,7 +231,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -276,7 +243,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces before"));
     }
@@ -289,7 +256,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too few spaces after"));
     }
@@ -302,7 +269,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces after"));
     }
@@ -318,7 +285,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -330,7 +297,7 @@ mod tests {
         let config = config_with_rule(RuleName::Commas, "{max-spaces-after: 2}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -342,7 +309,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -354,7 +321,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -366,7 +333,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Commas followed by newlines should be handled gracefully
         assert!(
             diagnostics.is_empty() || diagnostics.iter().all(|d| !d.message.contains("too few"))
@@ -382,7 +349,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
             diagnostics[0].span.start.line, 2,
@@ -399,7 +366,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should have multiple violations
         assert!(diagnostics.len() >= 2);
     }
@@ -416,7 +383,7 @@ mod tests {
         );
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert!(
             diagnostics.is_empty(),
             "no false positives in block scalar: {diagnostics:?}"

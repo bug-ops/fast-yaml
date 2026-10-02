@@ -278,8 +278,8 @@ impl LintConfig {
     /// Returns the configured severity of a rule, or `default` when none is set.
     ///
     /// Built-in rules are resolved through [`RulesConfig`], custom rules through
-    /// [`LintConfig::custom_rules`]. Custom [`LintRule`](crate::rules::LintRule) implementations
-    /// call this with their own id; built-in rules read their typed settings directly.
+    /// [`LintConfig::custom_rules`]. [`Linter`] calls this with the id of the rule that returned
+    /// a finding, so a rule never resolves its own severity.
     ///
     /// # Examples
     ///
@@ -620,7 +620,7 @@ impl Linter {
             for (idx, value) in docs.iter().flatten().enumerate() {
                 let first_line = context.documents().get(idx).map_or(1, |d| d.first_line);
                 let document = LintDocument { value, first_line };
-                found.extend(rule.check(&context, document, &self.config));
+                found.extend(rule.diagnose(&context, document, &self.config));
             }
             *slot = Some(found);
         }
@@ -630,7 +630,7 @@ impl Linter {
         for (slot, rule) in by_document.iter_mut().zip(&rules) {
             let mut found = match (slot.take(), rule) {
                 (Some(found), _) => found,
-                (None, Rule::Source(rule)) => rule.check(&context, &self.config),
+                (None, Rule::Source(rule)) => rule.diagnose(&context, &self.config),
                 (None, Rule::Document(_)) => Vec::new(),
             };
             if diagnostics.is_empty() {
@@ -744,19 +744,11 @@ mod tests {
     }
 
     impl SourceRule for AlwaysFlags {
-        fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+        fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<crate::Finding> {
             let span = context
                 .source_context()
                 .span_at(context.source_context().line_start(1), 1);
-            vec![
-                crate::DiagnosticBuilder::new(
-                    self.0.as_str(),
-                    config.severity_for(self.id(), self.default_severity()),
-                    "flagged",
-                    span,
-                )
-                .build(),
-            ]
+            vec![crate::Finding::new("flagged", span)]
         }
     }
 
@@ -786,18 +778,10 @@ mod tests {
             context: &LintContext,
             document: LintDocument<'_>,
             _config: &LintConfig,
-        ) -> Vec<Diagnostic> {
+        ) -> Vec<crate::Finding> {
             let source_context = context.source_context();
             let span = source_context.span_at(source_context.line_start(document.first_line), 1);
-            vec![
-                crate::DiagnosticBuilder::new(
-                    self.0.as_str(),
-                    self.default_severity(),
-                    format!("{:?}", document.value),
-                    span,
-                )
-                .build(),
-            ]
+            vec![crate::Finding::new(format!("{:?}", document.value), span)]
         }
     }
 

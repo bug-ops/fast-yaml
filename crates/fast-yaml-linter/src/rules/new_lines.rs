@@ -1,12 +1,12 @@
 //! Rule to check line ending type.
 
-use super::{LintRule, RuleId};
+use super::RuleId;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::RuleOptions;
 use crate::source::offset::ByteOffset;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Linting rule for line endings.
 ///
@@ -28,7 +28,7 @@ use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintConte
 /// let yaml = "key: value\nanother: value";
 ///
 /// let config = LintConfig::default();
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct NewLinesRule;
@@ -76,7 +76,7 @@ impl super::LintRule for NewLinesRule {
 }
 
 impl super::SourceRule for NewLinesRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let source = context.source();
         let expected = match config.rules.new_lines.options.line_ending {
             LineEndingType::Dos => LineEnding::Dos,
@@ -108,8 +108,6 @@ impl super::SourceRule for NewLinesRule {
                 };
 
                 if actual != expected {
-                    let severity = config.rules.new_lines.severity_or(self.default_severity());
-
                     let span = context.source_context().span_at(ByteOffset::new(offset), 0);
 
                     let expected_str = match expected {
@@ -122,17 +120,10 @@ impl super::SourceRule for NewLinesRule {
                         LineEnding::Dos => "DOS (\\r\\n)",
                     };
 
-                    diagnostics.push(
-                        DiagnosticBuilder::new(
-                            DiagnosticCode::NEW_LINES,
-                            severity,
-                            format!(
-                                "wrong line ending (expected {expected_str}, found {actual_str})"
-                            ),
-                            span,
-                        )
-                        .build(),
-                    );
+                    diagnostics.push(Finding::new(
+                        format!("wrong line ending (expected {expected_str}, found {actual_str})"),
+                        span,
+                    ));
                 }
 
                 offset = idx + 1;
@@ -168,7 +159,7 @@ mod tests {
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
 
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -180,7 +171,7 @@ mod tests {
         let config = LintConfig::default();
         let context = LintContext::new(yaml);
 
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("wrong line ending"));
         assert!(diagnostics[0].message.contains("DOS"));
@@ -194,7 +185,7 @@ mod tests {
         let config = config_with_rule(RuleName::NewLines, "{type: dos}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -206,7 +197,7 @@ mod tests {
         let config = config_with_rule(RuleName::NewLines, "{type: dos}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("wrong line ending"));
     }
@@ -219,7 +210,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should report the DOS line
         assert_ne!(diagnostics, []);
     }
@@ -232,7 +223,7 @@ mod tests {
         let config = config_with_rule(RuleName::NewLines, "{type: platform}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // On Unix platforms, this should be valid
         #[cfg(not(target_os = "windows"))]
         assert_eq!(diagnostics, []);
@@ -250,7 +241,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -262,7 +253,7 @@ mod tests {
         let config = LintConfig::default();
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should report all DOS line endings
         assert_eq!(diagnostics.len(), 3);
     }

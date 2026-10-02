@@ -7,10 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{MarkerPresence, RuleOptions};
 use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
-use crate::{
-    Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Location, Severity,
-    Span,
-};
+use crate::{Finding, LintConfig, LintContext, Location, Severity, Span};
 
 /// Linting rule for document end marker.
 ///
@@ -33,7 +30,7 @@ use crate::{
 ///
 /// let config = LintConfig::default();
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &config);
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &config);
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct DocumentEndRule;
@@ -67,28 +64,23 @@ impl super::LintRule for DocumentEndRule {
 }
 
 impl super::SourceRule for DocumentEndRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         match config.rules.document_end.options.present {
             MarkerPresence::Allowed => Vec::new(),
-            MarkerPresence::Required => {
-                check_required(context, config, DiagnosticCode::DOCUMENT_END)
-            }
-            MarkerPresence::Forbidden => {
-                check_forbidden(context.source(), config, DiagnosticCode::DOCUMENT_END)
-            }
+            MarkerPresence::Required => check_required(context),
+            MarkerPresence::Forbidden => check_forbidden(context.source()),
         }
     }
 }
 
 /// Flags each document that is not closed by `...`: the ones followed by another document at that
 /// document's `---` line, and the last one at the end of the file.
-fn check_required(context: &LintContext, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
+fn check_required(context: &LintContext) -> Vec<Finding> {
     if context.documents().is_empty() && context.scan_is_complete() {
         return Vec::new();
     }
     let source = context.source();
     let source_context = context.source_context();
-    let severity = config.rules.document_end.severity_or(Severity::Warning);
     let documents = context.document_markers();
 
     documents
@@ -115,20 +107,17 @@ fn check_required(context: &LintContext, config: &LintConfig, code: &str) -> Vec
                     (at, "...\n")
                 },
             );
-            DiagnosticBuilder::new(code, severity, "missing document end marker '...'", span)
-                .with_suggestion(
-                    "Add '...' to close this document",
-                    span,
-                    Some(replacement.to_owned()),
-                )
-                .build()
+            Finding::new("missing document end marker '...'", span).with_suggestion(
+                "Add '...' to close this document",
+                span,
+                Some(replacement.to_owned()),
+            )
         })
         .collect()
 }
 
 /// Flags every `...` at column 0; YAML makes such a line end the document even inside scalars.
-fn check_forbidden(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnostic> {
-    let severity = config.rules.document_end.severity_or(Severity::Warning);
+fn check_forbidden(source: &str) -> Vec<Finding> {
     source_lines(source)
         .enumerate()
         .filter(|(_, (_, line))| {
@@ -140,14 +129,11 @@ fn check_forbidden(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnos
                 Location::new(line_num + 1, 1, offset),
                 Location::new(line_num + 1, 4, offset + 3),
             );
-            DiagnosticBuilder::new(
-                code,
-                severity,
-                "document end marker '...' is forbidden",
+            Finding::new("document end marker '...' is forbidden", span).with_suggestion(
+                "Remove '...'",
                 span,
+                None,
             )
-            .with_suggestion("Remove '...'", span, None)
-            .build()
         })
         .collect()
 }
@@ -155,6 +141,7 @@ fn check_forbidden(source: &str, config: &LintConfig, code: &str) -> Vec<Diagnos
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Diagnostic;
     use crate::{
         config::{RuleName, test_support::config_with_rule},
         rules::SourceRule,
@@ -168,7 +155,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -180,7 +167,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "missing document end marker '...'");
     }
@@ -194,11 +181,11 @@ mod tests {
         let config = LintConfig::new(); // Default: not required
 
         let context_with = LintContext::new(yaml_with);
-        let diag_with = rule.check(&context_with, &config);
+        let diag_with = rule.diagnose(&context_with, &config);
         assert_eq!(diag_with, []);
 
         let context_without = LintContext::new(yaml_without);
-        let diag_without = rule.check(&context_without, &config);
+        let diag_without = rule.diagnose(&context_without, &config);
         assert_eq!(diag_without, []);
     }
 
@@ -210,7 +197,7 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -222,14 +209,14 @@ mod tests {
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true, severity: error}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].severity, Severity::Error);
     }
 
     fn forbidden(yaml: &str) -> Vec<Diagnostic> {
         let config = config_with_rule(RuleName::DocumentEnd, "{present: false}");
-        DocumentEndRule.check(&LintContext::new(yaml), &config)
+        DocumentEndRule.diagnose(&LintContext::new(yaml), &config)
     }
 
     #[test]
@@ -284,7 +271,7 @@ mod tests {
 
     fn required(yaml: &str) -> Vec<Diagnostic> {
         let config = config_with_rule(RuleName::DocumentEnd, "{present: true}");
-        DocumentEndRule.check(&LintContext::new(yaml), &config)
+        DocumentEndRule.diagnose(&LintContext::new(yaml), &config)
     }
 
     fn required_lines(yaml: &str) -> Vec<(usize, usize)> {

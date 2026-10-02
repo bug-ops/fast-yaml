@@ -9,7 +9,7 @@ use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
 use crate::nodes::{Node, ScalarNode, TagKind};
 use crate::source::offset::ByteOffset;
-use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, LintConfig, LintContext, Severity};
+use crate::{Finding, LintConfig, LintContext, Severity};
 use fast_yaml_core::ScalarStyle;
 
 /// Linting rule for empty values.
@@ -30,7 +30,7 @@ use fast_yaml_core::ScalarStyle;
 /// let rule = EmptyValuesRule;
 /// let yaml = "key: null";  // Explicit null is OK
 ///
-/// let diagnostics = rule.check(&fast_yaml_linter::LintContext::new(yaml), &LintConfig::new());
+/// let diagnostics = rule.diagnose(&fast_yaml_linter::LintContext::new(yaml), &LintConfig::new());
 /// assert!(diagnostics.is_empty());
 /// ```
 pub struct EmptyValuesRule;
@@ -78,7 +78,7 @@ impl super::LintRule for EmptyValuesRule {
 }
 
 impl super::SourceRule for EmptyValuesRule {
-    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Diagnostic> {
+    fn check(&self, context: &LintContext, config: &LintConfig) -> Vec<Finding> {
         let options = &config.rules.empty_values.options;
         if !options.forbid_in_block_mappings
             && !options.forbid_in_flow_mappings
@@ -88,7 +88,6 @@ impl super::SourceRule for EmptyValuesRule {
         }
 
         let source_context = context.source_context();
-        let severity = config.rules.empty_values.severity_or(Severity::Warning);
         collect_empty_values(context, options)
             .into_iter()
             .map(|EmptyValue { kind, indicator }| {
@@ -99,9 +98,11 @@ impl super::SourceRule for EmptyValuesRule {
                     }
                     EmptyKind::BlockSequence => "empty value in block sequence".to_owned(),
                 };
-                DiagnosticBuilder::new(DiagnosticCode::EMPTY_VALUES, severity, message, span)
-                    .with_suggestion("Add explicit 'null'", span, Some(" null".to_string()))
-                    .build()
+                Finding::new(message, span).with_suggestion(
+                    "Add explicit 'null'",
+                    span,
+                    Some(" null".to_string()),
+                )
             })
             .collect()
     }
@@ -273,7 +274,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("empty value"));
@@ -285,7 +286,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -296,7 +297,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -309,7 +310,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyValues, "{forbid-in-block-mappings: false}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics, []);
     }
 
@@ -320,7 +321,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         // Should detect empty value for 'child'
         assert_ne!(diagnostics, []);
@@ -332,7 +333,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics, []);
     }
@@ -344,7 +345,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         // Should detect empty value in flow mapping
         assert_eq!(diagnostics.len(), 1);
@@ -359,7 +360,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         // Should not detect when forbid_in_flow_mappings is false
         assert_eq!(diagnostics, []);
     }
@@ -370,7 +371,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         let positions: Vec<_> = diagnostics
             .iter()
@@ -385,7 +386,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert!(
             diagnostics.is_empty(),
@@ -400,7 +401,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert!(
             diagnostics.is_empty(),
@@ -414,7 +415,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert!(
             diagnostics.is_empty(),
@@ -430,7 +431,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
@@ -450,7 +451,7 @@ mod tests {
 
         let rule = EmptyValuesRule;
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &LintConfig::new());
+        let diagnostics = rule.diagnose(&context, &LintConfig::new());
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
@@ -461,7 +462,7 @@ mod tests {
 
     fn empty_positions(yaml: &str) -> Vec<(usize, usize)> {
         EmptyValuesRule
-            .check(&LintContext::new(yaml), &LintConfig::new())
+            .diagnose(&LintContext::new(yaml), &LintConfig::new())
             .iter()
             .map(|d| (d.span.start.line, d.span.start.column))
             .collect()
@@ -505,7 +506,7 @@ mod tests {
         let only_block =
             config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
         let yaml = "k: [a: ]\nm:\n";
-        let diags = EmptyValuesRule.check(&LintContext::new(yaml), &only_block);
+        let diags = EmptyValuesRule.diagnose(&LintContext::new(yaml), &only_block);
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].span.start.line, 2);
     }
@@ -548,7 +549,7 @@ mod tests {
     #[test]
     fn test_long_key_is_truncated_in_message() {
         let yaml = format!("{}:\n", "k".repeat(300));
-        let diags = EmptyValuesRule.check(&LintContext::new(&yaml), &LintConfig::new());
+        let diags = EmptyValuesRule.diagnose(&LintContext::new(&yaml), &LintConfig::new());
         assert!(diags[0].message.len() < 120, "{}", diags[0].message);
     }
 
@@ -568,7 +569,7 @@ mod tests {
         let config = config_with_rule(RuleName::EmptyValues, "{forbid-in-block-sequences: true}");
 
         let context = LintContext::new(yaml);
-        let diagnostics = rule.check(&context, &config);
+        let diagnostics = rule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 2);
     }
 
