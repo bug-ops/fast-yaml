@@ -154,7 +154,7 @@ describe('config errors', () => {
     'maxLineLength %s is rejected',
     (value) => {
       expect(() => lint('a: 1\n', { maxLineLength: value })).toThrow(
-        /maxLineLength must be a positive integer/
+        /maxLineLength must be between 1 and 4294967295, got /
       );
     }
   );
@@ -163,7 +163,7 @@ describe('config errors', () => {
     'indentSize %s is rejected',
     (value) => {
       expect(() => lint('a: 1\n', { indentSize: value })).toThrow(
-        /indentSize must be an integer between 1 and 16/
+        /indentSize must be between 1 and 16, got /
       );
     }
   );

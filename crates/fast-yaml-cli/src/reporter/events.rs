@@ -44,6 +44,13 @@ pub enum ReportEvent<'a> {
     },
     /// Batch summary
     BatchSummary(BatchStats),
+    /// Figures about a parsed document, requested with `parse --stats`
+    Statistics {
+        /// Number of mapping keys in the document
+        keys: usize,
+        /// Deepest nesting level of the document
+        max_depth: usize,
+    },
 }
 
 #[cfg(test)]

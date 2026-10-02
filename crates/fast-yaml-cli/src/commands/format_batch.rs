@@ -99,7 +99,7 @@ pub fn execute_batch(
 
     // Return appropriate exit code
     Ok(if result.failed > 0 {
-        ExitCode::ParseError
+        ExitCode::Failure
     } else if would_change > 0 {
         ExitCode::WouldChange
     } else {

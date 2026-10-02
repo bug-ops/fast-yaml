@@ -155,7 +155,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | FR-010 | WHEN a command accepts a file and none is given, THE SYSTEM SHALL read stdin; invalid UTF-8 SHALL fail with `input is not valid UTF-8` (exit 1). | must |
-| FR-011 | WHEN `-o` is `-`, `/dev/stdout` or `/dev/fd/1`, THE SYSTEM SHALL write to stdout; `/dev/stderr` or `/dev/fd/2` to stderr; any other value SHALL be written atomically via `write_atomic`. | must |
+| FR-011 | WHEN `-o` is `-`, `/dev/stdout` or `/dev/fd/1`, THE SYSTEM SHALL write to stdout; `/dev/stderr` or `/dev/fd/2` to stderr; `/dev/null` (`NUL` on Windows) SHALL discard the output without creating or replacing a file; any other value SHALL be written atomically via `write_atomic`. | must |
 | FR-012 | WHEN `-i` is given without a single file argument (stdin input), THE SYSTEM SHALL fail with `--in-place (-i) requires a file argument` (exit 1). | must |
 | FR-013 | WHEN `format -i` produces content identical to the file, THE SYSTEM SHALL NOT rewrite the file. | must |
 | FR-014 | THE SYSTEM SHALL write command results (formatted YAML/JSON, `✓ YAML is valid`, `--stats`, lint reports) to stdout and errors, summaries, timing, discovery warnings and the `using config file:` notice (with `-v` only) to stderr. | must |
@@ -203,7 +203,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 |--------|-------------|
 | `Cli`, `Command`, `ResolvedCli` | clap derive structs; global flags live on `Cli`, and `Cli::validate` resolves them into `ResolvedCli` (verbosity decided), the only form commands see. |
 | `ConfigSource` | `Explicit(path)`, `Disabled`, `Discover` for `fy lint`; `--config` and `--no-config` conflict in clap. |
-| `ExitCode` | `Success=0`, `ParseError=1`, `LintErrors=2`, `IoError=3` and `InvalidArgs=4` (defined, never produced), `WouldChange=5`. |
+| `ExitCode` | `Success=0`, `Failure=1` (any run-time failure: invalid YAML, I/O, configuration, discovery), `LintErrors=2`, `WouldChange=5`; codes 3 and 4 do not exist. |
 | `Verbosity` | `Quiet`, `Normal`, `Verbose`, resolved from `-q/-v` after parsing. |
 | `Target` | `Stdin`, `File`, `Batch` resolved from paths and flags. |
 | `OutputTarget`, `WriteTarget`, `EditIntent`, `WriteMode` | Encode the `-o`/`-i` destination and the `-n` precedence for format as types, not booleans; `-n` wins over `-i` in `EditIntent::resolve`. |
@@ -229,7 +229,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | `fy convert json -i -o x f.yaml` | Usage error: `--in-place` cannot be used with `--output`, exit 2. |
 | `fy format d/a.yaml` where file has comments | `file contains YAML comments that formatting would strip; use --strip-comments to allow this`, exit 1. |
 | `fy lint --config nope.yml ok.yaml` | `failed to load config file 'nope.yml'`, exit 1. |
-| `fy lint --max-line-length 0` | Usage error (non-zero type), exit 2. |
+| `fy lint --max-line-length 0` | Usage error, exit 2: `must be between 1 and 4294967295, got 0`, the range the Node.js binding accepts. |
 | `fy lint bad.yaml` (syntax error, single file) | `error: Failed to lint YAML ...`, exit 1; nothing on stdout, even with `--format json`. |
 | Empty input, `~`, comment-only | `parse` succeeds. |
 | Config `ignore` matches the single linted file | File is not read, empty report, exit 0. |
@@ -265,7 +265,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | # | Topic | Observed (verified) | Question |
 |---|-------|--------------------|----------|
 | 1 | Lint syntax-error exit code (P1, GAP-CLI-017) | Single file/stdin: exit 1. The same file in a batch: exit 2. | [NEEDS CLARIFICATION] One code for all lint syntax errors (2, matching findings) or a separate code? **Proposed:** distinct codes for findings, syntax error and usage/IO, applied uniformly, one integration test per code. |
-| 2 | Unused codes 3 and 4 (P2, GAP-CLI-018) | `IoError` and `InvalidArgs` exist in the enum but no path emits them; 2 is shared by usage errors and lint findings. | [NEEDS CLARIFICATION] Implement a distinct usage/IO code or delete 3/4 from enum and docs? **Proposed:** distinct codes for findings, syntax error and usage/IO, applied uniformly, one integration test per code. |
+| 2 | Unused codes 3 and 4 (P2, GAP-CLI-018) | Resolved: the never-produced `IoError` and `InvalidArgs` are removed and `ParseError` is renamed `Failure` (#628); 2 is still shared by usage errors and lint findings. | closed |
 | 3 | Top-level `-f/--format` (P2, GAP-CLI-001) | Resolved: removed. | closed |
 | 4 | `-o` and `-i` ignored by `parse` (P2, GAP-CLI-005) | Resolved: write flags exist only on the subcommands that write; `-n` still beats `-i` in `format`. | closed |
 | 5 | `-` is not stdin (P3, GAP-CLI-008) | `fy parse -` fails with ENOENT although `-o -` means stdout. | Accept `-` as stdin? |

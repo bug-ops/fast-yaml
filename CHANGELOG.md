@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **CLI**: `ExitCode::ParseError` is renamed `Failure` and the never-produced `IoError` (3) and `InvalidArgs` (4) are removed; exit codes 0, 1, 2 and 5 are unchanged (#628)
+- **CLI**: `--max-line-length` accepts `1..=4294967295`, as the Node.js binding does, and `0` or a larger value reports `must be between 1 and 4294967295, got N` (#634)
+- **Node.js**: `lint` reports an out-of-range `maxLineLength` or `indentSize` as `InvalidArg` with the `<name> must be between N and M, got V` message shared by the other numeric options (#628)
 - **Linter**: `IndentationOptions::indent_size` is removed; the width is the single field `spaces`, `indent-size` stays a config key that sets it, and a serialized config carries `spaces` only (#626)
 - **Python**: `LintConfig()` leaves the indentation width `consistent`, like `lint(source)` without a config, instead of a fixed 2 (#626)
 - **CLI**: `using config file: <path>` is printed only with `-v` (it was always on stderr, even with `-q`) (#614) (#622)
@@ -163,6 +166,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **CLI**: `fy lint|format|convert -o /dev/null` discards the output (`NUL` on Windows) instead of failing with `not a regular file` (#634)
 - **Linter**: `quoted-strings` supports `quote-type: consistent`, holding the file to the style of its first quoted string like yamllint >= 1.35 (#602)
 - **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#622)
 - **Linter/Python/Node.js**: `RulesConfig::apply_rule_at`, `has_ignore` and `LintConfig::matching_path`; Python `with_rule_config` accepts per-rule `ignore`, and `lint` `path` no longer touches the file system unless a rule has `ignore` (#619) (#622)
@@ -269,6 +273,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **CLI**: `parse --stats` goes through the reporter, so a closed stdout no longer panics (#628)
+- **Linter**: the `RuleRegistry::with_default_rules` docs no longer list a stale subset of the rules (#628)
 - **Linter/Python**: `lint(source, LintConfig())` and `lint(source)` report the same indentation findings, as do Node `lint(source, {})` and `fy lint` (#626)
 - **Linter**: `braces`, `brackets` and `colons` no longer report plain scalars in block sequence entries (`- a [ b ]`, `- :year`) and read a value after an anchor or tag (`k: &a [ x ]`) as the flow collection it is (#630)
 - **Linter**: `commas` ignores the spaces between a comma and a trailing comment inside a flow collection (#631)

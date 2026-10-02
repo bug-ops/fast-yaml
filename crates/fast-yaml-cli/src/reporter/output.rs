@@ -89,6 +89,9 @@ impl Reporter {
                     self.write_batch_summary(stats)?;
                 }
             }
+            ReportEvent::Statistics { keys, max_depth } => {
+                self.write_statistics(keys, max_depth)?;
+            }
         }
         Ok(())
     }
@@ -110,10 +113,6 @@ impl Reporter {
             }
             return writeln!(lock, "{} {}", "error:".red().bold(), message);
         }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.use_color();
-        }
         if let Some(p) = path {
             writeln!(lock, "error: {}: {}", DisplayPath::new(p), message)
         } else {
@@ -129,11 +128,23 @@ impl Reporter {
             use colored::Colorize;
             return writeln!(lock, "{} {}", "✓".green().bold(), message);
         }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.use_color();
-        }
         writeln!(lock, "✓ {}", message)
+    }
+
+    /// Writes the `parse --stats` figures to stdout; `-q` does not hide what was asked for.
+    fn write_statistics(&self, keys: usize, max_depth: usize) -> io::Result<()> {
+        let mut lock = self.stdout.lock();
+        writeln!(lock)?;
+        #[cfg(feature = "colors")]
+        if self.config.use_color() {
+            use colored::Colorize;
+            writeln!(lock, "{}", "Statistics:".bold())?;
+            writeln!(lock, "  Keys: {}", keys.to_string().cyan())?;
+            return writeln!(lock, "  Max depth: {}", max_depth.to_string().cyan());
+        }
+        writeln!(lock, "Statistics:")?;
+        writeln!(lock, "  Keys: {keys}")?;
+        writeln!(lock, "  Max depth: {max_depth}")
     }
 
     fn write_timing(&self, operation: &str, duration: Duration) -> io::Result<()> {
@@ -148,10 +159,6 @@ impl Reporter {
                 operation,
                 duration.as_secs_f64() * 1000.0
             );
-        }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.use_color();
         }
         writeln!(
             lock,
@@ -197,10 +204,6 @@ impl Reporter {
                 writeln!(lock, "  {} failed", failed.to_string().red())?;
             }
             return Ok(());
-        }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.use_color();
         }
 
         writeln!(lock)?;

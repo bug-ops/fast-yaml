@@ -41,7 +41,7 @@ impl ParseCommand {
         if self.show_stats
             && let Some(ref value) = maybe_value
         {
-            self.print_statistics(value, &reporter);
+            print_statistics(value, &reporter);
         }
 
         if let Some(duration) = reporter.elapsed() {
@@ -55,29 +55,14 @@ impl ParseCommand {
 
         Ok(())
     }
+}
 
-    /// Print parsing statistics
-    fn print_statistics(&self, value: &fast_yaml_core::Value, reporter: &Reporter) {
-        let (key_count, max_depth) = count_keys_and_depth(value, 0);
-
-        #[cfg(feature = "colors")]
-        if self.config.output.use_color() {
-            use colored::Colorize;
-            println!("\n{}", "Statistics:".bold());
-            println!("  Keys: {}", key_count.to_string().cyan());
-            println!("  Max depth: {}", max_depth.to_string().cyan());
-            return;
-        }
-        #[cfg(not(feature = "colors"))]
-        {
-            let _ = self.config.output.use_color();
-        }
-
-        println!("\nStatistics:");
-        println!("  Keys: {key_count}");
-        println!("  Max depth: {max_depth}");
-        let _ = reporter;
-    }
+/// Reports the key count and nesting depth of `value`.
+fn print_statistics(value: &fast_yaml_core::Value, reporter: &Reporter) {
+    let (keys, max_depth) = count_keys_and_depth(value, 0);
+    reporter
+        .report(ReportEvent::Statistics { keys, max_depth })
+        .ok();
 }
 
 /// Recursively count keys and max depth

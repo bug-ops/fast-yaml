@@ -183,6 +183,12 @@ impl<'de> Deserialize<'de> for EmptyInsideLimit {
 pub struct IndentSize(NonZeroU8);
 
 impl IndentSize {
+    /// The smallest size, 1.
+    pub const MIN: Self = Self(NonZeroU8::MIN);
+
+    /// The largest size, 16.
+    pub const MAX: Self = Self::saturating_from_u8(MAX_INDENT_SIZE);
+
     /// Returns the size in spaces.
     #[must_use]
     pub const fn get(self) -> usize {

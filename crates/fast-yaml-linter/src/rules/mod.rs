@@ -417,39 +417,17 @@ impl RuleRegistry {
         Self { rules: Vec::new() }
     }
 
-    /// Registers all default rules.
-    ///
-    /// Includes:
-    /// - Duplicate Keys (ERROR)
-    /// - Line Too Long (INFO)
-    /// - Trailing Whitespace (HINT)
-    /// - Document Start (WARNING)
-    /// - Document End (WARNING)
-    /// - Empty Values (WARNING)
-    /// - New Line at End of File (INFO)
-    /// - Braces (WARNING)
-    /// - Brackets (WARNING)
-    /// - Colons (WARNING)
-    /// - Commas (WARNING)
-    /// - Hyphens (WARNING)
-    /// - Comments (INFO)
-    /// - Comments Indentation (INFO)
-    /// - Empty Lines (INFO)
-    /// - New Lines (WARNING)
-    /// - Octal Values (WARNING)
-    /// - Truthy (WARNING)
-    /// - Quoted Strings (WARNING)
-    /// - Key Ordering (INFO)
-    /// - Float Values (WARNING)
-    /// - Indentation (WARNING)
+    /// Registers every built-in rule, one for each [`RuleName`](crate::config::RuleName), in the
+    /// order of [`RuleName::ALL`](crate::config::RuleName::ALL).
     ///
     /// # Examples
     ///
     /// ```
+    /// use fast_yaml_linter::config::RuleName;
     /// use fast_yaml_linter::rules::RuleRegistry;
     ///
     /// let registry = RuleRegistry::with_default_rules();
-    /// assert_eq!(registry.rules().len(), 25);
+    /// assert_eq!(registry.rules().len(), RuleName::ALL.len());
     /// ```
     #[must_use]
     pub fn with_default_rules() -> Self {

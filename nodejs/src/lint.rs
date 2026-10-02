@@ -4,6 +4,7 @@
 //! rich error reporting, and configurable linting rules.
 
 use crate::limits::{max_input_bytes, parse_limits};
+use crate::options::{U32_MAX, checked_uint};
 use fast_yaml_linter::{
     ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticContext as RustDiagnosticContext, LintConfig as RustLintConfig,
@@ -240,20 +241,6 @@ fn config_error(error: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(error.to_string())
 }
 
-/// Validates that a JS number is a finite integer within `min..=max`; `expected` words the error.
-fn checked_uint(field: &str, expected: &str, value: f64, min: u64, max: u64) -> napi::Result<u64> {
-    #[allow(clippy::cast_precision_loss)]
-    let in_range =
-        value.is_finite() && value.fract() == 0.0 && value >= min as f64 && value <= max as f64;
-    if !in_range {
-        return Err(config_error(format!(
-            "{field} must be {expected}, got {value}"
-        )));
-    }
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    Ok(value as u64)
-}
-
 fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
     let mut rust = RustLintConfig::new()
         .with_parse_limits(parse_limits(
@@ -272,20 +259,13 @@ fn to_rust_lint_config(config: &LintConfig) -> napi::Result<RustLintConfig> {
         })?;
     }
     if let Some(max) = config.max_line_length {
-        let max = checked_uint(
-            "maxLineLength",
-            "a positive integer no greater than 4294967295",
-            max,
-            1,
-            u64::from(u32::MAX),
-        )?;
-        rust = rust.with_max_line_length(NonZeroUsize::new(
-            usize::try_from(max).map_err(config_error)?,
-        ));
+        let max = checked_uint("maxLineLength", max, 1, U32_MAX)?;
+        rust = rust.with_max_line_length(NonZeroUsize::new(max));
     }
     if let Some(indent) = config.indent_size {
-        let indent = checked_uint("indentSize", "an integer between 1 and 16", indent, 1, 16)?;
-        rust = rust.with_indent_size(IndentSize::try_from(indent).map_err(config_error)?);
+        let (min, max) = (IndentSize::MIN.get() as u64, IndentSize::MAX.get() as u64);
+        let indent = checked_uint("indentSize", indent, min, max)?;
+        rust = rust.with_indent_size(IndentSize::try_from(indent as u64).map_err(config_error)?);
     }
     if config.require_document_start == Some(true) {
         rust = rust.with_document_start(MarkerPresence::Required);

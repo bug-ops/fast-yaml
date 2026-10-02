@@ -11,6 +11,8 @@ pub enum OutputDestination {
     File(PathBuf),
     Stdout,
     Stderr,
+    /// The null device: the output is discarded and nothing is created
+    Null,
 }
 
 /// Output writer
@@ -21,7 +23,8 @@ pub struct OutputWriter {
 
 /// Returns the `OutputDestination` for paths that should bypass the temp-file strategy.
 ///
-/// Detects `/dev/stdout`, `/dev/stderr`, `/dev/fd/1`, `/dev/fd/2`, and `-` (stdout convention).
+/// Detects `/dev/stdout`, `/dev/stderr`, `/dev/fd/1`, `/dev/fd/2`, and `-` (stdout convention),
+/// and `/dev/null` (`NUL` on Windows), whose output is discarded.
 /// Comparison is intentionally on the raw, non-canonicalized path: clap does not canonicalize
 /// `PathBuf` arguments, so the user-supplied string is matched directly.
 ///
@@ -33,6 +36,8 @@ fn detect_special_device(path: &Path) -> Option<OutputDestination> {
         Some(OutputDestination::Stdout)
     } else if s == "/dev/stderr" || s == "/dev/fd/2" {
         Some(OutputDestination::Stderr)
+    } else if s == "/dev/null" || (cfg!(windows) && s.eq_ignore_ascii_case("NUL")) {
+        Some(OutputDestination::Null)
     } else {
         None
     }
@@ -124,6 +129,7 @@ impl OutputWriter {
     pub fn write(&self, content: &str) -> Result<()> {
         match &self.destination {
             OutputDestination::File(path) => Self::write_file(path, content),
+            OutputDestination::Null => Ok(()),
             OutputDestination::Stdout | OutputDestination::Stderr => {
                 let mut sink = self.sink()?;
                 sink.write_all(content.as_bytes())
@@ -166,6 +172,7 @@ impl OutputWriter {
             ),
             OutputDestination::Stdout => SinkKind::Stdout,
             OutputDestination::Stderr => SinkKind::Stderr,
+            OutputDestination::Null => SinkKind::Null,
         };
         Ok(OutputSink {
             kind,
@@ -269,6 +276,7 @@ pub const fn stderr_sink() -> OutputSink {
 enum SinkKind {
     Stdout,
     Stderr,
+    Null,
     File(AtomicFile),
 }
 
@@ -291,7 +299,7 @@ impl OutputSink {
     pub fn finish(self) -> Result<()> {
         match self.kind {
             SinkKind::File(file) => file.commit().context("Failed to write the output file"),
-            SinkKind::Stdout | SinkKind::Stderr => Ok(()),
+            SinkKind::Stdout | SinkKind::Stderr | SinkKind::Null => Ok(()),
         }
     }
 
@@ -303,6 +311,7 @@ impl OutputSink {
             SinkKind::Stdout => op(&mut io::stdout().lock()),
             SinkKind::Stderr => op(&mut io::stderr().lock()),
             SinkKind::File(file) => return op(file),
+            SinkKind::Null => return Ok(()),
         };
         match result {
             Err(e) if e.kind() == io::ErrorKind::BrokenPipe => {
@@ -345,6 +354,18 @@ mod tests {
             OutputDestination::File(path) => assert_eq!(path, output_path),
             _ => panic!("Expected File destination"),
         }
+    }
+
+    #[test]
+    fn test_dev_null_discards_the_output() {
+        let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/null")));
+        assert!(matches!(writer.destination, OutputDestination::Null));
+        writer.write("a: 1\n").unwrap();
+        let mut sink = writer.sink().unwrap();
+        sink.write_all(b"a: 1\n").unwrap();
+        sink.flush().unwrap();
+        sink.finish().unwrap();
+        assert!(!writer.targets(Path::new("/dev/null")));
     }
 
     #[test]

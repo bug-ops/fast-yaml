@@ -16,14 +16,10 @@ pub fn stderr_line(args: std::fmt::Arguments<'_>) {
 pub enum ExitCode {
     /// Operation completed successfully
     Success = 0,
-    /// YAML parsing failed
-    ParseError = 1,
+    /// A command failed at run time: invalid YAML, I/O, configuration or discovery
+    Failure = 1,
     /// Linter found errors
     LintErrors = 2,
-    /// I/O operation failed
-    IoError = 3,
-    /// Invalid command-line arguments
-    InvalidArgs = 4,
     /// `format --dry-run` found files that formatting would change
     WouldChange = 5,
 }
@@ -345,10 +341,8 @@ mod tests {
     #[test]
     fn test_exit_code_values() {
         assert_eq!(ExitCode::Success.as_i32(), 0);
-        assert_eq!(ExitCode::ParseError.as_i32(), 1);
+        assert_eq!(ExitCode::Failure.as_i32(), 1);
         assert_eq!(ExitCode::LintErrors.as_i32(), 2);
-        assert_eq!(ExitCode::IoError.as_i32(), 3);
-        assert_eq!(ExitCode::InvalidArgs.as_i32(), 4);
         assert_eq!(ExitCode::WouldChange.as_i32(), 5);
     }
 
