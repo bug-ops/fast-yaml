@@ -202,6 +202,12 @@ fn check_spaces_after_comma(
         }
     }
 
+    // A comment is not a token for yamllint, which measures the gap to the next token on the
+    // line; none follows, and `comments` already requires two spaces before the `#`.
+    if spaces > 0 && bytes.get(offset) == Some(&b'#') {
+        return None;
+    }
+
     // Don't check min spaces if followed by newline
     if min_spaces.unmet_by(spaces) && !has_newline {
         let severity = config.rules.commas.severity_or(Severity::Warning);

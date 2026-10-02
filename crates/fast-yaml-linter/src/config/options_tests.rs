@@ -115,7 +115,12 @@ fn every_options_type_round_trips_with_non_default_values() {
         ],
         check_keys: true,
     });
-    for quote_type in [QuoteType::Any, QuoteType::Single, QuoteType::Double] {
+    for quote_type in [
+        QuoteType::Any,
+        QuoteType::Single,
+        QuoteType::Double,
+        QuoteType::Consistent,
+    ] {
         for required in [
             QuoteRequirement::Always,
             QuoteRequirement::NotRequired,

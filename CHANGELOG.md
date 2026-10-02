@@ -161,6 +161,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: `quoted-strings` supports `quote-type: consistent`, holding the file to the style of its first quoted string like yamllint >= 1.35 (#602)
 - **CLI/Parallel**: `RUST_LOG` enables `tracing` debug events on stderr (discovery skips, config file, workers, pool, scan-ahead retry); `fast-yaml-parallel` gains an optional `tracing` feature (#614) (#622)
 - **Linter/Python/Node.js**: `RulesConfig::apply_rule_at`, `has_ignore` and `LintConfig::matching_path`; Python `with_rule_config` accepts per-rule `ignore`, and `lint` `path` no longer touches the file system unless a rule has `ignore` (#619) (#622)
 - **Linter**: config `extends` and `ignore-from-file`, `key-ordering` `ignored-keys` and `invalid-anchor` duplicate/unused/undeclared options (#571) (#572) (#595)
@@ -266,6 +267,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter**: `braces`, `brackets` and `colons` no longer report plain scalars in block sequence entries (`- a [ b ]`, `- :year`) and read a value after an anchor or tag (`k: &a [ x ]`) as the flow collection it is (#630)
+- **Linter**: `commas` ignores the spaces between a comma and a trailing comment inside a flow collection (#631)
+- **Linter**: `braces` and `brackets` check a continuation line of a multi-line flow collection that ends in a plain scalar before the closing delimiter (#620)
 - **Core**: formatter keeps a `%TAG` prefix that starts with `#` instead of cutting it as a comment, so the output parses again (#636)
 - **CLI**: `run_ordered` cancellation test no longer depends on panic-hook timing on Windows (#636)
 - **CI**: fuzz job creates the corpus directory for targets not covered by the seed script (`validate_differential`) (#635)

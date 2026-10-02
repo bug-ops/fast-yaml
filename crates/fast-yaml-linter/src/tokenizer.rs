@@ -87,6 +87,30 @@ enum Quote {
     Single,
 }
 
+/// Where [`PlainScalarScanner`] is in the node it reads.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Phase {
+    /// Anywhere a node does not start: an implicit key, or the rest of a flow entry.
+    Key,
+    /// Before the node of a value, a block entry or an explicit key.
+    ValueStart,
+    /// In the anchor or tag of the node that follows, which is still to start.
+    Property,
+    /// In a block-context plain scalar.
+    Plain,
+}
+
+/// How far a char moves [`PlainScalarScanner`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Step {
+    /// Past the char.
+    One,
+    /// Past the char and the blank after it.
+    Two,
+    /// To the end of the line, as after a comment indicator.
+    EndOfLine,
+}
+
 /// Left-to-right scanner answering "is column N inside a block-context plain scalar?".
 ///
 /// State is carried across queries, so successive queries with increasing columns on one
@@ -98,8 +122,9 @@ struct PlainScalarScanner<'a> {
     quote: Quote,
     escape_next: bool,
     flow_depth: usize,
-    at_value_start: bool,
-    in_plain_scalar: bool,
+    phase: Phase,
+    /// Only whitespace and block entry (`- `) or key (`? `) indicators precede the position.
+    at_entry_prefix: bool,
 }
 
 impl<'a> PlainScalarScanner<'a> {
@@ -111,15 +136,31 @@ impl<'a> PlainScalarScanner<'a> {
             quote: Quote::None,
             escape_next: false,
             flow_depth: 0,
-            at_value_start: false,
-            in_plain_scalar: false,
+            phase: Phase::Key,
+            at_entry_prefix: true,
         }
+    }
+
+    /// Scanner for a line that starts inside a flow collection nested `depth` levels deep.
+    fn continuing(line: &'a str, depth: usize) -> Self {
+        Self {
+            flow_depth: depth,
+            at_entry_prefix: false,
+            ..Self::new(line)
+        }
+    }
+
+    /// Reads the rest of the line and returns the flow depth it ends at.
+    fn finish(&mut self) -> usize {
+        self.advance(self.len);
+        self.flow_depth
     }
 
     /// Checks if a position is inside a block-context plain scalar.
     ///
     /// A plain scalar starts when the first non-whitespace character after a value
-    /// separator (`: ` or `, `) is not a flow indicator (`{`, `[`, `"`, `'`).
+    /// separator (`: ` or `, `) or a block entry (`- `) is not a flow indicator (`{`, `[`,
+    /// `"`, `'`) or a node property (`&anchor`, `!tag`).
     /// In block context (outside any flow collection), such a plain scalar
     /// continues to the end of the line, so any `{` or `[` inside it must not
     /// be treated as a YAML flow collection delimiter.
@@ -130,109 +171,165 @@ impl<'a> PlainScalarScanner<'a> {
         if col >= self.len {
             return false;
         }
+        self.advance(col);
+        self.phase == Phase::Plain
+    }
 
+    fn advance(&mut self, col: usize) {
         while self.i < col
             && let Some(ch) = self.chars.next()
         {
-            if self.escape_next {
-                self.escape_next = false;
-                self.i += 1;
-                continue;
+            match self.step(ch) {
+                Step::One => self.i += 1,
+                Step::Two => {
+                    self.chars.next();
+                    self.i += 2;
+                }
+                Step::EndOfLine => {
+                    self.i = self.len;
+                    break;
+                }
             }
+        }
+    }
 
-            if self.quote == Quote::Double {
+    fn blank_follows(&mut self) -> bool {
+        matches!(self.chars.peek(), Some(' ' | '\t'))
+    }
+
+    fn step(&mut self, ch: char) -> Step {
+        if std::mem::take(&mut self.escape_next) {
+            return Step::One;
+        }
+        match self.quote {
+            Quote::Double => {
                 if ch == '\\' {
                     self.escape_next = true;
                 } else if ch == '"' {
                     self.quote = Quote::None;
                 }
-                self.i += 1;
-                continue;
+                return Step::One;
             }
-
-            if self.quote == Quote::Single {
+            Quote::Single => {
                 if ch == '\'' {
                     self.quote = Quote::None;
                 }
-                self.i += 1;
-                continue;
+                return Step::One;
             }
-
-            if self.in_plain_scalar {
-                // Block-context plain scalar ends at flow terminators only when nested
-                if self.flow_depth > 0 {
-                    match ch {
-                        ',' => {
-                            self.in_plain_scalar = false;
-                            self.at_value_start = true;
-                        }
-                        '}' | ']' => {
-                            self.in_plain_scalar = false;
-                            self.flow_depth = self.flow_depth.saturating_sub(1);
-                        }
-                        _ => {}
-                    }
-                }
-                // In block context (self.flow_depth == 0) plain scalar runs to EOL — nothing ends it
-                self.i += 1;
-                continue;
-            }
-
-            if self.at_value_start {
-                match ch {
-                    ' ' | '\t' => {}
-                    '"' => {
-                        self.quote = Quote::Double;
-                        self.at_value_start = false;
-                    }
-                    '\'' => {
-                        self.quote = Quote::Single;
-                        self.at_value_start = false;
-                    }
-                    '{' | '[' => {
-                        self.flow_depth += 1;
-                        self.at_value_start = false;
-                    }
-                    '#' => {
-                        self.i = self.len;
-                        break;
-                    }
-                    _ => {
-                        self.at_value_start = false;
-                        if self.flow_depth == 0 {
-                            // Block-context plain scalar — everything until EOL is scalar
-                            self.in_plain_scalar = true;
-                        }
-                        // Flow-context plain scalars cannot contain `{`/`[`, so we do not
-                        // set self.in_plain_scalar; any `{` encountered later will be treated
-                        // as a nested flow collection (or invalid YAML).
-                    }
-                }
-            } else {
-                match ch {
-                    '"' => self.quote = Quote::Double,
-                    '\'' => self.quote = Quote::Single,
-                    '{' | '[' => self.flow_depth += 1,
-                    '}' | ']' => self.flow_depth = self.flow_depth.saturating_sub(1),
-                    ':' if matches!(self.chars.peek(), Some(' ' | '\t')) => {
-                        self.at_value_start = true;
-                        self.chars.next();
-                        self.i += 2; // consume `: `
-                        continue;
-                    }
-                    ',' if self.flow_depth > 0 => self.at_value_start = true,
-                    '#' => {
-                        self.i = self.len;
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-
-            self.i += 1;
+            Quote::None => {}
         }
 
-        self.in_plain_scalar
+        if self.phase == Phase::Property {
+            if !matches!(ch, ',' | '[' | ']' | '{' | '}') {
+                if matches!(ch, ' ' | '\t') {
+                    self.phase = Phase::ValueStart;
+                }
+                return Step::One;
+            }
+            self.phase = Phase::ValueStart;
+        }
+
+        if self.phase == Phase::Plain {
+            return self.step_plain(ch);
+        }
+        if self.at_entry_prefix
+            && let Some(step) = self.step_entry_prefix(ch)
+        {
+            return step;
+        }
+        if self.phase == Phase::ValueStart {
+            self.step_value_start(ch)
+        } else {
+            self.step_key(ch)
+        }
+    }
+
+    /// Reads a char of a block-context plain scalar.
+    fn step_plain(&mut self, ch: char) -> Step {
+        if self.flow_depth > 0 {
+            // A plain scalar nested in a flow collection ends at its terminators
+            match ch {
+                ',' => self.phase = Phase::ValueStart,
+                '}' | ']' => {
+                    self.phase = Phase::Key;
+                    self.flow_depth = self.flow_depth.saturating_sub(1);
+                }
+                _ => {}
+            }
+        } else if ch == ':' && self.blank_follows() {
+            // In block context a plain scalar runs to EOL, except that `: ` turns it into an
+            // implicit key and starts the value
+            self.phase = Phase::ValueStart;
+            return Step::Two;
+        }
+        Step::One
+    }
+
+    /// Reads a char before which only whitespace and block indicators stand.
+    ///
+    /// Returns `None` when the char is not part of such a prefix.
+    fn step_entry_prefix(&mut self, ch: char) -> Option<Step> {
+        match ch {
+            ' ' | '\t' => None,
+            '-' | '?' if self.chars.peek().is_none_or(|c| matches!(c, ' ' | '\t')) => {
+                self.phase = Phase::ValueStart;
+                Some(Step::One)
+            }
+            _ => {
+                self.at_entry_prefix = false;
+                None
+            }
+        }
+    }
+
+    /// Reads a char where the node of a value may start.
+    const fn step_value_start(&mut self, ch: char) -> Step {
+        match ch {
+            ' ' | '\t' => {}
+            '&' | '!' => self.phase = Phase::Property,
+            '"' | '\'' => {
+                self.quote = if ch == '"' {
+                    Quote::Double
+                } else {
+                    Quote::Single
+                };
+                self.phase = Phase::Key;
+            }
+            '{' | '[' => {
+                self.flow_depth += 1;
+                self.phase = Phase::Key;
+            }
+            '#' => return Step::EndOfLine,
+            _ => {
+                // A block-context plain scalar runs to EOL. One in a flow collection cannot
+                // contain `{` or `[`, so any later one starts a nested flow collection (or is
+                // invalid YAML).
+                self.phase = if self.flow_depth == 0 {
+                    Phase::Plain
+                } else {
+                    Phase::Key
+                };
+            }
+        }
+        Step::One
+    }
+
+    /// Reads a char outside any node that is being read.
+    fn step_key(&mut self, ch: char) -> Step {
+        match ch {
+            '"' => self.quote = Quote::Double,
+            '\'' => self.quote = Quote::Single,
+            '{' | '[' => self.flow_depth += 1,
+            '}' | ']' => self.flow_depth = self.flow_depth.saturating_sub(1),
+            ':' if self.blank_follows() => {
+                self.phase = Phase::ValueStart;
+                return Step::Two;
+            }
+            ',' if self.flow_depth > 0 => self.phase = Phase::ValueStart,
+            '#' => return Step::EndOfLine,
+            _ => {}
+        }
+        Step::One
     }
 }
 
@@ -270,6 +367,7 @@ impl<'a> FlowTokenizer<'a> {
             ch: Self::token_char(token_type),
             next_line: 1,
             line: None,
+            carry: 0,
         }
     }
 
@@ -295,16 +393,21 @@ impl<'a> FlowTokenizer<'a> {
         if self.is_in_block_scalar(offset) {
             return false;
         }
+        // Outside flow collections a `:` is a value indicator only before a blank or the end of
+        // the line; otherwise it belongs to a plain scalar such as `:year`.
+        if token_type == TokenType::Colon
+            && !self.is_in_flow(offset)
+            && cursor
+                .text
+                .as_bytes()
+                .get(byte_col + 1)
+                .is_some_and(|next| !matches!(next, b' ' | b'\t' | b'\r'))
+        {
+            return false;
+        }
         // Skip braces/brackets that appear inside block-context plain scalars
         // (e.g. template expressions like `${{ var }}`).
-        let bracket = matches!(
-            token_type,
-            TokenType::BraceOpen
-                | TokenType::BraceClose
-                | TokenType::BracketOpen
-                | TokenType::BracketClose
-        );
-        !(bracket
+        !(Self::is_bracket(token_type)
             && cursor
                 .scanner
                 .get_or_insert_with(|| PlainScalarScanner::new(cursor.text))
@@ -319,6 +422,26 @@ impl<'a> FlowTokenizer<'a> {
     /// Checks if a byte offset falls inside an outermost flow collection.
     fn is_in_flow(&self, offset: ByteOffset) -> bool {
         Self::in_ranges(&self.index.flow_ranges, offset)
+    }
+
+    /// Checks if `offset` lies past the opening indicator of an outermost flow collection and
+    /// before its end, as the start of a continuation line does.
+    fn is_in_flow_interior(&self, offset: ByteOffset) -> bool {
+        let ranges = &self.index.flow_ranges;
+        let idx = ranges.partition_point(|range| range.start() < offset);
+        idx.checked_sub(1)
+            .and_then(|prev| ranges.get(prev))
+            .is_some_and(|range| range.contains(offset))
+    }
+
+    const fn is_bracket(token_type: TokenType) -> bool {
+        matches!(
+            token_type,
+            TokenType::BraceOpen
+                | TokenType::BraceClose
+                | TokenType::BracketOpen
+                | TokenType::BracketClose
+        )
     }
 
     /// Checks if `offset` falls inside one of the sorted, disjoint `ranges`.
@@ -384,6 +507,8 @@ pub struct Tokens<'t, 'a> {
     ch: char,
     next_line: usize,
     line: Option<LineCursor<'a>>,
+    /// Flow depth the previous line ended at, when the next line continues its collection.
+    carry: usize,
 }
 
 impl Iterator for Tokens<'_, '_> {
@@ -397,6 +522,8 @@ impl Iterator for Tokens<'_, '_> {
                     return None;
                 }
                 self.next_line += 1;
+                let start = self.tokenizer.context.line_start(number);
+                let carry = std::mem::take(&mut self.carry);
                 self.line = self
                     .tokenizer
                     .context
@@ -404,13 +531,27 @@ impl Iterator for Tokens<'_, '_> {
                     .map(|text| LineCursor {
                         number,
                         text,
-                        start: self.tokenizer.context.line_start(number),
+                        start,
                         chars: text.char_indices().enumerate(),
-                        scanner: None,
+                        scanner: (FlowTokenizer::is_bracket(self.token_type)
+                            && self.tokenizer.is_in_flow_interior(start))
+                        .then(|| PlainScalarScanner::continuing(text, carry.max(1))),
                     });
                 continue;
             };
             let Some((char_col, (byte_col, c))) = cursor.chars.next() else {
+                // The next line goes on in this line's flow collection at the depth this one ends
+                if FlowTokenizer::is_bracket(self.token_type)
+                    && self.next_line <= self.tokenizer.context.line_count()
+                    && self
+                        .tokenizer
+                        .is_in_flow_interior(self.tokenizer.context.line_start(self.next_line))
+                {
+                    self.carry = cursor
+                        .scanner
+                        .get_or_insert_with(|| PlainScalarScanner::new(cursor.text))
+                        .finish();
+                }
                 self.line = None;
                 continue;
             };

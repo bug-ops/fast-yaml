@@ -13,6 +13,7 @@ use crate::{
 };
 use fast_yaml_core::ScalarStyle;
 use regex::Regex;
+use std::cell::Cell;
 use std::sync::LazyLock;
 
 use super::node_roles::NodeRole;
@@ -56,6 +57,8 @@ pub enum QuoteType {
     Single,
     /// Double quotes only.
     Double,
+    /// The quote style of the first quoted string in the file that reaches the style check.
+    Consistent,
 }
 
 /// When strings have to be quoted.
@@ -195,6 +198,7 @@ impl super::SourceRule for QuotedStringsRule {
             source: context.source(),
             source_ctx: context.source_context(),
             config,
+            first_quote: Cell::new(None),
         };
         let index = context.nodes();
 
@@ -243,6 +247,8 @@ struct ScalarCheck<'a> {
     source: &'a str,
     source_ctx: &'a SourceContext<'a>,
     config: &'a LintConfig,
+    /// Quote style that `quote-type: consistent` holds the rest of the file to.
+    first_quote: Cell<Option<ScalarStyle>>,
 }
 
 /// One scalar event with the context the rule needs to judge it.
@@ -320,6 +326,20 @@ impl QuotedStringsRule {
                         if !options.allows_quoted_quote(value, '"') =>
                     {
                         report("string should use double quotes");
+                    }
+                    (QuoteType::Consistent, _) => {
+                        let first = check.first_quote.get().unwrap_or(style);
+                        check.first_quote.set(Some(first));
+                        if first != style {
+                            let (quote, message) = if first == ScalarStyle::SingleQuoted {
+                                ('\'', "string should use single quotes")
+                            } else {
+                                ('"', "string should use double quotes")
+                            };
+                            if !options.allows_quoted_quote(value, quote) {
+                                report(message);
+                            }
+                        }
                     }
                     _ => {}
                 }
