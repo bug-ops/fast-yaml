@@ -8,7 +8,12 @@ This directory contains YAML test fixtures for the fast-yaml-linter integration 
 fixtures/
 ├── valid/           # Files that should pass all linting rules
 ├── invalid/         # Files with known violations
-└── edge_cases/      # Edge case files for special scenarios
+├── edge_cases/      # Edge case files for special scenarios
+├── linter/          # Scanner and multi-document inputs (flow, BOM, CRLF, broken syntax)
+├── yamllint/        # Inputs compared against yamllint output
+├── directives/      # Inline `# fy:` / `# yamllint` directive inputs
+├── config/          # Valid and invalid config files
+└── sarif/           # SARIF 2.1.0 JSON schema
 ```
 
 ## Valid Fixtures
@@ -27,13 +32,13 @@ These files contain intentional violations for testing specific linting rules.
 
 | File | Rule Tested | Expected Violations |
 |------|-------------|---------------------|
-| `invalid/duplicate_keys.yaml` | duplicate-keys | 3 (duplicate 'name', 'id', 'port') |
-| `invalid/long_lines.yaml` | line-too-long | 3 (lines exceeding 80 chars) |
-| `invalid/bad_indentation.yaml` | inconsistent-indentation | 4 (inconsistent spacing) |
+| `invalid/duplicate_keys.yaml` | duplicate-key | 3 (duplicate 'name', 'id', 'port') |
+| `invalid/long_lines.yaml` | line-length | 3 (lines exceeding 80 chars) |
+| `invalid/bad_indentation.yaml` | indentation | 4 (inconsistent spacing) |
 | `invalid/trailing_whitespace.yaml` | trailing-whitespace | 5 (lines with trailing spaces) |
-| `invalid/empty_values.yaml` | empty-value | 4 (keys with empty values) |
-| `invalid/bad_comments.yaml` | comment-spacing/format | 4 (missing spaces in comments) |
-| `invalid/octal_values.yaml` | implicit-octal | 3 (values with leading zeros) |
+| `invalid/empty_values.yaml` | empty-values | 4 (keys with empty values) |
+| `invalid/bad_comments.yaml` | comments | 4 (missing spaces in comments) |
+| `invalid/octal_values.yaml` | octal-values | 3 (values with leading zeros) |
 
 ## Edge Cases
 
@@ -57,12 +62,12 @@ Fixtures are loaded using `include_str!` macro in integration tests:
 #[test]
 fn test_fixture_duplicate_keys() {
     let yaml = include_str!("fixtures/invalid/duplicate_keys.yaml");
-    let linter = Linter::new(LinterConfig::default());
+    let linter = Linter::with_all_rules();
     let diagnostics = linter.lint(yaml).unwrap();
 
     let dup_key_errors: Vec<_> = diagnostics
         .iter()
-        .filter(|d| d.rule_id == RuleId::DuplicateKeys)
+        .filter(|d| d.code.as_str() == "duplicate-key")
         .collect();
 
     assert_eq!(dup_key_errors.len(), 3);

@@ -18,7 +18,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: `fast-yaml-core` load API (`Parser`, `Value`, scalar resolution, merge keys, sets, key domains, input decoding) and the `fy parse` command.
-> **Baseline**: v0.6.6, commit e5e6cfb, plus the fixes #574 (document limit in core), #580 (anchors after a non-ASCII directive) and #567 (float key text). Behavior below was confirmed by running `fy` and reading the code.
+> **Baseline**: v0.7.0 at HEAD dbe1f2b (release/v0.7.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637. Behavior below was confirmed by running `fy` and reading the code.
 
 ## 1. Purpose and value
 
@@ -262,9 +262,9 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 
 | # | Topic | Observed | Question |
 |---|-------|----------|----------|
-| 1 | Duplicate keys | `a: 1\na: 2` loads, `fy parse` says valid; only the linter reports them (GAP-core-parse-004) | [NEEDS CLARIFICATION: should core offer an opt-in strict mode, and should `fy parse` warn?] **Proposed:** opt-in strict loader; keep lint as the default reporter. |
+| 1 | Duplicate keys | `a: 1\na: 2` loads, `fy parse` says valid; only the linter reports them (GAP-core-parse-004, X-11) | [NEEDS CLARIFICATION: should core offer an opt-in strict mode, and should `fy parse` warn?] **Proposed:** opt-in strict loader; keep lint as the default reporter. |
 | 2 | `%YAML` versions | `%YAML 2.0` and `%YAML 1.3` accepted silently; `%YAML 1.1` still gets 1.2 typing (-005) | [NEEDS CLARIFICATION: reject major > 1 and warn on minor > 2?] **Proposed:** reject major > 1 and warn on minor > 2 in the same opt-in strict loader. |
-| 4 | Tab after colon | `a:\t1` rejected on all surfaces; likely `saphyr-parser` limitation although YAML 1.2.2 allows tab separation | [NEEDS CLARIFICATION: accepted limitation?] **Proposed:** document as a known limitation and track upstream. |
+| 4 | Tab after colon | `a:\t1` rejected on all surfaces (verified: `':' must be followed by a valid YAML whitespace at line 1, column 4`); likely `saphyr-parser` limitation although YAML 1.2.2 allows tab separation (X-12) | [NEEDS CLARIFICATION: accepted limitation?] **Proposed:** document as a known limitation and track upstream. |
 | 5 | Integer grammar | Signed hex/octal and `0O`/`0X` accepted, beyond the 1.2.2 Core Schema; absent from README (-007) | [NEEDS CLARIFICATION: permanent extensions?] |
 | 6 | Silent tag loss | Unsupported/custom tags dropped; out-of-range `!!int` becomes a string without diagnostic (-019) | [NEEDS CLARIFICATION: warn, or document as designed?] |
 | 7 | `fy parse` ignored flags | Resolved: `-f` is removed and `-o`/`-i` exist only on the subcommands that write, so `fy parse -o out.txt` is a usage error (exit 2) (-010) | closed |
@@ -273,9 +273,11 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | 10 | File-read error chain | `caused by[0]` and `caused by[1]` repeat the same message (-017) | De-duplicate |
 | 11 | `parse_str` cost | Builds every document and returns the first (-018) | Document or add a lazy API |
 | 12 | Stale docs | Core README (`0.3`, `parse_all_str`), SKILL.md `fy parse -f json` example (-015, -016) | Fix docs; there is no `fy validate` command |
-| 13 | Performance claims | README speed claims have no reproducible benchmark in the repo | [NEEDS CLARIFICATION: which claims are contractual?] **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
+| 13 | Performance claims | README speed claims have no reproducible benchmark in the repo (X-15) | [NEEDS CLARIFICATION: which claims are contractual?] **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
 
-Resolved in this batch and removed: item 3 (`MaxDocuments` is a `ParseLimits` field enforced in core, #574).
+| 14 | Raw one-based positions | `SourcePosition` fields, `ParseError::relocated` and the linter's `LintDocument` still hold raw `usize` line and column; only `DocumentIndex` and the linter `Location` are typed (#638) | Introduce a one-based newtype in core and use it at every call site |
+
+Resolved and removed: item 3 (`MaxDocuments` is a `ParseLimits` field enforced in core, #574).
 
 ## 9. See also
 

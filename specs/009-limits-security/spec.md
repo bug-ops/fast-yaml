@@ -18,7 +18,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: `fast_yaml_core::limits`, `NormalizedInput` / `encoding`, file reading and writing safety in `fast-yaml-parallel` and the CLI, limit options on every surface.
-> **Baseline**: v0.6.6, commit e5e6cfb, plus the fixes #574 (document limit in core), #531 (no mmap), #366, #577, #571 (bounded config reads) and #569.
+> **Baseline**: v0.7.0 at HEAD dbe1f2b (`release/v0.7.0`). Reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637, including #574 (document limit in core), #531 (no mmap), #366 and #587 (`write_atomic`), #577, #571 (bounded config reads), #569 and #610 (`WorkerCount` 1..=128).
 
 ## 1. Purpose and value
 
@@ -238,12 +238,16 @@ THEN  content goes to a temp file in the same directory and is renamed over the 
 | 5 | No output bound in core emitter | Only bindings enforce `MaxOutputBytes` (GAP-CORE-EMIT-011); depth defaults 512 (emit) vs 256 (parse) differ (GAP-CORE-EMIT-004) | [NEEDS CLARIFICATION: bound in core?] |
 | 6 | Aggregate memory | No global byte budget across a parallel batch (threads x file size plus budgets) | [NEEDS CLARIFICATION: needed?] |
 | 8 | Scan-ahead docs | Help says a value "after a tab" is rejected; only nested (`a:\t[[..]]`) or `-\t[..]` shapes are (GAP-core-parse-003) | Reword help |
-| 9 | Support policy | `SECURITY.md` lists only 0.4.x as supported while the crate is 0.6.6 (GAP-core-parse-016 area) | [NEEDS CLARIFICATION: supported-version policy] **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
+| 9 | Support policy | `SECURITY.md` lists only 0.4.x as supported while the crate is 0.7.0 (GAP-core-parse-016 area) | [NEEDS CLARIFICATION: supported-version policy] **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
 | 10 | Windows | Unix-specific hardening is `cfg(unix)`; Windows is not exercised in CI | [NEEDS CLARIFICATION: supported platform?] |
 | 11 | Document limit on dump | Python `dump`, `dump_all`, `safe_dump*` and Node `safeDump*` take no `max_documents` (Python `dump_parallel` honors `ParallelConfig.max_documents`); no `max-documents` key in lint config files | [NEEDS CLARIFICATION: add to dump paths and config?] |
 | 12 | Scan-ahead aggregate | The 1 MiB floor of `Scaled` makes the first-attempt total `workers` x 1 MiB, above the default beyond 4 workers (up to 128 MiB of look-ahead, about 190 bytes each, at 128 workers) plus one full-limit retry; the lane is per run, so two concurrent runs can each hold a retry. Batch footprint also grows with file count (`WINDOW_PER_WORKER` results for lint) | [NEEDS CLARIFICATION: cap total in-flight bytes instead of per worker?] |
 | 13 | `write_atomic` limits | Extended attributes are copied (#587; a denied `com.apple.*` or `security.selinux` attribute is skipped, the old file is opened `O_NOFOLLOW`, `O_NONBLOCK` and `O_NOCTTY`) but ACLs of the replaced file are lost; a caller-owned hard-linked target is rewritten in place (`set_len(0)` then write), not atomically, and a crash can leave it partial; owner/group fall back to the caller's on `EPERM` with group/other bits dropped | accept; document |
-| 14 | Config reads | `extends` and `ignore-from-file` accept any absolute path and the pre-open check plus `O_NONBLOCK` keeps a swapped-in FIFO from blocking; `O_NONBLOCK` stays set on the regular-file descriptor (see [[003-lint/spec]] D-23) | accept |
+| 14 | Config reads | `extends` and `ignore-from-file` accept any absolute path and the pre-open check plus `O_NONBLOCK` keeps a swapped-in FIFO from blocking; `O_NONBLOCK` stays set on the regular-file descriptor of `fs::read_regular_file` (#599; see [[003-lint/spec]] D-23) | Clear the flag after the opened-file check, or document it |
+| 15 | ACLs in `write_atomic` (P3, #598) | POSIX and macOS ACLs of the replaced file are not carried to the replacement; Windows has no hardening path. | Preserve ACLs where the platform exposes them (see item 13). |
+| 16 | Hardening notes (P4, #608) | Undocumented `unsafe` in the Node `rule_input` conversion; `ignore-from-file` amplification (32 files x 1024 patterns) is bounded but not by a byte budget; a caller-owned hard-linked target is written in place. | Add `SAFETY` notes, a total pattern budget, and decide on the in-place policy. |
+| 17 | Debug log paths (P4, #624) | `RUST_LOG` events print discovered paths raw, so a newline in a file name forges a log line. | Render through `DisplayPath`. |
+| 18 | Parser workarounds (P3, #586, #543, #544, #559) | The scan-ahead guard compensates for a saphyr-parser root flow simple-key staleness (#586); tag-escape handling is a local workaround that lacks 3- and 4-byte percent escapes (#543); upstream reports for `BufferedInput` and `StrInput` are not yet filed (#544); `ordered-float` remains a transitive dependency (#559). | Drop or relax once upstream fixes land. |
 
 Resolved in this batch and removed: item 1 (`MaxDocuments` is a `ParseLimits` field enforced by core and every surface, #574) and item 7 (mmap removed, #531).
 

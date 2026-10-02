@@ -161,17 +161,17 @@ Run individual file benchmarks:
 ```bash
 # Small file
 hyperfine --warmup 3 --runs 20 \
-  -n "fast-yaml" "../../target/release/fy format corpus/generated/small_0.yaml > /dev/null" \
+  -n "fast-yaml" "../../target/release/fy format --strip-comments corpus/generated/small_0.yaml > /dev/null" \
   -n "yamlfmt" "yamlfmt -dry -in corpus/generated/small_0.yaml > /dev/null"
 
 # Medium file
 hyperfine --warmup 3 --runs 20 \
-  -n "fast-yaml" "../../target/release/fy format corpus/generated/medium_0.yaml > /dev/null" \
+  -n "fast-yaml" "../../target/release/fy format --strip-comments corpus/generated/medium_0.yaml > /dev/null" \
   -n "yamlfmt" "yamlfmt -dry -in corpus/generated/medium_0.yaml > /dev/null"
 
 # Large file
 hyperfine --warmup 3 --runs 20 \
-  -n "fast-yaml" "../../target/release/fy format corpus/generated/large_0.yaml > /dev/null" \
+  -n "fast-yaml" "../../target/release/fy format --strip-comments corpus/generated/large_0.yaml > /dev/null" \
   -n "yamlfmt" "yamlfmt -dry -in corpus/generated/large_0.yaml > /dev/null"
 ```
 
@@ -181,7 +181,7 @@ Export benchmark results to JSON or markdown:
 
 ```bash
 hyperfine --warmup 3 --runs 20 \
-  -n "fast-yaml" "../../target/release/fy format corpus/generated/large_0.yaml > /dev/null" \
+  -n "fast-yaml" "../../target/release/fy format --strip-comments corpus/generated/large_0.yaml > /dev/null" \
   -n "yamlfmt" "yamlfmt -dry -in corpus/generated/large_0.yaml > /dev/null" \
   --export-json results/large.json \
   --export-markdown results/large.md
@@ -260,8 +260,8 @@ Results may vary based on:
 
 | File Size | fast-yaml | yamlfmt | Result |
 |-----------|-----------|---------|--------|
-| Small (502 bytes) | **1.7 ms** | 3.1 ms | **fast-yaml 1.80x faster** ✓ |
-| Medium (45 KB) | **2.5 ms** | 2.9 ms | **fast-yaml 1.19x faster** ✓ |
+| Small (502 bytes) | **1.7 ms** | 3.1 ms | **fast-yaml 1.80x faster** |
+| Medium (45 KB) | **2.5 ms** | 2.9 ms | **fast-yaml 1.19x faster** |
 | Large (460 KB) | 8.4 ms | **2.9 ms** | yamlfmt 2.88x faster |
 
 > [!NOTE]
@@ -274,10 +274,10 @@ Results may vary based on:
 
 | Workload | fast-yaml (parallel -j 12) | yamlfmt (sequential) | Speedup |
 |----------|---------------------------|----------------------|---------|
-| 50 files (26 KB total) | **4.3 ms** | 10.3 ms | **2.40x faster** ✓ |
-| 200 files (204 KB total) | **8.0 ms** | 52.7 ms | **6.63x faster** ✓ |
-| 500 files (1 MB total) | **15.5 ms** | 244.7 ms | **15.77x faster** ⚡ |
-| 1000 files (1 MB total) | **23.4 ms** | 323.4 ms | **13.80x faster** ⚡ |
+| 50 files (26 KB total) | **4.3 ms** | 10.3 ms | **2.40x faster** |
+| 200 files (204 KB total) | **8.0 ms** | 52.7 ms | **6.63x faster** |
+| 500 files (1 MB total) | **15.5 ms** | 244.7 ms | **15.77x faster** |
+| 1000 files (1 MB total) | **23.4 ms** | 323.4 ms | **13.80x faster** |
 
 **Key takeaway:** Native batch mode with parallel workers provides 6-15x speedup on multi-file operations, making fast-yaml ideal for formatting entire codebases.
 

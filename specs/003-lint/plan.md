@@ -15,7 +15,7 @@ related:
 # Technical Plan: Lint
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.6.6 (commit e5e6cfb) plus the fixes #571-#575, #578, #579 and #569; it is not a proposal.
+> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.7.0 (release/v0.7.0, commit dbe1f2b), reverse-specified from v0.6.6 (commit e5e6cfb) and kept in sync through #637; it is not a proposal.
 
 ## 1. Architecture
 

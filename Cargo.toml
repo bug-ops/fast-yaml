@@ -19,7 +19,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.6.6"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.91.0"
 license = "MIT OR Apache-2.0"
@@ -27,9 +27,9 @@ repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 # Internal crates
-fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.6.6" }
-fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.6.6" }
-fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.6.6" }
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.7.0" }
+fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.7.0" }
+fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.7.0" }
 
 # External dependencies - production
 anyhow = { version = "1" }
@@ -42,8 +42,8 @@ ignore = { version = "0.4" }
 indexmap = { version = "2" }
 libc = { version = "0.2" }
 memchr = { version = "2.8" }
-napi = { version = "3.11" }
-napi-build = { version = "2.3" }
+napi = { version = "3.14" }
+napi-build = { version = "2.6" }
 napi-derive = { version = "3.6" }
 pyo3 = { version = "0.29" }
 rayon = { version = "1.12" }

@@ -16,7 +16,7 @@ related:
 # Technical Plan: Parse and validate YAML 1.2.2
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation that exists at v0.6.6 plus the document limit (#574); it is the reference for changes, not a to-do list.
+> **Spec**: [[spec]]. This plan describes the implementation that exists at v0.7.0 (HEAD dbe1f2b), reverse-specified from v0.6.6 and kept in sync through #637; it is the reference for changes, not a to-do list.
 
 ## 1. Architecture
 
@@ -82,15 +82,15 @@ pub enum Value { Null, Bool(bool), Int(i64), BigInt(BigInt), Float(Float),
 #[non_exhaustive]
 pub enum ParseError {
     Syntax(SyntaxError),
-    LimitExceeded { kind: LimitKind, line: usize, column: usize, document: usize },
-    Merge { error: MergeError, line: usize, column: usize, document: usize },
-    SetValue { line: usize, column: usize, document: usize },
-    Key { error: KeyError, line: usize, column: usize, document: usize },
+    LimitExceeded { kind: LimitKind, at: SourcePosition, document: DocumentIndex },
+    Merge { error: MergeError, at: SourcePosition, document: DocumentIndex },
+    SetValue { at: SourcePosition, document: DocumentIndex },
+    Key { error: KeyError, at: SourcePosition, document: DocumentIndex },
 }
 pub struct LoadOptions { pub keys: KeyDomain, pub duplicate_merge_keys: DuplicateMergeKeys, pub set_values: SetValues }
 ```
 
-Invariants: `NormalizedInput` holds only c-printable characters and no prefix BOM; anchors reset per document; aliases are deep clones (so alias-cost accounting bounds real memory); every `ParseError` variant carries line, column and document.
+Invariants: `NormalizedInput` holds only c-printable characters and no prefix BOM; anchors reset per document; aliases are deep clones (so alias-cost accounting bounds real memory); every `ParseError` variant carries a `SourcePosition` (1-based line and column, raw `usize` fields until #638) and a 0-based `DocumentIndex`.
 
 ## 4. API design
 

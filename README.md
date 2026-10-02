@@ -35,7 +35,7 @@ cargo install fast-yaml-cli
 > Requires Rust 1.91+, Python 3.10+ or Node.js 22+ (only for building from source — the prebuilt CLI binary has no runtime dependencies)
 
 > [!NOTE]
-> `scripts/install.sh` detects the host OS/arch/libc (including musl) and downloads the matching prebuilt `fy` binary with checksum verification from the [GitHub releases](https://github.com/bug-ops/fast-yaml/releases). Linux aarch64 musl (e.g. Alpine on ARM64) has no prebuilt binary yet — use `cargo install fast-yaml-cli` instead. Pin a version with `FASTYAML_VERSION=v0.6.6`, or change the install directory with `FASTYAML_INSTALL_DIR`.
+> `scripts/install.sh` detects the host OS/arch/libc (including musl) and downloads the matching prebuilt `fy` binary with checksum verification from the [GitHub releases](https://github.com/bug-ops/fast-yaml/releases). Linux aarch64 musl (e.g. Alpine on ARM64) has no prebuilt binary yet — use `cargo install fast-yaml-cli` instead. Pin a version with `FASTYAML_VERSION=v0.7.0`, or change the install directory with `FASTYAML_INSTALL_DIR`.
 
 <details>
 <summary><b>Build from source</b></summary>
@@ -59,6 +59,7 @@ fast-yaml is organized as a modular Rust workspace with clear separation of conc
 
 ```
 fast-yaml/
+├── crates/fast-yaml-cli/      # fy CLI (parse, format, lint, convert)
 ├── crates/fast-yaml-core/     # Parser + Emitter + Streaming Formatter
 ├── crates/fast-yaml-linter/   # Linter + Diagnostic Formatters
 ├── crates/fast-yaml-parallel/ # Multi-threaded processing
@@ -80,7 +81,7 @@ fast-yaml/
 > **Parser vs Streaming Formatter**: Parser builds a full DOM (use for data manipulation), Streaming Formatter processes events directly (use for formatting/conversion).
 
 > [!TIP]
-> **Linter vs Diagnostic Formatter**: Linter validates YAML and produces diagnostics, Diagnostic Formatter renders them for display (rustc-style text, JSON, SARIF).
+> **Linter vs Diagnostic Formatter**: Linter validates YAML and produces diagnostics, Diagnostic Formatter renders them for display (rustc-style text, JSON, GitHub annotations, parsable, SARIF).
 
 ### Parallelism Types
 
@@ -172,7 +173,7 @@ Every `fy` command rejects inputs over 100 MiB by default, like the library and 
 ### Linting
 
 ```python
-from fast_yaml._core.lint import lint
+from fast_yaml.lint import lint
 
 diagnostics = lint("key: value\nkey: duplicate")
 for diag in diagnostics:
@@ -217,12 +218,12 @@ a: 3
 ### Parallel Processing (Document-Level)
 
 ```python
-from fast_yaml._core.parallel import parse_parallel, ParallelConfig
+from fast_yaml._core import parallel
 
 # Parse ONE file with MULTIPLE documents in parallel
 multi_doc_yaml = "---\nfoo: 1\n---\nbar: 2\n---\nbaz: 3"
-config = ParallelConfig(thread_count=4, max_input_bytes=100*1024*1024)
-docs = parse_parallel(multi_doc_yaml, config)  # 3 documents parsed in parallel
+config = parallel.ParallelConfig(thread_count=4, max_input_bytes=100*1024*1024)
+docs = parallel.parse_parallel(multi_doc_yaml, config)  # 3 documents parsed in parallel
 ```
 
 > [!NOTE]
@@ -297,18 +298,18 @@ Full benchmarks: [benches/comparison](benches/comparison/)
 
 | File Size | fast-yaml | yamlfmt | Result |
 |-----------|-----------|---------|--------|
-| Small (502 bytes) | **1.7 ms** | 3.1 ms | **1.80x faster** ✓ |
-| Medium (45 KB) | **2.5 ms** | 2.9 ms | **1.19x faster** ✓ |
+| Small (502 bytes) | **1.7 ms** | 3.1 ms | **1.80x faster** |
+| Medium (45 KB) | **2.5 ms** | 2.9 ms | **1.19x faster** |
 | Large (460 KB) | 8.4 ms | **2.9 ms** | yamlfmt 2.88x faster |
 
 ### CLI Batch Mode vs yamlfmt
 
 | Workload | fast-yaml (parallel) | yamlfmt (sequential) | Speedup |
 |----------|---------------------|----------------------|---------|
-| 50 files (26 KB) | **4.3 ms** | 10.3 ms | **2.40x faster** ✓ |
-| 200 files (204 KB) | **8.0 ms** | 52.7 ms | **6.63x faster** ✓ |
-| 500 files (1 MB) | **15.5 ms** | 244.7 ms | **15.77x faster** ⚡ |
-| 1000 files (1 MB) | **23.4 ms** | 323.4 ms | **13.80x faster** ⚡ |
+| 50 files (26 KB) | **4.3 ms** | 10.3 ms | **2.40x faster** |
+| 200 files (204 KB) | **8.0 ms** | 52.7 ms | **6.63x faster** |
+| 500 files (1 MB) | **15.5 ms** | 244.7 ms | **15.77x faster** |
+| 1000 files (1 MB) | **23.4 ms** | 323.4 ms | **13.80x faster** |
 
 **Key takeaway:** Batch mode with parallel workers provides 6-15x speedup on multi-file operations, making it ideal for formatting entire codebases.
 
@@ -426,6 +427,7 @@ Input validation prevents denial-of-service attacks.
 ```
 fast-yaml/
 ├── crates/
+│   ├── fast-yaml-cli/      # fy command-line tool
 │   ├── fast-yaml-core/     # Core YAML parser/emitter
 │   ├── fast-yaml-linter/   # Linting engine
 │   └── fast-yaml-parallel/ # Multi-threaded processing
@@ -455,9 +457,9 @@ fast-yaml/
 Contributions welcome! All PRs must pass CI checks:
 
 ```bash
-cargo +nightly fmt --all
-cargo clippy --workspace --all-targets -- -D warnings
-cargo nextest run --workspace
+cargo +nightly fmt --check
+cargo clippy --all-targets --all-features --workspace -- -D warnings
+cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs --lib --bins
 ```
 
 ## FAQ
@@ -465,7 +467,7 @@ cargo nextest run --workspace
 <details>
 <summary><b>Why not just use PyYAML?</b></summary>
 
-PyYAML is excellent. Use fast-yaml when you need performance (5-10x faster), YAML 1.2.2 compliance, built-in linting, or parallel processing.
+PyYAML is excellent. Use fast-yaml when you need performance (2-4x faster than pure-Python PyYAML, on par with PyYAML C on small files), YAML 1.2.2 compliance, built-in linting, or parallel processing.
 
 </details>
 

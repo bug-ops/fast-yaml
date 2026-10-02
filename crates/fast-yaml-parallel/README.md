@@ -21,7 +21,7 @@ This crate provides two types of parallelism:
 
 ```toml
 [dependencies]
-fast-yaml-parallel = "0.5"
+fast-yaml-parallel = "0.7"
 ```
 
 Or with cargo-add:
@@ -70,7 +70,7 @@ Process multiple YAML files in parallel:
 
 ```rust
 use std::path::PathBuf;
-use fast_yaml_parallel::{FileProcessor, Config, BatchResult};
+use fast_yaml_parallel::{BatchResult, Config, FileProcessor, WorkerCount, Workers};
 
 let files = vec![
     PathBuf::from("config1.yaml"),
@@ -89,18 +89,21 @@ let result = processor.parse_files(&files);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-Format files in place:
+Format files in place (`CommentPolicy::Reject` fails files that contain comments, which the formatter cannot preserve; `CommentPolicy::Strip` drops them):
 
 ```rust
 use std::path::PathBuf;
-use fast_yaml_parallel::FileProcessor;
+use fast_yaml_parallel::{CommentPolicy, FileProcessor};
 use fast_yaml_core::emitter::EmitterConfig;
+use fast_yaml_core::limits::{Indent, Width};
 
 let files = vec![PathBuf::from("config.yaml")];
-let emitter_config = EmitterConfig::new().with_indent(2).with_width(80);
+let emitter_config = EmitterConfig::new()
+    .with_indent(Indent::new(2)?)
+    .with_width(Width::new(80)?);
 
 let processor = FileProcessor::new();
-let result = processor.format_in_place(&files, &emitter_config);
+let result = processor.format_in_place(&files, &emitter_config, CommentPolicy::Reject);
 
 println!("Changed {} files", result.changed);
 # Ok::<(), Box<dyn std::error::Error>>(())
@@ -124,7 +127,7 @@ assert!(result.is_success());
 | Option | Default | Description |
 |--------|---------|-------------|
 | `workers` | Auto (CPU cores) | Number of worker threads. `Workers::Auto`, `Workers::Sequential` or `Workers::Fixed(WorkerCount)` (1..=128) |
-| `max_input_bytes` | 100 MB | Maximum input size (DoS protection); files are checked before being read |
+| `max_input_bytes` | 100 MiB | Maximum input size (DoS protection); files are checked before being read |
 | `parse_limits.max_documents` | 100 000 | Maximum documents per input (DoS protection); set through `with_parse_limits`, checked before parsing |
 | `sequential_threshold` | 4 KB | Skip parallelism for inputs smaller than this |
 

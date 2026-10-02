@@ -8,7 +8,7 @@ applyTo:
 ## YAML 1.2.2 Compliance
 - `yes/no/on/off` are strings, NOT booleans (unlike YAML 1.1)
 - Octal numbers require `0o` prefix: `0o14` = 12 decimal
-- Use yaml-rust2 for parsing, wrap its types
+- Use saphyr-parser for parsing; keep its types behind the core events API
 
 ## Value Types
 ```rust

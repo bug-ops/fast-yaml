@@ -19,7 +19,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: crate `fast-yaml-parallel` (document-level and file-level parallelism) and the CLI batch layer (`fast-yaml-cli`: `discovery`, `invocation`, `format_batch`, `lint_batch`, `reporter`).
-> **Baseline**: v0.6.6 on `main` (e5e6cfb) plus the fixes #581/#532 (`-j`, shared pool), #531 (no mmap), #366 (`write_atomic`), #577 (scan-ahead lane), #574 (document limit) and #569 (`lint -o`). Behaviour below was observed with `target/debug/fy`.
+> **Baseline**: v0.7.0 at HEAD dbe1f2b (`release/v0.7.0`). Reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637, including #581/#532 (`-j`, shared pool), #531 (no mmap), #366 and #587 (`write_atomic`), #577 (scan-ahead lane), #574 (document limit), #569 (`lint -o`) and #610 (typed `Workers`/`WorkerCount`). Behaviour below was observed with `target/debug/fy` built from HEAD.
 
 ## 1. Purpose and value
 
@@ -35,7 +35,7 @@ Large repositories hold thousands of YAML files, and log or data dumps hold huge
 - Parallel `fy parse` / `fy convert` (they take one input).
 - Following symlinked directories during a walk, or any path sandboxing (callers own path trust).
 - Cross-process or distributed processing; watch mode; incremental caching.
-- Preserving extended attributes and ACLs of rewritten files.
+- Preserving ACLs of rewritten files (extended attributes are preserved on Unix, see FR-008 and item 15).
 
 ## 2. User stories
 
@@ -244,6 +244,11 @@ AS A tool author I WANT `FileProcessor::process(paths, f)` SO THAT I can run my 
 | 14 | Scan-ahead floor and batch footprint | `Scaled` never goes below 1 MiB per worker, so above 4 workers the first-attempt total grows with the worker count; the retry lane is per run. Footprint of a sequential batch still grows with the file count (lint keeps `WINDOW_PER_WORKER` results per worker). | [NEEDS CLARIFICATION: cap total in-flight bytes?] see [[009-limits-security/spec]] item 12 |
 | 15 | `write_atomic` limits | Xattrs are preserved on Unix (#587); POSIX and macOS ACLs are not, and a deny-delete ACL makes the write fail; an oversized attribute (a large `com.apple.ResourceFork`) is read whole; a caller-owned hard-linked target is written in place (non-atomic); `restore_owner` falls back to the caller's owner on `EPERM`. | accept; see [[009-limits-security/spec]] item 13 |
 | 16 | `shared_pool` public type | `shared_pool` returns `Arc<rayon::ThreadPool>`, so a rayon major upgrade is a breaking change of this function; `ScanAheadLane` and the 1 MiB floor are public. | narrow the public surface before 1.0 |
+| 17 | Discovery drops per-file errors (P2, #629) | Directory walk and glob expansion skip entries they cannot stat or read without a warning or a trace event, so a permission problem inside a tree is invisible. | Report them on stderr (and a debug event) without failing the run, or fail like explicit paths. |
+| 18 | Batch results in bindings (P2, #641) | Python and Node batch results carry an outcome plus `Option<String>` error, so contradictory states are representable, the error loses its kind and paths are lossy; the Rust `BatchResult` is typed. | Return a typed per-file result on every surface. |
+| 19 | Python `ParallelConfig` (P3, #627) | `max_chunk_size` is discarded, `auto_tune` is a bool beside `Workers`, and `safe_dump_to` clamps `chunk_size` silently. | Remove or apply the options; reject instead of clamping. |
+| 20 | Python worker counts (P3, #633) | A negative `workers` or `thread_count` raises `OverflowError`; above 128 raises `ValueError`. | Raise `ValueError` with the shared range message. |
+| 21 | `--pretty` and `--allow-duplicate-keys` (P3, #632) | The two flags take an optional value, so `fy convert yaml --pretty ok.yaml` fails with `invalid value 'ok.yaml' for '--pretty [<PRETTY>]'` (verified); the next positional is consumed as the value. | Make them value-less or require `=`. |
 
 Resolved in this batch and removed: item 1 (`format -j N` is honoured, #581), item 2 (dry-run duration, #581), the `max_documents` half of item 3 (#574) and item 8 (mmap removed, #531).
 

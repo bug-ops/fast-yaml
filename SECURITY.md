@@ -6,8 +6,8 @@ We release security updates for the following versions:
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 0.4.x   | :white_check_mark: |
-| < 0.4   | :x:                |
+| 0.7.x   | :white_check_mark: |
+| < 0.7   | :x:                |
 
 **Note:** We only support the latest minor version. Please upgrade to receive security updates.
 
@@ -53,7 +53,7 @@ A buffer overflow vulnerability exists in the YAML parser when
 processing malformed input with deeply nested structures.
 
 Affected Component:
-- fast-yaml-core v0.4.0
+- fast-yaml-core v0.7.0
 - All language bindings (Python, NodeJS)
 
 Impact:
@@ -69,7 +69,7 @@ Reproduction:
 Environment:
 - OS: Ubuntu 22.04
 - Rust: 1.91.0
-- fast-yaml: 0.4.0
+- fast-yaml: 0.7.0
 - Python: 3.11
 
 PoC: [Attached or link to private repository]
@@ -113,34 +113,41 @@ We classify vulnerabilities using the following severity levels:
 
 ### For Users
 
-**Input Validation:**
-```rust
-// Always validate input size before parsing
-const MAX_INPUT_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-
-if input.len() > MAX_INPUT_SIZE {
-    return Err("Input too large");
-}
-
-fast_yaml_core::parse(input)?;
+**Resource Limits (CLI):**
+```bash
+# Every limit has a safe default; tighten them for untrusted input
+fy parse --max-input-bytes 10MiB --max-depth 64 --max-alias-bytes 1MiB --max-documents 1000 untrusted.yaml
 ```
 
-**Resource Limits:**
+| Limit | Flag | Default | Range |
+|-------|------|---------|-------|
+| Input size | `--max-input-bytes` | 100 MiB | 1 B to 1 GiB |
+| Nesting depth | `--max-depth` | 256 | 1 to 512 |
+| Alias expansion | `--max-alias-bytes` | 64 MiB | 1 B to 1 GiB |
+| Documents per stream | `--max-documents` | 100000 | 1 to 10000000 |
+| Parser scan-ahead | `--max-scan-ahead` | 4 MiB | 1 B to 1 GiB |
+
+A limit that is hit fails with a `YAML resource limit exceeded` error (exit 1) and a hint naming the flag to raise. For `fy lint`, `max-input-bytes`, `max-scan-ahead` and `max-diagnostics` can also be set in the config file.
+
+**Resource Limits (Python):**
 ```python
 import fast_yaml
 
-# Set reasonable limits for production
-yaml_content = open('data.yaml').read()
-if len(yaml_content) > 10 * 1024 * 1024:  # 10 MB
-    raise ValueError("YAML file too large")
-
-data = fast_yaml.safe_load(yaml_content)
+data = fast_yaml.safe_load(
+    yaml_content,
+    max_depth=64,
+    max_alias_bytes=1024 * 1024,
+    max_documents=1000,
+)
 ```
+
+**Resource Limits (Node.js):** `processFiles` and `formatFiles` accept `maxDepth`, `maxAliasBytes`, `maxScanAhead` and `maxDocuments`; `LintConfig` and `BatchConfig` accept `maxInputBytes`.
 
 **Untrusted Input:**
 - Always use `safe_load()` for untrusted YAML (not `load()`)
 - Validate YAML structure against expected schema
-- Set resource limits (file size, parsing time)
+- Keep the built-in limits on and tighten them (input size, depth, alias bytes, documents)
+- Bound wall-clock time in the caller; the limits cap memory and stack, not CPU time
 - Run in sandboxed environments for untrusted sources
 
 ### For Contributors
@@ -169,16 +176,10 @@ cargo deny check licenses
 cd nodejs
 
 # Check for vulnerabilities
-npm audit
+pnpm audit
 
 # Fail on high/critical only
-npm audit --audit-level=high
-
-# Auto-fix when possible
-npm audit fix
-
-# Generate detailed report
-npm audit --json > audit-report.json
+pnpm audit --audit-level=high
 ```
 
 **Python dependencies:**
@@ -201,7 +202,7 @@ Security-critical code areas requiring extra scrutiny:
 
 2. **Parser Logic:**
    - Input validation in `fast-yaml-core`
-   - Recursive parsing depth limits
+   - Resource limits (`fast_yaml_core::limits`) and recursion depth
    - Memory allocation patterns
 
 3. **Parallel Processing:**
@@ -228,7 +229,10 @@ Security-critical code areas requiring extra scrutiny:
 **Input Validation:**
 - YAML 1.2.2 spec compliance
 - Safe schema support only (no arbitrary code execution)
-- Configurable resource limits
+- Configurable, always-on resource limits: input size, nesting depth, alias expansion, document count, parser scan-ahead
+- Input that is not valid UTF-8, contains NUL, or is UTF-16/UTF-32 is rejected with an error
+- File writes (`-i`, `-o`) are atomic, and `-o` refuses to overwrite an input file
+- File names are escaped in terminal output so a hostile name cannot forge lines or move the cursor
 
 **Dependency Security:**
 - Automated dependency scanning with cargo-audit
@@ -236,21 +240,24 @@ Security-critical code areas requiring extra scrutiny:
 - Regular security updates
 
 **Testing:**
-- Fuzzing for parser robustness (planned)
+- Fuzz targets for parse, format, lint and a differential validator (`fuzz/`), run in CI
 - Security test cases in test suite
 - Coverage: ≥80% for critical paths
 
 ### Known Limitations
 
 **Large File Handling:**
-- Very large YAML files (>1GB) may cause high memory usage
-- Recommendation: Use streaming/chunking for large files
-- Parallel processing available for multi-document streams
+- Inputs above `--max-input-bytes` (default 100 MiB) are rejected; raising the limit raises memory use accordingly
+- Parser memory is roughly 190x the `--max-scan-ahead` value per input; batch runs with many workers multiply that by the worker count
+- Parallel processing is available for multi-document streams and file batches
 
-**Nested Structures:**
-- Deep nesting (>100 levels) may impact performance
-- Stack overflow protection in place
-- Configurable recursion limits (future feature)
+**Nested Structures and Aliases:**
+- Nesting depth is capped (default 256, maximum 512; flow collections stop at 255)
+- Alias expansion is budgeted per input (default 64 MiB); peak memory in parallel runs can reach workers x this budget
+- A depth of 512 needs about 1 MiB of stack on the calling thread; do not run it on very small thread stacks
+
+**CPU time:**
+- There is no CPU-time limit; callers that parse hostile input should enforce a timeout
 
 ## Security Maintenance
 
@@ -266,15 +273,7 @@ We monitor and update dependencies regularly:
 
 Automated scanning in CI/CD pipeline:
 
-```yaml
-# .github/workflows/ci.yml
-security:
-  runs-on: ubuntu-latest
-  steps:
-    - uses: actions/checkout@v4
-    - uses: taiki-e/install-action@cargo-deny
-    - run: cargo deny check
-```
+`cargo deny check` runs in the `security` job of `.github/workflows/ci.yml` (actions are pinned to commit SHAs), and the fuzz targets run from `.github/workflows/fuzz.yml`.
 
 ### Security Audits
 
