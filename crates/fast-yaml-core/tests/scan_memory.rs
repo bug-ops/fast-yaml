@@ -173,15 +173,14 @@ fn overrun_in_a_later_document_is_positioned() {
     let input = format!("a: 1\n---\nb: 2\n---\n[{}1]\n", items(10_000));
     let Err(ParseError::LimitExceeded {
         kind: LimitKind::ScanAhead(_),
-        line,
+        at,
         document,
-        ..
     }) = Parser::parse_all_with_limits(&input, &limits(1024))
     else {
         panic!("scan-ahead error expected");
     };
-    assert_eq!(document, 2);
-    assert!(line >= 4, "line {line}");
+    assert_eq!(document.get(), 2);
+    assert!(at.line >= 4, "line {}", at.line);
 }
 
 /// Peak heap growth of normalizing `input`, with the result.
@@ -214,11 +213,11 @@ fn invalid_character_reports_the_document_after_a_huge_flow_collection() {
     let Err(error) = result else {
         panic!("syntax error expected");
     };
-    assert_eq!(error.document_index(), 3, "{error}");
+    assert_eq!(error.document_index().get(), 3, "{error}");
 }
 
 #[test]
 fn invalid_character_in_a_small_input_keeps_its_exact_document() {
     let error = NormalizedInput::new("a: 1\n---\nb: 2\n---\nc\x01").unwrap_err();
-    assert_eq!(error.document_index(), 2);
+    assert_eq!(error.document_index().get(), 2);
 }

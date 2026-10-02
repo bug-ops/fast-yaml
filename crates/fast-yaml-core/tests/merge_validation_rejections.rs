@@ -1,6 +1,6 @@
 //! Invalid merge values, repeated `<<` keys and set member values are rejected at their key.
 
-use fast_yaml_core::{MergeError, ParseError, Parser};
+use fast_yaml_core::{MergeError, ParseError, Parser, SourcePosition};
 
 fn merge_error(yaml: &str) -> Option<MergeError> {
     match Parser::parse_str(yaml) {
@@ -86,8 +86,7 @@ fn error_position_is_the_merge_key() {
     assert!(matches!(
         err,
         ParseError::Merge {
-            line: 4,
-            column: 3,
+            at: SourcePosition { line: 4, column: 3 },
             ..
         }
     ));

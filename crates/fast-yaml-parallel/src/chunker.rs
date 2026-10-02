@@ -3,7 +3,7 @@
 #![allow(clippy::redundant_pub_crate)]
 
 use fast_yaml_core::limits::MaxDocuments;
-use fast_yaml_core::{LimitKind, NormalizedInput, ParseError};
+use fast_yaml_core::{DocumentIndex, LimitKind, NormalizedInput, ParseError, SourcePosition};
 
 use crate::error::{Error, Result};
 
@@ -136,9 +136,8 @@ pub(crate) fn chunk_documents<'a>(
             index: count,
             source: ParseError::LimitExceeded {
                 kind: LimitKind::Documents(limit),
-                line: line + 1,
-                column: 1,
-                document: count,
+                at: SourcePosition::new(line + 1, 1),
+                document: DocumentIndex::new(count),
             },
         }),
         _ => Ok(()),
@@ -485,10 +484,10 @@ mod tests {
                     index: 3,
                     source: ParseError::LimitExceeded {
                         kind: LimitKind::Documents(_),
-                        document: 3,
+                        document,
                         ..
                     }
-                }
+                } if document.get() == 3
             ),
             "{err:?}"
         );
@@ -509,8 +508,8 @@ mod tests {
             match err {
                 Error::Parse {
                     index,
-                    source: ParseError::LimitExceeded { line, document, .. },
-                } => (index, document, line),
+                    source: ParseError::LimitExceeded { at, document, .. },
+                } => (index, document.get(), at.line),
                 other => panic!("unexpected {other:?}"),
             }
         };

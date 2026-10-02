@@ -4,6 +4,7 @@
 //! pathological input (deep nesting, alias amplification) is rejected while memory
 //! and stack usage are still bounded.
 
+use crate::DocumentIndex;
 use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
@@ -1089,8 +1090,8 @@ impl LimitGuard {
     ///
     /// Between two documents this is the index of the document that follows.
     #[must_use]
-    pub const fn document(&self) -> usize {
-        self.cursor.index()
+    pub const fn document(&self) -> DocumentIndex {
+        DocumentIndex::new(self.cursor.index())
     }
 
     /// Declares that the loader shares anchored nodes instead of copying them, which lifts the
@@ -1237,11 +1238,9 @@ impl LimitGuard {
     }
 
     fn exceeded(&self, kind: LimitKind, span: Span) -> ParseError {
-        let SourcePosition { line, column } = SourcePosition::from_span(span);
         ParseError::LimitExceeded {
             kind,
-            line,
-            column,
+            at: SourcePosition::from_span(span),
             document: self.document(),
         }
     }
@@ -1448,9 +1447,9 @@ mod tests {
             guard.observe(&Event::DocumentStart(true), span()),
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::Documents(_),
-                document: 2,
+                document,
                 ..
-            })
+            }) if document == DocumentIndex::new(2)
         ));
     }
 

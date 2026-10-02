@@ -1,3 +1,4 @@
+use crate::DocumentIndex;
 use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
 use crate::events::{self, EventItem, ScalarStyle};
 use crate::input::NormalizedInput;
@@ -480,7 +481,7 @@ impl Builder {
                 let value = self.anchors.get(&id).cloned().ok_or_else(|| {
                     ParseError::Syntax(SyntaxError::recursive_alias(
                         SourcePosition::from_span(span),
-                        self.documents.len(),
+                        DocumentIndex::new(self.documents.len()),
                     ))
                 })?;
                 self.deliver(value, 0, role, span)?;
@@ -549,19 +550,17 @@ impl Builder {
     // A rejected merge value is unreachable for parser-loaded input, which `MergeKeyValidator`
     // has already checked; a key collision among merged keys is reported at the `<<` key.
     fn merge_failure(&self, failure: MergeFailure, at: Span) -> ParseError {
-        let SourcePosition { line, column } = SourcePosition::from_span(at);
-        let document = self.documents.len();
+        let at = SourcePosition::from_span(at);
+        let document = DocumentIndex::new(self.documents.len());
         match failure {
             MergeFailure::Merge(error) => ParseError::Merge {
                 error,
-                line,
-                column,
+                at,
                 document,
             },
             MergeFailure::Key(error) => ParseError::Key {
                 error: error.through_merge(),
-                line,
-                column,
+                at,
                 document,
             },
         }
@@ -590,14 +589,10 @@ impl Builder {
                     frame
                         .keys
                         .check(&key, frame.entries.keys())
-                        .map_err(|error| {
-                            let SourcePosition { line, column } = SourcePosition::from_span(at);
-                            ParseError::Key {
-                                error,
-                                line,
-                                column,
-                                document: self.documents.len(),
-                            }
+                        .map_err(|error| ParseError::Key {
+                            error,
+                            at: SourcePosition::from_span(at),
+                            document: DocumentIndex::new(self.documents.len()),
                         })?;
                     frame.entries.insert(key, value);
                 }
@@ -1247,12 +1242,7 @@ m:
 
     fn merge_at(result: ParseResult<impl std::fmt::Debug>) -> (MergeError, usize, usize) {
         match result {
-            Err(ParseError::Merge {
-                error,
-                line,
-                column,
-                ..
-            }) => (error, line, column),
+            Err(ParseError::Merge { error, at, .. }) => (error, at.line, at.column),
             other => panic!("merge error expected, got {other:?}"),
         }
     }
@@ -1483,11 +1473,17 @@ m:
     fn test_hidden_merge_error_in_later_document_and_first_error_wins() {
         let yaml = "a: 1\n---\nx: {<<: 1}\nx: 2\n";
         assert_rejected_everywhere(yaml, (MergeError::NotMapping, 3, 5));
-        assert_eq!(Parser::parse_all(yaml).unwrap_err().document_index(), 1);
+        assert_eq!(
+            Parser::parse_all(yaml).unwrap_err().document_index().get(),
+            1
+        );
 
         let yaml = "a: {<<: 1}\n---\nb: {<<: !!set {x}}\n---\nc: {<<: 2}\n";
         assert_rejected_everywhere(yaml, (MergeError::NotMapping, 1, 5));
-        assert_eq!(Parser::parse_all(yaml).unwrap_err().document_index(), 0);
+        assert_eq!(
+            Parser::parse_all(yaml).unwrap_err().document_index().get(),
+            0
+        );
     }
 
     #[test]
@@ -1504,7 +1500,7 @@ m:
             )
             .unwrap_err(),
         ] {
-            assert_eq!(err.document_index(), 2);
+            assert_eq!(err.document_index().get(), 2);
             assert!(err.to_string().ends_with("(document 3)"), "{err}");
         }
     }
@@ -1517,10 +1513,10 @@ b: 2\n---\nc: [\n",
         )
         .unwrap_err();
         assert!(
-            matches!(&scanner, ParseError::Syntax(e) if e.document() == 2),
+            matches!(&scanner, ParseError::Syntax(e) if e.document().get() == 2),
             "{scanner:?}"
         );
-        assert_eq!(scanner.document_index(), 2);
+        assert_eq!(scanner.document_index().get(), 2);
 
         let limits = ParseLimits {
             max_depth: crate::MaxDepth::new(2).unwrap(),
@@ -1530,7 +1526,7 @@ b: 2\n---\nc: [\n",
             Parser::parse_all_with_limits("a: 1\n---\nb: 2\n---\nc: {d: {e: {f: 1}}}\n", &limits)
                 .unwrap_err();
         assert!(
-            matches!(err, ParseError::LimitExceeded { document: 2, .. }),
+            matches!(err, ParseError::LimitExceeded { document, .. } if document.get() == 2),
             "{err:?}"
         );
     }
@@ -1548,7 +1544,7 @@ b: 2\n---\nc: [\n",
     #[test]
     fn test_nul_after_document_end_belongs_to_the_following_document() {
         let err = Parser::parse_all("a: 1\n...\n\0\n").unwrap_err();
-        assert_eq!(err.document_index(), 1);
+        assert_eq!(err.document_index().get(), 1);
     }
 
     #[test]
@@ -1574,14 +1570,14 @@ b: 2\n---\nc: [\n",
     #[test]
     fn test_first_document_error_reports_index_zero() {
         let err = Parser::parse_all("a: [\n---\nb: 1\n").unwrap_err();
-        assert_eq!(err.document_index(), 0);
+        assert_eq!(err.document_index().get(), 0);
     }
 
     #[test]
     fn test_stale_alias_error_reports_its_document() {
         let err = Parser::parse_all("a: &x 1\n---\nb: *x\n").unwrap_err();
         assert!(
-            matches!(&err, ParseError::Syntax(e) if e.document() == 1),
+            matches!(&err, ParseError::Syntax(e) if e.document().get() == 1),
             "{err:?}"
         );
     }
@@ -1593,12 +1589,8 @@ b: 2\n---\nc: [\n",
             .relocated(4, 3);
         assert!(matches!(
             err,
-            ParseError::Merge {
-                line: 5,
-                column: 5,
-                document: 3,
-                ..
-            }
+            ParseError::Merge { at: SourcePosition { line: 5, column: 5 }, document, .. }
+                if document == DocumentIndex::new(3)
         ));
     }
 
@@ -2400,9 +2392,9 @@ m:
             match Parser::parse_str(&input) {
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::Depth(_),
-                    line,
+                    at,
                     ..
-                }) => assert_eq!(line, 1),
+                }) => assert_eq!(at.line, 1),
                 other => panic!("expected depth limit, got {other:?}"),
             }
         }
@@ -3097,7 +3089,7 @@ m:
         #[test]
         fn set_value_error_reports_its_document() {
             let err = Parser::parse_all("a: 1\n---\n!!set {x: 1}\n").unwrap_err();
-            assert_eq!(err.document_index(), 1);
+            assert_eq!(err.document_index().get(), 1);
             assert!(err.to_string().ends_with("(document 2)"), "{err}");
             assert!(err.relocated(4, 1).position().line > 4);
         }
@@ -3172,14 +3164,11 @@ m:
                 Parser::parse_all(&flow(256)),
                 Parser::parse_str(&flow(256)).map(|_| vec![]),
             ] {
-                let Err(ParseError::LimitExceeded {
-                    kind, line, column, ..
-                }) = result
-                else {
+                let Err(ParseError::LimitExceeded { kind, at, .. }) = result else {
                     panic!("limit error expected");
                 };
                 assert_eq!(kind, LimitKind::FlowNesting);
-                assert_eq!((line, column), (1, 256));
+                assert_eq!((at.line, at.column), (1, 256));
             }
             let message = Parser::parse_all(&flow(256)).unwrap_err().to_string();
             assert!(message.contains("255"), "{message}");

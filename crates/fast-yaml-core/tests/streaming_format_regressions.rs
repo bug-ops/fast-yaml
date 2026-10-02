@@ -406,11 +406,11 @@ fn max_depth_bounds_the_formatter_and_defaults_to_256() {
     let config = EmitterConfig::new();
     assert!(format_streaming(&nested(256), &config).is_ok());
     let err = format_streaming(&nested(257), &config).unwrap_err();
-    let EmitError::Parse(ParseError::LimitExceeded { kind, line, .. }) = err else {
+    let EmitError::Parse(ParseError::LimitExceeded { kind, at, .. }) = err else {
         panic!("depth error expected, got {err:?}");
     };
     assert_eq!(kind, LimitKind::Depth(MaxDepth::DEFAULT));
-    assert_eq!(line, 1);
+    assert_eq!(at.line, 1);
 
     let shallow = EmitterConfig::new().with_parse_limits(ParseLimits {
         max_depth: MaxDepth::new(2).unwrap(),

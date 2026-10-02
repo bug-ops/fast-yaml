@@ -10,7 +10,7 @@ use fast_yaml_core::events::{AnchorId, Event, EventItem, EventStream};
 use fast_yaml_core::merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 use fast_yaml_core::scalar::core_tag_suffix;
 use fast_yaml_core::{
-    KeyError, NormalizedInput, ParseError, ParseLimits, SourcePosition, SyntaxError,
+    DocumentIndex, KeyError, NormalizedInput, ParseError, ParseLimits, SourcePosition, SyntaxError,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -296,7 +296,7 @@ impl OpenNode {
     }
 
     /// Build the Python object once the container's end event arrives.
-    fn finish(self, py: Python<'_>, document: usize) -> PyResult<Py<PyAny>> {
+    fn finish(self, py: Python<'_>, document: DocumentIndex) -> PyResult<Py<PyAny>> {
         match self.children {
             Children::Sequence(items) => Ok(PyList::new(py, &items)?.into_any().unbind()),
             Children::Set { keys, .. } => build_py_set(py, &keys, document),
@@ -426,7 +426,7 @@ fn build_mapping(
     py: Python<'_>,
     merge: Option<MergeValue>,
     explicit: &[Pair],
-    document: usize,
+    document: DocumentIndex,
 ) -> PyResult<Py<PyAny>> {
     let merge_at = merge.as_ref().map(|m| m.at);
     if merge.is_some() {
@@ -446,15 +446,11 @@ fn build_mapping(
             .map(|p| (p.key.bind(py).clone(), p.value.bind(py).clone())),
     )
     .map_err(|failure| match failure {
-        PyMergeFailure::Rejected(error) => {
-            let SourcePosition { line, column } = known(merge_at);
-            limit_err(&ParseError::Merge {
-                error,
-                line,
-                column,
-                document,
-            })
-        }
+        PyMergeFailure::Rejected(error) => limit_err(&ParseError::Merge {
+            error,
+            at: known(merge_at),
+            document,
+        }),
         PyMergeFailure::Clash(clash, origin) => match origin {
             KeyOrigin::Merged => key_err(clash.through_merge(), known(merge_at), document),
             KeyOrigin::Explicit(index) => {
@@ -478,7 +474,7 @@ fn reject_complex_key(key: &Bound<'_, PyAny>) -> PyResult<()> {
 fn build_py_set(
     py: Python<'_>,
     keys: &[(Py<PyAny>, SourcePosition)],
-    document: usize,
+    document: DocumentIndex,
 ) -> PyResult<Py<PyAny>> {
     let members: Vec<_> = keys.iter().map(|(key, _)| key.bind(py).clone()).collect();
     match build_set(py, &members)? {
@@ -487,15 +483,10 @@ fn build_py_set(
     }
 }
 
-fn key_err(
-    error: KeyError,
-    SourcePosition { line, column }: SourcePosition,
-    document: usize,
-) -> PyErr {
+fn key_err(error: KeyError, at: SourcePosition, document: DocumentIndex) -> PyErr {
     limit_err(&ParseError::Key {
         error,
-        line,
-        column,
+        at,
         document,
     })
 }

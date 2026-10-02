@@ -355,9 +355,8 @@ mod tests {
             path: "c.yaml".into(),
             source: ParseError::LimitExceeded {
                 kind: LimitKind::Depth(MaxDepth::DEFAULT),
-                line: 1,
-                column: 1,
-                document: 0,
+                at: fast_yaml_core::SourcePosition::new(1, 1),
+                document: fast_yaml_core::DocumentIndex::FIRST,
             },
         };
         assert_eq!(RaiseHint::of(&error), None);
@@ -371,9 +370,8 @@ mod tests {
         use fast_yaml_core::{LimitKind, ParseError};
         let limit = |kind| ParseError::LimitExceeded {
             kind,
-            line: 1,
-            column: 1,
-            document: 0,
+            at: fast_yaml_core::SourcePosition::new(1, 1),
+            document: fast_yaml_core::DocumentIndex::FIRST,
         };
         assert_eq!(
             RaiseHint::of(&limit(LimitKind::Depth(MaxDepth::DEFAULT))),
@@ -446,9 +444,8 @@ mod tests {
         );
         let depth = ParseError::LimitExceeded {
             kind: LimitKind::Depth(MaxDepth::DEFAULT),
-            line: 1,
-            column: 1,
-            document: 0,
+            at: fast_yaml_core::SourcePosition::new(1, 1),
+            document: fast_yaml_core::DocumentIndex::FIRST,
         };
         assert_eq!(
             RaiseHint::of(&LintError::ParseError(depth)),

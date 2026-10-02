@@ -30,7 +30,7 @@ const fn documents_limit(err: &Error) -> Option<(usize, usize)> {
                     ..
                 },
             ..
-        } => Some((*document, limit.get())),
+        } => Some((document.get(), limit.get())),
         _ => None,
     }
 }

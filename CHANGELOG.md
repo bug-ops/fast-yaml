@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Core**: `ParseError::{LimitExceeded, Merge, SetValue, Key}` carry `at: SourcePosition` and `document: DocumentIndex` instead of `line`, `column` and a `usize` document; `ParseError::document_index`, `SyntaxError::document`, `SyntaxError::recursive_alias`, `EventStream::document` and `LimitGuard::document` use the new `DocumentIndex` (0-based) type (#621)
 - **Linter**: `SourceRule::check` and `DocumentRule::check` return `Vec<Finding>` instead of `Vec<Diagnostic>`; `Linter` gives each finding the code of the rule that returned it and the severity configured for that rule, so a rule no longer builds a `Diagnostic` or reads its own severity. Custom rules replace `DiagnosticBuilder::new(code, severity, message, span).build()` with `Finding::new(message, span)`, and `diagnose` returns diagnostics for tests (#625)
 - **Linter**: `rules::flow_common` helpers and the built-in rule helpers no longer take a diagnostic code or severity (#625)
 - **CLI**: `ExitCode::ParseError` is renamed `Failure` and the never-produced `IoError` (3) and `InvalidArgs` (4) are removed; exit codes 0, 1, 2 and 5 are unchanged (#628)
@@ -168,6 +169,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Core**: `DocumentIndex`, a 0-based document index distinct from the 1-based `SourcePosition`, and `SourcePosition::new` with a `Display` of `line L, column C` (#621)
 - **Linter**: `Finding`, the result of a rule before the linter adds its code and severity, and `SourceRule::diagnose` / `DocumentRule::diagnose` (#625)
 - **CLI**: `fy lint|format|convert -o /dev/null` discards the output (`NUL` on Windows) instead of failing with `not a regular file` (#634)
 - **Linter**: `quoted-strings` supports `quote-type: consistent`, holding the file to the style of its first quoted string like yamllint >= 1.35 (#602)

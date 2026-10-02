@@ -25,7 +25,7 @@ pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value
     config.max_input_bytes().check(input.len())?;
 
     let normalized = NormalizedInput::new(input).map_err(|source| Error::Parse {
-        index: source.document_index(),
+        index: source.document_index().get(),
         source,
     })?;
     let chunks = chunk_documents(&normalized, Some(config.parse_limits().max_documents))?;
@@ -109,7 +109,7 @@ fn collect_chunk(parsed: ParseResult<Vec<Value>>, preceding: usize) -> Result<Ve
     parsed.map_err(|source: ParseError| {
         let source = source.relocated(0, preceding);
         Error::Parse {
-            index: source.document_index(),
+            index: source.document_index().get(),
             source,
         }
     })
@@ -521,7 +521,7 @@ mod tests {
                         ..
                     },
                 ..
-            }) => Some((*document, limit.get())),
+            }) => Some((document.get(), limit.get())),
             _ => None,
         }
     }
