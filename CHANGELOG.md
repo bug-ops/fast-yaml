@@ -266,6 +266,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core**: formatter keeps a `%TAG` prefix that starts with `#` instead of cutting it as a comment, so the output parses again (#636)
+- **CLI**: `run_ordered` cancellation test no longer depends on panic-hook timing on Windows (#636)
 - **CI**: fuzz job creates the corpus directory for targets not covered by the seed script (`validate_differential`) (#635)
 - **Core**: `fy format` keeps anchor names after a non-ASCII directive (#580) (#595)
 - **CLI/Parallel**: `-j N` limits concurrency to N, batch runs share one pool and `format --dry-run` reports its duration (#581) (#532) (#595)
