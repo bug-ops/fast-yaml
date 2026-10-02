@@ -26,7 +26,7 @@ use crate::{
 /// let err = Linter::with_all_rules().lint(source).unwrap_err();
 /// let diagnostic = syntax_diagnostic(&err, source);
 /// assert_eq!(diagnostic.code.as_str(), "syntax");
-/// assert!(diagnostic.span.start.line >= 1);
+/// assert!(diagnostic.span.start.line() >= 1);
 /// ```
 #[must_use]
 pub fn syntax_diagnostic(err: &LintError, source: &str) -> Diagnostic {
@@ -51,7 +51,7 @@ pub fn syntax_diagnostic(err: &LintError, source: &str) -> Diagnostic {
 /// use fast_yaml_linter::formatter::input_error_diagnostic;
 ///
 /// let diagnostic = input_error_diagnostic("input is not valid UTF-8");
-/// assert_eq!((diagnostic.span.start.line, diagnostic.span.start.column), (1, 1));
+/// assert_eq!((diagnostic.span.start.line(), diagnostic.span.start.column()), (1, 1));
 /// ```
 #[must_use]
 pub fn input_error_diagnostic(message: impl Into<Cow<'static, str>>) -> Diagnostic {
@@ -97,8 +97,8 @@ mod tests {
     fn error_at_eof_is_clamped() {
         for source in ["a: [", "a: [\n", "a: \"x", "- ["] {
             let d = diagnostic_of(source);
-            assert!(d.span.start.offset <= source.len(), "{source:?}");
-            assert!(d.span.start.line >= 1 && d.span.start.column >= 1);
+            assert!(d.span.start.offset() <= source.len(), "{source:?}");
+            assert!(d.span.start.line() >= 1 && d.span.start.column() >= 1);
         }
     }
 
@@ -111,6 +111,6 @@ mod tests {
     #[test]
     fn invalid_character_is_located() {
         let d = diagnostic_of("a: 1\nb: \u{7F}\n");
-        assert_eq!((d.span.start.line, d.span.start.column), (2, 4));
+        assert_eq!((d.span.start.line(), d.span.start.column()), (2, 4));
     }
 }

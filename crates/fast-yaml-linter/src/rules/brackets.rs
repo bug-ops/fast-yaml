@@ -231,7 +231,7 @@ mod tests {
         let config = config_with_rule(RuleName::Brackets, "{forbid: non-empty}");
         let diagnostics = BracketsRule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert_eq!(diagnostics[0].span.start.column, 4);
+        assert_eq!(diagnostics[0].span.start.column(), 4);
     }
 
     #[test]
@@ -250,7 +250,7 @@ mod tests {
         let diagnostics = BracketsRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let start = diagnostics[0].span.start;
-        assert_eq!((start.column, start.offset), (4, 5));
+        assert_eq!((start.column(), start.offset()), (4, 5));
     }
 
     #[test]
@@ -259,6 +259,6 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = BracketsRule.diagnose(&context, &LintConfig::default());
         assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
-        assert!(diagnostics.iter().all(|d| d.span.start.line == 4));
+        assert!(diagnostics.iter().all(|d| d.span.start.line() == 4));
     }
 }

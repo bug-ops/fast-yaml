@@ -22,7 +22,7 @@ fn assert_single_span(yaml: &str, code: &str, line: usize, column: usize, snippe
     assert_eq!(diags.len(), 1, "{code} diagnostics for {yaml:?}: {diags:?}");
     let span = diags[0].span;
     assert_eq!(
-        (span.start.line, span.start.column),
+        (span.start.line(), span.start.column()),
         (line, column),
         "{yaml:?}"
     );
@@ -85,8 +85,8 @@ fn empty_value_lone_cr_line_endings() {
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1, "{diags:?}");
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 6));
-    assert_eq!(span.start.offset, "name: x\rпорт:".len());
+    assert_eq!((span.start.line(), span.start.column()), (2, 6));
+    assert_eq!(span.start.offset(), "name: x\rпорт:".len());
     assert_eq!(SourceContext::new(yaml).get_snippet(span), "");
 }
 
@@ -128,16 +128,16 @@ fn mapper_flow_key_with_non_ascii_neighbours_does_not_panic() {
     let span = mapper.find_key_span("é", 1);
     assert!(span.is_none());
     let first = mapper.find_key_span("aé", 1).unwrap();
-    assert_eq!((first.start.column, first.end.column), (1, 3));
-    assert_eq!((first.start.offset, first.end.offset), (0, 3));
+    assert_eq!((first.start.column(), first.end.column()), (1, 3));
+    assert_eq!((first.start.offset(), first.end.offset()), (0, 3));
 }
 
 #[test]
 fn mapper_key_span_uses_char_columns() {
     let mut mapper = SourceMapper::new("名前: 1\n");
     let span = mapper.find_key_span("名前", 1).unwrap();
-    assert_eq!((span.start.column, span.end.column), (1, 3));
-    assert_eq!((span.start.offset, span.end.offset), (0, 6));
+    assert_eq!((span.start.column(), span.end.column()), (1, 3));
+    assert_eq!((span.start.offset(), span.end.offset()), (0, 6));
 }
 
 #[test]
@@ -146,11 +146,11 @@ fn mapper_find_all_chars_uses_byte_offsets() {
     let colons = SourceMapper::new(yaml).find_all_chars(':');
     assert_eq!(colons.len(), 2);
     assert_eq!(
-        (colons[0].line, colons[0].column, colons[0].offset),
+        (colons[0].line(), colons[0].column(), colons[0].offset()),
         (1, 5, 8)
     );
-    assert_eq!((colons[1].line, colons[1].column), (2, 2));
-    assert_eq!(colons[1].offset, "ключ: 1\r🔑".len());
+    assert_eq!((colons[1].line(), colons[1].column()), (2, 2));
+    assert_eq!(colons[1].offset(), "ключ: 1\r🔑".len());
 }
 
 #[test]
@@ -159,8 +159,8 @@ fn mapper_find_colon_after_key_multibyte() {
     let mut mapper = SourceMapper::new(yaml);
     let key = mapper.find_key_span("ключ", 2).unwrap();
     let colon = mapper.find_colon_after_key(key).unwrap();
-    assert_eq!((colon.line, colon.column), (2, 5));
-    assert_eq!(colon.offset, "x: 1\nключ".len());
+    assert_eq!((colon.line(), colon.column()), (2, 5));
+    assert_eq!(colon.offset(), "x: 1\nключ".len());
 }
 
 /// Lints `yaml` with every rule and checks each span is in-bounds in the BOM-free text, on char
@@ -176,7 +176,7 @@ fn assert_spans_valid(yaml: &str) {
     for d in diags {
         let spans = std::iter::once(d.span).chain(d.suggestions.iter().map(|s| s.span));
         for span in spans {
-            let (s, e) = (span.start.offset, span.end.offset);
+            let (s, e) = (span.start.offset(), span.end.offset());
             assert!(s <= e && e <= body.len(), "{yaml:?}: {d:?}");
             assert!(
                 body.is_char_boundary(s) && body.is_char_boundary(e),
@@ -219,8 +219,8 @@ fn mixed_line_endings_comment_stays_on_its_line() {
     let ctx = fast_yaml_linter::LintContext::new(yaml);
     let comments = ctx.comments();
     assert_eq!(comments.len(), 1);
-    assert_eq!(comments[0].span.start.line, 1);
-    assert_eq!(comments[0].span.end.line, 1);
+    assert_eq!(comments[0].span.start.line(), 1);
+    assert_eq!(comments[0].span.end.line(), 1);
 }
 
 #[test]
@@ -229,11 +229,11 @@ fn trailing_whitespace_crlf_non_ascii() {
     let diags = lint_code(yaml, DiagnosticCode::TRAILING_WHITESPACE);
     assert_eq!(diags.len(), 1);
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 5));
-    assert_eq!((span.start.offset, span.end.offset), (11, 12));
+    assert_eq!((span.start.line(), span.start.column()), (2, 5));
+    assert_eq!((span.start.offset(), span.end.offset()), (11, 12));
     assert_eq!(SourceContext::new(yaml).get_snippet(span), " ");
     let sug = diags[0].suggestions[0].span;
-    assert_eq!((sug.start.offset, sug.end.offset), (11, 12));
+    assert_eq!((sug.start.offset(), sug.end.offset()), (11, 12));
 }
 
 #[test]
@@ -242,7 +242,7 @@ fn trailing_whitespace_lone_cr() {
     let diags = lint_code(yaml, DiagnosticCode::TRAILING_WHITESPACE);
     assert_eq!(diags.len(), 1);
     assert_eq!(
-        (diags[0].span.start.line, diags[0].span.start.offset),
+        (diags[0].span.start.line(), diags[0].span.start.offset()),
         (2, 10)
     );
 }
@@ -251,7 +251,7 @@ fn trailing_whitespace_lone_cr() {
 fn empty_value_flow_multiple_non_ascii_keys() {
     let yaml = "{ключ: , b: 1, é: }\n";
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
-    let cols: Vec<_> = diags.iter().map(|d| d.span.start.column).collect();
+    let cols: Vec<_> = diags.iter().map(|d| d.span.start.column()).collect();
     assert_eq!(cols, [7, 18]);
     for d in &diags {
         assert_eq!(SourceContext::new(yaml).get_snippet(d.span), "");
@@ -260,7 +260,7 @@ fn empty_value_flow_multiple_non_ascii_keys() {
     let yaml = "{é: , ю: }\n";
     let cols: Vec<_> = lint_code(yaml, DiagnosticCode::EMPTY_VALUES)
         .iter()
-        .map(|d| d.span.start.column)
+        .map(|d| d.span.start.column())
         .collect();
     assert_eq!(cols, [4, 9]);
 }
@@ -279,7 +279,7 @@ fn empty_value_with_bom() {
     assert_eq!(diags.len(), 1);
     let span = diags[0].span;
     assert_eq!(
-        (span.start.line, span.start.column, span.start.offset),
+        (span.start.line(), span.start.column(), span.start.offset()),
         (1, 6, 9)
     );
     assert_eq!(SourceContext::new("ключ:\nk: 1\n").get_snippet(span), "");
@@ -288,7 +288,7 @@ fn empty_value_with_bom() {
     let diags = lint_code(yaml, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1);
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 6));
+    assert_eq!((span.start.line(), span.start.column()), (2, 6));
     assert_eq!(
         SourceContext::new("a: 1\r\nключ:\r\nk: 1\r\n").get_snippet(span),
         ""
@@ -307,7 +307,7 @@ fn truthy_multiple_occurrences() {
     let diags = lint_code(yaml, DiagnosticCode::TRUTHY);
     let pos: Vec<_> = diags
         .iter()
-        .map(|d| (d.span.start.line, d.span.start.column))
+        .map(|d| (d.span.start.line(), d.span.start.column()))
         .collect();
     assert_eq!(pos, [(1, 7), (2, 11)]);
 
@@ -323,8 +323,8 @@ fn mapper_find_all_chars_quotes_and_non_ascii() {
     let yaml = "ключ: \"a: б\" # x: y\n";
     let colons = SourceMapper::new(yaml).find_all_chars(':');
     assert_eq!(colons.len(), 2);
-    assert_eq!((colons[0].column, colons[0].offset), (5, 8));
-    assert_eq!(colons[1].column, "ключ: \"a: б\" # x".chars().count() + 1);
+    assert_eq!((colons[0].column(), colons[0].offset()), (5, 8));
+    assert_eq!(colons[1].column(), "ключ: \"a: б\" # x".chars().count() + 1);
 }
 
 #[test]
@@ -355,9 +355,9 @@ fn empty_lines_span_points_at_first_empty_line() {
             .collect();
         assert_eq!(diags.len(), 1, "{yaml:?}: {diags:?}");
         let loc = diags[0].span.start;
-        assert_eq!((loc.line, loc.column), (2, 1), "{yaml:?}");
+        assert_eq!((loc.line(), loc.column()), (2, 1), "{yaml:?}");
         assert_eq!(
-            loc.offset,
+            loc.offset(),
             SourceContext::new(yaml).get_line_offset(2),
             "{yaml:?}"
         );
@@ -376,7 +376,7 @@ fn new_line_at_eof_respects_lone_cr_and_reports_eof_location() {
     let diags = lint_code(yaml, DiagnosticCode::NEW_LINE_AT_END_OF_FILE);
     assert_eq!(diags.len(), 1);
     let loc = diags[0].span.start;
-    assert_eq!((loc.line, loc.column, loc.offset), (2, 5, yaml.len()));
+    assert_eq!((loc.line(), loc.column(), loc.offset()), (2, 5, yaml.len()));
     assert_eq!(diags[0].span.end, loc);
     assert_eq!(diags[0].suggestions[0].replacement.as_deref(), Some("\n"));
 }
@@ -434,7 +434,11 @@ fn float_values_report_char_column() {
         .collect();
     assert_ne!(diags, []);
     for d in diags {
-        assert_eq!((d.span.start.line, d.span.start.column), (1, 7), "{d:?}");
+        assert_eq!(
+            (d.span.start.line(), d.span.start.column()),
+            (1, 7),
+            "{d:?}"
+        );
         assert_eq!(SourceContext::new(yaml).get_snippet(d.span), ".5");
     }
 }
@@ -445,9 +449,9 @@ fn duplicate_anchor_reports_char_column() {
     let diags = lint_code(yaml, DiagnosticCode::INVALID_ANCHOR);
     assert_eq!(diags.len(), 1, "{diags:?}");
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 4));
+    assert_eq!((span.start.line(), span.start.column()), (2, 4));
     assert_eq!(SourceContext::new(yaml).get_snippet(span), "&а");
-    assert_eq!(span.end.column, 6);
+    assert_eq!(span.end.column(), 6);
 }
 
 #[test]
@@ -457,16 +461,16 @@ fn key_ordering_reports_key_position() {
     assert_eq!(diags.len(), 1, "{diags:?}");
     let span = diags[0].span;
     assert_eq!(
-        (span.start.line, span.start.column, span.start.offset),
+        (span.start.line(), span.start.column(), span.start.offset()),
         (2, 1, 6)
     );
-    assert_eq!(span.end.column, 2);
+    assert_eq!(span.end.column(), 2);
     assert_eq!(SourceContext::new(yaml).get_snippet(span), "а");
 
     let yaml = "x:\n  б: 1\n  а: 2\n";
     let diags = lint_code(yaml, DiagnosticCode::KEY_ORDERING);
     assert_eq!(diags.len(), 1, "{diags:?}");
-    assert_eq!(diags[0].span.start.column, 3);
+    assert_eq!(diags[0].span.start.column(), 3);
     assert_eq!(SourceContext::new(yaml).get_snippet(diags[0].span), "а");
 }
 
@@ -485,8 +489,8 @@ fn line_length_offsets_follow_lines() {
         .iter()
         .map(|d| {
             (
-                d.span.start.line,
-                d.span.start.offset,
+                d.span.start.line(),
+                d.span.start.offset(),
                 ctx.get_snippet(d.span),
             )
         })
@@ -499,7 +503,7 @@ fn line_length_offsets_follow_lines() {
         ]
     );
     assert_eq!(
-        diags[0].span.end.column,
+        diags[0].span.end.column(),
         "длинная строка".chars().count() + 1
     );
 }
@@ -547,7 +551,7 @@ fn key_ordering_quoted_key_span_starts_at_quote() {
         let diags = lint_code(yaml, DiagnosticCode::KEY_ORDERING);
         assert_eq!(diags.len(), 1, "{diags:?}");
         let span = diags[0].span;
-        assert_eq!((span.start.line, span.start.column), (2, 1), "{yaml:?}");
+        assert_eq!((span.start.line(), span.start.column()), (2, 1), "{yaml:?}");
         assert_eq!(SourceContext::new(yaml).get_snippet(span), snippet);
     }
 }
@@ -559,7 +563,7 @@ fn document_start_missing_span_is_file_start() {
         let diags = lint_with(yaml, config.clone(), DiagnosticCode::DOCUMENT_START);
         assert_eq!(diags.len(), 1, "{yaml:?}");
         let span = diags[0].span;
-        assert_eq!((span.start.line, span.start.column), (1, 1), "{yaml:?}");
+        assert_eq!((span.start.line(), span.start.column()), (1, 1), "{yaml:?}");
         assert_eq!(span.start, span.end);
         assert_eq!(diags[0].suggestions[0].span, span);
     }
@@ -572,7 +576,7 @@ fn document_start_forbidden_reports_char_position() {
     let diags = lint_with(yaml, config, DiagnosticCode::DOCUMENT_START);
     assert_eq!(diags.len(), 1);
     let span = diags[0].span;
-    assert_eq!((span.start.line, span.start.column), (2, 1));
+    assert_eq!((span.start.line(), span.start.column()), (2, 1));
     assert_eq!(SourceContext::new(yaml).get_snippet(span), "---");
 }
 
@@ -590,7 +594,7 @@ fn document_end_missing_span_is_eof() {
         assert_eq!(diags.len(), 1, "{yaml:?}");
         let loc = diags[0].span.start;
         assert_eq!(
-            (loc.line, loc.column, loc.offset),
+            (loc.line(), loc.column(), loc.offset()),
             (line, column, yaml.len()),
             "{yaml:?}"
         );
@@ -623,7 +627,13 @@ fn new_lines_span_starts_at_line_with_wrong_ending() {
     let diags = lint_code(yaml, DiagnosticCode::NEW_LINES);
     let got: Vec<_> = diags
         .iter()
-        .map(|d| (d.span.start.line, d.span.start.column, d.span.start.offset))
+        .map(|d| {
+            (
+                d.span.start.line(),
+                d.span.start.column(),
+                d.span.start.offset(),
+            )
+        })
         .collect();
     assert_eq!(got, [(1, 1, 0), (2, 1, 6)]);
 
@@ -631,7 +641,7 @@ fn new_lines_span_starts_at_line_with_wrong_ending() {
     let diags = lint_code(yaml, DiagnosticCode::NEW_LINES);
     assert_eq!(diags.len(), 1);
     assert_eq!(
-        (diags[0].span.start.line, diags[0].span.start.offset),
+        (diags[0].span.start.line(), diags[0].span.start.offset()),
         (2, "ключ: 1\n".len())
     );
 }
@@ -651,7 +661,7 @@ fn empty_values_non_ascii_crlf_with_markers_required() {
     let diags = lint_with(yaml, config, DiagnosticCode::EMPTY_VALUES);
     assert_eq!(diags.len(), 1);
     assert_eq!(
-        (diags[0].span.start.line, diags[0].span.start.column),
+        (diags[0].span.start.line(), diags[0].span.start.column()),
         (1, 6)
     );
 }
@@ -675,7 +685,7 @@ fn spans_consistent_with_markers_required() {
         let ctx = SourceContext::new(yaml);
         for d in diags {
             for loc in [d.span.start, d.span.end] {
-                assert_eq!(loc, ctx.offset_to_location(loc.offset), "{yaml:?}: {d:?}");
+                assert_eq!(loc, ctx.offset_to_location(loc.offset()), "{yaml:?}: {d:?}");
             }
         }
     }

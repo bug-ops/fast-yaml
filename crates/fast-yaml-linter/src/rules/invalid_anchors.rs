@@ -220,7 +220,7 @@ impl AnchorScan<'_> {
         if self.options.forbid_unused_anchors {
             let mut unused: Vec<(&String, &Anchor)> =
                 self.seen.iter().filter(|(_, a)| !a.used).collect();
-            unused.sort_by_key(|(_, anchor)| anchor.span.start.offset);
+            unused.sort_by_key(|(_, anchor)| anchor.span.start.offset());
             for (name, anchor) in unused {
                 self.diagnostics.push(
                     Finding::new(
@@ -474,7 +474,7 @@ mod tests {
         let diags = run("a: &anchor value1\nb: &anchor value2\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("anchor '&anchor'"));
-        assert_eq!(diags[0].span.start.line, 2);
+        assert_eq!(diags[0].span.start.line(), 2);
         assert_eq!(diags[0].severity, Severity::Warning);
     }
 
@@ -513,7 +513,7 @@ mod tests {
         let diags = run("x: &foo 1\ny: other\nz: &foo 2\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("first defined at line 1"));
-        assert_eq!(diags[0].span.start.line, 3);
+        assert_eq!(diags[0].span.start.line(), 3);
     }
 
     #[test]
@@ -568,7 +568,7 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].message, "anchor '&b' is never used by an alias");
         assert_eq!(
-            (found[0].span.start.line, found[0].span.start.column),
+            (found[0].span.start.line(), found[0].span.start.column()),
             (2, 3)
         );
         assert_eq!(run("- &a 1\n- &b 2\n"), []);
@@ -579,10 +579,10 @@ mod tests {
         let options = "{forbid-unused-anchors: true}";
         let found = run_with("- &a 1\n- *a\n---\n- &a 2\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.line, 4);
+        assert_eq!(found[0].span.start.line(), 4);
         let found = run_with("- &a 1\n...\n---\n- &b 2\n- *b\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.line, 1);
+        assert_eq!(found[0].span.start.line(), 1);
     }
 
     #[test]
@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(run_with("- &a 1\n- {k: *a}\n", options), []);
         let found = run_with("--- &a x\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.column, 5);
+        assert_eq!(found[0].span.start.column(), 5);
     }
 
     #[test]
@@ -607,7 +607,7 @@ mod tests {
         let options = "{forbid-unused-anchors: true, forbid-duplicated-anchors: false}";
         let found = run_with("- &a 1\n- *a\n- &a 2\n", options);
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].span.start.line, 3);
+        assert_eq!(found[0].span.start.line(), 3);
     }
 
     #[test]

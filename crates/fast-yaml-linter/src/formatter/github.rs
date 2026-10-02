@@ -25,11 +25,18 @@ pub(super) fn render(files: &[FileReport<'_>]) -> String {
             let _ = write!(
                 out,
                 "line={},col={}",
-                d.span.start.line, d.span.start.column
+                d.span.start.line(),
+                d.span.start.column()
             );
-            let _ = write!(out, ",endLine={}", d.span.end.line.max(d.span.start.line));
-            if d.span.end.line == d.span.start.line && d.span.end.column >= d.span.start.column {
-                let _ = write!(out, ",endColumn={}", d.span.end.column);
+            let _ = write!(
+                out,
+                ",endLine={}",
+                d.span.end.line().max(d.span.start.line())
+            );
+            if d.span.end.line() == d.span.start.line()
+                && d.span.end.column() >= d.span.start.column()
+            {
+                let _ = write!(out, ",endColumn={}", d.span.end.column());
             }
             let _ = writeln!(
                 out,

@@ -20,7 +20,7 @@ fn positions(source: &str, options: &str) -> Vec<(usize, usize)> {
         .unwrap()
         .into_iter()
         .filter(|d| d.code.as_str() == "empty-values")
-        .map(|d| (d.span.start.line, d.span.start.column))
+        .map(|d| (d.span.start.line(), d.span.start.column()))
         .collect()
 }
 

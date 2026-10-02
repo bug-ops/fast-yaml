@@ -11,7 +11,7 @@ fn yamllint_spelling_and_aliases() {
         diagnostics
             .iter()
             .filter(|d| d.code.as_str() == code)
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect()
     };
     assert_eq!(lines(DiagnosticCode::DUPLICATE_KEY), [6]);

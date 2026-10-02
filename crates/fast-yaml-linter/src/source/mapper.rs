@@ -122,7 +122,7 @@ impl<'a> SourceMapper<'a> {
         self.key_positions
             .get(key)?
             .iter()
-            .find(|s| s.start.line == line_hint)
+            .find(|s| s.start.line() == line_hint)
             .copied()
     }
 
@@ -166,9 +166,9 @@ impl<'a> SourceMapper<'a> {
     /// assert!(colon.is_some());
     /// ```
     pub fn find_colon_after_key(&self, key_span: Span) -> Option<Location> {
-        let line = self.context.get_line(key_span.end.line)?;
-        let line_start = self.context.get_line_offset(key_span.end.line);
-        let key_end = key_span.end.offset.checked_sub(line_start)?;
+        let line = self.context.get_line(key_span.end.line())?;
+        let line_start = self.context.get_line_offset(key_span.end.line());
+        let key_end = key_span.end.offset().checked_sub(line_start)?;
         let offset = line_start + key_end + line.get(key_end..)?.find(':')?;
         Some(self.context.offset_to_location(offset))
     }
@@ -255,8 +255,8 @@ mod tests {
         let mut mapper = SourceMapper::new(source);
 
         let span = mapper.find_key_span("name", 1).unwrap();
-        assert_eq!(span.start.line, 1);
-        assert_eq!(span.start.column, 1);
+        assert_eq!(span.start.line(), 1);
+        assert_eq!(span.start.column(), 1);
     }
 
     #[test]
@@ -265,8 +265,8 @@ mod tests {
         let mut mapper = SourceMapper::new(source);
 
         let span = mapper.find_key_span("age", 2).unwrap();
-        assert_eq!(span.start.line, 2);
-        assert_eq!(span.start.column, 1);
+        assert_eq!(span.start.line(), 2);
+        assert_eq!(span.start.column(), 1);
     }
 
     #[test]
@@ -275,8 +275,8 @@ mod tests {
         let mut mapper = SourceMapper::new(source);
 
         let span = mapper.find_key_span("name", 2).unwrap();
-        assert_eq!(span.start.line, 2);
-        assert_eq!(span.start.column, 3); // After 2 spaces
+        assert_eq!(span.start.line(), 2);
+        assert_eq!(span.start.column(), 3); // After 2 spaces
     }
 
     #[test]
@@ -286,7 +286,7 @@ mod tests {
 
         let key_span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
         let colon = mapper.find_colon_after_key(key_span).unwrap();
-        assert_eq!(colon.column, 5);
+        assert_eq!(colon.column(), 5);
     }
 
     #[test]
@@ -296,8 +296,8 @@ mod tests {
 
         let colons = mapper.find_all_chars(':');
         assert_eq!(colons.len(), 2);
-        assert_eq!(colons[0].line, 1);
-        assert_eq!(colons[1].line, 2);
+        assert_eq!(colons[0].line(), 1);
+        assert_eq!(colons[1].line(), 2);
     }
 
     #[test]
@@ -326,8 +326,8 @@ mod tests {
         let first = mapper.find_key_span("name", 1).unwrap();
         let second = mapper.find_key_span("name", 3).unwrap();
 
-        assert_eq!(first.start.line, 1);
-        assert_eq!(second.start.line, 3);
+        assert_eq!(first.start.line(), 1);
+        assert_eq!(second.start.line(), 3);
     }
 
     #[test]
@@ -350,8 +350,8 @@ mod tests {
 
         let spans = mapper.find_all_key_spans("name");
         assert_eq!(spans.len(), 2);
-        assert_eq!(spans[0].start.line, 1);
-        assert_eq!(spans[1].start.line, 3);
+        assert_eq!(spans[0].start.line(), 1);
+        assert_eq!(spans[1].start.line(), 3);
     }
 
     #[test]

@@ -71,7 +71,7 @@ mod tests {
     }
 
     fn lines(yaml: &str) -> Vec<usize> {
-        run(yaml).iter().map(|d| d.span.start.line).collect()
+        run(yaml).iter().map(|d| d.span.start.line()).collect()
     }
 
     #[test]
@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(diags.len(), 1);
         assert_eq!(diags[0].code.as_str(), "set-values");
         assert_eq!(diags[0].severity, Severity::Error);
-        assert_eq!(diags[0].span.start.column, 8);
+        assert_eq!(diags[0].span.start.column(), 8);
         assert!(diags[0].message.contains("'a'"));
     }
 

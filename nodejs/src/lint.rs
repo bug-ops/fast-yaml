@@ -60,9 +60,9 @@ pub struct Location {
 impl From<RustLocation> for Location {
     fn from(loc: RustLocation) -> Self {
         Self {
-            line: u32::try_from(loc.line).unwrap_or(u32::MAX),
-            column: u32::try_from(loc.column).unwrap_or(u32::MAX),
-            offset: u32::try_from(loc.offset).unwrap_or(u32::MAX),
+            line: u32::try_from(loc.line()).unwrap_or(u32::MAX),
+            column: u32::try_from(loc.column()).unwrap_or(u32::MAX),
+            offset: u32::try_from(loc.offset()).unwrap_or(u32::MAX),
         }
     }
 }

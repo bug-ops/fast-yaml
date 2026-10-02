@@ -20,8 +20,8 @@ pub(super) fn render(files: &[FileReport<'_>]) -> String {
             let _ = writeln!(
                 out,
                 ":{}:{}: [{}] {} ({})",
-                d.span.start.line,
-                d.span.start.column,
+                d.span.start.line(),
+                d.span.start.column(),
                 level(d.severity),
                 message,
                 d.code.as_str()

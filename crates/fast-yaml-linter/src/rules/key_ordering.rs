@@ -139,7 +139,7 @@ impl super::SourceRule for KeyOrderingRule {
                     let Some(prev) = accepted.get(at) else {
                         continue;
                     };
-                    let line = source_context.span_of_bytes(prev.range).start.line;
+                    let line = source_context.span_of_bytes(prev.range).start.line();
                     diagnostics.push(Finding::new(
                         format!(
                             "key '{key}' should be ordered before '{}' (line {line})",
@@ -179,7 +179,7 @@ mod tests {
     fn positions(found: &[Diagnostic]) -> Vec<(usize, usize)> {
         found
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column))
+            .map(|d| (d.span.start.line(), d.span.start.column()))
             .collect()
     }
 
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found[0].message.contains("key 'ключ'"));
         assert!(found[1].message.contains("key 'abc'"));
-        assert_eq!(found[1].span.start.line, 3);
+        assert_eq!(found[1].span.start.line(), 3);
     }
 
     #[test]

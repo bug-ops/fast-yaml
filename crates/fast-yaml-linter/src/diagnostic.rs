@@ -678,7 +678,7 @@ mod tests {
             .map(|line| finding(Severity::Warning, line))
             .collect();
         cap(2).truncate(&mut found);
-        let lines: Vec<_> = found.iter().map(|d| d.span.start.line).collect();
+        let lines: Vec<_> = found.iter().map(|d| d.span.start.line()).collect();
         assert_eq!(lines, [1, 2, 3]);
         let summary = &found[2];
         assert_eq!(summary.code.as_str(), DiagnosticCode::DIAGNOSTIC_LIMIT);

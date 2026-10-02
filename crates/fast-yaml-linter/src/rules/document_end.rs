@@ -103,7 +103,7 @@ fn check_required(context: &LintContext) -> Vec<Finding> {
                 },
                 |marker| {
                     let at =
-                        source_context.span_at(source_context.line_start(marker.start.line), 0);
+                        source_context.span_at(source_context.line_start(marker.start.line()), 0);
                     (at, "...\n")
                 },
             );
@@ -227,10 +227,10 @@ mod tests {
             diagnostics[0].message,
             "document end marker '...' is forbidden"
         );
-        assert_eq!(diagnostics[0].span.start.line, 2);
-        assert_eq!(diagnostics[0].span.start.column, 1);
-        assert_eq!(diagnostics[0].span.end.column, 4);
-        assert_eq!(diagnostics[1].span.start.line, 5);
+        assert_eq!(diagnostics[0].span.start.line(), 2);
+        assert_eq!(diagnostics[0].span.start.column(), 1);
+        assert_eq!(diagnostics[0].span.end.column(), 4);
+        assert_eq!(diagnostics[1].span.start.line(), 5);
     }
 
     #[test]
@@ -258,8 +258,8 @@ mod tests {
     #[test]
     fn forbidden_reports_byte_offsets_after_multibyte_text() {
         let diagnostics = forbidden("é: 1\n...\n");
-        assert_eq!(diagnostics[0].span.start.offset, "é: 1\n".len());
-        assert_eq!(diagnostics[0].span.end.offset, "é: 1\n...".len());
+        assert_eq!(diagnostics[0].span.start.offset(), "é: 1\n".len());
+        assert_eq!(diagnostics[0].span.end.offset(), "é: 1\n...".len());
     }
 
     #[test]
@@ -277,7 +277,7 @@ mod tests {
     fn required_lines(yaml: &str) -> Vec<(usize, usize)> {
         required(yaml)
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column))
+            .map(|d| (d.span.start.line(), d.span.start.column()))
             .collect()
     }
 
@@ -311,7 +311,7 @@ mod tests {
             found[0].suggestions[0].replacement.as_deref(),
             Some("...\n")
         );
-        assert_eq!(found[0].suggestions[0].span.start.offset, "a: 1\n".len());
+        assert_eq!(found[0].suggestions[0].span.start.offset(), "a: 1\n".len());
         assert_eq!(found[1].suggestions[0].replacement.as_deref(), Some("..."));
     }
 

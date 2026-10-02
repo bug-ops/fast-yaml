@@ -174,7 +174,7 @@ impl super::SourceRule for IndentationRule {
             );
             Finding::new(problem.message, span)
         }));
-        diagnostics.sort_by_key(|d| (d.span().start.line, d.span().start.column));
+        diagnostics.sort_by_key(|d| (d.span().start.line(), d.span().start.column()));
         diagnostics
     }
 }
@@ -330,7 +330,7 @@ mod tests {
         let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
-        assert_eq!(diagnostics[0].span.start.line, 2);
+        assert_eq!(diagnostics[0].span.start.line(), 2);
     }
 
     #[test]
@@ -417,7 +417,9 @@ mod tests {
             .map(|d| {
                 format!(
                     "{}:{} {}",
-                    d.span.start.line, d.span.start.column, d.message
+                    d.span.start.line(),
+                    d.span.start.column(),
+                    d.message
                 )
             })
             .collect()

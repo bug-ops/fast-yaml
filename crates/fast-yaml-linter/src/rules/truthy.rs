@@ -519,7 +519,13 @@ mod tests {
         TruthyRule
             .diagnose(&LintContext::new(yaml), config)
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column, d.span.end.column))
+            .map(|d| {
+                (
+                    d.span.start.line(),
+                    d.span.start.column(),
+                    d.span.end.column(),
+                )
+            })
             .collect()
     }
 

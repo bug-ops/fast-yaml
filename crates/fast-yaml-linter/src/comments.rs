@@ -50,7 +50,7 @@ impl<'a> Comment<'a> {
             context.location_at(ByteOffset::new(range.start)),
             context.location_at(ByteOffset::new(range.end)),
         );
-        let before = source.get(context.get_line_offset(span.start.line)..range.start)?;
+        let before = source.get(context.get_line_offset(span.start.line())..range.start)?;
         let kind = if range.start == 0 && text.starts_with('!') {
             CommentKind::Shebang
         } else if before.trim().is_empty() {

@@ -21,7 +21,7 @@ fn lines(source: &str, options: &str) -> Vec<usize> {
         .unwrap()
         .iter()
         .filter(|d| d.code.as_str() == "quoted-strings")
-        .map(|d| d.span.start.line)
+        .map(|d| d.span.start.line())
         .collect()
 }
 

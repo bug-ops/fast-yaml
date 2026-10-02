@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `Location` fields are private; read them with `line()`, `column()` and `offset()`. Line and column are stored as the new `OneBased` type, so a location never holds line or column 0; `Location::new` raises a 0 to 1 and `Location::try_new` rejects it (#621)
+- **Python**: `Location(line, column, offset)` raises `ValueError` when `line` or `column` is 0 (#621)
 - **Core**: `ParseError::{LimitExceeded, Merge, SetValue, Key}` carry `at: SourcePosition` and `document: DocumentIndex` instead of `line`, `column` and a `usize` document; `ParseError::document_index`, `SyntaxError::document`, `SyntaxError::recursive_alias`, `EventStream::document` and `LimitGuard::document` use the new `DocumentIndex` (0-based) type (#621)
 - **Linter**: `SourceRule::check` and `DocumentRule::check` return `Vec<Finding>` instead of `Vec<Diagnostic>`; `Linter` gives each finding the code of the rule that returned it and the severity configured for that rule, so a rule no longer builds a `Diagnostic` or reads its own severity. Custom rules replace `DiagnosticBuilder::new(code, severity, message, span).build()` with `Finding::new(message, span)`, and `diagnose` returns diagnostics for tests (#625)
 - **Linter**: `rules::flow_common` helpers and the built-in rule helpers no longer take a diagnostic code or severity (#625)
@@ -169,6 +171,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Linter**: `OneBased`, a line or column number that is never 0, and `Location::try_new` (#621)
 - **Core**: `DocumentIndex`, a 0-based document index distinct from the 1-based `SourcePosition`, and `SourcePosition::new` with a `Display` of `line L, column C` (#621)
 - **Linter**: `Finding`, the result of a rule before the linter adds its code and severity, and `SourceRule::diagnose` / `DocumentRule::diagnose` (#625)
 - **CLI**: `fy lint|format|convert -o /dev/null` discards the output (`NUL` on Windows) instead of failing with `not a regular file` (#634)

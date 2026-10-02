@@ -388,13 +388,16 @@ class lint:  # noqa: N801
 
         ``offset`` is a byte offset in the text with document-prefix BOMs removed
         (also for suggestion spans); ``line`` and ``column`` refer to the same text.
+        ``line`` and ``column`` count from 1; ``offset`` counts from 0.
         """
 
         line: int
         column: int
         offset: int
 
-        def __init__(self, line: int, column: int, offset: int) -> None: ...
+        def __init__(self, line: int, column: int, offset: int) -> None:
+            """Raises ``ValueError`` when ``line`` or ``column`` is 0."""
+            ...
         def __repr__(self) -> str: ...
         def __eq__(self, other: object) -> bool: ...
 

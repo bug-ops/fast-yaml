@@ -350,8 +350,8 @@ fn indentation_findings(case: &Case) -> Vec<(usize, usize, String)> {
         .filter(|d| d.code.as_str() == DiagnosticCode::INDENTATION)
         .map(|d| {
             (
-                d.span.start.line,
-                d.span.start.column,
+                d.span.start.line(),
+                d.span.start.column(),
                 d.message.to_string(),
             )
         })

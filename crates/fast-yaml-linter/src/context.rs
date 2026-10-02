@@ -288,8 +288,8 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn extract_context(&self, span: Span, context_lines: usize) -> DiagnosticContext {
-        let start_line = span.start.line;
-        let end_line = span.end.line;
+        let start_line = span.start.line();
+        let end_line = span.end.line();
 
         let first_line = start_line.saturating_sub(context_lines).max(1);
         let last_line = end_line
@@ -303,20 +303,20 @@ impl<'a> SourceContext<'a> {
                 let anchor = (line_num == start_line).then(|| {
                     let line_start = self.get_line_offset(line_num);
                     (
-                        span.start.offset.checked_sub(line_start),
-                        span.start.column.saturating_sub(1),
+                        span.start.offset().checked_sub(line_start),
+                        span.start.column().saturating_sub(1),
                     )
                 });
                 let window = ContextWindow::of(content, anchor);
                 let highlight = (line_num >= start_line && line_num <= end_line)
                     .then(|| {
                         let start_col = if line_num == start_line {
-                            span.start.column
+                            span.start.column()
                         } else {
                             1
                         };
                         let end_col = if line_num == end_line {
-                            span.end.column
+                            span.end.column()
                         } else {
                             usize::MAX
                         };
@@ -360,8 +360,8 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn get_snippet(&self, span: Span) -> &'a str {
-        let start = self.source.floor_char_boundary(span.start.offset);
-        let end = self.source.floor_char_boundary(span.end.offset);
+        let start = self.source.floor_char_boundary(span.start.offset());
+        let end = self.source.floor_char_boundary(span.end.offset());
         self.source.get(start..end).unwrap_or_default()
     }
 
@@ -378,8 +378,8 @@ impl<'a> SourceContext<'a> {
     /// let ctx = SourceContext::new(source);
     ///
     /// let loc = ctx.offset_to_location(7);
-    /// assert_eq!(loc.line, 2);
-    /// assert_eq!(loc.column, 1);
+    /// assert_eq!(loc.line(), 2);
+    /// assert_eq!(loc.column(), 1);
     /// ```
     #[must_use]
     pub fn offset_to_location(&self, offset: usize) -> Location {
@@ -540,9 +540,9 @@ mod tests {
             assert_eq!(ctx_offset(&ctx, line, col), byte);
         }
         let offset = ctx.get_line_offset(2) + "ж: ".len();
-        assert_eq!(ctx.offset_to_location(offset).column, 4);
+        assert_eq!(ctx.offset_to_location(offset).column(), 4);
         let offset = ctx.get_line_offset(1) + 6;
-        assert_eq!(ctx.offset_to_location(offset).column, 7);
+        assert_eq!(ctx.offset_to_location(offset).column(), 7);
     }
 
     #[test]
@@ -558,7 +558,10 @@ mod tests {
     fn test_non_ascii_line_does_not_affect_ascii_lines() {
         let ctx = SourceContext::new("ж: 1\nabc: def\n");
         assert_eq!(ctx_offset(&ctx, 2, 5), 5);
-        assert_eq!(ctx.offset_to_location(ctx.get_line_offset(2) + 5).column, 6);
+        assert_eq!(
+            ctx.offset_to_location(ctx.get_line_offset(2) + 5).column(),
+            6
+        );
     }
 
     #[test]
@@ -596,9 +599,9 @@ mod tests {
         let ctx = SourceContext::new(source);
         assert_eq!(ctx_offset(&ctx, 1, 2), "я".len() * 2);
         let terminator = ctx.get_line_offset(1) + "яя: 1".len();
-        assert_eq!(ctx.offset_to_location(terminator).column, 6);
-        assert_eq!(ctx.offset_to_location(terminator + 1).column, 7);
-        assert_eq!(ctx.offset_to_location(ctx.get_line_offset(2)).line, 2);
+        assert_eq!(ctx.offset_to_location(terminator).column(), 6);
+        assert_eq!(ctx.offset_to_location(terminator + 1).column(), 7);
+        assert_eq!(ctx.offset_to_location(ctx.get_line_offset(2)).line(), 2);
     }
 
     #[test]
@@ -607,7 +610,7 @@ mod tests {
         let ctx = SourceContext::new(line);
         for (col, (byte, _)) in line.char_indices().enumerate() {
             assert_eq!(ctx_offset(&ctx, 1, col), byte);
-            assert_eq!(ctx.offset_to_location(byte).column, col + 1);
+            assert_eq!(ctx.offset_to_location(byte).column(), col + 1);
         }
     }
 
@@ -653,16 +656,16 @@ mod tests {
         let ctx = SourceContext::new(source);
 
         let loc = ctx.offset_to_location(0);
-        assert_eq!(loc.line, 1);
-        assert_eq!(loc.column, 1);
+        assert_eq!(loc.line(), 1);
+        assert_eq!(loc.column(), 1);
 
         let loc = ctx.offset_to_location(7);
-        assert_eq!(loc.line, 2);
-        assert_eq!(loc.column, 1);
+        assert_eq!(loc.line(), 2);
+        assert_eq!(loc.column(), 1);
 
         let loc = ctx.offset_to_location(10);
-        assert_eq!(loc.line, 2);
-        assert_eq!(loc.column, 4);
+        assert_eq!(loc.line(), 2);
+        assert_eq!(loc.column(), 4);
     }
 
     #[test]
@@ -671,8 +674,8 @@ mod tests {
         let ctx = SourceContext::new(source);
 
         let loc = ctx.offset_to_location(7);
-        assert_eq!(loc.line, 1);
-        assert_eq!(loc.column, 8);
+        assert_eq!(loc.line(), 1);
+        assert_eq!(loc.column(), 8);
     }
 
     #[test]
@@ -684,7 +687,7 @@ mod tests {
             assert_eq!(ctx.get_line(2), Some("б"));
             assert_eq!(ctx.get_line(3), Some("c"));
             let loc = ctx.offset_to_location(ctx.get_line_offset(3));
-            assert_eq!((loc.line, loc.column), (3, 1));
+            assert_eq!((loc.line(), loc.column()), (3, 1));
         }
         assert_eq!(SourceContext::new("a\r\nb").get_line_offset(2), 3);
         assert_eq!(SourceContext::new("a\rb").get_line_offset(2), 2);
@@ -724,9 +727,9 @@ mod tests {
     #[test]
     fn test_location_at_is_total() {
         let ctx = SourceContext::new("ключ: 1");
-        assert_eq!(ctx.offset_to_location(3).column, 2);
-        assert_eq!(ctx.offset_to_location(1000).column, 8);
-        assert_eq!(ctx.span_at(ByteOffset::new(6), 100).end.offset, 11);
+        assert_eq!(ctx.offset_to_location(3).column(), 2);
+        assert_eq!(ctx.offset_to_location(1000).column(), 8);
+        assert_eq!(ctx.span_at(ByteOffset::new(6), 100).end.offset(), 11);
     }
 
     #[test]
@@ -974,9 +977,9 @@ mod tests {
             .collect();
         let snippets: Vec<&str> = spans.iter().map(|&s| ctx.get_snippet(s)).collect();
         assert_eq!(snippets, ["—", "\"é\"", "🎉", "x"]);
-        assert_eq!((spans[1].start.column, spans[1].start.offset), (4, 5));
-        assert_eq!((spans[1].end.column, spans[1].end.offset), (7, 9));
-        assert_eq!((spans[2].start.line, spans[2].start.column), (2, 1));
+        assert_eq!((spans[1].start.column(), spans[1].start.offset()), (4, 5));
+        assert_eq!((spans[1].end.column(), spans[1].end.offset()), (7, 9));
+        assert_eq!((spans[2].start.line(), spans[2].start.column()), (2, 1));
     }
 
     #[test]
@@ -1190,8 +1193,8 @@ impl<'a> LintContext<'a> {
                 .iter()
                 .filter_map(|range| {
                     // The token starts at its content and ends on the line that stopped it
-                    let first = context.location_at(range.start()).line;
-                    let last = context.location_at(range.end()).line.saturating_sub(1);
+                    let first = context.location_at(range.start()).line();
+                    let last = context.location_at(range.end()).line().saturating_sub(1);
                     (last >= first).then_some(first..=last)
                 })
                 .collect()
@@ -1307,7 +1310,8 @@ impl<'a> LintContext<'a> {
             let by_text = !self.scan_is_complete();
             let mut comment_lines = vec![false; self.lines().len()];
             for comment in self.comments().iter().filter(|c| c.is_full_line()) {
-                if let Some(flag) = comment_lines.get_mut(comment.span.start.line.wrapping_sub(1)) {
+                if let Some(flag) = comment_lines.get_mut(comment.span.start.line().wrapping_sub(1))
+                {
                     *flag = true;
                 }
             }

@@ -71,7 +71,7 @@ impl super::SourceRule for CommentsIndentationRule {
                 continue;
             }
 
-            let comment_line = comment.span.start.line;
+            let comment_line = comment.span.start.line();
             if comment_line == 0 || comment_line > line_info.len() {
                 continue;
             }

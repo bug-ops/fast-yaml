@@ -91,7 +91,7 @@ impl super::SourceRule for ColonsRule {
 
         for colon in colons {
             // Skip if colon is part of URL or time
-            if is_url_or_time(source, colon.span.start.offset) {
+            if is_url_or_time(source, colon.span.start.offset()) {
                 continue;
             }
 
@@ -99,7 +99,7 @@ impl super::SourceRule for ColonsRule {
             if let Some(diag) = check_spaces_before_colon(
                 source,
                 source_context,
-                colon.span.start.offset,
+                colon.span.start.offset(),
                 max_spaces_before,
             ) {
                 diagnostics.push(diag);
@@ -109,7 +109,7 @@ impl super::SourceRule for ColonsRule {
             if let Some(diag) = check_spaces_after_colon(
                 source,
                 source_context,
-                colon.span.start.offset,
+                colon.span.start.offset(),
                 max_spaces_after,
             ) {
                 diagnostics.push(diag);
@@ -349,9 +349,10 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
-            diagnostics[0].span.start.line, 3,
+            diagnostics[0].span.start.line(),
+            3,
             "violation should be on line 3, got: {}",
-            diagnostics[0].span.start.line
+            diagnostics[0].span.start.line()
         );
     }
 

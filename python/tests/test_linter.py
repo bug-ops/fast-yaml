@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from fast_yaml._core import lint
 
 
@@ -52,6 +54,15 @@ class TestLocation:
         assert loc.line == 1
         assert loc.column == 5
         assert loc.offset == 10
+
+    @pytest.mark.parametrize("line, column", [(0, 1), (1, 0), (0, 0)])
+    def test_location_rejects_a_zero_line_or_column(self, line, column):
+        """Line and column count from 1 (#621)."""
+        with pytest.raises(ValueError, match="counted from 1"):
+            lint.Location(line=line, column=column, offset=0)
+
+    def test_location_accepts_a_zero_offset(self):
+        assert lint.Location(line=1, column=1, offset=0).offset == 0
 
     def test_location_repr(self):
         """Test Location repr."""

@@ -91,7 +91,7 @@ fn hash_in_verbatim_tag_is_not_a_comment() {
     assert!(
         diagnostics
             .iter()
-            .any(|d| d.code.as_str() == DiagnosticCode::COMMENTS && d.span.start.column == 15)
+            .any(|d| d.code.as_str() == DiagnosticCode::COMMENTS && d.span.start.column() == 15)
     );
 }
 

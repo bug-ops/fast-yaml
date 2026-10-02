@@ -89,7 +89,7 @@ impl super::SourceRule for DocumentStartRule {
 /// Reports a document that starts without `---`, at the line of its first token.
 fn missing(context: &LintContext<'_>, first_token: Span) -> Finding {
     let source_context = context.source_context();
-    let span = source_context.span_at(source_context.line_start(first_token.start.line), 0);
+    let span = source_context.span_at(source_context.line_start(first_token.start.line()), 0);
     Finding::new("missing document start marker '---'", span).with_suggestion(
         "Add '---' before this document",
         span,
@@ -259,7 +259,7 @@ mod tests {
     fn lines(yaml: &str, cfg: &str) -> Vec<usize> {
         diagnostics(yaml, cfg)
             .iter()
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect()
     }
 
@@ -280,8 +280,11 @@ mod tests {
         assert_eq!(found.len(), 1);
         let suggestion = &found[0].suggestions[0];
         assert_eq!(suggestion.replacement.as_deref(), Some("---\n"));
-        assert_eq!(suggestion.span.start.offset, "---\na: 1\n...\n# c\n".len());
-        assert_eq!(suggestion.span.start.offset, suggestion.span.end.offset);
+        assert_eq!(
+            suggestion.span.start.offset(),
+            "---\na: 1\n...\n# c\n".len()
+        );
+        assert_eq!(suggestion.span.start.offset(), suggestion.span.end.offset());
     }
 
     #[test]

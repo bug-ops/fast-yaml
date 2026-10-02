@@ -40,7 +40,7 @@ impl DocumentStart {
     /// Byte offset where the document starts.
     pub const fn offset(self) -> usize {
         match self {
-            Self::Explicit(span) | Self::Implicit(span) => span.start.offset,
+            Self::Explicit(span) | Self::Implicit(span) => span.start.offset(),
         }
     }
 
@@ -380,8 +380,8 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 let span = self.span(item);
                 let first_line = match (self.documents.is_empty(), explicit) {
                     (true, _) => 1,
-                    (false, true) => span.start.line + 1,
-                    (false, false) => span.start.line,
+                    (false, true) => span.start.line() + 1,
+                    (false, false) => span.start.line(),
                 };
                 let start = if *explicit {
                     DocumentStart::Explicit(span)
@@ -389,7 +389,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                     DocumentStart::Implicit(span)
                 };
                 let version = explicit
-                    .then(|| self.directive_version(span.start.line))
+                    .then(|| self.directive_version(span.start.line()))
                     .flatten();
                 self.open = Some((start, first_line, version));
             }
@@ -620,8 +620,8 @@ mod tests {
             .iter()
             .map(|d| {
                 (
-                    d.start.marker().map(|s| s.start.line),
-                    d.end.map(|s| s.start.line),
+                    d.start.marker().map(|s| s.start.line()),
+                    d.end.map(|s| s.start.line()),
                     d.first_line,
                 )
             })
@@ -710,22 +710,22 @@ mod tests {
         assert_eq!(comments.len(), 1);
         assert_eq!(comments[0].text, " c");
         // Coordinates refer to the text of the context, the BOM included
-        assert_eq!(comments[0].span.start.offset, 3);
+        assert_eq!(comments[0].span.start.offset(), 3);
         assert_eq!(
-            &source[comments[0].span.start.offset..comments[0].span.end.offset],
+            &source[comments[0].span.start.offset()..comments[0].span.end.offset()],
             "# c"
         );
 
         let marker = context.documents()[0].start.marker().unwrap();
-        assert_eq!((marker.start.line, marker.start.offset), (2, 7));
+        assert_eq!((marker.start.line(), marker.start.offset()), (2, 7));
 
         let repeats = context.key_repeats();
         assert_eq!(repeats.len(), 1);
         assert_eq!(
-            &source[repeats[0].span.start.offset..repeats[0].span.end.offset],
+            &source[repeats[0].span.start.offset()..repeats[0].span.end.offset()],
             "a"
         );
-        assert_eq!(repeats[0].span.start.line, 4);
+        assert_eq!(repeats[0].span.start.line(), 4);
     }
 
     #[test]
@@ -734,12 +734,12 @@ mod tests {
         let context = LintContext::new(source);
         let comment = context.comments()[0];
         assert_eq!(
-            &source[comment.span.start.offset..comment.span.end.offset],
+            &source[comment.span.start.offset()..comment.span.end.offset()],
             "# c"
         );
         let repeat = &context.key_repeats()[0];
         assert_eq!(
-            &source[repeat.span.start.offset..repeat.span.end.offset],
+            &source[repeat.span.start.offset()..repeat.span.end.offset()],
             "b"
         );
     }

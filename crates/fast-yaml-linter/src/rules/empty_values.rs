@@ -375,7 +375,7 @@ mod tests {
 
         let positions: Vec<_> = diagnostics
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column))
+            .map(|d| (d.span.start.line(), d.span.start.column()))
             .collect();
         assert_eq!(positions, [(1, 2), (2, 2)]);
     }
@@ -435,11 +435,13 @@ mod tests {
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
-            diagnostics[0].span.start.line, 2,
+            diagnostics[0].span.start.line(),
+            2,
             "diagnostic must be on line 2"
         );
         assert_eq!(
-            diagnostics[0].span.start.column, 5,
+            diagnostics[0].span.start.column(),
+            5,
             "diagnostic must point right after the colon"
         );
     }
@@ -455,7 +457,8 @@ mod tests {
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
-            diagnostics[0].span.start.line, 2,
+            diagnostics[0].span.start.line(),
+            2,
             "diagnostic must be on line 2"
         );
     }
@@ -464,7 +467,7 @@ mod tests {
         EmptyValuesRule
             .diagnose(&LintContext::new(yaml), &LintConfig::new())
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column))
+            .map(|d| (d.span.start.line(), d.span.start.column()))
             .collect()
     }
 
@@ -508,7 +511,7 @@ mod tests {
         let yaml = "k: [a: ]\nm:\n";
         let diags = EmptyValuesRule.diagnose(&LintContext::new(yaml), &only_block);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].span.start.line, 2);
+        assert_eq!(diags[0].span.start.line(), 2);
     }
 
     #[test]

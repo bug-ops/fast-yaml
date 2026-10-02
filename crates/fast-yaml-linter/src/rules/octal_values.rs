@@ -412,14 +412,16 @@ mod tests {
         assert!(!diagnostics.is_empty(), "expected a diagnostic for 0o755");
         let span = diagnostics[0].span;
         assert_eq!(
-            span.start.column, 7,
+            span.start.column(),
+            7,
             "expected column 7 for octal value, got {}",
-            span.start.column
+            span.start.column()
         );
         assert_eq!(
-            span.start.offset, 6,
+            span.start.offset(),
+            6,
             "expected offset 6 for octal value, got {}",
-            span.start.offset
+            span.start.offset()
         );
     }
 
@@ -437,14 +439,16 @@ mod tests {
         assert!(!diagnostics.is_empty(), "expected a diagnostic for 0755");
         let span = diagnostics[0].span;
         assert_eq!(
-            span.start.column, 7,
+            span.start.column(),
+            7,
             "expected column 7 for octal value, got {}",
-            span.start.column
+            span.start.column()
         );
         assert_eq!(
-            span.start.offset, 6,
+            span.start.offset(),
+            6,
             "expected offset 6 for octal value, got {}",
-            span.start.offset
+            span.start.offset()
         );
     }
 }

@@ -170,7 +170,7 @@ pub(crate) fn check_flow_collection(
         Forbid::NonEmpty => {
             let message = format!("non-empty {} forbidden (forbid: non-empty)", kind.noun());
             for (open, close) in &pairs {
-                if !is_empty_collection(source, open.span.end.offset, close.span.start.offset) {
+                if !is_empty_collection(source, open.span.end.offset(), close.span.start.offset()) {
                     diagnostics.push(Finding::new(message.clone(), open.span));
                 }
             }
@@ -180,7 +180,8 @@ pub(crate) fn check_flow_collection(
     }
 
     for (open, close) in &pairs {
-        let is_empty = is_empty_collection(source, open.span.end.offset, close.span.start.offset);
+        let is_empty =
+            is_empty_collection(source, open.span.end.offset(), close.span.start.offset());
 
         let (min_spaces, max_spaces) = if is_empty {
             (
@@ -197,7 +198,7 @@ pub(crate) fn check_flow_collection(
 
         let spacing = FlowSpacing {
             source,
-            inner: open.span.end.offset..close.span.start.offset,
+            inner: open.span.end.offset()..close.span.start.offset(),
             min: min_spaces,
             max: max_spaces,
             kind,
@@ -221,7 +222,7 @@ pub fn pair_delimiters<'t>(opens: &'t [Token], closes: &'t [Token]) -> Vec<(&'t 
 
     for close in closes {
         while let Some(open) = opens.get(next_open)
-            && open.span.start.offset < close.span.start.offset
+            && open.span.start.offset() < close.span.start.offset()
         {
             stack.push(next_open);
             next_open += 1;
@@ -367,7 +368,7 @@ mod tests {
 
         let pairs = pair_delimiters(&opens, &closes);
         assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].1.span.start.offset, 10);
+        assert_eq!(pairs[0].1.span.start.offset(), 10);
     }
 
     #[test]
@@ -445,7 +446,7 @@ mod tests {
         let closes = tokenizer.find_all(TokenType::BraceClose);
         let offsets: Vec<_> = pair_delimiters(&opens, &closes)
             .iter()
-            .map(|(o, c)| (o.span.start.offset, c.span.start.offset))
+            .map(|(o, c)| (o.span.start.offset(), c.span.start.offset()))
             .collect();
         assert_eq!(offsets, [(0, 10), (4, 9), (12, 17)]);
 

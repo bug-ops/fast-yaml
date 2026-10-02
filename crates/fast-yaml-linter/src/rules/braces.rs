@@ -217,12 +217,12 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         // The opening-side diagnostic must point to the `{`, not line 1 col 1
-        let open_diag = diagnostics.iter().find(|d| d.span.start.offset > 0);
+        let open_diag = diagnostics.iter().find(|d| d.span.start.offset() > 0);
         assert!(open_diag.is_some(), "diagnostic must have non-zero offset");
         // None of the diagnostics should report line 1 col 1 (offset 0)
         for d in &diagnostics {
             assert!(
-                d.span.start.offset > 0,
+                d.span.start.offset() > 0,
                 "diagnostic at wrong location: {:?}",
                 d.span,
             );
@@ -243,8 +243,8 @@ mod tests {
         assert_eq!(diagnostics.len(), 2);
         // They must point to different locations
         assert_ne!(
-            diagnostics[0].span.start.offset,
-            diagnostics[1].span.start.offset
+            diagnostics[0].span.start.offset(),
+            diagnostics[1].span.start.offset()
         );
     }
 
@@ -314,7 +314,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
         let diagnostics = BracesRule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert_eq!(diagnostics[0].span.start.column, 4);
+        assert_eq!(diagnostics[0].span.start.column(), 4);
     }
 
     #[test]
@@ -333,7 +333,7 @@ mod tests {
         let diagnostics = BracesRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let start = diagnostics[0].span.start;
-        assert_eq!((start.column, start.offset), (4, 5));
+        assert_eq!((start.column(), start.offset()), (4, 5));
     }
 
     #[test]

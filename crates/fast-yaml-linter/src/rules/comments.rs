@@ -107,10 +107,10 @@ impl super::SourceRule for CommentsRule {
             // Check spacing from content for inline comments
             if comment.kind == CommentKind::Inline {
                 // Find the line and check spacing before '#'
-                let line_num = comment.span.start.line;
+                let line_num = comment.span.start.line();
                 let line_offset = context.source_context().get_line_offset(line_num);
                 if let Some(line) = context.source_context().get_line(line_num) {
-                    let comment_col = comment.span.start.offset - line_offset;
+                    let comment_col = comment.span.start.offset() - line_offset;
 
                     // Count spaces before '#'
                     let mut spaces_before = 0;

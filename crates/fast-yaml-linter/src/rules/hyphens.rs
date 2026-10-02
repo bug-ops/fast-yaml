@@ -252,7 +252,7 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         let found: Vec<_> = diagnostics
             .iter()
-            .map(|d| (d.span.start.line, d.span.start.column))
+            .map(|d| (d.span.start.line(), d.span.start.column()))
             .collect();
         assert_eq!(found, [(2, 2), (3, 2)]);
     }
@@ -296,7 +296,7 @@ mod tests {
         let lines: Vec<_> = rule
             .diagnose(&context, &config)
             .iter()
-            .map(|d| d.span.start.line)
+            .map(|d| d.span.start.line())
             .collect();
         assert_eq!(lines, [1]);
     }
