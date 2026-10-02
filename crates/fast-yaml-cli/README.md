@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/crates/l/fast-yaml-cli)](LICENSE)
 [![MSRV](https://img.shields.io/badge/MSRV-1.91.0-blue)](https://blog.rust-lang.org/)
 
-Fast YAML command-line processor with validation and linting. Built on [fast-yaml](https://github.com/bug-ops/fast-yaml) for high-performance YAML 1.2.2 processing.
+Fast YAML command-line processor: parse, format, lint and convert. Built on [fast-yaml](https://github.com/bug-ops/fast-yaml) for high-performance YAML 1.2.2 processing.
 
 ## Installation
 
@@ -36,7 +36,7 @@ fy --help
 ## Usage
 
 ```bash
-fy [OPTIONS] [FILE] <COMMAND>
+fy [OPTIONS] <COMMAND>
 ```
 
 ### Parse and validate
@@ -154,6 +154,8 @@ fy lint --format sarif . > results.sarif   # SARIF 2.1.0 for code scanning
 fy lint --format parsable .    # path:line:col: [level] message (code)
 ```
 
+Diagnostics can be suppressed inline with `# fy: disable [rules]`, `# fy: enable [rules]`, `# fy: disable-line [rules]` and `# fy: disable-file` (`# yamllint ...` is accepted too). `fy lint` reads `.fast-yaml.yaml` (or `--config <FILE>`, `--no-config` to skip) in yamllint style, including `extends: default|relaxed`, per-rule severity and options, `ignore` and `yaml-files`.
+
 `fy lint --max-diagnostics N` (or the `max-diagnostics` key of `.fast-yaml.yaml`) shows at most N diagnostics per file and then one `diagnostic-limit` summary whose severity is the highest of the omitted diagnostics. It limits output only: the exit code still follows every diagnostic, and the text footer counts the diagnostics shown.
 
 `parsable` prints `info` and `hint` diagnostics as `warning`, like yamllint's two levels. Report formats list files in path order. Lines and columns (and the offsets of the `syntax` diagnostic) refer to the file text with a leading byte order mark removed. A file that cannot be parsed or read is reported as a `syntax` error, and the exit code and stderr message stay the same as with `--format text`. GitHub shows at most 10 annotations per level per step. The `github` format writes `file=` as an absolute path, which the runner maps relative to the workspace.
@@ -216,7 +218,9 @@ fy parse --max-input-bytes 500MiB huge.yaml
 |--------|-------|-------------|---------|
 | `--no-color` | - | Disable colored output | - |
 | `--quiet` | `-q` | Suppress non-error output | - |
-| `--verbose` | `-v` | Enable verbose output | - |
+| `--verbose` | `-v` | Enable verbose output (conflicts with `-q`) | - |
+| `--max-input-bytes` | - | Input size limit (see above) | 100MiB |
+| `--max-scan-ahead` | - | Parser scan-ahead limit (see above) | 4MiB |
 
 ### Write Options
 
@@ -247,6 +251,7 @@ fy parse --max-input-bytes 500MiB huge.yaml
 |---------|---------|-------------|
 | `colors` | Yes | Colored terminal output |
 | `linter` | Yes | YAML linting capabilities |
+| `arena` | Yes | Arena-backed parsing in `fast-yaml-core` |
 | `all` | - | All features enabled |
 
 Build with minimal features:

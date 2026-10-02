@@ -17,9 +17,10 @@ related:
 # Feature: Python API (`fast_yaml`)
 
 > [!info] Metadata
-> **Package**: PyPI `fastyaml-rs`, import name `fast_yaml` (PyO3, abi3, Python >= 3.10, version 0.6.6)
+> **Package**: PyPI `fastyaml-rs`, import name `fast_yaml` (PyO3, abi3, Python >= 3.10, version 0.7.0)
 > **Sources of truth**: `python/src/*.rs`, `python/fast_yaml/*.py`, `python/fast_yaml/_core.pyi`, `python/tests/`
-> **Verified**: examples below were run against a wheel built from HEAD (`e5e6cfb`, plus the fixes #574, #557, #568, #531/#532) in a scratch venv. The checked-in `python/fast_yaml/_core*.so` is stale (0.6.5); always rebuild before testing.
+> **Baseline**: v0.7.0 at `dbe1f2b` (`release/v0.7.0`), reverse-specified from v0.6.6 (`e5e6cfb`) and kept in sync through #637.
+> **Verified**: examples below were run against the extension built from HEAD (`safe_load`, `ParallelConfig`, `Location`, `LintConfig` checks repeated at v0.7.0). `python/fast_yaml/_core*.so` is an untracked build output; always rebuild (`maturin develop` in a scratch venv) before testing.
 
 ## 1. Purpose and value
 
@@ -104,6 +105,12 @@ THEN   ValueError "max_depth must be between 1 and 512, got 0"
 
 GIVEN  max_depth=True or "x"
 THEN   TypeError "max_depth must be an int, not bool"
+
+GIVEN  ParallelConfig(thread_count=129)
+THEN   ValueError "thread_count must be between 0 and 128, got 129"
+
+GIVEN  lint.Location(0, 1, 0)
+THEN   ValueError "line and column are counted from 1, got 0"
 ```
 
 ### US-004 (P2): Lint from Python
@@ -181,12 +188,14 @@ AS A typed-Python user I WANT the package to ship `py.typed` and stubs SO THAT m
 | FR-014 | `lint.lint` SHALL return diagnostics sorted by location, using all default rules when `config` is `None`; `LintConfig` SHALL apply the `rules` patch first, then the keyword arguments you set (`max_line_length`: omitted keeps 80, `None` removes the limit, `bool` is a `TypeError`; `indent_size`: omitted leaves the width `consistent`, the same as `config=None` (the `indent_size` property is then `None`), and a `rules` patch can set a fixed width; the boolean options act only when `True`), then `disabled_rules`, and SHALL accept `max_line_length`, `indent_size`, `require_document_start/end`, `allow_duplicate_keys`, `disabled_rules`, `rules` (per-rule patch, same schema as the CLI config file; yamllint rule names such as `trailing-spaces` are accepted there and in `disabled_rules`; per-rule `ignore`, also via `with_rule_config`, needs the `path` argument and is relative to the process working directory), and the four limits (`max_depth`, `max_alias_bytes`, `max_input_bytes`, `max_scan_ahead`). `lint.lint(source, config=None, *, path=None)` and `Linter.lint(source, path=None)` take an optional `str` or `os.PathLike` naming the file, which per-rule `ignore` is matched against; the path is resolved only when a rule has `ignore` (a path that does not exist is resolved through its parent, an unresolvable parent raises `ValueError`); otherwise the file system is not consulted. `Diagnostic.context` is filled from the BOM-free source. | must |
 | FR-015 | `lint.Linter(config).lint(source)` SHALL give the same diagnostics as `lint.lint(source, config)`. | must |
 | FR-016 | `format_diagnostics` SHALL support `format="text"` and `"json"`; any other value raises `ValueError`. | must |
-| FR-017 | `parse_parallel` SHALL preserve document order, honor `ParallelConfig` (`thread_count` <= 128 on the shared per-process pool, `min_chunk_size`, `max_input_bytes`, `max_documents`, limits) and release the GIL while parsing. | must |
-| FR-018 | `process_files`, `format_files` and `format_files_in_place` SHALL release the GIL, never raise for a per-file failure (including `document count exceeds N`), and report it per file; `format_files_in_place` writes atomically. Files are read into memory; there is no `mmap_threshold` option. An explicit `max_scan_ahead` in `BatchConfig` is final (no scaling, no retry). | must |
+| FR-017 | `parse_parallel` SHALL preserve document order, honor `ParallelConfig` (`thread_count`: `None` auto, `0` sequential, `1..=128` a fixed pool on the shared per-process pool, out of range `ValueError` with `thread_count must be between 0 and 128, got N`; `min_chunk_size` (`max_chunk_size` is validated only), `max_input_bytes`, `max_documents`, limits) and release the GIL while parsing. | must |
+| FR-018 | `process_files`, `format_files` and `format_files_in_place` SHALL release the GIL, never raise for a per-file failure (including `document count exceeds N`), and report it per file; `format_files_in_place` writes atomically. Files are read into memory; there is no `mmap_threshold` option. An explicit `max_scan_ahead` in `BatchConfig` is final (no scaling, no retry); `BatchConfig.workers` takes the same `None`/`0`/`1..=128` range as `thread_count`. | must |
 | FR-019 | `BatchConfig` SHALL validate `indent` (1..=9), `width` (20..=1000) and the limits at construction; its builder methods (`with_workers`, `with_indent`, `with_width`, `with_sort_keys`, `with_max_depth`, `with_max_alias_bytes`, `with_max_scan_ahead`, `with_max_documents`) SHALL return a new/updated config. | should |
 | FR-020 | THE SYSTEM SHALL ship `py.typed` and a `_core.pyi` whose signatures match the runtime. | should |
 | FR-021 | WHEN the wheel is built for abi3, THE SYSTEM SHALL work on every CPython >= 3.10 without a rebuild. | must |
 | FR-022 | WHEN a key collision or merge error occurs in the Nth document (N >= 2) of a stream THE SYSTEM SHALL end the `ValueError` message with ` (document N)`; an error in the first document carries no suffix. | must |
+| FR-024 | `lint.Location(line, column, offset)` SHALL raise `ValueError` when `line` or `column` is 0 (positions are one-based), and every location a diagnostic returns SHALL hold line and column >= 1. | must |
+| FR-025 | Option validation messages SHALL share one shape, `<option> must be between N and M, got V` (`ValueError`), for limits, `indent`, `width` and worker counts; a negative or oversized int is a range error, `bool` and non-integers are `TypeError` (worker counts are an exception, see the #633 row). | should |
 | FR-023 | `safe_dump*` SHALL escape U+0085, U+2028 and U+2029 in double-quoted output (`"a\x85b"`), write a flow-style key longer than 1024 characters as `? key`, quote a scalar containing `?` in flow context (`{a: ["x?y", "?"]}`) and dump `-0.0` as `-0.0`; the output SHALL load back to the same data. | must |
 
 ## 4. Key entities
@@ -197,10 +206,10 @@ AS A typed-Python user I WANT the package to ship `py.typed` and stubs SO THAT m
 | `SafeDumper`, `Dumper` | Marker classes accepted by `dump`/`dump_all`; both behave as `SafeDumper`. |
 | `YAMLError` > `MarkedYAMLError` > `ScannerError`/`ParserError`/`ComposerError`/`ConstructorError`; `EmitterError`; `Mark` | PyYAML-named classes exported for import compatibility; see open questions on whether they are raised. |
 | `LintConfig`, `Linter`, `Diagnostic{code, severity, message, span, context, suggestions}`, `Severity` (error/warning/info/hint), `Location{line,column,offset}`, `Span{start,end}` | Lint model, mirrors the CLI JSON output. |
-| `ParallelConfig` | Thread count, chunk size, doc/size limits, `auto_tune` (affects `dump_parallel` only). |
+| `ParallelConfig` | Thread count (`Workers`: auto, sequential, fixed 1..=128), `min_chunk_size`, `max_chunk_size` (validated, then discarded), doc/size limits, `auto_tune` (affects `dump_parallel` only). |
 | `BatchConfig`, `BatchResult{total, success, changed, failed, duration_ms; is_success(), files_per_second(), errors()}`, `FileResult`, `FileOutcome` | Batch model; `errors()` is a method returning `list[tuple[path, message]]`. |
 
-Python version policy: `requires-python >=3.10`; large-int conversion respects `sys.get_int_max_str_digits()`.
+Python version policy: `requires-python >=3.10` (the supported-versions policy is open, see X-15); large-int conversion respects `sys.get_int_max_str_digits()`.
 
 ## 5. Edge cases
 
@@ -257,10 +266,11 @@ Python version policy: `requires-python >=3.10`; large-int conversion respects `
 
 | Topic | Current behavior (verified) | Question |
 |-------|------------------------------|----------|
-| Exception types (GAP-PY-002) | Every parse/dump error is a plain `ValueError`; `YAMLError` and subclasses exist but are never raised; `Mark` never attached; `isinstance(ValueError(), YAMLError)` is False; stub documents `problem_mark` etc. | [NEEDS CLARIFICATION] Raise typed PyYAML-compatible errors with marks (and make them `ValueError` subclasses for backward compat), or declare `ValueError` the contract and trim stubs/tests? (OQ-09) **Proposed:** raise typed exceptions with marks; one error-code table for Node. |
-| `width`, `allow_unicode` (GAP-PY-006) | Validated but ignored by the emitter (`allow_unicode=False` does not escape) | [NEEDS CLARIFICATION] Implement or remove (OQ-01); cross-surface **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
-| Batch `sort_keys` (GAP-PY-015) | Accepted, stored, never applied | [NEEDS CLARIFICATION] Implement or remove (OQ-02) **Proposed:** preserve order by default, sorting opt-in. |
-| Comment loss in `format_files*` (GAP-PY-014) | Comments are silently stripped, including in place; CLI refuses without `--strip-comments` | [NEEDS CLARIFICATION] Mirror the CLI policy with a `strip_comments` option, default refuse? (OQ-03) **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
+| Exception types (GAP-PY-002) | Every parse/dump error is a plain `ValueError`; `YAMLError` and subclasses exist but are never raised; `Mark` never attached; `isinstance(ValueError(), YAMLError)` is False; stub documents `problem_mark` etc. | [NEEDS CLARIFICATION] Raise typed PyYAML-compatible errors with marks (and make them `ValueError` subclasses for backward compat), or declare `ValueError` the contract and trim stubs/tests? (X-13) **Proposed:** raise typed exceptions with marks; one error-code table for Node. |
+| `width`, `allow_unicode`, `default_flow_style` (GAP-PY-006, #639) | `width` is validated and `allow_unicode` accepted, but the emitter ignores both (`allow_unicode=False` does not escape; verified at v0.7.0); the native `default_flow_style` is `Option<bool>` with two equal states (`None`, `False`) | [NEEDS CLARIFICATION] Implement or remove (X-9); cross-surface **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
+| Batch `sort_keys` (GAP-PY-015, #639) | Accepted, stored, never applied by `format_files*` | [NEEDS CLARIFICATION] Implement or remove (X-9) **Proposed:** preserve order by default, sorting opt-in. |
+| `sort_keys` implemented twice (#640) | `safe_dump` sorts in the Python binding with its own copy of the logic, and the Node binding has another; the copies diverged and integer keys sort as text | Move the sort into the core, with numeric ordering for integer keys |
+| Comment loss in `format_files*` (GAP-PY-014) | Comments are silently stripped, including in place; CLI refuses without `--strip-comments` | [NEEDS CLARIFICATION] Mirror the CLI policy with a `strip_comments` option, default refuse? (X-10) **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
 | Bytes and datetimes on dump (GAP-PY-003) | `bytes` become an int list, `date`/`datetime` raise `TypeError`; PyYAML emits `!!binary`/timestamps | [NEEDS CLARIFICATION] Policy for `bytes` (reject vs `!!binary`) and timestamps |
 | Loader size cap (GAP-PY-021) | `safe_load*` and `load*` have no `max_input_bytes`; fixed 100 MiB | Add keyword? |
 | `max_documents` on dump paths | `dump`, `dump_all`, `safe_dump*` take no `max_documents`; `dump_parallel` honors `ParallelConfig.max_documents` ("cannot serialize to YAML: document count exceeds N") | [NEEDS CLARIFICATION: add to the dump functions?] |
@@ -268,13 +278,17 @@ Python version policy: `requires-python >=3.10`; large-int conversion respects `
 | Lint formats (GAP-PY-013) | Only `text`/`json`; CLI also has github, sarif, parsable | Expose the CI formats? |
 | Public batch module (GAP-PY-008) | Only reachable via `fast_yaml._core.batch`; `dump_parallel` only via `_core.parallel` | Promote to `fast_yaml.batch` / `fast_yaml.parallel.dump_parallel`? |
 | Unhashable value types (GAP-PY-010) | `Location`/`Span` define `__eq__` without `__hash__` | Make hashable/frozen |
-| Tab after colon (GAP-PY-019) | `safe_load("a:\t1")` raises ValueError (core scanner) | Core decision (OQ-07) **Proposed:** document as a known limitation and track upstream. |
+| Tab after colon (GAP-PY-019) | `safe_load("a:\t1")` raises ValueError (core scanner; verified at v0.7.0) | Core decision (X-12) **Proposed:** document as a known limitation and track upstream. |
 | Duplicate keys and `%YAML` (GAP-core-parse-004/005) | `safe_load` accepts duplicate keys (first position, last value) and `%YAML 2.0` silently | [NEEDS CLARIFICATION: strict option for loaders?] **Proposed:** opt-in strict loader; keep lint as the default reporter. |
 | Non-UTF-8 bytes (GAP-PY-012) | UTF-16 bytes raise `UnicodeDecodeError` | Document or sniff BOM |
-| Performance claims (GAP-PY-016) | README claims 5-10x (loader) and 3-6x (parallel); no Python benchmark in repo | Which claims are contractual? (OQ-12) **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
+| Performance claims (GAP-PY-016) | README claims 5-10x (loader) and 3-6x (parallel); no Python benchmark in repo | Which claims are contractual? (X-15) **Proposed:** add a reproducible benchmark before keeping speed claims. |
 | Docstring drift (GAP-PY-018) | `help(_core.safe_load)` still says repeated `<<` keeps the last value; actual behavior is an error | Fix docstrings |
-| Python versions | CI exercises a subset of 3.10-3.14 | Confirm support policy (OQ-12) **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
-| Stale prebuilt artifact | `python/fast_yaml/_core*.so` in the working tree is older than HEAD | Rebuild before any parity check |
+| Python versions | CI exercises a subset of 3.10-3.14 | [NEEDS CLARIFICATION] Confirm the supported-versions policy (X-15) **Proposed:** support the latest minors and test the oldest and newest in CI. |
+| Negative worker counts (#633) | `ParallelConfig(thread_count=-1)` and `BatchConfig(workers=-1)` raise `OverflowError` ("can't convert negative int to unsigned") from the `Option<usize>` extraction, while 129 raises `ValueError` (verified at v0.7.0) | Extract through the shared `extract_usize` path so every out-of-range value is a `ValueError` |
+| `ParallelConfig` leftovers (#627) | `max_chunk_size` is validated and then discarded (also `with_max_chunk_size`); `auto_tune` is a `bool` beside the `Workers` value; `safe_dump_to` clamps `chunk_size` to 1 KiB..1 MiB without error | Remove or apply `max_chunk_size`, fold `auto_tune` into the worker type, reject an out-of-range `chunk_size` |
+| Batch result shape (#641) | `FileResult` carries an outcome plus an optional error string, so contradictory states are representable; errors lose their kind (`errors()` yields `(path, message)`), and paths are lossy strings | One tagged result per file with the error kind and the raw path |
+| `max_line_length` range | `LintConfig(max_line_length=...)` accepts any positive int, while the CLI and Node.js cap it at 4294967295 | Align the upper bound with the other surfaces |
+| Prebuilt artifact | `python/fast_yaml/_core*.so` is an untracked build output and may predate HEAD | Rebuild before any parity check |
 
 ## 10. Parity with CLI / core
 

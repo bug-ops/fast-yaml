@@ -17,7 +17,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: crate `fast-yaml-cli`, binary `fy`, cross-command behaviour (flags, input and output conventions, exit codes, channels, feature flags). Per-command semantics live in the parse, format, convert and lint specs; batch discovery lives in [[005-batch-parallel/spec|005]].
-> **Baseline**: v0.6.6 on `main` (e5e6cfb), verified with `target/debug/fy`, plus the fixes #569/#575 (`lint -o`, closed pipes), #571 (`.yamllint`), #574 (`--max-documents`) and #581 (`-j`).
+> **Baseline**: v0.7.0 at HEAD dbe1f2b (`release/v0.7.0`), verified with `target/debug/fy` built from HEAD. Reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637, including #569/#575 (`lint -o`, closed pipes), #571 (`.yamllint`), #574 (`--max-documents`), #581 (`-j`), #611 (flag scoping), #628 (exit-code enum) and #610 (`-j` range 0..=128).
 
 ## 1. Purpose and value
 
@@ -279,6 +279,11 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | 13 | Single explicit non-YAML file accepted (P4, GAP-CLI-026) | `fy format -n a.txt` works; in a batch it errors on include patterns. | Make consistent? |
 | 14 | `--width` | Validated by `fy format` but never applied; help promises wrapping | [NEEDS CLARIFICATION: implement or remove] **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
 | 15 | `.yamllint` target (P4) | `.yamllint` is a default target of `fy lint` only (also for hidden-file skipping); `fy format` skips it. It is linted as YAML, never read as configuration. | accept |
+| 16 | `--pretty` and `--allow-duplicate-keys` swallow a positional (P3, #632) | Both take an optional value, so `fy convert yaml --pretty ok.yaml` fails with `invalid value 'ok.yaml' for '--pretty [<PRETTY>]'` (verified). | Make them value-less or require `=`. |
+| 17 | Discovery drops per-file errors (P2, #629) | Walk and glob errors on single entries are neither printed nor traced. | See [[005-batch-parallel/spec]] item 17. |
+| 18 | Debug events print paths raw (P4, #624) | `RUST_LOG` events print discovered paths without `DisplayPath`, so a newline in a name forges a log line; the human output is escaped (FR-042). | Render through `DisplayPath`. |
+| 19 | CLI config plumbing (P3, #643) | `lint` carries a dead formatter-indent branch, every subcommand carries a `FormatterConfig`, and several constructors take positional bools. | Remove the dead branch; scope the config to `format`; replace bools with enums (Principle 1). |
+| 20 | Python worker counts (P3, #633) | Negative `workers` / `thread_count` raise `OverflowError`, not `ValueError`, unlike the CLI usage error. | See [[007-python-api/spec]]. |
 
 ## 9. See also
 

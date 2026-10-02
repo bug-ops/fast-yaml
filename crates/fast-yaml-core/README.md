@@ -6,7 +6,7 @@
 [![MSRV](https://img.shields.io/crates/msrv/fast-yaml-core)](https://github.com/bug-ops/fast-yaml)
 [![License](https://img.shields.io/crates/l/fast-yaml-core)](LICENSE-MIT)
 
-Core YAML 1.2.2 parser and emitter for the fast-yaml ecosystem.
+Core YAML 1.2.2 parser and emitter for the fast-yaml ecosystem. `Value` is a fully resolved, owned type (null, bool, int, big int, float, string, sequence, `Mapping`, `Set`), and parse limits (nesting depth, alias expansion, scan-ahead, input size, document count) are enforced by default.
 
 > [!NOTE]
 > This crate provides three distinct components: **Parser** (YAML → data), **Emitter** (data → YAML), and **Streaming Formatter** (events → YAML, no DOM).
@@ -49,9 +49,9 @@ Core YAML 1.2.2 parser and emitter for the fast-yaml ecosystem.
 **Data flow**: `Parser events → YAML text` (zero-copy)
 
 **Advantages**:
-- ⚡ 2-3x faster than parse + emit
-- 📉 O(1) memory vs O(n) for DOM
-- 🎯 Ideal for batch operations
+- 2-3x faster than parse + emit
+- O(1) memory vs O(n) for DOM
+- Ideal for batch operations
 
 > [!TIP]
 > Use **Streaming Formatter** for CLI batch mode formatting. Use **Parser + Emitter** when you need to modify YAML data.
@@ -62,7 +62,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fast-yaml-core = "0.3"
+fast-yaml-core = "0.7"
 ```
 
 Or with cargo-add:
@@ -79,21 +79,22 @@ cargo add fast-yaml-core
 ### Parser: YAML → Data Structures
 
 ```rust
-use fast_yaml_core::{Parser, Value};
+use fast_yaml_core::Parser;
 
-// Parse single document
+// Parse single document (`None` for an empty stream)
 let yaml = "name: test\nvalue: 123";
 let doc = Parser::parse_str(yaml)?;
 
 // Parse multiple documents
 let yaml = "---\nfoo: 1\n---\nbar: 2";
-let docs = Parser::parse_all_str(yaml)?;
+let docs = Parser::parse_all(yaml)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ### Emitter: Data Structures → YAML
 
 ```rust
+use fast_yaml_core::limits::{Indent, Width};
 use fast_yaml_core::{Emitter, EmitterConfig, Value};
 
 // Basic emission
@@ -102,11 +103,10 @@ let yaml = Emitter::emit_str(&value)?;
 
 // Custom configuration
 let config = EmitterConfig::new()
-    .with_indent(4)
-    .with_width(120)
+    .with_indent(Indent::new(4)?)
+    .with_width(Width::new(120)?)
     .with_explicit_start(true);
-let emitter = Emitter::new(config);
-let yaml = emitter.emit_str(&value)?;
+let yaml = Emitter::emit_str_with_config(&value, &config)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -131,8 +131,8 @@ This library implements the YAML 1.2.2 specification with the Core Schema:
 | Type | Supported Values |
 |------|------------------|
 | Null | `~`, `null`, empty |
-| Boolean | `true`/`false` (lowercase only per YAML 1.2 Core Schema) |
-| Integer | Decimal, `0o` octal, `0x` hex |
+| Boolean | `true`/`false` (also `True`/`TRUE`, per the YAML 1.2 Core Schema) |
+| Integer | Decimal, `0o` octal, `0x` hex; values beyond `i64` are kept exact as `BigInt` |
 | Float | Standard, `.inf`, `-.inf`, `.nan` |
 | String | Plain, single/double-quoted, literal (`\|`), folded (`>`) |
 
@@ -147,7 +147,7 @@ This library implements the YAML 1.2.2 specification with the Core Schema:
 
 ```toml
 # Enable arena allocation
-fast-yaml-core = { version = "0.6", features = ["arena"] }
+fast-yaml-core = { version = "0.7", features = ["arena"] }
 ```
 
 > [!TIP]

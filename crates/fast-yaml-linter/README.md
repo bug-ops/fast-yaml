@@ -17,11 +17,11 @@ YAML linter with rich diagnostics for the fast-yaml ecosystem.
 
 **Data flow**: `YAML text → Vec<Diagnostic>`
 
-**Built-in rules** (21 total):
+**Built-in rules** (25 total, including `lint-directive`):
 - `duplicate-key` — Detect duplicate keys in mappings
 - `line-length` — Enforce maximum line length
 - `trailing-whitespace` — Detect trailing whitespace
-- And 18 more...
+- And 22 more, see [Built-in Rules](#built-in-rules)
 
 ### Diagnostic Formatters
 
@@ -73,12 +73,12 @@ let output = formatter.format(Findings::FromSource { diagnostics: &diagnostics, 
 
 // Step 4: Display output
 println!("{}", output);
-// Output:
-// error[duplicate-key]: duplicate key 'name' found
+// Output (among other findings):
+// error[duplicate-key]: duplicate key 'name' (first defined at line 2)
 //   --> input:4:1
 //    |
-//  4 | name: duplicate
-//    | ^^^^ duplicate key defined here
+//  4 | name: duplicate  # Error: duplicate key
+//    | ^^^^
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
@@ -127,7 +127,7 @@ linter.add_rule(Rule::Source(Box::new(NoTodo(CustomRuleCode::new("no-todo")?))))
 > Python bindings are available through the `fastyaml-rs` package on PyPI.
 
 ```python
-from fast_yaml._core.lint import lint, Linter, LintConfig, TextFormatter, Severity
+from fast_yaml.lint import lint, Linter, LintConfig, TextFormatter, Severity
 
 # Quick lint
 diagnostics = lint("key: value\nkey: duplicate")
@@ -158,7 +158,7 @@ Severity.HINT     # Suggestions
 
 ## Built-in Rules
 
-The linter includes 21+ rules covering syntax, style, and best practices:
+The linter includes 25 rules covering syntax, style, and best practices:
 
 **Document Structure:**
 - `document-start` — Enforce `---` document start marker
@@ -166,7 +166,7 @@ The linter includes 21+ rules covering syntax, style, and best practices:
 - `new-line-at-end-of-file` — Require newline at EOF
 
 **Keys and Values:**
-- `duplicate-keys` — Detect duplicate keys (ERROR)
+- `duplicate-key` — Detect duplicate keys (ERROR)
 - `empty-values` — Flag empty values
 - `key-ordering` — Enforce alphabetical key ordering
 
@@ -195,7 +195,7 @@ The linter includes 21+ rules covering syntax, style, and best practices:
 - `comments-indentation` — Comment indentation
 
 **Anchors & Aliases:**
-- `invalid-anchors` — Validate anchor/alias usage
+- `invalid-anchor` — Validate anchor/alias usage
 
 **Directives:**
 - `lint-directive` — Invalid inline directive (unknown rule or verb, misplaced `disable-file`); config-only, cannot be suppressed by a directive
@@ -378,7 +378,7 @@ falling back to the rule's `default_severity`.
 ### Python
 
 ```python
-from fast_yaml._core.lint import LintConfig, Linter
+from fast_yaml.lint import LintConfig, Linter
 
 config = LintConfig(
     max_line_length=120,
@@ -408,7 +408,7 @@ let output = formatter.format(Findings::FromSource { diagnostics: &diagnostics, 
 
 **Output**:
 ```
-error[duplicate-key]: duplicate key 'name' found
+error[duplicate-key]: duplicate key 'name' (first defined at line 3)
   --> example.yaml:10:5
    |
 10 | name: value
@@ -431,7 +431,7 @@ let json = formatter.format(Findings::FromSource { diagnostics: &diagnostics, so
   {
     "code": "duplicate-key",
     "severity": "error",
-    "message": "duplicate key 'name' found",
+    "message": "duplicate key 'name' (first defined at line 3)",
     "span": {
       "start": { "line": 10, "column": 5, "offset": 145 },
       "end": { "line": 10, "column": 9, "offset": 149 }
@@ -462,6 +462,8 @@ Files are always named by absolute path (`ReportPath` strips Windows `\\?\` pref
 |---------|-------------|
 | `default` | No additional features |
 | `json-output` | Enable JSON formatter |
+| `sarif-output` | Enable `ReportFormat::Sarif` (SARIF 2.1.0) |
+| `all-formats` | Enable `json-output` and `sarif-output` |
 
 ## Diagnostic Types
 

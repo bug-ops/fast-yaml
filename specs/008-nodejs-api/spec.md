@@ -17,9 +17,10 @@ related:
 # Feature: Node.js API (`fastyaml-rs`)
 
 > [!info] Metadata
-> **Package**: npm `fastyaml-rs` (napi-rs, Node >= 22, version 0.6.6), typings in `nodejs/index.d.ts` and `nodejs/lint-rules.d.ts`
+> **Package**: npm `fastyaml-rs` (napi-rs, Node >= 22, version 0.7.0), typings in `nodejs/index.d.ts` and `nodejs/lint-rules.d.ts`
 > **Sources of truth**: `nodejs/src/*.rs`, `nodejs/index.d.ts`, `nodejs/__test__/*.spec.ts`
-> **Verified**: examples were run against a binary built from HEAD (`e5e6cfb`, plus the fixes #574, #557, #566, #567, #531/#532) in a scratch target dir. The checked-in `nodejs/*.node` is stale; rebuild before testing. JSDoc examples that import `@fast-yaml/core` are wrong; the package name is `fastyaml-rs`.
+> **Baseline**: v0.7.0 at `dbe1f2b` (`release/v0.7.0`), reverse-specified from v0.6.6 (`e5e6cfb`) and kept in sync through #637.
+> **Verified**: examples were run against the `.node` binary built from HEAD (`safeLoad`, `parseParallel`, `lint`, `processFiles` checks repeated at v0.7.0). `nodejs/*.node` is an untracked build output; always rebuild before testing. JSDoc examples that import `@fast-yaml/core` are wrong; the package name is `fastyaml-rs`.
 
 ## 1. Purpose and value
 
@@ -72,6 +73,8 @@ GIVEN  safeLoad('[[[[1]]]]', { maxDepth: 2 })   THEN throws "... nesting depth e
 GIVEN  safeLoad('a: 1', { maxDepth: 0 })        THEN throws "maxDepth must be between 1 and 512, got 0"
 GIVEN  safeLoad('a: 1', { maxDepth: 'x' })      THEN throws (NumberExpected, napi type error)
 GIVEN  an object that references itself         THEN safeDump throws "nesting depth exceeds 256 (circular reference?)"
+GIVEN  parseParallel(src, { threadCount: 129 })  THEN throws (InvalidArg) "threadCount must be between 0 and 128, got 129"
+GIVEN  lint('a: 1', { maxLineLength: 0 })        THEN throws (InvalidArg) "maxLineLength must be between 1 and 4294967295, got 0"
 GIVEN  "? [a]\n: 1"                             THEN throws "complex keys ... not supported as JavaScript object keys"
 GIVEN  a source containing NUL                  THEN throws "NUL (U+0000) is not allowed in YAML"
 ```
@@ -131,37 +134,41 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | FR-006 | `safeDump*` SHALL accept `sortKeys`, `allowUnicode`, `indent` (1..=9, default 2), `width` (20..=1000), `defaultFlowStyle`, `explicitStart`; invalid values throw `InvalidArg`. | must |
 | FR-007 | WHEN dumping strings that resolve to non-strings under YAML 1.1/1.2 (`yes`, `null`, `1`, `a: b`), THE SYSTEM SHALL quote them. | must |
 | FR-008 | WHEN a value cannot be represented (function, `Buffer`/typed array, circular reference, depth over 256), THE SYSTEM SHALL throw rather than emit lossy YAML. | must |
-| FR-009 | `lint`/`Linter.lint` SHALL accept `LintConfig` (`maxLineLength`, `indentSize`, `requireDocumentStart/End`, `allowDuplicateKeys`, `disabledRules`, `rules`, limits) and return `Diagnostic[]` sorted by location; unknown rule names or rule options in `rules` SHALL throw, yamllint rule names (`trailing-spaces`, `key-duplicates`, `anchors`) are accepted in `rules` and `disabledRules`, and `indentation` takes `spaces`, `indent-sequences` and `check-multi-line-strings`. `lint(source, config?, path?)` and `linter.lint(source, path?)` take an optional file path for per-rule `ignore` (relative to the process working directory; resolved only when a rule has `ignore`, through its parent when missing, and an unresolvable parent throws only then). The `rules` patch is applied first, then `maxLineLength`, `indentSize`, `requireDocument*`, `allowDuplicateKeys`, then `disabledRules`. `context` is filled from the BOM-free source. | must |
+| FR-009 | `lint`/`Linter.lint` SHALL accept `LintConfig` (`maxLineLength` 1..=4294967295, `indentSize` within the typed indentation range; an out-of-range value throws `InvalidArg` with `<name> must be between N and M, got V`, `requireDocumentStart/End`, `allowDuplicateKeys`, `disabledRules`, `rules`, limits) and return `Diagnostic[]` sorted by location; unknown rule names or rule options in `rules` SHALL throw, yamllint rule names (`trailing-spaces`, `key-duplicates`, `anchors`) are accepted in `rules` and `disabledRules`, and `indentation` takes `spaces`, `indent-sequences` and `check-multi-line-strings`. `lint(source, config?, path?)` and `linter.lint(source, path?)` take an optional file path for per-rule `ignore` (relative to the process working directory; resolved only when a rule has `ignore`, through its parent when missing, and an unresolvable parent throws only then). The `rules` patch is applied first, then `maxLineLength`, `indentSize`, `requireDocument*`, `allowDuplicateKeys`, then `disabledRules`. `context` is filled from the BOM-free source. | must |
 | FR-010 | `Linter.withAllRules()` SHALL create a linter with the full default rule set. | should |
-| FR-011 | `parseParallel`/`parseParallelAsync` SHALL preserve document order, run on the shared per-process pool, honor `ParallelConfig` (`threadCount`, `minChunkSize`, `maxInputBytes`, `maxDocuments`, limits) and fall back to sequential parsing for single documents. | must |
-| FR-012 | `processFiles`/`formatFiles`/`formatFilesInPlace` SHALL never throw for a per-file failure (including `document count exceeds N`); they SHALL report it in `errors` / per-file `error`. `formatFilesInPlace` SHALL write atomically. Files are read into memory; `BatchConfig.mmapThreshold` no longer exists. An explicit `maxScanAhead` is final (no scaling, no retry). | must |
+| FR-011 | `parseParallel`/`parseParallelAsync` SHALL preserve document order, run on the shared per-process pool, honor `ParallelConfig` (`threadCount`: omitted is auto, `0` sequential, `1..=128` a fixed pool; `minChunkSize`, `maxInputBytes`, `maxDocuments`, limits; `maxChunkSize` no longer exists and is ignored as an unknown key) and fall back to sequential parsing for single documents. | must |
+| FR-012 | `processFiles`/`formatFiles`/`formatFilesInPlace` SHALL never throw for a per-file failure (including `document count exceeds N`); they SHALL report it in `errors` / per-file `error`. `formatFilesInPlace` SHALL write atomically. Files are read into memory; `BatchConfig.mmapThreshold` no longer exists; `workers` takes the same `0..=128` range as `threadCount`. An explicit `maxScanAhead` is final (no scaling, no retry). | must |
 | FR-013 | `BatchConfig`/`ParallelConfig` renamed option `maxInputSize` SHALL throw with a message pointing to `maxInputBytes`. | must |
-| FR-014 | `version()` SHALL return the package version string (`"0.6.6"`). | must |
+| FR-014 | `version()` SHALL return the package version string (`"0.7.0"`). | must |
 | FR-015 | The shipped `index.d.ts` SHALL describe the runtime: every option name, nullability, and return element type. | should |
 | FR-016 | The package SHALL load a prebuilt platform binary and fail with a clear error where none exists. | must |
 | FR-017 | `safeDump*` SHALL dump a `BigInt` as a YAML integer (`5n` is `5`, `2n ** 70n` is `1180591620717411303424`), `-0` as `-0.0`, a `Set` as `!!set` with null members and a `Map` as a mapping; a `Set` or `Map` subclass SHALL be recognized by its built-in brand (also across realms), not by an overridden `Symbol.toStringTag`; an object that only claims the tag SHALL fail with `incompatible receiver`. | must |
 | FR-018 | `safeLoad*` SHALL name a float mapping key like `String(number)` (`1e21` is `"1e+21"`, `.inf` is `"Infinity"`, `-0.0` is `"0"`), and key-collision errors SHALL spell it the same way. | must |
+| FR-020 | WHEN a numeric option (`indent`, `width`, `workers`, `threadCount`, limits, `maxLineLength`, `indentSize`, `sequentialThreshold`) is `NaN`, infinite, fractional, negative or out of range, THE SYSTEM SHALL throw `InvalidArg` with the shared message `<name> must be between N and M, got V` instead of wrapping or clamping; `null` throws `NumberExpected`. | must |
+| FR-021 | WHEN Rust code panics inside an exported function (`safeLoad*`, `safeDump*`, `lint`, `Linter`, batch and parallel entry points), THE SYSTEM SHALL surface a catchable JavaScript error (`catch_unwind` at the N-API boundary) and not abort the process. | must |
+| FR-022 | `safeDump*` SHALL bound conversion of host values by a dump budget (100 MiB of emitted text and 16 Mi nodes per call), so a shared-reference expansion throws instead of exhausting memory; dump failures throw rather than return partial text. | must |
 | FR-019 | `safeDump*` SHALL escape U+0085, U+2028 and U+2029 in double-quoted output, write a flow-style key longer than 1024 characters as `? key` and quote a scalar containing `?` in flow context, and the output SHALL load back to the same data. | must |
 
 ## 4. Key entities
 
 | Entity | Notes |
 |--------|-------|
-| `LoadOptions` | `schema`, `filename`, `allowDuplicateKeys` (accepted for compatibility, no effect), `maxDepth`, `maxAliasBytes`, `maxScanAhead` |
+| `LoadOptions` | `schema`, `filename`, `allowDuplicateKeys` (accepted for compatibility, no effect), `maxDepth`, `maxAliasBytes`, `maxScanAhead`, `maxDocuments` |
 | `DumpOptions` | `sortKeys`, `allowUnicode` (no effect), `indent`, `width` (validated, no effect), `defaultFlowStyle`, `explicitStart` |
+| `BatchConfig` | `workers`, `maxInputBytes`, `sequentialThreshold`, `indent`, `width` (no effect), `sortKeys` (no effect), `maxDepth`, `maxAliasBytes`, `maxScanAhead`, `maxDocuments` |
 | `LintConfig` + `LintRulesConfig` | Rule patch typed by `lint-rules.d.ts` (kebab-case rule names and option keys, same as the CLI config file) |
 | `Diagnostic` | `code`, `severity`, `message`, `span{start,end}{line,column,offset}`, `context?`, `suggestions[]` |
 | `BatchConfig` / `BatchResult` / `BatchError` | Result shape `{ total, success, changed, failed, durationMs, errors[] }` |
 | `FormatResult` | `{ path, content?, error? }` |
 | `Mark` | Constructible position holder (`new Mark(name, line, column)`, `toString()` gives `name:line:column`); not attached to any thrown error |
-| Number model | JS `number` is an IEEE double: integers above 2^53 lose precision; integers beyond i64 load as strings |
+| Number model | JS `number` is an IEEE double: integers above 2^53 lose precision; integers beyond i64, decimal, hex or octal, load as exact decimal strings |
 
 ## 5. Edge cases
 
 | Scenario | Expected behavior |
 |----------|-------------------|
 | `safeLoad('9007199254740993')` | `9007199254740992` (precision loss); see open questions |
-| `safeLoad('9223372036854775808')` | string `'9223372036854775808'` |
+| `safeLoad('9223372036854775808')`, `safeLoad('0x1ffffffffffffffffff')` | strings `'9223372036854775808'`, `'9444732965739290427391'` (exact) |
 | `.inf`, `.nan`, `-.inf` | load as `Infinity`, `NaN`, `-Infinity` (JSON.stringify shows `null`) |
 | `safeDump([Infinity, NaN, -0, undefined])` | `- .inf\n- .nan\n- -0.0\n- ~\n` |
 | `safeDump(5n)`, `safeDump(2n ** 70n)` | `5\n`, `1180591620717411303424\n` |
@@ -172,6 +179,7 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | UTF-8 BOM prefix | stripped |
 | Options object with unknown keys | ignored (see open questions) |
 | `null` for numeric options (`workers`, `width`) | throws `NumberExpected`; omit the key instead |
+| `parseParallel(src, { maxChunkSize: 5 })` | loads normally; the removed option is ignored |
 | 100,001 documents via `safeLoadAll` | throws `document count exceeds 100000`; 100,000 load |
 | `a:\t1` | rejected by the core scanner |
 
@@ -211,21 +219,24 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 
 | Topic | Current behavior (verified) | Question |
 |-------|------------------------------|----------|
-| Large integers (GAP-NODE-001) | Above 2^53 silently rounded to a double; beyond i64 returned as string | [NEEDS CLARIFICATION] `bigint`, string, or keep `number` with documentation? (OQ-10) **Proposed:** `bigint` for integers outside the safe range. |
-| Comment loss in `formatFiles*` (GAP-NODE-011) | Comments are silently stripped, also in place; the CLI refuses without `--strip-comments` | [NEEDS CLARIFICATION] Mirror CLI policy by default? (OQ-03) **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
-| `width`, `allowUnicode`, `sortKeys` in `BatchConfig` (GAP-NODE-002/012) | Accepted, validated, never applied by emitter/formatter | [NEEDS CLARIFICATION] Implement or remove (OQ-01, OQ-02) **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. For `sortKeys`: preserve order by default, sorting opt-in. |
-| `allowDuplicateKeys`, `schema`, `filename` (GAP-NODE-006) | Accepted, ignored; duplicates always collapse (first position, last value) | Throw for `allowDuplicateKeys: false` (js-yaml-like), or remove the options? (OQ-06) **Proposed:** opt-in strict loader; keep lint as the default reporter. |
-| Error `code` and marks (GAP-NODE-005/008) | Loader/limit errors have no `code`; dump/lint use `GenericFailure`/`InvalidArg`; `Mark` is never attached to errors | Define an error contract (class, `code`, `line`, `column`) **Proposed:** raise typed exceptions with marks; one error-code table for Node. |
+| Large integers (GAP-NODE-001) | Above 2^53 and within i64 silently rounded to a double; beyond i64 (any radix) returned as an exact decimal string | [NEEDS CLARIFICATION] `bigint`, string, or keep `number` with documentation? (X-14) **Proposed:** `bigint` for integers outside the safe range. |
+| Comment loss in `formatFiles*` (GAP-NODE-011) | Comments are silently stripped, also in place; the CLI refuses without `--strip-comments` | [NEEDS CLARIFICATION] Mirror CLI policy by default? (X-10) **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
+| `width`, `allowUnicode` in `DumpOptions`, `width` and `sortKeys` in `BatchConfig` (GAP-NODE-002/012, #639) | Accepted, validated, never applied by emitter/formatter; `safeDump*` `sortKeys` is applied (its own copy of the sort, see the `sortKeys` row) | [NEEDS CLARIFICATION] Implement or remove (X-9) **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. For `sortKeys`: preserve order by default, sorting opt-in. |
+| `allowDuplicateKeys`, `schema`, `filename` (GAP-NODE-006) | Accepted, ignored; duplicates always collapse (first position, last value) | Throw for `allowDuplicateKeys: false` (js-yaml-like), or remove the options? (X-11) **Proposed:** opt-in strict loader; keep lint as the default reporter. |
+| Error `code` and marks (GAP-NODE-005/008) | Loader/limit errors have no `code`; dump/lint use `GenericFailure`; option validation uses `InvalidArg`; `Mark` is never attached to errors | [NEEDS CLARIFICATION] Define an error contract (class, `code`, `line`, `column`) (X-13) **Proposed:** raise typed exceptions with marks; one error-code table for Node. |
 | `safeDumpAll` leading marker (GAP-NODE-004) | No leading `---` (`'a: 1\n---\nb: 2\n'`); JSDoc/README show one | Fix docs or output |
 | `load`/`dump` aliases (GAP-NODE-013) | README mentions `dump`/`dumpAll` and `SAFE_SCHEMA`; neither exists | Add aliases or fix README |
 | Uneven limits (GAP-NODE-017) | `safeLoad*` has no `maxInputBytes`; `safeDump*` have no `maxDocuments` | Add the missing keywords |
 | Unknown option keys (GAP-NODE-007) | Silently ignored on `LintConfig`, `BatchConfig`, `ParallelConfig` | Reject like `rules` entries? |
 | Sync batch API (GAP-NODE-021) | `processFiles`/`formatFiles*` block the event loop | Provide `*Async` variants? |
 | Typings drift (GAP-NODE-009/019/020) | `lint-rules.d.ts` lacks `lint-directive`; `parseParallelAsync` typed `Promise<unknown>`; `const enum` exports | Generate typings from the registry, fix types |
-| Test coverage (GAP-NODE-010/024) | `edge-cases.spec.ts` (93 tests) excluded from vitest; crate Rust unit tests excluded from CI | Re-enable or split the 100 MB cases |
+| Test coverage (GAP-NODE-010/024) | `edge-cases.spec.ts` (92 tests) excluded from vitest; crate Rust unit tests excluded from CI | Re-enable or split the 100 MB cases |
 | Docs drift (GAP-NODE-018) | JSDoc package name `@fast-yaml/core`, README Node version and sample versions stale | Fix docs |
-| Performance claims (GAP-NODE-025) | README 5-10x vs js-yaml has no reproducible benchmark | Which claims are contractual? (OQ-12) **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
-| Stale prebuilt artifact | `nodejs/*.node` in the working tree is older than HEAD | Rebuild before any parity check |
+| Performance claims (GAP-NODE-025) | README 5-10x vs js-yaml has no reproducible benchmark | Which claims are contractual? (X-15) **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
+| Batch result shape (#641) | `BatchResult.errors` and `FormatResult { content?, error? }` allow contradictory states (both set or both unset); an error carries only a message, not its kind, and `path` is a lossy `String` | Model the outcome as one tagged result and keep the error kind and the raw path |
+| `sortKeys` implemented twice (#640) | `safeDump*` sorts in `emitter.rs`, and the same logic lives in the Python binding; the copies diverged and integer keys sort as text | Move the sort into the core, with numeric ordering for integer keys |
+| Core positions (#638) | Core `SourcePosition` and `Location::new` still carry raw `usize` for one-based positions; the binding `Location` is already `OneBased`-checked | Type-safety follow-up in core, no binding API change expected |
+| Prebuilt artifact | `nodejs/*.node` is an untracked build output and may predate HEAD | Rebuild before any parity check |
 
 ## 10. Parity with CLI / core
 

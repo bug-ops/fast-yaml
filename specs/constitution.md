@@ -13,7 +13,7 @@ status: reverse-specified
 # fast-yaml: constitution and overview
 
 > [!abstract]
-> fast-yaml is a YAML 1.2.2 toolkit with a Rust core: one parser, one resolver, one emitter and one linter, exposed through the `fy` CLI, Rust crates, a Python package and a Node.js package. This document states what the product is for, the principles every feature obeys, the architecture on one page, and the map of feature specs. Behavior described in the specs is what the code at v0.6.6 (main, commit e5e6cfb) plus the batch of fixes #531, #532, #557, #566-#569, #571-#581 and #366 does or is intended to do; where the two differ, the spec says so in its "Open questions / Known deviations" section.
+> fast-yaml is a YAML 1.2.2 toolkit with a Rust core: one parser, one resolver, one emitter and one linter, exposed through the `fy` CLI, Rust crates, a Python package and a Node.js package. This document states what the product is for, the principles every feature obeys, the architecture on one page, and the map of feature specs. Behavior described in the specs is what the code at v0.7.0 (branch release/v0.7.0, commit dbe1f2b, PRs through #637) does or is intended to do; the specs were first reverse-specified from v0.6.6 (e5e6cfb) and are kept in sync with every later PR; where the two differ, the spec says so in its "Open questions / Known deviations" section.
 
 ## 1. Purpose
 
@@ -21,7 +21,7 @@ Developers and CI pipelines need to validate, format, lint and convert YAML quic
 
 | Audience | What they get |
 |----------|---------------|
-| CI / shell users | `fy parse`, `fy format`, `fy lint`, `fy convert` with stable exit codes and machine-readable output (JSON, GitHub annotations, SARIF) |
+| CI / shell users | `fy parse`, `fy format`, `fy lint`, `fy convert` with stable exit codes and machine-readable output (JSON, GitHub annotations, SARIF, parsable) |
 | Rust library users | `fast-yaml-core` (parse, `Value`, emit, limits), `fast-yaml-linter`, `fast-yaml-parallel` |
 | Python / Node.js users | native bindings with the same parser, limits and linter, plus batch file processing |
 
@@ -29,7 +29,7 @@ Value proposition: correct YAML 1.2.2 semantics, bounded resource use on hostile
 
 ## 2. Principles (non-negotiable)
 
-1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Width`, ...), lint config uses typed enums, diagnostics carry typed spans. No stringly-typed options inside the core.
+1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Width`, `Workers`/`WorkerCount`, ...), positions are `OneBased` and documents are `DocumentIndex`, lint config uses typed enums, rules return typed `Finding`s that the linter turns into diagnostics, diagnostics carry typed spans. No stringly-typed options inside the core. Remaining raw `usize` positions are tracked in #638.
 2. **One implementation, many surfaces.** Parsing, scalar resolution, merge keys, limits and linting live in the Rust crates. Bindings and the CLI are thin adapters; they must not re-implement semantics.
 3. **Surface parity.** The same input gives the same result on every surface unless a spec lists the difference as a deliberate deviation. Parity gaps are bugs, not features.
 4. **Bounded by default.** Every untrusted input passes the same size, NUL/BOM, depth, scan-ahead, document-count and expansion checks, whichever surface or rule reads it; config files are bounded too. Limits have documented defaults and validated ranges. See [[009-limits-security/spec]].
@@ -72,7 +72,7 @@ graph TD
 
 Data flow of every command: bytes -> input checks (size, NUL, encoding/BOM) -> `NormalizedInput` -> bounded scanner -> events -> resolved `Value` (or lint context) -> emitter / report.
 
-Toolchain: Rust edition 2024, MSRV 1.91, workspace version 0.6.6, license MIT OR Apache-2.0. FFI crates build separately (`maturin`, `napi`).
+Toolchain: Rust edition 2024, MSRV 1.91, workspace version 0.7.0, license MIT OR Apache-2.0. FFI crates build separately (`maturin`, `napi`).
 
 ## 4. Spec map
 
@@ -93,7 +93,7 @@ Reading order for a newcomer: 001, 009, 002, 003, 004, 005, 006, then the bindin
 ## 5. Conventions used in the specs
 
 - Requirement IDs `FR-NNN` are local to a spec; cross-references read "spec 003 FR-012".
-- MUST means verified in code at v0.6.6 or required by the stated principle; SHOULD means desired but not fully met or only partly tested.
+- MUST means verified in code at v0.7.0 or required by the stated principle; SHOULD means desired but not fully met or only partly tested.
 - Examples labeled "verified" were produced by running `fy` built from main; binding examples marked "from tests" were taken from the binding test suites.
 - `[NEEDS CLARIFICATION]` marks a product decision the code cannot answer; each lives in the spec it affects, with a **Proposed:** resolution where one exists; a decision that spans several specs is repeated in each affected spec.
 - Plans describe the existing implementation, not future work. No `tasks.md` is produced: unresolved items are product decisions, not yet implementation tasks. Once a decision is made, run `/sdd tasks` on the affected spec.

@@ -15,7 +15,7 @@ related:
 # Technical Plan: Format
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation as it exists at 0.6.6 plus #581, #574, #580.
+> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.7.0 (HEAD dbe1f2b), reverse-specified from v0.6.6 and kept in sync through #637.
 
 ## 1. Architecture
 

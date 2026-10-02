@@ -18,7 +18,7 @@ related:
 # Feature: Format
 
 > [!info] Metadata
-> **Product version**: fast-yaml 0.6.6 (main, e5e6cfb) plus the fixes #581 (`-j`), #574 (`--max-documents`), #580 (anchors after a non-ASCII directive) and #531/#366 (file read and write). **Surfaces**: `fy format`, `fast_yaml_core::Emitter::format*`, `streaming::format_streaming*`, bindings' format APIs.
+> **Product version**: fast-yaml v0.7.0 at HEAD dbe1f2b (release/v0.7.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637. **Surfaces**: `fy format`, `fast_yaml_core::Emitter::format*`, `streaming::format_streaming*`, bindings' format APIs.
 > **Method**: requirements reverse-specified from code and confirmed by real `fy` runs.
 
 ## 1. Purpose and value
@@ -149,7 +149,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | FR-004 | WHEN the input contains a comment (outside quoted/block scalars, keys, anchors, tags) and `--strip-comments` is absent THE SYSTEM SHALL fail with the comment error and exit 1 without writing; WITH the flag it SHALL drop all comments. | MUST |
 | FR-005 | WHEN a scalar is written THE SYSTEM SHALL keep its source spelling and quoting (`yes`, `0x1F`, `01`, `1e3`, `.inf`, `~`, `'plain'`, `"it's"`, `"007"`). | MUST |
 | FR-006 | WHEN a value is omitted (`a:`) or a document is empty THE SYSTEM SHALL write `null`; an explicit `~` or `null` keeps its spelling. | MUST |
-| FR-007 | WHEN the input has several documents THE SYSTEM SHALL separate them with `---`, keep `%YAML`/`%TAG` directives and a leading `---` that follows a directive, and drop the trailing `...`. Reserved directives (any other `%NAME`) are kept in order with trailing blanks and a trailing comment cut, and the output is idempotent. | MUST |
+| FR-007 | WHEN the input has several documents THE SYSTEM SHALL separate them with `---`, keep `%YAML`/`%TAG` directives (including a `%TAG` prefix that starts with `#`, #636) and a leading `---` that follows a directive, and drop the trailing `...`. Reserved directives (any other `%NAME`) are kept in order with trailing blanks and a trailing comment cut, and the output is idempotent. | MUST |
 | FR-008 | WHEN a node has an anchor, alias or tag THE SYSTEM SHALL preserve them (`x: &a` followed by an indented body; `y: *a`; `!!str 5`), also in a document that follows a directive with a non-ASCII name. | MUST |
 | FR-009 | WHEN a flow collection appears THE SYSTEM SHALL rewrite it as block style; empty collections stay `[]` / `{}`. | MUST |
 | FR-010 | WHEN a sequence or mapping is a mapping key THE SYSTEM SHALL use the explicit `?` form. | MUST |
@@ -215,7 +215,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | SC-001 | Idempotency on `tests/fixtures/yaml-spec` and `tests/fixtures/linter` (42 files, `--strip-comments`) | 100% byte-stable on second pass |
 | SC-002 | Data equivalence: `fy convert json` of input equals that of output | 100% on the fixture set and fuzz/proptest corpus |
 | SC-003 | Comment safety: files with comments formatted without `--strip-comments` | 0 files modified, exit 1 |
-| SC-004 | Core test suite (`cargo nextest run -p fast-yaml-core --all-features`) | green (723 tests at 0.6.6) |
+| SC-004 | Core test suite (`cargo nextest run -p fast-yaml-core --all-features`) | green (772 tests at v0.7.0) |
 | SC-005 | Fuzz target `fuzz/fuzz_targets/format.rs` | no panic, no non-idempotent output |
 
 ## 8. Agent boundaries
@@ -238,14 +238,14 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | `--width` is validated (20..=1000) but never applied; CLI help, Python stub and Node typings still promise "maximum line width". Verified: a 120-character string stays on one line. (GAP-CORE-EMIT-001, OQ-01) | [NEEDS CLARIFICATION: implement folding, or remove the option from every surface (pre-1.0 breaking change)] **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
+| 1 | `--width` is validated (20..=1000) but never applied; CLI help, Python stub and Node typings still promise "maximum line width". Verified: a 120-character string stays on one line. (GAP-CORE-EMIT-001, X-9, #639; `allow_unicode` and batch `sort_keys` are likewise accepted and unused, and the binding `sort_keys` is implemented twice, #640) | [NEEDS CLARIFICATION: implement folding, or remove the option from every surface (pre-1.0 breaking change)] **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
 | 2 | `fy format -v` prints nothing extra although README says it lists each file. (GAP-CLI-004) | [NEEDS CLARIFICATION: implement or drop from docs] |
 | 3 | Format re-parses the input a second time to find comments; with a file that is both commented and invalid/over-limit the format error wins. (GAP-CORE-EMIT-010) | accepted; use `CommentScanner` in the single pass |
 | 4 | BOM asymmetry: `Emitter::format*` and `fy format` keep the BOM; `streaming::format_streaming*` drop it. (GAP-CORE-EMIT-009) | [NEEDS CLARIFICATION: converge on one behavior] |
 | 5 | Silent normalizations not mentioned in help/README: blank lines dropped, multi-line plain/quoted scalars folded into one double-quoted line, flow to block. (GAP-CORE-EMIT-016) | document in `fy format --help` |
-| 6 | `a:\t1` (tab after mapping colon) is rejected by parse and format although YAML 1.2.2 allows a tab there; likely inherited from the parser. (GAP-CORE-EMIT-007, OQ-07) | [NEEDS CLARIFICATION: accepted limitation or parser bug] **Proposed:** document as a known limitation and track upstream. |
-| 7 | Bindings' file formatters strip comments silently, unlike the CLI. (GAP-NODE-011, GAP-PY-014, OQ-03) | [NEEDS CLARIFICATION: mirror `CommentPolicy`]. See Python/Node specs **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
-| 8 | `-i` silently overrides `-o`. (GAP-CLI-007) | see CLI spec |
+| 6 | `a:\t1` (tab after mapping colon) is rejected by parse and format although YAML 1.2.2 allows a tab there; likely inherited from the parser. (GAP-CORE-EMIT-007, X-12) | [NEEDS CLARIFICATION: accepted limitation or parser bug] **Proposed:** document as a known limitation and track upstream. |
+| 7 | Bindings' file formatters strip comments silently, unlike the CLI. (GAP-NODE-011, GAP-PY-014, X-10) | [NEEDS CLARIFICATION: mirror `CommentPolicy`]. See Python/Node specs **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
+| 8 | Resolved: `-i` with `-o` is a clap conflict (exit 2). (GAP-CLI-007) | closed |
 | 9 | Default depth differs: emit 512, format/parse 256. (GAP-CORE-EMIT-004) | [NEEDS CLARIFICATION: converge or document] |
 | 10 | Reserved directives (resolved by #592): `%FOO bar` before `---` is kept (`%ÄÖÜ x`, BOM, CRLF, stdin and multi-document streams included); a bare `%` is a syntax error. `%YAML` and `%TAG` are kept too (the parser emits no directive events, so the formatter re-reads them from the source). | closed |
 

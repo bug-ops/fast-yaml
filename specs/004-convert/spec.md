@@ -17,7 +17,7 @@ related:
 # Feature: Convert (JSON and YAML)
 
 > [!info] Metadata
-> **Product version**: fast-yaml 0.6.6 (main, e5e6cfb) plus #557 (key order, escapes, flow keys), #567 (float key text) and #574 (`--max-documents`). **Surface**: `fy convert <yaml|json> [FILE]` (CLI only; bindings expose their own load/dump APIs).
+> **Product version**: fast-yaml v0.7.0 at HEAD dbe1f2b (release/v0.7.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637. **Surface**: `fy convert <yaml|json> [FILE]` (CLI only; bindings expose their own load/dump APIs).
 > **Method**: reverse-specified from `crates/fast-yaml-cli/src/commands/convert.rs` and real `fy` runs.
 
 ## 1. Purpose and value
@@ -250,13 +250,13 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | Duplicate keys are first-position, last-value with no warning in both directions. (GAP-CLI-009, OQ-02) | [NEEDS CLARIFICATION: warn or reject under a strict option?] |
+| 1 | Duplicate keys are first-position, last-value with no warning in both directions. (GAP-CLI-009, X-11) | [NEEDS CLARIFICATION: warn or reject under a strict option?] |
 | 2 | `convert -i json file.yaml` overwrites the same path with JSON (a `.yaml` file containing JSON); `skills/fast-yaml-cli/SKILL.md` claims a renamed `file.json`. (GAP-CLI-006) | [NEEDS CLARIFICATION: rename, refuse, or fix docs] |
-| 3 | `-i` silently overrides `-o` (`convert json -i -o x w.yaml` writes `w.yaml` only). (GAP-CLI-007) | [NEEDS CLARIFICATION: make them conflict in clap] |
+| 3 | Resolved: `-i` with `-o` is a clap conflict (`the argument '--in-place' cannot be used with '--output <FILE>'`, exit 2). (GAP-CLI-007) | closed |
 | 4 | `-` is not accepted as stdin for the file argument. (GAP-CLI-008) | accept `-` as stdin |
 | 5 | JSON to YAML has no `--max-input-bytes`-independent depth control; JSON nesting is capped by `serde_json` at 128 and `--max-depth` applies to YAML input only. | document; [NEEDS CLARIFICATION: align limits] |
 | 6 | Non-JSON YAML values are flattened silently: tags dropped, binary and timestamps become strings. | [NEEDS CLARIFICATION: warn under `-v`, or accept] |
-| 7 | Integers above 2^53 in JSON output are exact in the CLI, but Node bindings lose precision. (GAP-NODE-001, OQ-10) | see Node spec |
+| 7 | Integers above 2^53 in JSON output are exact in the CLI, but Node bindings lose precision. (GAP-NODE-001, X-14); the Node loader still returns integers beyond i64 as decimal strings | see Node spec |
 
 ## 10. See also
 

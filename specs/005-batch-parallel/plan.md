@@ -16,7 +16,7 @@ related:
 # Technical Plan: Batch and parallel processing
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the existing implementation (v0.6.6) plus the fixes #581/#532, #531, #366, #577 and #574.
+> **Spec**: [[spec]]. This plan describes the existing implementation at v0.7.0 (HEAD dbe1f2b), reverse-specified from v0.6.6 and kept in sync through #637 (#581/#532, #531, #366, #587, #577, #574, #610).
 
 ## 1. Architecture
 

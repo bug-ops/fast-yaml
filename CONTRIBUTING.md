@@ -21,7 +21,7 @@ Thank you for your interest in contributing to fast-yaml. This document provides
 
 You will need the following tools installed:
 
-**Rust toolchain:**
+**Rust toolchain** (MSRV 1.91, stable for building, nightly for `rustfmt`):
 ```bash
 # Install Rust via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -41,8 +41,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 **NodeJS toolchain (for NodeJS bindings):**
 ```bash
-# Install Node.js 22+ and npm (via nvm or your preferred method)
-# Biome is installed via npm in the nodejs/ directory
+# Install Node.js 22+ and pnpm (via nvm or your preferred method)
+# Biome is installed via pnpm in the nodejs/ directory
 ```
 
 ### Cloning the Repository
@@ -73,16 +73,18 @@ uv run maturin develop
 
 # NodeJS bindings
 cd nodejs
-npm install
-npm run build
+pnpm install
+pnpm run build
 ```
+
+The Python and Node.js test suites call the `fy` binary for cross-checks, so run `cargo build --bin fy` first. The Node.js panic tests need `pnpm run build:test`.
 
 ## Development Workflow
 
 ### 1. Create a Feature Branch
 
 ```bash
-git checkout -b feature/your-feature-name
+git checkout -b feat/your-feature-name
 ```
 
 ### 2. Make Changes
@@ -91,21 +93,23 @@ Follow the code style guidelines below and ensure your changes align with the pr
 
 ### 3. Run Quality Checks
 
-Before committing, run the full quality check pipeline:
+Before committing, run the full quality check pipeline (flags match CI):
 
 ```bash
 # Format check (uses nightly rustfmt for Edition 2024 features)
 cargo +nightly fmt --all -- --check
 
-# Linting (excludes FFI crates)
-cargo clippy --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs -- -D warnings
+# Linting
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 # Tests (use nextest for faster execution)
-cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
+cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs --lib --bins
 
 # Documentation check
-cargo doc --workspace --no-deps --exclude fast-yaml --exclude fast-yaml-nodejs
+RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" cargo doc --no-deps --workspace
 ```
+
+Behavior changes also update the matching spec in `specs/` (start at `specs/constitution.md`; one `NNN-feature/spec.md` per capability) and the `[Unreleased]` section of `CHANGELOG.md`.
 
 ### 4. Commit Changes
 
@@ -114,7 +118,7 @@ See [Commit Messages](#commit-messages) section below.
 ### 5. Push and Create Pull Request
 
 ```bash
-git push origin feature/your-feature-name
+git push origin feat/your-feature-name
 ```
 
 Then create a pull request following the [PR template](.github/pull_request_template.md).
@@ -138,14 +142,9 @@ cargo +nightly fmt --all -- --check
 Code must pass clippy with no warnings:
 
 ```bash
-# Standard clippy check (excludes FFI crates that need special build tools)
-cargo clippy --workspace --all-targets --all-features --exclude fast-yaml --exclude fast-yaml-nodejs -- -D warnings
-
-# Pedantic mode for stricter checks
-cargo clippy --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs -- -D warnings -W clippy::pedantic
+# Same invocation as CI
+cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
-
-**Note:** FFI crates (`python/` and `nodejs/`) must be excluded from workspace commands as they require maturin/napi build tools.
 
 ### Workspace Lints
 
@@ -164,7 +163,10 @@ All public APIs must be documented:
 cargo doc --workspace --no-deps
 
 # Check for documentation warnings
-RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --exclude fast-yaml --exclude fast-yaml-nodejs
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+
+# Doc-tests
+cargo test --doc --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 ```
 
 ## Testing Requirements
@@ -175,10 +177,13 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --exclude fast-yaml -
 
 ```bash
 # Run all tests (excludes FFI crates)
+cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs --lib --bins
+
+# Include integration tests
 cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 
 # Run tests with output
-cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --nocapture
+cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --no-capture
 
 # Run specific test
 cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs -E 'test(test_name)'
@@ -213,6 +218,10 @@ cargo llvm-cov --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --lcov
 
 Open the HTML report at `target/llvm-cov/html/index.html`.
 
+### Fuzzing
+
+Fuzz targets (`parse`, `format`, `lint`, `validate_differential`) live in `fuzz/`; run one with `cargo +nightly fuzz run <target>` (requires `cargo-fuzz`). CI also runs them on pushes to `main`.
+
 ### Security Auditing
 
 All dependencies must pass security checks:
@@ -237,13 +246,10 @@ cargo deny check licenses
 cd nodejs
 
 # Check for vulnerabilities
-npm audit
+pnpm audit
 
 # Fail on high/critical only
-npm audit --audit-level=high
-
-# Auto-fix vulnerabilities
-npm audit fix
+pnpm audit --audit-level=high
 ```
 
 ## Python Contributions
@@ -269,13 +275,13 @@ uv run pytest tests/ -v --cov=fast_yaml --cov-report=html
 
 ```bash
 # Type checking
-uv run mypy python/fast_yaml/
+uv run mypy fast_yaml/
 
 # Linting
-uv run ruff check python/
+uv run ruff check .
 
 # Formatting
-uv run ruff format python/
+uv run ruff format .
 ```
 
 ### Building
@@ -294,20 +300,20 @@ uv run maturin build --release
 
 ```bash
 cd nodejs
-npm install
+pnpm install
 ```
 
 ### Testing
 
 ```bash
 # Run tests
-npm test
+pnpm test
 
 # With coverage
-npm run test:coverage
+pnpm run test:coverage
 
 # Run benchmarks
-npm run bench
+pnpm run bench
 ```
 
 ### Code Quality
@@ -316,29 +322,29 @@ NodeJS uses Biome for formatting and linting:
 
 ```bash
 # Format code
-npm run format
+pnpm run format
 
 # Check formatting
-npm run format:check
+pnpm run format:check
 
 # Lint code
-npm run lint
+pnpm run lint
 
 # Format and lint together
-npm run check
+pnpm run check
 
 # Type checking
-npm run typecheck
+pnpm run typecheck
 ```
 
 ### Building
 
 ```bash
-# Build native module
-npm run build
+# Build native module (release)
+pnpm run build
 
-# Build in release mode
-npm run build:release
+# Build without optimizations (faster)
+pnpm run build:debug
 ```
 
 ## Commit Messages
@@ -368,9 +374,12 @@ Follow conventional commit format:
 - `core`: fast-yaml-core crate
 - `linter`: fast-yaml-linter crate
 - `parallel`: fast-yaml-parallel crate
+- `cli`: fast-yaml-cli crate (`fy`)
 - `python`: Python bindings
 - `nodejs`: NodeJS bindings
 - `ci`: CI/CD configuration
+
+Combine scopes with commas (`fix(linter,cli)`) and mark breaking changes with `!` (`fix(core)!:`).
 
 **Example:**
 ```
@@ -388,9 +397,9 @@ large multi-document YAML streams. Achieves 3-4x speedup on
 1. Ensure all quality checks pass:
    ```bash
    cargo +nightly fmt --all -- --check && \
-   cargo clippy --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs -- -D warnings && \
-   cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs && \
-   cargo doc --workspace --no-deps --exclude fast-yaml --exclude fast-yaml-nodejs
+   cargo clippy --workspace --all-targets --all-features -- -D warnings && \
+   cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs --lib --bins && \
+   RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
    ```
 
 2. Check code coverage meets targets
@@ -399,7 +408,7 @@ large multi-document YAML streams. Achieves 3-4x speedup on
    ```bash
    cargo deny check
    # If NodeJS changes:
-   cd nodejs && npm audit
+   cd nodejs && pnpm audit
    ```
 
 4. Update documentation if needed
@@ -428,7 +437,7 @@ If your PR introduces breaking changes:
 1. Clearly mark in PR title: `feat!: breaking change description`
 2. Document migration path in PR description
 3. Update CHANGELOG.md
-4. Consider deprecation warnings before removal
+4. List every breaking change under `[Unreleased]` in CHANGELOG.md
 
 ## Project Structure
 
@@ -437,11 +446,14 @@ If your PR introduces breaking changes:
 ```
 fast-yaml/
 ├── crates/
+│   ├── fast-yaml-cli/       # `fy` binary (parse, format, convert, lint)
 │   ├── fast-yaml-core/      # Core YAML parser/emitter
 │   ├── fast-yaml-linter/    # Linting engine
 │   └── fast-yaml-parallel/  # Multi-threaded processing
 ├── python/                  # PyO3 Python bindings
 ├── nodejs/                  # NAPI-RS NodeJS bindings
+├── specs/                   # Feature specifications (source of truth for behavior)
+├── fuzz/                    # cargo-fuzz targets
 ├── tests/                   # Integration tests
 └── benches/                 # Criterion benchmarks
 ```
@@ -457,7 +469,6 @@ The `python/` and `nodejs/` directories contain FFI binding crates that:
 **Always exclude FFI crates** from workspace commands:
 ```bash
 cargo build --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
-cargo clippy --workspace --exclude fast-yaml --exclude fast-yaml-nodejs -- -D warnings
 cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 ```
 
@@ -478,8 +489,7 @@ cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
 
 - Open an issue for bugs or feature requests
 - Use GitHub Discussions for questions
-- Read the [project documentation](CLAUDE.md) for architecture details
-- Check [Architecture Decision Records](.local/adr/) for design rationale
+- Read the feature specs in [specs/](specs/) for intended behavior and the architecture overview in the workspace layout above
 
 ## License
 

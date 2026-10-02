@@ -6,8 +6,7 @@
 
 A fast YAML 1.2.2 parser and linter for Python, powered by Rust.
 
-> [!IMPORTANT]
-> Requires Python 3.10 or later.
+**Important:** Requires Python 3.10 or later.
 
 ## Installation
 
@@ -89,9 +88,9 @@ fast_yaml.safe_load("1: a\ntrue: b\n")
 ## Features
 
 - **YAML 1.2.2 compliant** — Full Core Schema support
-- **Fast** — 5-10x faster than PyYAML
+- **Fast** — matches PyYAML C on small and medium files, 2-4x faster than pure-Python PyYAML
 - **PyYAML compatible** — Drop-in replacement with `load`, `dump`, `Loader`, `Dumper` classes
-- **Linter** — Rich diagnostics with line/column tracking; supports inline `# fy: disable` / `disable-line` / `disable-file` (and `# yamllint ...`) suppression comments
+- **Linter** — Rich diagnostics with 1-based line/column tracking (`Location(line, column, offset)` rejects 0); supports inline `# fy: disable` / `disable-line` / `disable-file` (and `# yamllint ...`) suppression comments
 - **Parallel processing** — Multi-threaded parsing for large files
 - **Batch processing** — Process multiple files in parallel
 - **Type stubs** — Full IDE support with `.pyi` files

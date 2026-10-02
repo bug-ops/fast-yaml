@@ -320,7 +320,7 @@ BREAKING CHANGE: Minimum Python version increased to 3.9
 - `feat(linter): add schema validation rule`
 - `fix(python): correct error handling in safe_load`
 - `docs: add API reference for parallel processing`
-- `chore(deps): update yaml-rust2 to 0.10.5`
+- `chore(deps): update saphyr-parser to 0.1.0`
 
 ### Required Checks Before Merge
 

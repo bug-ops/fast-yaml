@@ -6,7 +6,7 @@
 
 **High-performance YAML 1.2.2 parser for Node.js, powered by Rust.**
 
-Drop-in replacement for js-yaml with **5-10x faster** parsing through Rust's `saphyr` library. Full YAML 1.2.2 Core Schema compliance with TypeScript definitions included.
+Drop-in replacement for js-yaml, **1.2-1.4x faster** in benchmarks, built on Rust's `saphyr-parser`. Full YAML 1.2.2 Core Schema compliance with TypeScript definitions included.
 
 > **YAML 1.2.2 Compliance** — Unlike js-yaml (YAML 1.1 by default), `fastyaml-rs` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans, and octal numbers require `0o` prefix.
 
@@ -33,7 +33,7 @@ import { safeLoad, safeDump } from 'fastyaml-rs';
 // Parse YAML
 const data = safeLoad(`
 name: fast-yaml
-version: 0.3.3
+version: 0.7.0
 features:
   - fast
   - safe
@@ -41,7 +41,7 @@ features:
 `);
 
 console.log(data);
-// { name: 'fast-yaml', version: '0.3.1', features: ['fast', 'safe', 'yaml-1.2.2'] }
+// { name: 'fast-yaml', version: '0.7.0', features: ['fast', 'safe', 'yaml-1.2.2'] }
 
 // Serialize to YAML
 const yamlStr = safeDump(data);
@@ -317,19 +317,24 @@ Integers beyond the `i64` range load as decimal strings, not `BigInt`, so `safeL
 
 Input validation is enforced to prevent denial-of-service attacks:
 
-| Limit          | Default |
-| -------------- | ------- |
-| Max input size | 100 MB  |
+| Limit                 | Default         | Option                       |
+| --------------------- | --------------- | ---------------------------- |
+| Max input size        | 100 MiB         | `maxInputBytes`              |
+| Max documents         | 100,000         | `maxDocuments`               |
+| Max nesting depth     | 256 (1..512)    | `maxDepth`                   |
+| Max alias expansion   | 64 MiB          | `maxAliasBytes`              |
+| Max parser scan-ahead | 4 Mi characters | `maxScanAhead`               |
+| Max worker threads    | 128             | `workers` / `threadCount`    |
 
 ## Performance
 
-Benchmarks on typical YAML workloads show **5-10x speedup** over js-yaml for large files:
+Measured against js-yaml 4.1.1 (Apple M3 Pro, process start included):
 
-| File Size     | js-yaml | fastyaml-rs | Speedup  |
-| ------------- | ------- | ----------- | -------- |
-| Small (100B)  | 15 μs   | 5 μs        | **3x**   |
-| Medium (2KB)  | 200 μs  | 50 μs       | **4x**   |
-| Large (100KB) | 15 ms   | 2 ms        | **7.5x** |
+| File Size     | Parse speedup | Dump speedup |
+| ------------- | ------------- | ------------ |
+| Small (502B)  | **1.15x**     | **1.22x**    |
+| Medium (44KB) | **1.22x**     | **1.29x**    |
+| Large (449KB) | **1.20x**     | **1.42x**    |
 
 Run benchmarks yourself:
 
@@ -352,7 +357,7 @@ Pre-built binaries are available for:
 
 ### Prerequisites
 
-- Node.js >= 20
+- Node.js >= 22
 - Rust >= 1.91.0
 - NAPI-RS CLI (`npm install -g @napi-rs/cli`)
 
@@ -394,7 +399,7 @@ npm run bench
 
 ## Technology Stack
 
-- **YAML Parser**: [saphyr](https://github.com/saphyr-rs/saphyr) — Rust YAML 1.2.2 parser
+- **YAML Parser**: [saphyr-parser](https://github.com/saphyr-rs/saphyr) — Rust YAML 1.2.2 parser
 - **Node.js Bindings**: [NAPI-RS](https://napi.rs/) — Zero-cost Node.js bindings
 - **Test Framework**: [Vitest](https://vitest.dev/) — Fast test runner
 - **Linter/Formatter**: [Biome](https://biomejs.dev/) — Fast all-in-one toolchain
