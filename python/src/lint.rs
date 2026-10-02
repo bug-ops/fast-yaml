@@ -565,8 +565,6 @@ impl PyLintConfig {
                 "max_input_bytes",
                 max_input_bytes,
             )?);
-        // The old fixed default width; a `rules` patch or `indent_size` still replaces it
-        inner.rules.indentation.options.indent_size = Some(IndentSize::default());
 
         if let Some(rules_obj) = rules {
             let value = ValueConverter::default()

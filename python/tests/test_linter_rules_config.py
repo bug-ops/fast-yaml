@@ -433,15 +433,23 @@ class TestShorthandPrecedence:
         long_line = "a: " + "x" * 200 + "\n"
         assert "line-length" not in {d.code for d in lint.lint(long_line, config)}
 
-    def test_default_config_keeps_the_fixed_indent_size(self):
-        source = "a:\n    b: 1\n    c:\n        d: 2\n"
-        assert "indentation" in {d.code for d in lint.Linter(lint.LintConfig()).lint(source)}
-        assert "indentation" in {d.code for d in lint.lint(source, lint.LintConfig())}
+    def test_default_config_reads_the_indent_width_as_consistent(self):
+        # the same input must not depend on how the default config is spelled (#626)
+        for source in ("a:\n    b: 1\n", "a:\n    b: 1\n    c:\n        d: 2\n"):
+            assert lint.lint(source) == []
+            assert lint.lint(source, lint.LintConfig()) == []
+            assert lint.Linter(lint.LintConfig()).lint(source) == []
 
-    def test_rules_replace_the_default_indent_size(self):
-        source = "a:\n    b: 1\n"
+    def test_default_config_still_flags_an_inconsistent_indent(self):
+        source = "a:\n    b: 1\nc:\n  d: 2\n"
+        assert "indentation" in {d.code for d in lint.lint(source, lint.LintConfig())}
+        assert "indentation" in {d.code for d in lint.lint(source)}
+
+    def test_rules_set_the_fixed_indent_size(self):
+        source = "a:\n  b: 1\n"
         config = lint.LintConfig(rules={"indentation": {"indent-size": 4}})
-        assert "indentation" not in {d.code for d in lint.Linter(config).lint(source)}
+        assert "indentation" in {d.code for d in lint.Linter(config).lint(source)}
+        assert "indentation" not in {d.code for d in lint.Linter(lint.LintConfig()).lint(source)}
 
     def test_max_line_length_rejects_bool(self):
         with pytest.raises(TypeError, match="not bool"):

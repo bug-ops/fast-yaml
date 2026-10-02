@@ -468,9 +468,10 @@ class lint:  # noqa: N801
         (e.g. ``{"line-length": {"max": 120}}``). Unknown rules, option keys,
         wrong types and invalid severities raise ``ValueError``. Order of
         application: ``rules``, then the keyword arguments you set (the boolean
-        ones only when ``True``), then ``disabled_rules``. Omitted ``max_line_length``
-        and ``indent_size`` keep the defaults (80 and 2, which ``rules`` can
-        replace); ``max_line_length=None`` removes the limit.
+        ones only when ``True``), then ``disabled_rules``. An omitted ``max_line_length``
+        keeps the default 80 (which ``rules`` can replace) and ``None`` removes
+        the limit; an omitted ``indent_size`` leaves the width ``consistent``, as for
+        ``lint(source)`` without a config, and ``rules`` can set a fixed width.
 
         ``max_input_bytes`` (1..=1 GiB, default 100 MiB) rejects larger sources
         with ``ValueError``. It bounds linting work on oversized input; the

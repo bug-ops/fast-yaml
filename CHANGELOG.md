@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- **Linter**: `IndentationOptions::indent_size` is removed; the width is the single field `spaces`, `indent-size` stays a config key that sets it, and a serialized config carries `spaces` only (#626)
+- **Python**: `LintConfig()` leaves the indentation width `consistent`, like `lint(source)` without a config, instead of a fixed 2 (#626)
 - **CLI**: `using config file: <path>` is printed only with `-v` (it was always on stderr, even with `-q`) (#614) (#622)
 - **Python/Node.js/Linter**: dedicated options now win over the `rules` patch on every surface (#601) (#622)
 - **Parallel**: `Config::with_workers` takes `Workers` (`Auto`, `Sequential`, `Fixed(WorkerCount)`), `Config::workers()` returns it, and `shared_pool` and `ScanAheadLane::for_policy` take `WorkerCount` (1..=128) instead of `Option<usize>`/`NonZeroUsize` (#610) (#622)
@@ -267,6 +269,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linter/Python**: `lint(source, LintConfig())` and `lint(source)` report the same indentation findings, as do Node `lint(source, {})` and `fy lint` (#626)
 - **Linter**: `braces`, `brackets` and `colons` no longer report plain scalars in block sequence entries (`- a [ b ]`, `- :year`) and read a value after an anchor or tag (`k: &a [ x ]`) as the flow collection it is (#630)
 - **Linter**: `commas` ignores the spaces between a comma and a trailing comment inside a flow collection (#631)
 - **Linter**: `braces` and `brackets` check a continuation line of a multi-line flow collection that ends in a plain scalar before the closing delimiter (#620)

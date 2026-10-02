@@ -92,7 +92,6 @@ impl LintConfig {
     /// ```
     #[must_use]
     pub const fn with_indent_size(mut self, size: IndentSize) -> Self {
-        self.rules.indentation.options.indent_size = Some(size);
         self.rules.indentation.options.spaces = Some(IndentSpaces::Fixed(size));
         self
     }

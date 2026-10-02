@@ -176,13 +176,11 @@ fn every_options_type_round_trips_with_non_default_values() {
         forbid_duplicated_merge_keys: false,
     });
     round_trip(&IndentationOptions {
-        indent_size: Some(IndentSize::try_from(8u64).unwrap()),
         spaces: Some(IndentSpaces::Fixed(IndentSize::try_from(8u64).unwrap())),
         indent_sequences: IndentSequences::Consistent,
         check_multi_line_strings: true,
     });
     round_trip(&IndentationOptions {
-        indent_size: None,
         spaces: Some(IndentSpaces::Consistent),
         indent_sequences: IndentSequences::NotIndented,
         check_multi_line_strings: false,
