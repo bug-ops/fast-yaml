@@ -266,7 +266,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **CI**: fuzz job creates the corpus directory for targets not covered by the seed script (`validate_differential`)
+- **CI**: fuzz job creates the corpus directory for targets not covered by the seed script (`validate_differential`) (#635)
 - **Core**: `fy format` keeps anchor names after a non-ASCII directive (#580) (#595)
 - **CLI/Parallel**: `-j N` limits concurrency to N, batch runs share one pool and `format --dry-run` reports its duration (#581) (#532) (#595)
 - **CLI**: `fy lint` honors `-o`, reports a missing path in report formats and stays silent on a closed pipe (#569) (#575) (#595)
