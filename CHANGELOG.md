@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- Node.js: override transitive `source-map-js` to `>=1.2.2` (GHSA-68fv-2mgg-jv7q) (#650)
+
 ## [0.7.0] - 2026-10-02
 
 ### Breaking Changes
