@@ -9,6 +9,7 @@ overrides:
   js-yaml: '>=5.4.1'
   postcss: '>=8.5.18'
   nanoid: '>=3.3.17'
+  source-map-js: '>=1.2.2'
 
 importers:
 
@@ -19,7 +20,7 @@ importers:
         version: 2.5.15
       '@napi-rs/cli':
         specifier: ^3.10.6
-        version: 3.10.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@26.6.4)
+        version: 3.10.6(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@types/node@26.6.4)
       '@types/node':
         specifier: ^26.6.4
         version: 26.6.4
@@ -1235,8 +1236,8 @@ packages:
     resolution: {integrity: sha512-bzyZ1e88w9O1iNJbKnOlvYTrWPDl46O1bG0D3XInv+9tkPrxrN8jUUTiFlDkkmKWgn1M6CfIA13SuGqOa9Korw==}
     engines: {node: '>=14'}
 
-  source-map-js@1.2.1:
-    resolution: {integrity: sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==}
+  source-map-js@1.2.2:
+    resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
 
   stackback@0.0.2:
@@ -1598,7 +1599,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@napi-rs/cli@3.10.6(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)(@types/node@26.6.4)':
+  '@napi-rs/cli@3.10.6(@emnapi/core@1.9.2)(@emnapi/runtime@1.9.2)(@types/node@26.6.4)':
     dependencies:
       '@inquirer/prompts': 8.6.0(@types/node@26.6.4)
       '@napi-rs/cross-toolchain': 1.0.3
@@ -1613,8 +1614,8 @@ snapshots:
       typanion: 3.14.0
       typescript: 6.0.3
     optionalDependencies:
-      '@emnapi/core': 1.11.2
-      '@emnapi/runtime': 1.11.2
+      '@emnapi/core': 1.9.2
+      '@emnapi/runtime': 1.9.2
     transitivePeerDependencies:
       - '@napi-rs/cross-toolchain-arm64-target-aarch64'
       - '@napi-rs/cross-toolchain-arm64-target-armv7'
@@ -2267,7 +2268,7 @@ snapshots:
     dependencies:
       '@babel/parser': 7.29.8
       '@babel/types': 7.29.8
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   make-dir@4.0.0:
     dependencies:
@@ -2293,7 +2294,7 @@ snapshots:
     dependencies:
       nanoid: 6.0.1
       picocolors: 1.1.1
-      source-map-js: 1.2.1
+      source-map-js: 1.2.2
 
   rolldown@1.0.3:
     dependencies:
@@ -2324,7 +2325,7 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  source-map-js@1.2.1: {}
+  source-map-js@1.2.2: {}
 
   stackback@0.0.2: {}
 
