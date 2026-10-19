@@ -154,6 +154,11 @@ impl Input for GuardedInput<'_> {
     }
 
     #[inline]
+    fn peek_opt(&self) -> Option<char> {
+        self.inner.peek_opt()
+    }
+
+    #[inline]
     fn peek_nth(&self, n: usize) -> char {
         self.inner.peek_nth(n)
     }
