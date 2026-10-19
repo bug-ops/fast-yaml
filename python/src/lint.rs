@@ -38,11 +38,7 @@ use fast_yaml_linter::JsonFormatter as RustJsonFormatter;
 ///     >>> from `fast_yaml`._core.lint import Severity
 ///     >>> error = Severity.ERROR
 ///     >>> warning = Severity.WARNING
-#[pyclass(
-    module = "fast_yaml._core.lint",
-    name = "Severity",
-    skip_from_py_object
-)]
+#[pyclass(module = "fast_yaml._core.lint", name = "Severity")]
 #[derive(Clone, Copy)]
 pub struct PySeverity {
     inner: RustSeverity,

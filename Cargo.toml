@@ -45,7 +45,7 @@ memchr = { version = "2.8" }
 napi = { version = "3.14" }
 napi-build = { version = "2.6" }
 napi-derive = { version = "3.6" }
-pyo3 = { version = "0.29" }
+pyo3 = { version = "0.30" }
 rayon = { version = "1.12" }
 regex = { version = "1.13" }
 saphyr-parser = { version = "0.2.2" }
