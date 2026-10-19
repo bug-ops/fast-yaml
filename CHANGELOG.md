@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security
 
 - Node.js: override transitive `source-map-js` to `>=1.2.2` (GHSA-68fv-2mgg-jv7q) (#650)
+- CI: repin `dtolnay/rust-toolchain` to the current `v1` tag commit (zizmor `ref-version-mismatch`)
 
 ## [0.7.0] - 2026-10-02
 
