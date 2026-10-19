@@ -14,11 +14,7 @@ use fast_yaml_parallel::{
 use pyo3::prelude::*;
 
 /// Outcome of processing a single file.
-#[pyclass(
-    module = "fast_yaml._core.batch",
-    name = "FileOutcome",
-    skip_from_py_object
-)]
+#[pyclass(module = "fast_yaml._core.batch", name = "FileOutcome")]
 #[derive(Clone)]
 pub enum PyFileOutcome {
     /// File processed successfully
