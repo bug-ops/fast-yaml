@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linter: `Location::new` takes `OneBased` line and column and no longer raises 0 to 1, and `LintDocument::first_line` is `OneBased` (#667)
 - Linter: `fast_yaml_linter::OneBased` is the core type and no longer implements `Serialize`/`Deserialize` under `json-output` (#667)
 
+### Added
+
+- CI: fmt, clippy, docs, test, coverage, audit, Python and Node.js jobs install tools with `mise` and run `mise run <task>`; setup-node, setup-python, setup-uv, pnpm/action-setup and most install-action steps removed (#669)
+
 ### Security
 
 - Node.js: override transitive `source-map-js` to `>=1.2.2` (GHSA-68fv-2mgg-jv7q) (#650)

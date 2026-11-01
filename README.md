@@ -462,6 +462,8 @@ cargo clippy --all-targets --all-features --workspace -- -D warnings
 cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs --lib --bins
 ```
 
+The repository also ships a [mise](https://mise.jdx.dev) configuration for development: `mise install --locked` installs the pinned dev tools and `mise run ci` runs the checks CI runs. It is only for working on this repository; using `fy` or the Python and Node.js packages does not require it. See [CONTRIBUTING.md](CONTRIBUTING.md) for the task list.
+
 ## FAQ
 
 <details>
