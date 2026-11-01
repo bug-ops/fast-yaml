@@ -12,10 +12,12 @@
 use std::ffi::c_void;
 use std::fs::File;
 use std::io;
+use std::mem::offset_of;
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 use std::ptr;
+use std::slice;
 
 use windows_sys::Win32::Foundation::{
     ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_SUCCESS, HLOCAL, LocalFree, WIN32_ERROR,
@@ -191,10 +193,12 @@ fn is_inherited(dacl: *const ACL, bytes: usize, index: u32) -> bool {
         return false;
     }
     // SAFETY: `ace` lies inside the `bytes` of the ACL, which its descriptor keeps alive, and
-    // every entry starts with an `ACE_HEADER`; it is read unaligned in case the entry is not
-    // 4-byte aligned.
-    let header = unsafe { ptr::read_unaligned(ace.cast::<ACE_HEADER>()) };
-    u32::from(header.AceFlags) & INHERITED_ACE != 0
+    // every entry starts with an `ACE_HEADER`; a byte slice has no alignment requirement.
+    let header =
+        unsafe { slice::from_raw_parts(ace.cast::<u8>().cast_const(), size_of::<ACE_HEADER>()) };
+    header
+        .get(offset_of!(ACE_HEADER, AceFlags))
+        .is_some_and(|flags| u32::from(*flags) & INHERITED_ACE != 0)
 }
 
 fn set_dacl(path: &Path, dacl: *const ACL, flags: OBJECT_SECURITY_INFORMATION) -> io::Result<()> {
