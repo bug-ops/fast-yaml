@@ -172,10 +172,11 @@ fn has_explicit_ace(dacl: *const ACL) -> bool {
         )
     };
     // An unreadable ACL is treated as explicit so that it is copied rather than dropped
-    ok == 0 || (0..info.AceCount).any(|index| !is_inherited(dacl, index))
+    let bytes = usize::try_from(info.AclBytesInUse).unwrap_or(0);
+    ok == 0 || (0..info.AceCount).any(|index| !is_inherited(dacl, bytes, index))
 }
 
-fn is_inherited(dacl: *const ACL, index: u32) -> bool {
+fn is_inherited(dacl: *const ACL, bytes: usize, index: u32) -> bool {
     let mut ace: *mut c_void = ptr::null_mut();
     // SAFETY: `dacl` is a valid ACL, `index` is below its entry count, and `ace` is a live
     // out-pointer.
@@ -183,8 +184,15 @@ fn is_inherited(dacl: *const ACL, index: u32) -> bool {
     if ok == 0 || ace.is_null() {
         return false;
     }
-    // SAFETY: `GetAce` returned a pointer to an entry inside the ACL, and every entry starts
-    // with an `ACE_HEADER`; it is read unaligned in case the entry is not 4-byte aligned.
+    let start = dacl as usize;
+    let end = start.saturating_add(bytes);
+    let at = ace as usize;
+    if at < start || at.saturating_add(size_of::<ACE_HEADER>()) > end {
+        return false;
+    }
+    // SAFETY: `ace` lies inside the `bytes` of the ACL, which its descriptor keeps alive, and
+    // every entry starts with an `ACE_HEADER`; it is read unaligned in case the entry is not
+    // 4-byte aligned.
     let header = unsafe { ptr::read_unaligned(ace.cast::<ACE_HEADER>()) };
     u32::from(header.AceFlags) & INHERITED_ACE != 0
 }
