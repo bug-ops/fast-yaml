@@ -1081,7 +1081,13 @@ mod dacl_tests {
     }
 
     fn run(program: &str, args: &[&str]) -> String {
-        let output = Command::new(program).args(args).output().unwrap();
+        // Windows PowerShell 5.1 cannot autoload modules when the runner's
+        // PSModulePath points at PowerShell 7 module directories.
+        let output = Command::new(program)
+            .args(args)
+            .env_remove("PSModulePath")
+            .output()
+            .unwrap();
         assert!(
             output.status.success(),
             "{program} {args:?}: {}",
