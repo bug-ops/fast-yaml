@@ -18,20 +18,63 @@ run = [
 ]
 
 [tasks."fmt:check"]
-description = "Check formatting (CI: format-rust, format-python, format-nodejs)"
+description = "Check formatting of Rust, Python and Node.js sources"
 run = [
-  "cargo +nightly fmt --all -- --check",
-  "cd python && uv run ruff format --check .",
-  "cd nodejs && pnpm install --no-frozen-lockfile && pnpm run format:check",
+  { task = "fmt:check:rust" },
+  { task = "fmt:check:python" },
+  { task = "fmt:check:nodejs" },
 ]
+
+[tasks."fmt:check:rust"]
+description = "Check Rust formatting (CI: Lint (rust))"
+run = "cargo +nightly fmt --all -- --check"
+
+[tasks."fmt:check:python"]
+description = "Check Python formatting (CI: Python Quality Checks)"
+run = "cd python && uv run ruff format --check ."
+
+[tasks."fmt:check:nodejs"]
+description = "Check Node.js formatting (CI: NodeJS Quality Checks)"
+run = ["cd nodejs && pnpm install --no-frozen-lockfile", "cd nodejs && pnpm run format:check"]
 
 [tasks.lint]
 description = "Clippy, ruff, mypy (non-blocking as in CI), biome and tsc"
-env = { RUSTFLAGS = "-D warnings" }
 run = [
-  "cargo clippy --workspace --all-targets --all-features -- -D warnings",
-  "cd python && uv sync && (uv run mypy fast_yaml/ || true) && uv run ruff check .",
-  "cd nodejs && pnpm install --no-frozen-lockfile && pnpm run lint && pnpm run typecheck",
+  { task = "lint:clippy" },
+  { task = "lint:python" },
+  { task = "lint:nodejs" },
+]
+
+[tasks."lint:clippy"]
+description = "Clippy over the whole workspace with warnings denied (CI: Lint (rust))"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+[tasks."lint:clippy-hack"]
+description = "Clippy over the feature powerset of the non-FFI crates (CI: Clippy Feature Powerset)"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo hack clippy --feature-powerset --all-targets -p fast-yaml-cli -p fast-yaml-linter -p fast-yaml-core -p fast-yaml-parallel -- -D warnings"
+
+[tasks."lint:python"]
+description = "mypy (non-blocking as in CI) and ruff (CI: Python Quality Checks)"
+run = "cd python && uv sync && (uv run mypy fast_yaml/ || true) && uv run ruff check ."
+
+[tasks."lint:nodejs"]
+description = "biome lint and tsc (CI: NodeJS Quality Checks)"
+run = ["cd nodejs && pnpm install --no-frozen-lockfile", "cd nodejs && pnpm run lint && pnpm run typecheck"]
+
+[tasks."audit:nodejs"]
+description = "pnpm audit failing on high and critical vulnerabilities (CI: NodeJS Quality Checks)"
+run = [
+  "cd nodejs && pnpm install --no-frozen-lockfile",
+  '''
+cd nodejs
+pnpm audit --audit-level=high || {
+  echo "Security vulnerabilities found. Run 'pnpm audit' locally to see details."
+  echo "To fix automatically: pnpm audit fix"
+  exit 1
+}
+''',
 ]
 
 [tasks.doc]
@@ -48,42 +91,71 @@ run = [
   "cargo test --doc --workspace --exclude fast-yaml --exclude fast-yaml-nodejs",
 ]
 
+[tasks."test:core-no-arena"]
+description = "Core crate alone, so workspace feature unification cannot hide no-arena cfg regressions (CI: Test Core (no arena))"
+env = { RUSTFLAGS = "-D warnings" }
+run = [
+  "cargo clippy -p fast-yaml-core --all-targets -- -D warnings",
+  "cargo nextest run -p fast-yaml-core",
+  "cargo test --doc -p fast-yaml-core",
+]
+
 [tasks."build:fy"]
 description = "Build the fy binary used by binding tests"
 env = { RUSTFLAGS = "-D warnings" }
 run = "cargo build --bin fy"
-sources = ["Cargo.toml", "Cargo.lock", "crates/**/*.rs", "crates/**/Cargo.toml"]
-outputs = ["target/debug/fy"]
 
 [tasks."build:python"]
 description = "Install Python dependencies and build the extension with maturin"
+depends = ["build:fy"]
 env = { RUSTFLAGS = "-D warnings" }
 run = ["cd python && uv sync", "cd python && uv run maturin develop"]
-sources = ["Cargo.lock", "crates/**/*.rs", "python/Cargo.toml", "python/src/**/*.rs", "python/pyproject.toml", "python/uv.lock"]
-outputs = ["python/fast_yaml/*.so"]
 
 [tasks."build:nodejs"]
 description = "Install Node.js dependencies and build the test addon"
+depends = ["build:fy"]
 env = { RUSTFLAGS = "-D warnings" }
 run = ["cd nodejs && pnpm install --no-frozen-lockfile", "cd nodejs && pnpm run build:test"]
-sources = ["Cargo.lock", "crates/**/*.rs", "nodejs/Cargo.toml", "nodejs/src/**/*.rs", "nodejs/package.json", "nodejs/pnpm-lock.yaml"]
-outputs = ["nodejs/*.node"]
+
+[tasks."release:nodejs"]
+description = "Release build of the Node.js addon (CI: NodeJS Build)"
+run = ["cd nodejs && pnpm install --no-frozen-lockfile", "cd nodejs && pnpm run build"]
 
 [tasks."test:python"]
 description = "Python binding tests; set YAML_TEST_SUITE_PATH to a yaml-test-suite checkout to run the suite"
-depends = ["build:fy", "build:python"]
-env = { FY_BIN = "{{config_root}}/target/debug/fy" }
+depends = ["build:python"]
+env = { FY_BIN = '{{config_root}}/target/debug/fy{% if os() == "windows" %}.exe{% endif %}' }
 run = "cd python && uv run pytest tests/ -v"
 
 [tasks."test:nodejs"]
 description = "Node.js binding tests"
-depends = ["build:fy", "build:nodejs"]
-env = { FY_BIN = "{{config_root}}/target/debug/fy" }
+depends = ["build:nodejs"]
+env = { FY_BIN = '{{config_root}}/target/debug/fy{% if os() == "windows" %}.exe{% endif %}' }
 run = "cd nodejs && pnpm test"
+
+[tasks."coverage:rust"]
+description = "Rust line coverage as lcov, excluding FFI crates (CI: Code Coverage)"
+run = "cargo llvm-cov nextest --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --lcov --output-path lcov.info"
+
+[tasks."coverage:python"]
+description = "Python binding tests with coverage (CI: Python Coverage)"
+depends = ["build:python"]
+env = { FY_BIN = '{{config_root}}/target/debug/fy' }
+run = "cd python && uv run pytest tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml"
+
+[tasks."coverage:nodejs"]
+description = "Node.js binding tests with coverage (CI: NodeJS Coverage)"
+depends = ["build:nodejs"]
+env = { FY_BIN = '{{config_root}}/target/debug/fy' }
+run = "cd nodejs && pnpm run test:coverage"
 
 [tasks.deny]
 description = "cargo-deny advisories, bans, licenses and sources"
 run = "cargo deny check"
+
+[tasks.semver]
+description = "cargo-semver-checks of fast-yaml-core, non-blocking as in CI (CI: Security Audit)"
+run = "cargo semver-checks check-release --package fast-yaml-core || true"
 
 [tasks.ci]
 description = "Run every CI check sequentially, avoiding concurrent cargo and pnpm installs"

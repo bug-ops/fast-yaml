@@ -20,6 +20,8 @@ env:
   RUST_BACKTRACE: short
   RUSTFLAGS: "-D warnings"
   RUSTUP_MAX_RETRIES: 10
+  # Fail loudly when a task needs a tool its job did not list in install_args
+  MISE_TASK_RUN_AUTO_INSTALL: "false"
 
 # Cancel previous runs on new push
 concurrency:
@@ -58,84 +60,15 @@ jobs:
               - 'crates/fast-yaml-core/**'
             ci:
               - '.github/workflows/**'
+              - 'mise.toml'
+              - 'mise.*.toml'
+              - 'mise.lock'
+              - 'mise.*.lock'
 
-  # Format checks - one job per language so downstream jobs can depend on the relevant one
-  format-rust:
-    name: Format (rust)
-    needs: [changes]
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install nightly Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: nightly
-          components: rustfmt
-
-      - name: Check Rust formatting
-        run: cargo +nightly fmt --all -- --check
-
-  format-python:
-    name: Format (python)
-    needs: [changes]
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: '3.12'
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Check Python formatting
-        run: cd python && uv run ruff format --check .
-
-  format-nodejs:
-    name: Format (nodejs)
-    needs: [changes]
-    if: needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 10
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: nodejs/pnpm-lock.yaml
-
-      - name: Install NodeJS dependencies
-        run: cd nodejs && pnpm install --no-frozen-lockfile
-
-      - name: Check NodeJS formatting
-        run: cd nodejs && pnpm run format:check
-
-  # Clippy linting - runs in parallel with format; gate for all test jobs
+  # Rust format and clippy in one job: a 10s nightly install is cheaper than a separate runner, and this job gates the tests either way
+  # mise-action steps: MISE_SAFE applies to the install step only, because safe mode disables `mise run`
   lint:
-    name: Clippy Lint
+    name: Lint (rust)
     needs: [changes]
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
@@ -147,12 +80,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: nightly
+          components: rustfmt
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: stable
           components: clippy
-
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -160,32 +98,82 @@ jobs:
           shared-key: "clippy"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          cache: false
+          version: 2026.10.25
+          install: false
+
+      - name: Check Rust formatting
+        run: mise run fmt:check:rust
+
+      # clippy-sarif and sarif-fmt have no mise registry entry and share one repository with several tag prefixes
+      # The steps below run after a failed format check so one failure does not hide the others
       - name: Install SARIF tools
+        if: ${{ !cancelled() }}
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: clippy-sarif,sarif-fmt,cargo-hack
+          tool: clippy-sarif,sarif-fmt
 
       # Single clippy run with SARIF output
       - name: Run Clippy with SARIF
+        if: ${{ !cancelled() }}
         run: |
           cargo clippy --workspace --all-targets --all-features --message-format=json -- -D warnings 2>&1 | \
           clippy-sarif | tee clippy-results.sarif | sarif-fmt
         continue-on-error: true
 
       - name: Verify Clippy passes
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: Clippy feature powerset
-        run: cargo hack clippy --feature-powerset --all-targets -p fast-yaml-cli -p fast-yaml-linter -p fast-yaml-core -p fast-yaml-parallel -- -D warnings
+        if: ${{ !cancelled() }}
+        run: mise run lint:clippy
 
       - name: Upload SARIF to GitHub
+        if: ${{ !cancelled() }}
         uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:
           sarif_file: clippy-results.sarif
           wait-for-processing: true
 
       - name: Check documentation
-        run: RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
+        if: ${{ !cancelled() }}
+        run: mise run doc
+
+  # Feature powerset is ~65s of the lint gate (main medians), so it runs beside the tests instead of in front of them
+  clippy-powerset:
+    name: Clippy Feature Powerset
+    needs: [changes]
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: "clippy-powerset"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
+        with:
+          cache: false
+          version: 2026.10.25
+          install_args: github:taiki-e/cargo-hack
+
+      - name: Clippy feature powerset
+        run: mise run lint:clippy-hack
 
 
   # Security auditing - runs in parallel with everything
@@ -205,10 +193,14 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Install security tools
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          tool: cargo-deny
+          cache: false
+          version: 2026.10.25
+          install_args: aqua:EmbarkStudios/cargo-deny github:obi1kenobi/cargo-semver-checks
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -217,15 +209,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run cargo deny
-        run: cargo deny check
-
-      - name: Install cargo-semver-checks
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: cargo-semver-checks
+        run: mise run deny
 
       - name: Check SemVer compliance
-        run: cargo semver-checks check-release --package fast-yaml-core || true
+        run: mise run semver
 
   # MSRV check - runs in parallel
   msrv:
@@ -258,7 +245,7 @@ jobs:
   # Cross-platform Rust tests
   test-rust:
     name: Test Rust (${{ matrix.os }}${{ matrix.rust == 'beta' && ', beta' || '' }})
-    needs: [changes, format-rust, lint]
+    needs: [changes, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ${{ matrix.os }}
@@ -286,11 +273,14 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
 
-
-      - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          tool: nextest
+          cache: false
+          version: 2026.10.25
+          install_args: github:nextest-rs/nextest[version_prefix=cargo-nextest-]
 
       - name: Install dependencies (Ubuntu)
         if: matrix.os == 'ubuntu-latest'
@@ -304,22 +294,15 @@ jobs:
           shared-key: "test-${{ matrix.os }}-${{ matrix.rust }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build workspace
-        # Exclude FFI bindings (tested separately with their runtimes)
-        run: cargo build --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs
-
-      - name: Run tests
-        run: cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
-
-      - name: Run doctests
-        # nextest does not run doctests
-        run: cargo test --doc --workspace --exclude fast-yaml --exclude fast-yaml-nodejs
+      # Build, nextest and doctests; FFI bindings are excluded (tested separately with their runtimes)
+      - name: Build and test workspace
+        run: mise run test:rust
 
 
   # Core crate alone: workspace-wide runs unify the `arena` feature on, hiding no-arena cfg regressions
   test-core-no-arena:
     name: Test Core (no arena)
-    needs: [changes, format-rust, lint]
+    needs: [changes, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
@@ -335,10 +318,14 @@ jobs:
           toolchain: stable
           components: clippy
 
-      - name: Install nextest
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          tool: nextest
+          cache: false
+          version: 2026.10.25
+          install_args: github:nextest-rs/nextest[version_prefix=cargo-nextest-]
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -346,20 +333,14 @@ jobs:
           shared-key: "core-no-arena"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Clippy (default features)
-        run: cargo clippy -p fast-yaml-core --all-targets -- -D warnings
-
-      - name: Run tests
-        run: cargo nextest run -p fast-yaml-core
-
-      - name: Run doctests
-        # nextest does not run doctests
-        run: cargo test --doc -p fast-yaml-core
+      # Clippy (default features), nextest and doctests
+      - name: Lint and test core
+        run: mise run test:core-no-arena
 
   # Code coverage (Linux only)
   coverage:
     name: Code Coverage
-    needs: [changes, format-rust, lint]
+    needs: [changes, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
@@ -374,11 +355,14 @@ jobs:
         with:
           toolchain: stable
 
-
-      - name: Install coverage tools
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          tool: cargo-llvm-cov,nextest
+          cache: false
+          version: 2026.10.25
+          install_args: aqua:taiki-e/cargo-llvm-cov github:nextest-rs/nextest[version_prefix=cargo-nextest-]
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -387,7 +371,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Generate coverage
-        run: cargo llvm-cov nextest --workspace --exclude fast-yaml --exclude fast-yaml-nodejs --lcov --output-path lcov.info
+        run: mise run coverage:rust
 
       - name: Upload to codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -407,11 +391,11 @@ jobs:
           retention-days: 30
 
 
-  # Python quality checks - runs in parallel
+  # Python format and lint in one job: both spend ~60s in the same uv sync (extension build), which now runs once
   python-quality:
     name: Python Quality Checks
     needs: [changes]
-    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ci == 'true'
+    if: needs.changes.outputs.python == 'true' || needs.changes.outputs.ci == 'true' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -419,27 +403,24 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          python-version: '3.12'
+          cache: false
+          version: 2026.10.25
+          install_args: python uv
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
+      # uv sync, mypy (non-blocking) and ruff check
+      - name: Run type checking and linting
+        run: mise run lint:python
 
-      - name: Install Python dependencies
-        run: cd python && uv sync
+      - name: Check Python formatting
+        if: ${{ !cancelled() }}
+        run: mise run fmt:check:python
 
-      - name: Run type checking
-        run: cd python && uv run mypy fast_yaml/
-        continue-on-error: true
-
-      - name: Run linting
-        run: cd python && uv run ruff check .
-
-  # NodeJS quality checks - runs in parallel
+  # NodeJS format and quality in one job: format alone was ~20s, mostly setup
   nodejs-quality:
     name: NodeJS Quality Checks
     needs: [changes]
@@ -451,45 +432,36 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          version: 10
+          cache: false
+          version: 2026.10.25
+          install_args: node pnpm
 
-      - name: Set up Node.js 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: nodejs/pnpm-lock.yaml
+      - name: Check NodeJS formatting
+        run: mise run fmt:check:nodejs
 
-      - name: Install NodeJS dependencies
-        run: cd nodejs && pnpm install --no-frozen-lockfile
-
+      # Fails on high and critical vulnerabilities
       - name: Run security audit
-        run: |
-          cd nodejs
-          # Fail on high and critical vulnerabilities
-          pnpm audit --audit-level=high || {
-            echo "Security vulnerabilities found. Run 'pnpm audit' locally to see details."
-            echo "To fix automatically: pnpm audit fix"
-            exit 1
-          }
+        run: mise run audit:nodejs
 
-      - name: Run linting
-        run: cd nodejs && pnpm run lint
-
-      - name: Run type checking
-        run: cd nodejs && pnpm run typecheck
+      - name: Run linting and type checking
+        run: mise run lint:nodejs
 
   # Python bindings tests (optimized matrix)
   test-python:
     name: Test Python (${{ matrix.os }}, ${{ matrix.python-version }})
-    needs: [changes, format-python, python-quality, lint]
+    needs: [changes, python-quality, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    env:
+      # Selects mise.<env>.toml and its own lockfile, so the tested Python stays lock-pinned
+      MISE_ENV: ${{ matrix.mise-env }}
     strategy:
       fail-fast: false
       matrix:
@@ -497,12 +469,16 @@ jobs:
           # abi3 wheel is identical across versions: test the floor and the newest release
           - os: ubuntu-latest
             python-version: '3.10'
+            mise-env: py310
           - os: ubuntu-latest
             python-version: '3.14'
+            mise-env: py314
           - os: macos-latest
             python-version: '3.14'
+            mise-env: py314
           - os: windows-latest
             python-version: '3.14'
+            mise-env: py314
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -514,32 +490,30 @@ jobs:
         with:
           toolchain: stable
 
-
-      - name: Set up Python ${{ matrix.python-version }}
-        id: setup-python
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - name: Set up mise (Python ${{ matrix.python-version }})
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          python-version: ${{ matrix.python-version }}
+          cache: false
+          version: 2026.10.25
+          install_args: python uv
+
+      # Checks the interpreter uv resolves for the project, so an ignored MISE_ENV or a uv-downloaded Python cannot pass
+      - name: Assert Python version
+        shell: bash
+        run: |
+          PY="$(cd python && uv python find)"
+          GOT="$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
+          test "$GOT" = "$EXPECTED_PYTHON" || { echo "Expected Python $EXPECTED_PYTHON, got $GOT ($PY)"; exit 1; }
+        env:
+          EXPECTED_PYTHON: ${{ matrix.python-version }}
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          shared-key: "python-${{ matrix.os }}-${{ steps.setup-python.outputs.python-version }}"
+          shared-key: "python-${{ matrix.os }}-${{ matrix.python-version }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Install Python dependencies
-        run: cd python && uv sync
-
-      - name: Build fy binary
-        run: cargo build --bin fy
-
-      - name: Build Python extension
-        run: cd python && uv run maturin develop
 
       - name: Checkout yaml-test-suite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -550,17 +524,17 @@ jobs:
           depth: 1
           persist-credentials: false
 
-      - name: Run Python tests
-        run: cd python && uv run pytest tests/ -v
+      # test:python builds fy, then the extension (uv sync, maturin develop), then runs pytest
+      - name: Build and run Python tests
+        run: mise run test:python
         env:
           YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
-          FY_BIN: ${{ github.workspace }}/target/debug/fy${{ runner.os == 'Windows' && '.exe' || '' }}
 
 
   # NodeJS bindings tests
   test-nodejs:
     name: Test NodeJS (${{ matrix.os }}, Node ${{ matrix.node-version }})
-    needs: [changes, format-nodejs, nodejs-quality, lint]
+    needs: [changes, nodejs-quality, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ${{ matrix.os }}
@@ -572,6 +546,7 @@ jobs:
           # Linux: min supported LTS and latest LTS
           - os: ubuntu-latest
             node-version: '22'
+            mise-env: node22
           - os: ubuntu-latest
             node-version: '24'
           # macOS: latest LTS
@@ -591,17 +566,28 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        with:
-          version: 10
+      # node22 selects mise.node22.toml and its own lockfile; default legs leave MISE_ENV unset
+      - name: Select mise environment
+        if: ${{ matrix.mise-env }}
+        shell: bash
+        run: echo "MISE_ENV=$MISE_ENV_NAME" >> "$GITHUB_ENV"
+        env:
+          MISE_ENV_NAME: ${{ matrix.mise-env }}
 
-      - name: Set up Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - name: Set up mise (Node ${{ matrix.node-version }})
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'pnpm'
-          cache-dependency-path: nodejs/pnpm-lock.yaml
+          cache: false
+          version: 2026.10.25
+          install_args: node pnpm
+
+      - name: Assert Node major version
+        shell: bash
+        run: test "$(node --version | cut -d. -f1)" = "v${EXPECTED_NODE}" || { echo "Expected Node ${EXPECTED_NODE}, got $(node --version)"; exit 1; }
+        env:
+          EXPECTED_NODE: ${{ matrix.node-version }}
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -609,25 +595,15 @@ jobs:
           shared-key: "nodejs-${{ matrix.os }}-${{ matrix.node-version }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install NodeJS dependencies
-        run: cd nodejs && pnpm install --no-frozen-lockfile
-
-      - name: Build fy binary
-        run: cargo build --bin fy
-
-      - name: Build NodeJS extension
-        run: cd nodejs && pnpm run build:test
-
-      - name: Run NodeJS tests
-        run: cd nodejs && pnpm test
-        env:
-          FY_BIN: ${{ github.workspace }}/target/debug/fy${{ runner.os == 'Windows' && '.exe' || '' }}
+      # test:nodejs builds fy, then the addon (pnpm install, napi build:test), then runs the tests
+      - name: Build and run NodeJS tests
+        run: mise run test:nodejs
 
 
   # Python coverage (Linux only)
   python-coverage:
     name: Python Coverage
-    needs: [changes, format-python, python-quality, lint]
+    needs: [changes, python-quality, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.python == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
@@ -642,31 +618,20 @@ jobs:
         with:
           toolchain: stable
 
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          python-version: '3.12'
+          cache: false
+          version: 2026.10.25
+          install_args: python uv
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: "python-coverage"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-        with:
-          enable-cache: true
-
-      - name: Install Python dependencies
-        run: cd python && uv sync
-
-      - name: Build fy binary
-        run: cargo build --bin fy
-
-      - name: Build Python extension
-        run: cd python && uv run maturin develop
 
       - name: Checkout yaml-test-suite
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -677,11 +642,10 @@ jobs:
           depth: 1
           persist-credentials: false
 
-      - name: Run tests with coverage
-        run: cd python && uv run pytest tests/ -v --cov=fast_yaml --cov-report=xml:coverage.xml
+      - name: Build and run tests with coverage
+        run: mise run coverage:python
         env:
           YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
-          FY_BIN: ${{ github.workspace }}/target/debug/fy
 
       - name: Upload Python coverage to codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -696,7 +660,7 @@ jobs:
   # NodeJS coverage (Linux only)
   nodejs-coverage:
     name: NodeJS Coverage
-    needs: [changes, format-nodejs, nodejs-quality, lint]
+    needs: [changes, nodejs-quality, lint]
     # !cancelled() lets skipped (path-filtered) gates through; any failed gate blocks
     if: ${{ !cancelled() && !contains(needs.*.result, 'failure') && (needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.rust == 'true' || needs.changes.outputs.ci == 'true') }}
     runs-on: ubuntu-latest
@@ -711,17 +675,14 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          version: 10
-
-      - name: Set up Node.js 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: nodejs/pnpm-lock.yaml
+          cache: false
+          version: 2026.10.25
+          install_args: node pnpm
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -729,19 +690,8 @@ jobs:
           shared-key: "nodejs-coverage"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install NodeJS dependencies
-        run: cd nodejs && pnpm install --no-frozen-lockfile
-
-      - name: Build fy binary
-        run: cargo build --bin fy
-
-      - name: Build NodeJS extension
-        run: cd nodejs && pnpm run build:test
-
-      - name: Run tests with coverage
-        run: cd nodejs && pnpm run test:coverage
-        env:
-          FY_BIN: ${{ github.workspace }}/target/debug/fy
+      - name: Build and run tests with coverage
+        run: mise run coverage:nodejs
 
       - name: Upload NodeJS coverage to codecov
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
@@ -775,17 +725,14 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        env:
+          MISE_SAFE: "1"
         with:
-          version: 10
-
-      - name: Set up Node.js 24
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: '24'
-          cache: 'pnpm'
-          cache-dependency-path: nodejs/pnpm-lock.yaml
+          cache: false
+          version: 2026.10.25
+          install_args: node pnpm
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -793,11 +740,8 @@ jobs:
           shared-key: "nodejs-build-${{ matrix.os }}"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Install NodeJS dependencies
-        run: cd nodejs && pnpm install --no-frozen-lockfile
-
       - name: Build release
-        run: cd nodejs && pnpm run build
+        run: mise run release:nodejs
 
       - name: Upload artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -839,72 +783,17 @@ jobs:
           find target/release -maxdepth 1 -type f -regex '.*\.\(so\|dylib\|dll\|a\|rlib\)' -exec ls -lh {} +
           du -sh target/release/
 
-
-  # Pilot (#665): mise toolchain and task runner running the same checks as the jobs above; not a required check
-  mise-ci:
-    name: Mise CI (pilot)
-    needs: [changes]
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.python == 'true' || needs.changes.outputs.nodejs == 'true' || needs.changes.outputs.ci == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install nightly Rust
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: nightly
-          components: rustfmt
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
-        with:
-          toolchain: stable
-          components: clippy
-
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          shared-key: "mise-ci"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # Safe mode applies to the install step only: it disables `mise run`
-      - name: Install mise tools
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
-        env:
-          MISE_SAFE: "1"
-        with:
-          cache: false
-
-      - name: Checkout yaml-test-suite
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: yaml/yaml-test-suite
-          ref: data-2022-01-17
-          path: yaml-test-suite
-          depth: 1
-          persist-credentials: false
-
-      - name: Run mise ci
-        run: mise run ci
-        env:
-          YAML_TEST_SUITE_PATH: ${{ github.workspace }}/yaml-test-suite
-
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [format-rust, format-python, format-nodejs, lint, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
+    needs: [lint, clippy-powerset, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all jobs
         run: |
-          echo "Format (rust): ${{ needs.format-rust.result }}"
-          echo "Format (python): ${{ needs.format-python.result }}"
-          echo "Format (nodejs): ${{ needs.format-nodejs.result }}"
-          echo "Lint: ${{ needs.lint.result }}"
+          echo "Lint (rust): ${{ needs.lint.result }}"
+          echo "Clippy Feature Powerset: ${{ needs.clippy-powerset.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "Test Rust: ${{ needs.test-rust.result }}"
           echo "Test Core (no arena): ${{ needs.test-core-no-arena.result }}"
@@ -919,8 +808,8 @@ jobs:
 
           # Docs-only changes (specs/, *.md, docs/) match no filter, so every job is skipped
           # All jobs can be skipped if the path filter excludes them
-          for result in "${{ needs.format-rust.result }}" "${{ needs.format-python.result }}" \
-                        "${{ needs.format-nodejs.result }}" "${{ needs.lint.result }}" "${{ needs.security.result }}" \
+          for result in "${{ needs.lint.result }}" "${{ needs.clippy-powerset.result }}" \
+                        "${{ needs.security.result }}" \
                         "${{ needs.test-rust.result }}" "${{ needs.test-core-no-arena.result }}" \
                         "${{ needs.coverage.result }}" \
                         "${{ needs.msrv.result }}" "${{ needs.test-python.result }}" \

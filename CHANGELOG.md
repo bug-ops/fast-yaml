@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- CI: opt-in `mise` toolchain and tasks (`mise.toml`, `mise.lock`) with a parallel non-required `mise-ci` pilot job (#669)
+- CI: fmt, clippy, docs, test, coverage, audit, Python and Node.js jobs install tools with `mise` and run `mise run <task>`; setup-node, setup-python, setup-uv, pnpm/action-setup and most install-action steps removed (#669)
 
 ### Security
 

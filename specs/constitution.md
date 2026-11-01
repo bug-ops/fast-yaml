@@ -87,6 +87,7 @@ Toolchain: Rust edition 2024, MSRV 1.91, workspace version 0.7.0, license MIT OR
 | 007 | [[007-python-api/spec\|Python API]] | `fast_yaml` package | - |
 | 008 | [[008-nodejs-api/spec\|Node.js API]] | `fastyaml-rs` package | - |
 | 009 | [[009-limits-security/spec\|Limits and security]] | resource limits, input hardening, file safety | - |
+| 010 | [[010-ci-tooling/spec\|CI tooling]] | mise toolchain, tasks, lockfiles, CI job wiring | [[010-ci-tooling/plan\|plan]] |
 
 Reading order for a newcomer: 001, 009, 002, 003, 004, 005, 006, then the bindings.
 

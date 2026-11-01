@@ -109,18 +109,103 @@ cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-
 RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" cargo doc --no-deps --workspace
 ```
 
-#### Optional: mise
+#### Optional: mise toolchain and tasks
 
-[mise](https://mise.jdx.dev) can install the pinned dev tools (Node.js, pnpm, Python, uv, cargo-nextest, cargo-deny, cargo-hack, cargo-llvm-cov, cargo-semver-checks) from `mise.toml` and `mise.lock`, and run the same checks as CI. Rust itself stays on rustup; the stable and nightly toolchains must be installed as above.
+[mise](https://mise.jdx.dev) pins the non-Rust dev tools and exposes the CI checks as named tasks. CI installs its tools with mise and runs the format, lint, test, coverage, audit and build jobs through `mise run <task>`, so a task reproduces the matching CI job locally. The MSRV check, the release build check and the SARIF tool install stay outside mise. mise is optional for contributors: plain `cargo`, `pnpm` and `uv` commands keep working, and the commands above remain the reference.
+
+Pinned in `mise.toml` and `mise.lock`: Node.js, pnpm, Python, uv, cargo-nextest, cargo-deny, cargo-hack, cargo-llvm-cov and cargo-semver-checks. Rust stays on rustup (see [What stays outside mise](#what-stays-outside-mise)).
 
 ```bash
-mise install --locked
+mise install --locked     # install exactly the versions and checksums in mise.lock
 mise tasks                # list tasks
-mise run ci               # fmt:check, lint, doc, test:rust, test:python, test:nodejs, deny
-mise run fmt:check
+mise run ci               # local pre-PR gate
+mise run lint:clippy      # a single task
 ```
 
-mise is optional and still a pilot: plain `cargo`, `pnpm` and `uv` commands keep working and remain the reference. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
+| Task | Runs | CI job |
+|------|------|--------|
+| `fmt` | rustfmt (nightly), `ruff format`, `pnpm run format` (rewrites files) | - |
+| `fmt:check`, `fmt:check:rust`, `fmt:check:python`, `fmt:check:nodejs` | formatting checks | Lint (rust), Python Quality Checks, NodeJS Quality Checks |
+| `lint` | `lint:clippy`, `lint:python`, `lint:nodejs` | - |
+| `lint:clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Lint (rust) |
+| `lint:clippy-hack` | clippy over the feature powerset of the non-FFI crates | Clippy Feature Powerset |
+| `lint:python` | `uv sync`, mypy (non-blocking), `ruff check` | Python Quality Checks |
+| `lint:nodejs` | `pnpm install`, biome lint, `tsc` | NodeJS Quality Checks |
+| `audit:nodejs` | `pnpm audit --audit-level=high` | NodeJS Quality Checks |
+| `doc` | `cargo doc --workspace --no-deps` with warnings denied | Lint (rust) |
+| `test:rust` | build, nextest and doctests, excluding the FFI crates | Test Rust |
+| `test:core-no-arena` | clippy, nextest and doctests of `fast-yaml-core` alone | Test Core (no arena) |
+| `build:fy`, `build:python`, `build:nodejs` | build the `fy` binary, the maturin extension, the napi test addon | - |
+| `test:python`, `test:nodejs` | binding tests (depend on the build tasks) | Test Python, Test NodeJS |
+| `release:nodejs` | release build of the Node.js addon | NodeJS Build |
+| `coverage:rust`, `coverage:python`, `coverage:nodejs` | coverage runs | Code Coverage, Python Coverage, NodeJS Coverage |
+| `deny` | `cargo deny check` | Security Audit |
+| `semver` | `cargo semver-checks` of `fast-yaml-core` (non-blocking) | Security Audit |
+| `ci` | `fmt:check`, `lint`, `doc`, `test:rust`, `test:python`, `test:nodejs`, `deny`, sequentially | - |
+
+`mise run ci` is the local pre-PR gate. It covers the format, lint, test and security jobs but not coverage, `lint:clippy-hack`, `test:core-no-arena`, `audit:nodejs`, `semver`, `release:nodejs`, the MSRV check or the SARIF upload; run those tasks individually when your change touches them. It runs tasks sequentially because parallel tasks race on the cargo lock and on concurrent `pnpm install` runs. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
+
+##### Version legs
+
+CI tests other Python and Node.js versions through mise environments. `MISE_ENV` selects an extra config file with its own lockfile:
+
+| `MISE_ENV` | Config | Lockfile | Overrides |
+|------------|--------|----------|-----------|
+| `py310` | `mise.py310.toml` | `mise.py310.lock` | Python 3.10 |
+| `py314` | `mise.py314.toml` | `mise.py314.lock` | Python 3.14 |
+| `node22` | `mise.node22.toml` | `mise.node22.lock` | Node.js 22 |
+
+Run a leg locally:
+
+```bash
+MISE_ENV=py310 mise install --locked
+MISE_ENV=py310 mise run test:python
+```
+
+Environment names must not contain dots (`py3.10` would write into `mise.lock`). Node.js 24 and Python 3.12 are the defaults in `mise.toml`.
+
+##### Adding or updating a tool
+
+1. Edit `[tools]` in `mise.toml` (or the `mise.<env>.toml` file for a version leg). Prefer the `aqua:` backend; use `github:` when aqua has no entry. Avoid the `cargo:` backend: it builds from source and does not lock transitive tools.
+2. Regenerate every lockfile for the platforms CI uses:
+
+   ```bash
+   P=linux-x64,linux-arm64,macos-arm64,windows-x64
+   mise lock --platform $P
+   for env in py310 py314 node22; do MISE_ENV=$env mise lock --platform $P; done
+   ```
+
+3. Verify with `mise install --locked`; confirm `git diff` touches only the intended lock entries.
+4. If CI needs the tool in a job, add it to that job's `install_args` in `.github/workflows/ci.yml`. Jobs set `MISE_TASK_RUN_AUTO_INSTALL=false`, so a tool missing from `install_args` fails the job instead of being installed silently.
+5. `jdx/mise-action` steps pin `version: 2026.10.25` (the mise release the lockfiles were generated with). Dependabot does not bump it: when regenerating lockfiles with a newer mise, change all 13 occurrences in `.github/workflows/ci.yml` together and keep them equal to that mise version.
+
+To see what is stale, run `mise outdated`. A tool bump changes `mise.lock` (and the `mise.<env>.lock` files if a leg is affected); `mise.toml`, `mise.*.toml` and `mise.*.lock` are in the CI path filter, so such a PR runs the full pipeline.
+
+##### Adding a task
+
+Add a `[tasks."name"]` table to `mise.toml` with a `description` and `run`. Tasks that CI runs must produce the same result as the command they replace. New CI jobs call `mise run <task>` instead of a `setup-*` action followed by raw commands.
+
+##### Security notes
+
+- `mise.lock` pins each tool version with a per-platform sha256 checksum (and GitHub attestation provenance where the release provides it). Always install with `--locked` so a drifting upstream cannot change what you run.
+- CI runs the install step with `MISE_SAFE=1` (safe mode). Safe mode disables `mise run`, so it is set on the install step only, never at job level. Whether safe mode is honored by the setup action in real CI is unverified until the first run.
+- mise executes tasks and `[env]` values from `mise.toml`. Treat `mise.toml` like a build script: review changes to it, and trust a checkout (`mise trust`) only after you have read the file. Never put secrets in `[env]`; the file is committed. Per-task `env` holds only build flags.
+- The setup action runs with `cache: false`, so a poisoned cache cannot supply binaries; only the checksum-verified downloads are used.
+- Third-party actions stay pinned to a full commit SHA.
+
+##### What stays outside mise
+
+- Rust toolchains (stable, nightly for rustfmt, beta, and the MSRV 1.91.0) come from rustup and `dtolnay/rust-toolchain`; mise does not manage them.
+- `clippy-sarif` and `sarif-fmt` come from `taiki-e/install-action` in the Clippy job: they have no mise registry entry and share one repository with several tag prefixes, which collide in the lockfile.
+- The MSRV and release build checks use rustup only.
+
+##### Troubleshooting
+
+- `nodejs/pnpm-lock.yaml` shows as modified after a task: the Node.js tasks run `pnpm install --no-frozen-lockfile`, as CI does, and the lockfile drifts. Revert it with `git checkout nodejs/pnpm-lock.yaml` unless you changed dependencies.
+- A task hangs on "Blocking waiting for file lock": another cargo process holds the build directory. Do not run cargo-based tasks in parallel; `mise run ci` is sequential for this reason.
+- `mise install --locked` fails with a missing lock entry: regenerate the lockfile for all platforms as above.
+- mise refuses to run in a checkout: run `mise trust` after reviewing `mise.toml`.
+- `mise run test:python` skips most of the yaml-test-suite: set `YAML_TEST_SUITE_PATH`.
 
 Behavior changes also update the matching spec in `specs/` (start at `specs/constitution.md`; one `NNN-feature/spec.md` per capability) and the `[Unreleased]` section of `CHANGELOG.md`.
 

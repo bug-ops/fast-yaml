@@ -25,6 +25,12 @@ checksum_source = "mise-versions"
 url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471597689"
 
+[tools."aqua:EmbarkStudios/cargo-deny"."platforms.windows-x64"]
+checksum = "sha256:975a22143262fd27476d19ee00c7af67978426e40e1dee94eed6bbade1cf87dc"
+checksum_source = "mise-versions"
+url = "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.20.2/cargo-deny-0.20.2-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/EmbarkStudios/cargo-deny/releases/assets/471599057"
+
 [[tools."aqua:taiki-e/cargo-llvm-cov"]]
 version = "0.9.1"
 backend = "aqua:taiki-e/cargo-llvm-cov"
@@ -46,6 +52,12 @@ provenance = "github-attestations"
 checksum = "sha256:7e821a6c90c0884f79f759f5d9be50799ade67bb82515186d922f26032ef43b8"
 url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547403359"
+provenance = "github-attestations"
+
+[tools."aqua:taiki-e/cargo-llvm-cov"."platforms.windows-x64"]
+checksum = "sha256:15eefd5b90fcdd4006b727c6e710d70a61aff509fcd7bb37f9c2a35c4f024948"
+url = "https://github.com/taiki-e/cargo-llvm-cov/releases/download/v0.9.1/cargo-llvm-cov-x86_64-pc-windows-msvc.tar.gz"
+url_api = "https://api.github.com/repos/taiki-e/cargo-llvm-cov/releases/assets/547404213"
 provenance = "github-attestations"
 
 [[tools."github:nextest-rs/nextest"]]
@@ -74,6 +86,12 @@ url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9
 url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/679078149"
 provenance = "github-attestations"
 
+[tools."github:nextest-rs/nextest"."platforms.windows-x64"]
+checksum = "sha256:6fd8f9ba48c946a79a5bcdd35bf4f922447b149f7ca6c3ff7f39e12f32ef78db"
+url = "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-0.9.150/cargo-nextest-0.9.150-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/nextest-rs/nextest/releases/assets/679074354"
+provenance = "github-attestations"
+
 [[tools."github:obi1kenobi/cargo-semver-checks"]]
 version = "0.51.0"
 backend = "github:obi1kenobi/cargo-semver-checks"
@@ -96,6 +114,12 @@ checksum = "sha256:3cec5da41eee9a3336d75ad43d1f30a5c9680818f4ba209024786f452caba
 checksum_source = "mise-versions"
 url = "https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.51.0/cargo-semver-checks-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/obi1kenobi/cargo-semver-checks/releases/assets/608677274"
+
+[tools."github:obi1kenobi/cargo-semver-checks"."platforms.windows-x64"]
+checksum = "sha256:7663ba2c938b59f0476d375ee1b5d8bece36a81819612d1541bc6ccf6316c4b7"
+checksum_source = "mise-versions"
+url = "https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.51.0/cargo-semver-checks-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/obi1kenobi/cargo-semver-checks/releases/assets/608677294"
 
 [[tools."github:taiki-e/cargo-hack"]]
 version = "0.6.45"
@@ -120,6 +144,12 @@ url = "https://github.com/taiki-e/cargo-hack/releases/download/v0.6.45/cargo-hac
 url_api = "https://api.github.com/repos/taiki-e/cargo-hack/releases/assets/433843066"
 provenance = "github-attestations"
 
+[tools."github:taiki-e/cargo-hack"."platforms.windows-x64"]
+checksum = "sha256:b05485f03c1620f6481c41c4b03d5f59ca62d5f64a07d79df9ee088a91721b6c"
+url = "https://github.com/taiki-e/cargo-hack/releases/download/v0.6.45/cargo-hack-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/taiki-e/cargo-hack/releases/assets/433843419"
+provenance = "github-attestations"
+
 [[tools.node]]
 version = "24.22.2"
 backend = "core:node"
@@ -136,6 +166,10 @@ url = "https://nodejs.org/dist/v24.22.2/node-v24.22.2-linux-x64.tar.gz"
 [tools.node."platforms.macos-arm64"]
 checksum = "sha256:aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a"
 url = "https://nodejs.org/dist/v24.22.2/node-v24.22.2-darwin-arm64.tar.gz"
+
+[tools.node."platforms.windows-x64"]
+checksum = "sha256:ca1bff5d8ead13c9f2ea404a176db46bd430704d5b5113734049fa365e7799e2"
+url = "https://nodejs.org/dist/v24.22.2/node-v24.22.2-win-x64.zip"
 
 [[tools.pnpm]]
 version = "10.33.0"
@@ -160,6 +194,12 @@ checksum_source = "mise-versions"
 url = "https://github.com/pnpm/pnpm/releases/download/v10.33.0/pnpm-macos-arm64"
 url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/380583277"
 
+[tools.pnpm."platforms.windows-x64"]
+checksum = "sha256:afc96009dc39fe23a835d65192049e6a995f342496b175585dc2beda7d42d33f"
+checksum_source = "mise-versions"
+url = "https://github.com/pnpm/pnpm/releases/download/v10.33.0/pnpm-win-x64.exe"
+url_api = "https://api.github.com/repos/pnpm/pnpm/releases/assets/380583279"
+
 [[tools.python]]
 version = "3.12.16"
 backend = "core:python"
@@ -178,6 +218,11 @@ provenance = "github-attestations"
 [tools.python."platforms.macos-arm64"]
 checksum = "sha256:353d5f1b4fd2715e7053f12f068435d5bbad16b91e057006b5d01e0925709a7e"
 url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16+20261026-aarch64-apple-darwin-install_only_stripped.tar.gz"
+provenance = "github-attestations"
+
+[tools.python."platforms.windows-x64"]
+checksum = "sha256:1f2ab53880fc67ea323398c6388e05af28addc99a8e389209f08a51fdff4b149"
+url = "https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16+20261026-x86_64-pc-windows-msvc-install_only_stripped.tar.gz"
 provenance = "github-attestations"
 
 [[tools.uv]]
@@ -201,4 +246,10 @@ provenance = "github-attestations"
 checksum = "sha256:60fbd5c8a1ed681845eea28d9d622fcde03c51e91a43465b64a1e17db1ed3472"
 url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-apple-darwin.tar.gz"
 url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980393"
+provenance = "github-attestations"
+
+[tools.uv."platforms.windows-x64"]
+checksum = "sha256:a2a8820d5eea32f08ef467ef3b7f66883a9b076d5737a2fc2fbb5f458d1bb50f"
+url = "https://github.com/astral-sh/uv/releases/download/0.13.6/uv-x86_64-pc-windows-msvc.zip"
+url_api = "https://api.github.com/repos/astral-sh/uv/releases/assets/679980629"
 provenance = "github-attestations"
