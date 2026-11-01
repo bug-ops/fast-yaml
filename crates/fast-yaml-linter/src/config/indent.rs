@@ -18,7 +18,7 @@ use super::IndentSize;
 /// assert_eq!(fixed, IndentSpaces::Fixed(IndentSize::try_from(4u64).unwrap()));
 /// let consistent: IndentSpaces = serde_norway::from_str("consistent").unwrap();
 /// assert_eq!(consistent, IndentSpaces::Consistent);
-/// assert!(serde_norway::from_str::<IndentSpaces>("17").is_err());
+/// assert!(serde_norway::from_str::<IndentSpaces>("256").is_err());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndentSpaces {
@@ -43,7 +43,7 @@ impl Visitor<'_> for IndentSpacesVisitor {
     type Value = IndentSpaces;
 
     fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("an integer between 1 and 16 or `consistent`")
+        f.write_str("an integer between 1 and 255 or `consistent`")
     }
 
     fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {

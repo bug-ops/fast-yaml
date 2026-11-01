@@ -159,17 +159,17 @@ describe('config errors', () => {
     }
   );
 
-  it.each([0, 99, -1, 2 ** 32 + 2, 1.5, Number.NaN, Number.NEGATIVE_INFINITY])(
+  it.each([0, 256, -1, 2 ** 32 + 2, 1.5, Number.NaN, Number.NEGATIVE_INFINITY])(
     'indentSize %s is rejected',
     (value) => {
       expect(() => lint('a: 1\n', { indentSize: value })).toThrow(
-        /indentSize must be between 1 and 16, got /
+        /indentSize must be between 1 and 255, got /
       );
     }
   );
 
   it('accepts boundary values', () => {
-    expect(() => lint('a: 1\n', { maxLineLength: 4294967295, indentSize: 16 })).not.toThrow();
+    expect(() => lint('a: 1\n', { maxLineLength: 4294967295, indentSize: 255 })).not.toThrow();
     expect(() => lint('a: 1\n', { maxLineLength: 1, indentSize: 1 })).not.toThrow();
   });
 

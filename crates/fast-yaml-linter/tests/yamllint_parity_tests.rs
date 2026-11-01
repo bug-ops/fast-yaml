@@ -27,7 +27,7 @@ fn lines(fixture: &str, rules: &str, code: &str) -> Vec<usize> {
         .unwrap()
         .iter()
         .filter(|d| d.code.as_str() == code)
-        .map(|d| d.span.start.line())
+        .map(|d| d.span.start.line().get())
         .collect();
     found.dedup();
     found

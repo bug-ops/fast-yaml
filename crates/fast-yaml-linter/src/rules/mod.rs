@@ -31,6 +31,7 @@ pub(crate) mod node_roles;
 mod octal_values;
 mod quoted_strings;
 mod set_values;
+mod spacing;
 mod token_stream;
 mod trailing_whitespace;
 mod truthy;
@@ -316,7 +317,7 @@ pub struct LintDocument<'a> {
 /// linter.add_rule(Rule::Document(Box::new(NoNull(code)))).unwrap();
 /// let found = linter.lint("a: 1\n---\n~\n").unwrap();
 /// assert_eq!(found.len(), 1);
-/// assert_eq!(found[0].span.start.line(), 3);
+/// assert_eq!(found[0].span.start.line().get(), 3);
 /// ```
 pub trait DocumentRule: LintRule {
     /// Checks one document and returns the findings, empty if there are none.

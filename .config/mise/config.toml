@@ -55,6 +55,11 @@ description = "Clippy over the feature powerset of the non-FFI crates (CI: Clipp
 env = { RUSTFLAGS = "-D warnings" }
 run = "cargo hack clippy --feature-powerset --all-targets -p fast-yaml-cli -p fast-yaml-linter -p fast-yaml-core -p fast-yaml-parallel -- -D warnings"
 
+[tasks."lint:clippy-windows"]
+description = "Clippy over Windows-only code in fast-yaml-parallel (CI: Test Rust (windows-latest))"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo clippy -p fast-yaml-parallel --all-targets --all-features -- -D warnings"
+
 [tasks."lint:python"]
 description = "mypy (non-blocking as in CI) and ruff (CI: Python Quality Checks)"
 run = "cd python && uv sync && (uv run mypy fast_yaml/ || true) && uv run ruff check ."
@@ -99,6 +104,10 @@ run = [
   "cargo nextest run -p fast-yaml-core",
   "cargo test --doc -p fast-yaml-core",
 ]
+
+[tasks.msrv]
+description = "Type-check the workspace on the MSRV toolchain (CI: Check MSRV (1.91.0))"
+run = "cargo +1.91.0 check --workspace --all-targets"
 
 [tasks."build:fy"]
 description = "Build the fy binary used by binding tests"

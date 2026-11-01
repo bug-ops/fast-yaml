@@ -9,6 +9,7 @@ use fast_yaml_core::limits::MaxScanAhead;
 use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comments_normalized};
 use rayon::prelude::*;
 
+use crate::atomic::HardLinkPolicy;
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::io::read_file;
@@ -35,6 +36,38 @@ pub struct FormatOutput {
     pub formatted: String,
     /// `true` when `formatted` differs from the file's current content.
     pub changed: bool,
+}
+
+/// A file to format in place together with how to treat its hard links.
+///
+/// There is no `From<PathBuf>`: every caller names the [`HardLinkPolicy`].
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::{HardLinkPolicy, InPlaceTarget};
+///
+/// let target = InPlaceTarget::new("a.yaml".into(), HardLinkPolicy::Refuse);
+/// assert_eq!(target.path().to_str(), Some("a.yaml"));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InPlaceTarget {
+    path: PathBuf,
+    hard_links: HardLinkPolicy,
+}
+
+impl InPlaceTarget {
+    /// Creates a target for `path` written under `hard_links`.
+    #[must_use]
+    pub const fn new(path: PathBuf, hard_links: HardLinkPolicy) -> Self {
+        Self { path, hard_links }
+    }
+
+    /// The file to format.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
 }
 
 /// Parallel file processor for batch YAML operations.
@@ -184,38 +217,42 @@ impl FileProcessor {
     /// Format files in place (write back if changed).
     ///
     /// With [`CommentPolicy::Reject`], files containing comments are reported as
-    /// [`Error::CommentsWouldBeStripped`] and left untouched.
+    /// [`Error::CommentsWouldBeStripped`] and left untouched. Each target's
+    /// [`HardLinkPolicy`] decides what happens to a file with several hard links.
     pub fn format_in_place(
         &self,
-        paths: &[PathBuf],
+        targets: &[InPlaceTarget],
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> BatchResult {
         let batch_start = std::time::Instant::now();
-        let total = paths.len();
+        let total = targets.len();
 
         if total == 0 {
             return BatchResult::new();
         }
 
+        let paths: Vec<PathBuf> = targets.iter().map(|t| t.path.clone()).collect();
         let lane = self.lane();
-        let results = if self.should_use_sequential(paths) {
-            paths
+        let results = if self.should_use_sequential(&paths) {
+            targets
                 .iter()
-                .map(|path| self.format_single_file(path, emitter_config, comments, &lane))
+                .map(|target| self.format_single_file(target, emitter_config, comments, &lane))
                 .collect()
         } else {
             self.install(
                 || {
-                    paths
+                    targets
                         .par_iter()
-                        .map(|path| self.format_single_file(path, emitter_config, comments, &lane))
+                        .map(|target| {
+                            self.format_single_file(target, emitter_config, comments, &lane)
+                        })
                         .collect()
                 },
                 |error| {
-                    paths
+                    targets
                         .iter()
-                        .map(|path| Self::failed(path, error()))
+                        .map(|target| Self::failed(&target.path, error()))
                         .collect()
                 },
             )
@@ -278,12 +315,13 @@ impl FileProcessor {
     /// Format a single file in place
     fn format_single_file(
         &self,
-        path: &Path,
+        target: &InPlaceTarget,
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
         lane: &ScanAheadLane,
     ) -> FileResult {
         let start = std::time::Instant::now();
+        let path = target.path();
 
         let output = match self.format_content(path, emitter_config, comments, lane) {
             Ok(output) => output,
@@ -299,7 +337,7 @@ impl FileProcessor {
         };
 
         if output.changed
-            && let Err(error) = Self::write_file_atomic(path, &output.formatted)
+            && let Err(error) = Self::write_file_atomic(path, &output.formatted, target.hard_links)
         {
             return FileResult::new(
                 path.to_path_buf(),
@@ -411,8 +449,8 @@ impl FileProcessor {
     }
 
     /// Writes content to file via the shared secure writer [`crate::write_atomic`].
-    fn write_file_atomic(path: &Path, content: &str) -> Result<()> {
-        crate::write_atomic(path, content.as_bytes()).map_err(|source| Error::Write {
+    fn write_file_atomic(path: &Path, content: &str, hard_links: HardLinkPolicy) -> Result<()> {
+        crate::write_atomic(path, content.as_bytes(), hard_links).map_err(|source| Error::Write {
             path: path.to_path_buf(),
             source,
         })
@@ -485,6 +523,10 @@ mod tests {
     use fast_yaml_core::limits::MaxInputBytes;
     use std::fs;
     use tempfile::TempDir;
+
+    fn in_place(path: &Path) -> InPlaceTarget {
+        InPlaceTarget::new(path.to_path_buf(), HardLinkPolicy::WriteInPlace)
+    }
 
     fn create_test_file(dir: &TempDir, name: &str, content: &str) -> PathBuf {
         let path = dir.path().join(name);
@@ -611,11 +653,8 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let result = processor.format_in_place(
-            std::slice::from_ref(&path),
-            &emitter_config,
-            CommentPolicy::Strip,
-        );
+        let result =
+            processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         assert_eq!(result.total, 1);
     }
@@ -626,7 +665,8 @@ mod tests {
         let path = dir.path().join("test.yaml");
         fs::write(&path, "old content").unwrap();
 
-        FileProcessor::write_file_atomic(&path, "new content").unwrap();
+        FileProcessor::write_file_atomic(&path, "new content", HardLinkPolicy::WriteInPlace)
+            .unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content, "new content");
@@ -717,11 +757,8 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let result = processor.format_in_place(
-            std::slice::from_ref(&path),
-            &emitter_config,
-            CommentPolicy::Strip,
-        );
+        let result =
+            processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         // Should process successfully
         assert_eq!(result.total, 1);
@@ -738,11 +775,8 @@ mod tests {
 
         let processor = FileProcessor::new();
         let emitter_config = EmitterConfig::new();
-        let result = processor.format_in_place(
-            std::slice::from_ref(&path),
-            &emitter_config,
-            CommentPolicy::Strip,
-        );
+        let result =
+            processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         // File should be changed
         assert_eq!(result.total, 1);
@@ -812,11 +846,11 @@ mod tests {
         let path = dir.path().join("test.yaml");
 
         // Initial write
-        FileProcessor::write_file_atomic(&path, "content1").unwrap();
+        FileProcessor::write_file_atomic(&path, "content1", HardLinkPolicy::WriteInPlace).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "content1");
 
         // Update
-        FileProcessor::write_file_atomic(&path, "content2").unwrap();
+        FileProcessor::write_file_atomic(&path, "content2", HardLinkPolicy::WriteInPlace).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "content2");
 
         // Verify atomic write succeeded
@@ -837,7 +871,8 @@ mod tests {
         fs::set_permissions(dir.path(), perms).unwrap();
 
         // Attempt to write should fail
-        let result = FileProcessor::write_file_atomic(&path, "content");
+        let result =
+            FileProcessor::write_file_atomic(&path, "content", HardLinkPolicy::WriteInPlace);
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(dir.path()).unwrap().permissions();
@@ -916,7 +951,7 @@ mod tests {
         let path = create_test_file(&dir, "c.yaml", content);
 
         let result = FileProcessor::new().format_in_place(
-            std::slice::from_ref(&path),
+            &[in_place(&path)],
             &EmitterConfig::new(),
             CommentPolicy::Reject,
         );
@@ -932,7 +967,7 @@ mod tests {
         let path = create_test_file(&dir, "clean.yaml", "key: value\n");
 
         let result = FileProcessor::new().format_in_place(
-            std::slice::from_ref(&path),
+            &[in_place(&path)],
             &EmitterConfig::new(),
             CommentPolicy::Reject,
         );
@@ -1069,12 +1104,15 @@ mod tests {
         let emitter = EmitterConfig::new();
 
         let strict = FileProcessor::with_config(limited(64));
-        let batch =
-            strict.format_in_place(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
+        let batch = strict.format_in_place(&[in_place(&path)], &emitter, CommentPolicy::Reject);
         assert_eq!(batch.failed, 1);
         assert!(batch.errors.iter().all(|(_, e)| is_scan_ahead_rejection(e)));
 
-        let batch = FileProcessor::new().format_in_place(&[path], &emitter, CommentPolicy::Reject);
+        let batch = FileProcessor::new().format_in_place(
+            &[in_place(&path)],
+            &emitter,
+            CommentPolicy::Reject,
+        );
         assert_eq!(batch.failed, 0);
     }
 

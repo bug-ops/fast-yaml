@@ -235,8 +235,15 @@ jobs:
           shared-key: "msrv"
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          cache: false
+          version: 2026.10.25
+          install: false
+
       - name: Check with MSRV
-        run: cargo check --workspace --all-targets
+        run: mise run msrv
 
 
   # Cross-platform Rust tests
@@ -269,6 +276,7 @@ jobs:
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ matrix.rust }}
+          components: clippy
 
       - name: Set up mise
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
@@ -294,6 +302,11 @@ jobs:
       # Build, nextest and doctests; FFI bindings are excluded (tested separately with their runtimes)
       - name: Build and test workspace
         run: mise run test:rust
+
+      # Windows-only code (cfg(windows)) is invisible to the Linux clippy job
+      - name: Clippy Windows-only code
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: mise run lint:clippy-windows
 
 
   # Core crate alone: workspace-wide runs unify the `arena` feature on, hiding no-arena cfg regressions
@@ -783,12 +796,13 @@ jobs:
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [lint, clippy-powerset, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
+    needs: [changes, lint, clippy-powerset, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
       - name: Check all jobs
         run: |
+          echo "Detect Changes: ${{ needs.changes.result }}"
           echo "Lint (rust): ${{ needs.lint.result }}"
           echo "Clippy Feature Powerset: ${{ needs.clippy-powerset.result }}"
           echo "Security: ${{ needs.security.result }}"
@@ -802,6 +816,12 @@ jobs:
           echo "Test NodeJS: ${{ needs.test-nodejs.result }}"
           echo "NodeJS Quality: ${{ needs.nodejs-quality.result }}"
           echo "NodeJS Coverage: ${{ needs.nodejs-coverage.result }}"
+
+          # A failed or cancelled Detect Changes skips every dependent job, so it must succeed itself
+          if [[ "${{ needs.changes.result }}" != "success" ]]; then
+            echo "❌ Detect Changes did not succeed: ${{ needs.changes.result }}"
+            exit 1
+          fi
 
           # Docs-only changes (specs/, *.md, docs/) match no filter, so every job is skipped
           # All jobs can be skipped if the path filter excludes them

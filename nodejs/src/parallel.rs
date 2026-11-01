@@ -2,6 +2,8 @@
 //!
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
+#![allow(unsafe_code)]
+
 use crate::conversion::yaml_to_js;
 use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size, workers};
 use crate::options::{U32_MAX, checked_opt_uint};

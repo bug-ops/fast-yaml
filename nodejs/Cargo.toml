@@ -30,13 +30,15 @@ napi-derive = { workspace = true }
 [build-dependencies]
 napi-build = { workspace = true }
 
-# Override workspace lints for NAPI-RS (uses unsafe internally)
+# napi-rs generates its glue itself; hand-written unsafe is confined to rule_input.rs and parallel.rs
 [lints.rust]
-unsafe_code = "allow"
+unsafe_code = "deny"
 missing_docs = "warn"
 
 [lints.clippy]
 all = "warn"
+undocumented_unsafe_blocks = "warn"
+missing_safety_doc = "warn"
 pedantic = "warn"
 module_name_repetitions = "allow"
 must_use_candidate = "allow"

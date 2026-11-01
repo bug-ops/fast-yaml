@@ -380,8 +380,8 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 let span = self.span(item);
                 let first_line = match (self.documents.is_empty(), explicit) {
                     (true, _) => OneBased::FIRST,
-                    (false, true) => span.start.line_number().saturating_add(1),
-                    (false, false) => span.start.line_number(),
+                    (false, true) => span.start.line().saturating_add(1),
+                    (false, false) => span.start.line(),
                 };
                 let start = if *explicit {
                     DocumentStart::Explicit(span)
@@ -415,8 +415,8 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
     }
 
     /// The `%YAML` directive among the directive, comment and blank lines above `marker_line`.
-    fn directive_version(&self, marker_line: usize) -> Option<YamlVersion> {
-        (0..marker_line.saturating_sub(1))
+    fn directive_version(&self, marker_line: OneBased) -> Option<YamlVersion> {
+        (0..marker_line.index())
             .rev()
             .map(OneBased::from_index)
             .map_while(|line| self.context.get_line(line))
@@ -621,8 +621,8 @@ mod tests {
             .iter()
             .map(|d| {
                 (
-                    d.start.marker().map(|s| s.start.line()),
-                    d.end.map(|s| s.start.line()),
+                    d.start.marker().map(|s| s.start.line().get()),
+                    d.end.map(|s| s.start.line().get()),
                     d.first_line.get(),
                 )
             })
@@ -718,7 +718,7 @@ mod tests {
         );
 
         let marker = context.documents()[0].start.marker().unwrap();
-        assert_eq!((marker.start.line(), marker.start.offset()), (2, 7));
+        assert_eq!((marker.start.line().get(), marker.start.offset()), (2, 7));
 
         let repeats = context.key_repeats();
         assert_eq!(repeats.len(), 1);
@@ -726,7 +726,7 @@ mod tests {
             &source[repeats[0].span.start.offset()..repeats[0].span.end.offset()],
             "a"
         );
-        assert_eq!(repeats[0].span.start.line(), 4);
+        assert_eq!(repeats[0].span.start.line().get(), 4);
     }
 
     #[test]

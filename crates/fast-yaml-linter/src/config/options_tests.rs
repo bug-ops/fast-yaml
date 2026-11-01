@@ -317,7 +317,7 @@ fn wrong_types_name_rule_and_key() {
         ("line-length: {max: 0}", "max"),
         ("line-length: {max: -1}", "max"),
         ("indentation: {indent-size: 0}", "indent-size"),
-        ("indentation: {indent-size: 17}", "indent-size"),
+        ("indentation: {indent-size: 256}", "indent-size"),
         ("indentation: {indent-size: two}", "indent-size"),
     ] {
         let message = error_of(yaml);

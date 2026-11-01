@@ -262,7 +262,7 @@ fy lint [OPTIONS] [PATHS]...
 | `--config FILE` | — | auto-discover | Path to the config file (fails with exit 1 if missing or invalid) |
 | `--no-config` | — | — | Disable config file auto-discovery (built-in defaults) |
 | `--max-line-length N` | — | — | Override the `line-length` max |
-| `--indent-size N` | — | — | Override the `indentation` width (1-16) |
+| `--indent-size N` | — | — | Override the `indentation` width (1-255) |
 | `--format FORMAT` | — | `text` | Output format: `text`, `json`, `github`, `sarif` or `parsable` |
 | `-o, --output FILE` | — | stdout | Write the report to FILE (refused when FILE is an input) |
 | `--allow-duplicate-keys` / `--no-allow-duplicate-keys` | — | — | the first disables the `duplicate-key` rule; the second leaves the config's setting (the last one given wins) |

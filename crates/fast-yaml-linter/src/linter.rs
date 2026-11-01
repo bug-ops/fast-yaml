@@ -783,7 +783,7 @@ mod tests {
         let found: Vec<_> = diagnostics
             .iter()
             .filter(|d| d.code.as_str() == "document-lines")
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect();
         assert_eq!(found, [1, 3, 5]);
     }
@@ -1209,7 +1209,7 @@ mod tests {
             .unwrap()
             .iter()
             .filter(|d| d.code.as_str() == crate::config::RuleName::EmptyValues.as_str())
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect()
     }
 
@@ -1235,7 +1235,7 @@ mod tests {
         let lines: Vec<usize> = diags
             .iter()
             .filter(|d| d.code.as_str() == crate::config::RuleName::Truthy.as_str())
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect();
         assert_eq!(lines, [1, 3]);
     }
@@ -1453,7 +1453,7 @@ mod tests {
         let lines: Vec<_> = diagnostics
             .iter()
             .filter(|d| d.code.as_str() == "comments")
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect();
         assert_eq!(lines, [3, 3]);
     }

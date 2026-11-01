@@ -12,7 +12,7 @@ fn yamllint_spelling_and_aliases() {
         diagnostics
             .iter()
             .filter(|d| d.code.as_str() == code)
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect()
     };
     assert_eq!(lines(RuleName::DuplicateKey.as_str()), [6]);

@@ -112,7 +112,7 @@ mod invalid_fixtures {
             .iter()
             .find(|d| d.code.as_str() == RuleName::DuplicateKey.as_str())
             .expect("Expected a duplicate-key diagnostic for the repeated <<");
-        assert_eq!(duplicate.span.start.line(), 7);
+        assert_eq!(duplicate.span.start.line().get(), 7);
     }
 
     #[test]
@@ -124,7 +124,7 @@ mod invalid_fixtures {
             .iter()
             .find(|d| d.code.as_str() == RuleName::DuplicateKey.as_str())
             .expect("Expected a duplicate-key diagnostic for the alias-written <<");
-        assert_eq!(duplicate.span.start.line(), 5);
+        assert_eq!(duplicate.span.start.line().get(), 5);
     }
 
     #[test]
@@ -135,7 +135,7 @@ mod invalid_fixtures {
         let lines: Vec<_> = diagnostics
             .iter()
             .filter(|d| d.code.as_str() == RuleName::SetValues.as_str())
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect();
         assert_eq!(lines, vec![2, 4]);
     }
@@ -151,7 +151,7 @@ mod invalid_fixtures {
             .collect();
         assert_eq!(set_values.len(), 1, "{diagnostics:?}");
         assert_eq!(set_values[0].severity, Severity::Error);
-        assert_eq!(set_values[0].span.start.line(), 2);
+        assert_eq!(set_values[0].span.start.line().get(), 2);
     }
 }
 
@@ -219,20 +219,18 @@ mod edge_case_fixtures {
             assert!(yaml.is_char_boundary(end.offset()), "{d:?}");
             let line_start = yaml
                 .split_inclusive('\n')
-                .take(start.line() - 1)
+                .take(start.line().index())
                 .map(str::len)
                 .sum::<usize>();
             assert_eq!(
                 yaml[line_start..start.offset()].chars().count() + 1,
-                start.column(),
+                start.column().get(),
                 "{d:?}"
             );
         }
         assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.span.start.line() == 7
-                    && d.code.as_str() == RuleName::QuotedStrings.as_str()),
+            diagnostics.iter().any(|d| d.span.start.line().get() == 7
+                && d.code.as_str() == RuleName::QuotedStrings.as_str()),
             "a quoted \\u escape of a plain-safe text is redundantly quoted: {diagnostics:?}"
         );
     }
@@ -274,14 +272,11 @@ mod integration_tests {
 
         let diagnostics = linter.lint(yaml).unwrap();
 
+        assert_ne!(diagnostics, []);
         for diagnostic in &diagnostics {
             assert!(
-                diagnostic.span.start.line() > 0,
-                "Diagnostic should have valid line number"
-            );
-            assert!(
-                diagnostic.span.start.column() > 0,
-                "Diagnostic should have valid column number"
+                diagnostic.span.start.line().get() <= yaml.lines().count(),
+                "Diagnostic should point inside the file"
             );
         }
     }

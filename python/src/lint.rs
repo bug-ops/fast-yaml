@@ -183,8 +183,8 @@ impl PyLocation {
 impl From<RustLocation> for PyLocation {
     fn from(loc: RustLocation) -> Self {
         Self {
-            line: loc.line(),
-            column: loc.column(),
+            line: loc.line().get(),
+            column: loc.column().get(),
             offset: loc.offset(),
         }
     }

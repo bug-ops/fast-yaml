@@ -5,12 +5,13 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use fast_yaml_parallel::{
-    BatchResult as ParallelBatchResult, CommentPolicy, FileProcessor, FormatOutput, ScanAheadPolicy,
+    BatchResult as ParallelBatchResult, CommentPolicy, Error as ParallelError, FileProcessor,
+    FormatOutput, HardLinkPolicy, HardLinkRefused, InPlaceTarget, ScanAheadPolicy,
 };
 
 use crate::commands::format::error_message;
 use crate::config::{CommonConfig, FormatterConfig, ParallelConfig};
-use crate::discovery::FileDiscovery;
+use crate::discovery::{DiscoveryOrigin, FileDiscovery};
 use crate::error::ExitCode;
 use crate::invocation::BatchTarget;
 use crate::reporter::{BatchStats, ReportEvent, Reporter};
@@ -23,6 +24,31 @@ pub enum BatchWrite {
     InPlace,
     /// Report what would change without writing
     DryRun,
+}
+
+const HARD_LINK_HINT: &str = "found by a directory walk or glob; name the file as a path argument to write through its links";
+
+/// Files named by the user are written through their hard links; files found by a walk or glob
+/// are refused so that an unrelated name for the same inode is never rewritten silently.
+const fn hard_link_policy(origin: DiscoveryOrigin) -> HardLinkPolicy {
+    match origin {
+        DiscoveryOrigin::DirectPath | DiscoveryOrigin::StdinList => HardLinkPolicy::WriteInPlace,
+        DiscoveryOrigin::DirectoryWalk | DiscoveryOrigin::GlobExpansion => HardLinkPolicy::Refuse,
+    }
+}
+
+fn batch_error_message(error: &ParallelError) -> String {
+    let message = error_message(error);
+    match error {
+        ParallelError::Write { source, .. }
+            if source
+                .get_ref()
+                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<HardLinkRefused>) =>
+        {
+            format!("{message}; {HARD_LINK_HINT}")
+        }
+        _ => message,
+    }
 }
 
 /// Execute batch formatting on multiple files.
@@ -72,7 +98,13 @@ pub fn execute_batch(
             let formatted = processor.format_files(&file_paths, &emitter_config, comments);
             convert_format_results_to_batch_result(formatted, start.elapsed())
         }
-        BatchWrite::InPlace => processor.format_in_place(&file_paths, &emitter_config, comments),
+        BatchWrite::InPlace => {
+            let targets: Vec<InPlaceTarget> = files
+                .iter()
+                .map(|file| InPlaceTarget::new(file.path.clone(), hard_link_policy(file.origin)))
+                .collect();
+            processor.format_in_place(&targets, &emitter_config, comments)
+        }
     };
 
     // In dry-run mode, 'changed' means "would change"; in in-place mode it means "formatted".
@@ -94,7 +126,7 @@ pub fn execute_batch(
     for (path, error) in &result.errors {
         reporter.report(ReportEvent::Error {
             path: Some(path),
-            message: &error_message(error),
+            message: &batch_error_message(error),
         })?;
     }
 

@@ -5,7 +5,9 @@
 //! directory of the config file, so results do not depend on where `fy` runs. `yaml-files` is
 //! matched against the file name only. Matching is case-sensitive.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 
@@ -13,6 +15,49 @@ use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 
 /// Most pattern lines accepted by `ignore` or `yaml-files`.
 pub const MAX_PATH_PATTERNS: usize = 1024;
+
+/// Most wildcards (`*` runs, `?` and `[`) accepted in one pattern line.
+pub const MAX_PATTERN_WILDCARDS: usize = 16;
+
+const BUDGET_LINES: usize = 4096;
+const BUDGET_BYTES: usize = 256 * 1024;
+const BUDGET_WILDCARDS: usize = 4096;
+
+/// The resource a pattern budget ran out of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum BudgetKind {
+    /// Pattern lines.
+    Lines,
+    /// Bytes of pattern text.
+    Bytes,
+    /// Wildcards over all patterns.
+    Wildcards,
+}
+
+impl BudgetKind {
+    const fn limit(self) -> usize {
+        match self {
+            Self::Lines => BUDGET_LINES,
+            Self::Bytes => BUDGET_BYTES,
+            Self::Wildcards => BUDGET_WILDCARDS,
+        }
+    }
+
+    const fn noun(self) -> &'static str {
+        match self {
+            Self::Lines => "lines",
+            Self::Bytes => "bytes",
+            Self::Wildcards => "wildcards",
+        }
+    }
+}
+
+impl std::fmt::Display for BudgetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.limit(), self.noun())
+    }
+}
 
 /// Why pattern lines could not be compiled.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -40,12 +85,159 @@ pub enum InvalidPathPattern {
         /// Why the set was rejected.
         message: String,
     },
+
+    /// A line has more than [`MAX_PATTERN_WILDCARDS`] wildcards.
+    #[error("a pattern has more than {MAX_PATTERN_WILDCARDS} wildcards")]
+    TooComplex,
+
+    /// The patterns of one config, with those of the files it extends, are over the budget.
+    #[error("the patterns exceed the budget of {kind}")]
+    OverBudget {
+        /// What ran out.
+        kind: BudgetKind,
+    },
 }
 
-fn build(root: &Path, lines: &[String]) -> Result<Gitignore, InvalidPathPattern> {
+/// Number of wildcards in a pattern line: a run of `*` counts once, each `?` and `[` once.
+pub fn wildcard_count(line: &str) -> usize {
+    if line.starts_with('#') {
+        return 0;
+    }
+    let mut count = 0;
+    let mut in_run = false;
+    for c in line.chars() {
+        match c {
+            '*' if in_run => {}
+            '*' => {
+                count += 1;
+                in_run = true;
+            }
+            '?' | '[' => {
+                count += 1;
+                in_run = false;
+            }
+            _ => in_run = false,
+        }
+    }
+    count
+}
+
+/// What a config load may still spend on pattern lines, bytes and wildcards.
+///
+/// Bounds the memory and time that compiling gitignore patterns takes, which the per-key line
+/// cap alone does not: lines can be long and each wildcard grows the compiled matcher.
+#[derive(Debug, Clone)]
+pub struct PatternBudget {
+    lines: usize,
+    bytes: usize,
+    wildcards: usize,
+}
+
+impl PatternBudget {
+    pub const fn new() -> Self {
+        Self {
+            lines: BUDGET_LINES,
+            bytes: BUDGET_BYTES,
+            wildcards: BUDGET_WILDCARDS,
+        }
+    }
+
+    fn take(slot: &mut usize, amount: usize, kind: BudgetKind) -> Result<(), InvalidPathPattern> {
+        *slot = slot
+            .checked_sub(amount)
+            .ok_or(InvalidPathPattern::OverBudget { kind })?;
+        Ok(())
+    }
+
+    /// Charges one pattern line; the error never contains the line.
+    pub fn charge(&mut self, line: &str) -> Result<(), InvalidPathPattern> {
+        let wildcards = wildcard_count(line);
+        if wildcards > MAX_PATTERN_WILDCARDS {
+            return Err(InvalidPathPattern::TooComplex);
+        }
+        Self::take(&mut self.lines, 1, BudgetKind::Lines)?;
+        Self::take(&mut self.bytes, line.len(), BudgetKind::Bytes)?;
+        Self::take(&mut self.wildcards, wildcards, BudgetKind::Wildcards)
+    }
+
+    fn charge_all(&mut self, lines: &[String]) -> Result<(), InvalidPathPattern> {
+        lines.iter().try_for_each(|line| self.charge(line))
+    }
+}
+
+/// Compiled ignore patterns with the lines they came from, shared by every key that names the
+/// same files.
+#[derive(Debug, Clone)]
+pub struct Shared {
+    pub lines: Arc<[String]>,
+    pub patterns: IgnorePatterns,
+}
+
+impl Shared {
+    /// Compiles lines that have already been charged to a budget.
+    pub fn build(root: &Path, lines: &[String]) -> Result<Self, InvalidPathPattern> {
+        Ok(Self {
+            lines: lines.into(),
+            patterns: IgnorePatterns::compile(root, lines)?,
+        })
+    }
+}
+
+/// Canonical ignore files, in order, and the root their patterns are anchored at.
+pub type CacheKey = (Vec<PathBuf>, PathBuf);
+
+/// Per-load state of pattern compilation: the matchers built so far and the budget they drew on.
+///
+/// A matcher is keyed by the canonical `ignore-from-file` files and the root, so a file named by
+/// the top level and by many rules, or by several configs of an `extends` chain, is read,
+/// charged and compiled once.
+#[derive(Debug)]
+pub struct PatternState {
+    cache: HashMap<CacheKey, Shared>,
+    budget: PatternBudget,
+}
+
+impl PatternState {
+    pub fn new() -> Self {
+        Self {
+            cache: HashMap::new(),
+            budget: PatternBudget::new(),
+        }
+    }
+
+    pub const fn budget_mut(&mut self) -> &mut PatternBudget {
+        &mut self.budget
+    }
+
+    pub fn cached(&self, key: &CacheKey) -> Option<Shared> {
+        self.cache.get(key).cloned()
+    }
+
+    pub fn store(&mut self, key: CacheKey, shared: Shared) {
+        self.cache.insert(key, shared);
+    }
+
+    /// Charges and compiles the lines of an inline `ignore` key.
+    pub fn compile_inline(
+        &mut self,
+        root: &Path,
+        lines: &[String],
+    ) -> Result<Shared, InvalidPathPattern> {
+        check_count(lines)?;
+        self.budget.charge_all(lines)?;
+        Shared::build(root, lines)
+    }
+}
+
+const fn check_count(lines: &[String]) -> Result<(), InvalidPathPattern> {
     if lines.len() > MAX_PATH_PATTERNS {
         return Err(InvalidPathPattern::TooMany { count: lines.len() });
     }
+    Ok(())
+}
+
+fn build(root: &Path, lines: &[String]) -> Result<Gitignore, InvalidPathPattern> {
+    check_count(lines)?;
     let mut builder = GitignoreBuilder::new(root);
     for line in lines {
         builder
@@ -148,7 +340,7 @@ impl CanonicalPath {
 #[derive(Debug, Clone)]
 pub struct IgnorePatterns {
     root: PathBuf,
-    matcher: Gitignore,
+    matcher: Arc<Gitignore>,
 }
 
 impl IgnorePatterns {
@@ -159,12 +351,19 @@ impl IgnorePatterns {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidPathPattern`] naming the first line gitignore syntax rejects, or when
-    /// there are more than [`MAX_PATH_PATTERNS`] lines.
+    /// Returns [`InvalidPathPattern`] naming the first line gitignore syntax rejects, when
+    /// there are more than [`MAX_PATH_PATTERNS`] lines, or when the lines have more wildcards
+    /// or bytes than one load of a config may use.
     pub fn new(root: &Path, lines: &[String]) -> Result<Self, InvalidPathPattern> {
+        PatternState::new()
+            .compile_inline(root, lines)
+            .map(|shared| shared.patterns)
+    }
+
+    fn compile(root: &Path, lines: &[String]) -> Result<Self, InvalidPathPattern> {
         Ok(Self {
             root: root.to_owned(),
-            matcher: build(root, lines)?,
+            matcher: Arc::new(build(root, lines)?),
         })
     }
 
@@ -216,9 +415,20 @@ impl YamlFiles {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidPathPattern`] naming the first line gitignore syntax rejects, or when
-    /// there are more than [`MAX_PATH_PATTERNS`] lines.
+    /// Returns [`InvalidPathPattern`] naming the first line gitignore syntax rejects, when
+    /// there are more than [`MAX_PATH_PATTERNS`] lines, or when the lines have more wildcards
+    /// or bytes than one load of a config may use.
     pub fn new(lines: &[String]) -> Result<Self, InvalidPathPattern> {
+        Self::with_budget(lines, &mut PatternBudget::new())
+    }
+
+    /// Like [`YamlFiles::new`], drawing on the budget of a config load.
+    pub fn with_budget(
+        lines: &[String],
+        budget: &mut PatternBudget,
+    ) -> Result<Self, InvalidPathPattern> {
+        check_count(lines)?;
+        budget.charge_all(lines)?;
         build(Path::new(""), lines).map(Self)
     }
 
@@ -320,6 +530,49 @@ mod tests {
         let files = YamlFiles::new(&lines("config")).unwrap();
         assert!(files.matches(Path::new("config")));
         assert!(!files.matches(Path::new("config/x.yaml")));
+    }
+
+    #[test]
+    fn wildcards_are_counted_by_run_for_stars_and_singly_otherwise() {
+        assert_eq!(wildcard_count("plain/"), 0);
+        assert_eq!(wildcard_count("*"), 1);
+        assert_eq!(wildcard_count("**/a***b"), 2);
+        assert_eq!(wildcard_count("a*b*c"), 2);
+        assert_eq!(wildcard_count("??"), 2);
+        assert_eq!(wildcard_count("[ab][cd]"), 2);
+        assert_eq!(wildcard_count("*?*"), 3);
+        assert_eq!(wildcard_count("# *?[ comment"), 0);
+    }
+
+    #[test]
+    fn a_line_is_rejected_above_the_per_pattern_cap_only() {
+        let at_cap = "*a".repeat(MAX_PATTERN_WILDCARDS);
+        let over = "*a".repeat(MAX_PATTERN_WILDCARDS + 1);
+        assert!(PatternBudget::new().charge(&at_cap).is_ok());
+        assert_eq!(
+            PatternBudget::new().charge(&over),
+            Err(InvalidPathPattern::TooComplex)
+        );
+    }
+
+    #[test]
+    fn the_budget_is_exact_for_lines_and_wildcards() {
+        let mut lines = PatternBudget::new();
+        assert!((0..BUDGET_LINES).all(|_| lines.charge("a/").is_ok()));
+        assert_eq!(
+            lines.charge("a/"),
+            Err(InvalidPathPattern::OverBudget {
+                kind: BudgetKind::Lines
+            })
+        );
+        let mut wildcards = PatternBudget::new();
+        assert!((0..BUDGET_WILDCARDS / 2).all(|_| wildcards.charge("*a*").is_ok()));
+        assert_eq!(
+            wildcards.charge("*a*"),
+            Err(InvalidPathPattern::OverBudget {
+                kind: BudgetKind::Wildcards
+            })
+        );
     }
 
     #[test]

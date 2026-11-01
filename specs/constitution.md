@@ -36,7 +36,7 @@ Value proposition: correct YAML 1.2.2 semantics, bounded resource use on hostile
 5. **No silent data loss.** Operations that can drop information (comment stripping, key reordering, precision loss) must be explicit or refused, never implicit.
 6. **Deterministic output.** Batch and parallel runs produce the same ordered output as a sequential run.
 7. **Atomic writes.** File rewrites and `-o` outputs go through a temp file plus rename (`write_atomic`, `AtomicFile`); a failed run leaves originals intact. The one exception is a hard-linked target owned by the caller, written in place (see [[005-batch-parallel/spec]] FR-008).
-8. **Safe Rust.** `unsafe_code = deny` workspace-wide; `fast-yaml-core`, `fast-yaml-linter` and `fast-yaml-parallel` set `forbid(unsafe_code)`; local `allow` only at FFI boundaries, each justified. There is no memory mapping.
+8. **Safe Rust.** `unsafe_code = deny` workspace-wide; `fast-yaml-core` and `fast-yaml-linter` set `forbid(unsafe_code)`; `fast-yaml-parallel` forbids unsafe except one Windows-only module (`atomic::win_acl`, DACL copy) that documents every block with a SAFETY comment; other local `allow` only at FFI boundaries, each justified. There is no memory mapping.
 9. **Quality gate.** `cargo +nightly fmt --check`, `clippy -D warnings` (pedantic and nursery), `cargo nextest`, rustdoc without broken links. Every public item is documented.
 10. **Pre-1.0 policy.** Breaking changes are allowed and recorded in `CHANGELOG.md`; no deprecation shims.
 

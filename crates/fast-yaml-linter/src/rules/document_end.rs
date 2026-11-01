@@ -94,8 +94,8 @@ fn check_required(context: &LintContext) -> Vec<Finding> {
                     (eof, marker)
                 },
                 |marker| {
-                    let at = source_context
-                        .span_at(source_context.line_start(marker.start.line_number()), 0);
+                    let at =
+                        source_context.span_at(source_context.line_start(marker.start.line()), 0);
                     (at, "...\n")
                 },
             );
@@ -216,10 +216,10 @@ mod tests {
             diagnostics[0].message,
             "document end marker '...' is forbidden"
         );
-        assert_eq!(diagnostics[0].span.start.line(), 2);
-        assert_eq!(diagnostics[0].span.start.column(), 1);
-        assert_eq!(diagnostics[0].span.end.column(), 4);
-        assert_eq!(diagnostics[1].span.start.line(), 5);
+        assert_eq!(diagnostics[0].span.start.line().get(), 2);
+        assert_eq!(diagnostics[0].span.start.column().get(), 1);
+        assert_eq!(diagnostics[0].span.end.column().get(), 4);
+        assert_eq!(diagnostics[1].span.start.line().get(), 5);
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
     fn required_lines(yaml: &str) -> Vec<(usize, usize)> {
         required(yaml)
             .iter()
-            .map(|d| (d.span.start.line(), d.span.start.column()))
+            .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
             .collect()
     }
 

@@ -2,7 +2,9 @@
 
 use fast_yaml_core::limits::MaxDepth;
 use fast_yaml_core::{EmitterConfig, ParseLimits};
-use fast_yaml_parallel::{CommentPolicy, Config, Error, FileProcessor};
+use fast_yaml_parallel::{
+    CommentPolicy, Config, Error, FileProcessor, HardLinkPolicy, InPlaceTarget,
+};
 use std::fs;
 use tempfile::TempDir;
 
@@ -116,7 +118,10 @@ fn format_in_place_rewrites_valid_merge_keys() {
     fs::write(&path, "a: &a {x: 1}\nm:\n    <<: *a\n").unwrap();
 
     let result = FileProcessor::new().format_in_place(
-        std::slice::from_ref(&path),
+        &[InPlaceTarget::new(
+            path.clone(),
+            HardLinkPolicy::WriteInPlace,
+        )],
         &EmitterConfig::new(),
         CommentPolicy::Reject,
     );
@@ -136,7 +141,10 @@ fn format_in_place_rejects_invalid_merge_and_keeps_the_file() {
     fs::write(&path, BAD_SECOND_DOCUMENT).unwrap();
 
     let result = FileProcessor::new().format_in_place(
-        std::slice::from_ref(&path),
+        &[InPlaceTarget::new(
+            path.clone(),
+            HardLinkPolicy::WriteInPlace,
+        )],
         &EmitterConfig::new(),
         CommentPolicy::Reject,
     );

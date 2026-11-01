@@ -1,6 +1,7 @@
 //! Rule to check spacing after list item hyphens.
 
 use super::RuleId;
+use super::spacing::SpaceViolation;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +10,7 @@ use crate::rules::token_stream::{
     scanner,
     tokens::{Kind, Token},
 };
-use crate::{Finding, LintConfig, LintContext, Severity, Span};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Linting rule for hyphen spacing.
 ///
@@ -86,12 +87,13 @@ impl super::SourceRule for HyphensRule {
                 {
                     let spaces = token.start.index - hyphen.end.index;
                     if max_spaces.exceeded_by(spaces) {
-                        let loc = source_context.offset_to_location(hyphen.end.pointer);
-                        diagnostics.push(
-                            Finding::new(format!(
-                                    "too many spaces after hyphen (expected at most {max_spaces}, found {spaces})"
-                                ), Span::new(loc, loc)),
-                        );
+                        diagnostics.push(SpaceViolation::TooMany.finding(
+                            source_context,
+                            token.start.pointer,
+                            format!(
+                                "too many spaces after hyphen (expected at most {max_spaces}, found {spaces})"
+                            ),
+                        ));
                     }
                 }
                 if token.kind == Kind::BlockEntry {
@@ -244,9 +246,21 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         let found: Vec<_> = diagnostics
             .iter()
-            .map(|d| (d.span.start.line(), d.span.start.column()))
+            .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
             .collect();
-        assert_eq!(found, [(2, 2), (3, 2)]);
+        assert_eq!(found, [(2, 3), (3, 4)]);
+    }
+
+    #[test]
+    fn test_hyphens_column_is_the_last_space_with_indent_and_multibyte() {
+        let yaml = "k:\n  -    é\n";
+        let context = LintContext::new(yaml);
+        let diagnostics = HyphensRule.diagnose(&context, &LintConfig::default());
+        let found: Vec<_> = diagnostics
+            .iter()
+            .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
+            .collect();
+        assert_eq!(found, [(2, 7)]);
     }
 
     #[test]
@@ -288,7 +302,7 @@ mod tests {
         let lines: Vec<_> = rule
             .diagnose(&context, &config)
             .iter()
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect();
         assert_eq!(lines, [1]);
     }

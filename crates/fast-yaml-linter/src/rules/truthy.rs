@@ -513,9 +513,9 @@ mod tests {
             .iter()
             .map(|d| {
                 (
-                    d.span.start.line(),
-                    d.span.start.column(),
-                    d.span.end.column(),
+                    d.span.start.line().get(),
+                    d.span.start.column().get(),
+                    d.span.end.column().get(),
                 )
             })
             .collect()

@@ -23,11 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linter: `DiagnosticCode` is an enum, `LintRule::name`/`description` are removed, `flow_common` is private, and `formatter::Finding` is renamed `DiagnosticView` (#642) (#671)
 - Linter: `JsonFormatter::new` takes `JsonLayout` and `TextFormatter::with_color` takes `Coloring` (#643) (#671)
 - Linter: `SourceContext::get_line*` and `ContextLine::line_number` use `OneBased` (#666) (#671)
+- Linter: `Location::line()`/`column()` return `OneBased` and `Location::line_number()` is removed (#672) (#674)
+- Linter: `indentation.spaces` accepts 1 to 255 instead of 1 to 16 (#602) (#674)
+- Parallel: `write_atomic` and `FileProcessor::format_in_place` take a `HardLinkPolicy`/`InPlaceTarget`, and `fy format -i` refuses hard-linked files found by directory walk or glob (#608) (#674)
 
 ### Added
 
 - Core: `Value::sort_keys`, one type-aware iterative sort shared by the Python and Node.js bindings (#640) (#671)
 - Parallel: `write_atomic` preserves ACLs on macOS (#598) (#671)
+- Parallel: `write_atomic` preserves the DACL on Windows (#673) (#674)
+- CI: `lint:clippy-windows` and `msrv` mise tasks, with a Windows clippy step in `test-rust` (#668) (#674)
+- Linter: yamllint-compatible column placement for colons, commas, hyphens, braces and brackets (#602) (#674)
 
 ### Fixed
 
@@ -36,6 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: discovery warns about files skipped during directory walk and glob expansion (#629) (#671)
 - CLI: debug events and glob patterns in errors escape control characters in paths (#624) (#671)
 - Core: `read_regular_file` clears `O_NONBLOCK` on regular-file handles (#599) (#671)
+- CI: `CI Success` fails when `Detect Changes` does not succeed (#670) (#674)
 
 ### Added
 
@@ -46,6 +53,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Node.js: override transitive `source-map-js` to `>=1.2.2` (GHSA-68fv-2mgg-jv7q) (#650)
 - CI: repin `dtolnay/rust-toolchain` to the current `v1` tag commit (zizmor `ref-version-mismatch`) (#658)
 - Node.js: bump `vitest` to 4.1.12 and pin `vite` >=8.1.6 to clear `pnpm audit` advisories (#664)
+- Linter: ignore patterns share a per-load budget and compiled matchers are cached, bounding `ignore-from-file` and `extends` amplification (#608) (#674)
+- Parallel: in-place writes cannot hang on a swapped FIFO (#608) (#674)
+- Node.js: `// SAFETY:` documentation and clippy lints for `unsafe` in the rule-config converter (#608) (#674)
 
 ## [0.7.0] - 2026-10-02
 

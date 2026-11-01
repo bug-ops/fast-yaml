@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::node_roles::NodeRole;
 use crate::config::RuleOptions;
 use crate::echo::{KEY_LIMIT, echo};
-use crate::nodes::{Node, ScalarNode, TagKind};
+use crate::nodes::{Node, NodeIndex, ScalarNode, TagKind};
 use crate::source::offset::ByteOffset;
 use crate::{Finding, LintConfig, LintContext, Severity};
 use fast_yaml_core::ScalarStyle;
@@ -149,8 +149,9 @@ fn collect_empty_values(
                         options.forbid_in_block_mappings
                     };
                     if let (true, true, Some(key)) =
-                        (forbidden, is_implicit_null(scalar), pending.take())
+                        (forbidden, is_implicit_null(index, scalar), pending.take())
                         && let Some(colon) = colon_after(source, key.end)
+                        && (!scalar.in_flow || ends_flow_entry(source, colon))
                     {
                         found.push(EmptyValue {
                             kind: EmptyKind::Mapping(key.text.to_owned()),
@@ -161,7 +162,7 @@ fn collect_empty_values(
                 NodeRole::SequenceItem => {
                     if options.forbid_in_block_sequences
                         && !scalar.in_flow
-                        && is_implicit_null(scalar)
+                        && is_implicit_null(index, scalar)
                         && let Some(dash) = dash_before(source, scalar.range.start())
                     {
                         found.push(EmptyValue {
@@ -190,9 +191,24 @@ fn collect_empty_values(
     found
 }
 
-fn is_implicit_null(scalar: &ScalarNode) -> bool {
-    scalar.range.start() == scalar.range.end()
-        && scalar.style == ScalarStyle::Plain
+/// Whether the next token after the `:` at `colon` is a `,` or `}`; yamllint flags an empty flow
+/// value only then, so `[a: ]` is not reported.
+fn ends_flow_entry(source: &str, colon: ByteOffset) -> bool {
+    let mut rest = source.get(colon.get() + 1..).unwrap_or_default();
+    loop {
+        rest = rest.trim_start();
+        match rest.as_bytes().first() {
+            Some(b'#') => rest = rest.split_once('\n').map_or("", |(_, tail)| tail),
+            Some(b',' | b'}') => return true,
+            _ => return false,
+        }
+    }
+}
+
+fn is_implicit_null(index: &NodeIndex<'_>, scalar: &ScalarNode) -> bool {
+    // The parser can stretch the range of an empty scalar to the next token, so the text decides
+    scalar.style == ScalarStyle::Plain
+        && index.text(scalar).is_empty()
         && scalar.tag == TagKind::None
         && !scalar.anchored
 }
@@ -345,6 +361,21 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_flow_value_is_flagged_only_before_a_comma_or_brace() {
+        let flagged = |yaml: &str| {
+            EmptyValuesRule
+                .diagnose(&LintContext::new(yaml), &LintConfig::new())
+                .len()
+        };
+        assert_eq!(flagged("a: {b: 1}\nx: [ a: , b ]\n"), 1);
+        assert_eq!(flagged("x: [a: ]\n"), 0);
+        assert_eq!(flagged("x: [a: , b]\n"), 1);
+        assert_eq!(flagged("x: {a: , b: 1}\n"), 1);
+        assert_eq!(flagged(&["x: {a:", "\n}\n"].concat()), 1);
+        assert_eq!(flagged("x: {a: # c\n }\n"), 1);
+    }
+
+    #[test]
     fn test_empty_value_flow_mapping_config() {
         let yaml = "{key:}";
 
@@ -367,7 +398,7 @@ mod tests {
 
         let positions: Vec<_> = diagnostics
             .iter()
-            .map(|d| (d.span.start.line(), d.span.start.column()))
+            .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
             .collect();
         assert_eq!(positions, [(1, 2), (2, 2)]);
     }
@@ -427,12 +458,12 @@ mod tests {
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
-            diagnostics[0].span.start.line(),
+            diagnostics[0].span.start.line().get(),
             2,
             "diagnostic must be on line 2"
         );
         assert_eq!(
-            diagnostics[0].span.start.column(),
+            diagnostics[0].span.start.column().get(),
             5,
             "diagnostic must point right after the colon"
         );
@@ -449,7 +480,7 @@ mod tests {
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(
-            diagnostics[0].span.start.line(),
+            diagnostics[0].span.start.line().get(),
             2,
             "diagnostic must be on line 2"
         );
@@ -459,7 +490,7 @@ mod tests {
         EmptyValuesRule
             .diagnose(&LintContext::new(yaml), &LintConfig::new())
             .iter()
-            .map(|d| (d.span.start.line(), d.span.start.column()))
+            .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
             .collect()
     }
 
@@ -497,13 +528,13 @@ mod tests {
 
     #[test]
     fn test_flow_pair_in_flow_sequence_is_flow() {
-        assert_eq!(empty_positions("k: [a: ]\n"), [(1, 7)]);
+        assert_eq!(empty_positions("k: [a: , b]\n"), [(1, 7)]);
         let only_block =
             config_with_rule(RuleName::EmptyValues, "{forbid-in-flow-mappings: false}");
-        let yaml = "k: [a: ]\nm:\n";
+        let yaml = "k: [a: , b]\nm:\n";
         let diags = EmptyValuesRule.diagnose(&LintContext::new(yaml), &only_block);
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].span.start.line(), 2);
+        assert_eq!(diags[0].span.start.line().get(), 2);
     }
 
     #[test]

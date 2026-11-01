@@ -228,7 +228,7 @@ option.
 
 Fields are applied in order: the `rules` patch, then `maxLineLength`, `indentSize`,
 `requireDocumentStart`, `requireDocumentEnd`, `allowDuplicateKeys` (the last three only when `true`), then `disabledRules`, which
-wins; so `indentSize: 2` beats `rules.indentation.spaces: 4`. Unset `maxLineLength` keeps the rule default; `0` and an `indentSize` outside 1 to 16
+wins; so `indentSize: 2` beats `rules.indentation.spaces: 4`. Unset `maxLineLength` keeps the rule default; `0` and an `indentSize` outside 1 to 255
 throw. `requireDocument*: false` leaves the rule unchanged.
 
 ## Parse Limits

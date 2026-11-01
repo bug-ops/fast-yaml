@@ -19,7 +19,8 @@ pub use indent::{IndentSequences, IndentSpaces};
 pub use locale::LocaleName;
 pub(crate) use path_patterns::is_valid_pattern;
 pub use path_patterns::{
-    CanonicalPath, IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS, YamlFiles,
+    BudgetKind, CanonicalPath, IgnorePatterns, InvalidPathPattern, MAX_PATH_PATTERNS,
+    MAX_PATTERN_WILDCARDS, YamlFiles,
 };
 pub use preset::{Preset, UnknownPresetError};
 pub use rules::{

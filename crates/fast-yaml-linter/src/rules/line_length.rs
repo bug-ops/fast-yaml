@@ -310,7 +310,7 @@ mod tests {
         let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.start.line(), 2); // Second line
+        assert_eq!(diagnostics[0].span.start.line().get(), 2); // Second line
     }
 
     fn flagged(yaml: &str, options: &str) -> Vec<usize> {
@@ -318,7 +318,7 @@ mod tests {
         LineLengthRule
             .diagnose(&LintContext::new(yaml), &config)
             .iter()
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect()
     }
 

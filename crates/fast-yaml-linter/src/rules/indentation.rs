@@ -326,7 +326,7 @@ mod tests {
         let diagnostics = rule.diagnose(&ctx, &config);
         assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics[0].message.contains("wrong indentation"));
-        assert_eq!(diagnostics[0].span.start.line(), 2);
+        assert_eq!(diagnostics[0].span.start.line().get(), 2);
     }
 
     #[test]
@@ -544,6 +544,6 @@ mod tests {
         assert!(serde_norway::from_str::<IndentationOptions>("indent-size: null").is_err());
         assert!(serde_norway::from_str::<IndentationOptions>("spaces: null").is_err());
         assert!(serde_norway::from_str::<IndentationOptions>("indent: 2").is_err());
-        assert!(serde_norway::from_str::<IndentationOptions>("indent-size: 17").is_err());
+        assert!(serde_norway::from_str::<IndentationOptions>("indent-size: 256").is_err());
     }
 }

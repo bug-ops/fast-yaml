@@ -5,6 +5,77 @@ use std::fs::{self, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod win_acl;
+
+/// What [`write_atomic`] does with a target that has several hard links.
+///
+/// The policy only has an effect on Unix; on other platforms every target is replaced by rename
+/// and both variants behave alike. There is deliberately no `Default`: each caller states
+/// whether writing through other names of the file is acceptable.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::{HardLinkPolicy, write_atomic};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("a.yaml");
+/// write_atomic(&path, b"a: 1\n", HardLinkPolicy::Refuse)?;
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HardLinkPolicy {
+    /// Write the content through the shared inode so every link sees it.
+    WriteInPlace,
+    /// Fail with an [`io::Error`] that carries [`HardLinkRefused`] and leave the file untouched.
+    Refuse,
+}
+
+/// The payload of the [`io::ErrorKind::InvalidInput`] error returned for [`HardLinkPolicy::Refuse`].
+///
+/// Callers find it with [`io::Error::get_ref`] and `downcast_ref`, which lets them add their own
+/// advice to the neutral message.
+///
+/// # Examples
+///
+/// ```
+/// # #[cfg(unix)] {
+/// use fast_yaml_parallel::{HardLinkPolicy, HardLinkRefused, write_atomic};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("a.yaml");
+/// std::fs::write(&path, "a: 1\n")?;
+/// std::fs::hard_link(&path, dir.path().join("b.yaml"))?;
+///
+/// let err = write_atomic(&path, b"a: 2\n", HardLinkPolicy::Refuse).unwrap_err();
+/// let refused = err.get_ref().and_then(|e| e.downcast_ref::<HardLinkRefused>()).unwrap();
+/// assert_eq!(refused.links(), 2);
+/// # }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HardLinkRefused {
+    links: u64,
+}
+
+impl HardLinkRefused {
+    /// The number of hard links the refused file has.
+    #[must_use]
+    pub const fn links(&self) -> u64 {
+        self.links
+    }
+}
+
+impl std::fmt::Display for HardLinkRefused {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "refused to write through {} hard links", self.links)
+    }
+}
+
+impl std::error::Error for HardLinkRefused {}
+
 /// Atomically replaces the contents of `path` with `content`.
 ///
 /// The data is written to an unpredictably named temporary file created with `O_EXCL`
@@ -28,8 +99,10 @@ use std::path::{Path, PathBuf};
 ///   than the original: without the group, the group and other permission bits are dropped.
 ///
 /// Limitations:
-/// - A Unix target with several hard links that the caller owns is **not** replaced
-///   atomically: the content is written in place so every link sees it. The file is opened
+/// - With [`HardLinkPolicy::Refuse`], a Unix target with several hard links is refused with
+///   [`HardLinkRefused`] before anything is written.
+/// - With [`HardLinkPolicy::WriteInPlace`], a Unix target with several hard links that the caller
+///   owns is **not** replaced atomically: the content is written in place so every link sees it. The file is opened
 ///   with `O_NOFOLLOW` and must still be the inode that was resolved; a crash or error
 ///   mid-write can leave it truncated or partial, and a read-only hard-linked file is refused.
 ///   A hard-linked target owned by someone else is replaced through the rename instead, which
@@ -52,33 +125,52 @@ use std::path::{Path, PathBuf};
 ///   in meanwhile is never applied (the write itself still succeeds, as it does for xattrs),
 ///   but a swap that is undone before the check is not seen. Only a file system that reports
 ///   ACLs as unsupported is skipped silently; any other failure, including permission denied,
-///   fails the write. Windows ACLs are not preserved: the Win32 calls need `unsafe`, which this
-///   crate forbids.
+///   fails the write.
+/// - On Windows, the DACL of the old file is read through a handle opened with `READ_CONTROL`
+///   at `create` time and applied to the replacement before the read-only attribute is set,
+///   including its protection flag; a file without a DACL gets none. A file whose DACL only
+///   holds entries inherited from its directory needs no copy, since the replacement inherits
+///   the same entries. Applying an unprotected DACL reads the descriptor of the parent
+///   directory, so a parent that denies `READ_CONTROL` fails the write. A file system without
+///   security descriptors is skipped; the owner, SACL, integrity label and alternate data
+///   streams are not preserved.
 ///
 /// # Errors
 ///
-/// Returns an I/O error if the target cannot be resolved, is not a regular file, or the
-/// temporary file cannot be created, written, or renamed into place. No temporary file is
-/// left behind on failure.
+/// Returns an I/O error if the target cannot be resolved, is not a regular file, is refused by
+/// `hard_links`, or the temporary file cannot be created, written, or renamed into place. No
+/// temporary file is left behind on failure.
 ///
 /// # Examples
 ///
 /// ```
+/// use fast_yaml_parallel::HardLinkPolicy;
+///
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("config.yaml");
 ///
-/// fast_yaml_parallel::write_atomic(&path, b"key: value\n")?;
+/// fast_yaml_parallel::write_atomic(&path, b"key: value\n", HardLinkPolicy::WriteInPlace)?;
 /// assert_eq!(std::fs::read_to_string(&path)?, "key: value\n");
 /// # Ok::<(), std::io::Error>(())
 /// ```
-pub fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
+pub fn write_atomic(path: &Path, content: &[u8], hard_links: HardLinkPolicy) -> io::Result<()> {
     let mut file = AtomicFile::create(path)?;
     #[cfg(unix)]
-    if let Some(old) = file.existing.as_ref().filter(|old| old.hardlinked())
-        && old.owned_by(&file.temp.as_file().metadata()?)
-    {
-        return write_in_place(&file.target, content, old);
+    if let Some(old) = file.existing.as_ref().filter(|old| old.hardlinked()) {
+        if hard_links == HardLinkPolicy::Refuse {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                HardLinkRefused {
+                    links: old.identity.2,
+                },
+            ));
+        }
+        if old.owned_by(&file.temp.as_file().metadata()?) {
+            return write_in_place(&file.target, content, old);
+        }
     }
+    #[cfg(not(unix))]
+    let _ = hard_links;
     file.write_all(content)?;
     file.commit()
 }
@@ -168,8 +260,15 @@ impl AtomicFile {
             };
             #[cfg(not(unix))]
             let permissions = old.permissions.clone();
+            #[cfg(windows)]
+            if let Some(source) = old.source.as_ref() {
+                win_acl::copy_dacl(source, temp.path())?;
+            }
             temp.as_file().set_permissions(permissions)?;
         }
+        // The READ_CONTROL handle has no share-delete access and would block the rename fallback
+        #[cfg(windows)]
+        drop(existing);
         temp.as_file().sync_all()?;
         // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
         let temp_path = temp.into_temp_path();
@@ -221,14 +320,15 @@ fn set_read_only(path: &Path, read_only: bool) -> io::Result<()> {
 
 /// Flushes the directory entry created by the rename; best effort, since the data is already
 /// committed and not every file system supports syncing a directory.
+#[cfg(unix)]
 fn sync_dir(dir: &Path) {
-    #[cfg(unix)]
     if let Ok(handle) = fs::File::open(dir) {
         let _ = handle.sync_all();
     }
-    #[cfg(not(unix))]
-    let _ = dir;
 }
+
+#[cfg(not(unix))]
+const fn sync_dir(_dir: &Path) {}
 
 /// Overwrites a target that other names share, so every hard link observes the new content.
 ///
@@ -238,9 +338,13 @@ fn sync_dir(dir: &Path) {
 fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<()> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 
+    use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
+
+    // NONBLOCK keeps a FIFO swapped in at the path from blocking the open; it is cleared below
+    let flags = OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY;
     let mut file = fs::OpenOptions::new()
         .write(true)
-        .custom_flags(libc::O_NOFOLLOW)
+        .custom_flags(flags.bits().cast_signed())
         .open(target)?;
     let opened = file.metadata()?;
     if !opened.is_file() || (opened.dev(), opened.ino(), opened.nlink()) != old.identity {
@@ -249,6 +353,7 @@ fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<(
             DisplayPath::new(target)
         )));
     }
+    fcntl_setfl(&file, fcntl_getfl(&file)? - OFlags::NONBLOCK)?;
     file.set_len(0)?;
     file.write_all(content)?;
     file.sync_all()
@@ -389,6 +494,18 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
     Ok(Some(file))
 }
 
+/// Opens `real` with only `READ_CONTROL` access, enough to read its DACL.
+///
+/// A denied open fails the write: continuing would silently replace the file with one that has
+/// the directory's default DACL.
+#[cfg(windows)]
+fn open_dacl_source(real: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
+
+    fs::OpenOptions::new().access_mode(READ_CONTROL).open(real)
+}
+
 /// Creates the temporary file; new targets get umask-filtered `0o666` instead of `0o600`.
 fn create_temp(dir: &Path, new_target: bool) -> io::Result<tempfile::NamedTempFile> {
     #[cfg(unix)]
@@ -413,8 +530,8 @@ struct Existing {
     /// `(dev, ino, nlink)`
     #[cfg(unix)]
     identity: (u64, u64, u64),
-    /// Read handle on the old inode, the source of its extended attributes.
-    #[cfg(unix)]
+    /// Handle on the old file, the source of its extended attributes (Unix) or DACL (Windows).
+    #[cfg(any(unix, windows))]
     source: Option<fs::File>,
 }
 
@@ -428,7 +545,7 @@ impl Existing {
             owner: (metadata.uid(), metadata.gid()),
             #[cfg(unix)]
             identity: (metadata.dev(), metadata.ino(), metadata.nlink()),
-            #[cfg(unix)]
+            #[cfg(any(unix, windows))]
             source: None,
         }
     }
@@ -463,6 +580,10 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
             {
                 existing.source = open_xattr_source(&real, &metadata)?;
             }
+            #[cfg(windows)]
+            {
+                existing.source = Some(open_dacl_source(&real)?);
+            }
             Ok((real, Some(existing)))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -481,6 +602,10 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
+        super::write_atomic(path, content, HardLinkPolicy::WriteInPlace)
+    }
 
     #[test]
     fn creates_missing_file() {
@@ -713,6 +838,59 @@ mod tests {
         }
 
         #[test]
+        fn refused_hard_link_leaves_every_link_intact() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.yaml");
+            let link = dir.path().join("b.yaml");
+            fs::write(&path, "old").unwrap();
+            fs::hard_link(&path, &link).unwrap();
+
+            let err = crate::write_atomic(&path, b"new", HardLinkPolicy::Refuse).unwrap_err();
+
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+            let refused = err
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<HardLinkRefused>())
+                .unwrap();
+            assert_eq!(refused.links(), 2);
+            assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+            assert_eq!(fs::read_to_string(&link).unwrap(), "old");
+            assert_eq!(fs::metadata(&path).unwrap().nlink(), 2);
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2);
+        }
+
+        #[test]
+        fn refuse_policy_does_not_affect_unshared_files() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("a.yaml");
+            fs::write(&path, "old").unwrap();
+            crate::write_atomic(&path, b"new", HardLinkPolicy::Refuse).unwrap();
+            assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        }
+
+        #[test]
+        fn in_place_write_to_a_fifo_does_not_block() {
+            let dir = tempfile::tempdir().unwrap();
+            let fifo = dir.path().join("pipe.yaml");
+            assert!(
+                std::process::Command::new("mkfifo")
+                    .arg(&fifo)
+                    .status()
+                    .unwrap()
+                    .success()
+            );
+            let old = existing_of(&fifo);
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                tx.send(write_in_place(&fifo, b"x", &old).is_err()).ok();
+            });
+            let refused = rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("opening a FIFO for writing must not block");
+            assert!(refused);
+        }
+
+        #[test]
         fn unshared_target_gets_a_new_inode_with_same_owner_and_mode() {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("a.yaml");
@@ -811,6 +989,10 @@ mod acl_tests {
     use super::*;
     use exacl::{AclEntry, Flag, Perm};
 
+    fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
+        super::write_atomic(path, content, HardLinkPolicy::WriteInPlace)
+    }
+
     fn deny_everyone_write() -> Vec<AclEntry> {
         vec![AclEntry::deny_group("everyone", Perm::WRITE, None)]
     }
@@ -886,5 +1068,105 @@ mod acl_tests {
         let old = file.existing.as_ref().unwrap();
         copy_acl(old, &file.target, file.temp.path()).unwrap();
         assert!(!has_everyone_entry(file.temp.path()));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod dacl_tests {
+    use super::*;
+    use std::process::Command;
+
+    fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
+        super::write_atomic(path, content, HardLinkPolicy::WriteInPlace)
+    }
+
+    fn run(program: &str, args: &[&str]) -> String {
+        // Windows PowerShell 5.1 cannot autoload modules when the runner's
+        // PSModulePath points at PowerShell 7 module directories.
+        let output = Command::new(program)
+            .args(args)
+            .env_remove("PSModulePath")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{program} {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn powershell(script: &str) -> String {
+        run("powershell", &["-NoProfile", "-Command", script])
+    }
+
+    fn sddl(path: &Path) -> String {
+        powershell(&format!("(Get-Acl -LiteralPath '{}').Sddl", path.display()))
+    }
+
+    fn icacls(path: &Path, args: &[&str]) {
+        let path = path.to_str().unwrap();
+        let mut all = vec![path];
+        all.extend_from_slice(args);
+        run("icacls", &all);
+    }
+
+    fn assert_sddl_survives(path: &Path) {
+        let before = sddl(path);
+        write_atomic(path, b"a: 2\n").unwrap();
+        assert_eq!(sddl(path), before);
+        assert_eq!(fs::read_to_string(path).unwrap(), "a: 2\n");
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    fn file_in(dir: &tempfile::TempDir) -> PathBuf {
+        let path = dir.path().join("acl.yaml");
+        fs::write(&path, "a: 1\n").unwrap();
+        path
+    }
+
+    #[test]
+    fn explicit_grant_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        icacls(&path, &["/grant", "*S-1-1-0:(R)"]);
+        assert_sddl_survives(&path);
+    }
+
+    #[test]
+    fn protected_dacl_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        icacls(&path, &["/inheritance:d"]);
+        icacls(&path, &["/grant", "*S-1-1-0:(R)"]);
+        assert_sddl_survives(&path);
+    }
+
+    #[test]
+    fn protected_read_only_grant_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        icacls(&path, &["/inheritance:r", "/grant", "*S-1-1-0:(R)"]);
+        assert_sddl_survives(&path);
+    }
+
+    #[test]
+    fn null_dacl_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        powershell(&format!(
+            "$p = '{}'; $a = Get-Acl -LiteralPath $p; \
+             $a.SetSecurityDescriptorSddlForm('D:NO_ACCESS_CONTROL'); \
+             Set-Acl -LiteralPath $p -AclObject $a",
+            path.display()
+        ));
+        assert_sddl_survives(&path);
+    }
+
+    #[test]
+    fn plain_file_keeps_inherited_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        assert_sddl_survives(&path);
     }
 }
