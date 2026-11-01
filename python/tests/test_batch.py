@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -301,7 +302,8 @@ class TestFormatFilesInPlace:
         assert hardlink.read_text() == distinct[0].read_text()
         assert symlink.read_text() == distinct[0].read_text()
         assert symlink.is_symlink()
-        assert os.path.samefile(hardlink, distinct[0])
+        if sys.platform != "win32":
+            assert os.path.samefile(hardlink, distinct[0])
 
 
 class TestBatchResult:

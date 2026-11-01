@@ -191,7 +191,9 @@ describe('Batch Processing', () => {
       expect(fs.readFileSync(hardlink, 'utf8')).toBe(fs.readFileSync(distinct[0], 'utf8'));
       expect(fs.readFileSync(symlink, 'utf8')).toBe(fs.readFileSync(distinct[0], 'utf8'));
       expect(fs.lstatSync(symlink).isSymbolicLink()).toBe(true);
-      expect(fs.statSync(hardlink).ino).toBe(fs.statSync(distinct[0]).ino);
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(hardlink).ino).toBe(fs.statSync(distinct[0]).ino);
+      }
     });
   });
 
