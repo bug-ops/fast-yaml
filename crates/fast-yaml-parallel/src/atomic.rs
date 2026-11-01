@@ -126,14 +126,17 @@ impl std::error::Error for HardLinkRefused {}
 ///   but a swap that is undone before the check is not seen. Only a file system that reports
 ///   ACLs as unsupported is skipped silently; any other failure, including permission denied,
 ///   fails the write.
-/// - On Windows, the DACL of the old file is read through a handle opened with `READ_CONTROL`
-///   at `create` time and applied to the replacement before the read-only attribute is set,
-///   including its protection flag; a file without a DACL gets none. A file whose DACL only
-///   holds entries inherited from its directory needs no copy, since the replacement inherits
-///   the same entries. Applying an unprotected DACL reads the descriptor of the parent
-///   directory, so a parent that denies `READ_CONTROL` fails the write. A file system without
-///   security descriptors is skipped; the owner, SACL, integrity label and alternate data
-///   streams are not preserved.
+/// - On Windows, the old file is opened at `create` time without following a reparse point, and
+///   its permissions and DACL are both taken from that handle: a file swapped in at the path
+///   afterwards is not read, and a directory or symlink found there fails the write. The DACL
+///   is applied to the replacement through a handle on it, before the read-only attribute is
+///   set, including its protection flag; a file without a DACL gets none. A file whose DACL
+///   only holds entries inherited from its directory needs no copy, since the replacement
+///   inherits the same entries. Applying an unprotected DACL reads the descriptor of the
+///   parent directory, so a parent that denies `READ_CONTROL` fails the write. A file system
+///   without security descriptors is skipped. The owner is not copied (the replacement belongs
+///   to the writer, so inherited creator-owner entries resolve to the writer), nor are the
+///   SACL, the integrity label and alternate data streams.
 ///
 /// # Errors
 ///
@@ -262,11 +265,11 @@ impl AtomicFile {
             let permissions = old.permissions.clone();
             #[cfg(windows)]
             if let Some(source) = old.source.as_ref() {
-                win_acl::copy_dacl(source, temp.path())?;
+                win_acl::copy_dacl(source, temp.as_file())?;
             }
             temp.as_file().set_permissions(permissions)?;
         }
-        // The READ_CONTROL handle has no share-delete access and would block the rename fallback
+        // Close the source handle first so the rename never meets another open handle on the target
         #[cfg(windows)]
         drop(existing);
         temp.as_file().sync_all()?;
@@ -330,6 +333,23 @@ fn sync_dir(dir: &Path) {
 #[cfg(not(unix))]
 const fn sync_dir(_dir: &Path) {}
 
+/// Flags for opening a file that may have been swapped for a symlink or FIFO.
+///
+/// `NONBLOCK` keeps a FIFO from blocking the open; callers that write clear it afterwards.
+#[cfg(unix)]
+const NO_FOLLOW_OPEN: rustix::fs::OFlags = rustix::fs::OFlags::NOFOLLOW
+    .union(rustix::fs::OFlags::NONBLOCK)
+    .union(rustix::fs::OFlags::NOCTTY);
+
+/// The error for a target that stopped being the file resolved at `create` time.
+#[cfg(any(unix, windows))]
+fn changed(path: &Path) -> io::Error {
+    io::Error::other(format!(
+        "{} changed while it was being replaced",
+        DisplayPath::new(path)
+    ))
+}
+
 /// Overwrites a target that other names share, so every hard link observes the new content.
 ///
 /// The target is opened without truncation and without following a symlink, and written only
@@ -340,18 +360,13 @@ fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<(
 
     use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
 
-    // NONBLOCK keeps a FIFO swapped in at the path from blocking the open; it is cleared below
-    let flags = OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::NOCTTY;
     let mut file = fs::OpenOptions::new()
         .write(true)
-        .custom_flags(flags.bits().cast_signed())
+        .custom_flags(NO_FOLLOW_OPEN.bits().cast_signed())
         .open(target)?;
     let opened = file.metadata()?;
     if !opened.is_file() || (opened.dev(), opened.ino(), opened.nlink()) != old.identity {
-        return Err(io::Error::other(format!(
-            "{} changed while it was being replaced",
-            DisplayPath::new(target)
-        )));
+        return Err(changed(target));
     }
     fcntl_setfl(&file, fcntl_getfl(&file)? - OFlags::NONBLOCK)?;
     file.set_len(0)?;
@@ -387,7 +402,8 @@ fn copy_xattrs(from: Option<&fs::File>, to: &fs::File) -> io::Result<()> {
     use xattr::FileExt;
 
     let unsupported = |e: &io::Error| {
-        e.kind() == io::ErrorKind::Unsupported || e.raw_os_error() == Some(libc::ENOTSUP)
+        e.kind() == io::ErrorKind::Unsupported
+            || e.raw_os_error() == Some(rustix::io::Errno::NOTSUP.raw_os_error())
     };
     let Some(from) = from else {
         return Ok(());
@@ -477,7 +493,7 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
 
     let file = match fs::OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_NOCTTY)
+        .custom_flags(NO_FOLLOW_OPEN.bits().cast_signed())
         .open(real)
     {
         Ok(file) => file,
@@ -486,24 +502,37 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
     };
     let opened = file.metadata()?;
     if !opened.is_file() || (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
-        return Err(io::Error::other(format!(
-            "{} changed while it was being replaced",
-            DisplayPath::new(real)
-        )));
+        return Err(changed(real));
     }
     Ok(Some(file))
 }
 
-/// Opens `real` with only `READ_CONTROL` access, enough to read its DACL.
+/// Opens `real` without following a reparse point, with only the access that reading its DACL
+/// and attributes takes, and returns the file with the metadata of what was opened.
+///
+/// The returned metadata comes from the handle, so the permissions and the DACL describe one
+/// file even if the path is swapped meanwhile. `BACKUP_SEMANTICS` lets a swapped-in directory
+/// open and fail the `is_file` check with the same error as on Unix.
 ///
 /// A denied open fails the write: continuing would silently replace the file with one that has
 /// the directory's default DACL.
 #[cfg(windows)]
-fn open_dacl_source(real: &Path) -> io::Result<fs::File> {
+fn open_dacl_source(real: &Path) -> io::Result<(fs::File, fs::Metadata)> {
     use std::os::windows::fs::OpenOptionsExt;
-    use windows_sys::Win32::Storage::FileSystem::READ_CONTROL;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        READ_CONTROL,
+    };
 
-    fs::OpenOptions::new().access_mode(READ_CONTROL).open(real)
+    let file = fs::OpenOptions::new()
+        .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+        .open(real)?;
+    let opened = file.metadata()?;
+    if !opened.is_file() {
+        return Err(changed(real));
+    }
+    Ok((file, opened))
 }
 
 /// Creates the temporary file; new targets get umask-filtered `0o666` instead of `0o600`.
@@ -550,6 +579,25 @@ impl Existing {
         }
     }
 
+    /// What `real`, a regular file described by `metadata`, has that a replacement must keep.
+    #[cfg(unix)]
+    fn open(real: &Path, metadata: &fs::Metadata) -> io::Result<Self> {
+        Ok(Self {
+            source: open_xattr_source(real, metadata)?,
+            ..Self::of(metadata)
+        })
+    }
+
+    /// The same on Windows, where the permissions come from the handle the DACL is read from.
+    #[cfg(windows)]
+    fn open(real: &Path, _path_metadata: &fs::Metadata) -> io::Result<Self> {
+        let (source, opened) = open_dacl_source(real)?;
+        Ok(Self {
+            source: Some(source),
+            ..Self::of(&opened)
+        })
+    }
+
     #[cfg(unix)]
     const fn hardlinked(&self) -> bool {
         self.identity.2 > 1
@@ -574,16 +622,10 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
                     format!("not a regular file: {}", DisplayPath::new(path)),
                 ));
             }
-            #[allow(unused_mut)]
-            let mut existing = Existing::of(&metadata);
-            #[cfg(unix)]
-            {
-                existing.source = open_xattr_source(&real, &metadata)?;
-            }
-            #[cfg(windows)]
-            {
-                existing.source = Some(open_dacl_source(&real)?);
-            }
+            #[cfg(any(unix, windows))]
+            let existing = Existing::open(&real, &metadata)?;
+            #[cfg(not(any(unix, windows)))]
+            let existing = Existing::of(&metadata);
             Ok((real, Some(existing)))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -1168,5 +1210,42 @@ mod dacl_tests {
         let dir = tempfile::tempdir().unwrap();
         let path = file_in(&dir);
         assert_sddl_survives(&path);
+    }
+
+    #[test]
+    fn read_only_file_with_an_explicit_grant_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        icacls(&path, &["/grant", "*S-1-1-0:(R)"]);
+        set_read_only(&path, true).unwrap();
+        let before = sddl(&path);
+        write_atomic(&path, b"a: 2\n").unwrap();
+        assert_eq!(sddl(&path), before);
+        assert!(fs::metadata(&path).unwrap().permissions().readonly());
+        set_read_only(&path, false).unwrap();
+    }
+
+    #[test]
+    fn open_dacl_source_refuses_a_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = open_dacl_source(dir.path()).unwrap_err();
+        assert!(err.to_string().contains("changed while"), "{err}");
+    }
+
+    #[test]
+    fn open_dacl_source_does_not_follow_a_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        let link = dir.path().join("link.yaml");
+        if let Err(e) = std::os::windows::fs::symlink_file(&path, &link) {
+            // Creating symlinks takes a privilege that CI runners have
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "cannot create symlink: {e}"
+            );
+            return;
+        }
+        let err = open_dacl_source(&link).unwrap_err();
+        assert!(err.to_string().contains("changed while"), "{err}");
     }
 }

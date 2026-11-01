@@ -38,9 +38,10 @@ description = "Check Node.js formatting (CI: NodeJS Quality Checks)"
 run = ["cd nodejs && pnpm install --no-frozen-lockfile", "cd nodejs && pnpm run format:check"]
 
 [tasks.lint]
-description = "Clippy, ruff, mypy (non-blocking as in CI), biome and tsc"
+description = "Clippy, lint-level allowances, ruff, mypy (non-blocking as in CI), biome and tsc"
 run = [
   { task = "lint:clippy" },
+  { task = "lint:unsafe-allow" },
   { task = "lint:python" },
   { task = "lint:nodejs" },
 ]
@@ -49,6 +50,10 @@ run = [
 description = "Clippy over the whole workspace with warnings denied (CI: Lint (rust))"
 env = { RUSTFLAGS = "-D warnings" }
 run = "cargo clippy --workspace --all-targets --all-features -- -D warnings"
+
+[tasks."lint:unsafe-allow"]
+description = "Lint-level allowances match the reviewed list, and the gate rejects known violations (CI: Unsafe Allowances)"
+run = ["scripts/check-unsafe-allow.sh", "scripts/check-unsafe-allow.sh --self-test"]
 
 [tasks."lint:clippy-hack"]
 description = "Clippy over the feature powerset of the non-FFI crates (CI: Clippy Feature Powerset)"

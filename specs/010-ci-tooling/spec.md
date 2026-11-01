@@ -94,7 +94,7 @@ THEN  the Python 3.10 pinned in the lock runs the binding tests
 
 | ID | Requirement | Priority |
 |----|-------------|----------|
-| FR-010 | THE SYSTEM SHALL define a task for every check CI runs through mise: `fmt:check{,:rust,:python,:nodejs}`, `lint{,:clippy,:clippy-hack,:python,:nodejs}`, `audit:nodejs`, `doc`, `test:rust`, `test:core-no-arena`, `build:{fy,python,nodejs}`, `test:{python,nodejs}`, `release:nodejs`, `coverage:{rust,python,nodejs}`, `deny`, `semver`, `lint:clippy-windows`, `msrv`, plus `fmt` and `ci`. | must |
+| FR-010 | THE SYSTEM SHALL define a task for every check CI runs through mise: `fmt:check{,:rust,:python,:nodejs}`, `lint{,:clippy,:unsafe-allow,:clippy-hack,:python,:nodejs}`, `audit:nodejs`, `doc`, `test:rust`, `test:core-no-arena`, `build:{fy,python,nodejs}`, `test:{python,nodejs}`, `release:nodejs`, `coverage:{rust,python,nodejs}`, `deny`, `semver`, `lint:clippy-windows`, `msrv`, plus `fmt` and `ci`. | must |
 | FR-011 | EACH task SHALL run the same command the replaced inline CI step ran; checks that were non-blocking in CI (`mypy`, `semver`) SHALL remain non-blocking in the task. | must |
 | FR-012 | THE `ci` task SHALL run `fmt:check`, `lint`, `doc`, `test:rust`, `test:python`, `test:nodejs` and `deny` sequentially, not through parallel `depends`, because parallel runs race on the cargo lock and on `pnpm install`. | must |
 | FR-013 | THE SYSTEM SHALL set `RUSTFLAGS` and `RUSTDOCFLAGS` in the `env` of the task that needs them, not in a global `[env]`. | must |
@@ -118,6 +118,7 @@ THEN  the Python 3.10 pinned in the lock runs the binding tests
 
 | FR-029 | THE `Test Rust (windows-latest)` leg SHALL run `mise run lint:clippy-windows` (`cargo clippy -p fast-yaml-parallel --all-targets --all-features -- -D warnings`) after the tests, under `if: ${{ !cancelled() && runner.os == 'Windows' }}`, so `cfg(windows)` code is clippy-linted on the platform that compiles it. The scope is `fast-yaml-parallel`; widening it to the non-FFI workspace is a follow-up. | must |
 | FR-034 | WHEN the MSRV changes, THE MAINTAINER SHALL change `rust-version` in `Cargo.toml`, the toolchain of the `msrv` job and the `msrv` task in the same PR. The `msrv` job installs the toolchain through `dtolnay/rust-toolchain` and runs `mise run msrv` (`cargo +1.91.0 check --workspace --all-targets`) with `install: false`. | must |
+| FR-035 | THE `Unsafe Allowances` job (`unsafe-allow`) SHALL run `mise run lint:unsafe-allow` (`scripts/check-unsafe-allow.sh` and its `--self-test`, which rejects mutated copies of the tree: forbid turned into allow, allow moved to a wider item, hyphenated spelling, `cap-lints`, `#[path]` and `include!` of a Markdown file, a dependency on `fuzz/`, a crate without workspace lints; `install: false`) on every push, pull request and scheduled run, without a `changes` filter, so a diff touching only `nodejs/`, `scripts/` or workflows is checked; `ci-success` SHALL list it in `needs` and require the result `success` (`skipped` fails), as for `changes`. The script contract is in [[009-limits-security/spec]] FR-035; `lint:unsafe-allow` is part of the `lint` aggregate and so of `mise run ci`. | must |
 
 ### 3.4 Security
 

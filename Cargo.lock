@@ -608,7 +608,6 @@ dependencies = [
  "criterion",
  "exacl",
  "fast-yaml-core",
- "libc",
  "proptest",
  "rayon",
  "rustix",

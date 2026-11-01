@@ -136,6 +136,26 @@ jobs:
         if: ${{ !cancelled() }}
         run: mise run doc
 
+  # Not behind `changes`: a diff that touches only nodejs/, scripts/ or specs/ must still be checked
+  unsafe-allow:
+    name: Unsafe Allowances
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up mise
+        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        with:
+          cache: false
+          version: 2026.10.25
+          install: false
+
+      - name: Check lint-level allowances
+        run: mise run lint:unsafe-allow
+
   # Feature powerset is ~65s of the lint gate (main medians), so it runs beside the tests instead of in front of them
   clippy-powerset:
     name: Clippy Feature Powerset
@@ -796,7 +816,7 @@ jobs:
   # All checks passed - required for branch protection
   ci-success:
     name: CI Success
-    needs: [changes, lint, clippy-powerset, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
+    needs: [changes, lint, unsafe-allow, clippy-powerset, security, test-rust, test-core-no-arena, coverage, msrv, test-python, python-quality, python-coverage, test-nodejs, nodejs-quality, nodejs-coverage]
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -804,6 +824,7 @@ jobs:
         run: |
           echo "Detect Changes: ${{ needs.changes.result }}"
           echo "Lint (rust): ${{ needs.lint.result }}"
+          echo "Unsafe Allowances: ${{ needs.unsafe-allow.result }}"
           echo "Clippy Feature Powerset: ${{ needs.clippy-powerset.result }}"
           echo "Security: ${{ needs.security.result }}"
           echo "Test Rust: ${{ needs.test-rust.result }}"
@@ -820,6 +841,12 @@ jobs:
           # A failed or cancelled Detect Changes skips every dependent job, so it must succeed itself
           if [[ "${{ needs.changes.result }}" != "success" ]]; then
             echo "❌ Detect Changes did not succeed: ${{ needs.changes.result }}"
+            exit 1
+          fi
+
+          # Not behind Detect Changes, so a skipped result means the job never ran
+          if [[ "${{ needs.unsafe-allow.result }}" != "success" ]]; then
+            echo "❌ Unsafe Allowances did not succeed: ${{ needs.unsafe-allow.result }}"
             exit 1
           fi
 

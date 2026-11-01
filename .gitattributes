@@ -1,2 +1,4 @@
 crates/fast-yaml-linter/tests/fixtures/** -text
 crates/fast-yaml-linter/tests/golden/** -text
+scripts/check-unsafe-allow.sh text eol=lf
+scripts/unsafe-allow.allowlist text eol=lf

@@ -224,4 +224,40 @@ mod unix {
         }
         assert_eq!(fs::metadata(&through).unwrap().nlink(), 2);
     }
+
+    #[test]
+    fn format_in_place_writes_two_names_of_one_file_one_after_the_other() {
+        use fast_yaml_parallel::{Config, WorkerCount, Workers};
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = TempDir::new().unwrap();
+        let write = |name: &str| {
+            let path = dir.path().join(name);
+            fs::write(&path, "key:   value\n").unwrap();
+            path
+        };
+        let first = write("first.yaml");
+        let second = dir.path().join("second.yaml");
+        fs::hard_link(&first, &second).unwrap();
+        let mut paths = vec![first.clone(), second.clone()];
+        paths.extend((0..10).map(|i| write(&format!("filler{i}.yaml"))));
+        let targets: Vec<_> = paths
+            .iter()
+            .map(|path| InPlaceTarget::new(path.clone(), HardLinkPolicy::WriteInPlace))
+            .collect();
+        let config = Config::new().with_workers(Workers::Fixed(WorkerCount::new(4).unwrap()));
+
+        let result = FileProcessor::with_config(config).format_in_place(
+            &targets,
+            &EmitterConfig::new(),
+            CommentPolicy::Reject,
+        );
+
+        // The second name finds the file already formatted only when it runs after the first
+        assert_eq!((result.total, result.failed, result.changed), (12, 0, 11));
+        for path in [&first, &second] {
+            assert_eq!(fs::read_to_string(path).unwrap(), "key: value\n");
+        }
+        assert_eq!(fs::metadata(&first).unwrap().nlink(), 2);
+    }
 }

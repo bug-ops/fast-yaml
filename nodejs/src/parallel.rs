@@ -2,8 +2,6 @@
 //!
 //! Provides multi-threaded parsing for large multi-document YAML files.
 
-#![allow(unsafe_code)]
-
 use crate::conversion::yaml_to_js;
 use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size, workers};
 use crate::options::{U32_MAX, checked_opt_uint};
@@ -106,15 +104,16 @@ impl ParallelConfig {
 
 /// Widens a value to `Unknown<'static>` for `Task::JsValue`, which cannot carry an env lifetime.
 ///
-/// Only call from `Task::resolve`: napi-rs converts the returned value to a raw `napi_value`
-/// before that call's handle scope closes, so the handle never outlives the env.
+/// # Safety
+///
+/// The result must become a raw `napi_value` inside the `Task::resolve` call that created `v`:
+/// napi-rs converts it before that call's handle scope closes, so the handle never outlives the
+/// env.
 #[inline]
-fn to_static(v: Unknown<'_>) -> Unknown<'static> {
-    // SAFETY: lifetime-only change; see the function docs for why the handle stays valid.
-    #[allow(clippy::missing_transmute_annotations)]
-    unsafe {
-        std::mem::transmute(v)
-    }
+#[allow(unsafe_code)]
+unsafe fn to_static(v: Unknown<'_>) -> Unknown<'static> {
+    // SAFETY: lifetime-only change; the caller upholds the contract above.
+    unsafe { std::mem::transmute::<Unknown<'_>, Unknown<'static>>(v) }
 }
 
 /// Parse multi-document YAML in parallel (synchronous).
@@ -215,11 +214,15 @@ impl Task for ParseParallelTask {
         })
     }
 
+    #[allow(unsafe_code)]
     fn resolve(&mut self, env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         contain_panic(|| {
             let mut js_docs = Vec::with_capacity(output.len());
             for value in &output {
-                js_docs.push(to_static(yaml_to_js(&env, value)?));
+                let js = yaml_to_js(&env, value)?;
+                // SAFETY: `js` is created and returned inside this `resolve` call, which napi-rs
+                // converts to raw values before the call's handle scope closes.
+                js_docs.push(unsafe { to_static(js) });
             }
             Ok(js_docs)
         })

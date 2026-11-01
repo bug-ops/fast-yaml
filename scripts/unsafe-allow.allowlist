@@ -1,0 +1,11 @@
+Cargo.toml	# Use "deny" instead of "forbid" to allow local #[allow(unsafe_code)] where necessary	
+Cargo.toml	unsafe_code = "deny"	
+crates/fast-yaml-core/src/lib.rs	#![forbid(unsafe_code)]	
+crates/fast-yaml-linter/src/lib.rs	#![forbid(unsafe_code)]	
+crates/fast-yaml-parallel/src/atomic.rs	#[allow(unsafe_code)]	mod win_acl;
+crates/fast-yaml-parallel/src/lib.rs	#![cfg_attr(not(windows), forbid(unsafe_code))]	
+crates/fast-yaml-parallel/src/lib.rs	#![cfg_attr(windows, deny(unsafe_code))]	
+nodejs/Cargo.toml	unsafe_code = "deny"	
+nodejs/src/parallel.rs	#[allow(unsafe_code)]	fn resolve(&mut self, env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
+nodejs/src/parallel.rs	#[allow(unsafe_code)]	unsafe fn to_static(v: Unknown<'_>) -> Unknown<'static> {
+nodejs/src/rule_input.rs	#![allow(unsafe_code)]	

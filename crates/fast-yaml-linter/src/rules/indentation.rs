@@ -11,7 +11,8 @@ use crate::config::RuleName;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::config::{IndentSequences, IndentSize, IndentSpaces, RuleOptions};
-use crate::{Finding, LintConfig, LintContext, Location, Severity, Span};
+use crate::source::offset::ByteOffset;
+use crate::{Finding, LintConfig, LintContext, Severity, Span};
 
 mod machine;
 
@@ -164,13 +165,10 @@ impl super::SourceRule for IndentationRule {
                 .get(problem.offset..)
                 .and_then(|rest| rest.chars().next())
                 .map_or(0, char::len_utf8);
+            let ctx = context.source_context();
             let span = Span::new(
-                Location::new(problem.line, problem.column, problem.offset),
-                Location::new(
-                    problem.line,
-                    problem.column.saturating_add(1),
-                    problem.offset + width,
-                ),
+                ctx.location_at(ByteOffset::new(problem.offset)),
+                ctx.location_at(ByteOffset::new(problem.offset + width)),
             );
             Finding::new(problem.message, span)
         }));
