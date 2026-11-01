@@ -1,0 +1,98 @@
+[tools]
+node = "24"
+pnpm = "10.33.0"
+python = "3.12"
+uv = "latest"
+"aqua:EmbarkStudios/cargo-deny" = "latest"
+"aqua:taiki-e/cargo-llvm-cov" = "latest"
+"github:nextest-rs/nextest[version_prefix=cargo-nextest-]" = "latest"
+"github:taiki-e/cargo-hack" = "latest"
+"github:obi1kenobi/cargo-semver-checks" = "latest"
+
+[tasks.fmt]
+description = "Format Rust, Python and Node.js sources"
+run = [
+  "cargo +nightly fmt --all",
+  "cd python && uv run ruff format .",
+  "cd nodejs && pnpm install --no-frozen-lockfile && pnpm run format",
+]
+
+[tasks."fmt:check"]
+description = "Check formatting (CI: format-rust, format-python, format-nodejs)"
+run = [
+  "cargo +nightly fmt --all -- --check",
+  "cd python && uv run ruff format --check .",
+  "cd nodejs && pnpm install --no-frozen-lockfile && pnpm run format:check",
+]
+
+[tasks.lint]
+description = "Clippy, ruff, mypy (non-blocking as in CI), biome and tsc"
+env = { RUSTFLAGS = "-D warnings" }
+run = [
+  "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+  "cd python && uv sync && (uv run mypy fast_yaml/ || true) && uv run ruff check .",
+  "cd nodejs && pnpm install --no-frozen-lockfile && pnpm run lint && pnpm run typecheck",
+]
+
+[tasks.doc]
+description = "Build Rust docs with warnings denied"
+env = { RUSTFLAGS = "-D warnings", RUSTDOCFLAGS = "-D warnings" }
+run = "cargo doc --workspace --no-deps"
+
+[tasks."test:rust"]
+description = "Build, nextest and doctests, excluding FFI crates"
+env = { RUSTFLAGS = "-D warnings" }
+run = [
+  "cargo build --workspace --all-targets --exclude fast-yaml --exclude fast-yaml-nodejs",
+  "cargo nextest run --workspace --exclude fast-yaml --exclude fast-yaml-nodejs",
+  "cargo test --doc --workspace --exclude fast-yaml --exclude fast-yaml-nodejs",
+]
+
+[tasks."build:fy"]
+description = "Build the fy binary used by binding tests"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo build --bin fy"
+sources = ["Cargo.toml", "Cargo.lock", "crates/**/*.rs", "crates/**/Cargo.toml"]
+outputs = ["target/debug/fy"]
+
+[tasks."build:python"]
+description = "Install Python dependencies and build the extension with maturin"
+env = { RUSTFLAGS = "-D warnings" }
+run = ["cd python && uv sync", "cd python && uv run maturin develop"]
+sources = ["Cargo.lock", "crates/**/*.rs", "python/Cargo.toml", "python/src/**/*.rs", "python/pyproject.toml", "python/uv.lock"]
+outputs = ["python/fast_yaml/*.so"]
+
+[tasks."build:nodejs"]
+description = "Install Node.js dependencies and build the test addon"
+env = { RUSTFLAGS = "-D warnings" }
+run = ["cd nodejs && pnpm install --no-frozen-lockfile", "cd nodejs && pnpm run build:test"]
+sources = ["Cargo.lock", "crates/**/*.rs", "nodejs/Cargo.toml", "nodejs/src/**/*.rs", "nodejs/package.json", "nodejs/pnpm-lock.yaml"]
+outputs = ["nodejs/*.node"]
+
+[tasks."test:python"]
+description = "Python binding tests; set YAML_TEST_SUITE_PATH to a yaml-test-suite checkout to run the suite"
+depends = ["build:fy", "build:python"]
+env = { FY_BIN = "{{config_root}}/target/debug/fy" }
+run = "cd python && uv run pytest tests/ -v"
+
+[tasks."test:nodejs"]
+description = "Node.js binding tests"
+depends = ["build:fy", "build:nodejs"]
+env = { FY_BIN = "{{config_root}}/target/debug/fy" }
+run = "cd nodejs && pnpm test"
+
+[tasks.deny]
+description = "cargo-deny advisories, bans, licenses and sources"
+run = "cargo deny check"
+
+[tasks.ci]
+description = "Run every CI check sequentially, avoiding concurrent cargo and pnpm installs"
+run = [
+  { task = "fmt:check" },
+  { task = "lint" },
+  { task = "doc" },
+  { task = "test:rust" },
+  { task = "test:python" },
+  { task = "test:nodejs" },
+  { task = "deny" },
+]

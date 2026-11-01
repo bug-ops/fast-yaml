@@ -109,6 +109,19 @@ cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-
 RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" cargo doc --no-deps --workspace
 ```
 
+#### Optional: mise
+
+[mise](https://mise.jdx.dev) can install the pinned dev tools (Node.js, pnpm, Python, uv, cargo-nextest, cargo-deny, cargo-hack, cargo-llvm-cov, cargo-semver-checks) from `mise.toml` and `mise.lock`, and run the same checks as CI. Rust itself stays on rustup; the stable and nightly toolchains must be installed as above.
+
+```bash
+mise install --locked
+mise tasks                # list tasks
+mise run ci               # fmt:check, lint, doc, test:rust, test:python, test:nodejs, deny
+mise run fmt:check
+```
+
+mise is optional and still a pilot: plain `cargo`, `pnpm` and `uv` commands keep working and remain the reference. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
+
 Behavior changes also update the matching spec in `specs/` (start at `specs/constitution.md`; one `NNN-feature/spec.md` per capability) and the `[Unreleased]` section of `CHANGELOG.md`.
 
 ### 4. Commit Changes
