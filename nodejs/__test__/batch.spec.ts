@@ -184,7 +184,9 @@ describe('Batch Processing', () => {
       expect(result.failed).toBe(0);
       expect(result.errors).toEqual([]);
       distinct.forEach((file, i) => {
-        expect(fs.readFileSync(file, 'utf8')).toBe(`key${i}: value${i}\nnested:\n  a: ${i}\n  b: 2\n`);
+        expect(fs.readFileSync(file, 'utf8')).toBe(
+          `key${i}: value${i}\nnested:\n  a: ${i}\n  b: 2\n`
+        );
       });
       expect(fs.readFileSync(hardlink, 'utf8')).toBe(fs.readFileSync(distinct[0], 'utf8'));
       expect(fs.readFileSync(symlink, 'utf8')).toBe(fs.readFileSync(distinct[0], 'utf8'));
