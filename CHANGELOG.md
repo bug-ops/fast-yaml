@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- CI: opt-in `mise` toolchain and tasks (`mise.toml`, `mise.lock`) with a parallel non-required `mise-ci` pilot job (#TBD)
+- CI: opt-in `mise` toolchain and tasks (`mise.toml`, `mise.lock`) with a parallel non-required `mise-ci` pilot job (#669)
 
 ### Security
 
