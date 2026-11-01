@@ -100,6 +100,14 @@ export type LintRulesConfig = { [R in LintRuleName]?: RuleEntry<R> } & {
 }
 
 /**
+ * Which binding artifact the generated loader actually loaded: `'native'` for
+ * a native addon, otherwise the `platformArchABI` of the WASI flavor. Every
+ * flavor napi-rs can build is listed, because `NAPI_RS_NATIVE_LIBRARY_PATH`
+ * can point the loader at a WASI artifact this package does not build itself.
+ */
+export declare const __napiBindingTarget: 'native' | 'wasm32-wasi' | 'wasm32-wasip1'
+
+/**
  * YAML linter with configurable rules.
  *
  * # Example
@@ -929,6 +937,16 @@ export interface Suggestion {
   /** Replacement text (None = deletion). */
   replacement?: string
 }
+
+/**
+ * Panics on purpose so tests can verify panics surface as catchable JS errors.
+ *
+ * Only compiled with the `test-panic` feature; never part of release builds.
+ */
+export declare function testPanic(): string
+
+/** Async counterpart of [`test_panic`] that panics on the libuv worker thread. */
+export declare function testPanicAsync(): Promise<unknown>
 
 /**
  * Get the library version.

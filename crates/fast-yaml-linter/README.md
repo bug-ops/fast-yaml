@@ -288,7 +288,7 @@ an entry does not mention keep their current values. A limit of `-1` disables th
 | `empty-lines` | `max` (2), `max-start` (0), `max-end` (0) |
 | `empty-values` | `forbid-in-block-mappings` (true), `forbid-in-flow-mappings` (true), `forbid-in-block-sequences` (true) |
 | `float-values` | `require-numeral-before-decimal` (true), `forbid-scientific-notation` (false), `forbid-nan` (false), `forbid-inf` (false) |
-| `indentation` | `indent-size` (2, 1 to 16) |
+| `indentation` | `indent-size` (2, 1 to 255) |
 | `key-ordering` | `case-sensitive` (true), `ignored-keys` ([] regexes, `re.search` semantics; matching keys are skipped) |
 | `line-length` | `max` (80, `null` for no limit), `allow-non-breakable-words` (true), `allow-non-breakable-inline-mappings` (false; implies the previous one) |
 | `new-lines` | `type` (unix; unix, dos or platform) |

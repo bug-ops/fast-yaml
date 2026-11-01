@@ -126,6 +126,16 @@ impl SourcePosition {
         }
     }
 
+    // Marker the scanner or parser reported for real input, which never has line 0.
+    pub(crate) fn from_parsed_marker(marker: Marker) -> Self {
+        debug_assert!(marker.line() > 0, "parsed markers start at line 1");
+        Self::from_marker(marker)
+    }
+
+    pub(crate) fn from_parsed_span(span: saphyr_parser::Span) -> Self {
+        Self::from_parsed_marker(span.start)
+    }
+
     pub(crate) fn from_span(span: saphyr_parser::Span) -> Self {
         Self::from_marker(span.start)
     }

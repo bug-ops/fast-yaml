@@ -111,7 +111,7 @@ RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" ca
 
 #### Optional: mise toolchain and tasks
 
-[mise](https://mise.jdx.dev) pins the non-Rust dev tools and exposes the CI checks as named tasks. CI installs its tools with mise and runs the format, lint, test, coverage, audit and build jobs through `mise run <task>`, so a task reproduces the matching CI job locally. The MSRV check, the release build check and the SARIF tool install stay outside mise. mise is optional for contributors: plain `cargo`, `pnpm` and `uv` commands keep working, and the commands above remain the reference.
+[mise](https://mise.jdx.dev) pins the non-Rust dev tools and exposes the CI checks as named tasks. CI installs its tools with mise and runs the format, lint, test, coverage, audit and build jobs through `mise run <task>`, so a task reproduces the matching CI job locally. The MSRV check runs through the `msrv` task on a rustup toolchain; the release build check and the SARIF tool install stay outside mise. mise is optional for contributors: plain `cargo`, `pnpm` and `uv` commands keep working, and the commands above remain the reference.
 
 Pinned in `.config/mise/config.toml` and `.config/mise/mise.lock`: Node.js, pnpm, Python, uv, cargo-nextest, cargo-deny, cargo-hack, cargo-llvm-cov and cargo-semver-checks. Rust stays on rustup (see [What stays outside mise](#what-stays-outside-mise)).
 
@@ -143,7 +143,7 @@ mise run lint:clippy      # a single task
 | `semver` | `cargo semver-checks` of `fast-yaml-core` (non-blocking) | Security Audit |
 | `ci` | `fmt:check`, `lint`, `doc`, `test:rust`, `test:python`, `test:nodejs`, `deny`, sequentially | - |
 
-`mise run ci` is the local pre-PR gate. It covers the format, lint, test and security jobs but not coverage, `lint:clippy-hack`, `test:core-no-arena`, `audit:nodejs`, `semver`, `release:nodejs`, the MSRV check or the SARIF upload; run those tasks individually when your change touches them. It runs tasks sequentially because parallel tasks race on the cargo lock and on concurrent `pnpm install` runs. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
+`mise run ci` is the local pre-PR gate. It covers the format, lint, test and security jobs but not coverage, `lint:clippy-hack`, `test:core-no-arena`, `audit:nodejs`, `semver`, `release:nodejs`, the `msrv` task or the SARIF upload; run those tasks individually when your change touches them. It runs tasks sequentially because parallel tasks race on the cargo lock and on concurrent `pnpm install` runs. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
 
 ##### Version legs
 
@@ -197,7 +197,7 @@ Add a `[tasks."name"]` table to `.config/mise/config.toml` with a `description` 
 
 - Rust toolchains (stable, nightly for rustfmt, beta, and the MSRV 1.91.0) come from rustup and `dtolnay/rust-toolchain`; mise does not manage them.
 - `clippy-sarif` and `sarif-fmt` come from `taiki-e/install-action` in the Clippy job: they have no mise registry entry and share one repository with several tag prefixes, which collide in the lockfile.
-- The MSRV and release build checks use rustup only.
+- The release build check uses rustup only; the MSRV check uses the rustup 1.91.0 toolchain through `mise run msrv`. When the MSRV changes, update `rust-version`, the `msrv` job and the `msrv` task together.
 
 ##### Troubleshooting
 

@@ -4,6 +4,8 @@
 //! cyclic JS value overflows the native stack before any validation runs. This conversion is
 //! type-exact and capped in depth and node count, so hostile input fails with `InvalidArg`.
 
+#![allow(unsafe_code)]
+
 use napi::{
     Error, Result, Status, ValueType,
     bindgen_prelude::{Array, FromNapiValue, Object, TypeName, ValidateNapiValue, sys},
@@ -22,6 +24,9 @@ pub struct RuleInput(pub Value);
 struct RawValue(sys::napi_value);
 
 impl FromNapiValue for RawValue {
+    /// # Safety
+    ///
+    /// Callers must pass the `env` and `value` napi gave them; the handle is only stored.
     unsafe fn from_napi_value(_: sys::napi_env, value: sys::napi_value) -> Result<Self> {
         Ok(Self(value))
     }
@@ -32,12 +37,19 @@ fn invalid_arg(reason: String) -> Error {
 }
 
 /// Returns the property-name array of `value` without copying the names into Rust.
+///
+/// # Safety
+///
+/// `env` must be the live environment of the current callback and `value` a valid handle of
+/// that environment. The returned array is valid only while the handle scope is open.
 unsafe fn own_keys<'env>(env: sys::napi_env, value: sys::napi_value) -> Result<Array<'env>> {
     let mut names = std::ptr::null_mut();
     napi::check_status!(
+        // SAFETY: `env` and `value` are valid per this function's contract and `names` is a live out-pointer.
         unsafe { sys::napi_get_property_names(env, value, &raw mut names) },
         "Failed to get property names of given object"
     )?;
+    // SAFETY: `names` was just produced by `napi_get_property_names` for the same `env`.
     unsafe { Array::from_napi_value(env, names) }
 }
 
@@ -56,6 +68,12 @@ impl Converter {
         Ok(())
     }
 
+    /// Converts `value` into JSON, failing past the depth and node limits.
+    ///
+    /// # Safety
+    ///
+    /// `value` must be a valid handle of `self.env`, which must be the live environment of the
+    /// current callback.
     unsafe fn convert(&mut self, value: sys::napi_value, depth: usize) -> Result<Value> {
         if depth > MAX_DEPTH {
             return Err(invalid_arg(format!(
@@ -66,6 +84,8 @@ impl Converter {
         self.nodes += 1;
         let env = self.env;
         let kind = napi::type_of!(env, value)?;
+        // SAFETY: `env` and `value` are valid per this function's contract; every napi call
+        // below only reads `value` and the handle stays in scope for the whole match.
         unsafe {
             match kind {
                 ValueType::Null => Ok(Value::Null),
@@ -90,25 +110,35 @@ impl Converter {
         }
     }
 
+    /// Converts an object or array handle into JSON.
+    ///
+    /// # Safety
+    ///
+    /// Same contract as [`Converter::convert`]; `value` must additionally have type `object`.
     unsafe fn convert_object(&mut self, value: sys::napi_value, depth: usize) -> Result<Value> {
         let env = self.env;
         let mut is_array = false;
         napi::check_status!(
+            // SAFETY: `env` and `value` are valid per this function's contract; `is_array` is a live out-pointer.
             unsafe { sys::napi_is_array(env, value, &raw mut is_array) },
             "Failed to detect whether given js is an array"
         )?;
         if is_array {
+            // SAFETY: `value` was just checked to be an array of `env`.
             let items = unsafe { Array::from_napi_value(env, value)? };
             self.reserve(items.len() as usize)?;
             let mut out = Vec::with_capacity(items.len() as usize);
             for index in 0..items.len() {
                 if let Some(RawValue(item)) = items.get(index)? {
+                    // SAFETY: `item` is an element handle of the array in the same `env`.
                     out.push(unsafe { self.convert(item, depth + 1)? });
                 }
             }
             return Ok(Value::Array(out));
         }
+        // SAFETY: `value` is an object handle of `env` per this function's contract.
         let object = unsafe { Object::from_napi_value(env, value)? };
+        // SAFETY: same handle and environment as above.
         let keys = unsafe { own_keys(env, value)? };
         self.reserve(keys.len() as usize)?;
         let mut map = Map::new();
@@ -117,6 +147,7 @@ impl Converter {
                 continue;
             };
             if let Some(RawValue(item)) = object.get(&key)? {
+                // SAFETY: `item` is a property handle of `object` in the same `env`.
                 map.insert(key, unsafe { self.convert(item, depth + 1)? });
             }
         }
@@ -137,8 +168,13 @@ impl TypeName for RuleInput {
 impl ValidateNapiValue for RuleInput {}
 
 impl FromNapiValue for RuleInput {
+    /// # Safety
+    ///
+    /// `env` and `value` must be the ones napi passes to the argument conversion of the current
+    /// callback.
     unsafe fn from_napi_value(env: sys::napi_env, value: sys::napi_value) -> Result<Self> {
         let mut converter = Converter { env, nodes: 0 };
+        // SAFETY: `env` and `value` come from napi per this function's contract.
         unsafe { converter.convert(value, 0) }.map(Self)
     }
 }

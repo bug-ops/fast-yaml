@@ -481,7 +481,7 @@ impl Builder {
             Event::Alias(id) => {
                 let value = self.anchors.get(&id).cloned().ok_or_else(|| {
                     ParseError::Syntax(SyntaxError::recursive_alias(
-                        SourcePosition::from_span(span),
+                        SourcePosition::from_parsed_span(span),
                         DocumentIndex::new(self.documents.len()),
                     ))
                 })?;
@@ -551,7 +551,7 @@ impl Builder {
     // A rejected merge value is unreachable for parser-loaded input, which `MergeKeyValidator`
     // has already checked; a key collision among merged keys is reported at the `<<` key.
     fn merge_failure(&self, failure: MergeFailure, at: Span) -> ParseError {
-        let at = SourcePosition::from_span(at);
+        let at = SourcePosition::from_parsed_span(at);
         let document = DocumentIndex::new(self.documents.len());
         match failure {
             MergeFailure::Merge(error) => ParseError::Merge {
@@ -592,7 +592,7 @@ impl Builder {
                         .check(&key, frame.entries.keys())
                         .map_err(|error| ParseError::Key {
                             error,
-                            at: SourcePosition::from_span(at),
+                            at: SourcePosition::from_parsed_span(at),
                             document: DocumentIndex::new(self.documents.len()),
                         })?;
                     frame.entries.insert(key, value);

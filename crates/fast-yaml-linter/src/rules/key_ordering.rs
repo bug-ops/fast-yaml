@@ -67,6 +67,15 @@ struct Accepted<'i> {
     range: ByteRange,
 }
 
+/// Whether a flow mapping key is written with a `?` before it or a `:` after it; yamllint sees
+/// no key token for a bare entry such as the `b` of `{b, a}`.
+fn has_key_indicator(source: &str, range: ByteRange) -> bool {
+    let after = source.get(range.end().get()..).unwrap_or_default();
+    let before = source.get(..range.start().get()).unwrap_or_default();
+    after.trim_start_matches([' ', '\t']).starts_with(':')
+        || before.trim_end_matches([' ', '\t']).ends_with('?')
+}
+
 fn compare(key: &str, earlier: &str, case_sensitive: bool) -> std::cmp::Ordering {
     if case_sensitive {
         key.cmp(earlier)
@@ -114,7 +123,9 @@ impl super::SourceRule for KeyOrderingRule {
                         continue;
                     };
                     let key = index.text(scalar);
-                    if options.ignored_keys.is_match(key) {
+                    if (scalar.in_flow && !has_key_indicator(context.source(), scalar.range))
+                        || options.ignored_keys.is_match(key)
+                    {
                         continue;
                     }
                     let sorts_before = |earlier: &Accepted<'_>| {
@@ -171,7 +182,7 @@ mod tests {
     fn positions(found: &[Diagnostic]) -> Vec<(usize, usize)> {
         found
             .iter()
-            .map(|d| (d.span.start.line(), d.span.start.column()))
+            .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
             .collect()
     }
 
@@ -256,6 +267,14 @@ mod tests {
     }
 
     #[test]
+    fn bare_flow_entries_have_no_key_token() {
+        assert_eq!(check_yaml("{b, a}\n"), []);
+        assert_eq!(positions(&check_yaml("{? b, ? a}\n")), [(1, 9)]);
+        assert_eq!(positions(&check_yaml("{b: 1, a: 2}\n")), [(1, 8)]);
+        assert_eq!(positions(&check_yaml("{b : 1, a : 2}\n")), [(1, 9)]);
+    }
+
+    #[test]
     fn keys_of_a_flow_sequence_pair_are_not_ordered() {
         assert_eq!(check_yaml("[b: 1, a: 2]\n"), []);
     }
@@ -291,7 +310,7 @@ mod tests {
         assert_eq!(found.len(), 2);
         assert!(found[0].message.contains("key 'ключ'"));
         assert!(found[1].message.contains("key 'abc'"));
-        assert_eq!(found[1].span.start.line(), 3);
+        assert_eq!(found[1].span.start.line().get(), 3);
     }
 
     #[test]

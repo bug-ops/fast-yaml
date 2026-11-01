@@ -1,6 +1,6 @@
 //! Typed configuration for every built-in rule, generated from one rule table.
 
-use std::cell::OnceCell;
+use std::cell::{OnceCell, RefCell};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -13,7 +13,10 @@ use serde_norway::{Mapping, Value};
 use crate::DiagnosticCode;
 use crate::ParseSeverityError;
 use crate::Severity;
-use crate::config::ignore_source::{ListError, ignore_file_lines, ignore_file_names, ignore_lines};
+use crate::config::ignore_source::{
+    ListError, ignore_file_names, ignore_file_patterns, ignore_lines,
+};
+use crate::config::path_patterns::{PatternState, Shared};
 use crate::config::{CanonicalPath, IgnorePatterns, InvalidPathPattern, Preset};
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::rules::NON_STANDARD_BOOLS;
@@ -135,8 +138,8 @@ pub struct RuleSettings<O> {
 #[derive(Debug, Clone)]
 pub struct RuleIgnore {
     root: PathBuf,
-    lines: Vec<String>,
-    matcher: Arc<IgnorePatterns>,
+    lines: Arc<[String]>,
+    matcher: IgnorePatterns,
 }
 
 impl RuleIgnore {
@@ -144,14 +147,23 @@ impl RuleIgnore {
     ///
     /// # Errors
     ///
-    /// Returns [`InvalidPathPattern`] when a line is not valid gitignore syntax or there are
-    /// too many lines.
+    /// Returns [`InvalidPathPattern`] when a line is not valid gitignore syntax, there are
+    /// too many lines, or the lines are over the pattern budget.
     pub fn new(root: &Path, lines: Vec<String>) -> Result<Self, InvalidPathPattern> {
+        let shared = PatternState::new().compile_inline(root, &lines)?;
         Ok(Self {
             root: root.to_owned(),
-            matcher: Arc::new(IgnorePatterns::new(root, &lines)?),
-            lines,
+            lines: lines.into(),
+            matcher: shared.patterns,
         })
+    }
+
+    fn from_shared(root: &Path, shared: Shared) -> Self {
+        Self {
+            root: root.to_owned(),
+            lines: shared.lines,
+            matcher: shared.patterns,
+        }
     }
 
     /// Returns the directory the patterns are relative to.
@@ -407,17 +419,20 @@ pub enum IgnoreBase<'a> {
     Dir(&'a Path),
 }
 
-/// What entries are applied against: yamllint's own settings, for `enable`, and the ignore base.
+/// What entries are applied against: yamllint's own settings, for `enable`, the ignore base and
+/// the pattern cache and budget of the load.
 struct ApplyCtx<'a> {
     yamllint: OnceCell<RulesConfig>,
     base: IgnoreBase<'a>,
+    patterns: &'a RefCell<PatternState>,
 }
 
 impl<'a> ApplyCtx<'a> {
-    const fn new(base: IgnoreBase<'a>) -> Self {
+    const fn new(base: IgnoreBase<'a>, patterns: &'a RefCell<PatternState>) -> Self {
         Self {
             yamllint: OnceCell::new(),
             base,
+            patterns,
         }
     }
 
@@ -475,7 +490,7 @@ fn apply_entry<O: RuleOptions>(
                 );
             }
         }
-        Value::Mapping(map) => apply_mapping(rule, settings, ctx.base, map)?,
+        Value::Mapping(map) => apply_mapping(rule, settings, ctx, map)?,
         other => {
             return Err(RuleConfigError::InvalidEntry {
                 rule,
@@ -510,9 +525,10 @@ impl SeveritySpelling {
 fn apply_mapping<O: RuleOptions>(
     rule: RuleName,
     settings: &mut RuleSettings<O>,
-    base: IgnoreBase<'_>,
+    ctx: &ApplyCtx<'_>,
     map: Mapping,
 ) -> Result<(), RuleConfigError> {
+    let base = ctx.base;
     let mut overlay = Mapping::new();
     let mut bool_word_keys = Vec::new();
     let mut severity_key: Option<SeveritySpelling> = None;
@@ -597,7 +613,7 @@ fn apply_mapping<O: RuleOptions>(
     }
 
     if let (Some(source), IgnoreBase::Dir(dir)) = (ignore_source, base) {
-        settings.ignore = Some(source.compile(rule, dir)?);
+        settings.ignore = Some(source.compile(rule, dir, ctx.patterns)?);
     }
     overlay_options(rule, settings, overlay, &bool_word_keys)
 }
@@ -651,18 +667,17 @@ impl IgnoreSource {
         }
     }
 
-    fn compile(self, rule: RuleName, dir: &Path) -> Result<RuleIgnore, RuleConfigError> {
+    fn compile(
+        self,
+        rule: RuleName,
+        dir: &Path,
+        patterns: &RefCell<PatternState>,
+    ) -> Result<RuleIgnore, RuleConfigError> {
         let key = self.key();
         let invalid = |message: &dyn fmt::Display| RuleConfigError::InvalidOption {
             rule,
             key: key.to_owned(),
             message: message.to_string(),
-        };
-        let from_file = matches!(self, Self::Files(_));
-        let lines = match self {
-            Self::Lines(lines) => lines.map_err(|error| invalid(&error))?,
-            Self::Files(names) => ignore_file_lines(dir, &names.map_err(|error| invalid(&error))?)
-                .map_err(|error| invalid(&error))?,
         };
         let root = dir.canonicalize().map_err(|error| {
             invalid(&format_args!(
@@ -670,14 +685,20 @@ impl IgnoreSource {
                 DisplayPath::new(dir)
             ))
         })?;
-        RuleIgnore::new(&root, lines).map_err(|error| {
-            // patterns read from a file are never echoed
-            if from_file {
-                invalid(&"the listed patterns cannot be combined")
-            } else {
-                invalid(&error)
-            }
-        })
+        let mut state = patterns.borrow_mut();
+        let shared = match self {
+            Self::Lines(lines) => state
+                .compile_inline(&root, &lines.map_err(|error| invalid(&error))?)
+                .map_err(|error| invalid(&error))?,
+            Self::Files(names) => ignore_file_patterns(
+                dir,
+                &root,
+                &names.map_err(|error| invalid(&error))?,
+                &mut state,
+            )
+            .map_err(|error| invalid(&error))?,
+        };
+        Ok(RuleIgnore::from_shared(&root, shared))
     }
 }
 
@@ -1017,6 +1038,7 @@ impl RulesConfig {
             buffer(deserializer)?,
             ApplyMode::Patch,
             IgnoreBase::Unavailable,
+            &RefCell::new(PatternState::new()),
         )
     }
 
@@ -1079,6 +1101,7 @@ impl RulesConfig {
             buffer(deserializer)?,
             ApplyMode::Patch,
             IgnoreBase::Dir(base_dir),
+            &RefCell::new(PatternState::new()),
         )
     }
 
@@ -1091,8 +1114,9 @@ impl RulesConfig {
         &mut self,
         value: Value,
         base: IgnoreBase<'_>,
+        patterns: &RefCell<PatternState>,
     ) -> Result<(), RuleConfigError> {
-        self.apply_entries(value, ApplyMode::FileOverBase, base)
+        self.apply_entries(value, ApplyMode::FileOverBase, base, patterns)
     }
 
     pub(super) fn apply_entries(
@@ -1100,6 +1124,7 @@ impl RulesConfig {
         value: Value,
         mode: ApplyMode,
         base: IgnoreBase<'_>,
+        patterns: &RefCell<PatternState>,
     ) -> Result<(), RuleConfigError> {
         let entries = match value {
             Value::Null => return Ok(()),
@@ -1114,7 +1139,7 @@ impl RulesConfig {
             }
         };
 
-        let ctx = ApplyCtx::new(base);
+        let ctx = ApplyCtx::new(base, patterns);
         let mut next = self.clone();
         let mut seen = Vec::new();
         for (key, entry) in entries {
@@ -1241,7 +1266,11 @@ impl RulesConfig {
     ) -> Result<(), RuleConfigError> {
         let entry = buffer(deserializer)?;
         let mut next = self.clone();
-        next.apply_value(name, &ApplyCtx::new(base), entry)?;
+        next.apply_value(
+            name,
+            &ApplyCtx::new(base, &RefCell::new(PatternState::new())),
+            entry,
+        )?;
         *self = next;
         Ok(())
     }
@@ -1520,7 +1549,7 @@ mod tests {
                 original
                     .apply_value(
                         name,
-                        &ApplyCtx::new(IgnoreBase::Unavailable),
+                        &ApplyCtx::new(IgnoreBase::Unavailable, &RefCell::new(PatternState::new())),
                         Value::Mapping(entry),
                     )
                     .unwrap();
@@ -1682,7 +1711,11 @@ mod tests {
     fn over_preset(rules: &mut RulesConfig, yaml: &str) {
         let value = serde_norway::from_str(yaml).unwrap();
         rules
-            .apply_over_preset(value, IgnoreBase::Unavailable)
+            .apply_over_preset(
+                value,
+                IgnoreBase::Unavailable,
+                &RefCell::new(PatternState::new()),
+            )
             .unwrap();
     }
 
@@ -1724,7 +1757,11 @@ mod tests {
         let value = serde_norway::from_str("braces: {max-spaces-inside: 1}\ncolons: loud").unwrap();
         assert!(
             rules
-                .apply_over_preset(value, IgnoreBase::Unavailable)
+                .apply_over_preset(
+                    value,
+                    IgnoreBase::Unavailable,
+                    &RefCell::new(PatternState::new()),
+                )
                 .is_err()
         );
         assert_eq!(rules, before);

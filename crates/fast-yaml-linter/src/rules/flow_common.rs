@@ -4,8 +4,9 @@ use std::ops::Range;
 
 use serde::{Deserialize, Serialize};
 
+use super::spacing::SpaceViolation;
 use crate::{
-    Finding, LintContext, Span,
+    Finding, LintContext, SourceContext,
     config::{
         BoolOrName, EmptyInsideLimit, Limit, RuleOptions, RuleSettings, deserialize_bool_or_name,
     },
@@ -198,15 +199,17 @@ pub fn check_flow_collection(
 
         let spacing = FlowSpacing {
             source,
+            lines: context.source_context(),
+            empty: is_empty,
             inner: open.span.end.offset()..close.span.start.offset(),
             min: min_spaces,
             max: max_spaces,
             kind,
         };
-        diagnostics.extend(spacing.after_opening(open.span));
+        diagnostics.extend(spacing.after_opening());
         // An empty collection has one gap, reported once, as yamllint does
         if !is_empty {
-            diagnostics.extend(spacing.before_closing(close.span));
+            diagnostics.extend(spacing.before_closing());
         }
     }
 
@@ -264,6 +267,8 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
 /// Spacing limits for the interior of one flow collection.
 pub struct FlowSpacing<'a> {
     pub(crate) source: &'a str,
+    pub(crate) lines: &'a SourceContext<'a>,
+    pub(crate) empty: bool,
     /// Byte range between the opening and the closing delimiter.
     pub(crate) inner: Range<usize>,
     pub(crate) min: Limit,
@@ -273,7 +278,7 @@ pub struct FlowSpacing<'a> {
 
 impl FlowSpacing<'_> {
     /// Checks the spaces right after the opening delimiter.
-    pub(crate) fn after_opening(&self, opening_span: Span) -> Option<Finding> {
+    pub(crate) fn after_opening(&self) -> Option<Finding> {
         let end = self.inner.end.min(self.source.len());
         if self.inner.start > end {
             return None;
@@ -285,11 +290,11 @@ impl FlowSpacing<'_> {
             return None;
         }
         let spaces = content.len() - rest.len();
-        self.violation(spaces, opening_span)
+        self.violation(spaces, self.inner.start + spaces)
     }
 
     /// Checks the spaces right before the closing delimiter.
-    pub(crate) fn before_closing(&self, closing_span: Span) -> Option<Finding> {
+    pub(crate) fn before_closing(&self) -> Option<Finding> {
         let end = self.inner.end.min(self.source.len());
         if self.inner.start >= end {
             return None;
@@ -301,23 +306,26 @@ impl FlowSpacing<'_> {
             return None;
         }
         let spaces = content.len() - trimmed.len();
-        self.violation(spaces, closing_span)
+        self.violation(spaces, self.inner.end)
     }
 
-    fn violation(&self, spaces: usize, span: Span) -> Option<Finding> {
-        let (problem, bound, limit) = if self.min.unmet_by(spaces) {
-            ("few", "least", self.min)
+    /// Reports a gap that ends at the token starting at `ending_token`.
+    fn violation(&self, spaces: usize, ending_token: usize) -> Option<Finding> {
+        let (kind, problem, bound, limit) = if self.min.unmet_by(spaces) {
+            (SpaceViolation::TooFew, "few", "least", self.min)
         } else if self.max.exceeded_by(spaces) {
-            ("many", "most", self.max)
+            (SpaceViolation::TooMany, "many", "most", self.max)
         } else {
             return None;
         };
         let name = self.kind.name();
-        Some(Finding::new(
+        let empty = if self.empty { "empty " } else { "" };
+        Some(kind.finding(
+            self.lines,
+            ending_token,
             format!(
-                "too {problem} spaces inside {name} (expected at {bound} {limit}, found {spaces})"
+                "too {problem} spaces inside {empty}{name} (expected at {bound} {limit}, found {spaces})"
             ),
-            span,
         ))
     }
 }
@@ -325,7 +333,6 @@ impl FlowSpacing<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Location;
 
     #[test]
     fn test_is_empty_collection() {
@@ -336,21 +343,22 @@ mod tests {
         assert!(!is_empty_collection("{ key: value }", 1, 13));
     }
 
-    fn spacing(source: &str, inner: Range<usize>, min: Limit, max: Limit) -> FlowSpacing<'_> {
+    fn spacing<'a>(
+        source: &'a str,
+        lines: &'a SourceContext<'a>,
+        inner: Range<usize>,
+        min: Limit,
+        max: Limit,
+    ) -> FlowSpacing<'a> {
         FlowSpacing {
             source,
+            lines,
+            empty: false,
             inner,
             min,
             max,
             kind: FlowCollection::Mapping,
         }
-    }
-
-    fn dummy_span() -> Span {
-        Span::new(
-            Location::try_new(1, 1, 0).unwrap(),
-            Location::try_new(1, 2, 1).unwrap(),
-        )
     }
 
     #[test]
@@ -370,12 +378,14 @@ mod tests {
     #[test]
     fn test_check_spaces_after_opening() {
         let source = "{ key: value}";
-        let ok = spacing(source, 1..13, Limit::Max(0), Limit::Max(1));
-        assert!(ok.after_opening(dummy_span()).is_none());
+        let lines_source = SourceContext::new(source);
+        let ok = spacing(source, &lines_source, 1..13, Limit::Max(0), Limit::Max(1));
+        assert!(ok.after_opening().is_none());
 
         let source2 = "{  key: value}";
-        let bad = spacing(source2, 1..14, Limit::Max(0), Limit::Max(1));
-        let diag = bad.after_opening(dummy_span()).unwrap();
+        let lines_source2 = SourceContext::new(source2);
+        let bad = spacing(source2, &lines_source2, 1..14, Limit::Max(0), Limit::Max(1));
+        let diag = bad.after_opening().unwrap();
         assert_eq!(
             diag.message(),
             "too many spaces inside braces (expected at most 1, found 2)"
@@ -385,27 +395,50 @@ mod tests {
     #[test]
     fn test_check_spaces_before_closing() {
         let source = "{key: value }";
-        let ok = spacing(source, 1..12, Limit::Max(0), Limit::Max(1));
-        assert!(ok.before_closing(dummy_span()).is_none());
+        let lines_source = SourceContext::new(source);
+        let ok = spacing(source, &lines_source, 1..12, Limit::Max(0), Limit::Max(1));
+        assert!(ok.before_closing().is_none());
 
         let source2 = "{key: value  }";
-        let bad = spacing(source2, 1..13, Limit::Max(0), Limit::Max(1));
-        assert!(bad.before_closing(dummy_span()).is_some());
+        let lines_source2 = SourceContext::new(source2);
+        let bad = spacing(source2, &lines_source2, 1..13, Limit::Max(0), Limit::Max(1));
+        assert!(bad.before_closing().is_some());
     }
 
     #[test]
     fn test_spacing_ignores_indentation_across_lines() {
         let source = "{\n  a: 1\n  }";
-        let s = spacing(source, 1..source.len() - 1, Limit::Max(0), Limit::Max(0));
-        assert!(s.before_closing(dummy_span()).is_none());
+        let lines_source = SourceContext::new(source);
+        let s = spacing(
+            source,
+            &lines_source,
+            1..source.len() - 1,
+            Limit::Max(0),
+            Limit::Max(0),
+        );
+        assert!(s.before_closing().is_none());
 
         let source = "{ \n a }";
-        let s = spacing(source, 1..source.len() - 1, Limit::Max(0), Limit::Max(0));
-        assert!(s.after_opening(dummy_span()).is_none());
+        let lines_source = SourceContext::new(source);
+        let s = spacing(
+            source,
+            &lines_source,
+            1..source.len() - 1,
+            Limit::Max(0),
+            Limit::Max(0),
+        );
+        assert!(s.after_opening().is_none());
 
         let source = "{ # c\n a }";
-        let s = spacing(source, 1..source.len() - 1, Limit::Max(0), Limit::Max(0));
-        assert!(s.after_opening(dummy_span()).is_none());
+        let lines_source = SourceContext::new(source);
+        let s = spacing(
+            source,
+            &lines_source,
+            1..source.len() - 1,
+            Limit::Max(0),
+            Limit::Max(0),
+        );
+        assert!(s.after_opening().is_none());
     }
 
     #[test]
@@ -414,23 +447,31 @@ mod tests {
 
         assert!(is_empty_collection(source, 5, 2));
         for (start, end) in [(5, 2), (3, 4), (4, 3)] {
-            let s = spacing(source, start..end, Limit::Max(0), Limit::Max(0));
-            assert!(s.after_opening(dummy_span()).is_none());
-            assert!(s.before_closing(dummy_span()).is_none());
+            let lines_source = SourceContext::new(source);
+            let s = spacing(
+                source,
+                &lines_source,
+                start..end,
+                Limit::Max(0),
+                Limit::Max(0),
+            );
+            assert!(s.after_opening().is_none());
+            assert!(s.before_closing().is_none());
         }
     }
 
     #[test]
     fn test_empty_range_reports_min_spaces_after_opening() {
         let source = "{}";
-        let s = spacing(source, 1..1, Limit::Max(1), Limit::Disabled);
+        let lines_source = SourceContext::new(source);
+        let s = spacing(source, &lines_source, 1..1, Limit::Max(1), Limit::Disabled);
 
-        let diag = s.after_opening(dummy_span()).unwrap();
+        let diag = s.after_opening().unwrap();
         assert_eq!(
             diag.message(),
             "too few spaces inside braces (expected at least 1, found 0)"
         );
-        assert!(s.before_closing(dummy_span()).is_none());
+        assert!(s.before_closing().is_none());
     }
 
     #[test]

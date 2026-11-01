@@ -93,11 +93,11 @@ Format files in place (`CommentPolicy::Reject` fails files that contain comments
 
 ```rust
 use std::path::PathBuf;
-use fast_yaml_parallel::{CommentPolicy, FileProcessor};
+use fast_yaml_parallel::{CommentPolicy, FileProcessor, HardLinkPolicy, InPlaceTarget};
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_core::limits::Indent;
 
-let files = vec![PathBuf::from("config.yaml")];
+let files = vec![InPlaceTarget::new(PathBuf::from("config.yaml"), HardLinkPolicy::WriteInPlace)];
 let emitter_config = EmitterConfig::new()
     .with_indent(Indent::new(2)?);
 

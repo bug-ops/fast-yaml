@@ -59,6 +59,30 @@ mod tests {
     };
 
     #[test]
+    fn test_brackets_columns_and_empty_wording_follow_yamllint() {
+        let config = config_with_rule(
+            RuleName::Brackets,
+            "{min-spaces-inside: 1, max-spaces-inside: 1, max-spaces-inside-empty: 0}",
+        );
+        let found = |yaml: &str| BracketsRule.diagnose(&LintContext::new(yaml), &config);
+        let columns = |yaml: &str| -> Vec<usize> {
+            found(yaml)
+                .iter()
+                .map(|d| d.span.start.column().get())
+                .collect()
+        };
+        assert_eq!(columns("d: [n]\n"), [5, 6]);
+        assert_eq!(columns("l: [  b  ]\n"), [6, 9]);
+        let empty = found("f: [  ]\n");
+        assert_eq!(empty[0].span.start.column().get(), 6);
+        assert!(
+            empty[0]
+                .message
+                .starts_with("too many spaces inside empty brackets")
+        );
+    }
+
+    #[test]
     fn test_brackets_default_valid() {
         let yaml = "list: [1, 2, 3]";
 
@@ -223,7 +247,7 @@ mod tests {
         let config = config_with_rule(RuleName::Brackets, "{forbid: non-empty}");
         let diagnostics = BracketsRule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert_eq!(diagnostics[0].span.start.column(), 4);
+        assert_eq!(diagnostics[0].span.start.column().get(), 4);
     }
 
     #[test]
@@ -242,7 +266,7 @@ mod tests {
         let diagnostics = BracketsRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let start = diagnostics[0].span.start;
-        assert_eq!((start.column(), start.offset()), (4, 5));
+        assert_eq!((start.column().get(), start.offset()), (4, 5));
     }
 
     #[test]
@@ -251,6 +275,6 @@ mod tests {
         let context = LintContext::new(yaml);
         let diagnostics = BracketsRule.diagnose(&context, &LintConfig::default());
         assert_eq!(diagnostics.len(), 2, "{diagnostics:?}");
-        assert!(diagnostics.iter().all(|d| d.span.start.line() == 4));
+        assert!(diagnostics.iter().all(|d| d.span.start.line().get() == 4));
     }
 }

@@ -129,7 +129,7 @@ mod tests {
         let diags = run("key: first\nkey: second\n");
         assert_eq!(diags.len(), 1, "expected 1 diagnostic, got {}", diags.len());
         assert!(diags[0].message.contains("duplicate key 'key'"));
-        assert_eq!(diags[0].span.start.line(), 2);
+        assert_eq!(diags[0].span.start.line().get(), 2);
     }
 
     #[test]
@@ -196,7 +196,7 @@ mod tests {
         let diags = run("name: John\nage: 30\nname: Jane\n");
         assert_eq!(diags.len(), 1);
         assert!(diags[0].message.contains("first defined at line 1"));
-        assert_eq!(diags[0].span.start.line(), 3);
+        assert_eq!(diags[0].span.start.line().get(), 3);
     }
 
     /// Regression test for #131: duplicate-key column must be 1-indexed.
@@ -206,10 +206,10 @@ mod tests {
         let diags = run("dup: 1\ndup: 2\n");
         assert_eq!(diags.len(), 1);
         assert_eq!(
-            diags[0].span.start.column(),
+            diags[0].span.start.column().get(),
             1,
             "column should be 1-indexed; got {}",
-            diags[0].span.start.column()
+            diags[0].span.start.column().get()
         );
     }
 
@@ -220,10 +220,10 @@ mod tests {
         let diags = run("parent:\n  key: 1\n  key: 2\n");
         assert_eq!(diags.len(), 1);
         assert_eq!(
-            diags[0].span.start.column(),
+            diags[0].span.start.column().get(),
             3,
             "column should be 1-indexed at indent 2; got {}",
-            diags[0].span.start.column()
+            diags[0].span.start.column().get()
         );
     }
 
@@ -234,10 +234,14 @@ mod tests {
         assert_eq!(diags.len(), 1);
         let span = diags[0].span;
         assert_eq!(
-            (span.start.line(), span.start.column(), span.start.offset()),
+            (
+                span.start.line().get(),
+                span.start.column().get(),
+                span.start.offset()
+            ),
             (2, 1, 12)
         );
-        assert_eq!((span.end.column(), span.end.offset()), (5, 20));
+        assert_eq!((span.end.column().get(), span.end.offset()), (5, 20));
     }
 
     #[test]
@@ -245,8 +249,8 @@ mod tests {
         let diags = run("{é: 1, é: 2}");
         assert_eq!(diags.len(), 1);
         let span = diags[0].span;
-        assert_eq!((span.start.column(), span.start.offset()), (8, 8));
-        assert_eq!((span.end.column(), span.end.offset()), (9, 10));
+        assert_eq!((span.start.column().get(), span.start.offset()), (8, 8));
+        assert_eq!((span.end.column().get(), span.end.offset()), (9, 10));
     }
 
     #[test]
@@ -305,7 +309,7 @@ mod tests {
     fn test_duplicate_after_collection_key() {
         let diags = run("? {x: 1}\n: v\nk: 1\nk: 2\n");
         assert_eq!(diags.len(), 1);
-        assert_eq!(diags[0].span.start.line(), 4);
+        assert_eq!(diags[0].span.start.line().get(), 4);
     }
 
     #[test]

@@ -140,7 +140,7 @@ mod tests {
         let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.start.line(), 1);
+        assert_eq!(diagnostics[0].span.start.line().get(), 1);
     }
 
     #[test]
@@ -166,6 +166,6 @@ mod tests {
         let diagnostics = rule.diagnose(&lint_context, &config);
 
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.start.line(), 2);
+        assert_eq!(diagnostics[0].span.start.line().get(), 2);
     }
 }

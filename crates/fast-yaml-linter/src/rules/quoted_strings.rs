@@ -864,10 +864,10 @@ mod tests {
         );
         let span = diagnostics[0].span;
         assert_eq!(
-            span.start.column(),
+            span.start.column().get(),
             6,
             "expected column 6 for quoted value, got {}",
-            span.start.column()
+            span.start.column().get()
         );
         assert_eq!(
             span.start.offset(),
@@ -895,10 +895,10 @@ mod tests {
         );
         let span = diagnostics[0].span;
         assert_eq!(
-            span.start.column(),
+            span.start.column().get(),
             3,
             "expected column 3 for quoted value after '- ', got {}",
-            span.start.column()
+            span.start.column().get()
         );
         assert_eq!(
             span.start.offset(),
@@ -926,8 +926,8 @@ mod tests {
         let diagnostics = run(yaml);
         assert_eq!(diagnostics.len(), 1);
         let span = diagnostics[0].span;
-        assert_eq!((span.start.column(), span.start.offset()), (4, 5));
-        assert_eq!((span.end.column(), span.end.offset()), (7, 9));
+        assert_eq!((span.start.column().get(), span.start.offset()), (4, 5));
+        assert_eq!((span.end.column().get(), span.end.offset()), (7, 9));
     }
 
     #[test]
@@ -936,8 +936,8 @@ mod tests {
         let diagnostics = run(yaml);
         assert_eq!(diagnostics.len(), 1);
         let span = diagnostics[0].span;
-        assert_eq!((span.start.column(), span.start.offset()), (4, 6));
-        assert_eq!((span.end.column(), span.end.offset()), (7, 10));
+        assert_eq!((span.start.column().get(), span.start.offset()), (4, 6));
+        assert_eq!((span.end.column().get(), span.end.offset()), (7, 10));
         assert_eq!(run("🎉: \"\\u00e9\"").len(), 1);
     }
 
@@ -948,16 +948,16 @@ mod tests {
         let diagnostics = QuotedStringsRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1);
         let span = diagnostics[0].span;
-        assert_eq!((span.start.column(), span.start.offset()), (1, 0));
-        assert_eq!((span.end.column(), span.end.offset()), (7, 10));
+        assert_eq!((span.start.column().get(), span.start.offset()), (1, 0));
+        assert_eq!((span.end.column().get(), span.end.offset()), (7, 10));
     }
 
     #[test]
     fn test_multiline_quoted_span_ends_on_last_line() {
         let diagnostics = run("k: \"a\n  b\"\n");
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].span.start.line(), 1);
-        assert_eq!(diagnostics[0].span.end.line(), 2);
+        assert_eq!(diagnostics[0].span.start.line().get(), 1);
+        assert_eq!(diagnostics[0].span.end.line().get(), 2);
     }
 
     // Regression tests for issue #182: false positives on unicode/hex escape sequences.

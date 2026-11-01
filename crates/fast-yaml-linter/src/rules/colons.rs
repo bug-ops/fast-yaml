@@ -1,15 +1,14 @@
 //! Rule to check spacing around colons.
 
 use super::RuleId;
+use super::spacing::SpaceViolation;
 use crate::config::RuleName;
 use crate::nodes::Node;
 use serde::{Deserialize, Serialize};
 use std::cell::LazyCell;
 
 use crate::config::{Limit, RuleOptions};
-use crate::{
-    Finding, LintConfig, LintContext, Severity, SourceContext, Span, tokenizer::TokenType,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, SourceContext, tokenizer::TokenType};
 
 /// Linting rule for colon spacing.
 ///
@@ -181,12 +180,10 @@ fn check_spaces_before_colon(
     let after_alias = spaces == 1 && alias_ends.binary_search(&(colon_offset - 1)).is_ok();
 
     if max_spaces.exceeded_by(spaces) && !after_alias {
-        let loc = source_context.offset_to_location(colon_offset);
-        let span = Span::new(loc, loc);
-
-        return Some(Finding::new(
+        return Some(SpaceViolation::TooMany.finding(
+            source_context,
+            colon_offset,
             format!("too many spaces before colon (expected at most {max_spaces}, found {spaces})"),
-            span,
         ));
     }
 
@@ -227,12 +224,10 @@ fn check_spaces_after_colon(
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let loc = source_context.offset_to_location(colon_offset + 1);
-        let span = Span::new(loc, loc);
-
-        return Some(Finding::new(
+        return Some(SpaceViolation::TooMany.finding(
+            source_context,
+            offset,
             format!("too many spaces after colon (expected at most {max_spaces}, found {spaces})"),
-            span,
         ));
     }
 
@@ -283,6 +278,20 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert!(diagnostics[0].message.contains("too many spaces after"));
+    }
+
+    #[test]
+    fn test_colons_columns_follow_yamllint() {
+        let columns = |yaml: &str| -> Vec<usize> {
+            ColonsRule
+                .diagnose(&LintContext::new(yaml), &LintConfig::default())
+                .iter()
+                .map(|d| d.span.start.column().get())
+                .collect()
+        };
+        assert_eq!(columns("key:   value\n"), [7]);
+        assert_eq!(columns("g :  h\n"), [2, 5]);
+        assert_eq!(columns("? k\n:   v\n"), [4]);
     }
 
     #[test]
@@ -359,10 +368,10 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
-            diagnostics[0].span.start.line(),
+            diagnostics[0].span.start.line().get(),
             3,
             "violation should be on line 3, got: {}",
-            diagnostics[0].span.start.line()
+            diagnostics[0].span.start.line().get()
         );
     }
 

@@ -299,8 +299,8 @@ fn parse(comment: &str, known_code: impl Fn(&str) -> Option<DiagnosticCode>) -> 
 pub struct Directives {
     disable_file: bool,
     /// Cumulative block state after each `disable` / `enable`, keyed by directive line.
-    blocks: Vec<(usize, DisabledRules)>,
-    lines: BTreeMap<usize, RuleSelector>,
+    blocks: Vec<(OneBased, DisabledRules)>,
+    lines: BTreeMap<OneBased, RuleSelector>,
     warnings: Vec<Diagnostic>,
 }
 
@@ -377,7 +377,11 @@ impl Directives {
                         this.blocks.push((line, state.clone()));
                     }
                     DirectiveKind::DisableLine(selector) => {
-                        let target = if full_line { line + 1 } else { line };
+                        let target = if full_line {
+                            line.saturating_add(1)
+                        } else {
+                            line
+                        };
                         match this.lines.entry(target) {
                             Entry::Occupied(mut entry) => entry.get_mut().merge(selector),
                             Entry::Vacant(entry) => {
@@ -451,7 +455,7 @@ fn may_contain_directive(source: &str) -> bool {
 }
 
 /// 1-based number of the first line that is not blank, a full-line comment or a `%` directive.
-fn first_content_line(ctx: &SourceContext<'_>) -> usize {
+fn first_content_line(ctx: &SourceContext<'_>) -> OneBased {
     (0..ctx.line_count())
         .map(OneBased::from_index)
         .find(|&n| {
@@ -459,7 +463,7 @@ fn first_content_line(ctx: &SourceContext<'_>) -> usize {
             let text = line.trim();
             !text.is_empty() && !text.starts_with('#') && !line.starts_with('%')
         })
-        .map_or_else(|| ctx.line_count() + 1, OneBased::get)
+        .unwrap_or_else(|| OneBased::from_index(ctx.line_count()))
 }
 
 #[cfg(test)]
@@ -511,7 +515,7 @@ mod tests {
         diagnostics
             .iter()
             .filter(|d| d.code.as_str() == code)
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect()
     }
 
@@ -778,7 +782,7 @@ mod tests {
         let lines: Vec<usize> = lint(source)
             .iter()
             .filter(|d| d.code.as_str() == "duplicate-key")
-            .map(|d| d.span.start.line())
+            .map(|d| d.span.start.line().get())
             .collect();
         assert_eq!(lines, [2, 8]);
     }
@@ -839,7 +843,7 @@ mod tests {
             .find(|d| d.code.as_str() == "lint-directive")
             .unwrap();
         assert_eq!(warning.severity, Severity::Warning);
-        assert_eq!(warning.span.start.line(), 1);
+        assert_eq!(warning.span.start.line(), OneBased::FIRST);
         assert_eq!(warning.excerpt, crate::Excerpt::SourceLines);
     }
 

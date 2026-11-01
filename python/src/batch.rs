@@ -9,7 +9,7 @@ use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead
 use fast_yaml_core::{Indent, ParseLimits};
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig, Error, ErrorKind,
-    FileProcessor,
+    FileProcessor, HardLinkPolicy, InPlaceTarget,
 };
 use pyo3::prelude::*;
 
@@ -483,7 +483,11 @@ fn format_files_in_place(
 
     let result = py.detach(|| {
         let processor = FileProcessor::with_config(rust_config);
-        processor.format_in_place(&paths, &emitter_config, CommentPolicy::Strip)
+        let targets: Vec<InPlaceTarget> = paths
+            .iter()
+            .map(|path| InPlaceTarget::new(path.clone(), HardLinkPolicy::WriteInPlace))
+            .collect();
+        processor.format_in_place(&targets, &emitter_config, CommentPolicy::Strip)
     });
 
     Ok(result.into())

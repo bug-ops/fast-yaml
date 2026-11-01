@@ -221,12 +221,15 @@ class TestKwargSemantics:
         config = lint.LintConfig(max_line_length=None)
         assert "line-length" not in codes(lint.lint("key: " + "x" * 200 + "\n", config))
 
-    @pytest.mark.parametrize("size", [0, 17, -1])
+    @pytest.mark.parametrize("size", [0, 256, -1])
     def test_indent_size_out_of_range(self, size: int):
-        with pytest.raises(ValueError, match="between 1 and 16"):
+        with pytest.raises(ValueError, match="between 1 and 255"):
             lint.LintConfig(indent_size=size)
-        with pytest.raises(ValueError, match="between 1 and 16"):
+        with pytest.raises(ValueError, match="between 1 and 255"):
             lint.LintConfig().with_indent_size(size)
+
+    def test_indent_size_accepts_255(self):
+        assert lint.LintConfig(indent_size=255).indent_size == 255
 
     def test_allow_duplicate_keys_beats_rules_enabled(self):
         config = lint.LintConfig(

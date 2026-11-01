@@ -208,7 +208,7 @@ fn cli_rejects_invalid_numeric_overrides() {
     for args in [
         ["--max-line-length", "0"],
         ["--indent-size", "0"],
-        ["--indent-size", "17"],
+        ["--indent-size", "256"],
     ] {
         cargo_bin_cmd!("fy")
             .arg("lint")

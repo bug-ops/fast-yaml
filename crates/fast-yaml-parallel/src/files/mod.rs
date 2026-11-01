@@ -38,4 +38,4 @@
 
 mod processor;
 
-pub use processor::{CommentPolicy, FileProcessor, FormatOutput};
+pub use processor::{CommentPolicy, FileProcessor, FormatOutput, InPlaceTarget};

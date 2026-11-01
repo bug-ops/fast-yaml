@@ -11,7 +11,7 @@ use serde::de::{self, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Largest accepted indentation size in spaces.
-const MAX_INDENT_SIZE: u8 = 16;
+const MAX_INDENT_SIZE: u8 = u8::MAX;
 
 /// A numeric bound on a count of spaces or lines, or no bound at all.
 ///
@@ -167,7 +167,7 @@ impl<'de> Deserialize<'de> for EmptyInsideLimit {
     }
 }
 
-/// Number of spaces per indentation level, between 1 and 16.
+/// Number of spaces per indentation level, between 1 and 255.
 ///
 /// # Examples
 ///
@@ -177,7 +177,8 @@ impl<'de> Deserialize<'de> for EmptyInsideLimit {
 /// assert_eq!(IndentSize::default().get(), 2);
 /// assert_eq!("4".parse::<IndentSize>().unwrap().get(), 4);
 /// assert!(IndentSize::try_from(0u64).is_err());
-/// assert!(IndentSize::try_from(17u64).is_err());
+/// assert_eq!(IndentSize::try_from(255u64).unwrap().get(), 255);
+/// assert!(IndentSize::try_from(256u64).is_err());
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IndentSize(NonZeroU8);
@@ -186,7 +187,7 @@ impl IndentSize {
     /// The smallest size, 1.
     pub const MIN: Self = Self(NonZeroU8::MIN);
 
-    /// The largest size, 16.
+    /// The largest size, 255.
     pub const MAX: Self = Self::saturating_from_u8(MAX_INDENT_SIZE);
 
     /// Returns the size in spaces.
@@ -197,7 +198,7 @@ impl IndentSize {
 }
 
 impl IndentSize {
-    /// Converts a width to a valid size, raising 0 to 1 and lowering values above 16 to 16.
+    /// Converts a width to a valid size, raising 0 to 1.
     ///
     /// # Examples
     ///
@@ -206,16 +207,11 @@ impl IndentSize {
     ///
     /// assert_eq!(IndentSize::saturating_from_u8(0).get(), 1);
     /// assert_eq!(IndentSize::saturating_from_u8(4).get(), 4);
-    /// assert_eq!(IndentSize::saturating_from_u8(200).get(), 16);
+    /// assert_eq!(IndentSize::saturating_from_u8(200).get(), 200);
     /// ```
     #[must_use]
     pub const fn saturating_from_u8(value: u8) -> Self {
-        let clamped = if value > MAX_INDENT_SIZE {
-            MAX_INDENT_SIZE
-        } else {
-            value
-        };
-        match NonZeroU8::new(clamped) {
+        match NonZeroU8::new(value) {
             Some(size) => Self(size),
             None => Self(NonZeroU8::MIN),
         }
@@ -234,7 +230,7 @@ impl fmt::Display for IndentSize {
     }
 }
 
-/// Error returned when an indentation size is outside `1..=16` or not a number.
+/// Error returned when an indentation size is outside `1..=255` or not a number.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 #[error(
@@ -252,7 +248,6 @@ impl TryFrom<u64> for IndentSize {
     fn try_from(value: u64) -> Result<Self, Self::Error> {
         u8::try_from(value)
             .ok()
-            .filter(|size| *size <= MAX_INDENT_SIZE)
             .and_then(NonZeroU8::new)
             .map(Self)
             .ok_or_else(|| InvalidIndentSize {
@@ -758,9 +753,9 @@ mod tests {
     #[test]
     fn indent_size_bounds() {
         assert_eq!(parse::<IndentSize>("1").unwrap().get(), 1);
-        assert_eq!(parse::<IndentSize>("16").unwrap().get(), 16);
+        assert_eq!(parse::<IndentSize>("255").unwrap().get(), 255);
         assert!(parse::<IndentSize>("0").is_err());
-        assert!(parse::<IndentSize>("17").is_err());
+        assert!(parse::<IndentSize>("256").is_err());
         assert!(parse::<IndentSize>("-1").is_err());
         assert!(parse::<IndentSize>("two").is_err());
         assert!("x".parse::<IndentSize>().is_err());
@@ -770,8 +765,7 @@ mod tests {
     #[test]
     fn indent_size_saturates() {
         assert_eq!(IndentSize::saturating_from_u8(0).get(), 1);
-        assert_eq!(IndentSize::saturating_from_u8(16).get(), 16);
-        assert_eq!(IndentSize::saturating_from_u8(17).get(), 16);
+        assert_eq!(IndentSize::saturating_from_u8(255).get(), 255);
     }
 
     #[test]

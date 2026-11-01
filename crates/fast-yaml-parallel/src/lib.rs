@@ -66,7 +66,8 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(windows), forbid(unsafe_code))]
+#![cfg_attr(windows, deny(unsafe_code))]
 #![warn(missing_docs)]
 
 mod atomic;
@@ -85,14 +86,14 @@ mod trace;
 mod workers;
 
 // Core public API
-pub use atomic::{AtomicFile, write_atomic};
+pub use atomic::{AtomicFile, HardLinkPolicy, HardLinkRefused, write_atomic};
 pub use config::Config;
 pub use error::{Error, ErrorKind, Result};
 pub use fast_yaml_core::Value;
 pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 
 // File-level parallelism
-pub use files::{CommentPolicy, FileProcessor, FormatOutput};
+pub use files::{CommentPolicy, FileProcessor, FormatOutput, InPlaceTarget};
 pub use io::read_file;
 pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};

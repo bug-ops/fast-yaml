@@ -56,9 +56,10 @@ related:
 | Test NodeJS | `test:nodejs` (`MISE_ENV=node22` on the Node 22 leg; unset otherwise) | `node pnpm` |
 | Python / NodeJS Coverage | `coverage:python` / `coverage:nodejs` | per job |
 | NodeJS Build | `release:nodejs` | `node pnpm` |
-| Check MSRV, Release Build Check | unchanged (rustup only) | not applicable |
+| Check MSRV | `msrv` (toolchain from rustup, `install: false` mise step) | not applicable |
+| Release Build Check | unchanged (rustup only) | not applicable |
 
-The workflow has no `mise-ci` job and CI never calls the `ci` task; it is the local aggregate only. `ci-success` ("CI Success") is the only required check (ruleset `master`), so other job names may change; it needs `lint`, `clippy-powerset`, `security`, `test-rust`, `test-core-no-arena`, `coverage`, `msrv`, `test-python`, `python-quality`, `python-coverage`, `test-nodejs`, `nodejs-quality` and `nodejs-coverage`. Test jobs wait for `lint` (and for the matching quality job). `ci-success` does not list `changes` (pre-existing; [[spec]] section 8 item 11). Issue #665's proposed layout, lock platforms and `mise-ci` job differ from this implementation: see the deviations table in [[spec]] section 8.
+The workflow has no `mise-ci` job and CI never calls the `ci` task; it is the local aggregate only. `ci-success` ("CI Success") is the only required check (ruleset `master`), so other job names may change; it needs `changes` (must be `success`), `lint`, `clippy-powerset`, `security`, `test-rust`, `test-core-no-arena`, `coverage`, `msrv`, `test-python`, `python-quality`, `python-coverage`, `test-nodejs`, `nodejs-quality` and `nodejs-coverage`. Test jobs wait for `lint` (and for the matching quality job). The `Test Rust (windows-latest)` leg also runs `lint:clippy-windows` (FR-029). Issue #665's proposed layout, lock platforms and `mise-ci` job differ from this implementation: see the deviations table in [[spec]] section 8.
 
 Install ids are load-bearing: `MISE_TASK_RUN_AUTO_INSTALL=false` makes a mismatch between `install_args` and the config fail the job. The Python and Node.js assertion steps (`uv python find` in `python/`; `node --version`) follow each setup step in `test-python` and `test-nodejs`.
 
@@ -66,14 +67,14 @@ Install ids are load-bearing: `MISE_TASK_RUN_AUTO_INSTALL=false` makes a mismatc
 
 | FR | Task | CI job | Verification |
 |----|------|--------|--------------|
-| FR-004, FR-022 | install step | all mise jobs | Linux pilot run 41335814375; macOS and Windows unverified |
-| FR-006, FR-023 | `test:python`, `test:nodejs` | Test Python, Test NodeJS | `mise install --locked --dry-run` per env locally; legs unverified in CI |
+| FR-004, FR-022 | install step | all mise jobs | verified on Linux, macOS and Windows (run 41342007315) |
+| FR-006, FR-023 | `test:python`, `test:nodejs` | Test Python, Test NodeJS | `mise install --locked --dry-run` per env locally; legs verified in run 41342007315 (`py310` and `node22` on Linux only) |
 | FR-011 | every task | the replaced job | by comparison with the pre-#669 workflow |
 | FR-012 | `ci` | none (local only) | local `mise run ci`; not run in CI |
 | FR-014, FR-016 | `build:*` | Test Python, Test NodeJS | by inspection |
-| FR-015 | `test:python`, `test:nodejs` | Test * (Windows) | unverified |
+| FR-015 | `test:python`, `test:nodejs` | Test * (Windows) | verified (run 41342007315) |
 | FR-021 | all | all | by inspection; a missing id fails the job |
-| FR-027 | assertion steps | Test Python, Test NodeJS | by inspection; Windows shim use unverified |
+| FR-027 | assertion steps | Test Python, Test NodeJS | verified on Windows and macOS (run 41342007315) |
 | FR-028 | `lint:clippy`, `doc`, `lint:python`, `fmt:check:python` | Lint (rust), Python Quality Checks | by inspection |
 
 ## 3. Files

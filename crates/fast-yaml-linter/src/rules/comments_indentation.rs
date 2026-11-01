@@ -64,11 +64,11 @@ impl super::SourceRule for CommentsIndentationRule {
             }
 
             let comment_line = comment.span.start.line();
-            if comment_line == 0 || comment_line > line_info.len() {
+            if comment_line.get() > line_info.len() {
                 continue;
             }
 
-            let comment_line_idx = comment_line - 1;
+            let comment_line_idx = comment_line.index();
 
             let Some(comment_indent) = line_info.get(comment_line_idx).map(|info| info.indent)
             else {

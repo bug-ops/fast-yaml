@@ -19,8 +19,8 @@ use serde::{Deserialize, Serialize};
 /// use fast_yaml_linter::Location;
 ///
 /// let loc = Location::try_new(10, 5, 145).unwrap();
-/// assert_eq!(loc.line(), 10);
-/// assert_eq!(loc.column(), 5);
+/// assert_eq!(loc.line().get(), 10);
+/// assert_eq!(loc.column().get(), 5);
 /// assert_eq!(loc.offset(), 145);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -54,7 +54,7 @@ impl Location {
     /// use fast_yaml_linter::{Location, OneBased};
     ///
     /// let loc = Location::new(OneBased::FIRST, OneBased::from_index(4), 4);
-    /// assert_eq!((loc.line(), loc.column(), loc.offset()), (1, 5, 4));
+    /// assert_eq!((loc.line().get(), loc.column().get(), loc.offset()), (1, 5, 4));
     /// assert_eq!(Location::new(OneBased::FIRST, OneBased::FIRST, 0), Location::start());
     /// ```
     #[must_use]
@@ -73,7 +73,7 @@ impl Location {
     /// ```
     /// use fast_yaml_linter::Location;
     ///
-    /// assert_eq!(Location::try_new(2, 3, 10).map(|loc| loc.line()), Some(2));
+    /// assert_eq!(Location::try_new(2, 3, 10).map(|loc| loc.line().get()), Some(2));
     /// assert_eq!(Location::try_new(0, 3, 10), None);
     /// assert_eq!(Location::try_new(2, 0, 10), None);
     /// ```
@@ -93,8 +93,8 @@ impl Location {
     /// use fast_yaml_linter::Location;
     ///
     /// let start = Location::start();
-    /// assert_eq!(start.line(), 1);
-    /// assert_eq!(start.column(), 1);
+    /// assert_eq!(start.line().get(), 1);
+    /// assert_eq!(start.column().get(), 1);
     /// assert_eq!(start.offset(), 0);
     /// ```
     #[must_use]
@@ -103,29 +103,23 @@ impl Location {
     }
 
     /// The line number, counted from 1.
-    #[must_use]
-    pub const fn line(&self) -> usize {
-        self.line.get()
-    }
-
-    /// The line number as a [`OneBased`], for APIs that take a typed line.
     ///
     /// # Examples
     ///
     /// ```
     /// use fast_yaml_linter::Location;
     ///
-    /// assert_eq!(Location::try_new(7, 1, 0).unwrap().line_number().get(), 7);
+    /// assert_eq!(Location::try_new(7, 1, 0).unwrap().line().get(), 7);
     /// ```
     #[must_use]
-    pub const fn line_number(&self) -> OneBased {
+    pub const fn line(&self) -> OneBased {
         self.line
     }
 
     /// The column number, counted from 1.
     #[must_use]
-    pub const fn column(&self) -> usize {
-        self.column.get()
+    pub const fn column(&self) -> OneBased {
+        self.column
     }
 
     /// The byte offset from the start of the text, counted from 0.
@@ -147,8 +141,8 @@ struct LocationRepr {
 impl From<Location> for LocationRepr {
     fn from(loc: Location) -> Self {
         Self {
-            line: loc.line(),
-            column: loc.column(),
+            line: loc.line().get(),
+            column: loc.column().get(),
             offset: loc.offset,
         }
     }
@@ -317,8 +311,8 @@ mod tests {
     #[test]
     fn test_location_new() {
         let loc = Location::try_new(10, 5, 145).unwrap();
-        assert_eq!(loc.line(), 10);
-        assert_eq!(loc.column(), 5);
+        assert_eq!(loc.line().get(), 10);
+        assert_eq!(loc.column().get(), 5);
         assert_eq!(loc.offset(), 145);
     }
 
@@ -350,8 +344,8 @@ mod tests {
     #[test]
     fn test_location_start() {
         let start = Location::start();
-        assert_eq!(start.line(), 1);
-        assert_eq!(start.column(), 1);
+        assert_eq!(start.line().get(), 1);
+        assert_eq!(start.column().get(), 1);
         assert_eq!(start.offset(), 0);
     }
 

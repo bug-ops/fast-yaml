@@ -109,6 +109,30 @@ mod tests {
     }
 
     #[test]
+    fn test_braces_columns_and_empty_wording_follow_yamllint() {
+        let config = config_with_rule(
+            RuleName::Braces,
+            "{min-spaces-inside: 1, max-spaces-inside: 1, max-spaces-inside-empty: 0}",
+        );
+        let found = |yaml: &str| BracesRule.diagnose(&LintContext::new(yaml), &config);
+        let columns = |yaml: &str| -> Vec<usize> {
+            found(yaml)
+                .iter()
+                .map(|d| d.span.start.column().get())
+                .collect()
+        };
+        assert_eq!(columns("c: {m: 1}\n"), [5, 9]);
+        assert_eq!(columns("k: {  a: 1  }\n"), [6, 12]);
+        let empty = found("e: {   }\n");
+        assert_eq!(empty[0].span.start.column().get(), 7);
+        assert!(
+            empty[0]
+                .message
+                .starts_with("too many spaces inside empty braces")
+        );
+    }
+
+    #[test]
     fn test_braces_min_spaces_inside() {
         let yaml = "object: {key: value}";
 
@@ -306,7 +330,7 @@ mod tests {
         let config = config_with_rule(RuleName::Braces, "{forbid: non-empty}");
         let diagnostics = BracesRule.diagnose(&context, &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
-        assert_eq!(diagnostics[0].span.start.column(), 4);
+        assert_eq!(diagnostics[0].span.start.column().get(), 4);
     }
 
     #[test]
@@ -325,7 +349,7 @@ mod tests {
         let diagnostics = BracesRule.diagnose(&LintContext::new(yaml), &config);
         assert_eq!(diagnostics.len(), 1, "{diagnostics:?}");
         let start = diagnostics[0].span.start;
-        assert_eq!((start.column(), start.offset()), (4, 5));
+        assert_eq!((start.column().get(), start.offset()), (4, 5));
     }
 
     #[test]

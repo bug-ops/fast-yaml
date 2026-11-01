@@ -92,11 +92,9 @@ fn hash_in_verbatim_tag_is_not_a_comment() {
     assert_eq!(count(fixture, RuleName::Comments.as_str()), 0);
     assert_eq!(count("a: !<a#b,c> 1\n", RuleName::Comments.as_str()), 0);
     let diagnostics = Linter::with_all_rules().lint("a: !<a#b,c> 1 #c\n").unwrap();
-    assert!(
-        diagnostics
-            .iter()
-            .any(|d| d.code.as_str() == RuleName::Comments.as_str() && d.span.start.column() == 15)
-    );
+    assert!(diagnostics.iter().any(
+        |d| d.code.as_str() == RuleName::Comments.as_str() && d.span.start.column().get() == 15
+    ));
 }
 
 #[test]

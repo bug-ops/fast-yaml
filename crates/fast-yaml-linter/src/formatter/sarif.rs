@@ -111,10 +111,10 @@ impl Region {
         let start = (d.span.start.line(), d.span.start.column());
         let (end_line, end_column) = start.max((d.span.end.line(), d.span.end.column()));
         Self {
-            start_line: start.0,
-            start_column: start.1,
-            end_line,
-            end_column,
+            start_line: start.0.get(),
+            start_column: start.1.get(),
+            end_line: end_line.get(),
+            end_column: end_column.get(),
         }
     }
 }

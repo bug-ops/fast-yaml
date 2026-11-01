@@ -1,6 +1,6 @@
 //! File discovery for batch processing.
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -236,6 +236,14 @@ pub enum DiscoveryOrigin {
     StdinList,
 }
 
+impl DiscoveryOrigin {
+    /// Whether the user named the file, as opposed to it being found by a walk or a glob.
+    #[must_use]
+    pub const fn is_explicit(self) -> bool {
+        matches!(self, Self::DirectPath | Self::StdinList)
+    }
+}
+
 /// A discovered file with its origin information.
 #[derive(Debug, Clone)]
 pub struct DiscoveredFile {
@@ -249,11 +257,28 @@ pub struct DiscoveredFile {
 #[derive(Default)]
 struct Found {
     files: Vec<DiscoveredFile>,
-    seen: HashSet<PathBuf>,
+    /// Canonical path to its index in `files`
+    seen: HashMap<PathBuf, usize>,
     dropped_by_config: bool,
 }
 
 impl Found {
+    /// Records a sighting; an explicit sighting upgrades the origin of a file found implicitly.
+    fn record(&mut self, canonical: PathBuf, origin: DiscoveryOrigin) {
+        if let Some(&index) = self.seen.get(&canonical) {
+            let known = &mut self.files[index];
+            if origin.is_explicit() && !known.origin.is_explicit() {
+                known.origin = origin;
+            }
+            return;
+        }
+        self.seen.insert(canonical.clone(), self.files.len());
+        self.files.push(DiscoveredFile {
+            path: canonical,
+            origin,
+        });
+    }
+
     /// A run that found nothing is an error unless the config `ignore` dropped something.
     fn finish(self, empty_is_ok: bool) -> Result<Vec<DiscoveredFile>, DiscoveryError> {
         if self.files.is_empty() && !self.dropped_by_config && !empty_is_ok {
@@ -429,10 +454,7 @@ impl FileDiscovery {
             tracing::debug!("skipped: matches --exclude: {}", DisplayPath::new(path));
             return Ok(());
         }
-        let explicit = matches!(
-            origin,
-            DiscoveryOrigin::DirectPath | DiscoveryOrigin::StdinList
-        );
+        let explicit = origin.is_explicit();
         if explicit
             && !path
                 .metadata()
@@ -490,13 +512,7 @@ impl FileDiscovery {
             canonical
         };
 
-        // Dedup by canonical path
-        if found.seen.insert(canonical.clone()) {
-            found.files.push(DiscoveredFile {
-                path: canonical,
-                origin,
-            });
-        }
+        found.record(canonical, origin);
 
         Ok(())
     }
@@ -1464,5 +1480,33 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn an_explicit_sighting_upgrades_a_file_found_by_a_walk_in_either_order() {
+        use DiscoveryOrigin::{DirectPath, DirectoryWalk, GlobExpansion, StdinList};
+
+        for (first, second, expected) in [
+            (DirectoryWalk, DirectPath, DirectPath),
+            (DirectPath, DirectoryWalk, DirectPath),
+            (GlobExpansion, StdinList, StdinList),
+            (DirectoryWalk, GlobExpansion, DirectoryWalk),
+            (DirectPath, StdinList, DirectPath),
+        ] {
+            let mut found = Found::default();
+            let path = PathBuf::from("/x/a.yaml");
+            found.record(path.clone(), first);
+            found.record(path, second);
+            assert_eq!(found.files.len(), 1);
+            assert_eq!(found.files[0].origin, expected, "{first:?} then {second:?}");
+        }
+    }
+
+    #[test]
+    fn only_named_origins_are_explicit() {
+        assert!(DiscoveryOrigin::DirectPath.is_explicit());
+        assert!(DiscoveryOrigin::StdinList.is_explicit());
+        assert!(!DiscoveryOrigin::DirectoryWalk.is_explicit());
+        assert!(!DiscoveryOrigin::GlobExpansion.is_explicit());
     }
 }

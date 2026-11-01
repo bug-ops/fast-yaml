@@ -890,7 +890,7 @@ mod tests {
             let mut tokens = Vec::new();
 
             // Single-pass scan of only the span range
-            for line_idx in span.start.line_number().index()..=span.end.line_number().index() {
+            for line_idx in span.start.line().index()..=span.end.line().index() {
                 let line_num = OneBased::from_index(line_idx);
                 if let Some(line) = self.context.get_line(line_num) {
                     let line_start = self.context.line_start(line_num);
@@ -970,7 +970,7 @@ mod tests {
 
         let braces = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(braces.len(), 1);
-        assert_eq!(braces[0].span.start.column(), 9);
+        assert_eq!(braces[0].span.start.column().get(), 9);
     }
 
     #[test]
@@ -997,7 +997,7 @@ mod tests {
         let colons = tokenizer.find_all(TokenType::Colon);
         // Only the mapping separator, not the one in the URL
         assert_eq!(colons.len(), 1);
-        assert_eq!(colons[0].span.start.column(), 4);
+        assert_eq!(colons[0].span.start.column().get(), 4);
     }
 
     #[test]
@@ -1271,8 +1271,8 @@ mod tests {
         let context = SourceContext::new(yaml);
         let index = FlowIndex::new(yaml, &context);
         let braces = FlowTokenizer::new(&index, &context).find_all(TokenType::BraceOpen);
-        assert_eq!(braces[0].span.start.line(), 3);
-        assert_eq!(braces[0].span.start.column(), 4);
+        assert_eq!(braces[0].span.start.line().get(), 3);
+        assert_eq!(braces[0].span.start.column().get(), 4);
     }
 
     #[test]
@@ -1371,7 +1371,7 @@ mod tests {
             Location::try_new(3, 9, yaml.len()).unwrap(),
         );
         let tokens = tokenizer.find_in_span(span);
-        assert!(tokens.iter().all(|t| t.span.start.line() == 3));
+        assert!(tokens.iter().all(|t| t.span.start.line().get() == 3));
         assert_eq!(tokens.len(), 4);
     }
 
@@ -1397,11 +1397,11 @@ mod tests {
 
         let open = tokenizer.find_all(TokenType::BraceOpen);
         assert_eq!(open.len(), 1);
-        assert_eq!(open[0].span.start.line(), 1);
+        assert_eq!(open[0].span.start.line().get(), 1);
 
         let close = tokenizer.find_all(TokenType::BraceClose);
         assert_eq!(close.len(), 1);
-        assert_eq!(close[0].span.start.line(), 3);
+        assert_eq!(close[0].span.start.line().get(), 3);
     }
 
     #[test]
@@ -1481,7 +1481,7 @@ mod tests {
             1,
             "only the real YAML bracket should be found"
         );
-        assert_eq!(brackets[0].span.start.line(), 3);
+        assert_eq!(brackets[0].span.start.line().get(), 3);
     }
 
     // Regression tests for issue #167: byte vs char offset confusion for multibyte UTF-8
@@ -1494,7 +1494,7 @@ mod tests {
         let tokenizer = FlowTokenizer::new(&index, &context);
         let commas = tokenizer.find_all(TokenType::Comma);
         assert_eq!(commas.len(), 1, "should find exactly 1 comma");
-        assert_eq!(commas[0].span.start.line(), 2);
+        assert_eq!(commas[0].span.start.line().get(), 2);
     }
 
     #[test]

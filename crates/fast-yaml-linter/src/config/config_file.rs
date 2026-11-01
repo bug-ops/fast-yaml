@@ -1,5 +1,6 @@
 //! Config file loading, discovery, and merging into `LintConfig`.
 
+use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
@@ -11,13 +12,14 @@ use fast_yaml_core::{DecodeError, ParseError, Parser};
 use serde_norway::Value;
 
 use crate::config::ignore_source::{
-    IgnoreFileCause, TextReadError, ignore_file_lines, ignore_file_names, ignore_lines,
+    IgnoreFileCause, TextReadError, ignore_file_names, ignore_file_patterns, ignore_lines,
     read_config_text, string_items,
 };
+use crate::config::path_patterns::PatternState;
 use crate::config::rules::{ApplyMode, value_kind};
 use crate::config::{
-    IgnoreBase, IgnorePatterns, IndentSize, LocaleName, MaxDiagnostics, Preset, RuleConfigError,
-    RuleName, RulesConfig, YamlFiles,
+    BudgetKind, IgnoreBase, IgnorePatterns, IndentSize, InvalidPathPattern, LocaleName,
+    MaxDiagnostics, Preset, RuleConfigError, RuleName, RulesConfig, YamlFiles,
 };
 use crate::echo::{KEY_LIMIT, MESSAGE_LIMIT, echo};
 use crate::linter::LintConfig;
@@ -291,6 +293,16 @@ pub enum ConfigFileError {
         path: PathBuf,
     },
 
+    /// The `ignore`, `ignore-from-file` and `yaml-files` patterns of a config, with those of the
+    /// files it extends, are over the budget; no pattern text is echoed.
+    #[error("config file '{}': the patterns exceed the budget of {kind}", DisplayPath::new(.path))]
+    PatternBudget {
+        /// The config file whose load ran out of budget.
+        path: PathBuf,
+        /// What ran out.
+        kind: BudgetKind,
+    },
+
     /// A file named by `extends` is not a valid config file; its content is not echoed.
     #[error("'{}' is not a valid config file (its content is not shown)", DisplayPath::new(.path))]
     Malformed {
@@ -380,16 +392,34 @@ fn read_text(path: &Path) -> Result<String, ConfigFileError> {
     read_config_text(path).map_err(|error| ConfigFileError::from_read(path, error))
 }
 
-/// Lines of the `ignore-from-file` files, named relative to the config file's directory.
-fn ignore_files(path: &Path, names: &[String]) -> Result<Vec<String>, ConfigFileError> {
-    ignore_file_lines(config_dir(path), names).map_err(|error| match error.cause {
-        IgnoreFileCause::Text(cause) => ConfigFileError::from_read(&error.path, cause),
-        _ => ConfigFileError::InvalidKey {
-            path: path.to_owned(),
-            key: TopLevelKey::IgnoreFromFile,
-            message: error.to_string(),
-        },
-    })
+/// Patterns of the `ignore-from-file` files, named relative to the config file's directory.
+fn ignore_files(
+    path: &Path,
+    root: &Path,
+    names: &[String],
+    state: &mut PatternState,
+) -> Result<IgnorePatterns, ConfigFileError> {
+    ignore_file_patterns(config_dir(path), root, names, state)
+        .map(|shared| shared.patterns)
+        .map_err(|error| match error.cause {
+            IgnoreFileCause::Text(cause) => ConfigFileError::from_read(&error.path, cause),
+            IgnoreFileCause::OverBudget(kind) => ConfigFileError::PatternBudget {
+                path: path.to_owned(),
+                kind,
+            },
+            _ => ConfigFileError::InvalidKey {
+                path: path.to_owned(),
+                key: TopLevelKey::IgnoreFromFile,
+                message: error.to_string(),
+            },
+        })
+}
+
+/// What one load of a config and its `extends` chain carries along.
+struct LoadState {
+    /// Canonical paths of the files being extended from
+    chain: Vec<PathBuf>,
+    patterns: RefCell<PatternState>,
 }
 
 /// Canonical directory of the config file, the anchor of `ignore` patterns.
@@ -435,6 +465,7 @@ impl ConfigFileError {
             | Self::NotAMapping { .. }
             | Self::NotRegularFile { .. }
             | Self::TooLarge { .. }
+            | Self::PatternBudget { .. }
             | Self::Malformed { .. }
             | Self::Extended { .. }
             | Self::ExtendsCycle { .. }
@@ -456,7 +487,11 @@ impl ConfigFile {
     /// flow collection's continuation line is rejected, and the error names its line and column.
     /// Indent with spaces.
     pub fn load(path: &Path) -> Result<Self, ConfigFileError> {
-        let config = Self::load_chain(path, &mut Vec::new())?;
+        let mut state = LoadState {
+            chain: Vec::new(),
+            patterns: RefCell::new(PatternState::new()),
+        };
+        let config = Self::load_chain(path, &mut state)?;
         match &config.locale {
             Some(LocaleName::Other(locale)) if config.rules.key_ordering.enabled => {
                 Err(ConfigFileError::UnsupportedLocale {
@@ -468,25 +503,25 @@ impl ConfigFile {
         }
     }
 
-    /// Loads `path`, with `chain` holding the canonical paths of the files it is extending from.
-    fn load_chain(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
+    /// Loads `path`, with `state.chain` holding the canonical paths of the files it is extending from.
+    fn load_chain(path: &Path, state: &mut LoadState) -> Result<Self, ConfigFileError> {
         let canonical = path.canonicalize().map_err(|source| ConfigFileError::Io {
             path: path.to_owned(),
             source,
         })?;
-        if chain.contains(&canonical) {
+        if state.chain.contains(&canonical) {
             return Err(ConfigFileError::ExtendsCycle {
                 path: path.to_owned(),
             });
         }
-        if chain.len() >= MAX_EXTENDS_DEPTH {
+        if state.chain.len() >= MAX_EXTENDS_DEPTH {
             return Err(ConfigFileError::ExtendsTooDeep {
                 path: path.to_owned(),
             });
         }
-        chain.push(canonical);
-        let loaded = Self::load_file(path, chain);
-        chain.pop();
+        state.chain.push(canonical);
+        let loaded = Self::load_file(path, state);
+        state.chain.pop();
         loaded
     }
 
@@ -512,7 +547,7 @@ impl ConfigFile {
         }
     }
 
-    fn load_file(path: &Path, chain: &mut Vec<PathBuf>) -> Result<Self, ConfigFileError> {
+    fn load_file(path: &Path, state: &mut LoadState) -> Result<Self, ConfigFileError> {
         let entries = Self::read_entries(path)?;
         let top = Self::collect_keys(path, entries)?;
         let invalid_rules = |source| ConfigFileError::InvalidRules {
@@ -525,13 +560,13 @@ impl ConfigFile {
             Some(Extends::Preset(preset)) => {
                 let mut rules = preset.rules();
                 rules
-                    .apply_over_preset(top.rules, ignore_base)
+                    .apply_over_preset(top.rules, ignore_base, &state.patterns)
                     .map_err(invalid_rules)?;
                 (rules, None)
             }
             Some(Extends::File(name)) => {
                 let base =
-                    Self::load_chain(&config_dir(path).join(name), chain).map_err(|source| {
+                    Self::load_chain(&config_dir(path).join(name), state).map_err(|source| {
                         ConfigFileError::Extended {
                             path: path.to_owned(),
                             source: Box::new(source.without_content()),
@@ -539,29 +574,30 @@ impl ConfigFile {
                     })?;
                 let mut rules = base.rules.clone();
                 rules
-                    .apply_over_preset(top.rules, ignore_base)
+                    .apply_over_preset(top.rules, ignore_base, &state.patterns)
                     .map_err(invalid_rules)?;
                 (rules, Some(base))
             }
             None => {
                 let mut rules = RulesConfig::default();
                 rules
-                    .apply_entries(top.rules, ApplyMode::Patch, ignore_base)
+                    .apply_entries(top.rules, ApplyMode::Patch, ignore_base, &state.patterns)
                     .map_err(invalid_rules)?;
                 (rules, None)
             }
         };
-        let invalid_key =
-            |key, error: crate::config::InvalidPathPattern| ConfigFileError::InvalidKey {
+        let invalid_key = |key, error: InvalidPathPattern| match error {
+            InvalidPathPattern::OverBudget { kind } => ConfigFileError::PatternBudget {
+                path: path.to_owned(),
+                kind,
+            },
+            error => ConfigFileError::InvalidKey {
                 path: path.to_owned(),
                 key,
-                // patterns read from a file are never echoed
-                message: if key == TopLevelKey::IgnoreFromFile {
-                    "the listed patterns cannot be combined".to_owned()
-                } else {
-                    error.to_string()
-                },
-            };
+                message: error.to_string(),
+            },
+        };
+        let patterns = state.patterns.get_mut();
         let ignore = match (top.ignore, top.ignore_from_file) {
             (Some(_), Some(_)) => {
                 return Err(ConfigFileError::InvalidKey {
@@ -570,18 +606,20 @@ impl ConfigFile {
                     message: "cannot be used together with 'ignore'".to_owned(),
                 });
             }
-            (Some(lines), None) => Some((TopLevelKey::Ignore, lines)),
-            (None, Some(names)) => Some((TopLevelKey::IgnoreFromFile, ignore_files(path, &names)?)),
+            (Some(lines), None) => Some(
+                patterns
+                    .compile_inline(&root, &lines)
+                    .map(|shared| shared.patterns)
+                    .map_err(|error| invalid_key(TopLevelKey::Ignore, error))?,
+            ),
+            (None, Some(names)) => Some(ignore_files(path, &root, &names, patterns)?),
             (None, None) => None,
-        }
-        .map(|(key, lines)| {
-            IgnorePatterns::new(&root, &lines).map_err(|error| invalid_key(key, error))
-        })
-        .transpose()?;
+        };
         let yaml_files = top
             .yaml_files
             .map(|lines| {
-                YamlFiles::new(&lines).map_err(|error| invalid_key(TopLevelKey::YamlFiles, error))
+                YamlFiles::with_budget(&lines, patterns.budget_mut())
+                    .map_err(|error| invalid_key(TopLevelKey::YamlFiles, error))
             })
             .transpose()?;
         let inherited = base.unwrap_or_default();

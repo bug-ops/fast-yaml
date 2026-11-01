@@ -611,9 +611,11 @@ dependencies = [
  "libc",
  "proptest",
  "rayon",
+ "rustix",
  "tempfile",
  "thiserror",
  "tracing",
+ "windows-sys",
  "xattr",
 ]
 

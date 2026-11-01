@@ -1,13 +1,12 @@
 //! Rule to check spacing around commas in flow collections.
 
 use super::RuleId;
+use super::spacing::SpaceViolation;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
 use crate::config::{Limit, RuleOptions};
-use crate::{
-    Finding, LintConfig, LintContext, Severity, SourceContext, Span, tokenizer::TokenType,
-};
+use crate::{Finding, LintConfig, LintContext, Severity, SourceContext, tokenizer::TokenType};
 
 /// Linting rule for comma spacing.
 ///
@@ -135,12 +134,10 @@ fn check_spaces_before_comma(
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let loc = source_context.offset_to_location(comma_offset);
-        let span = Span::new(loc, loc);
-
-        return Some(Finding::new(
+        return Some(SpaceViolation::TooMany.finding(
+            source_context,
+            comma_offset,
             format!("too many spaces before comma (expected at most {max_spaces}, found {spaces})"),
-            span,
         ));
     }
 
@@ -185,22 +182,18 @@ fn check_spaces_after_comma(
 
     // Don't check min spaces if followed by newline
     if min_spaces.unmet_by(spaces) && !has_newline {
-        let loc = source_context.offset_to_location(comma_offset + 1);
-        let span = Span::new(loc, loc);
-
-        return Some(Finding::new(
+        return Some(SpaceViolation::TooFew.finding(
+            source_context,
+            offset,
             format!("too few spaces after comma (expected at least {min_spaces}, found {spaces})"),
-            span,
         ));
     }
 
     if max_spaces.exceeded_by(spaces) {
-        let loc = source_context.offset_to_location(comma_offset + 1);
-        let span = Span::new(loc, loc);
-
-        return Some(Finding::new(
+        return Some(SpaceViolation::TooMany.finding(
+            source_context,
+            offset,
             format!("too many spaces after comma (expected at most {max_spaces}, found {spaces})"),
-            span,
         ));
     }
 
@@ -344,11 +337,30 @@ mod tests {
         let diagnostics = rule.diagnose(&context, &config);
         assert_ne!(diagnostics, []);
         assert_eq!(
-            diagnostics[0].span.start.line(),
+            diagnostics[0].span.start.line().get(),
             2,
             "violation should be on line 2, got: {}",
-            diagnostics[0].span.start.line()
+            diagnostics[0].span.start.line().get()
         );
+    }
+
+    #[test]
+    fn test_commas_columns_follow_yamllint() {
+        let config = config_with_rule(
+            RuleName::Commas,
+            "{max-spaces-before: 0, min-spaces-after: 1, max-spaces-after: 1}",
+        );
+        let found = CommasRule.diagnose(&LintContext::new("a: [x ,y,   z]\n"), &config);
+        let columns: Vec<_> = found.iter().map(|d| d.span.start.column().get()).collect();
+        assert_eq!(columns, [6, 8, 12]);
+    }
+
+    #[test]
+    fn test_commas_too_few_after_reports_the_next_token() {
+        let found = CommasRule.diagnose(&LintContext::new("a: [x,y]\n"), &LintConfig::default());
+        let columns: Vec<_> = found.iter().map(|d| d.span.start.column().get()).collect();
+        assert_eq!(columns, [7]);
+        assert!(found[0].message.starts_with("too few spaces after comma"));
     }
 
     #[test]

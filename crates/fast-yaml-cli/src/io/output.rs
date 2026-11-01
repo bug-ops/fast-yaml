@@ -210,8 +210,12 @@ impl OutputWriter {
 
     /// Write to file via the shared secure atomic writer
     fn write_file(path: &Path, content: &str) -> Result<()> {
-        fast_yaml_parallel::write_atomic(path, content.as_bytes())
-            .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))
+        fast_yaml_parallel::write_atomic(
+            path,
+            content.as_bytes(),
+            fast_yaml_parallel::HardLinkPolicy::WriteInPlace,
+        )
+        .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))
     }
 }
 

@@ -293,8 +293,8 @@ impl<'a> SourceContext<'a> {
     /// ```
     #[must_use]
     pub fn extract_context(&self, span: Span, context_lines: usize) -> DiagnosticContext {
-        let start_line = span.start.line();
-        let end_line = span.end.line();
+        let start_line = span.start.line().get();
+        let end_line = span.end.line().get();
 
         let first_line = start_line.saturating_sub(context_lines).max(1);
         let last_line = end_line
@@ -311,19 +311,19 @@ impl<'a> SourceContext<'a> {
                     let line_start = self.get_line_offset(line);
                     (
                         span.start.offset().checked_sub(line_start),
-                        span.start.column().saturating_sub(1),
+                        span.start.column().index(),
                     )
                 });
                 let window = ContextWindow::of(content, anchor);
                 let highlight = (line_num >= start_line && line_num <= end_line)
                     .then(|| {
                         let start_col = if line_num == start_line {
-                            span.start.column()
+                            span.start.column().get()
                         } else {
                             1
                         };
                         let end_col = if line_num == end_line {
-                            span.end.column()
+                            span.end.column().get()
                         } else {
                             usize::MAX
                         };
@@ -385,8 +385,8 @@ impl<'a> SourceContext<'a> {
     /// let ctx = SourceContext::new(source);
     ///
     /// let loc = ctx.offset_to_location(7);
-    /// assert_eq!(loc.line(), 2);
-    /// assert_eq!(loc.column(), 1);
+    /// assert_eq!(loc.line().get(), 2);
+    /// assert_eq!(loc.column().get(), 1);
     /// ```
     #[must_use]
     pub fn offset_to_location(&self, offset: usize) -> Location {
@@ -556,9 +556,9 @@ mod tests {
             assert_eq!(ctx_offset(&ctx, line, col), byte);
         }
         let offset = ctx.get_line_offset(line(2)) + "ж: ".len();
-        assert_eq!(ctx.offset_to_location(offset).column(), 4);
+        assert_eq!(ctx.offset_to_location(offset).column().get(), 4);
         let offset = ctx.get_line_offset(line(1)) + 6;
-        assert_eq!(ctx.offset_to_location(offset).column(), 7);
+        assert_eq!(ctx.offset_to_location(offset).column().get(), 7);
     }
 
     #[test]
@@ -576,7 +576,8 @@ mod tests {
         assert_eq!(ctx_offset(&ctx, 2, 5), 5);
         assert_eq!(
             ctx.offset_to_location(ctx.get_line_offset(line(2)) + 5)
-                .column(),
+                .column()
+                .get(),
             6
         );
     }
@@ -616,10 +617,12 @@ mod tests {
         let ctx = SourceContext::new(source);
         assert_eq!(ctx_offset(&ctx, 1, 2), "я".len() * 2);
         let terminator = ctx.get_line_offset(line(1)) + "яя: 1".len();
-        assert_eq!(ctx.offset_to_location(terminator).column(), 6);
-        assert_eq!(ctx.offset_to_location(terminator + 1).column(), 7);
+        assert_eq!(ctx.offset_to_location(terminator).column().get(), 6);
+        assert_eq!(ctx.offset_to_location(terminator + 1).column().get(), 7);
         assert_eq!(
-            ctx.offset_to_location(ctx.get_line_offset(line(2))).line(),
+            ctx.offset_to_location(ctx.get_line_offset(line(2)))
+                .line()
+                .get(),
             2
         );
     }
@@ -630,7 +633,7 @@ mod tests {
         let ctx = SourceContext::new(line);
         for (col, (byte, _)) in line.char_indices().enumerate() {
             assert_eq!(ctx_offset(&ctx, 1, col), byte);
-            assert_eq!(ctx.offset_to_location(byte).column(), col + 1);
+            assert_eq!(ctx.offset_to_location(byte).column().get(), col + 1);
         }
     }
 
@@ -675,16 +678,16 @@ mod tests {
         let ctx = SourceContext::new(source);
 
         let loc = ctx.offset_to_location(0);
-        assert_eq!(loc.line(), 1);
-        assert_eq!(loc.column(), 1);
+        assert_eq!(loc.line().get(), 1);
+        assert_eq!(loc.column().get(), 1);
 
         let loc = ctx.offset_to_location(7);
-        assert_eq!(loc.line(), 2);
-        assert_eq!(loc.column(), 1);
+        assert_eq!(loc.line().get(), 2);
+        assert_eq!(loc.column().get(), 1);
 
         let loc = ctx.offset_to_location(10);
-        assert_eq!(loc.line(), 2);
-        assert_eq!(loc.column(), 4);
+        assert_eq!(loc.line().get(), 2);
+        assert_eq!(loc.column().get(), 4);
     }
 
     #[test]
@@ -693,8 +696,8 @@ mod tests {
         let ctx = SourceContext::new(source);
 
         let loc = ctx.offset_to_location(7);
-        assert_eq!(loc.line(), 1);
-        assert_eq!(loc.column(), 8);
+        assert_eq!(loc.line().get(), 1);
+        assert_eq!(loc.column().get(), 8);
     }
 
     #[test]
@@ -706,7 +709,7 @@ mod tests {
             assert_eq!(ctx.get_line(line(2)), Some("б"));
             assert_eq!(ctx.get_line(line(3)), Some("c"));
             let loc = ctx.offset_to_location(ctx.get_line_offset(line(3)));
-            assert_eq!((loc.line(), loc.column()), (3, 1));
+            assert_eq!((loc.line().get(), loc.column().get()), (3, 1));
         }
         assert_eq!(SourceContext::new("a\r\nb").get_line_offset(line(2)), 3);
         assert_eq!(SourceContext::new("a\rb").get_line_offset(line(2)), 2);
@@ -746,8 +749,8 @@ mod tests {
     #[test]
     fn test_location_at_is_total() {
         let ctx = SourceContext::new("ключ: 1");
-        assert_eq!(ctx.offset_to_location(3).column(), 2);
-        assert_eq!(ctx.offset_to_location(1000).column(), 8);
+        assert_eq!(ctx.offset_to_location(3).column().get(), 2);
+        assert_eq!(ctx.offset_to_location(1000).column().get(), 8);
         assert_eq!(ctx.span_at(ByteOffset::new(6), 100).end.offset(), 11);
     }
 
@@ -1025,9 +1028,15 @@ mod tests {
             .collect();
         let snippets: Vec<&str> = spans.iter().map(|&s| ctx.get_snippet(s)).collect();
         assert_eq!(snippets, ["—", "\"é\"", "🎉", "x"]);
-        assert_eq!((spans[1].start.column(), spans[1].start.offset()), (4, 5));
-        assert_eq!((spans[1].end.column(), spans[1].end.offset()), (7, 9));
-        assert_eq!((spans[2].start.line(), spans[2].start.column()), (2, 1));
+        assert_eq!(
+            (spans[1].start.column().get(), spans[1].start.offset()),
+            (4, 5)
+        );
+        assert_eq!((spans[1].end.column().get(), spans[1].end.offset()), (7, 9));
+        assert_eq!(
+            (spans[2].start.line().get(), spans[2].start.column().get()),
+            (2, 1)
+        );
     }
 
     #[test]
@@ -1241,8 +1250,8 @@ impl<'a> LintContext<'a> {
                 .iter()
                 .filter_map(|range| {
                     // The token starts at its content and ends on the line that stopped it
-                    let first = context.location_at(range.start()).line();
-                    let last = context.location_at(range.end()).line().saturating_sub(1);
+                    let first = context.location_at(range.start()).line().get();
+                    let last = context.location_at(range.end()).line().index();
                     (last >= first).then_some(first..=last)
                 })
                 .collect()
@@ -1358,8 +1367,7 @@ impl<'a> LintContext<'a> {
             let by_text = !self.scan_is_complete();
             let mut comment_lines = vec![false; self.lines().len()];
             for comment in self.comments().iter().filter(|c| c.is_full_line()) {
-                if let Some(flag) = comment_lines.get_mut(comment.span.start.line().wrapping_sub(1))
-                {
+                if let Some(flag) = comment_lines.get_mut(comment.span.start.line().index()) {
                     *flag = true;
                 }
             }

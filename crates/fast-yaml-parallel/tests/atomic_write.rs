@@ -1,6 +1,12 @@
 //! Integration tests for the shared secure atomic writer and batch `format_in_place`.
 
-use fast_yaml_parallel::write_atomic;
+use fast_yaml_parallel::HardLinkPolicy;
+use std::io;
+use std::path::Path;
+
+fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
+    fast_yaml_parallel::write_atomic(path, content, HardLinkPolicy::WriteInPlace)
+}
 use std::fs;
 use tempfile::TempDir;
 
@@ -33,7 +39,7 @@ fn leaves_no_temp_files_behind() {
 mod unix {
     use super::*;
     use fast_yaml_core::EmitterConfig;
-    use fast_yaml_parallel::{CommentPolicy, FileProcessor};
+    use fast_yaml_parallel::{CommentPolicy, FileProcessor, InPlaceTarget};
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::Path;
 
@@ -152,7 +158,10 @@ mod unix {
             fs::set_permissions(&path, fs::Permissions::from_mode(m)).unwrap();
             paths.push((path, m));
         }
-        let only_paths: Vec<_> = paths.iter().map(|(p, _)| p.clone()).collect();
+        let only_paths: Vec<_> = paths
+            .iter()
+            .map(|(p, _)| InPlaceTarget::new(p.clone(), HardLinkPolicy::WriteInPlace))
+            .collect();
 
         let result = FileProcessor::new().format_in_place(
             &only_paths,
@@ -165,5 +174,54 @@ mod unix {
             assert_eq!(fs::read_to_string(path).unwrap(), "key: value\n");
             assert_eq!(mode(path), *m);
         }
+    }
+
+    #[test]
+    fn format_in_place_applies_the_policy_of_each_target() {
+        use fast_yaml_parallel::HardLinkRefused;
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = TempDir::new().unwrap();
+        let write = |name: &str| {
+            let path = dir.path().join(name);
+            fs::write(&path, "key:   value\n").unwrap();
+            path
+        };
+        let (refused, refused_alias) = (write("refused.yaml"), dir.path().join("refused2.yaml"));
+        fs::hard_link(&refused, &refused_alias).unwrap();
+        let (through, through_alias) = (write("through.yaml"), dir.path().join("through2.yaml"));
+        fs::hard_link(&through, &through_alias).unwrap();
+        let plain = write("plain.yaml");
+        let targets = [
+            InPlaceTarget::new(refused.clone(), HardLinkPolicy::Refuse),
+            InPlaceTarget::new(through.clone(), HardLinkPolicy::WriteInPlace),
+            InPlaceTarget::new(plain.clone(), HardLinkPolicy::Refuse),
+        ];
+
+        let result = FileProcessor::new().format_in_place(
+            &targets,
+            &EmitterConfig::new(),
+            CommentPolicy::Reject,
+        );
+
+        assert_eq!((result.total, result.failed, result.changed), (3, 1, 2));
+        let (path, error) = &result.errors[0];
+        assert_eq!(path, &refused);
+        let io_error = match error {
+            fast_yaml_parallel::Error::Write { source, .. } => source,
+            other => panic!("unexpected error: {other}"),
+        };
+        assert!(
+            io_error
+                .get_ref()
+                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<HardLinkRefused>)
+        );
+        for untouched in [&refused, &refused_alias] {
+            assert_eq!(fs::read_to_string(untouched).unwrap(), "key:   value\n");
+        }
+        for formatted in [&through, &through_alias, &plain] {
+            assert_eq!(fs::read_to_string(formatted).unwrap(), "key: value\n");
+        }
+        assert_eq!(fs::metadata(&through).unwrap().nlink(), 2);
     }
 }

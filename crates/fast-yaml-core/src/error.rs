@@ -407,7 +407,7 @@ impl ParseError {
     /// Wraps a scanner error found in the document with zero-based index `document`.
     #[must_use]
     pub(crate) fn scanner(error: &saphyr_parser::ScanError, document: DocumentIndex) -> Self {
-        let position = SourcePosition::from_marker(*error.marker());
+        let position = SourcePosition::from_parsed_marker(*error.marker());
         if error.info() == SCANNER_FLOW_NESTING_INFO {
             return Self::LimitExceeded {
                 kind: LimitKind::FlowNesting,

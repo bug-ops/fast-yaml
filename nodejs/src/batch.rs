@@ -8,7 +8,7 @@ use crate::limits::{
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
     BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig, Error, ErrorKind,
-    FileProcessor,
+    FileProcessor, HardLinkPolicy, InPlaceTarget,
 };
 use napi_derive::napi;
 
@@ -327,10 +327,13 @@ pub fn format_files_in_place(
     let config = config.unwrap_or_default();
     let rust_config = config.to_rust_config()?;
     let emitter_config = config.to_emitter_config()?;
-    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+    let targets: Vec<InPlaceTarget> = paths
+        .iter()
+        .map(|path| InPlaceTarget::new(PathBuf::from(path), HardLinkPolicy::WriteInPlace))
+        .collect();
 
     let processor = FileProcessor::with_config(rust_config);
-    let result = processor.format_in_place(&path_bufs, &emitter_config, CommentPolicy::Strip);
+    let result = processor.format_in_place(&targets, &emitter_config, CommentPolicy::Strip);
 
     Ok(result.into())
 }
