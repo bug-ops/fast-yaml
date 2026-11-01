@@ -186,14 +186,6 @@ impl super::LintRule for TruthyRule {
         RuleId::BuiltIn(RuleName::Truthy)
     }
 
-    fn name(&self) -> &'static str {
-        "Truthy Values"
-    }
-
-    fn description(&self) -> &'static str {
-        "Forbids non-standard truthy value representations (yes/no, on/off)"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

@@ -11,10 +11,10 @@ use fast_yaml_linter::config::{CanonicalPath, IndentSize, IndentSpaces, RuleName
 use fast_yaml_linter::formatter::Findings;
 use fast_yaml_linter::rules::MarkerPresence;
 use fast_yaml_linter::{
-    ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
+    Coloring, ContextLine as RustContextLine, Diagnostic as RustDiagnostic,
     DiagnosticCode as RustDiagnosticCode, DiagnosticContext as RustDiagnosticContext,
     Excerpt as RustExcerpt, Formatter as RustFormatter, LintConfig as RustLintConfig,
-    LintError as RustLintError, Linter as RustLinter, Location as RustLocation,
+    LintError as RustLintError, Linter as RustLinter, Location as RustLocation, OneBased,
     Severity as RustSeverity, Span as RustSpan, Suggestion as RustSuggestion,
     TextFormatter as RustTextFormatter,
 };
@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 #[cfg(feature = "json-output")]
-use fast_yaml_linter::JsonFormatter as RustJsonFormatter;
+use fast_yaml_linter::{JsonFormatter as RustJsonFormatter, JsonLayout};
 
 /// Diagnostic severity levels.
 ///
@@ -148,16 +148,15 @@ pub struct PyLocation {
 impl PyLocation {
     #[new]
     #[pyo3(signature = (line, column, offset))]
-    fn new(line: usize, column: usize, offset: usize) -> PyResult<Self> {
-        if line == 0 || column == 0 {
-            return Err(PyValueError::new_err(
-                "line and column are counted from 1, got 0",
-            ));
-        }
+    fn new(
+        line: &Bound<'_, PyAny>,
+        column: &Bound<'_, PyAny>,
+        offset: &Bound<'_, PyAny>,
+    ) -> PyResult<Self> {
         Ok(Self {
-            line,
-            column,
-            offset,
+            line: limits::extract_in_range("line", 1, usize::MAX, line)?,
+            column: limits::extract_in_range("column", 1, usize::MAX, column)?,
+            offset: limits::extract_in_range("offset", 0, usize::MAX, offset)?,
         })
     }
 
@@ -266,21 +265,30 @@ pub struct PyContextLine {
 #[pymethods]
 impl PyContextLine {
     #[new]
-    #[pyo3(signature = (line_number, content, highlights, column_offset=0, truncated_end=false))]
-    const fn new(
-        line_number: usize,
+    #[pyo3(signature = (line_number, content, highlights, column_offset=None, truncated_end=false))]
+    fn new(
+        line_number: &Bound<'_, PyAny>,
         content: String,
-        highlights: Vec<(usize, usize)>,
-        column_offset: usize,
+        highlights: Vec<(Bound<'_, PyAny>, Bound<'_, PyAny>)>,
+        column_offset: Option<&Bound<'_, PyAny>>,
         truncated_end: bool,
-    ) -> Self {
-        Self {
-            line_number,
+    ) -> PyResult<Self> {
+        let highlights = highlights
+            .into_iter()
+            .map(|(start, end)| {
+                Ok((
+                    limits::extract_in_range("highlights", 0, usize::MAX, &start)?,
+                    limits::extract_in_range("highlights", 0, usize::MAX, &end)?,
+                ))
+            })
+            .collect::<PyResult<Vec<_>>>()?;
+        Ok(Self {
+            line_number: limits::extract_in_range("line_number", 1, usize::MAX, line_number)?,
             content,
-            column_offset,
+            column_offset: limits::in_range_or("column_offset", 0, usize::MAX, 0, column_offset)?,
             truncated_end,
             highlights,
-        }
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -327,7 +335,7 @@ impl From<RustDiagnosticContext> for PyDiagnosticContext {
             .lines
             .into_iter()
             .map(|line| PyContextLine {
-                line_number: line.line_number,
+                line_number: line.line_number.get(),
                 content: line.content,
                 column_offset: line.column_offset,
                 truncated_end: line.truncated_end,
@@ -877,19 +885,27 @@ fn given_findings(
         .map(|item| {
             let py_diag: PyDiagnostic = item.extract()?;
 
-            let context = py_diag.context.map(|py_ctx| RustDiagnosticContext {
-                lines: py_ctx
-                    .lines
-                    .into_iter()
-                    .map(|py_line| RustContextLine {
-                        line_number: py_line.line_number,
-                        content: py_line.content,
-                        column_offset: py_line.column_offset,
-                        truncated_end: py_line.truncated_end,
-                        highlights: py_line.highlights,
-                    })
-                    .collect(),
-            });
+            let context = py_diag
+                .context
+                .map(|py_ctx| -> PyResult<RustDiagnosticContext> {
+                    let lines = py_ctx
+                        .lines
+                        .into_iter()
+                        .map(|py_line| -> PyResult<RustContextLine> {
+                            Ok(RustContextLine {
+                                line_number: OneBased::new(py_line.line_number).ok_or_else(
+                                    || PyValueError::new_err("line_number is counted from 1"),
+                                )?,
+                                content: py_line.content,
+                                column_offset: py_line.column_offset,
+                                truncated_end: py_line.truncated_end,
+                                highlights: py_line.highlights,
+                            })
+                        })
+                        .collect::<PyResult<Vec<_>>>()?;
+                    Ok(RustDiagnosticContext { lines })
+                })
+                .transpose()?;
 
             let suggestions = py_diag
                 .suggestions
@@ -907,7 +923,10 @@ fn given_findings(
                 .collect::<PyResult<Vec<_>>>()?;
 
             let diagnostic = RustDiagnostic {
-                code: RustDiagnosticCode::new(py_diag.code),
+                code: py_diag
+                    .code
+                    .parse::<RustDiagnosticCode>()
+                    .map_err(|e| PyValueError::new_err(e.to_string()))?,
                 severity: py_diag.severity.inner,
                 message: Cow::Owned(py_diag.message),
                 span: RustSpan::new(py_diag.span.start.to_rust()?, py_diag.span.end.to_rust()?),
@@ -945,9 +964,9 @@ pub struct PyTextFormatter {
 impl PyTextFormatter {
     #[new]
     #[pyo3(signature = (use_colors=true))]
-    const fn new(use_colors: bool) -> Self {
+    fn new(use_colors: bool) -> Self {
         Self {
-            inner: RustTextFormatter::new().with_color(use_colors),
+            inner: RustTextFormatter::new().with_color(Coloring::from(use_colors)),
         }
     }
 
@@ -977,10 +996,14 @@ pub struct PyJsonFormatter {
 impl PyJsonFormatter {
     #[new]
     #[pyo3(signature = (pretty=false))]
-    #[allow(clippy::missing_const_for_fn)] // RustJsonFormatter::new is not const
-    fn new(pretty: bool) -> Self {
+    const fn new(pretty: bool) -> Self {
+        let layout = if pretty {
+            JsonLayout::Pretty
+        } else {
+            JsonLayout::Compact
+        };
         Self {
-            inner: RustJsonFormatter::new(pretty),
+            inner: RustJsonFormatter::new(layout),
         }
     }
 

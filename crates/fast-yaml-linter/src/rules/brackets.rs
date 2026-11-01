@@ -39,14 +39,6 @@ impl super::LintRule for BracketsRule {
         RuleId::BuiltIn(RuleName::Brackets)
     }
 
-    fn name(&self) -> &'static str {
-        "Brackets"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates spacing and usage of flow sequence brackets []"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

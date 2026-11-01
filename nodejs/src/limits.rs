@@ -46,6 +46,17 @@ pub(crate) fn reject_legacy_max_input_size(value: Option<f64>) -> NapiResult<()>
     })
 }
 
+/// Rejects an option that was removed, so a caller relying on it is told instead of ignored.
+pub(crate) fn reject_removed_option(name: &str, present: bool) -> NapiResult<()> {
+    if present {
+        return Err(napi::Error::new(
+            napi::Status::InvalidArg,
+            format!("{name} was removed and is no longer accepted"),
+        ));
+    }
+    Ok(())
+}
+
 /// Validates an optional `maxInputBytes` value, defaulting to [`MaxInputBytes::DEFAULT`].
 pub(crate) fn max_input_bytes(value: Option<f64>) -> NapiResult<MaxInputBytes> {
     bounded("maxInputBytes", value)

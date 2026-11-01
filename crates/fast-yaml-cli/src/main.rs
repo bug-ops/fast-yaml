@@ -49,8 +49,9 @@ mod reporter;
 #[cfg(feature = "linter")]
 use cli::LintFlags;
 use cli::{Cli, Command, FormatArgs, ResolvedCli};
-use commands::format::{EditIntent, FormatCommand, WriteMode};
+use commands::format::{EditIntent, FormatCommand, RunMode, WriteMode};
 use commands::format_batch::BatchWrite;
+use commands::parse::Stats;
 use config::{CommonConfig, FormatterConfig};
 use error::{ExitCode, format_error};
 use invocation::Target;
@@ -125,7 +126,7 @@ fn run(cli: ResolvedCli) -> Result<ExitCode> {
             let input = InputSource::from_args(file, ctx.max_input)?;
             let cmd = commands::parse::ParseCommand::new(
                 ctx.common,
-                stats,
+                if stats { Stats::Show } else { Stats::Hide },
                 limits.parse_limits(ctx.max_scan_ahead),
             );
             cmd.execute(&input)?;
@@ -135,7 +136,7 @@ fn run(cli: ResolvedCli) -> Result<ExitCode> {
         Some(Command::Convert {
             to,
             file,
-            pretty,
+            json,
             write,
             limits,
         }) => {
@@ -143,7 +144,7 @@ fn run(cli: ResolvedCli) -> Result<ExitCode> {
             let output = OutputWriter::for_write(write.target(), input.file_path())?;
             let cmd = commands::convert::ConvertCommand::new(
                 to,
-                pretty,
+                json.output(),
                 limits.parse_limits(ctx.max_scan_ahead),
             );
             cmd.execute(&input, &output)?;
@@ -154,8 +155,12 @@ fn run(cli: ResolvedCli) -> Result<ExitCode> {
         None => {
             let mode =
                 stdin_write_mode(EditIntent::Write(WriteTarget::Output(OutputTarget::Stdout)))?;
-            FormatCommand::new(ctx.common, CommentPolicy::Reject)
-                .run(&InputSource::from_stdin(ctx.max_input)?, &mode)
+            FormatCommand::new(
+                ctx.common,
+                FormatterConfig::default(),
+                CommentPolicy::Reject,
+            )
+            .run(&InputSource::from_stdin(ctx.max_input)?, &mode)
         }
     }
 }
@@ -166,26 +171,31 @@ fn run_format(ctx: Context, args: FormatArgs) -> Result<ExitCode> {
     } else {
         CommentPolicy::Reject
     };
-    let intent = EditIntent::resolve(args.dry_run, args.write.target());
-    let common = ctx.common.with_formatter(
-        FormatterConfig::new()
-            .with_indent(args.indent)
-            .with_width(args.width)
-            .with_max_depth(args.max_depth)
-            .with_max_documents(args.max_documents)
-            .with_max_scan_ahead(ctx.max_scan_ahead),
+    let intent = EditIntent::resolve(
+        if args.dry_run {
+            RunMode::DryRun
+        } else {
+            RunMode::Write
+        },
+        args.write.target(),
     );
+    let common = ctx.common;
+    let format_config = FormatterConfig::new()
+        .with_indent(args.indent)
+        .with_max_depth(args.max_depth)
+        .with_max_documents(args.max_documents)
+        .with_max_scan_ahead(ctx.max_scan_ahead);
 
     match Target::resolve(args.paths, args.stdin_files, &args.batch)? {
         Target::Stdin => {
             let mode = stdin_write_mode(intent)?;
-            FormatCommand::new(common, comments)
+            FormatCommand::new(common, format_config, comments)
                 .run(&InputSource::from_stdin(ctx.max_input)?, &mode)
         }
         Target::File(path) => {
             let input = InputSource::from_file(&path, ctx.max_input)?;
             let mode = WriteMode::new(intent, Some(&path))?;
-            FormatCommand::new(common, comments).run(&input, &mode)
+            FormatCommand::new(common, format_config, comments).run(&input, &mode)
         }
         Target::Batch(target) => {
             let write = match intent {
@@ -198,6 +208,7 @@ fn run_format(ctx: Context, args: FormatArgs) -> Result<ExitCode> {
             let scan_ahead = ScanAheadPolicy::from(ctx.explicit_max_scan_ahead);
             commands::format_batch::execute_batch(
                 &common,
+                &format_config,
                 &target,
                 write,
                 comments,
@@ -219,7 +230,7 @@ fn run_lint(ctx: Context, flags: LintFlags) -> Result<ExitCode> {
         max_line_length: flags.max_line_length,
         indent_size: flags.indent_size,
         format,
-        allow_duplicate_keys: flags.allow_duplicate_keys,
+        allow_duplicate_keys: flags.duplicate_keys.choice(),
         max_diagnostics: flags.max_diagnostics,
         max_input_bytes: ctx.explicit_max_input,
         max_scan_ahead: ctx.explicit_max_scan_ahead,

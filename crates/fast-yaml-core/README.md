@@ -35,7 +35,7 @@ Core YAML 1.2.2 parser and emitter for the fast-yaml ecosystem. `Value` is a ful
 
 **Data flow**: `Value (DOM) → YAML text`
 
-**Configuration**: `EmitterConfig` allows customizing indent, line width, flow style, etc.
+**Configuration**: `EmitterConfig` allows customizing indent, collection layout, etc.
 
 ### Streaming Formatter
 
@@ -94,7 +94,7 @@ let docs = Parser::parse_all(yaml)?;
 ### Emitter: Data Structures → YAML
 
 ```rust
-use fast_yaml_core::limits::{Indent, Width};
+use fast_yaml_core::limits::Indent;
 use fast_yaml_core::{Emitter, EmitterConfig, Value};
 
 // Basic emission
@@ -104,7 +104,6 @@ let yaml = Emitter::emit_str(&value)?;
 // Custom configuration
 let config = EmitterConfig::new()
     .with_indent(Indent::new(4)?)
-    .with_width(Width::new(120)?)
     .with_explicit_start(true);
 let yaml = Emitter::emit_str_with_config(&value, &config)?;
 # Ok::<(), Box<dyn std::error::Error>>(())

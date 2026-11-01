@@ -7,8 +7,8 @@ use std::fmt::Write;
 
 use fast_yaml_core::streaming::format_streaming;
 use fast_yaml_core::{
-    EmitError, Emitter, EmitterConfig, Indent, LimitKind, MaxDepth, ParseError, ParseLimits,
-    Parser, Value,
+    EmitError, Emitter, EmitterConfig, Indent, Layout, LimitKind, MaxDepth, ParseError,
+    ParseLimits, Parser, Value,
 };
 
 fn fmt(input: &str, indent: usize) -> String {
@@ -450,7 +450,7 @@ fn emitting_at_max_depth_fits_a_small_stack() {
             doc = Value::Sequence(vec![doc]);
         }
         let block = EmitterConfig::new().with_max_emit_depth(MaxDepth::MAX);
-        let flow = block.clone().with_default_flow_style(Some(true));
+        let flow = block.clone().with_layout(Layout::Flow);
         for config in [&block, &flow] {
             let out = Emitter::emit_str_with_config(&doc, config).unwrap();
             assert!(out.contains('1'));

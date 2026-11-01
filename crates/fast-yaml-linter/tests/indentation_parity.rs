@@ -3,7 +3,8 @@
 //! Each expected `(line, column, message)` was taken from yamllint itself; regenerate with
 //! `.local/testing/gen_indent_parity.py`.
 
-use fast_yaml_linter::{ConfigFile, DiagnosticCode, Linter};
+use fast_yaml_linter::config::RuleName;
+use fast_yaml_linter::{ConfigFile, Linter};
 
 struct Case {
     name: &'static str,
@@ -347,7 +348,7 @@ fn indentation_findings(case: &Case) -> Vec<(usize, usize, String)> {
         .lint(case.source)
         .unwrap()
         .iter()
-        .filter(|d| d.code.as_str() == DiagnosticCode::INDENTATION)
+        .filter(|d| d.code.as_str() == RuleName::Indentation.as_str())
         .map(|d| {
             (
                 d.span.start.line(),

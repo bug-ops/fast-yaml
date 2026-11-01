@@ -18,13 +18,13 @@ use std::io;
 /// Size of the buffer a formatter puts between its many small writes and the caller's writer.
 const WRITE_BUFFER: usize = 64 * 1024;
 
-pub use findings::{Finding, Findings};
+pub use findings::{DiagnosticView, Findings};
 pub use report::{FileReport, NotAbsolute, ReportFormat, ReportPath, ReportSource};
 pub use syntax::{input_error_diagnostic, syntax_diagnostic};
-pub use text::TextFormatter;
+pub use text::{Coloring, TextFormatter};
 
 #[cfg(feature = "json-output")]
-pub use json::{JsonDiagnostic, JsonFormatter};
+pub use json::{JsonDiagnostic, JsonFormatter, JsonLayout};
 
 /// Trait for formatting diagnostics.
 ///

@@ -63,14 +63,6 @@ impl super::LintRule for DuplicateKeysRule {
         RuleId::BuiltIn(RuleName::DuplicateKey)
     }
 
-    fn name(&self) -> &'static str {
-        "Duplicate Keys"
-    }
-
-    fn description(&self) -> &'static str {
-        "Detects duplicate keys in YAML mappings at all nesting levels"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Error
     }

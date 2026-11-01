@@ -14,7 +14,7 @@ use crate::{
 
 /// The two flow collection kinds checked by the braces and brackets rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum FlowCollection {
+pub enum FlowCollection {
     /// Flow mapping `{}`.
     Mapping,
     /// Flow sequence `[]`.
@@ -145,7 +145,7 @@ impl Default for FlowCollectionOptions {
 impl RuleOptions for FlowCollectionOptions {}
 
 /// Runs the shared braces/brackets check for one kind of flow collection.
-pub(crate) fn check_flow_collection(
+pub fn check_flow_collection(
     context: &LintContext,
     settings: &RuleSettings<FlowCollectionOptions>,
     kind: FlowCollection,
@@ -249,16 +249,6 @@ pub fn pair_delimiters<'t>(opens: &'t [Token], closes: &'t [Token]) -> Vec<(&'t 
 /// * `source` - The full YAML source
 /// * `start_offset` - Byte offset after opening delimiter
 /// * `end_offset` - Byte offset of closing delimiter
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_linter::rules::flow_common::is_empty_collection;
-///
-/// assert!(is_empty_collection("{}", 1, 1));
-/// assert!(is_empty_collection("{  }", 1, 3));
-/// assert!(!is_empty_collection("{a}", 1, 2));
-/// ```
 #[must_use]
 pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize) -> bool {
     let end = end_offset.min(source.len());
@@ -272,7 +262,7 @@ pub fn is_empty_collection(source: &str, start_offset: usize, end_offset: usize)
 }
 
 /// Spacing limits for the interior of one flow collection.
-pub(crate) struct FlowSpacing<'a> {
+pub struct FlowSpacing<'a> {
     pub(crate) source: &'a str,
     /// Byte range between the opening and the closing delimiter.
     pub(crate) inner: Range<usize>,

@@ -37,16 +37,6 @@ fn test_stdin_mode_with_custom_indent() {
 }
 
 #[test]
-fn test_stdin_mode_with_custom_width() {
-    let input = "key: value\n";
-
-    fy().args(["format", "--width", "120"])
-        .write_stdin(input)
-        .assert()
-        .success();
-}
-
-#[test]
 fn test_single_file_stdout_unchanged() {
     let temp = TempDir::new().unwrap();
     let file = temp.path().join("test.yaml");

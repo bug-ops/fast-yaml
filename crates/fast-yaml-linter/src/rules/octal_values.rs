@@ -1,6 +1,7 @@
 //! Rule to check octal value representations.
 
 use super::RuleId;
+use crate::OneBased;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
@@ -79,14 +80,6 @@ impl super::LintRule for OctalValuesRule {
         RuleId::BuiltIn(RuleName::OctalValues)
     }
 
-    fn name(&self) -> &'static str {
-        "Octal Values"
-    }
-
-    fn description(&self) -> &'static str {
-        "Forbids unquoted octal numbers (implicit 010, explicit 0o10)"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
@@ -105,7 +98,7 @@ impl super::SourceRule for OctalValuesRule {
 
         let mut diagnostics = Vec::new();
         for (line_idx, line) in lines_of(source).enumerate() {
-            let line_num = line_idx + 1;
+            let line_num = OneBased::from_index(line_idx);
             let line_offset = context.source_context().get_line_offset(line_num);
             Self::check_line(context, config, &mut diagnostics, line, line_offset);
         }

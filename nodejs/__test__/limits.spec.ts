@@ -318,7 +318,7 @@ describe('Configurable parse limits', () => {
       fs.writeFileSync(file, `${seq(300)}\n`);
       const failed = processFiles([file]);
       expect(failed.failed).toBe(1);
-      expect(failed.errors[0].message).toMatch(/nesting depth exceeds 256/);
+      expect(failed.errors[0].error.message).toMatch(/nesting depth exceeds 256/);
       expect(processFiles([file], { maxDepth: 400 }).failed).toBe(0);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
@@ -373,10 +373,12 @@ describe('Batch config validation', () => {
       const file = path.join(dir, 'nested.yaml');
       fs.writeFileSync(file, `${seq(50)}\n`);
       const [result] = formatFiles([file], { maxDepth: 64, maxAliasBytes: 1 });
-      expect(result.error).toBeFalsy();
-      expect(result.content).toBeTruthy();
+      expect(result.status).toBe('formatted');
       const [deep] = formatFiles([file], { maxDepth: 1 });
-      expect(deep.error).toMatch(/nesting depth exceeds 1/);
+      expect(deep).toMatchObject({
+        status: 'failed',
+        error: { kind: 'limit', message: expect.stringMatching(/nesting depth exceeds 1/) },
+      });
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -424,9 +426,12 @@ describe('maxScanAhead (#563)', () => {
       const file = path.join(dir, 'flow.yaml');
       fs.writeFileSync(file, `${rootFlow}\n`);
       const [low] = formatFiles([file], { maxScanAhead: 64 });
-      expect(low.error).toMatch(rejected);
+      expect(low).toMatchObject({
+        status: 'failed',
+        error: { kind: 'limit', message: expect.stringMatching(rejected) },
+      });
       const [high] = formatFiles([file], { maxScanAhead: 1 << 20 });
-      expect(high.error).toBeFalsy();
+      expect(high.status).toBe('formatted');
       expect(processFiles([file], { maxScanAhead: 64 }).failed).toBe(1);
       expect(processFiles([file], { maxScanAhead: 1 << 20 }).failed).toBe(0);
     } finally {

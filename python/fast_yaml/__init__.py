@@ -215,10 +215,8 @@ def safe_dump(
     data: Any,
     stream: IO[str] | None = None,
     *,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
     indent: int | None = None,
-    width: int | None = None,
     explicit_start: bool = False,
     default_flow_style: bool | None = None,
 ) -> str | None:
@@ -230,12 +228,10 @@ def safe_dump(
     Args:
         data: A Python object to serialize.
         stream: If provided, write to this file-like object and return None.
-        allow_unicode: If True, allow unicode characters in output. Default: True.
         sort_keys: If True, sort dictionary keys. Default: False.
         indent: Number of spaces for indentation. Default: 2.
-        width: Maximum line width. Default: 80.
         explicit_start: If True, add explicit document start marker (---). Default: False.
-        default_flow_style: Force flow style for collections. Default: None.
+        default_flow_style: True writes flow collections; None or False writes block. Default: None.
 
     Returns:
         A YAML string if stream is None, otherwise None.
@@ -254,10 +250,8 @@ def safe_dump(
     """
     result = _safe_dump(
         data,
-        allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent if indent is not None else 2,
-        width=width if width is not None else 80,
         explicit_start=explicit_start,
         default_flow_style=default_flow_style,
     )
@@ -273,10 +267,8 @@ def safe_dump_all(
     documents: Iterator[Any],
     stream: IO[str] | None = None,
     *,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
     indent: int | None = None,
-    width: int | None = None,
     explicit_start: bool = False,
     default_flow_style: bool | None = None,
 ) -> str | None:
@@ -288,12 +280,10 @@ def safe_dump_all(
     Args:
         documents: An iterable of Python objects to serialize.
         stream: If provided, write to this file-like object and return None.
-        allow_unicode: If True, allow unicode characters in output. Default: True.
         sort_keys: If True, sort dictionary keys. Default: False.
         indent: Number of spaces for indentation. Default: 2.
-        width: Maximum line width. Default: 80.
         explicit_start: If True, add ``---`` document start marker. Default: False.
-        default_flow_style: If True, use flow style. Default: None (block style).
+        default_flow_style: True writes flow collections; None or False writes block. Default: None.
 
     Returns:
         A YAML string if stream is None, otherwise None.
@@ -311,10 +301,8 @@ def safe_dump_all(
     """
     result = _safe_dump_all(
         list(documents),
-        allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent if indent is not None else 2,
-        width=width if width is not None else 80,
         explicit_start=explicit_start,
         default_flow_style=default_flow_style,
     )
@@ -330,13 +318,11 @@ def safe_dump_to(
     data: Any,
     stream: IO[str],
     *,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
-    indent: int = 2,
-    width: int = 80,
+    indent: int | None = None,
     default_flow_style: bool | None = None,
     explicit_start: bool = False,
-    chunk_size: int = 8192,
+    chunk_size: int | None = None,
 ) -> int:
     """
     Dump YAML directly to a stream without intermediate string.
@@ -347,13 +333,13 @@ def safe_dump_to(
     Args:
         data: Python object to serialize
         stream: File-like object with write() method
-        allow_unicode: Allow unicode characters (default: True)
         sort_keys: Sort dictionary keys (default: False)
         indent: Number of spaces for indentation (default: 2)
-        width: Maximum line width (default: 80)
-        default_flow_style: Force flow style for collections (default: None)
+        default_flow_style: True writes flow collections; None or False writes block
+            (default: None)
         explicit_start: Add explicit document start marker (default: False)
-        chunk_size: Size of write chunks in bytes (default: 8KB)
+        chunk_size: Write chunk size in bytes, 1024..=1048576 (default: 8192);
+            other values raise ValueError
 
     Returns:
         Number of bytes written
@@ -376,10 +362,8 @@ def safe_dump_to(
     return _safe_dump_to(
         data,
         stream,
-        allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent,
-        width=width,
         default_flow_style=default_flow_style,
         explicit_start=explicit_start,
         chunk_size=chunk_size,
@@ -540,10 +524,8 @@ def dump(
     stream: IO[str] | None = None,
     Dumper: type | None = None,  # noqa: N803 - PyYAML API compatibility
     *,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
     indent: int | None = None,
-    width: int | None = None,
     explicit_start: bool = False,
 ) -> str | None:
     """
@@ -557,10 +539,8 @@ def dump(
         data: A Python object to serialize.
         stream: If provided, write to this file-like object and return None.
         Dumper: Optional dumper class (SafeDumper, Dumper).
-        allow_unicode: If True, allow unicode characters in output. Default: True.
         sort_keys: If True, sort dictionary keys. Default: False.
         indent: Number of spaces for indentation. Default: 2.
-        width: Maximum line width. Default: 80.
         explicit_start: If True, add explicit document start marker (---).
 
     Returns:
@@ -580,10 +560,8 @@ def dump(
     """
     result: str = _safe_dump(
         data,
-        allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent if indent is not None else 2,
-        width=width if width is not None else 80,
         explicit_start=explicit_start,
     )
 
@@ -599,10 +577,8 @@ def dump_all(
     stream: IO[str] | None = None,
     Dumper: type | None = None,  # noqa: N803 - PyYAML API compatibility
     *,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
     indent: int | None = None,
-    width: int | None = None,
     explicit_start: bool = False,
 ) -> str | None:
     """
@@ -616,10 +592,8 @@ def dump_all(
         documents: An iterable of Python objects to serialize.
         stream: If provided, write to this file-like object and return None.
         Dumper: Optional dumper class (SafeDumper, Dumper).
-        allow_unicode: If True, allow unicode characters in output. Default: True.
         sort_keys: If True, sort dictionary keys. Default: False.
         indent: Number of spaces for indentation. Default: 2.
-        width: Maximum line width. Default: 80.
         explicit_start: If True, add explicit document start markers (---).
 
     Returns:
@@ -636,10 +610,8 @@ def dump_all(
     """
     result: str = _safe_dump_all(
         list(documents),
-        allow_unicode=allow_unicode,
         sort_keys=sort_keys,
         indent=indent if indent is not None else 2,
-        width=width if width is not None else 80,
         explicit_start=explicit_start,
     )
 

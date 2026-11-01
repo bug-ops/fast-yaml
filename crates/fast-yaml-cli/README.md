@@ -61,7 +61,7 @@ fy parse --stats large.yaml
 fy format messy.yaml
 
 # Custom indentation (1-9 spaces)
-fy format --indent 4 --width 100 config.yaml
+fy format --indent 4 config.yaml
 
 # Format in-place
 fy format -i config.yaml
@@ -131,7 +131,7 @@ fy convert json config.yaml > config.json
 fy convert yaml data.json > data.yaml
 
 # Compact JSON (no pretty-print)
-fy convert json --pretty=false app.yaml
+fy convert json --no-pretty app.yaml
 ```
 
 ### Lint YAML
@@ -166,7 +166,7 @@ Diagnostics can be suppressed inline with `# fy: disable [rules]`, `# fy: enable
 `--max-alias-bytes` (1 to 1GiB, default 64MiB; suffixes `KiB`, `MiB`, `GiB`). Out-of-range values
 are rejected. The alias budget is per file, so batch runs can use up to workers x `--max-alias-bytes` of
 memory. For `fy convert`, the flags apply to YAML input only. `fy format` accepts `--max-depth`
-and `--max-scan-ahead` (formatting never expands aliases); `--indent` is 1 to 9 and `--width` 20 to 1000.
+and `--max-scan-ahead` (formatting never expands aliases); `--indent` is 1 to 9.
 
 ```bash
 # Allow a large alias expansion

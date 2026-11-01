@@ -58,8 +58,14 @@ class TestLocation:
     @pytest.mark.parametrize("line, column", [(0, 1), (1, 0), (0, 0)])
     def test_location_rejects_a_zero_line_or_column(self, line, column):
         """Line and column count from 1 (#621)."""
-        with pytest.raises(ValueError, match="counted from 1"):
+        with pytest.raises(ValueError, match="must be between 1"):
             lint.Location(line=line, column=column, offset=0)
+
+    @pytest.mark.parametrize("line, column, offset", [(-1, 1, 0), (1, -1, 0), (1, 1, -1)])
+    def test_location_rejects_negative_numbers(self, line, column, offset):
+        """A negative number raises ValueError, not OverflowError (#633)."""
+        with pytest.raises(ValueError, match="must be between"):
+            lint.Location(line=line, column=column, offset=offset)
 
     def test_location_repr(self):
         """Test Location repr."""
@@ -361,6 +367,19 @@ class TestContextLine:
         assert line.line_number == 1
         assert line.content == "key: value"
         assert line.highlights == []
+
+    @pytest.mark.parametrize("line_number", [0, -1])
+    def test_context_line_rejects_a_line_number_below_one(self, line_number):
+        """Line numbers count from 1 (#666, #633)."""
+        with pytest.raises(ValueError, match="line_number must be between 1"):
+            lint.ContextLine(line_number=line_number, content="x", highlights=[])
+
+    def test_context_line_rejects_negative_numbers(self):
+        """Negative offsets and highlight columns raise ValueError (#633)."""
+        with pytest.raises(ValueError, match="column_offset must be between"):
+            lint.ContextLine(line_number=1, content="x", highlights=[], column_offset=-1)
+        with pytest.raises(ValueError, match="highlights must be between"):
+            lint.ContextLine(line_number=1, content="x", highlights=[(-1, 2)])
 
     def test_context_line_with_highlights(self):
         """Test ContextLine with highlights."""

@@ -9,9 +9,11 @@
 
 use crate::conversion::value_to_python;
 use crate::limits;
-use crate::{check_output_len, check_output_size, python_to_yaml, sort_yaml_keys};
+use crate::{check_output_len, check_output_size, python_to_yaml};
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_core::{DumpBudget, Emitter, EmitterConfig, KeyDomain, LimitKind, MaxDocuments};
+use fast_yaml_core::{
+    DumpBudget, Emitter, EmitterConfig, KeyDomain, Layout, LimitKind, MaxDocuments, Value,
+};
 use fast_yaml_parallel::{
     Config as RustParallelConfig, Error as ParallelError, WorkerCount, Workers,
     parse_parallel_with_config, shared_pool,
@@ -36,7 +38,6 @@ use rayon::prelude::*;
 #[derive(Clone)]
 pub struct PyParallelConfig {
     inner: RustParallelConfig,
-    auto_tune: bool,
 }
 
 #[pymethods]
@@ -44,23 +45,19 @@ impl PyParallelConfig {
     #[new]
     #[pyo3(signature = (
         thread_count=None,
-        min_chunk_size=4096,
-        max_chunk_size=10*1024*1024,
+        min_chunk_size=None,
         max_input_bytes=None,
         max_documents=None,
-        auto_tune=true,
         max_depth=None,
         max_alias_bytes=None,
         max_scan_ahead=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        thread_count: Option<usize>,
-        min_chunk_size: usize,
-        max_chunk_size: usize,
+        thread_count: Option<&Bound<'_, PyAny>>,
+        min_chunk_size: Option<&Bound<'_, PyAny>>,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
         max_documents: Option<&Bound<'_, PyAny>>,
-        auto_tune: bool,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
         max_scan_ahead: Option<&Bound<'_, PyAny>>,
@@ -69,34 +66,16 @@ impl PyParallelConfig {
             limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         let workers = limits::workers("thread_count", thread_count)?;
 
-        // Validate chunk sizes
-        if min_chunk_size == 0 {
-            return Err(PyValueError::new_err(
-                "min_chunk_size must be greater than 0",
-            ));
-        }
-        if max_chunk_size == 0 || max_chunk_size < min_chunk_size {
-            return Err(PyValueError::new_err(
-                "max_chunk_size must be greater than 0 and >= min_chunk_size",
-            ));
-        }
-
         let config = python_config()
             .with_workers(workers)
-            .with_sequential_threshold(min_chunk_size)
+            .with_sequential_threshold(resolve_min_chunk_size(min_chunk_size)?)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
             )?)
             .with_parse_limits(parse_limits);
 
-        // Note: max_chunk_size is validated but not stored in new Config API
-        let _ = max_chunk_size;
-
-        Ok(Self {
-            inner: config,
-            auto_tune,
-        })
+        Ok(Self { inner: config })
     }
 
     /// Sets thread pool size.
@@ -107,13 +86,12 @@ impl PyParallelConfig {
     ///
     /// Raises:
     ///     `ValueError`: If thread count exceeds 128
-    fn with_thread_count(&self, count: Option<usize>) -> PyResult<Self> {
+    fn with_thread_count(&self, count: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(Self {
             inner: self
                 .inner
                 .clone()
                 .with_workers(limits::workers("thread_count", count)?),
-            auto_tune: self.auto_tune,
         })
     }
 
@@ -130,7 +108,6 @@ impl PyParallelConfig {
                 .inner
                 .clone()
                 .with_max_input_bytes(limits::bounded::<InputBytes>("max_input_bytes", bytes)?),
-            ..self.clone()
         })
     }
 
@@ -148,7 +125,6 @@ impl PyParallelConfig {
         };
         Ok(Self {
             inner: self.inner.clone().with_parse_limits(parse_limits),
-            ..self.clone()
         })
     }
 
@@ -157,49 +133,15 @@ impl PyParallelConfig {
     /// Default: 4KB
     ///
     /// Raises:
-    ///     `ValueError`: If size is 0
-    fn with_min_chunk_size(&self, size: usize) -> PyResult<Self> {
-        if size == 0 {
-            return Err(PyValueError::new_err(
-                "min_chunk_size must be greater than 0",
-            ));
-        }
+    ///     `ValueError`: If size is outside 1..=4294967295
+    ///     `TypeError`: If size is not an int (`bool` included)
+    fn with_min_chunk_size(&self, size: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            inner: self.inner.clone().with_sequential_threshold(size),
-            auto_tune: self.auto_tune,
+            inner: self
+                .inner
+                .clone()
+                .with_sequential_threshold(resolve_min_chunk_size(Some(size))?),
         })
-    }
-
-    /// Sets maximum chunk size in bytes.
-    ///
-    /// Default: 10MB
-    ///
-    /// Raises:
-    ///     `ValueError`: If size is 0
-    fn with_max_chunk_size(&self, size: usize) -> PyResult<Self> {
-        if size == 0 {
-            return Err(PyValueError::new_err(
-                "max_chunk_size must be greater than 0",
-            ));
-        }
-        // Note: max_chunk_size is validated but not stored in new Config API
-        Ok(Self {
-            inner: self.inner.clone(),
-            auto_tune: self.auto_tune,
-        })
-    }
-
-    /// Enable or disable automatic thread count tuning.
-    ///
-    /// When enabled and thread_count is None, the system analyzes the workload
-    /// and chooses an optimal thread count based on document count and size.
-    ///
-    /// Default: true
-    fn with_auto_tune(&self, enabled: bool) -> Self {
-        Self {
-            inner: self.inner.clone(),
-            auto_tune: enabled,
-        }
     }
 
     /// Sets the maximum collection nesting depth; `None` resets to the default.
@@ -217,7 +159,6 @@ impl PyParallelConfig {
         };
         Ok(Self {
             inner: self.inner.clone().with_parse_limits(parse_limits),
-            ..self.clone()
         })
     }
 
@@ -235,7 +176,6 @@ impl PyParallelConfig {
         };
         Ok(Self {
             inner: self.inner.clone().with_parse_limits(parse_limits),
-            ..self.clone()
         })
     }
 
@@ -254,7 +194,6 @@ impl PyParallelConfig {
         };
         Ok(Self {
             inner: self.inner.clone().with_parse_limits(parse_limits),
-            ..self.clone()
         })
     }
 
@@ -262,6 +201,18 @@ impl PyParallelConfig {
     fn __repr__(&self) -> String {
         "ParallelConfig()".to_string()
     }
+}
+
+const DEFAULT_MIN_CHUNK_SIZE: usize = 4096;
+
+fn resolve_min_chunk_size(arg: Option<&Bound<'_, PyAny>>) -> PyResult<usize> {
+    limits::in_range_or(
+        "min_chunk_size",
+        1,
+        limits::U32_MAX,
+        DEFAULT_MIN_CHUNK_SIZE,
+        arg,
+    )
 }
 
 /// Auto-tune thread count based on document count and average size.
@@ -350,10 +301,8 @@ fn parse_parallel(
 /// Args:
 ///     documents: Iterable of Python objects to serialize
 ///     config: Optional parallel processing configuration
-///     allow_unicode: Allow unicode characters (default: true)
 ///     sort_keys: Sort dictionary keys alphabetically (default: false)
 ///     indent: Indentation width in spaces (default: 2)
-///     width: Maximum line width (default: 80)
 ///     default_flow_style: Force flow style for collections (default: None)
 ///     explicit_start: Add explicit document start marker (default: false)
 ///
@@ -372,10 +321,8 @@ fn parse_parallel(
 #[pyo3(signature = (
     documents,
     config=None,
-    allow_unicode=true,
     sort_keys=false,
-    indent=2,
-    width=80,
+    indent=None,
     default_flow_style=None,
     explicit_start=false
 ))]
@@ -384,14 +331,11 @@ fn dump_parallel(
     py: Python<'_>,
     documents: &Bound<'_, PyAny>,
     config: Option<&PyParallelConfig>,
-    allow_unicode: bool,
     sort_keys: bool,
-    indent: usize,
-    width: usize,
+    indent: Option<&Bound<'_, PyAny>>,
     default_flow_style: Option<bool>,
     explicit_start: bool,
 ) -> PyResult<String> {
-    let _ = allow_unicode; // Accepted for API compatibility, always true in saphyr
     // Collect documents from Python iterator (requires GIL)
     let iter = documents.try_iter()?;
     let mut yaml_values = Vec::new();
@@ -411,25 +355,19 @@ fn dump_parallel(
     }
 
     // Sort keys if requested (serial, before parallel phase)
-    let yaml_values: Vec<_> = if sort_keys {
-        yaml_values
-            .into_iter()
-            .map(|y| sort_yaml_keys(&y))
-            .collect()
-    } else {
-        yaml_values
-    };
+    if sort_keys {
+        yaml_values.iter_mut().for_each(Value::sort_keys);
+    }
 
     // Create emitter config
     let emitter_config = EmitterConfig::new()
         .with_indent(limits::indent(indent)?)
-        .with_width(limits::width(width)?)
-        .with_default_flow_style(default_flow_style)
+        .with_layout(Layout::from_flow_flag(default_flow_style))
         .with_explicit_start(false); // We add separators manually
 
     // An explicit worker setting wins; otherwise auto-tune when enabled
     let threads = config.map_or(WorkerCount::MIN, |cfg| match cfg.inner.workers() {
-        Workers::Auto if cfg.auto_tune => {
+        Workers::Auto => {
             let avg_size = if yaml_values.is_empty() {
                 0
             } else {

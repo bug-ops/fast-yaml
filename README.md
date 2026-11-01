@@ -10,7 +10,7 @@
 
 **High-performance YAML 1.2.2 parser for Python and Node.js, powered by Rust.**
 
-Drop-in replacement for PyYAML and js-yaml. Matches or beats PyYAML C on small/medium files, **2-4x faster** than pure Python, **1.2-1.4x faster** than js-yaml. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
+Near drop-in replacement for PyYAML and js-yaml (exception: `safe_dump(width=..., allow_unicode=...)` raises `TypeError`, see the FAQ). Matches or beats PyYAML C on small/medium files, **2-4x faster** than pure Python, **1.2-1.4x faster** than js-yaml. Full YAML 1.2.2 Core Schema compliance, comprehensive linting, and multi-threaded parallel processing.
 
 > [!IMPORTANT]
 > **YAML 1.2.2 Compliance** — Unlike PyYAML (YAML 1.1), `fast-yaml` follows the modern YAML 1.2.2 specification. This means `yes/no/on/off` are strings, not booleans.
@@ -158,7 +158,7 @@ Every `fy` command rejects inputs over 100 MiB by default, like the library and 
 
 - **High Performance** — Matches PyYAML C on small/medium files, 2-4x faster than pure Python
 - **YAML 1.2.2** — Full Core Schema compliance
-- **Drop-in API** — Compatible with PyYAML/js-yaml
+- **Familiar API** — PyYAML/js-yaml-shaped (`safe_dump` no longer accepts `width` or `allow_unicode`)
 - **Batch Processing** — Multi-file operations with parallel workers, glob patterns, .gitignore support
 - **Linting** — Rich diagnostics with line/column tracking
 - **Parallel** — Multi-threaded processing for large files
@@ -373,7 +373,6 @@ yaml_str = fast_yaml.safe_dump(data)
 yaml_str = fast_yaml.dump(
     data,
     indent=2,
-    width=80,
     explicit_start=True,
     sort_keys=False,
 )
@@ -476,7 +475,7 @@ PyYAML is excellent. Use fast-yaml when you need performance (2-4x faster than p
 <details>
 <summary><b>Is this a drop-in replacement?</b></summary>
 
-For `safe_*` functions, yes. Just change `import yaml` to `import fast_yaml as yaml`. Note that YAML 1.2.2 has different boolean/octal handling.
+For most `safe_*` calls, yes: change `import yaml` to `import fast_yaml as yaml`. Not for every call: `safe_dump(width=..., allow_unicode=...)` (and `dump`, `safe_dump_all`) now raises `TypeError`, because the emitter never wrapped lines or escaped unicode; drop those arguments. Also, `default_flow_style=None` writes block style. Note that YAML 1.2.2 has different boolean/octal handling.
 
 </details>
 

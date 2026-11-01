@@ -6,6 +6,7 @@
 //! yamllint 1.38 for every document both parsers accept.
 
 use super::RuleId;
+use crate::OneBased;
 use crate::config::RuleName;
 use serde::{Deserialize, Deserializer, Serialize};
 
@@ -138,14 +139,6 @@ impl super::LintRule for IndentationRule {
         RuleId::BuiltIn(RuleName::Indentation)
     }
 
-    fn name(&self) -> &'static str {
-        "Indentation"
-    }
-
-    fn description(&self) -> &'static str {
-        "Checks for consistent indentation throughout the YAML file"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
@@ -223,7 +216,7 @@ fn machine_problems(
 fn mixed_whitespace(context: &LintContext) -> Vec<Finding> {
     let ctx = context.source_context();
     let mut diagnostics = Vec::new();
-    for line_num in 1..=ctx.line_count() {
+    for line_num in (0..ctx.line_count()).map(OneBased::from_index) {
         let Some(line) = ctx.get_line(line_num) else {
             continue;
         };

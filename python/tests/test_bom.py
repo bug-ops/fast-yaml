@@ -60,9 +60,9 @@ def test_format_files_keeps_a_leading_bom(tmp_path):
     from fast_yaml._core import batch
 
     path = _write(tmp_path, "bom.yaml", f"{BOM}# c\na:   1\n".encode())
-    [(_, content, error)] = batch.format_files([path])
-    assert error is None
-    assert content == f"{BOM}a: 1\n"
+    [result] = batch.format_files([path])
+    assert isinstance(result, batch.FormatResult.Formatted)
+    assert result.content == f"{BOM}a: 1\n"
 
 
 def test_format_files_in_place_leaves_a_formatted_bom_file_unchanged(tmp_path):
@@ -82,11 +82,13 @@ def test_bom_less_utf16_and_utf32_are_reported_as_unsupported(tmp_path, encoding
     path = _write(tmp_path, "wide.yaml", "a: 1\n".encode(encoding))
     result = batch.process_files([path])
     assert result.failed == 1
-    [(_, message)] = result.errors()
-    assert "unsupported encoding" in message.lower()
-    [(_, content, error)] = batch.format_files([path])
-    assert content is None
-    assert "unsupported encoding" in error.lower()
+    [(_, error)] = result.errors()
+    assert error.kind == batch.FileErrorKind.Decode
+    assert "unsupported encoding" in error.message.lower()
+    [formatted] = batch.format_files([path])
+    assert isinstance(formatted, batch.FormatResult.Failed)
+    assert formatted.error.kind == batch.FileErrorKind.Decode
+    assert "unsupported encoding" in formatted.error.message.lower()
 
 
 @pytest.mark.parametrize(

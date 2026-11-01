@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{AlwaysTrue, RuleOptions};
 use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
-use crate::{Finding, LintConfig, LintContext, Severity, SourceContext, Span};
+use crate::{Finding, LintConfig, LintContext, OneBased, Severity, SourceContext, Span};
 use std::collections::HashMap;
 
 /// Rule to detect duplicate and unused anchor definitions.
@@ -57,14 +57,6 @@ impl RuleOptions for InvalidAnchorsOptions {}
 impl super::LintRule for InvalidAnchorsRule {
     fn id(&self) -> RuleId<'_> {
         RuleId::BuiltIn(RuleName::InvalidAnchor)
-    }
-
-    fn name(&self) -> &'static str {
-        "Invalid Anchors"
-    }
-
-    fn description(&self) -> &'static str {
-        "Detects duplicate anchor definitions"
     }
 
     fn default_severity(&self) -> Severity {
@@ -137,7 +129,7 @@ fn scan_anchors(
     };
 
     for (line_idx, (line_start_offset, line)) in source_lines(source).enumerate() {
-        let line_number = line_idx + 1; // 1-indexed
+        let line_number = OneBased::from_index(line_idx);
         let state = &mut scan.state;
 
         // ── Document boundary: reset anchor map ──────────────────────────
@@ -207,8 +199,8 @@ struct AnchorScan<'a> {
 
 /// An anchor definition of the current document.
 struct Anchor {
-    /// 1-indexed line of the first definition of the name.
-    first_line: usize,
+    /// Line of the first definition of the name.
+    first_line: OneBased,
     /// Span of the latest `&name`.
     span: Span,
     used: bool,
@@ -238,7 +230,7 @@ impl AnchorScan<'_> {
         self.seen.clear();
     }
 
-    fn scan_line(&mut self, line: &str, line_number: usize, line_start_offset: usize) {
+    fn scan_line(&mut self, line: &str, line_number: OneBased, line_start_offset: usize) {
         let bytes = line.as_bytes();
         let mut i = 0;
 

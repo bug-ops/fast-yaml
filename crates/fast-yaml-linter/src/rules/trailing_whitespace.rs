@@ -1,6 +1,7 @@
 //! Rule to detect trailing whitespace.
 
 use super::RuleId;
+use crate::OneBased;
 use crate::config::RuleName;
 use crate::{Finding, LintConfig, LintContext, Severity};
 
@@ -10,14 +11,6 @@ pub struct TrailingWhitespaceRule;
 impl super::LintRule for TrailingWhitespaceRule {
     fn id(&self) -> RuleId<'_> {
         RuleId::BuiltIn(RuleName::TrailingWhitespace)
-    }
-
-    fn name(&self) -> &'static str {
-        "Trailing Whitespace"
-    }
-
-    fn description(&self) -> &'static str {
-        "Detects trailing whitespace at the end of lines"
     }
 
     fn default_severity(&self) -> Severity {
@@ -30,7 +23,7 @@ impl super::SourceRule for TrailingWhitespaceRule {
         let mut diagnostics = Vec::new();
         let ctx = context.source_context();
 
-        for line_num in 1..=ctx.line_count() {
+        for line_num in (0..ctx.line_count()).map(OneBased::from_index) {
             if let Some(line) = ctx.get_line(line_num) {
                 let trimmed = line.trim_end();
 

@@ -75,8 +75,7 @@ describe('batch input', () => {
     const file = path.join(tmpDir, 'bom.yaml');
     fs.writeFileSync(file, `${BOM}# c\na:   1\n`);
     const [result] = formatFiles([file]);
-    expect(result.error).toBeUndefined();
-    expect(result.content).toBe(`${BOM}a: 1\n`);
+    expect(result).toEqual({ status: 'formatted', path: file, content: `${BOM}a: 1\n` });
   });
 
   it('leaves a formatted BOM file unchanged in place', () => {
@@ -105,10 +104,15 @@ describe('batch input', () => {
       fs.writeFileSync(file, data);
       const processed = processFiles([file]);
       expect(processed.failed, name).toBe(1);
-      expect(processed.errors[0].message.toLowerCase(), name).toContain('unsupported encoding');
+      expect(processed.errors[0].error.message.toLowerCase(), name).toContain(
+        'unsupported encoding'
+      );
       const [formatted] = formatFiles([file]);
-      expect(formatted.content, name).toBeUndefined();
-      expect(formatted.error?.toLowerCase(), name).toContain('unsupported encoding');
+      expect(formatted.status, name).toBe('failed');
+      if (formatted.status === 'failed') {
+        expect(formatted.error.kind, name).toBe('decode');
+        expect(formatted.error.message.toLowerCase(), name).toContain('unsupported encoding');
+      }
     }
   });
 });

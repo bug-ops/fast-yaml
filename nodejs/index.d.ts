@@ -98,6 +98,7 @@ export type LintRulesConfig = { [R in LintRuleName]?: RuleEntry<R> } & {
   /** yamllint's name for `invalid-anchor`. */
   anchors?: RuleEntry<'invalid-anchor'>
 }
+
 /**
  * YAML linter with configurable rules.
  *
@@ -193,9 +194,9 @@ export interface BatchConfig {
   sequentialThreshold?: number
   /** Indentation width in spaces (integer, 1..=9, default: 2) */
   indent?: number
-  /** Maximum line width (integer, 20..=1000, default: 80) */
+  /** Removed: batch formatting never wrapped lines; passing it throws. */
   width?: number
-  /** Sort dictionary keys alphabetically (default: false) */
+  /** Removed: batch formatting never reorders keys; passing it throws. */
   sortKeys?: boolean
   /**
    * Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections stop at 255 levels;
@@ -226,8 +227,8 @@ export interface BatchConfig {
 export interface BatchError {
   /** Path to the failed file */
   path: string
-  /** Error message */
-  message: string
+  /** What went wrong */
+  error: FileError
 }
 
 /** Aggregated results from batch processing. */
@@ -286,10 +287,9 @@ export interface DiagnosticContext {
 export interface DumpOptions {
   /** If true, sort object keys alphabetically (default: false) */
   sortKeys?: boolean
-  /**
-   * Allow unicode characters (default: true).
-   * Note: yaml-rust2 always outputs unicode; this is accepted for API compatibility.
-   */
+  /** Removed: the emitter never wrapped lines; passing it throws. */
+  width?: number
+  /** Removed: output is always unicode; passing it throws. */
   allowUnicode?: boolean
   /**
    * Indentation width in spaces (default: 2).
@@ -297,43 +297,43 @@ export interface DumpOptions {
    */
   indent?: number
   /**
-   * Maximum line width for wrapping (default: 80).
-   * Must be an integer in 20-1000; other values throw.
-   */
-  width?: number
-  /**
-   * Default flow style for collections (default: null).
-   * - null: Use block style (multi-line)
-   * - true: Force flow style (inline: [...], {...})
-   * - false: Force block style (explicit)
+   * Collection style (default: null).
+   * - true: flow style (inline: [...], {...})
+   * - false or null: block style (multi-line)
    */
   defaultFlowStyle?: boolean
   /** Add explicit document start marker `---` (default: false). */
   explicitStart?: boolean
 }
 
-/** Outcome of processing a single file. */
-export declare const enum FileOutcome {
-  /** File processed successfully */
-  Success = 'Success',
-  /** File formatted and content changed */
-  Changed = 'Changed',
-  /** File unchanged (already formatted) */
-  Unchanged = 'Unchanged',
-  /** Processing failed */
-  Error = 'Error'
+/** Failure of one file: its class and the full message. */
+export interface FileError {
+  /** Class of the failure */
+  kind: FileErrorKind
+  /** Human-readable message */
+  message: string
 }
 
-/** Result for a single file with path context. */
-export interface FileResult {
-  /** Path to the processed file */
-  path: string
-  /** Processing outcome */
-  outcome: FileOutcome
-  /** Processing duration in milliseconds */
-  durationMs: number
-  /** Error message if outcome is Error */
-  error?: string
+/** Class of a failure, the same for every file-level error. */
+export declare const enum FileErrorKind {
+  /** Reading the file failed, including a path that is not a regular file */
+  Io = 'io',
+  /** The file is not UTF-8 text */
+  Decode = 'decode',
+  /** The text is not valid YAML */
+  Parse = 'parse',
+  /** A resource limit was exceeded */
+  Limit = 'limit',
+  /** Emitting the formatted document failed */
+  Format = 'format',
+  /** The file holds no YAML document */
+  EmptyDocument = 'emptyDocument',
+  /** Formatting would drop comments */
+  Comments = 'comments',
+  /** Writing the file failed */
+  Write = 'write',
+  /** The worker pool could not be built */
+  ThreadPool = 'threadPool',
 }
 
 /**
@@ -356,7 +356,7 @@ export interface FileResult {
  * const { formatFiles } = require('fastyaml-rs');
  * const results = formatFiles(['file1.yaml']);
  * results.forEach(r => {
- *   if (r.content) console.log(r.content);
+ *   if (r.status === 'formatted') console.log(r.content);
  * });
  * ```
  */
@@ -387,15 +387,17 @@ export declare function formatFiles(paths: Array<string>, config?: BatchConfig |
  */
 export declare function formatFilesInPlace(paths: Array<string>, config?: BatchConfig | undefined | null): BatchResult
 
-/** Formatted file result. */
-export interface FormatResult {
-  /** Path to the file */
-  path: string
-  /** Formatted content (null if error) */
-  content?: string
-  /** Error message (null if success) */
-  error?: string
-}
+/**
+ * Formatted file result: `{ status: 'formatted', path, content }` or
+ * `{ status: 'failed', path, error }`.
+ */
+export type FormatResult =
+  | { status: 'formatted'; /** Path to the file */
+    path: string; /** Formatted content */
+  content: string }
+  | { status: 'failed'; /** Path to the file */
+    path: string; /** What went wrong */
+  error: FileError }
 
 /**
  * Lint YAML source with optional configuration.
@@ -895,7 +897,7 @@ export declare const enum Schema {
   /** Core schema - YAML 1.2.2 Core Schema. */
   CoreSchema = 'CoreSchema',
   /** Failsafe schema - minimal safe subset. */
-  FailsafeSchema = 'FailsafeSchema'
+  FailsafeSchema = 'FailsafeSchema',
 }
 
 /** Diagnostic severity levels. */
@@ -907,7 +909,7 @@ export declare const enum Severity {
   /** Informational message about style or best practices. */
   Info = 'Info',
   /** Suggestion for improvement. */
-  Hint = 'Hint'
+  Hint = 'Hint',
 }
 
 /** A span of text in the source file. */

@@ -2,66 +2,73 @@
 
 use std::path::PathBuf;
 
-use crate::limits::{max_input_bytes, parse_limits, reject_legacy_max_input_size, workers};
+use crate::limits::{
+    max_input_bytes, parse_limits, reject_legacy_max_input_size, reject_removed_option, workers,
+};
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_parallel::{
-    BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
-    FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
+    BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig, Error, ErrorKind,
+    FileProcessor,
 };
 use napi_derive::napi;
 
-use crate::options::{U32_MAX, checked_opt_uint, emitter_indent, emitter_width};
+use crate::options::{U32_MAX, checked_opt_uint, emitter_indent};
 
-/// Outcome of processing a single file.
-#[napi(string_enum)]
+/// Class of a failure, the same for every file-level error.
+#[napi(string_enum = "camelCase")]
 #[derive(Debug, Clone, Copy)]
-pub enum FileOutcome {
-    /// File processed successfully
-    Success,
-    /// File formatted and content changed
-    Changed,
-    /// File unchanged (already formatted)
-    Unchanged,
-    /// Processing failed
-    Error,
+pub enum FileErrorKind {
+    /// Reading the file failed, including a path that is not a regular file
+    Io,
+    /// The file is not UTF-8 text
+    Decode,
+    /// The text is not valid YAML
+    Parse,
+    /// A resource limit was exceeded
+    Limit,
+    /// Emitting the formatted document failed
+    Format,
+    /// The file holds no YAML document
+    EmptyDocument,
+    /// Formatting would drop comments
+    Comments,
+    /// Writing the file failed
+    Write,
+    /// The worker pool could not be built
+    ThreadPool,
 }
 
-impl From<&RustFileOutcome> for FileOutcome {
-    fn from(outcome: &RustFileOutcome) -> Self {
-        match outcome {
-            RustFileOutcome::Success { .. } => Self::Success,
-            RustFileOutcome::Changed { .. } => Self::Changed,
-            RustFileOutcome::Unchanged { .. } => Self::Unchanged,
-            RustFileOutcome::Error { .. } => Self::Error,
+impl From<ErrorKind> for FileErrorKind {
+    fn from(kind: ErrorKind) -> Self {
+        match kind {
+            ErrorKind::Io => Self::Io,
+            ErrorKind::Decode => Self::Decode,
+            ErrorKind::Parse => Self::Parse,
+            ErrorKind::Limit => Self::Limit,
+            ErrorKind::Format => Self::Format,
+            ErrorKind::EmptyDocument => Self::EmptyDocument,
+            ErrorKind::Comments => Self::Comments,
+            ErrorKind::Write => Self::Write,
+            ErrorKind::ThreadPool => Self::ThreadPool,
         }
     }
 }
 
-/// Result for a single file with path context.
+/// Failure of one file: its class and the full message.
 #[napi(object)]
 #[derive(Debug, Clone)]
-pub struct FileResult {
-    /// Path to the processed file
-    pub path: String,
-    /// Processing outcome
-    pub outcome: FileOutcome,
-    /// Processing duration in milliseconds
-    pub duration_ms: f64,
-    /// Error message if outcome is Error
-    pub error: Option<String>,
+pub struct FileError {
+    /// Class of the failure
+    pub kind: FileErrorKind,
+    /// Human-readable message
+    pub message: String,
 }
 
-impl From<RustFileResult> for FileResult {
-    fn from(result: RustFileResult) -> Self {
-        let error = match &result.outcome {
-            RustFileOutcome::Error { error, .. } => Some(error.to_string()),
-            _ => None,
-        };
+impl From<&Error> for FileError {
+    fn from(error: &Error) -> Self {
         Self {
-            path: result.path.to_string_lossy().to_string(),
-            outcome: (&result.outcome).into(),
-            duration_ms: result.outcome.duration().as_secs_f64() * 1000.0,
-            error,
+            kind: error.kind().into(),
+            message: error.to_string(),
         }
     }
 }
@@ -72,8 +79,8 @@ impl From<RustFileResult> for FileResult {
 pub struct BatchError {
     /// Path to the failed file
     pub path: String,
-    /// Error message
-    pub message: String,
+    /// What went wrong
+    pub error: FileError,
 }
 
 /// Aggregated results from batch processing.
@@ -108,7 +115,7 @@ impl From<RustBatchResult> for BatchResult {
                 .iter()
                 .map(|(p, e)| BatchError {
                     path: p.to_string_lossy().to_string(),
-                    message: e.to_string(),
+                    error: e.into(),
                 })
                 .collect(),
         }
@@ -129,9 +136,9 @@ pub struct BatchConfig {
     pub sequential_threshold: Option<f64>,
     /// Indentation width in spaces (integer, 1..=9, default: 2)
     pub indent: Option<f64>,
-    /// Maximum line width (integer, 20..=1000, default: 80)
+    /// Removed: batch formatting never wrapped lines; passing it throws.
     pub width: Option<f64>,
-    /// Sort dictionary keys alphabetically (default: false)
+    /// Removed: batch formatting never reorders keys; passing it throws.
     pub sort_keys: Option<bool>,
     /// Maximum collection nesting depth (integer, 1..=512, default: 256); flow collections stop at 255 levels;
     /// applies to `processFiles` and `formatFiles`.
@@ -154,6 +161,8 @@ impl BatchConfig {
     fn to_rust_config(&self) -> napi::Result<RustConfig> {
         let mut config = RustConfig::new().with_workers(workers("workers", self.workers)?);
         reject_legacy_max_input_size(self.max_input_size)?;
+        reject_removed_option("width", self.width.is_some())?;
+        reject_removed_option("sortKeys", self.sort_keys.is_some())?;
         config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
         if let Some(t) =
             checked_opt_uint("sequentialThreshold", self.sequential_threshold, 0, U32_MAX)?
@@ -171,7 +180,6 @@ impl BatchConfig {
     fn to_emitter_config(&self) -> napi::Result<EmitterConfig> {
         Ok(EmitterConfig::new()
             .with_indent(emitter_indent(self.indent)?)
-            .with_width(emitter_width(self.width)?)
             .with_parse_limits(parse_limits(
                 self.max_depth,
                 None,
@@ -181,16 +189,25 @@ impl BatchConfig {
     }
 }
 
-/// Formatted file result.
-#[napi(object)]
+/// Formatted file result: `{ status: 'formatted', path, content }` or
+/// `{ status: 'failed', path, error }`.
+#[napi(discriminant = "status", discriminant_case = "lowercase")]
 #[derive(Debug, Clone)]
-pub struct FormatResult {
-    /// Path to the file
-    pub path: String,
-    /// Formatted content (null if error)
-    pub content: Option<String>,
-    /// Error message (null if success)
-    pub error: Option<String>,
+pub enum FormatResult {
+    /// The file was formatted
+    Formatted {
+        /// Path to the file
+        path: String,
+        /// Formatted content
+        content: String,
+    },
+    /// The file could not be formatted
+    Failed {
+        /// Path to the file
+        path: String,
+        /// What went wrong
+        error: FileError,
+    },
 }
 
 /// Process files and return batch result.
@@ -245,7 +262,7 @@ pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> napi::R
 /// const { formatFiles } = require('fastyaml-rs');
 /// const results = formatFiles(['file1.yaml']);
 /// results.forEach(r => {
-///   if (r.content) console.log(r.content);
+///   if (r.status === 'formatted') console.log(r.content);
 /// });
 /// ```
 #[napi(catch_unwind)]
@@ -265,17 +282,15 @@ pub fn format_files(
     Ok(results
         .into_iter()
         .map(|(path, result)| {
-            let path_str = path.to_string_lossy().to_string();
+            let path = path.to_string_lossy().to_string();
             match result {
-                Ok(output) => FormatResult {
-                    path: path_str,
-                    content: Some(output.formatted),
-                    error: None,
+                Ok(output) => FormatResult::Formatted {
+                    path,
+                    content: output.formatted,
                 },
-                Err(e) => FormatResult {
-                    path: path_str,
-                    content: None,
-                    error: Some(e.to_string()),
+                Err(e) => FormatResult::Failed {
+                    path,
+                    error: (&e).into(),
                 },
             }
         })

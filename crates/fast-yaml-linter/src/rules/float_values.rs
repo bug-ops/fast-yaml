@@ -70,14 +70,6 @@ impl super::LintRule for FloatValuesRule {
         RuleId::BuiltIn(RuleName::FloatValues)
     }
 
-    fn name(&self) -> &'static str {
-        "Float Values"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates float number representations (decimal point, scientific notation, NaN, Inf)"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

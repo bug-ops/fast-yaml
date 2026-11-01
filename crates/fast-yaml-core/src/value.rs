@@ -5,6 +5,7 @@
 //! type appears in this API.
 
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::sync::LazyLock;
@@ -570,6 +571,113 @@ impl Mapping {
     /// Iterates over the values in insertion order.
     pub fn values(&self) -> impl ExactSizeIterator<Item = &Value> {
         self.0.values()
+    }
+}
+
+impl Value {
+    /// Sorts the keys of every mapping and the members of every set, at any depth, in place.
+    ///
+    /// Order is by kind (null, booleans, numbers, strings, sequences, mappings, sets); numbers
+    /// compare by value across `Int`, `BigInt` and `Float` and strings by code point. Sequences
+    /// keep their element order, but mappings and sets inside them are sorted too, and entries that compare equal keep their
+    /// insertion order. The interior of a key or set member is not re-sorted. Nesting is walked
+    /// on the heap, so depth costs no call stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Emitter, Parser};
+    ///
+    /// let mut value = Parser::parse_str("{b: 1, a: {d: 1, c: 2}, 10: x, 9: y}")?.unwrap();
+    /// value.sort_keys();
+    /// assert_eq!(Emitter::emit_str(&value)?, "9: y\n10: x\na:\n  c: 2\n  d: 1\nb: 1\n");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn sort_keys(&mut self) {
+        let mut pending = vec![self];
+        while let Some(value) = pending.pop() {
+            match value {
+                Self::Sequence(items) => pending.extend(items.iter_mut()),
+                Self::Mapping(map) => {
+                    map.0.sort_by(|left, _, right, _| key_order(left, right));
+                    pending.extend(map.0.values_mut());
+                }
+                Self::Set(set) => set.0.sort_by(key_order),
+                _ => {}
+            }
+        }
+    }
+
+    const fn order_rank(&self) -> u8 {
+        match self {
+            Self::Null => 0,
+            Self::Bool(_) => 1,
+            Self::Int(_) | Self::BigInt(_) | Self::Float(_) => 2,
+            Self::String(_) => 3,
+            Self::Sequence(_) => 4,
+            Self::Mapping(_) => 5,
+            Self::Set(_) => 6,
+        }
+    }
+}
+
+fn key_order(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Bool(a), Value::Bool(b)) => a.cmp(b),
+        (Value::String(a), Value::String(b)) => a.cmp(b),
+        (
+            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+            Value::Int(_) | Value::BigInt(_) | Value::Float(_),
+        ) => number_order(left, right),
+        _ => left.order_rank().cmp(&right.order_rank()),
+    }
+}
+
+/// Orders numbers: integers exactly, an integer against a float by `f64::total_cmp` with the
+/// integer first on a tie, which keeps the order total.
+fn number_order(left: &Value, right: &Value) -> Ordering {
+    match (left, right) {
+        (Value::Int(a), Value::Int(b)) => a.cmp(b),
+        (Value::BigInt(a), Value::BigInt(b)) => big_order(a.canonical(), b.canonical()),
+        (Value::BigInt(big), Value::Int(_)) => big_vs_int(big),
+        (Value::Int(_), Value::BigInt(big)) => big_vs_int(big).reverse(),
+        (Value::Float(a), Value::Float(b)) => a.get().total_cmp(&b.get()),
+        (Value::Float(a), integer) => integer_as_f64(integer)
+            .total_cmp(&a.get())
+            .then(Ordering::Less)
+            .reverse(),
+        (integer, Value::Float(b)) => integer_as_f64(integer)
+            .total_cmp(&b.get())
+            .then(Ordering::Less),
+        _ => Ordering::Equal,
+    }
+}
+
+/// A big integer lies outside `i64`, so its sign alone orders it against any `Int`.
+fn big_vs_int(big: &BigInt) -> Ordering {
+    if big.canonical().starts_with('-') {
+        Ordering::Less
+    } else {
+        Ordering::Greater
+    }
+}
+
+fn big_order(left: &str, right: &str) -> Ordering {
+    match (left.strip_prefix('-'), right.strip_prefix('-')) {
+        (Some(a), Some(b)) => (a.len(), a).cmp(&(b.len(), b)).reverse(),
+        (Some(_), None) => Ordering::Less,
+        (None, Some(_)) => Ordering::Greater,
+        (None, None) => (left.len(), left).cmp(&(right.len(), right)),
+    }
+}
+
+#[allow(clippy::cast_precision_loss)] // ordering against floats only needs the nearest f64
+fn integer_as_f64(value: &Value) -> f64 {
+    match value {
+        Value::Int(i) => *i as f64,
+        // The canonical text is a valid decimal integer, so parsing cannot fail.
+        Value::BigInt(big) => big.canonical().parse().unwrap_or(f64::NAN),
+        _ => f64::NAN,
     }
 }
 
@@ -1256,5 +1364,128 @@ mod tests {
         );
         assert_eq!(Float::parse("5e-324").unwrap(), Float::new(5e-324));
         assert_eq!(Float::parse("1e-400").unwrap(), Float::new(0.0));
+    }
+
+    fn keyed(keys: impl IntoIterator<Item = Value>) -> Value {
+        Value::Mapping(keys.into_iter().map(|k| (k, Value::Null)).collect())
+    }
+
+    fn keys_of(value: &Value) -> Vec<Value> {
+        let Value::Mapping(map) = value else {
+            panic!("not a mapping")
+        };
+        map.keys().cloned().collect()
+    }
+
+    #[test]
+    fn sort_keys_orders_numbers_by_value_and_kinds_by_rank() {
+        let big = BigInt::parse("9223372036854775808").unwrap();
+        let mut value = keyed([
+            text("x"),
+            Value::Int(10),
+            Value::Bool(true),
+            Value::Float(Float::new(9.5)),
+            Value::BigInt(big.clone()),
+            Value::Int(9),
+            Value::Null,
+            Value::Bool(false),
+        ]);
+        value.sort_keys();
+        assert_eq!(
+            keys_of(&value),
+            [
+                Value::Null,
+                Value::Bool(false),
+                Value::Bool(true),
+                Value::Int(9),
+                Value::Float(Float::new(9.5)),
+                Value::Int(10),
+                Value::BigInt(big),
+                text("x"),
+            ]
+        );
+    }
+
+    #[test]
+    fn sort_keys_recurses_through_sequences_and_values_and_sorts_sets() {
+        let inner = keyed([text("b"), text("a")]);
+        let mut map = Mapping::new();
+        map.insert(text("k"), Value::Sequence(vec![inner]));
+        let mut value = Value::Mapping(map);
+        let mut set = Value::Set([Value::Int(2), Value::Int(1)].into_iter().collect());
+        value.sort_keys();
+        set.sort_keys();
+        let Value::Mapping(map) = &value else {
+            unreachable!()
+        };
+        let Value::Sequence(items) = &map[&text("k")] else {
+            unreachable!()
+        };
+        assert_eq!(keys_of(&items[0]), [text("a"), text("b")]);
+        let Value::Set(set) = &set else {
+            unreachable!()
+        };
+        assert_eq!(
+            set.iter().cloned().collect::<Vec<_>>(),
+            [Value::Int(1), Value::Int(2)]
+        );
+    }
+
+    #[test]
+    fn sort_keys_survives_deep_nesting() {
+        let mut value = Value::Null;
+        for _ in 0..100_000 {
+            value = Value::Sequence(vec![value]);
+        }
+        value.sort_keys();
+        std::mem::forget(value);
+    }
+
+    fn any_number() -> impl proptest::strategy::Strategy<Value = Value> {
+        use proptest::prelude::*;
+        let special = prop_oneof![
+            Just(f64::NAN),
+            Just(0.0),
+            Just(-0.0),
+            Just(f64::INFINITY),
+            Just(f64::NEG_INFINITY),
+            Just(9_007_199_254_740_992.0),
+            any::<f64>(),
+        ];
+        let edge = prop_oneof![
+            Just(i64::MIN),
+            Just(i64::MAX),
+            Just(9_007_199_254_740_991),
+            Just(9_007_199_254_740_993),
+            any::<i64>(),
+        ];
+        let big = prop_oneof![
+            Just("9223372036854775808"),
+            Just("-9223372036854775809"),
+            Just("123456789012345678901234567890"),
+            Just("-123456789012345678901234567890"),
+        ];
+        prop_oneof![
+            edge.prop_map(Value::Int),
+            special.prop_map(|f| Value::Float(Float::new(f))),
+            big.prop_map(|b| Value::BigInt(BigInt::parse(b).unwrap())),
+        ]
+    }
+
+    proptest::proptest! {
+        #[test]
+        fn key_order_is_a_total_order_over_numbers(
+            a in any_number(), b in any_number(), c in any_number()
+        ) {
+            use std::cmp::Ordering::{Equal, Greater, Less};
+            proptest::prop_assert_eq!(key_order(&a, &b), key_order(&b, &a).reverse());
+            proptest::prop_assert_eq!(key_order(&a, &a), Equal);
+            if key_order(&a, &b) != Greater && key_order(&b, &c) != Greater {
+                proptest::prop_assert_ne!(key_order(&a, &c), Greater);
+            }
+            if key_order(&a, &b) == Less && key_order(&b, &c) == Less {
+                proptest::prop_assert_eq!(key_order(&a, &c), Less);
+            }
+        }
     }
 }

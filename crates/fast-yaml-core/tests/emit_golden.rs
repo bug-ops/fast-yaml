@@ -2,7 +2,7 @@
 //!
 //! Each case names the divergence it pins; every output also reads back as the same value.
 
-use fast_yaml_core::{Emitter, EmitterConfig, Indent, Mapping, Parser, Set, Value};
+use fast_yaml_core::{Emitter, EmitterConfig, Indent, Layout, Mapping, Parser, Set, Value};
 
 fn text(s: &str) -> Value {
     Value::String(s.into())
@@ -24,7 +24,7 @@ fn block() -> EmitterConfig {
 }
 
 fn flow() -> EmitterConfig {
-    EmitterConfig::new().with_default_flow_style(Some(true))
+    EmitterConfig::new().with_layout(Layout::Flow)
 }
 
 #[test]

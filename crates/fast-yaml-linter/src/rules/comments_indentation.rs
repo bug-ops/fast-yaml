@@ -36,14 +36,6 @@ impl super::LintRule for CommentsIndentationRule {
         RuleId::BuiltIn(RuleName::CommentsIndentation)
     }
 
-    fn name(&self) -> &'static str {
-        "Comments Indentation"
-    }
-
-    fn description(&self) -> &'static str {
-        "Ensures comments have same indentation as surrounding content"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Info
     }

@@ -105,7 +105,7 @@ pub struct ContextLine {
 impl From<RustContextLine> for ContextLine {
     fn from(line: RustContextLine) -> Self {
         Self {
-            line_number: u32::try_from(line.line_number).unwrap_or(u32::MAX),
+            line_number: u32::try_from(line.line_number.get()).unwrap_or(u32::MAX),
             content: line.content,
             column_offset: u32::try_from(line.column_offset).unwrap_or(u32::MAX),
             truncated_end: line.truncated_end,

@@ -26,13 +26,13 @@ use std::sync::OnceLock;
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{SourceContext, Location, Span};
+/// use fast_yaml_linter::{OneBased, SourceContext, Location, Span};
 ///
 /// let source = "line 1\nline 2\nline 3";
 /// let ctx = SourceContext::new(source);
 ///
-/// assert_eq!(ctx.get_line(1), Some("line 1"));
-/// assert_eq!(ctx.get_line(2), Some("line 2"));
+/// assert_eq!(ctx.get_line(OneBased::FIRST), Some("line 1"));
+/// assert_eq!(ctx.get_line(OneBased::from_index(1)), Some("line 2"));
 /// ```
 #[derive(Debug)]
 pub struct SourceContext<'a> {
@@ -237,7 +237,12 @@ impl<'a> SourceContext<'a> {
         let LineIndex::Wide(cell) = self.line_index.get(line_idx)? else {
             return None;
         };
-        Some(cell.get_or_init(|| CharStarts::new(self.get_line(line_idx + 1).unwrap_or_default())))
+        Some(cell.get_or_init(|| {
+            CharStarts::new(
+                self.get_line(OneBased::from_index(line_idx))
+                    .unwrap_or_default(),
+            )
+        }))
     }
 
     /// Gets a specific line by number (1-indexed), without its line terminator.
@@ -249,18 +254,18 @@ impl<'a> SourceContext<'a> {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::SourceContext;
+    /// use fast_yaml_linter::{OneBased, SourceContext};
     ///
     /// let source = "line 1\nline 2\nline 3";
     /// let ctx = SourceContext::new(source);
     ///
-    /// assert_eq!(ctx.get_line(1), Some("line 1"));
-    /// assert_eq!(ctx.get_line(2), Some("line 2"));
-    /// assert_eq!(ctx.get_line(100), None);
+    /// assert_eq!(ctx.get_line(OneBased::FIRST), Some("line 1"));
+    /// assert_eq!(ctx.get_line(OneBased::from_index(1)), Some("line 2"));
+    /// assert_eq!(ctx.get_line(OneBased::from_index(99)), None);
     /// ```
     #[must_use]
-    pub fn get_line(&self, line_number: usize) -> Option<&'a str> {
-        let idx = line_number.checked_sub(1)?;
+    pub fn get_line(&self, line: OneBased) -> Option<&'a str> {
+        let idx = line.index();
         self.source
             .get(*self.line_starts.get(idx)?..*self.line_ends.get(idx)?)
     }
@@ -298,10 +303,12 @@ impl<'a> SourceContext<'a> {
 
         let mut lines = Vec::with_capacity((last_line + 1).saturating_sub(first_line));
 
-        for line_num in first_line..=last_line {
-            if let Some(content) = self.get_line(line_num) {
+        for line_idx in (first_line - 1)..last_line {
+            let line = OneBased::from_index(line_idx);
+            let line_num = line.get();
+            if let Some(content) = self.get_line(line) {
                 let anchor = (line_num == start_line).then(|| {
-                    let line_start = self.get_line_offset(line_num);
+                    let line_start = self.get_line_offset(line);
                     (
                         span.start.offset().checked_sub(line_start),
                         span.start.column().saturating_sub(1),
@@ -327,7 +334,7 @@ impl<'a> SourceContext<'a> {
                 let highlights: Vec<(usize, usize)> = highlight.into_iter().collect();
 
                 lines.push(ContextLine {
-                    line_number: line_num,
+                    line_number: line,
                     content: window.text.to_string(),
                     column_offset: window.column_offset,
                     truncated_end: window.truncated_end,
@@ -443,27 +450,26 @@ impl<'a> SourceContext<'a> {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::SourceContext;
+    /// use fast_yaml_linter::{OneBased, SourceContext};
     ///
     /// let source = "line 1\nline 2\nline 3";
     /// let ctx = SourceContext::new(source);
     ///
-    /// assert_eq!(ctx.get_line_offset(1), 0);
-    /// assert_eq!(ctx.get_line_offset(2), 7);
-    /// assert_eq!(ctx.get_line_offset(3), 14);
+    /// assert_eq!(ctx.get_line_offset(OneBased::FIRST), 0);
+    /// assert_eq!(ctx.get_line_offset(OneBased::from_index(1)), 7);
+    /// assert_eq!(ctx.get_line_offset(OneBased::from_index(2)), 14);
     /// ```
     #[must_use]
-    pub fn get_line_offset(&self, line_num: usize) -> usize {
-        line_num
-            .checked_sub(1)
-            .and_then(|idx| self.line_starts.get(idx))
+    pub fn get_line_offset(&self, line: OneBased) -> usize {
+        self.line_starts
+            .get(line.index())
             .copied()
             .unwrap_or_default()
     }
 
     /// Typed twin of [`get_line_offset`](Self::get_line_offset).
-    pub(crate) fn line_start(&self, line_num: usize) -> ByteOffset {
-        ByteOffset::new(self.get_line_offset(line_num))
+    pub(crate) fn line_start(&self, line: OneBased) -> ByteOffset {
+        ByteOffset::new(self.get_line_offset(line))
     }
 
     /// Converts the line and char column of `position` to a byte offset.
@@ -471,20 +477,17 @@ impl<'a> SourceContext<'a> {
     /// A column past the end maps to the end of its line, or of the source when the line does
     /// not exist.
     pub(crate) fn byte_offset_of_position(&self, position: SourcePosition) -> ByteOffset {
-        self.byte_offset_at(position.line().get(), position.column().index())
+        self.byte_offset_at(position.line(), position.column().index())
     }
 
-    fn byte_offset_at(&self, line: usize, column: usize) -> ByteOffset {
+    fn byte_offset_at(&self, line: OneBased, column: usize) -> ByteOffset {
         let Some(text) = self.get_line(line) else {
             return ByteOffset::new(self.source.len());
         };
-        let byte_col = line
-            .checked_sub(1)
-            .and_then(|idx| self.char_starts(idx))
-            .map_or_else(
-                || column.min(text.len()),
-                |table| table.byte_of(column, text.len()),
-            );
+        let byte_col = self.char_starts(line.index()).map_or_else(
+            || column.min(text.len()),
+            |table| table.byte_of(column, text.len()),
+        );
         self.line_start(line).add_bytes(byte_col)
     }
 
@@ -492,7 +495,10 @@ impl<'a> SourceContext<'a> {
     #[cfg(test)]
     #[expect(clippy::disallowed_methods)]
     pub(crate) fn byte_offset_of(&self, marker: Marker) -> ByteOffset {
-        self.byte_offset_at(marker.line(), marker.col())
+        OneBased::new(marker.line()).map_or_else(
+            || ByteOffset::new(self.source.len()),
+            |line| self.byte_offset_at(line, marker.col()),
+        )
     }
 
     /// Converts a saphyr marker to a [`Location`] with a 1-indexed char column.
@@ -533,8 +539,13 @@ impl<'a> SourceContext<'a> {
 mod tests {
     use super::*;
 
+    fn line(number: usize) -> OneBased {
+        OneBased::new(number).unwrap()
+    }
+
     fn ctx_offset(ctx: &SourceContext<'_>, line: usize, col: usize) -> usize {
-        ctx.byte_offset_of(Marker::new(0, line, col)).get() - ctx.get_line_offset(line)
+        ctx.byte_offset_of(Marker::new(0, line, col)).get()
+            - ctx.get_line_offset(OneBased::new(line).unwrap())
     }
 
     #[test]
@@ -544,9 +555,9 @@ mod tests {
         for (line, col, byte) in [(1, 6, 6), (2, 4, 5), (3, 3, 3)] {
             assert_eq!(ctx_offset(&ctx, line, col), byte);
         }
-        let offset = ctx.get_line_offset(2) + "ж: ".len();
+        let offset = ctx.get_line_offset(line(2)) + "ж: ".len();
         assert_eq!(ctx.offset_to_location(offset).column(), 4);
-        let offset = ctx.get_line_offset(1) + 6;
+        let offset = ctx.get_line_offset(line(1)) + 6;
         assert_eq!(ctx.offset_to_location(offset).column(), 7);
     }
 
@@ -564,7 +575,8 @@ mod tests {
         let ctx = SourceContext::new("ж: 1\nabc: def\n");
         assert_eq!(ctx_offset(&ctx, 2, 5), 5);
         assert_eq!(
-            ctx.offset_to_location(ctx.get_line_offset(2) + 5).column(),
+            ctx.offset_to_location(ctx.get_line_offset(line(2)) + 5)
+                .column(),
             6
         );
     }
@@ -603,10 +615,13 @@ mod tests {
         let source = "яя: 1\r\nz: 2\r\n";
         let ctx = SourceContext::new(source);
         assert_eq!(ctx_offset(&ctx, 1, 2), "я".len() * 2);
-        let terminator = ctx.get_line_offset(1) + "яя: 1".len();
+        let terminator = ctx.get_line_offset(line(1)) + "яя: 1".len();
         assert_eq!(ctx.offset_to_location(terminator).column(), 6);
         assert_eq!(ctx.offset_to_location(terminator + 1).column(), 7);
-        assert_eq!(ctx.offset_to_location(ctx.get_line_offset(2)).line(), 2);
+        assert_eq!(
+            ctx.offset_to_location(ctx.get_line_offset(line(2))).line(),
+            2
+        );
     }
 
     #[test]
@@ -629,7 +644,7 @@ mod tests {
     fn test_new_single_line() {
         let ctx = SourceContext::new("single line");
         assert_eq!(ctx.line_count(), 1);
-        assert_eq!(ctx.get_line(1), Some("single line"));
+        assert_eq!(ctx.get_line(line(1)), Some("single line"));
     }
 
     #[test]
@@ -642,17 +657,16 @@ mod tests {
     fn test_get_line() {
         let ctx = SourceContext::new("line 1\nline 2\nline 3");
 
-        assert_eq!(ctx.get_line(1), Some("line 1"));
-        assert_eq!(ctx.get_line(2), Some("line 2"));
-        assert_eq!(ctx.get_line(3), Some("line 3"));
-        assert_eq!(ctx.get_line(0), None);
-        assert_eq!(ctx.get_line(4), None);
+        assert_eq!(ctx.get_line(line(1)), Some("line 1"));
+        assert_eq!(ctx.get_line(line(2)), Some("line 2"));
+        assert_eq!(ctx.get_line(line(3)), Some("line 3"));
+        assert_eq!(ctx.get_line(line(4)), None);
     }
 
     #[test]
     fn test_get_line_no_trailing_newline() {
         let ctx = SourceContext::new("line 1\nline 2");
-        assert_eq!(ctx.get_line(2), Some("line 2"));
+        assert_eq!(ctx.get_line(line(2)), Some("line 2"));
     }
 
     #[test]
@@ -688,14 +702,14 @@ mod tests {
         for source in ["a\nб\nc", "a\r\nб\r\nc", "a\rб\rc"] {
             let ctx = SourceContext::new(source);
             assert_eq!(ctx.line_count(), 3, "{source:?}");
-            assert_eq!(ctx.get_line(1), Some("a"));
-            assert_eq!(ctx.get_line(2), Some("б"));
-            assert_eq!(ctx.get_line(3), Some("c"));
-            let loc = ctx.offset_to_location(ctx.get_line_offset(3));
+            assert_eq!(ctx.get_line(line(1)), Some("a"));
+            assert_eq!(ctx.get_line(line(2)), Some("б"));
+            assert_eq!(ctx.get_line(line(3)), Some("c"));
+            let loc = ctx.offset_to_location(ctx.get_line_offset(line(3)));
             assert_eq!((loc.line(), loc.column()), (3, 1));
         }
-        assert_eq!(SourceContext::new("a\r\nb").get_line_offset(2), 3);
-        assert_eq!(SourceContext::new("a\rb").get_line_offset(2), 2);
+        assert_eq!(SourceContext::new("a\r\nb").get_line_offset(line(2)), 3);
+        assert_eq!(SourceContext::new("a\rb").get_line_offset(line(2)), 2);
     }
 
     #[test]
@@ -724,8 +738,8 @@ mod tests {
         assert_eq!(got, [(0, "a"), (2, "б"), (6, "c")]);
         let ctx = SourceContext::new(source);
         for (i, (start, line)) in got.iter().enumerate() {
-            assert_eq!(ctx.get_line_offset(i + 1), *start);
-            assert_eq!(ctx.get_line(i + 1), Some(*line));
+            assert_eq!(ctx.get_line_offset(OneBased::from_index(i)), *start);
+            assert_eq!(ctx.get_line(OneBased::from_index(i)), Some(*line));
         }
     }
 
@@ -767,9 +781,9 @@ mod tests {
         let diagnostic_ctx = ctx.extract_context(span, 1);
 
         assert_eq!(diagnostic_ctx.lines.len(), 3);
-        assert_eq!(diagnostic_ctx.lines[0].line_number, 1);
-        assert_eq!(diagnostic_ctx.lines[1].line_number, 2);
-        assert_eq!(diagnostic_ctx.lines[2].line_number, 3);
+        assert_eq!(diagnostic_ctx.lines[0].line_number.get(), 1);
+        assert_eq!(diagnostic_ctx.lines[1].line_number.get(), 2);
+        assert_eq!(diagnostic_ctx.lines[2].line_number.get(), 3);
 
         assert_eq!(diagnostic_ctx.lines[1].highlights, vec![(1, 6)]);
     }
@@ -966,7 +980,7 @@ mod tests {
         );
         let diagnostic_ctx = ctx.extract_context(span, 5);
 
-        assert!(diagnostic_ctx.lines[0].line_number >= 1);
+        assert!(diagnostic_ctx.lines[0].line_number.get() >= 1);
     }
 
     #[test]
@@ -982,11 +996,10 @@ mod tests {
         let source = "line 1\nline 2\nline 3";
         let ctx = SourceContext::new(source);
 
-        assert_eq!(ctx.get_line_offset(1), 0);
-        assert_eq!(ctx.get_line_offset(2), 7);
-        assert_eq!(ctx.get_line_offset(3), 14);
-        assert_eq!(ctx.get_line_offset(0), 0);
-        assert_eq!(ctx.get_line_offset(100), 0);
+        assert_eq!(ctx.get_line_offset(line(1)), 0);
+        assert_eq!(ctx.get_line_offset(line(2)), 7);
+        assert_eq!(ctx.get_line_offset(line(3)), 14);
+        assert_eq!(ctx.get_line_offset(line(100)), 0);
     }
 
     fn scalar_spans(source: &str) -> Vec<SaphyrSpan> {
@@ -1173,12 +1186,12 @@ impl<'a> LintContext<'a> {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::LintContext;
+    /// use fast_yaml_linter::{LintContext, OneBased};
     ///
     /// let source = "line 1\nline 2";
     /// let context = LintContext::new(source);
     /// assert_eq!(context.source_context().line_count(), 2);
-    /// assert_eq!(context.source_context().get_line(1), Some("line 1"));
+    /// assert_eq!(context.source_context().get_line(OneBased::FIRST), Some("line 1"));
     /// ```
     #[must_use]
     pub const fn source_context(&self) -> &SourceContext<'a> {

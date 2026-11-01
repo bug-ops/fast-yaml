@@ -8,17 +8,26 @@ use crate::config::CommonConfig;
 use crate::io::InputSource;
 use crate::reporter::{ReportEvent, Reporter};
 
+/// Whether `fy parse` reports key and depth statistics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stats {
+    /// Report them.
+    Show,
+    /// Report only that the YAML is valid.
+    Hide,
+}
+
 /// Parse command implementation
 pub struct ParseCommand {
-    show_stats: bool,
+    stats: Stats,
     config: CommonConfig,
     limits: ParseLimits,
 }
 
 impl ParseCommand {
-    pub const fn new(config: CommonConfig, show_stats: bool, limits: ParseLimits) -> Self {
+    pub const fn new(config: CommonConfig, stats: Stats, limits: ParseLimits) -> Self {
         Self {
-            show_stats,
+            stats,
             config,
             limits,
         }
@@ -38,7 +47,7 @@ impl ParseCommand {
             })
             .ok();
 
-        if self.show_stats
+        if self.stats == Stats::Show
             && let Some(ref value) = maybe_value
         {
             print_statistics(value, &reporter);
@@ -120,7 +129,7 @@ mod tests {
         let config = CommonConfig::new().with_output(
             crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
         );
-        let cmd = ParseCommand::new(config, false, ParseLimits::default());
+        let cmd = ParseCommand::new(config, Stats::Hide, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -134,7 +143,7 @@ mod tests {
         let config = CommonConfig::new().with_output(
             crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
         );
-        let cmd = ParseCommand::new(config, false, ParseLimits::default());
+        let cmd = ParseCommand::new(config, Stats::Hide, ParseLimits::default());
         assert!(cmd.execute(&input).is_err());
     }
 
@@ -148,7 +157,7 @@ mod tests {
         let config = CommonConfig::new().with_output(
             crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
         );
-        let cmd = ParseCommand::new(config, false, ParseLimits::default());
+        let cmd = ParseCommand::new(config, Stats::Hide, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -162,7 +171,7 @@ mod tests {
         let config = CommonConfig::new().with_output(
             crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
         );
-        let cmd = ParseCommand::new(config, false, ParseLimits::default());
+        let cmd = ParseCommand::new(config, Stats::Hide, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 
@@ -176,7 +185,7 @@ mod tests {
         let config = CommonConfig::new().with_output(
             crate::config::OutputConfig::new().with_verbosity(crate::config::Verbosity::Quiet),
         );
-        let cmd = ParseCommand::new(config, false, ParseLimits::default());
+        let cmd = ParseCommand::new(config, Stats::Hide, ParseLimits::default());
         assert!(cmd.execute(&input).is_ok());
     }
 

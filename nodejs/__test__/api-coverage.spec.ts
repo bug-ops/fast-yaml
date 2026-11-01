@@ -286,20 +286,6 @@ describe('API Coverage - All Functions', () => {
       });
     });
 
-    it('should work with width option', () => {
-      const options: DumpOptions[] = [
-        { width: 20 },
-        { width: 40 },
-        { width: 80 },
-        { width: 120 },
-        { width: 200 },
-      ];
-      options.forEach((opt) => {
-        const yaml = safeDump({ key: 'value' }, opt);
-        expect(yaml).toBeTruthy();
-      });
-    });
-
     it('should work with default_flow_style option', () => {
       const data = { items: [1, 2, 3] };
       expect(safeDump(data, { default_flow_style: true })).toBeTruthy();
@@ -311,20 +297,16 @@ describe('API Coverage - All Functions', () => {
       expect(safeDump({ key: 'value' }, { explicit_start: false })).toBeTruthy();
     });
 
-    it('should work with allow_unicode option', () => {
-      const data = { text: 'Hello 世界' };
-      expect(safeDump(data, { allow_unicode: true })).toContain('世界');
-      expect(safeDump(data, { allow_unicode: false })).toBeTruthy();
+    it('should keep unicode characters', () => {
+      expect(safeDump({ text: 'Hello 世界' })).toContain('世界');
     });
 
     it('should work with all options combined', () => {
       const options: DumpOptions = {
         sortKeys: true,
         indent: 4,
-        width: 100,
         default_flow_style: false,
         explicit_start: true,
-        allow_unicode: true,
       };
       const yaml = safeDump({ z: 1, a: 2 }, options);
       expect(yaml).toBeTruthy();
@@ -372,7 +354,6 @@ describe('API Coverage - All Functions', () => {
       const options: DumpOptions = {
         sortKeys: true,
         indent: 2,
-        width: 80,
         explicit_start: true,
       };
       const yaml = safeDumpAll(

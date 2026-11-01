@@ -93,10 +93,8 @@ const multiDoc = safeDumpAll([{ a: 1 }, { b: 2 }]);
 ```typescript
 interface DumpOptions {
   sortKeys?: boolean; // Sort object keys alphabetically (default: false)
-  allowUnicode?: boolean; // Allow unicode characters (default: true)
   indent?: number; // Indentation width 1-9 (default: 2)
-  width?: number; // Line width 20-1000 (default: 80)
-  defaultFlowStyle?: boolean; // Force flow style [...], {...} (default: null/block)
+  defaultFlowStyle?: boolean; // true writes flow style [...], {...}; null/false block (default)
   explicitStart?: boolean; // Add '---' document marker (default: false)
 }
 ```
@@ -107,7 +105,6 @@ interface DumpOptions {
 const yaml = safeDump(data, {
   sortKeys: true,
   indent: 4,
-  width: 120,
   explicitStart: true,
 });
 ```
@@ -154,9 +151,11 @@ import { formatFiles, formatFilesInPlace } from 'fastyaml-rs';
 
 // Dry-run: get formatted content without writing
 const results = formatFiles(['config.yaml']);
-for (const { path, content, error } of results) {
-  if (content) {
-    console.log(`${path}: ${content.length} bytes`);
+for (const result of results) {
+  if (result.status === 'formatted') {
+    console.log(`${result.path}: ${result.content.length} bytes`);
+  } else {
+    console.log(`${result.path}: ${result.error.kind} ${result.error.message}`);
   }
 }
 
@@ -172,8 +171,6 @@ interface BatchConfig {
   workers?: number;           // Worker threads (omit = auto, 0 = sequential, max 128)
   maxInputBytes?: number;     // Max file size, 1..1073741824 (default: 100MiB)
   indent?: number;            // Indentation (default: 2)
-  width?: number;             // Line width (default: 80)
-  sortKeys?: boolean;         // Sort keys (default: false)
   maxDepth?: number;          // Max nesting depth, 1..512 (default: 256); processFiles only
   maxAliasBytes?: number;     // Alias-expansion budget per file, 1..1073741824 (default: 64MiB); processFiles only
   maxScanAhead?: number;      // Characters the parser may read past the last node, 1..1073741824 (default: 4Mi)
@@ -195,7 +192,7 @@ interface BatchResult {
 
 interface BatchError {
   path: string;
-  message: string;
+  error: FileError; // { kind: 'io' | 'decode' | 'parse' | 'limit' | 'format' | 'emptyDocument' | 'comments' | 'write' | 'threadPool', message: string }
 }
 ```
 
@@ -252,7 +249,7 @@ safeLoad(bigRootFlowJson, { maxScanAhead: 2 ** 26 }); // default 4Mi characters,
 - `maxScanAhead` bounds how far the parser reads past the last node it reported, which bounds parser memory (about 190x the value). A flow collection that the parser reads whole (at the document root, in a `- ` entry, nested in another flow collection, or after a tab), so any JSON document longer than the limit, minified or pretty-printed, a single scalar, or a run of comments longer than the limit throws `parser lookahead exceeds N characters past the last node`; raise `maxScanAhead` for such input. Block YAML, `key: [..]` and `--- [..]` are not affected. It applies to `safeLoad`, `safeLoadAll`, `parseParallel`, `lint`, `processFiles` and `formatFiles`.
 - `safeLoad`, `safeLoadAll`, `parseParallel` / `parseParallelAsync`, `lint`, `processFiles` and `formatFiles` accept `maxDocuments` (integer, 1..10000000, default 100000; a longer stream throws `document count exceeds N`); `parseParallel` / `parseParallelAsync` also accept `maxInputBytes`; `processFiles` accepts `maxInputBytes`; all throw the same `... must be between 1 and N, got V` error for invalid values.
 - `lint` / `Linter` also accept `maxInputBytes` (integer, 1..1073741824, default 100MiB) and reject larger sources. It bounds linting work on oversized input; the source is already in memory when checked, so it is not a memory bound.
-- The calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (for example a worker with `stackSizeMb: 0.5`) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` / `formatFilesInPlace` apply `maxDepth` and `maxScanAhead` and ignore `maxAliasBytes`; `indent` (1..9) and `width` (20..1000) throw when out of range instead of being clamped.
+- The calling thread needs about 1 MiB of stack at depth 512 (roughly 980 KiB measured in release); on stacks of 512 KiB or less (for example a worker with `stackSizeMb: 0.5`) the process can abort and the overflow cannot be caught, while the default 256 is safe. `formatFiles` / `formatFilesInPlace` apply `maxDepth` and `maxScanAhead` and ignore `maxAliasBytes`; `indent` (1..9) throws when out of range instead of being clamped.
 
 ## YAML 1.2.2 Differences
 

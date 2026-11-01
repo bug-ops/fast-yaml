@@ -563,12 +563,12 @@ impl Iterator for Tokens<'_, '_> {
                     return None;
                 }
                 self.next_line = number.saturating_add(1);
-                let start = self.tokenizer.context.line_start(number.get());
+                let start = self.tokenizer.context.line_start(number);
                 let carry = std::mem::take(&mut self.carry);
                 self.line = self
                     .tokenizer
                     .context
-                    .get_line(number.get())
+                    .get_line(number)
                     .map(|text| LineCursor {
                         number,
                         text,
@@ -583,9 +583,9 @@ impl Iterator for Tokens<'_, '_> {
                 // The next line goes on in this line's flow collection at the depth this one ends
                 if heuristic
                     && self.next_line.get() <= self.tokenizer.context.line_count()
-                    && self.tokenizer.is_in_flow_interior(
-                        self.tokenizer.context.line_start(self.next_line.get()),
-                    )
+                    && self
+                        .tokenizer
+                        .is_in_flow_interior(self.tokenizer.context.line_start(self.next_line))
                 {
                     self.carry = cursor
                         .scanner
@@ -892,8 +892,8 @@ mod tests {
             // Single-pass scan of only the span range
             for line_idx in span.start.line_number().index()..=span.end.line_number().index() {
                 let line_num = OneBased::from_index(line_idx);
-                if let Some(line) = self.context.get_line(line_num.get()) {
-                    let line_start = self.context.line_start(line_num.get());
+                if let Some(line) = self.context.get_line(line_num) {
+                    let line_start = self.context.line_start(line_num);
 
                     for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
                         let offset = line_start.add_bytes(byte_col);

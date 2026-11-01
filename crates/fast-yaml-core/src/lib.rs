@@ -76,7 +76,7 @@ pub mod value;
 pub mod streaming;
 
 pub use comments::{CommentScanner, find_comments, has_comments, has_comments_normalized};
-pub use emitter::{Emitter, EmitterConfig};
+pub use emitter::{Emitter, EmitterConfig, Layout};
 pub use encoding::{
     DecodeError, EncodingEvidence, UnsupportedEncoding, decode_input, decode_input_owned,
 };
@@ -87,7 +87,7 @@ pub use keys::{KeyError, KeyKind};
 pub use limits::{
     DumpBudget, Indent, InputTooLarge, LimitKind, LimitRangeError, MaxAliasBytes, MaxDepth,
     MaxDocuments, MaxDumpNodes, MaxInputBytes, MaxOutputBytes, MaxScanAhead, MaxTagBytes,
-    ParseLimits, StreamBudget, Width,
+    ParseLimits, StreamBudget,
 };
 pub use merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 pub use options::{DuplicateMergeKeys, KeyDomain, LoadOptions, SetValues};

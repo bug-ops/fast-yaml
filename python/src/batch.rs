@@ -1,105 +1,116 @@
 //! PyO3 bindings for batch file processing.
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use crate::limits;
-use fast_yaml_core::ParseLimits;
 use fast_yaml_core::emitter::EmitterConfig;
 use fast_yaml_core::limits::{AliasBytes, Depth, Documents, InputBytes, ScanAhead};
-use fast_yaml_core::{Indent, Width};
+use fast_yaml_core::{Indent, ParseLimits};
 use fast_yaml_parallel::{
-    BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig,
-    FileOutcome as RustFileOutcome, FileProcessor, FileResult as RustFileResult,
+    BatchResult as RustBatchResult, CommentPolicy, Config as RustConfig, Error, ErrorKind,
+    FileProcessor,
 };
 use pyo3::prelude::*;
 
-/// Outcome of processing a single file.
-#[pyclass(module = "fast_yaml._core.batch", name = "FileOutcome")]
-#[derive(Clone)]
-pub enum PyFileOutcome {
-    /// File processed successfully
-    Success,
-    /// File formatted and content changed
-    Changed,
-    /// File unchanged (already formatted)
-    Unchanged,
-    /// Processing failed
-    Error,
+/// Class of a failure, the same for every file-level error.
+#[pyclass(
+    module = "fast_yaml._core.batch",
+    name = "FileErrorKind",
+    frozen,
+    eq,
+    eq_int,
+    hash
+)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PyFileErrorKind {
+    /// Reading the file failed, including a path that is not a regular file
+    Io,
+    /// The file is not UTF-8 text
+    Decode,
+    /// The text is not valid YAML
+    Parse,
+    /// A resource limit was exceeded
+    Limit,
+    /// Emitting the formatted document failed
+    Format,
+    /// The file holds no YAML document
+    EmptyDocument,
+    /// Formatting would drop comments
+    Comments,
+    /// Writing the file failed
+    Write,
+    /// The worker pool could not be built
+    ThreadPool,
+}
+
+impl From<ErrorKind> for PyFileErrorKind {
+    fn from(kind: ErrorKind) -> Self {
+        match kind {
+            ErrorKind::Io => Self::Io,
+            ErrorKind::Decode => Self::Decode,
+            ErrorKind::Parse => Self::Parse,
+            ErrorKind::Limit => Self::Limit,
+            ErrorKind::Format => Self::Format,
+            ErrorKind::EmptyDocument => Self::EmptyDocument,
+            ErrorKind::Comments => Self::Comments,
+            ErrorKind::Write => Self::Write,
+            ErrorKind::ThreadPool => Self::ThreadPool,
+        }
+    }
+}
+
+/// Failure of one file: its class and the full message.
+#[pyclass(
+    module = "fast_yaml._core.batch",
+    name = "FileError",
+    frozen,
+    eq,
+    get_all,
+    from_py_object
+)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PyFileError {
+    kind: PyFileErrorKind,
+    message: String,
 }
 
 #[pymethods]
-impl PyFileOutcome {
-    const fn __repr__(&self) -> &'static str {
-        match self {
-            Self::Success => "FileOutcome.Success",
-            Self::Changed => "FileOutcome.Changed",
-            Self::Unchanged => "FileOutcome.Unchanged",
-            Self::Error => "FileOutcome.Error",
-        }
-    }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    const fn __hash__(&self) -> u64 {
-        match self {
-            Self::Success => 0,
-            Self::Changed => 1,
-            Self::Unchanged => 2,
-            Self::Error => 3,
-        }
-    }
-}
-
-/// Result for a single file with path context.
-#[pyclass(module = "fast_yaml._core.batch", name = "FileResult")]
-pub struct PyFileResult {
-    #[pyo3(get)]
-    path: String,
-    #[pyo3(get)]
-    outcome: PyFileOutcome,
-    #[pyo3(get)]
-    duration_ms: f64,
-    #[pyo3(get)]
-    error: Option<String>,
-}
-
-#[pymethods]
-impl PyFileResult {
-    const fn is_success(&self) -> bool {
-        !matches!(self.outcome, PyFileOutcome::Error)
-    }
-
-    const fn was_changed(&self) -> bool {
-        matches!(self.outcome, PyFileOutcome::Changed)
-    }
-
+impl PyFileError {
     fn __repr__(&self) -> String {
         format!(
-            "FileResult(path='{}', outcome={}, duration_ms={:.2})",
-            self.path,
-            self.outcome.__repr__(),
-            self.duration_ms
+            "FileError(kind={:?}, message={:?})",
+            self.kind, self.message
         )
     }
 }
 
-impl From<RustFileResult> for PyFileResult {
-    fn from(result: RustFileResult) -> Self {
-        let (outcome, error) = match &result.outcome {
-            RustFileOutcome::Success { .. } => (PyFileOutcome::Success, None),
-            RustFileOutcome::Changed { .. } => (PyFileOutcome::Changed, None),
-            RustFileOutcome::Unchanged { .. } => (PyFileOutcome::Unchanged, None),
-            RustFileOutcome::Error { error, .. } => (PyFileOutcome::Error, Some(error.to_string())),
-        };
+impl From<&Error> for PyFileError {
+    fn from(error: &Error) -> Self {
         Self {
-            path: result.path.to_string_lossy().to_string(),
-            outcome,
-            duration_ms: result.outcome.duration().as_secs_f64() * 1000.0,
-            error,
+            kind: error.kind().into(),
+            message: error.to_string(),
         }
     }
+}
+
+/// Result of formatting one file: `Formatted(path, content)` or `Failed(path, error)`.
+#[pyclass(module = "fast_yaml._core.batch", name = "FormatResult", frozen)]
+pub enum PyFormatResult {
+    /// The file was formatted
+    Formatted {
+        /// Path of the file
+        path: OsString,
+        /// Formatted content
+        content: String,
+    },
+    /// The file could not be formatted
+    Failed {
+        /// Path of the file
+        path: OsString,
+        /// What went wrong
+        error: PyFileError,
+    },
 }
 
 /// Aggregated results from batch processing.
@@ -115,7 +126,7 @@ pub struct PyBatchResult {
     failed: usize,
     #[pyo3(get)]
     duration_ms: f64,
-    errors: Vec<(String, String)>,
+    errors: Vec<(OsString, PyFileError)>,
 }
 
 #[pymethods]
@@ -134,8 +145,8 @@ impl PyBatchResult {
         }
     }
 
-    /// Returns list of (path, error_message) tuples
-    fn errors(&self) -> Vec<(String, String)> {
+    /// Returns list of (path, error) tuples
+    fn errors(&self) -> Vec<(OsString, PyFileError)> {
         self.errors.clone()
     }
 
@@ -158,24 +169,24 @@ impl From<RustBatchResult> for PyBatchResult {
             errors: result
                 .errors
                 .iter()
-                .map(|(p, e)| (p.to_string_lossy().to_string(), e.to_string()))
+                .map(|(path, error)| (path.clone().into_os_string(), error.into()))
                 .collect(),
         }
     }
 }
 
+const DEFAULT_SEQUENTIAL_THRESHOLD: usize = 4096;
+
 /// Configuration for batch file processing.
 ///
 /// `max_depth`, `max_scan_ahead` and `max_documents` apply to `process_files` and `format_files`;
-/// `max_alias_bytes` to `process_files` only. `indent` must be in 1..=9 and `width` in 20..=1000. Non-integer values
+/// `max_alias_bytes` to `process_files` only. `indent` must be in 1..=9. Non-integer values
 /// raise `TypeError`, out-of-range values `ValueError`.
 #[pyclass(module = "fast_yaml._core.batch", name = "BatchConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyBatchConfig {
     inner: RustConfig,
     emitter_indent: Indent,
-    emitter_width: Width,
-    sort_keys: bool,
 }
 
 #[pymethods]
@@ -184,10 +195,8 @@ impl PyBatchConfig {
     #[pyo3(signature = (
         workers=None,
         max_input_bytes=None,
-        sequential_threshold=4096,
-        indent=2,
-        width=80,
-        sort_keys=false,
+        sequential_threshold=None,
+        indent=None,
         max_depth=None,
         max_alias_bytes=None,
         max_scan_ahead=None,
@@ -195,12 +204,10 @@ impl PyBatchConfig {
     ))]
     #[allow(clippy::too_many_arguments)]
     fn new(
-        workers: Option<usize>,
+        workers: Option<&Bound<'_, PyAny>>,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
-        sequential_threshold: usize,
-        indent: usize,
-        width: usize,
-        sort_keys: bool,
+        sequential_threshold: Option<&Bound<'_, PyAny>>,
+        indent: Option<&Bound<'_, PyAny>>,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
         max_scan_ahead: Option<&Bound<'_, PyAny>>,
@@ -209,25 +216,28 @@ impl PyBatchConfig {
         let parse_limits =
             limits::parse_limits(max_depth, max_alias_bytes, max_scan_ahead, max_documents)?;
         let emitter_indent = limits::indent(indent)?;
-        let emitter_width = limits::width(width)?;
         let config = RustConfig::new()
             .with_workers(limits::workers("workers", workers)?)
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
             )?)
-            .with_sequential_threshold(sequential_threshold)
+            .with_sequential_threshold(limits::in_range_or(
+                "sequential_threshold",
+                0,
+                limits::U32_MAX,
+                DEFAULT_SEQUENTIAL_THRESHOLD,
+                sequential_threshold,
+            )?)
             .with_parse_limits(parse_limits);
 
         Ok(Self {
             inner: config,
             emitter_indent,
-            emitter_width,
-            sort_keys,
         })
     }
 
-    fn with_workers(&self, workers: Option<usize>) -> PyResult<Self> {
+    fn with_workers(&self, workers: Option<&Bound<'_, PyAny>>) -> PyResult<Self> {
         Ok(Self {
             inner: self
                 .inner
@@ -312,35 +322,19 @@ impl PyBatchConfig {
         })
     }
 
-    fn with_indent(&self, indent: usize) -> PyResult<Self> {
+    fn with_indent(&self, indent: &Bound<'_, PyAny>) -> PyResult<Self> {
         Ok(Self {
-            emitter_indent: limits::indent(indent)?,
+            emitter_indent: limits::indent(Some(indent))?,
             ..self.clone()
         })
-    }
-
-    fn with_width(&self, width: usize) -> PyResult<Self> {
-        Ok(Self {
-            emitter_width: limits::width(width)?,
-            ..self.clone()
-        })
-    }
-
-    fn with_sort_keys(&self, sort_keys: bool) -> Self {
-        Self {
-            sort_keys,
-            ..self.clone()
-        }
     }
 
     fn __repr__(&self) -> String {
         format!(
-            "BatchConfig(workers={}, indent={}, width={}, sort_keys={})",
+            "BatchConfig(workers={}, indent={})",
             limits::workers_value(self.inner.workers())
                 .map_or_else(|| "None".to_owned(), |n| n.to_string()),
-            self.emitter_indent,
-            self.emitter_width,
-            self.sort_keys
+            self.emitter_indent
         )
     }
 }
@@ -349,7 +343,6 @@ impl PyBatchConfig {
     fn to_emitter_config(&self) -> EmitterConfig {
         EmitterConfig::new()
             .with_indent(self.emitter_indent)
-            .with_width(self.emitter_width)
             .with_parse_limits(self.inner.parse_limits())
     }
 }
@@ -381,18 +374,16 @@ impl PyBatchConfig {
 )]
 fn process_files(
     py: Python<'_>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     config: Option<PyBatchConfig>,
 ) -> PyResult<PyBatchResult> {
     let rust_config = config
         .as_ref()
         .map_or_else(RustConfig::default, |c| c.inner.clone());
 
-    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-
     let result = py.detach(|| {
         let processor = FileProcessor::with_config(rust_config);
-        processor.parse_files(&path_bufs)
+        processor.parse_files(&paths)
     });
 
     Ok(result.into())
@@ -401,53 +392,57 @@ fn process_files(
 /// Format files and return formatted content (dry-run).
 ///
 /// Formats YAML files without writing changes back.
-/// Returns list of (path, formatted_content) tuples.
 ///
 /// Args:
-///     paths: List of file paths to format
+///     paths: List of file paths (`str` or `os.PathLike`) to format
 ///     config: Optional batch processing configuration
 ///
 /// Returns:
-///     List of (path, content) tuples where content is Result[str, str]
+///     One `FormatResult` per file: `Formatted(path, content)` or `Failed(path, error)`
 ///
 /// Example:
-///     >>> from fast_yaml._core.batch import format_files
-///     >>> results = format_files(['file1.yaml'])
-///     >>> for path, content in results:
-///     ...     if content is not None:
-///     ...         print(content)
+///     >>> from fast_yaml._core.batch import format_files, FormatResult
+///     >>> for result in format_files(['file1.yaml']):
+///     ...     match result:
+///     ...         case FormatResult.Formatted(path=path, content=content):
+///     ...             print(content)
+///     ...         case FormatResult.Failed(path=path, error=error):
+///     ...             print(error.kind, error.message)
 #[pyfunction]
 #[pyo3(signature = (paths, config=None))]
 #[allow(
     clippy::needless_pass_by_value,
     clippy::doc_link_with_quotes,
-    clippy::unnecessary_wraps,
-    clippy::type_complexity
+    clippy::unnecessary_wraps
 )]
 fn format_files(
     py: Python<'_>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     config: Option<PyBatchConfig>,
-) -> PyResult<Vec<(String, Option<String>, Option<String>)>> {
+) -> PyResult<Vec<PyFormatResult>> {
     let (rust_config, emitter_config) = config.as_ref().map_or_else(
         || (RustConfig::default(), EmitterConfig::new()),
         |c| (c.inner.clone(), c.to_emitter_config()),
     );
 
-    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-
     let results = py.detach(|| {
         let processor = FileProcessor::with_config(rust_config);
-        processor.format_files(&path_bufs, &emitter_config, CommentPolicy::Strip)
+        processor.format_files(&paths, &emitter_config, CommentPolicy::Strip)
     });
 
     Ok(results
         .into_iter()
         .map(|(path, result)| {
-            let path_str = path.to_string_lossy().to_string();
+            let path = path.into_os_string();
             match result {
-                Ok(output) => (path_str, Some(output.formatted), None),
-                Err(e) => (path_str, None, Some(e.to_string())),
+                Ok(output) => PyFormatResult::Formatted {
+                    path,
+                    content: output.formatted,
+                },
+                Err(e) => PyFormatResult::Failed {
+                    path,
+                    error: (&e).into(),
+                },
             }
         })
         .collect())
@@ -478,7 +473,7 @@ fn format_files(
 )]
 fn format_files_in_place(
     py: Python<'_>,
-    paths: Vec<String>,
+    paths: Vec<PathBuf>,
     config: Option<PyBatchConfig>,
 ) -> PyResult<PyBatchResult> {
     let (rust_config, emitter_config) = config.as_ref().map_or_else(
@@ -486,11 +481,9 @@ fn format_files_in_place(
         |c| (c.inner.clone(), c.to_emitter_config()),
     );
 
-    let path_bufs: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
-
     let result = py.detach(|| {
         let processor = FileProcessor::with_config(rust_config);
-        processor.format_in_place(&path_bufs, &emitter_config, CommentPolicy::Strip)
+        processor.format_in_place(&paths, &emitter_config, CommentPolicy::Strip)
     });
 
     Ok(result.into())
@@ -500,8 +493,9 @@ fn format_files_in_place(
 pub fn register_batch_module(py: Python<'_>, parent_module: &Bound<'_, PyModule>) -> PyResult<()> {
     let batch_module = PyModule::new(py, "batch")?;
 
-    batch_module.add_class::<PyFileOutcome>()?;
-    batch_module.add_class::<PyFileResult>()?;
+    batch_module.add_class::<PyFileErrorKind>()?;
+    batch_module.add_class::<PyFileError>()?;
+    batch_module.add_class::<PyFormatResult>()?;
     batch_module.add_class::<PyBatchResult>()?;
     batch_module.add_class::<PyBatchConfig>()?;
     batch_module.add_function(wrap_pyfunction!(process_files, &batch_module)?)?;

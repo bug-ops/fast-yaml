@@ -63,7 +63,9 @@ class TestMaxDocuments:
         path.write_text("---\na\n" * 5)
         result = batch.process_files([str(path)], batch.BatchConfig(max_documents=3))
         assert result.failed == 1
-        assert "document count exceeds 3" in result.errors()[0][1]
+        error = result.errors()[0][1]
+        assert error.kind == batch.FileErrorKind.Limit
+        assert "document count exceeds 3" in error.message
 
     @pytest.mark.parametrize("bad", [0, -1, 10_000_001])
     def test_out_of_range(self, bad):

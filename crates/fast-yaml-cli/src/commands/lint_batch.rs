@@ -24,7 +24,7 @@ use fast_yaml_linter::formatter::{
     syntax_diagnostic,
 };
 use fast_yaml_linter::{
-    Diagnostic, DiagnosticContext, Formatter, LintConfig, LintError, LintSource, Linter,
+    Coloring, Diagnostic, DiagnosticContext, Formatter, LintConfig, LintError, LintSource, Linter,
     TextFormatter,
 };
 use fast_yaml_parallel::{
@@ -35,7 +35,7 @@ use serde::ser::{SerializeSeq, Serializer};
 use serde_json::ser::PrettyFormatter;
 
 use crate::cli::{LintFormat, LintOutput};
-use crate::commands::lint::{ReportFilter, report_source};
+use crate::commands::lint::{Filtered, ReportFilter, Shown, Verdict, report_source};
 use crate::config::CommonConfig;
 use crate::discovery::FileDiscovery;
 use crate::error::{ExitCode, RaiseHint};
@@ -248,9 +248,12 @@ fn lint_content<F: OutputFormat>(
     // discovery yields canonical paths
     let canonical = CanonicalPath::assume_canonical(path.to_path_buf());
     let diagnostics = linter.lint(&source, &canonical).map_err(lint_failed)?;
-    let (diagnostics, has_errors) = filter.apply(diagnostics);
+    let Filtered {
+        diagnostics,
+        verdict,
+    } = filter.apply(diagnostics);
     Ok(Linted {
-        has_errors,
+        has_errors: verdict == Verdict::Fail,
         payload: format.payload(diagnostics, &source),
     })
 }
@@ -288,7 +291,7 @@ pub fn execute_lint_batch(
     output.ensure_not_inputs(file_paths.iter().map(PathBuf::as_path))?;
     let linter = Linters::new(lint_config, scan_ahead, workers);
     let filter = ReportFilter {
-        quiet: common.output.is_quiet(),
+        shown: Shown::of(common.output.is_quiet()),
         max_diagnostics,
     };
     let mut sink = output.sink()?;
@@ -458,8 +461,7 @@ impl OutputFormat for TextOutput {
         if diagnostics.is_empty() {
             return String::new();
         }
-        let mut formatter = TextFormatter::new();
-        formatter.use_color = self.use_color;
+        let formatter = TextFormatter::new().with_color(Coloring::from(self.use_color));
         let context = source.context();
         formatter.format(Findings::FromSource {
             diagnostics: &diagnostics,
@@ -640,6 +642,7 @@ impl OutputFormat for JsonOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fast_yaml_linter::config::RuleName;
     use fast_yaml_linter::{DiagnosticBuilder, Location, Severity, Span};
     use std::io;
     use std::sync::atomic::AtomicUsize;
@@ -649,7 +652,7 @@ mod tests {
             Location::try_new(line, 1, 0).unwrap(),
             Location::try_new(line, 2, 1).unwrap(),
         );
-        DiagnosticBuilder::new("test-rule", severity, "message", span)
+        DiagnosticBuilder::new(RuleName::Colons, severity, "message", span)
             .with_suggestion("fix", span, Some("x".to_owned()))
             .build()
     }

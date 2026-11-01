@@ -1,6 +1,6 @@
 //! Emission keeps its nesting on the heap: the deepest accepted value fits a tiny stack (#546).
 
-use fast_yaml_core::{Emitter, EmitterConfig, MaxDepth, ParseLimits, Parser, Value};
+use fast_yaml_core::{Emitter, EmitterConfig, Layout, MaxDepth, ParseLimits, Parser, Value};
 
 const SMALL_STACK: usize = 256 * 1024;
 
@@ -35,8 +35,8 @@ fn on_small_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> 
 fn deepest_value_emits_in_block_and_flow_on_a_small_stack() {
     on_small_stack(|| {
         for doc in [nested_sequences(512), nested_mappings(512)] {
-            for flow in [None, Some(true)] {
-                let config = EmitterConfig::new().with_default_flow_style(flow);
+            for flow in [Layout::Block, Layout::Flow] {
+                let config = EmitterConfig::new().with_layout(flow);
                 let out = Emitter::emit_str_with_config(&doc, &config).unwrap();
                 assert!(out.contains('1'), "{flow:?}");
             }

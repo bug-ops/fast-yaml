@@ -501,68 +501,6 @@ impl fmt::Display for Indent {
     }
 }
 
-/// Preferred maximum line width of emitted YAML, in characters.
-///
-/// Valid values lie between [`MIN`](Self::MIN) and [`MAX`](Self::MAX) inclusive.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::limits::Width;
-///
-/// assert_eq!(Width::default(), Width::DEFAULT);
-/// assert_eq!(Width::new(120).unwrap().get(), 120);
-/// assert_eq!(Width::new(10).unwrap_err().to_string(), "must be between 20 and 1000, got 10");
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Width(u16);
-
-impl Width {
-    /// Eighty characters.
-    pub const DEFAULT: Self = Self(80);
-
-    /// Smallest accepted width.
-    pub const MIN: Self = Self(20);
-
-    /// Largest accepted width.
-    pub const MAX: Self = Self(1000);
-
-    /// Creates a line width of `width` characters.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`LimitRangeError`] when `width` is outside `20..=1000`.
-    pub const fn new(width: usize) -> Result<Self, LimitRangeError> {
-        if width < Self::MIN.0 as usize || width > Self::MAX.0 as usize {
-            return Err(LimitRangeError {
-                value: width,
-                min: Self::MIN.0 as usize,
-                max: Self::MAX.0 as usize,
-            });
-        }
-        #[allow(clippy::cast_possible_truncation)]
-        Ok(Self(width as u16))
-    }
-
-    /// Returns the width as a plain number.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl Default for Width {
-    fn default() -> Self {
-        Self::DEFAULT
-    }
-}
-
-impl fmt::Display for Width {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 /// Maximum bytes of resolved `%TAG` prefix text the parser may materialize over a whole stream.
 ///
 /// The parser copies the full prefix into every tagged node, so a long prefix reused by many

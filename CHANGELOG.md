@@ -14,6 +14,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Core: `fast_yaml_core::error::{SourcePosition, DocumentIndex}` paths are gone, import from the crate root or `fast_yaml_core::position` (#667)
 - Linter: `Location::new` takes `OneBased` line and column and no longer raises 0 to 1, and `LintDocument::first_line` is `OneBased` (#667)
 - Linter: `fast_yaml_linter::OneBased` is the core type and no longer implements `Serialize`/`Deserialize` under `json-output` (#667)
+- Core: `EmitterConfig` drops `width` and `default_flow_style` for `layout: Layout`, and `Width` is removed (#639) (#PRNUM)
+- CLI: `fy format --width` is removed, `--pretty=false` becomes `--no-pretty`, and `--allow-duplicate-keys=<bool>` becomes the `--allow-duplicate-keys`/`--no-allow-duplicate-keys` pair (#639) (#632) (#PRNUM)
+- Python/Node.js: `width`, `allow_unicode`/`allowUnicode` and batch `width`/`sort_keys` are removed and now raise `TypeError`/`InvalidArg` (#639) (#PRNUM)
+- Python: `ParallelConfig` drops `max_chunk_size` and `auto_tune`, and `safe_dump_to` rejects an out-of-range `chunk_size` with `ValueError` (#627) (#PRNUM)
+- Python/Node.js: batch results reshaped (`FormatResult`, `FileError` with `ErrorKind`), and the never-returned `FileResult`/`FileOutcome` are removed (#641) (#PRNUM)
+- Python: negative `workers`, `thread_count` and other unsigned options, and `lint.Location`/`ContextLine` fields, raise `ValueError` instead of `OverflowError` (#633) (#PRNUM)
+- Linter: `DiagnosticCode` is an enum, `LintRule::name`/`description` are removed, `flow_common` is private, and `formatter::Finding` is renamed `DiagnosticView` (#642) (#PRNUM)
+- Linter: `JsonFormatter::new` takes `JsonLayout` and `TextFormatter::with_color` takes `Coloring` (#643) (#PRNUM)
+- Linter: `SourceContext::get_line*` and `ContextLine::line_number` use `OneBased` (#666) (#PRNUM)
+
+### Added
+
+- Core: `Value::sort_keys`, one type-aware iterative sort shared by the Python and Node.js bindings (#640) (#PRNUM)
+- Parallel: `write_atomic` preserves ACLs on macOS (#598) (#PRNUM)
+
+### Fixed
+
+- Linter: `colons` no longer reports the mandatory space after an alias key (#644) (#PRNUM)
+- CLI: `--pretty` and `--allow-duplicate-keys` no longer swallow the next path (#632) (#PRNUM)
+- CLI: discovery warns about files skipped during directory walk and glob expansion (#629) (#PRNUM)
+- CLI: debug events and glob patterns in errors escape control characters in paths (#624) (#PRNUM)
+- Core: `read_regular_file` clears `O_NONBLOCK` on regular-file handles (#599) (#PRNUM)
 
 ### Added
 

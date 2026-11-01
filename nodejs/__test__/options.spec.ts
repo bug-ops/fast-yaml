@@ -160,27 +160,6 @@ describe('Emitter Options - DumpOptions', () => {
     });
   });
 
-  describe('safeDump() with width option', () => {
-    it('should use default width of 80', () => {
-      const options: DumpOptions = { width: 80 };
-      const yaml = safeDump({ key: 'value' }, options);
-      expect(yaml).toBeTruthy();
-    });
-
-    it('should use custom width of 120', () => {
-      const options: DumpOptions = { width: 120 };
-      const longString = 'a'.repeat(100);
-      const yaml = safeDump({ text: longString }, options);
-      expect(yaml).toContain(longString);
-    });
-
-    it('should use minimum width of 20', () => {
-      const options: DumpOptions = { width: 20 };
-      const yaml = safeDump({ short: 'text' }, options);
-      expect(yaml).toContain('short: text');
-    });
-  });
-
   describe('safeDump() with default_flow_style option', () => {
     it('should use block style by default (null)', () => {
       const yaml = safeDump({ items: ['a', 'b', 'c'] });
@@ -272,15 +251,25 @@ describe('Emitter Options - DumpOptions', () => {
       const options: DumpOptions = {
         sortKeys: true,
         indent: 3,
-        width: 100,
         explicit_start: true,
-        allow_unicode: true,
       };
       const data = { z: 'last', a: 'first', m: 'middle' };
       const yaml = safeDump(data, options);
       expect(yaml).toContain('a: first');
       expect(yaml).toContain('m: middle');
       expect(yaml).toContain('z: last');
+    });
+  });
+
+  describe('safeDump() sortKeys ordering', () => {
+    it('orders Map number keys by value and sorts Set members', () => {
+      const map = new Map<unknown, unknown>([
+        [10, 'a'],
+        [9, 'b'],
+        ['x', 'c'],
+      ]);
+      expect(safeDump(map, { sortKeys: true })).toBe('9: b\n10: a\nx: c\n');
+      expect(safeDump(new Set([3, 1, 2]), { sortKeys: true })).toBe('!!set\n1: ~\n2: ~\n3: ~\n');
     });
   });
 

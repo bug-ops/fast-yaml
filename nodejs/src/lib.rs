@@ -36,7 +36,7 @@ mod rule_input;
 
 // Re-export public API
 pub use batch::{
-    BatchConfig, BatchError, BatchResult, FileOutcome, FileResult, FormatResult, format_files,
+    BatchConfig, BatchError, BatchResult, FileError, FileErrorKind, FormatResult, format_files,
     format_files_in_place, process_files,
 };
 pub use emitter::{DumpOptions, safe_dump, safe_dump_all};

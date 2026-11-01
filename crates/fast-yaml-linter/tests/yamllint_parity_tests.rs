@@ -4,7 +4,8 @@
 
 use std::fs;
 
-use fast_yaml_linter::{ConfigFile, DiagnosticCode, Linter};
+use fast_yaml_linter::config::RuleName;
+use fast_yaml_linter::{ConfigFile, Linter};
 
 /// Lints `fixture` with `rules` (a YAML mapping of rule settings) and returns the lines `code`
 /// is reported on, once per line.
@@ -34,7 +35,7 @@ fn lines(fixture: &str, rules: &str, code: &str) -> Vec<usize> {
 
 #[test]
 fn document_start_checks_every_document() {
-    let code = DiagnosticCode::DOCUMENT_START;
+    let code = RuleName::DocumentStart.as_str();
     let required = "  document-start: {present: true}\n";
     assert_eq!(lines("multi_document.yaml", required, code), [1]);
     let forbidden = "  document-start: {present: false}\n";
@@ -49,7 +50,7 @@ fn document_end_checks_every_document() {
         lines(
             "multi_document.yaml",
             "  document-end: {present: true}\n",
-            DiagnosticCode::DOCUMENT_END
+            RuleName::DocumentEnd.as_str()
         ),
         [2, 7]
     );
@@ -57,7 +58,7 @@ fn document_end_checks_every_document() {
 
 #[test]
 fn quoted_strings_skips_keys_and_core_tags_by_default() {
-    let code = DiagnosticCode::QUOTED_STRINGS;
+    let code = RuleName::QuotedStrings.as_str();
     assert_eq!(
         lines("quoted.yaml", "  quoted-strings: {required: true}\n", code),
         [1, 4]
@@ -66,7 +67,7 @@ fn quoted_strings_skips_keys_and_core_tags_by_default() {
 
 #[test]
 fn quoted_strings_skips_anchored_scalars_and_checks_verbatim_str_tags() {
-    let code = DiagnosticCode::QUOTED_STRINGS;
+    let code = RuleName::QuotedStrings.as_str();
     let required = "  quoted-strings: {required: true}\n";
     assert_eq!(lines("quoted_anchors.yaml", required, code), [5, 7, 10]);
     let needed = "  quoted-strings: {required: only-when-needed}\n";
@@ -75,7 +76,7 @@ fn quoted_strings_skips_anchored_scalars_and_checks_verbatim_str_tags() {
 
 #[test]
 fn quoted_strings_check_keys() {
-    let code = DiagnosticCode::QUOTED_STRINGS;
+    let code = RuleName::QuotedStrings.as_str();
     let rules = "  quoted-strings: {required: true, check-keys: true}\n";
     assert_eq!(
         lines("quoted.yaml", rules, code),
@@ -87,7 +88,7 @@ fn quoted_strings_check_keys() {
 
 #[test]
 fn quoted_strings_allow_quoted_quotes() {
-    let code = DiagnosticCode::QUOTED_STRINGS;
+    let code = RuleName::QuotedStrings.as_str();
     let single = "  quoted-strings: {quote-type: single, required: false}\n";
     assert_eq!(lines("quoted.yaml", single, code), [2, 6, 7, 9]);
     let single =
@@ -100,7 +101,7 @@ fn quoted_strings_allow_quoted_quotes() {
 
 #[test]
 fn line_length_non_breakable_words() {
-    let code = DiagnosticCode::LINE_LENGTH;
+    let code = RuleName::LineLength.as_str();
     assert_eq!(
         lines("long_lines.yaml", "  line-length: {max: 40}\n", code),
         [2, 5, 7, 8, 9]
@@ -116,14 +117,14 @@ fn line_length_non_breakable_words() {
 fn line_length_non_breakable_inline_mappings() {
     let rules = "  line-length: {max: 40, allow-non-breakable-inline-mappings: true}\n";
     assert_eq!(
-        lines("long_lines.yaml", rules, DiagnosticCode::LINE_LENGTH),
+        lines("long_lines.yaml", rules, RuleName::LineLength.as_str()),
         [7, 9]
     );
 }
 
 #[test]
 fn duplicated_merge_keys_are_reported_only_when_forbidden() {
-    let code = DiagnosticCode::DUPLICATE_KEY;
+    let code = RuleName::DuplicateKey.as_str();
     let forbidden = "  duplicate-key: {forbid-duplicated-merge-keys: true}\n";
     assert_eq!(lines("merge_keys.yaml", forbidden, code), [7, 11]);
     let allowed = "  duplicate-key: {forbid-duplicated-merge-keys: false}\n";
@@ -132,7 +133,7 @@ fn duplicated_merge_keys_are_reported_only_when_forbidden() {
 
 #[test]
 fn truthy_reports_true_and_false_when_they_are_not_allowed() {
-    let code = DiagnosticCode::TRUTHY;
+    let code = RuleName::Truthy.as_str();
     let yes_only = "  truthy: {allowed-values: [yes], check-keys: true}\n";
     assert_eq!(
         lines("truthy_allowed.yaml", yes_only, code),
@@ -156,7 +157,7 @@ fn key_ordering_checks_the_first_key_of_sequence_items() {
         lines(
             "../linter/key_ordering_sequence_items.yaml",
             "  key-ordering: enable\n",
-            DiagnosticCode::KEY_ORDERING
+            RuleName::KeyOrdering.as_str()
         ),
         [3, 5]
     );
@@ -168,7 +169,7 @@ fn truthy_does_not_report_single_letters() {
         lines(
             "truthy_letters.yaml",
             "  truthy: {check-keys: true}\n",
-            DiagnosticCode::TRUTHY
+            RuleName::Truthy.as_str()
         ),
         [5, 6, 7]
     );

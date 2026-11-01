@@ -2,7 +2,9 @@
 
 use super::RuleId;
 use crate::config::RuleName;
+use crate::nodes::Node;
 use serde::{Deserialize, Serialize};
+use std::cell::LazyCell;
 
 use crate::config::{Limit, RuleOptions};
 use crate::{
@@ -63,14 +65,6 @@ impl super::LintRule for ColonsRule {
         RuleId::BuiltIn(RuleName::Colons)
     }
 
-    fn name(&self) -> &'static str {
-        "Colons"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates spacing around colons in mappings"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
@@ -88,6 +82,17 @@ impl super::SourceRule for ColonsRule {
 
         let mut diagnostics = Vec::new();
         let colons = tokenizer.tokens(TokenType::Colon);
+        // The node index is only needed once a single space before a colon is about to be reported
+        let alias_ends = LazyCell::new(|| {
+            context
+                .nodes()
+                .nodes()
+                .filter_map(|node| match node {
+                    Node::Alias { range, .. } => Some(range.end().get()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        });
 
         for colon in colons {
             // Skip if colon is part of URL or time
@@ -101,6 +106,7 @@ impl super::SourceRule for ColonsRule {
                 source_context,
                 colon.span.start.offset(),
                 max_spaces_before,
+                &alias_ends,
             ) {
                 diagnostics.push(diag);
             }
@@ -151,6 +157,7 @@ fn check_spaces_before_colon(
     source_context: &SourceContext<'_>,
     colon_offset: usize,
     max_spaces: Limit,
+    alias_ends: &LazyCell<Vec<usize>, impl FnOnce() -> Vec<usize>>,
 ) -> Option<Finding> {
     if colon_offset == 0 {
         return None;
@@ -170,7 +177,10 @@ fn check_spaces_before_colon(
         }
     }
 
-    if max_spaces.exceeded_by(spaces) {
+    // `*k:` scans as the alias `k:`, so one space is mandatory between an alias key and its colon
+    let after_alias = spaces == 1 && alias_ends.binary_search(&(colon_offset - 1)).is_ok();
+
+    if max_spaces.exceeded_by(spaces) && !after_alias {
         let loc = source_context.offset_to_location(colon_offset);
         let span = Span::new(loc, loc);
 
@@ -384,6 +394,39 @@ mod tests {
             diagnostics.is_empty(),
             "expected no diagnostics for trailing whitespace after key colon, got: {diagnostics:?}"
         );
+    }
+
+    fn before_messages(yaml: &str) -> Vec<String> {
+        ColonsRule
+            .diagnose(&LintContext::new(yaml), &LintConfig::default())
+            .into_iter()
+            .map(|d| d.message.into_owned())
+            .filter(|m| m.contains("before colon"))
+            .collect()
+    }
+
+    #[test]
+    fn test_colons_alias_key_single_space_allowed() {
+        assert_eq!(
+            before_messages("base: &k a\nm:\n  *k : v\n"),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            before_messages("base: &k a\nn: {*k : 1}\n"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn test_colons_alias_key_two_spaces_reported() {
+        let found = before_messages("base: &k a\nm:\n  *k  : v\n");
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains("found 2"));
+    }
+
+    #[test]
+    fn test_colons_plain_key_after_alias_value_still_reported() {
+        assert_eq!(before_messages("base: &k a\nm: *k\nname : v\n").len(), 1);
     }
 
     #[test]

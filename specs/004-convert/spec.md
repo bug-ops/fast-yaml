@@ -53,7 +53,7 @@ THEN  stdout is
   }
 AND   exit code is 0                                  (keys keep the input order)
 
-WHEN  I add --pretty=false
+WHEN  I add --no-pretty
 THEN  stdout is {"b":1,"a":["x",2.5,true,null]} followed by a newline
 ```
 
@@ -81,7 +81,7 @@ AS A user of Kubernetes-style streams I WANT every document converted SO THAT no
 
 ```
 GIVEN "a: 1\n---\nb: 2\n"
-WHEN  I run `fy convert json --pretty=false`
+WHEN  I run `fy convert json --no-pretty`
 THEN  stdout is [{"a":1},{"b":2}]   (an array, one element per document)
 
 GIVEN a single document
@@ -111,7 +111,7 @@ AS A user of DRY YAML I WANT aliases and `<<` expanded SO THAT JSON consumers se
 
 ```
 GIVEN "base: &b {k: 1, j: 2}\nd:\n  <<: *b\n  k: 9\n"
-WHEN  I run `fy convert json --pretty=false`
+WHEN  I run `fy convert json --no-pretty`
 THEN  stdout is {"base":{"k":1,"j":2},"d":{"k":9,"j":2}}   (explicit key wins over the merged one, in the merged key's position)
 
 GIVEN "x: &a {k: 1}\ny: *a\n<<: *a\n"
@@ -145,7 +145,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | ID | Requirement | Priority |
 |----|-------------|----------|
 | FR-001 | WHEN the target is `json` THE SYSTEM SHALL parse all documents of the input with the core-schema resolver and string key domain, and print one JSON value (single document) or one JSON array (several documents), followed by a newline. | MUST |
-| FR-002 | THE SYSTEM SHALL pretty-print with two-space indent by default and a compact single line with `--pretty=false`. | MUST |
+| FR-002 | THE SYSTEM SHALL pretty-print with two-space indent by default and a compact single line with `--no-pretty` (`--pretty`/`--no-pretty`, the last one wins). | MUST |
 | FR-003 | WHEN a scalar resolves to null, bool, int, or float THE SYSTEM SHALL emit the corresponding JSON type; other scalars (including `!!binary`, timestamps, unknown tags) SHALL be emitted as strings of their text, tags dropped. | MUST |
 | FR-004 | WHEN an integer is written in hex (`0x1F`) or octal (`0o17`) THE SYSTEM SHALL emit its decimal value; integers beyond 64 bits SHALL keep all digits. | MUST |
 | FR-005 | WHEN a float is `.inf`, `-.inf`, or `.nan` THE SYSTEM SHALL fail with the infinity/NaN error and exit 1 (never emit `null` or a string). | MUST |
@@ -186,7 +186,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | Type | Role |
 |------|------|
 | `ConvertFormat` (`Yaml`, `Json`) | Target selector (clap `ValueEnum`) |
-| `Converter` | Holds target, `pretty`, `ParseLimits` |
+| `Converter` | Holds target, `JsonOutput` (`Pretty`/`Compact`), `ParseLimits` |
 | `Parser::parse_all_with_options`, `LoadOptions`, `KeyDomain::StringKeys` | Resolve YAML to `Value` for conversion |
 | `Value` (`fast-yaml-core`) | Resolved tree: null, bool, int, big int, float, string, sequence, mapping, set |
 | `serde_json::Value` | JSON side; `Map` is insertion-ordered (`preserve_order` enabled) |

@@ -89,7 +89,7 @@ fast_yaml.safe_load("1: a\ntrue: b\n")
 
 - **YAML 1.2.2 compliant** — Full Core Schema support
 - **Fast** — matches PyYAML C on small and medium files, 2-4x faster than pure-Python PyYAML
-- **PyYAML compatible** — Drop-in replacement with `load`, `dump`, `Loader`, `Dumper` classes
+- **PyYAML compatible** — `load`, `dump`, `Loader`, `Dumper` classes; `dump`/`safe_dump` no longer accept `width` or `allow_unicode` (they raise `TypeError`)
 - **Linter** — Rich diagnostics with 1-based line/column tracking (`Location(line, column, offset)` rejects 0); supports inline `# fy: disable` / `disable-line` / `disable-file` (and `# yamllint ...`) suppression comments
 - **Parallel processing** — Multi-threaded parsing for large files
 - **Batch processing** — Process multiple files in parallel
@@ -150,9 +150,12 @@ result = batch.process_files(paths, config)
 ```python
 # Dry-run: get formatted content without writing
 results = batch.format_files(["config.yaml"])
-for path, content, error in results:
-    if content:
-        print(f"{path}: {len(content)} bytes")
+for result in results:
+    match result:
+        case batch.FormatResult.Formatted(path=path, content=content):
+            print(f"{path}: {len(content)} bytes")
+        case batch.FormatResult.Failed(path=path, error=error):
+            print(f"{path}: {error.kind} {error.message}")
 
 # In-place: format and write back
 result = batch.format_files_in_place(["config.yaml"])
@@ -166,14 +169,12 @@ print(f"Changed {result.changed} files")
 | `workers` | Auto | `None` = auto, `0` = sequential, `1`-`128` = worker threads (larger values raise `ValueError`) |
 | `max_input_bytes` | 100 MiB | Maximum file size, 1..=1 GiB |
 | `indent` | 2 | Indentation width |
-| `width` | 80 | Line width |
-| `sort_keys` | False | Sort dictionary keys |
 | `max_depth` | 256 | Maximum nesting depth, 1..=512 (`process_files` and `format_files`) |
 | `max_alias_bytes` | 64 MiB | Alias-expansion budget per file, 1..=1 GiB (`process_files` only) |
 | `max_scan_ahead` | 4 Mi | Characters the parser may read past the last node, 1..=1 Gi |
 | `max_documents` | 100 000 | Maximum documents per file, 1..=10 000 000 |
 
-`format_files` applies `max_depth`, `max_scan_ahead` and `max_documents` and ignores `max_alias_bytes`. `indent` must be 1..=9 and `width` 20..=1000; other values raise `ValueError` instead of being clamped.
+`format_files` applies `max_depth`, `max_scan_ahead` and `max_documents` and ignores `max_alias_bytes`. `indent` must be 1..=9; other values raise `ValueError` instead of being clamped.
 
 ### BatchResult
 
@@ -187,7 +188,7 @@ print(f"Duration: {result.duration_ms}ms")
 print(f"Files/sec: {result.files_per_second()}")
 
 for path, error in result.errors():
-    print(f"Error in {path}: {error}")
+    print(f"Error in {path}: {error.kind} {error.message}")
 ```
 
 ## Documentation

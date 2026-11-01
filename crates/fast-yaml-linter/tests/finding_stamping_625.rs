@@ -6,7 +6,8 @@ use std::fmt::Write as _;
 use fast_yaml_linter::config::{CustomRuleCode, NoOptions, RuleName, RuleSettings};
 use fast_yaml_linter::rules::{DocumentRule, LintDocument, LintRule, Rule, RuleId, SourceRule};
 use fast_yaml_linter::{
-    ConfigFile, Excerpt, Finding, LintConfig, LintContext, Linter, Location, Severity, Span,
+    ConfigFile, Excerpt, Finding, LintConfig, LintContext, Linter, Location, OneBased, Severity,
+    Span,
 };
 
 struct Flags(CustomRuleCode);
@@ -15,12 +16,6 @@ impl LintRule for Flags {
     fn id(&self) -> RuleId<'_> {
         RuleId::Custom(&self.0)
     }
-    fn name(&self) -> &'static str {
-        "Flags"
-    }
-    fn description(&self) -> &'static str {
-        "Flags the first line"
-    }
     fn default_severity(&self) -> Severity {
         Severity::Hint
     }
@@ -28,7 +23,7 @@ impl LintRule for Flags {
 
 impl SourceRule for Flags {
     fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<Finding> {
-        vec![Finding::new("flagged", line_span(context, 1))]
+        vec![Finding::new("flagged", line_span(context, OneBased::FIRST))]
     }
 }
 
@@ -37,12 +32,6 @@ struct FlagsDocuments(CustomRuleCode);
 impl LintRule for FlagsDocuments {
     fn id(&self) -> RuleId<'_> {
         RuleId::Custom(&self.0)
-    }
-    fn name(&self) -> &'static str {
-        "Flags documents"
-    }
-    fn description(&self) -> &'static str {
-        "Flags every document"
     }
     fn default_severity(&self) -> Severity {
         Severity::Info
@@ -56,16 +45,16 @@ impl DocumentRule for FlagsDocuments {
         document: LintDocument<'_>,
         _config: &LintConfig,
     ) -> Vec<Finding> {
-        let span = line_span(context, document.first_line.get());
+        let span = line_span(context, document.first_line);
         vec![Finding::new("document", span).without_excerpt()]
     }
 }
 
-fn line_span(context: &LintContext, line: usize) -> Span {
+fn line_span(context: &LintContext, line: OneBased) -> Span {
     let offset = context.source_context().get_line_offset(line);
     Span::new(
-        Location::try_new(line, 1, offset).unwrap(),
-        Location::try_new(line, 2, offset + 1).unwrap(),
+        Location::new(line, OneBased::FIRST, offset),
+        Location::new(line, OneBased::from_index(1), offset + 1),
     )
 }
 

@@ -128,7 +128,6 @@ invalid/duplicate_keys.yaml:15:1: [warning] key 'database' should be ordered bef
 invalid/duplicate_keys.yaml:19:5: [error] duplicate key 'port' (first defined at line 18) (duplicate-key)
 invalid/duplicate_merge_keys.yaml:7:3: [error] duplicate merge key '<<' (first defined at line 6) (duplicate-key)
 invalid/duplicate_merge_keys_alias.yaml:5:24: [error] duplicate merge key '<<' (first defined at line 5) (duplicate-key)
-invalid/duplicate_merge_keys_alias.yaml:5:27: [warning] too many spaces before colon (expected at most 0, found 1) (colons)
 invalid/empty_values.yaml:6:1: [warning] key 'description' should be ordered before 'name' (line 4) (key-ordering)
 invalid/empty_values.yaml:6:13: [warning] empty value for key 'description' (empty-values)
 invalid/empty_values.yaml:8:1: [warning] key 'server' should be ordered before 'version' (line 5) (key-ordering)

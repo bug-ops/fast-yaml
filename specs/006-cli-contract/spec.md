@@ -160,7 +160,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | FR-013 | WHEN `format -i` produces content identical to the file, THE SYSTEM SHALL NOT rewrite the file. | must |
 | FR-014 | THE SYSTEM SHALL write command results (formatted YAML/JSON, `✓ YAML is valid`, `--stats`, lint reports) to stdout and errors, summaries, timing, discovery warnings and the `using config file:` notice (with `-v` only) to stderr. | must |
 | FR-017 | WHEN `RUST_LOG` holds a valid `tracing` filter, THE SYSTEM SHALL print debug events (discovery skips, config file chosen, worker count, pool building, scan-ahead retry, sequential-vs-parallel choice) to stderr; WITHOUT `RUST_LOG` it SHALL print none, and an invalid filter SHALL print one warning and log nothing. Stdout is never affected. | should |
-| FR-015 | WHEN `fy convert` runs, THE SYSTEM SHALL require `<TO>` = `yaml` or `json` (missing: exit 2) and SHALL accept `--pretty=false` for compact JSON; YAML input with several documents SHALL become a JSON array. | must |
+| FR-015 | WHEN `fy convert` runs, THE SYSTEM SHALL require `<TO>` = `yaml` or `json` (missing: exit 2) and SHALL accept `--pretty` (default) and `--no-pretty` for compact JSON, the last one given winning, and SHALL reject a value such as `--pretty=false` (#632); YAML input with several documents SHALL become a JSON array. | must |
 | FR-016 | WHEN color is enabled (stderr is a TTY, `NO_COLOR` is unset, `--no-color` absent, feature `colors` on), THE SYSTEM SHALL color errors and lint output; the `NO_COLOR` variable with any value (even empty) SHALL disable it. | must |
 
 ### 3.4 Exit codes
@@ -208,7 +208,7 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | `Target` | `Stdin`, `File`, `Batch` resolved from paths and flags. |
 | `OutputTarget`, `WriteTarget`, `EditIntent`, `WriteMode` | Encode the `-o`/`-i` destination and the `-n` precedence for format as types, not booleans; `-n` wins over `-i` in `EditIntent::resolve`. |
 | `InputSource`, `OutputWriter` | File or stdin input; stdout/stderr/atomic-file output. |
-| `MaxInputBytes`, `MaxScanAhead`, `MaxDepth`, `MaxAliasBytes`, `Indent`, `Width` | Range-checked newtypes from `fast-yaml-core::limits`. |
+| `MaxInputBytes`, `MaxScanAhead`, `MaxDepth`, `MaxAliasBytes`, `Indent` | Range-checked newtypes from `fast-yaml-core::limits`. |
 | `PathError`, `RaiseHint` | Discovery errors and limit hints rendered by `format_error`. |
 
 ## 5. Edge cases
@@ -277,13 +277,9 @@ The former top-level `-f/--format` is removed (usage error, exit 2). `-o` and `-
 | 11 | Cause chain repeats text (P4, GAP-CLI-014) | `caused by[0]` and `[1]` are identical for I/O errors. | Dedupe in `format_error`. |
 | 12 | Doc drift (P3, GAP-CLI-002/003/006/021) | Crate README synopsis, `skills/fast-yaml-cli/SKILL.md` (key sorting, `--indent` range, `convert -i` renaming, lint formats) disagree with behaviour. | Refresh docs from this spec. |
 | 13 | Single explicit non-YAML file accepted (P4, GAP-CLI-026) | `fy format -n a.txt` works; in a batch it errors on include patterns. | Make consistent? |
-| 14 | `--width` | Validated by `fy format` but never applied; help promises wrapping | [NEEDS CLARIFICATION: implement or remove] **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
 | 15 | `.yamllint` target (P4) | `.yamllint` is a default target of `fy lint` only (also for hidden-file skipping); `fy format` skips it. It is linted as YAML, never read as configuration. | accept |
-| 16 | `--pretty` and `--allow-duplicate-keys` swallow a positional (P3, #632) | Both take an optional value, so `fy convert yaml --pretty ok.yaml` fails with `invalid value 'ok.yaml' for '--pretty [<PRETTY>]'` (verified). | Make them value-less or require `=`. |
-| 17 | Discovery drops per-file errors (P2, #629) | Walk and glob errors on single entries are neither printed nor traced. | See [[005-batch-parallel/spec]] item 17. |
 | 18 | Debug events print paths raw (P4, #624) | `RUST_LOG` events print discovered paths without `DisplayPath`, so a newline in a name forges a log line; the human output is escaped (FR-042). | Render through `DisplayPath`. |
 | 19 | CLI config plumbing (P3, #643) | `lint` carries a dead formatter-indent branch, every subcommand carries a `FormatterConfig`, and several constructors take positional bools. | Remove the dead branch; scope the config to `format`; replace bools with enums (Principle 1). |
-| 20 | Python worker counts (P3, #633) | Negative `workers` / `thread_count` raise `OverflowError`, not `ValueError`, unlike the CLI usage error. | See [[007-python-api/spec]]. |
 
 ## 9. See also
 

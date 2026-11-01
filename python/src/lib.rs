@@ -676,10 +676,8 @@ fn safe_load_all(
 ///
 /// Args:
 ///     data: A Python object to serialize (dict, list, str, int, float, bool, None)
-///     `allow_unicode`: Accepted for `PyYAML` API compatibility (default: `True`)
 ///     `sort_keys`: If `True`, sort dictionary keys (default: `False`)
 ///     `indent`: Indentation width in spaces (default: 2)
-///     `width`: Line width for wrapping (default: 80)
 ///     `default_flow_style`: Force flow/block style (default: `None`)
 ///     `explicit_start`: Add document start marker `---` (default: `False`)
 ///
@@ -699,39 +697,29 @@ fn safe_load_all(
 #[pyfunction]
 #[pyo3(signature = (
     data,
-    allow_unicode=true,
     sort_keys=false,
-    indent=2,
-    width=80,
+    indent=None,
     default_flow_style=None,
     explicit_start=false
 ))]
-#[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
 #[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
 fn safe_dump(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
-    allow_unicode: bool,
     sort_keys: bool,
-    indent: usize,
-    width: usize,
+    indent: Option<&Bound<'_, PyAny>>,
     default_flow_style: Option<bool>,
     explicit_start: bool,
 ) -> PyResult<String> {
-    let yaml = python_to_yaml(data, &mut DumpBudget::default())?;
-
-    // Sort keys if requested
-    let yaml = if sort_keys {
-        sort_yaml_keys(&yaml)
-    } else {
-        yaml
-    };
+    let mut yaml = python_to_yaml(data, &mut DumpBudget::default())?;
+    if sort_keys {
+        yaml.sort_keys();
+    }
 
     // Create emitter configuration
     let config = fast_yaml_core::EmitterConfig::new()
         .with_indent(limits::indent(indent)?)
-        .with_width(limits::width(width)?)
-        .with_default_flow_style(default_flow_style)
+        .with_layout(fast_yaml_core::Layout::from_flow_flag(default_flow_style))
         .with_explicit_start(explicit_start);
 
     // Release GIL during CPU-intensive serialization
@@ -741,6 +729,10 @@ fn safe_dump(
 
     check_output_size(output)
 }
+
+const MIN_CHUNK_SIZE: usize = 1024;
+const MAX_CHUNK_SIZE: usize = 1024 * 1024;
+const DEFAULT_CHUNK_SIZE: usize = 8192;
 
 /// Wrapper to call Python stream.write() from Rust.
 struct PyWriteable<'py> {
@@ -828,47 +820,43 @@ pub(crate) fn estimate_dump_yaml_size(yaml: &Value) -> usize {
 #[pyo3(signature = (
     data,
     stream,
-    allow_unicode=true,
     sort_keys=false,
-    indent=2,
-    width=80,
+    indent=None,
     default_flow_style=None,
     explicit_start=false,
-    chunk_size=8192
+    chunk_size=None
 ))]
 #[allow(clippy::too_many_arguments)]
 fn safe_dump_to(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
     stream: &Bound<'_, PyAny>,
-    allow_unicode: bool,
     sort_keys: bool,
-    indent: usize,
-    width: usize,
+    indent: Option<&Bound<'_, PyAny>>,
     default_flow_style: Option<bool>,
     explicit_start: bool,
-    chunk_size: usize,
+    chunk_size: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<usize> {
-    let _ = allow_unicode; // Accepted for API compatibility, always true in saphyr
-
-    // Validate chunk size (1KB - 1MB)
-    let chunk_size = chunk_size.clamp(1024, 1024 * 1024);
+    let chunk_size = limits::in_range_or(
+        "chunk_size",
+        MIN_CHUNK_SIZE,
+        MAX_CHUNK_SIZE,
+        DEFAULT_CHUNK_SIZE,
+        chunk_size,
+    )?;
 
     // Create writable stream wrapper
     let mut writer = PyWriteable::new(stream.clone())?;
 
-    let yaml = python_to_yaml(data, &mut DumpBudget::default())?;
-    let yaml = if sort_keys {
-        sort_yaml_keys(&yaml)
-    } else {
-        yaml
-    };
+    let mut yaml = python_to_yaml(data, &mut DumpBudget::default())?;
+    if sort_keys {
+        yaml.sort_keys();
+    }
 
     // Create emitter config
     let config = fast_yaml_core::EmitterConfig::new()
         .with_indent(limits::indent(indent)?)
-        .with_width(limits::width(width)?)
-        .with_default_flow_style(default_flow_style)
+        .with_layout(fast_yaml_core::Layout::from_flow_flag(default_flow_style))
         .with_explicit_start(explicit_start);
 
     // Estimate threshold based on chunk_size
@@ -901,51 +889,14 @@ fn safe_dump_to(
     Ok(writer.bytes_written())
 }
 
-/// Helper function to recursively sort dictionary keys in YAML
-pub(crate) fn sort_yaml_keys(yaml: &Value) -> Value {
-    match yaml {
-        Value::Mapping(map) => {
-            let mut sorted: Vec<_> = map.iter().collect();
-            sorted.sort_by_cached_key(|(k, _)| yaml_to_sort_key(k));
-            let mut new_map = Mapping::with_capacity(map.len());
-            for (k, v) in sorted {
-                new_map.insert(k.clone(), sort_yaml_keys(v));
-            }
-            Value::Mapping(new_map)
-        }
-        Value::Sequence(arr) => Value::Sequence(arr.iter().map(sort_yaml_keys).collect()),
-        Value::Set(set) => {
-            let mut sorted: Vec<_> = set.iter().collect();
-            sorted.sort_by_cached_key(|member| yaml_to_sort_key(member));
-            Value::Set(sorted.into_iter().map(sort_yaml_keys).collect())
-        }
-        other => other.clone(),
-    }
-}
-
-/// Convert YAML value to a sortable string key
-fn yaml_to_sort_key(yaml: &Value) -> String {
-    match yaml {
-        Value::String(s) => s.clone(),
-        Value::Int(i) => i.to_string(),
-        Value::Float(f) => f.get().to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null | Value::BigInt(_) | Value::Sequence(_) | Value::Mapping(_) | Value::Set(_) => {
-            String::new()
-        }
-    }
-}
-
 /// Serialize multiple Python objects to a YAML string with document separators.
 ///
 /// This is equivalent to `PyYAML`'s `yaml.safe_dump_all()`.
 ///
 /// Args:
 ///     documents: An iterable of Python objects to serialize
-///     `allow_unicode`: Accepted for `PyYAML` API compatibility (default: `True`)
 ///     `sort_keys`: If `True`, sort dictionary keys (default: `False`)
 ///     `indent`: Indentation width in spaces (default: 2)
-///     `width`: Line width for wrapping (default: 80)
 ///     `default_flow_style`: Force flow/block style (default: `None`)
 ///     `explicit_start`: Add document start marker `---` (default: `False`)
 ///
@@ -967,22 +918,17 @@ fn yaml_to_sort_key(yaml: &Value) -> String {
 #[pyfunction]
 #[pyo3(signature = (
     documents,
-    allow_unicode=true,
     sort_keys=false,
-    indent=2,
-    width=80,
+    indent=None,
     default_flow_style=None,
     explicit_start=false
 ))]
-#[allow(unused_variables)] // allow_unicode is accepted for PyYAML API compatibility
 #[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
 fn safe_dump_all(
     py: Python<'_>,
     documents: &Bound<'_, PyAny>,
-    allow_unicode: bool,
     sort_keys: bool,
-    indent: usize,
-    width: usize,
+    indent: Option<&Bound<'_, PyAny>>,
     default_flow_style: Option<bool>,
     explicit_start: bool,
 ) -> PyResult<String> {
@@ -992,20 +938,17 @@ fn safe_dump_all(
     let mut yamls = Vec::new();
     for item in iter {
         let item = item?;
-        let yaml = python_to_yaml(&item, &mut budget)?;
-        let yaml = if sort_keys {
-            sort_yaml_keys(&yaml)
-        } else {
-            yaml
-        };
+        let mut yaml = python_to_yaml(&item, &mut budget)?;
+        if sort_keys {
+            yaml.sort_keys();
+        }
         yamls.push(yaml);
     }
 
     // Create emitter configuration
     let config = fast_yaml_core::EmitterConfig::new()
         .with_indent(limits::indent(indent)?)
-        .with_width(limits::width(width)?)
-        .with_default_flow_style(default_flow_style)
+        .with_layout(fast_yaml_core::Layout::from_flow_flag(default_flow_style))
         .with_explicit_start(explicit_start);
 
     // Release GIL during CPU-intensive serialization

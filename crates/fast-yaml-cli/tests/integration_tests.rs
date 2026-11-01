@@ -194,18 +194,6 @@ fn test_format_with_custom_indent() {
 }
 
 #[test]
-fn test_format_with_custom_width() {
-    cargo_bin_cmd!("fy")
-        .arg("format")
-        .arg("--width")
-        .arg("120")
-        .write_stdin("name: test")
-        .assert()
-        .success()
-        .code(0);
-}
-
-#[test]
 fn test_format_in_place_flag() {
     let file = create_temp_yaml("name:   test\nvalue:    123");
     let path = file.path().to_path_buf();
@@ -431,11 +419,12 @@ fn test_convert_with_pretty_flag_false() {
     cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
-        .arg("--pretty=false")
+        .arg("--no-pretty")
         .write_stdin("name: test\nvalue: 123")
         .assert()
         .success()
-        .code(0);
+        .code(0)
+        .stdout("{\"name\":\"test\",\"value\":123}\n");
 }
 
 #[test]

@@ -189,11 +189,12 @@ pub struct FileReport<'a> {
 /// # fn main() -> Result<(), fast_yaml_linter::formatter::NotAbsolute> {
 /// use std::path::Path;
 /// use fast_yaml_linter::formatter::{FileReport, ReportFormat, ReportPath, ReportSource};
+/// use fast_yaml_linter::config::RuleName;
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Location, Severity, Span};
 ///
 /// let span = Span::new(Location::try_new(3, 5, 20).unwrap(), Location::try_new(3, 9, 24).unwrap());
 /// let diagnostic =
-///     DiagnosticBuilder::new(DiagnosticCode::TRUTHY, Severity::Warning, "truthy value", span)
+///     DiagnosticBuilder::new(RuleName::Truthy, Severity::Warning, "truthy value", span)
 ///         .build_without_excerpt();
 /// let source = ReportSource::File(ReportPath::from_absolute(Path::new("/w/a.yaml"))?);
 /// let report = FileReport { source: &source, diagnostics: &[diagnostic] };

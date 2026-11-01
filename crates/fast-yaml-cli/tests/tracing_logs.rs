@@ -114,3 +114,21 @@ fn event_paths_never_carry_raw_escape_characters() {
     assert!(stderr.contains("red.txt"), "{stderr}");
     assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
 }
+
+#[cfg(unix)]
+#[test]
+fn a_newline_in_a_skipped_file_name_never_splits_an_event() {
+    let dir = project();
+    fs::write(dir.path().join("a\nFORGED-LINE.txt"), "not yaml\n").unwrap();
+    fs::write(dir.path().join(".hid\nFORGED-LINE.yaml"), "a: 1\n").unwrap();
+    let out = fy(&dir, &["format", "-n", "-j", "2", "."])
+        .env("RUST_LOG", "debug")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("FORGED-LINE"), "{stderr}");
+    assert!(
+        stderr.lines().all(|line| !line.starts_with("FORGED-LINE")),
+        "{stderr}"
+    );
+}

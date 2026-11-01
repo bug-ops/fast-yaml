@@ -18,7 +18,7 @@ mod duplicate_keys;
 mod empty_lines;
 mod empty_values;
 mod float_values;
-pub mod flow_common;
+mod flow_common;
 mod hyphens;
 mod indentation;
 mod invalid_anchors;
@@ -121,7 +121,7 @@ impl RuleId<'_> {
 /// assert_eq!(id, OwnedRuleId::BuiltIn(RuleName::Braces));
 /// assert_eq!(id.as_id(), RuleId::BuiltIn(RuleName::Braces));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum OwnedRuleId {
     /// One of the built-in rules.
     BuiltIn(RuleName),
@@ -178,14 +178,6 @@ impl fmt::Display for RuleId<'_> {
 ///         RuleId::Custom(&self.0)
 ///     }
 ///
-///     fn name(&self) -> &str {
-///         "Example Rule"
-///     }
-///
-///     fn description(&self) -> &str {
-///         "An example lint rule"
-///     }
-///
 ///     fn default_severity(&self) -> Severity {
 ///         Severity::Warning
 ///     }
@@ -211,14 +203,6 @@ pub trait LintRule: Send + Sync {
     /// the built-in is already registered. Splitting the trait to forbid it would double every
     /// registry type for one corner case.
     fn id(&self) -> RuleId<'_>;
-
-    /// Human-readable name.
-    ///
-    /// Should be title case, e.g., "Duplicate Keys", "Line Length".
-    fn name(&self) -> &str;
-
-    /// Detailed description of what this rule checks.
-    fn description(&self) -> &str;
 
     /// Default severity level.
     fn default_severity(&self) -> Severity;
@@ -302,12 +286,6 @@ pub struct LintDocument<'a> {
 ///     fn id(&self) -> RuleId<'_> {
 ///         RuleId::Custom(&self.0)
 ///     }
-///     fn name(&self) -> &str {
-///         "No Null"
-///     }
-///     fn description(&self) -> &str {
-///         "Rejects a null document"
-///     }
 ///     fn default_severity(&self) -> Severity {
 ///         Severity::Warning
 ///     }
@@ -324,7 +302,7 @@ pub struct LintDocument<'a> {
 ///             return Vec::new();
 ///         }
 ///         let source = context.source_context();
-///         let offset = source.get_line_offset(document.first_line.get());
+///         let offset = source.get_line_offset(document.first_line);
 ///         let span = Span::new(
 ///             source.offset_to_location(offset),
 ///             source.offset_to_location(offset + 1),
@@ -376,7 +354,7 @@ pub(crate) fn stamp<R: LintRule + ?Sized>(
     }
     let id = rule.id();
     let severity = config.severity_for(id, rule.default_severity());
-    let code = DiagnosticCode::from(id.as_str());
+    let code = DiagnosticCode::from(id);
     findings
         .into_iter()
         .map(|finding| finding.into_diagnostic(code.clone(), severity))

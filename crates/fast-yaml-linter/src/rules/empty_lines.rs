@@ -1,6 +1,7 @@
 //! Rule to check empty lines.
 
 use super::RuleId;
+use crate::OneBased;
 use crate::config::RuleName;
 use serde::{Deserialize, Serialize};
 
@@ -64,14 +65,6 @@ impl super::LintRule for EmptyLinesRule {
         RuleId::BuiltIn(RuleName::EmptyLines)
     }
 
-    fn name(&self) -> &'static str {
-        "Empty Lines"
-    }
-
-    fn description(&self) -> &'static str {
-        "Limits consecutive empty lines in document"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
@@ -93,10 +86,10 @@ impl super::SourceRule for EmptyLinesRule {
 
         // Track consecutive empty lines
         let mut empty_count = 0;
-        let mut empty_start_line = 0;
+        let mut empty_start_line = OneBased::FIRST;
 
         for (idx, (_, line)) in lines.iter().enumerate() {
-            let line_num = idx + 1;
+            let line_num = OneBased::from_index(idx);
 
             if line.trim().is_empty() {
                 if empty_count == 0 {
@@ -106,7 +99,7 @@ impl super::SourceRule for EmptyLinesRule {
             } else {
                 // Check if we exceeded limits
                 if empty_count > 0 {
-                    let limit = if empty_start_line == 1 {
+                    let limit = if empty_start_line == OneBased::FIRST {
                         max_start
                     } else {
                         max
@@ -117,7 +110,7 @@ impl super::SourceRule for EmptyLinesRule {
                             source_context.location_at(source_context.line_start(empty_start_line));
                         let span = Span::new(location, location);
 
-                        let position = if empty_start_line == 1 {
+                        let position = if empty_start_line == OneBased::FIRST {
                             "at document start"
                         } else {
                             "in document"

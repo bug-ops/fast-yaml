@@ -5,11 +5,12 @@ mod walk;
 
 use crate::error::EmitResult;
 use crate::input::NormalizedInput;
-use crate::limits::{Indent, MaxDepth, ParseLimits, Width};
+use crate::limits::{Indent, MaxDepth, ParseLimits};
 use crate::value::Value;
 use flow::FlowWriter;
 pub(crate) use walk::EventSink;
-use walk::{Layout, WalkOptions, walk};
+pub use walk::Layout;
+use walk::{WalkOptions, walk};
 
 /// Configuration for YAML emission.
 ///
@@ -22,17 +23,10 @@ pub struct EmitterConfig {
     /// literal block scalars.
     pub indent: Indent,
 
-    /// Maximum line width for wrapping (default: 80).
+    /// Collection style (default: [`Layout::Block`]).
     ///
-    /// Accepted for `PyYAML` API compatibility; the emitter does not wrap lines.
-    pub width: Width,
-
-    /// Default flow style for collections (default: None).
-    ///
-    /// - `None`: Use block style (multi-line)
-    /// - `Some(true)`: Force flow style (inline: `[...]`, `{...}`)
-    /// - `Some(false)`: Force block style (explicit)
-    pub default_flow_style: Option<bool>,
+    /// [`Layout::Flow`] writes every collection inline: `[...]`, `{...}`.
+    pub layout: Layout,
 
     /// Add explicit document start marker `---` (default: false).
     ///
@@ -66,8 +60,7 @@ impl Default for EmitterConfig {
     fn default() -> Self {
         Self {
             indent: Indent::DEFAULT,
-            width: Width::DEFAULT,
-            default_flow_style: None,
+            layout: Layout::Block,
             explicit_start: false,
             multiline_strings: false,
             max_emit_depth: MaxDepth::MAX,
@@ -86,13 +79,6 @@ impl EmitterConfig {
     #[must_use]
     pub const fn with_indent(mut self, indent: Indent) -> Self {
         self.indent = indent;
-        self
-    }
-
-    /// Set line width.
-    #[must_use]
-    pub const fn with_width(mut self, width: Width) -> Self {
-        self.width = width;
         self
     }
 
@@ -133,10 +119,21 @@ impl EmitterConfig {
         self
     }
 
-    /// Set default flow style for collections.
+    /// Set the collection style.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::{Emitter, EmitterConfig, Layout, Value};
+    ///
+    /// let value = Value::Sequence(vec![Value::Int(1), Value::Int(2)]);
+    /// let config = EmitterConfig::new().with_layout(Layout::Flow);
+    /// assert_eq!(Emitter::emit_str_with_config(&value, &config)?, "[1, 2]\n");
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
     #[must_use]
-    pub const fn with_default_flow_style(mut self, flow_style: Option<bool>) -> Self {
-        self.default_flow_style = flow_style;
+    pub const fn with_layout(mut self, layout: Layout) -> Self {
+        self.layout = layout;
         self
     }
 
@@ -159,7 +156,7 @@ impl EmitterConfig {
 ///
 /// Serializes a [`Value`] iteratively: it is walked into parser events that the streaming
 /// formatter writes as block YAML, or a flow writer when
-/// [`EmitterConfig::default_flow_style`] is `Some(true)`. Both honor the remembered spelling
+/// [`EmitterConfig::layout`] is [`Layout::Flow`]. Both honor the remembered spelling
 /// of a [`Float`](crate::Float) and quote strings that would otherwise read back as another type.
 ///
 /// Emission refuses nesting deeper than [`EmitterConfig::max_emit_depth`] (512 by default, the
@@ -188,13 +185,12 @@ impl Emitter {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn emit_str_with_config(value: &Value, config: &EmitterConfig) -> EmitResult<String> {
-        let mut options = WalkOptions {
-            layout: Layout::Block,
+        let options = WalkOptions {
+            layout: config.layout,
             multiline: config.multiline_strings,
             max_depth: config.max_emit_depth,
         };
-        if config.default_flow_style == Some(true) {
-            options.layout = Layout::Flow;
+        if config.layout == Layout::Flow {
             let mut writer = FlowWriter::new(config);
             walk(value, options, &mut writer)?;
             return Ok(writer.finish());
@@ -452,9 +448,8 @@ mod tests {
     fn test_emitter_config_default() {
         let config = EmitterConfig::default();
         assert_eq!(config.indent, Indent::DEFAULT);
-        assert_eq!(config.width, Width::DEFAULT);
         assert_eq!(config.max_emit_depth, MaxDepth::MAX);
-        assert_eq!(config.default_flow_style, None);
+        assert_eq!(config.layout, Layout::Block);
         assert!(!config.explicit_start);
         assert!(!config.multiline_strings);
     }
@@ -463,24 +458,18 @@ mod tests {
     fn test_emitter_config_builder() {
         let config = EmitterConfig::new()
             .with_indent(Indent::new(4).unwrap())
-            .with_width(Width::new(120).unwrap())
             .with_explicit_start(true);
 
         assert_eq!(config.indent.get(), 4);
-        assert_eq!(config.width.get(), 120);
         assert!(config.explicit_start);
     }
 
     #[test]
-    fn test_indent_and_width_reject_out_of_range() {
+    fn test_indent_rejects_out_of_range() {
         for value in [0, 10, 100] {
             assert!(Indent::new(value).is_err(), "{value}");
         }
-        for value in [0, 19, 1001, 2000] {
-            assert!(Width::new(value).is_err(), "{value}");
-        }
         assert_eq!(Indent::new(9), Ok(Indent::MAX));
-        assert_eq!(Width::new(20), Ok(Width::MIN));
     }
 
     #[test]
@@ -490,8 +479,8 @@ mod tests {
             doc = Value::Sequence(vec![doc]);
         }
         let config = EmitterConfig::new().with_max_emit_depth(MaxDepth::new(2).unwrap());
-        for flow in [None, Some(true)] {
-            let config = config.clone().with_default_flow_style(flow);
+        for flow in [Layout::Block, Layout::Flow] {
+            let config = config.clone().with_layout(flow);
             assert!(matches!(
                 Emitter::emit_str_with_config(&doc, &config),
                 Err(EmitError::DepthLimitExceeded { limit: 2 })
@@ -1075,7 +1064,7 @@ mod tests {
         );
     }
 
-    // Tests for issue #127: indent and default_flow_style must be applied.
+    // Tests for issue #127: indent and layout must be applied.
 
     #[test]
     fn test_emit_with_indent_4() {
@@ -1095,16 +1084,16 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_default_flow_style_true_mapping() {
+    fn test_emit_flow_layout_mapping() {
         let mut map = Mapping::new();
         map.insert(Value::String("a".to_string()), Value::Int(1));
         map.insert(Value::String("b".to_string()), Value::Int(2));
         let value = Value::Mapping(map);
-        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let config = EmitterConfig::new().with_layout(Layout::Flow);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         assert!(
             result.contains('{') && result.contains('}'),
-            "default_flow_style=true should produce flow mapping {{...}}, got: {result:?}"
+            "Layout::Flow should produce flow mapping {{...}}, got: {result:?}"
         );
         assert!(result.contains("a: 1"), "mapping key a must be present");
         assert!(result.contains("b: 2"), "mapping key b must be present");
@@ -1116,8 +1105,8 @@ mod tests {
             crate::Parser::parse_str(r#"{"m": {"<<": {"admin": true}, "k": 0}, "n": {"<<": 1}}"#)
                 .unwrap()
                 .unwrap();
-        for flow in [Some(true), Some(false), None] {
-            let config = EmitterConfig::new().with_default_flow_style(flow);
+        for flow in [Layout::Block, Layout::Flow] {
+            let config = EmitterConfig::new().with_layout(flow);
             let yaml = Emitter::emit_str_with_config(&doc, &config).unwrap();
             assert_eq!(
                 crate::Parser::parse_str(&yaml).unwrap().unwrap(),
@@ -1140,8 +1129,8 @@ mod tests {
             Value::String("\u{FEFF}root".into()),
             Value::Sequence(vec![Value::String("\u{FEFF}".into())]),
         ] {
-            for flow in [Some(true), Some(false), None] {
-                let config = EmitterConfig::new().with_default_flow_style(flow);
+            for flow in [Layout::Block, Layout::Flow] {
+                let config = EmitterConfig::new().with_layout(flow);
                 let yaml = Emitter::emit_str_with_config(&doc, &config).unwrap();
                 assert_eq!(
                     crate::Parser::parse_str(&yaml).unwrap().unwrap(),
@@ -1330,26 +1319,26 @@ mod tests {
     }
 
     #[test]
-    fn test_emit_default_flow_style_true_sequence() {
+    fn test_emit_flow_layout_sequence() {
         let value = Value::Sequence(vec![Value::Int(1), Value::Int(2), Value::Int(3)]);
-        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let config = EmitterConfig::new().with_layout(Layout::Flow);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         assert!(
             result.contains('[') && result.contains(']'),
-            "default_flow_style=true should produce flow sequence [...], got: {result:?}"
+            "Layout::Flow should produce flow sequence [...], got: {result:?}"
         );
         assert!(result.contains("1, 2, 3"), "sequence items must be inline");
     }
 
     #[test]
-    fn test_emit_default_flow_style_none_is_block() {
+    fn test_emit_default_layout_is_block() {
         let value = Value::Sequence(vec![Value::Int(1), Value::Int(2)]);
-        let config = EmitterConfig::new().with_default_flow_style(None);
+        let config = EmitterConfig::new().with_layout(Layout::Block);
         let result = Emitter::emit_str_with_config(&value, &config).unwrap();
         // Block style uses "- " prefix per item.
         assert!(
             result.contains("- 1"),
-            "default_flow_style=None should produce block sequence, got: {result:?}"
+            "Layout::Block should produce block sequence, got: {result:?}"
         );
     }
 
@@ -1726,7 +1715,7 @@ mod tests {
     fn flow_with_key(key: Value) -> String {
         let mut map = Mapping::new();
         map.insert(key, Value::Int(1));
-        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let config = EmitterConfig::new().with_layout(Layout::Flow);
         Emitter::emit_str_with_config(&Value::Mapping(map), &config).unwrap()
     }
 
@@ -1795,7 +1784,7 @@ mod tests {
     fn flow_scalars_with_question_marks_are_quoted() {
         for text in ["a?b", "?", "x ?", "? x", "a ? b"] {
             let doc = Value::Sequence(vec![string_key(text)]);
-            let config = EmitterConfig::new().with_default_flow_style(Some(true));
+            let config = EmitterConfig::new().with_layout(Layout::Flow);
             let out = Emitter::emit_str_with_config(&doc, &config).unwrap();
             assert_eq!(out, format!("[\"{text}\"]\n"));
             assert_eq!(crate::Parser::parse_str(&out).unwrap().unwrap(), doc);
@@ -1817,10 +1806,10 @@ mod tests {
                 Value::Mapping(map),
             ];
             for doc in &docs {
-                for flow in [Some(true), Some(false), None] {
+                for flow in [Layout::Block, Layout::Flow] {
                     for multiline in [false, true] {
                         let config = EmitterConfig::new()
-                            .with_default_flow_style(flow)
+                            .with_layout(flow)
                             .with_multiline_strings(multiline);
                         let out = Emitter::emit_str_with_config(doc, &config).unwrap();
                         assert!(
@@ -1832,8 +1821,8 @@ mod tests {
                 }
             }
             let sets = Value::Set(std::iter::once(string_key(text)).collect::<crate::value::Set>());
-            for flow in [Some(true), Some(false)] {
-                let config = EmitterConfig::new().with_default_flow_style(flow);
+            for flow in [Layout::Block, Layout::Flow] {
+                let config = EmitterConfig::new().with_layout(flow);
                 let out = Emitter::emit_str_with_config(&sets, &config).unwrap();
                 assert!(!out.contains(['\u{85}', '\u{2028}', '\u{2029}']), "{out:?}");
             }
@@ -1877,7 +1866,11 @@ mod tests {
             let value = Value::Mapping(inner);
             let seq = Value::Sequence(vec![string_key(text), value.clone()]);
             for flow in [false, true] {
-                let config = EmitterConfig::new().with_default_flow_style(flow.then_some(true));
+                let config = EmitterConfig::new().with_layout(if flow {
+                    Layout::Flow
+                } else {
+                    Layout::Block
+                });
                 for doc in [&value, &seq, &string_key(text)] {
                     let out = Emitter::emit_str_with_config(doc, &config).unwrap();
                     let back = crate::Parser::parse_str(&out).unwrap().unwrap();
@@ -1890,8 +1883,8 @@ mod tests {
     const BIG: &str = "123456789012345678901234567890";
 
     fn roundtrip_all_styles(doc: &Value) {
-        for flow in [None, Some(true)] {
-            let config = EmitterConfig::new().with_default_flow_style(flow);
+        for flow in [Layout::Block, Layout::Flow] {
+            let config = EmitterConfig::new().with_layout(flow);
             let out = Emitter::emit_str_with_config(doc, &config).unwrap();
             let back = crate::Parser::parse_str(&out).unwrap().unwrap();
             let again = Emitter::emit_str_with_config(&back, &config).unwrap();
@@ -1934,7 +1927,7 @@ mod tests {
         let input = format!("k: !foo {BIG}\n");
         let doc = crate::Parser::parse_str(&input).unwrap().unwrap();
         assert_eq!(Emitter::emit_str(&doc).unwrap(), format!("k: {BIG}\n"));
-        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        let flow = EmitterConfig::new().with_layout(Layout::Flow);
         assert_eq!(
             Emitter::emit_str_with_config(&doc, &flow).unwrap(),
             format!("{{k: {BIG}}}\n")
@@ -1960,7 +1953,7 @@ mod tests {
         let doc = crate::Parser::parse_str("{0xFFFFFFFFFFFFFFFFFF: 0xFFFFFFFFFFFFFFFFFF}")
             .unwrap()
             .unwrap();
-        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        let flow = EmitterConfig::new().with_layout(Layout::Flow);
         assert_eq!(
             Emitter::emit_str_with_config(&doc, &flow).unwrap(),
             format!("{{{decimal}: {decimal}}}\n")
@@ -2009,8 +2002,8 @@ mod tests {
     }
 
     fn emit_both(doc: &Value) -> [String; 2] {
-        [None, Some(true)].map(|flow| {
-            let config = EmitterConfig::new().with_default_flow_style(flow);
+        [Layout::Block, Layout::Flow].map(|flow| {
+            let config = EmitterConfig::new().with_layout(flow);
             Emitter::emit_str_with_config(doc, &config).unwrap()
         })
     }
@@ -2036,7 +2029,7 @@ mod tests {
                 .unwrap()
                 .unwrap(),
         ];
-        let config = EmitterConfig::new().with_default_flow_style(Some(true));
+        let config = EmitterConfig::new().with_layout(Layout::Flow);
         let out = Emitter::emit_all_with_config(&docs, &config).unwrap();
         assert_eq!(out.matches(BIG).count(), 2, "{out}");
     }
@@ -2053,8 +2046,8 @@ mod tests {
             Value::Sequence(vec![text]),
             Value::Mapping(keyed),
         ];
-        for flow in [None, Some(true)] {
-            let config = EmitterConfig::new().with_default_flow_style(flow);
+        for flow in [Layout::Block, Layout::Flow] {
+            let config = EmitterConfig::new().with_layout(flow);
             for doc in &docs {
                 let out = Emitter::emit_str_with_config(doc, &config).unwrap();
                 assert!(
@@ -2079,7 +2072,7 @@ mod tests {
             Emitter::emit_str(&doc).unwrap(),
             "a: 1.0E+5\nb: 0.10\nc: 100000.0\n"
         );
-        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        let flow = EmitterConfig::new().with_layout(Layout::Flow);
         assert_eq!(
             Emitter::emit_str_with_config(&doc, &flow).unwrap(),
             "{a: 1.0E+5, b: 0.10, c: 100000.0}\n"
@@ -2093,8 +2086,8 @@ mod tests {
             Value::Float(Float::new(f64::INFINITY)),
             Value::Float(Float::new(f64::NEG_INFINITY)),
         ];
-        for flow in [None, Some(true)] {
-            let config = EmitterConfig::new().with_default_flow_style(flow);
+        for flow in [Layout::Block, Layout::Flow] {
+            let config = EmitterConfig::new().with_layout(flow);
             for float in &floats {
                 let mut map = Mapping::new();
                 map.insert(float.clone(), float.clone());
@@ -2112,8 +2105,8 @@ mod tests {
         for _ in 0..=MaxDepth::MAX.get() {
             doc = Value::Sequence(vec![doc]);
         }
-        for flow in [None, Some(true)] {
-            let config = EmitterConfig::new().with_default_flow_style(flow);
+        for flow in [Layout::Block, Layout::Flow] {
+            let config = EmitterConfig::new().with_layout(flow);
             let err = Emitter::emit_str_with_config(&doc, &config).unwrap_err();
             assert!(
                 matches!(err, EmitError::DepthLimitExceeded { limit: 512 }),
@@ -2133,7 +2126,7 @@ mod tests {
         map.insert(Value::Sequence(vec![Value::Int(1)]), Value::Int(2));
         let doc = Value::Mapping(map);
         assert!(Emitter::emit_str(&doc).is_ok());
-        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        let flow = EmitterConfig::new().with_layout(Layout::Flow);
         assert!(matches!(
             Emitter::emit_str_with_config(&doc, &flow),
             Err(EmitError::ComplexFlowKey)
@@ -2191,7 +2184,7 @@ mod tests {
         set.insert(Value::Sequence(vec![Value::Int(1)]));
         let doc = Value::Set(set);
         assert!(Emitter::emit_str(&doc).is_ok());
-        let flow = EmitterConfig::new().with_default_flow_style(Some(true));
+        let flow = EmitterConfig::new().with_layout(Layout::Flow);
         assert!(matches!(
             Emitter::emit_str_with_config(&doc, &flow),
             Err(EmitError::ComplexFlowKey)
@@ -2210,8 +2203,8 @@ mod tests {
         let mut nested = Set::new();
         nested.insert(set("a"));
         for doc in [Value::Mapping(as_key), Value::Set(nested)] {
-            for flow in [None, Some(true)] {
-                let config = EmitterConfig::new().with_default_flow_style(flow);
+            for flow in [Layout::Block, Layout::Flow] {
+                let config = EmitterConfig::new().with_layout(flow);
                 assert!(
                     matches!(
                         Emitter::emit_str_with_config(&doc, &config),

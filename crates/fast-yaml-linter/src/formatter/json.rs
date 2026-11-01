@@ -7,7 +7,7 @@ use serde::{Serialize, Serializer as _};
 
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticContext, Formatter, Severity, Span, Suggestion,
-    formatter::{Finding, Findings},
+    formatter::{DiagnosticView, Findings},
 };
 
 /// JSON formatter for machine-readable output.
@@ -19,44 +19,56 @@ use crate::{
 ///
 /// ```
 /// use fast_yaml_linter::formatter::Findings;
-/// use fast_yaml_linter::{JsonFormatter, Formatter};
+/// use fast_yaml_linter::{Formatter, JsonFormatter, JsonLayout};
 ///
-/// let formatter = JsonFormatter::new(true);
+/// let formatter = JsonFormatter::new(JsonLayout::Pretty);
 /// let output = formatter.format(Findings::EMPTY);
 /// assert_eq!(output, "[]");
 /// ```
 #[cfg(feature = "json-output")]
 pub struct JsonFormatter {
-    /// Pretty-print JSON.
-    pub pretty: bool,
+    layout: JsonLayout,
+}
+
+/// Whitespace layout of [`JsonFormatter`] output.
+#[cfg(feature = "json-output")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JsonLayout {
+    /// Indented, one value per line.
+    Pretty,
+    /// No insignificant whitespace.
+    #[default]
+    Compact,
 }
 
 #[cfg(feature = "json-output")]
 impl JsonFormatter {
-    /// Creates a new JSON formatter.
-    ///
-    /// # Parameters
-    ///
-    /// - `pretty`: Whether to pretty-print the JSON output
+    /// Creates a JSON formatter with the given layout.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::JsonFormatter;
+    /// use fast_yaml_linter::{JsonFormatter, JsonLayout};
     ///
-    /// let formatter = JsonFormatter::new(true);
-    /// assert!(formatter.pretty);
+    /// let formatter = JsonFormatter::new(JsonLayout::Pretty);
+    /// assert_eq!(formatter.layout(), JsonLayout::Pretty);
     /// ```
     #[must_use]
-    pub const fn new(pretty: bool) -> Self {
-        Self { pretty }
+    pub const fn new(layout: JsonLayout) -> Self {
+        Self { layout }
+    }
+
+    /// Returns the configured layout.
+    #[must_use]
+    pub const fn layout(&self) -> JsonLayout {
+        self.layout
     }
 }
 
 #[cfg(feature = "json-output")]
 impl Default for JsonFormatter {
     fn default() -> Self {
-        Self::new(false)
+        Self::new(JsonLayout::Compact)
     }
 }
 
@@ -69,11 +81,12 @@ impl Default for JsonFormatter {
 ///
 /// ```
 /// use fast_yaml_linter::formatter::{Findings, JsonDiagnostic};
+/// use fast_yaml_linter::config::RuleName;
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Location, Severity, Span};
 ///
 /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 2, 1).unwrap());
 /// let pairs = [(
-///     DiagnosticBuilder::new(DiagnosticCode::TRUTHY, Severity::Warning, "m", span)
+///     DiagnosticBuilder::new(RuleName::Truthy, Severity::Warning, "m", span)
 ///         .build_without_excerpt(),
 ///     None,
 /// )];
@@ -101,7 +114,7 @@ pub struct JsonDiagnostic<'a> {
 impl<'a> JsonDiagnostic<'a> {
     /// Describes `finding`, naming the `file` it was found in when there is one.
     #[must_use]
-    pub fn new(finding: &Finding<'a>, file: Option<&'a str>) -> Self {
+    pub fn new(finding: &DiagnosticView<'a>, file: Option<&'a str>) -> Self {
         let Diagnostic {
             code,
             severity,
@@ -131,7 +144,7 @@ impl Formatter for JsonFormatter {
         // The caller's writer is a trait object, so every token serde writes would be a virtual
         // call; a local buffer keeps them inlined
         let mut out = io::BufWriter::with_capacity(super::WRITE_BUFFER, out);
-        if self.pretty {
+        if self.layout == JsonLayout::Pretty {
             (&mut serde_json::Serializer::pretty(&mut out)).collect_seq(entries)
         } else {
             (&mut serde_json::Serializer::new(&mut out)).collect_seq(entries)
@@ -144,18 +157,18 @@ impl Formatter for JsonFormatter {
 #[cfg(all(test, feature = "json-output"))]
 mod tests {
     use super::*;
-    use crate::{DiagnosticBuilder, DiagnosticCode, Location, Severity, Span};
+    use crate::{DiagnosticBuilder, Location, Severity, Span, config::RuleName};
 
     #[test]
     fn test_json_formatter_empty() {
-        let formatter = JsonFormatter::new(false);
+        let formatter = JsonFormatter::new(JsonLayout::Compact);
         let output = formatter.format(Findings::EMPTY);
         assert_eq!(output, "[]");
     }
 
     #[test]
     fn test_json_formatter_pretty() {
-        let formatter = JsonFormatter::new(true);
+        let formatter = JsonFormatter::new(JsonLayout::Pretty);
         let output = formatter.format(Findings::EMPTY);
         assert_eq!(output, "[]");
     }
@@ -167,11 +180,10 @@ mod tests {
             Location::try_new(1, 4, 3).unwrap(),
         );
 
-        let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)
-                .build_without_excerpt();
+        let diagnostic = DiagnosticBuilder::new(RuleName::LineLength, Severity::Info, "test", span)
+            .build_without_excerpt();
 
-        let formatter = JsonFormatter::new(false);
+        let formatter = JsonFormatter::new(JsonLayout::Compact);
         let output = formatter.format(Findings::Given(&[(diagnostic, None)]));
 
         assert!(output.contains("\"code\":\"line-length\""));
@@ -189,7 +201,7 @@ mod excerpt_tests {
         let source = LintSource::new("a:   1\n").unwrap();
         let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
         let context = source.context();
-        let json = JsonFormatter::new(false).format(Findings::FromSource {
+        let json = JsonFormatter::new(JsonLayout::Compact).format(Findings::FromSource {
             diagnostics: &diagnostics,
             source: &context,
         });
@@ -204,12 +216,15 @@ mod excerpt_tests {
         let source = LintSource::new("a:   1\n").unwrap();
         let diagnostics = Linter::with_all_rules().lint_source(&source).unwrap();
         let context = source.context();
-        let lazy = JsonFormatter::new(true).format(Findings::FromSource {
+        let lazy = JsonFormatter::new(JsonLayout::Pretty).format(Findings::FromSource {
             diagnostics: &diagnostics,
             source: &context,
         });
         let cut = Findings::cut(diagnostics, &context);
-        assert_eq!(JsonFormatter::new(true).format(Findings::Given(&cut)), lazy);
+        assert_eq!(
+            JsonFormatter::new(JsonLayout::Pretty).format(Findings::Given(&cut)),
+            lazy
+        );
     }
 
     #[test]
@@ -219,7 +234,7 @@ mod excerpt_tests {
             "a: [",
         );
         let context = SourceContext::new("a: [");
-        let json = JsonFormatter::new(false).format(Findings::FromSource {
+        let json = JsonFormatter::new(JsonLayout::Compact).format(Findings::FromSource {
             diagnostics: &[diagnostic],
             source: &context,
         });

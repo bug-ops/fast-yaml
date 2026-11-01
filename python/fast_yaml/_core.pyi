@@ -191,10 +191,8 @@ def safe_load_all(
 
 def safe_dump(
     data: Any,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
-    indent: int = 2,
-    width: int = 80,
+    indent: int | None = None,
     default_flow_style: bool | None = None,
     explicit_start: bool = False,
 ) -> str:
@@ -202,11 +200,10 @@ def safe_dump(
 
     Args:
         data: A Python object to serialize
-        allow_unicode: If True, allow unicode in output (currently always enabled)
         sort_keys: If True, sort dictionary keys
         indent: Number of spaces for indentation (default: 2)
-        width: Maximum line width (default: 80)
-        default_flow_style: Force flow style for collections (default: None)
+        default_flow_style: True writes flow collections; None or False writes block
+            (default: None)
         explicit_start: Add explicit document start marker (default: False)
 
     Returns:
@@ -216,19 +213,13 @@ def safe_dump(
         TypeError: If the object cannot be serialized
         ValueError: If an int has more digits than ``sys.get_int_max_str_digits()`` (CPython's
             limit; ``sys.set_int_max_str_digits()`` raises it)
-
-    Note:
-        The allow_unicode parameter is accepted for PyYAML compatibility,
-        but yaml-rust2 always outputs unicode characters.
     """
     ...
 
 def safe_dump_all(
     documents: Any,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
-    indent: int = 2,
-    width: int = 80,
+    indent: int | None = None,
     default_flow_style: bool | None = None,
     explicit_start: bool = False,
 ) -> str:
@@ -236,11 +227,10 @@ def safe_dump_all(
 
     Args:
         documents: An iterable of Python objects to serialize
-        allow_unicode: If True, allow unicode in output (currently always enabled)
         sort_keys: If True, sort dictionary keys
         indent: Number of spaces for indentation (default: 2)
-        width: Maximum line width (default: 80)
-        default_flow_style: Force flow style for collections (default: None)
+        default_flow_style: True writes flow collections; None or False writes block
+            (default: None)
         explicit_start: Add explicit document start marker (default: False)
 
     Returns:
@@ -256,13 +246,11 @@ def safe_dump_all(
 def safe_dump_to(
     data: Any,
     stream: Any,
-    allow_unicode: bool = True,
     sort_keys: bool = False,
-    indent: int = 2,
-    width: int = 80,
+    indent: int | None = None,
     default_flow_style: bool | None = None,
     explicit_start: bool = False,
-    chunk_size: int = 8192,
+    chunk_size: int | None = None,
 ) -> int:
     """Dump YAML directly to a stream without intermediate string.
 
@@ -272,13 +260,13 @@ def safe_dump_to(
     Args:
         data: Python object to serialize
         stream: File-like object with write() method
-        allow_unicode: Allow unicode characters (default: True)
         sort_keys: Sort dictionary keys (default: False)
         indent: Number of spaces for indentation (default: 2)
-        width: Maximum line width (default: 80)
-        default_flow_style: Force flow style for collections (default: None)
+        default_flow_style: True writes flow collections; None or False writes block
+            (default: None)
         explicit_start: Add explicit document start marker (default: False)
-        chunk_size: Size of write chunks in bytes (default: 8KB)
+        chunk_size: Write chunk size in bytes, 1024..=1048576 (default: 8192);
+            other values raise ValueError
 
     Returns:
         Number of bytes written
@@ -388,7 +376,9 @@ class lint:  # noqa: N801
 
         ``offset`` is a byte offset in the text with document-prefix BOMs removed
         (also for suggestion spans); ``line`` and ``column`` refer to the same text.
-        ``line`` and ``column`` count from 1; ``offset`` counts from 0.
+        ``line`` and ``column`` count from 1; ``offset`` counts from 0. Constructor
+        arguments outside their range (zero or negative ``line``/``column``, negative
+        ``offset``) raise ``ValueError``; ``bool`` raises ``TypeError``.
         """
 
         line: int
@@ -412,7 +402,11 @@ class lint:  # noqa: N801
         def __eq__(self, other: object) -> bool: ...
 
     class ContextLine:
-        """A single line of source context."""
+        """A single line of source context.
+
+        ``line_number`` counts from 1; zero, negative ``line_number``, ``column_offset`` or
+        ``highlights`` columns raise ``ValueError``; ``bool`` raises ``TypeError``.
+        """
 
         line_number: int
         content: str
@@ -591,11 +585,9 @@ class parallel:  # noqa: N801
         def __init__(
             self,
             thread_count: int | None = None,
-            min_chunk_size: int = 4096,
-            max_chunk_size: int = 10 * 1024 * 1024,
+            min_chunk_size: int | None = None,
             max_input_bytes: int | None = None,
             max_documents: int | None = None,
-            auto_tune: bool = True,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
             max_scan_ahead: int | None = None,
@@ -607,8 +599,6 @@ class parallel:  # noqa: N801
         def with_max_input_bytes(self, bytes: int | None) -> "parallel.ParallelConfig": ...
         def with_max_documents(self, count: int | None) -> "parallel.ParallelConfig": ...
         def with_min_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
-        def with_max_chunk_size(self, size: int) -> "parallel.ParallelConfig": ...
-        def with_auto_tune(self, auto_tune: bool) -> "parallel.ParallelConfig": ...
         def __repr__(self) -> str: ...
 
     @staticmethod
@@ -635,10 +625,8 @@ class parallel:  # noqa: N801
     def dump_parallel(
         documents: Any,
         config: "parallel.ParallelConfig | None" = None,
-        allow_unicode: bool = True,
         sort_keys: bool = False,
-        indent: int = 2,
-        width: int = 80,
+        indent: int | None = None,
         default_flow_style: bool | None = None,
         explicit_start: bool = False,
     ) -> str:
@@ -647,11 +635,10 @@ class parallel:  # noqa: N801
         Args:
             documents: List or iterable of Python objects to serialize
             config: Optional parallel processing configuration
-            allow_unicode: Allow unicode characters (default: True)
             sort_keys: If True, sort dictionary keys (default: False)
             indent: Number of spaces for indentation (default: 2)
-            width: Maximum line width (default: 80)
-            default_flow_style: Force flow style for collections (default: None)
+            default_flow_style: True writes flow collections; None or False writes block
+            (default: None)
             explicit_start: Add explicit document start marker (default: False)
 
         Returns:
@@ -674,35 +661,43 @@ class parallel:  # noqa: N801
 class batch:  # noqa: N801
     """Batch file processing submodule."""
 
-    class FileOutcome:
-        """Outcome of processing a single file."""
+    class FileErrorKind:
+        """Class of a failure, the same for every file-level error."""
 
-        Success: "batch.FileOutcome"
-        Changed: "batch.FileOutcome"
-        Unchanged: "batch.FileOutcome"
-        Error: "batch.FileOutcome"
+        Io: "batch.FileErrorKind"
+        Decode: "batch.FileErrorKind"
+        Parse: "batch.FileErrorKind"
+        Limit: "batch.FileErrorKind"
+        Format: "batch.FileErrorKind"
+        EmptyDocument: "batch.FileErrorKind"
+        Comments: "batch.FileErrorKind"
+        Write: "batch.FileErrorKind"
+        ThreadPool: "batch.FileErrorKind"
 
-        def __repr__(self) -> str: ...
         def __eq__(self, other: object) -> bool: ...
         def __hash__(self) -> int: ...
 
-    class FileResult:
-        """Result for a single file with path context."""
+    class FileError:
+        """Failure of one file: its class and the full message."""
 
-        path: str
-        outcome: "batch.FileOutcome"
-        duration_ms: float
-        error: str | None
+        kind: "batch.FileErrorKind"
+        message: str
 
-        def is_success(self) -> bool:
-            """Returns True if processing was successful."""
-            ...
-
-        def was_changed(self) -> bool:
-            """Returns True if file content was changed."""
-            ...
-
+        def __eq__(self, other: object) -> bool: ...
         def __repr__(self) -> str: ...
+
+    class FormatResult:
+        """Result of formatting one file; match on ``Formatted`` and ``Failed``."""
+
+        class Formatted:
+            __match_args__ = ("path", "content")
+            path: str
+            content: str
+
+        class Failed:
+            __match_args__ = ("path", "error")
+            path: str
+            error: "batch.FileError"
 
     class BatchResult:
         """Aggregated results from batch processing."""
@@ -721,8 +716,8 @@ class batch:  # noqa: N801
             """Returns processing throughput."""
             ...
 
-        def errors(self) -> list[tuple[str, str]]:
-            """Returns list of (path, error_message) tuples."""
+        def errors(self) -> list[tuple[str, "batch.FileError"]]:
+            """Returns list of (path, error) tuples."""
             ...
 
         def __repr__(self) -> str: ...
@@ -733,7 +728,7 @@ class batch:  # noqa: N801
         ``max_depth`` applies to ``process_files`` and ``format_files``;
         ``max_scan_ahead`` and ``max_documents`` to both; ``max_alias_bytes`` to
         ``process_files`` only.
-        ``indent`` must be in 1..=9 and ``width`` in 20..=1000.
+        ``indent`` must be in 1..=9.
         Non-integer values raise ``TypeError``, out-of-range values ``ValueError``.
         """
 
@@ -741,10 +736,8 @@ class batch:  # noqa: N801
             self,
             workers: int | None = None,
             max_input_bytes: int | None = None,
-            sequential_threshold: int = 4096,
-            indent: int = 2,
-            width: int = 80,
-            sort_keys: bool = False,
+            sequential_threshold: int | None = None,
+            indent: int | None = None,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,
             max_scan_ahead: int | None = None,
@@ -756,13 +749,11 @@ class batch:  # noqa: N801
         def with_max_documents(self, count: int | None) -> "batch.BatchConfig": ...
         def with_workers(self, workers: int | None) -> "batch.BatchConfig": ...
         def with_indent(self, indent: int) -> "batch.BatchConfig": ...
-        def with_width(self, width: int) -> "batch.BatchConfig": ...
-        def with_sort_keys(self, sort_keys: bool) -> "batch.BatchConfig": ...
         def __repr__(self) -> str: ...
 
     @staticmethod
     def process_files(
-        paths: list[str],
+        paths: "list[str | os.PathLike[str]]",
         config: "batch.BatchConfig | None" = None,
     ) -> "batch.BatchResult":
         """Process files and return batch result.
@@ -780,9 +771,9 @@ class batch:  # noqa: N801
 
     @staticmethod
     def format_files(
-        paths: list[str],
+        paths: "list[str | os.PathLike[str]]",
         config: "batch.BatchConfig | None" = None,
-    ) -> list[tuple[str, str | None, str | None]]:
+    ) -> "list[batch.FormatResult]":
         """Format files and return formatted content (dry-run).
 
         Formats YAML files without writing changes back.
@@ -792,13 +783,13 @@ class batch:  # noqa: N801
             config: Optional batch processing configuration
 
         Returns:
-            List of (path, content, error) tuples
+            One ``FormatResult`` per file: ``Formatted(path, content)`` or ``Failed(path, error)``
         """
         ...
 
     @staticmethod
     def format_files_in_place(
-        paths: list[str],
+        paths: "list[str | os.PathLike[str]]",
         config: "batch.BatchConfig | None" = None,
     ) -> "batch.BatchResult":
         """Format files in place (write changes back).

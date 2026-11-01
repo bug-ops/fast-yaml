@@ -5,7 +5,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   formatFiles,
-  formatFilesInPlace,
   Linter,
   lint,
   Mark,
@@ -33,11 +32,6 @@ const MULTI = 'a: 1\n---\nb: 2\n';
 const cases: OptionCase[] = [
   { name: 'indent', call: (v) => safeDump({ a: 1 }, { indent: v }), valid: 4 },
   {
-    name: 'width',
-    call: (v) => safeDump({ a: 1 }, { width: v }),
-    valid: 80,
-  },
-  {
     name: 'indent (safeDumpAll)',
     call: (v) => safeDumpAll([{ a: 1 }], { indent: v }),
     valid: 4,
@@ -55,7 +49,6 @@ const cases: OptionCase[] = [
     valid: 1024,
   },
   { name: 'indent (batch)', call: (v) => formatFiles([], { indent: v }), valid: 4 },
-  { name: 'width (batch)', call: (v) => formatFilesInPlace([], { width: v }), valid: 100 },
   {
     name: 'threadCount',
     call: (v) => parseParallel(MULTI, { threadCount: v }),
@@ -109,8 +102,6 @@ describe('numeric option validation', () => {
   it.each([
     ['indent', { indent: 0 }],
     ['indent', { indent: 100 }],
-    ['width', { width: 1 }],
-    ['width', { width: 100_000 }],
   ])('rejects safeDump %s out of range (%o)', (name, opts) => {
     expect(() => safeDump({ a: 1 }, opts)).toThrow(new RegExp(`${name} must be between`));
     expect(() => safeDumpAll([{ a: 1 }], opts)).toThrow(new RegExp(`${name} must be between`));
@@ -136,7 +127,6 @@ describe('numeric option validation', () => {
     const max = 2 ** 32 - 1;
     expect(() => processFiles([], { sequentialThreshold: max })).not.toThrow();
     expect(() => formatFiles([], { indent: 9 })).not.toThrow();
-    expect(() => formatFilesInPlace([], { width: 1000 })).not.toThrow();
     expect(() => parseParallel(MULTI, { minChunkSize: max })).not.toThrow();
   });
 

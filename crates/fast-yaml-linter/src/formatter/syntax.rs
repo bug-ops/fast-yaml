@@ -56,7 +56,7 @@ pub fn input_error_diagnostic(message: impl Into<Cow<'static, str>>) -> Diagnost
 }
 
 fn build(message: impl Into<Cow<'static, str>>, span: Span) -> Diagnostic {
-    DiagnosticBuilder::new(DiagnosticCode::SYNTAX, Severity::Error, message, span)
+    DiagnosticBuilder::new(DiagnosticCode::Syntax, Severity::Error, message, span)
         .build_without_excerpt()
 }
 

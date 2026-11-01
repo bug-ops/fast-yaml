@@ -98,6 +98,83 @@ pub enum Error {
     ThreadPool(#[source] Arc<rayon::ThreadPoolBuildError>),
 }
 
+/// Coarse class of an [`enum@Error`], for bindings that report a failure as a kind plus a message.
+///
+/// Classified by the underlying cause, so a resource limit hit while scanning for comments is
+/// still [`Limit`](Self::Limit).
+///
+/// The enum is exhaustive on purpose: bindings map every kind to their own type, so adding one
+/// is a deliberate, compiler-checked change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ErrorKind {
+    /// Reading the file failed, including a path that is not a regular file.
+    Io,
+    /// The file is not UTF-8 text.
+    Decode,
+    /// The text is not valid YAML.
+    Parse,
+    /// A resource limit was exceeded: input size, depth, aliases, scan-ahead or documents.
+    Limit,
+    /// Emitting the formatted document failed.
+    Format,
+    /// The file holds no YAML document.
+    EmptyDocument,
+    /// Formatting would drop comments and the caller did not allow it.
+    Comments,
+    /// Writing the file failed.
+    Write,
+    /// The worker pool could not be built.
+    ThreadPool,
+}
+
+impl Error {
+    /// Returns the coarse class of this error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_parallel::{Error, ErrorKind};
+    ///
+    /// assert_eq!(Error::CommentsWouldBeStripped.kind(), ErrorKind::Comments);
+    /// ```
+    #[must_use]
+    pub const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Parse { source, .. } => parse_kind(source),
+            Self::Io { .. } => ErrorKind::Io,
+            Self::Decode { .. } => ErrorKind::Decode,
+            Self::Format { source, .. } => emit_kind(source),
+            Self::EmptyDocument { .. } => ErrorKind::EmptyDocument,
+            Self::CommentsWouldBeStripped => ErrorKind::Comments,
+            Self::CommentScan { source } => match parse_kind(source) {
+                ErrorKind::Limit => ErrorKind::Limit,
+                _ => ErrorKind::Comments,
+            },
+            Self::Write { .. } => ErrorKind::Write,
+            Self::InputTooLarge(_) => ErrorKind::Limit,
+            Self::ThreadPool(_) => ErrorKind::ThreadPool,
+        }
+    }
+}
+
+const fn emit_kind(error: &fast_yaml_core::EmitError) -> ErrorKind {
+    use fast_yaml_core::EmitError;
+    match error {
+        EmitError::Parse(source) => parse_kind(source),
+        EmitError::DepthLimitExceeded { .. }
+        | EmitError::AnchorLimitExceeded { .. }
+        | EmitError::TagLimitExceeded { .. } => ErrorKind::Limit,
+        _ => ErrorKind::Format,
+    }
+}
+
+const fn parse_kind(error: &CoreParseError) -> ErrorKind {
+    match error {
+        CoreParseError::LimitExceeded { .. } => ErrorKind::Limit,
+        _ => ErrorKind::Parse,
+    }
+}
+
 /// Result type for parallel operations.
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -106,6 +183,53 @@ mod tests {
     use super::*;
     use fast_yaml_core::LimitKind;
     use fast_yaml_core::limits::MaxDepth;
+
+    #[test]
+    fn kind_follows_the_underlying_cause() {
+        let limit = || CoreParseError::LimitExceeded {
+            kind: LimitKind::Depth(MaxDepth::DEFAULT),
+            at: fast_yaml_core::SourcePosition::START,
+            document: fast_yaml_core::DocumentIndex::new(0),
+        };
+        assert_eq!(
+            Error::Parse {
+                index: 0,
+                source: limit()
+            }
+            .kind(),
+            ErrorKind::Limit
+        );
+        assert_eq!(
+            Error::CommentScan { source: limit() }.kind(),
+            ErrorKind::Limit
+        );
+        assert_eq!(Error::CommentsWouldBeStripped.kind(), ErrorKind::Comments);
+        let format = |source| Error::Format {
+            path: "f".into(),
+            source,
+        };
+        assert_eq!(
+            format(fast_yaml_core::EmitError::Parse(limit())).kind(),
+            ErrorKind::Limit
+        );
+        assert_eq!(
+            format(fast_yaml_core::EmitError::DepthLimitExceeded { limit: 2 }).kind(),
+            ErrorKind::Limit
+        );
+        assert_eq!(
+            format(fast_yaml_core::EmitError::SetAsKey).kind(),
+            ErrorKind::Format
+        );
+        let syntax = fast_yaml_core::Parser::parse_str("a: [").unwrap_err();
+        assert_eq!(
+            Error::Parse {
+                index: 0,
+                source: syntax
+            }
+            .kind(),
+            ErrorKind::Parse
+        );
+    }
 
     #[test]
     fn test_parse_error_display_includes_cause() {

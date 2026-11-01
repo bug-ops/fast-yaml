@@ -88,14 +88,6 @@ class TestDumpFunction:
         # This test verifies parameter is accepted
         assert "child: value" in yaml_str
 
-    def test_dump_with_width(self):
-        """dump() respects width parameter."""
-        data = {"key": "a very long string that should wrap"}
-        yaml_str = fast_yaml.dump(data, width=40)
-        # Note: yaml-rust2 has limited wrapping control
-        # This test verifies parameter is accepted
-        assert "key:" in yaml_str
-
     def test_dump_with_explicit_start(self):
         """dump() adds document start marker when explicit_start=True."""
         yaml_str = fast_yaml.dump({"key": "value"}, explicit_start=True)
@@ -177,7 +169,7 @@ class TestDumperCompatibility:
 
 
 class TestSafeDumpOptions:
-    """Tests for safe_dump() parameters: explicit_start, indent, width."""
+    """Tests for safe_dump() parameters: explicit_start, indent."""
 
     def test_explicit_start(self):
         """safe_dump() adds document start marker when explicit_start=True."""
@@ -262,12 +254,6 @@ class TestSafeDumpOptions:
         result = fast_yaml.safe_dump(data, indent=4)
         assert result is not None
 
-    def test_width(self):
-        """safe_dump() accepts width parameter without error."""
-        data = {"key": "value"}
-        result = fast_yaml.safe_dump(data, width=40)
-        assert "key: value" in result
-
     def test_sort_keys(self):
         """safe_dump() sorts keys when sort_keys=True."""
         data = {"z": 1, "a": 2}
@@ -297,7 +283,6 @@ class TestSafeDumpOptions:
             {"z": 1, "a": 2},
             explicit_start=True,
             indent=4,
-            width=100,
             sort_keys=True,
         )
         assert result.startswith("---\n")
@@ -344,11 +329,6 @@ class TestSafeDumpAllOptions:
         result = fast_yaml.safe_dump_all(docs, sort_keys=True)
         assert result.index("a:") < result.index("z:")
 
-    def test_width(self):
-        """safe_dump_all() accepts width parameter without error."""
-        result = fast_yaml.safe_dump_all([{"key": "value"}], width=40)
-        assert "key: value" in result
-
     def test_all_params_combined(self):
         """safe_dump_all() accepts all formatting kwargs together."""
         docs = [{"z": 1, "a": 2}, {"nested": {"x": 1}}]
@@ -356,7 +336,6 @@ class TestSafeDumpAllOptions:
             docs,
             explicit_start=True,
             indent=4,
-            width=100,
             sort_keys=True,
         )
         assert result.startswith("---\n")
@@ -378,9 +357,7 @@ class TestDumpOptions:
     def test_dump_all_options_combinations(self):
         """dump_all() works with multiple options."""
         docs = [{"z": 1, "a": 2}, {"y": 3, "b": 4}]
-        yaml_str = fast_yaml.dump_all(
-            docs, sort_keys=True, explicit_start=True, indent=4, width=100
-        )
+        yaml_str = fast_yaml.dump_all(docs, sort_keys=True, explicit_start=True, indent=4)
         assert yaml_str.startswith("---")
         assert "a:" in yaml_str
         assert "z:" in yaml_str

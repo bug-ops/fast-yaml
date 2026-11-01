@@ -63,14 +63,6 @@ impl super::LintRule for CommasRule {
         RuleId::BuiltIn(RuleName::Commas)
     }
 
-    fn name(&self) -> &'static str {
-        "Commas"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates spacing around commas in flow collections"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

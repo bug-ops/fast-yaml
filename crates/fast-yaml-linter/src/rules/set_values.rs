@@ -27,14 +27,6 @@ impl super::LintRule for SetValuesRule {
         RuleId::BuiltIn(RuleName::SetValues)
     }
 
-    fn name(&self) -> &'static str {
-        "Set Values"
-    }
-
-    fn description(&self) -> &'static str {
-        "Detects !!set members that carry a value"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Error
     }

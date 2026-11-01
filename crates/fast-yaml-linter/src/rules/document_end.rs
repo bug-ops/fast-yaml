@@ -50,14 +50,6 @@ impl super::LintRule for DocumentEndRule {
         RuleId::BuiltIn(RuleName::DocumentEnd)
     }
 
-    fn name(&self) -> &'static str {
-        "Document End"
-    }
-
-    fn description(&self) -> &'static str {
-        "Requires or forbids the YAML document end marker '...'"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
@@ -102,8 +94,8 @@ fn check_required(context: &LintContext) -> Vec<Finding> {
                     (eof, marker)
                 },
                 |marker| {
-                    let at =
-                        source_context.span_at(source_context.line_start(marker.start.line()), 0);
+                    let at = source_context
+                        .span_at(source_context.line_start(marker.start.line_number()), 0);
                     (at, "...\n")
                 },
             );

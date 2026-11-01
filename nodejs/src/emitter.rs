@@ -4,8 +4,9 @@
 //! JavaScript objects to YAML strings.
 
 use crate::conversion::js_to_yaml;
-use crate::options::{emitter_indent, emitter_width};
-use fast_yaml_core::{DumpBudget, Mapping, MaxOutputBytes, Value};
+use crate::limits::reject_removed_option;
+use crate::options::emitter_indent;
+use fast_yaml_core::{DumpBudget, Layout, MaxOutputBytes};
 use napi::{Env, Result as NapiResult, bindgen_prelude::*};
 use napi_derive::napi;
 
@@ -32,10 +33,11 @@ fn check_output_size(output: String) -> napi::Result<String> {
 }
 
 fn emitter_config(opts: &DumpOptions) -> NapiResult<fast_yaml_core::EmitterConfig> {
+    reject_removed_option("width", opts.width.is_some())?;
+    reject_removed_option("allowUnicode", opts.allow_unicode.is_some())?;
     Ok(fast_yaml_core::EmitterConfig::new()
         .with_indent(emitter_indent(opts.indent)?)
-        .with_width(emitter_width(opts.width)?)
-        .with_default_flow_style(opts.default_flow_style)
+        .with_layout(Layout::from_flow_flag(opts.default_flow_style))
         .with_explicit_start(opts.explicit_start.unwrap_or(false)))
 }
 
@@ -50,22 +52,19 @@ pub struct DumpOptions {
     /// If true, sort object keys alphabetically (default: false)
     pub sort_keys: Option<bool>,
 
-    /// Allow unicode characters (default: true).
-    /// Note: yaml-rust2 always outputs unicode; this is accepted for API compatibility.
+    /// Removed: the emitter never wrapped lines; passing it throws.
+    pub width: Option<f64>,
+
+    /// Removed: output is always unicode; passing it throws.
     pub allow_unicode: Option<bool>,
 
     /// Indentation width in spaces (default: 2).
     /// Must be an integer in 1-9; other values throw.
     pub indent: Option<f64>,
 
-    /// Maximum line width for wrapping (default: 80).
-    /// Must be an integer in 20-1000; other values throw.
-    pub width: Option<f64>,
-
-    /// Default flow style for collections (default: null).
-    /// - null: Use block style (multi-line)
-    /// - true: Force flow style (inline: [...], {...})
-    /// - false: Force block style (explicit)
+    /// Collection style (default: null).
+    /// - true: flow style (inline: [...], {...})
+    /// - false or null: block style (multi-line)
     pub default_flow_style: Option<bool>,
 
     /// Add explicit document start marker `---` (default: false).
@@ -76,9 +75,9 @@ impl Default for DumpOptions {
     fn default() -> Self {
         Self {
             sort_keys: Some(false),
-            allow_unicode: Some(true),
             indent: Some(2.0),
-            width: Some(80.0),
+            width: None,
+            allow_unicode: None,
             default_flow_style: None,
             explicit_start: Some(false),
         }
@@ -130,7 +129,7 @@ fn dump_one(env: Env, data: Unknown, opts: &DumpOptions) -> napi::Result<String>
     let mut budget = DumpBudget::default();
     let mut yaml = js_to_yaml(env, data, &mut budget)?;
     if opts.sort_keys.unwrap_or(false) {
-        yaml = sort_yaml_keys(&yaml);
+        yaml.sort_keys();
     }
     let output = fast_yaml_core::Emitter::emit_str_with_config(&yaml, &emitter_config(opts)?)
         .map_err(emit_error)?;
@@ -184,47 +183,13 @@ fn dump_many(env: Env, documents: Vec<Unknown>, opts: &DumpOptions) -> napi::Res
     for doc in documents {
         let mut yaml = js_to_yaml(env, doc, &mut budget)?;
         if opts.sort_keys.unwrap_or(false) {
-            yaml = sort_yaml_keys(&yaml);
+            yaml.sort_keys();
         }
         yamls.push(yaml);
     }
     let output = fast_yaml_core::Emitter::emit_all_with_config(&yamls, &emitter_config(opts)?)
         .map_err(emit_error)?;
     check_output_size(output)
-}
-
-/// Helper function to recursively sort dictionary keys in YAML
-fn sort_yaml_keys(yaml: &Value) -> Value {
-    match yaml {
-        Value::Mapping(map) => {
-            let mut sorted: Vec<_> = map.iter().collect();
-            sorted.sort_by(|(k1, _), (k2, _)| {
-                let s1 = yaml_to_sort_key(k1);
-                let s2 = yaml_to_sort_key(k2);
-                s1.cmp(&s2)
-            });
-            let mut new_map = Mapping::new();
-            for (k, v) in sorted {
-                new_map.insert(k.clone(), sort_yaml_keys(v));
-            }
-            Value::Mapping(new_map)
-        }
-        Value::Sequence(arr) => Value::Sequence(arr.iter().map(sort_yaml_keys).collect()),
-        other => other.clone(),
-    }
-}
-
-/// Convert YAML value to a sortable string key
-fn yaml_to_sort_key(yaml: &Value) -> String {
-    match yaml {
-        Value::String(s) => s.clone(),
-        Value::Int(i) => i.to_string(),
-        Value::Float(f) => f.get().to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null | Value::BigInt(_) | Value::Sequence(_) | Value::Mapping(_) | Value::Set(_) => {
-            String::new()
-        }
-    }
 }
 
 #[cfg(test)]
@@ -242,45 +207,8 @@ mod tests {
     fn test_dump_options_default() {
         let opts = DumpOptions::default();
         assert_eq!(opts.sort_keys, Some(false));
-        assert_eq!(opts.allow_unicode, Some(true));
         assert_eq!(opts.indent, Some(2.0));
-        assert_eq!(opts.width, Some(80.0));
         assert_eq!(opts.default_flow_style, None);
         assert_eq!(opts.explicit_start, Some(false));
-    }
-
-    #[test]
-    fn test_yaml_to_sort_key() {
-        assert_eq!(yaml_to_sort_key(&Value::String("test".to_string())), "test");
-        assert_eq!(yaml_to_sort_key(&Value::Int(42)), "42");
-        assert_eq!(yaml_to_sort_key(&Value::Bool(true)), "true");
-    }
-
-    #[test]
-    fn test_sort_yaml_keys() {
-        let mut map = Mapping::new();
-        map.insert(Value::String("z".to_string()), Value::Int(1));
-        map.insert(Value::String("a".to_string()), Value::Int(2));
-        map.insert(Value::String("m".to_string()), Value::Int(3));
-
-        let yaml = Value::Mapping(map);
-        let sorted = sort_yaml_keys(&yaml);
-
-        if let Value::Mapping(sorted_map) = sorted {
-            let keys: Vec<String> = sorted_map
-                .keys()
-                .map(|k| {
-                    if let Value::String(s) = k {
-                        s.clone()
-                    } else {
-                        String::new()
-                    }
-                })
-                .collect();
-
-            assert_eq!(keys, vec!["a", "m", "z"]);
-        } else {
-            panic!("Expected Mapping");
-        }
     }
 }

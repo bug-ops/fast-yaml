@@ -59,11 +59,11 @@ pub use diagnostic::{
     ContextLine, Diagnostic, DiagnosticBuilder, DiagnosticCode, DiagnosticContext, Excerpt,
     Finding, Suggestion,
 };
-pub use formatter::{Formatter, TextFormatter};
+pub use formatter::{Coloring, Formatter, TextFormatter};
 pub use lint_source::LintSource;
 pub use linter::{LintConfig, LintError, Linter};
 pub use location::{Location, OneBased, Span};
 pub use severity::{ParseSeverityError, Severity};
 
 #[cfg(feature = "json-output")]
-pub use formatter::JsonFormatter;
+pub use formatter::{JsonFormatter, JsonLayout};
