@@ -186,7 +186,7 @@ class TestBatchConfig:
     def test_default_fails_file(self, alias_file):
         result = batch.process_files([alias_file])
         assert result.failed == 1
-        assert "alias expansion exceeds" in result.errors()[0][1]
+        assert "alias expansion exceeds" in result.errors()[0][1].message
 
     def test_ctor_kwarg_raises_budget(self, alias_file):
         config = batch.BatchConfig(max_alias_bytes=256 * MIB)
@@ -393,14 +393,15 @@ class TestScanAheadConfigs:
         path.write_text(ROOT_FLOW)
         low = batch.BatchConfig(max_scan_ahead=64)
         assert batch.process_files([str(path)], low).failed == 1
-        [(_, content, error)] = batch.format_files([str(path)], low)
-        assert content is None
-        assert error is not None and SCAN_AHEAD in error
+        [result] = batch.format_files([str(path)], low)
+        assert isinstance(result, batch.FormatResult.Failed)
+        assert result.error.kind == batch.FileErrorKind.Limit
+        assert SCAN_AHEAD in result.error.message
         high = batch.BatchConfig().with_max_scan_ahead(MIB)
         assert batch.process_files([str(path)], high).failed == 0
-        [(_, content, error)] = batch.format_files([str(path)], high)
-        assert error is None
-        assert content
+        [result] = batch.format_files([str(path)], high)
+        assert isinstance(result, batch.FormatResult.Formatted)
+        assert result.content
 
     @pytest.mark.parametrize(
         "make",

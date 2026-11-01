@@ -95,12 +95,11 @@ Format files in place (`CommentPolicy::Reject` fails files that contain comments
 use std::path::PathBuf;
 use fast_yaml_parallel::{CommentPolicy, FileProcessor};
 use fast_yaml_core::emitter::EmitterConfig;
-use fast_yaml_core::limits::{Indent, Width};
+use fast_yaml_core::limits::Indent;
 
 let files = vec![PathBuf::from("config.yaml")];
 let emitter_config = EmitterConfig::new()
-    .with_indent(Indent::new(2)?)
-    .with_width(Width::new(80)?);
+    .with_indent(Indent::new(2)?);
 
 let processor = FileProcessor::new();
 let result = processor.format_in_place(&files, &emitter_config, CommentPolicy::Reject);
@@ -181,6 +180,10 @@ pub enum FileOutcome {
     Error { error: Error, duration: Duration },
 }
 ```
+
+### ErrorKind
+
+`Error::kind()` returns a coarse `ErrorKind` (`Io`, `Decode`, `Parse`, `Limit`, `Format`, `EmptyDocument`, `Comments`, `Write`, `ThreadPool`), classified by the underlying cause; the bindings report it next to the message.
 
 ## Performance
 

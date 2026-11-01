@@ -3,7 +3,8 @@
 //!
 //! Each expected `(line, column)` was taken from yamllint itself.
 
-use fast_yaml_linter::{ConfigFile, DiagnosticCode, Linter};
+use fast_yaml_linter::config::RuleName;
+use fast_yaml_linter::{ConfigFile, Linter};
 
 /// Lints `source` with `rules` (a YAML mapping of rule settings) and returns the `(line, column)`
 /// of every diagnostic with `code`.
@@ -22,9 +23,19 @@ fn positions(source: &str, rules: &str, code: &str) -> Vec<(usize, usize)> {
 }
 
 #[test]
+fn colons_allow_one_space_after_an_alias_key() {
+    let source = "base: &k a\nm:\n  *k : v\nn: {*k : 1}\no:\n  *k  : v\n";
+    let lines: Vec<usize> = positions(source, "  colons: enable\n", RuleName::Colons.as_str())
+        .into_iter()
+        .map(|(line, _)| line)
+        .collect();
+    assert_eq!(lines, [6]);
+}
+
+#[test]
 fn comments_skip_repeated_hashes() {
     let source = "## double hash\n#### many\n##glued\n# ok\n";
-    let found = positions(source, "  comments: enable\n", DiagnosticCode::COMMENTS);
+    let found = positions(source, "  comments: enable\n", RuleName::Comments.as_str());
     let lines: Vec<usize> = found.iter().map(|&(line, _)| line).collect();
     assert_eq!(lines, [3]);
 }
@@ -49,7 +60,7 @@ e: 1
         positions(
             source,
             "  comments-indentation: enable\n",
-            DiagnosticCode::COMMENTS_INDENTATION
+            RuleName::CommentsIndentation.as_str()
         ),
         [(7, 3), (11, 5)]
     );
@@ -57,7 +68,7 @@ e: 1
 
 #[test]
 fn key_ordering_checks_a_flow_mapping_on_the_marker_line() {
-    let code = DiagnosticCode::KEY_ORDERING;
+    let code = RuleName::KeyOrdering.as_str();
     let rules = "  key-ordering: enable\n";
     assert_eq!(positions("--- {b: 1, a: 2}\n", rules, code), [(1, 12)]);
     assert_eq!(
@@ -68,7 +79,7 @@ fn key_ordering_checks_a_flow_mapping_on_the_marker_line() {
 
 #[test]
 fn key_ordering_ignored_keys() {
-    let code = DiagnosticCode::KEY_ORDERING;
+    let code = RuleName::KeyOrdering.as_str();
     let source = "--- {b: 1, a: 2}\n--- {d: 1, c: 2}\n";
     assert_eq!(
         positions(source, "  key-ordering: {ignored-keys: ['^a$']}\n", code),
@@ -87,7 +98,7 @@ fn anchors_report_duplicated_and_unused_anchors() {
     let rules =
         "  invalid-anchor: {forbid-duplicated-anchors: true, forbid-unused-anchors: true}\n";
     assert_eq!(
-        positions(source, rules, DiagnosticCode::INVALID_ANCHOR),
+        positions(source, rules, RuleName::InvalidAnchor.as_str()),
         [(4, 3), (4, 3), (6, 3), (8, 5)]
     );
 }
@@ -98,7 +109,7 @@ fn document_start_forbidden_flags_a_marker_after_a_directive() {
         positions(
             "%YAML 1.2\n---\na: 1\n",
             "  document-start: {present: false}\n",
-            DiagnosticCode::DOCUMENT_START
+            RuleName::DocumentStart.as_str()
         ),
         [(2, 1)]
     );
@@ -111,7 +122,7 @@ fn markers_are_not_required_in_a_source_without_documents() {
             positions(
                 source,
                 "  document-start: {present: true}\n",
-                DiagnosticCode::DOCUMENT_START
+                RuleName::DocumentStart.as_str()
             ),
             []
         );
@@ -119,7 +130,7 @@ fn markers_are_not_required_in_a_source_without_documents() {
             positions(
                 source,
                 "  document-end: {present: true}\n",
-                DiagnosticCode::DOCUMENT_END
+                RuleName::DocumentEnd.as_str()
             ),
             []
         );

@@ -46,7 +46,7 @@ def test_omap_keeps_every_pair_in_order():
 @pytest.mark.parametrize(("doc", "expected"), MAPPINGS)
 def test_matches_cli_key_order(doc, expected):
     result = subprocess.run(
-        [fy_binary(), "convert", "json", "--pretty", "false"],
+        [fy_binary(), "convert", "json", "--no-pretty"],
         input=doc,
         capture_output=True,
         text=True,

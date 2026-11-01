@@ -525,7 +525,7 @@ class TestSafeDump:
     def test_unicode_output(self):
         import fast_yaml
         data = {"greeting": "привет"}
-        result = fast_yaml.safe_dump(data, allow_unicode=True)
+        result = fast_yaml.safe_dump(data)
         assert "привет" in result
     
     def test_roundtrip(self):

@@ -32,6 +32,28 @@ pub enum Layout {
     Flow,
 }
 
+impl Layout {
+    /// Maps a tri-state `flow` flag of a dynamic-language API to a layout: only `Some(true)`
+    /// selects [`Flow`](Self::Flow); `None` and `Some(false)` select [`Block`](Self::Block).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_core::Layout;
+    ///
+    /// assert_eq!(Layout::from_flow_flag(Some(true)), Layout::Flow);
+    /// assert_eq!(Layout::from_flow_flag(Some(false)), Layout::Block);
+    /// assert_eq!(Layout::from_flow_flag(None), Layout::Block);
+    /// ```
+    #[must_use]
+    pub const fn from_flow_flag(flow: Option<bool>) -> Self {
+        match flow {
+            Some(true) => Self::Flow,
+            Some(false) | None => Self::Block,
+        }
+    }
+}
+
 /// What the walk needs from the configuration.
 #[derive(Debug, Clone, Copy)]
 pub struct WalkOptions {

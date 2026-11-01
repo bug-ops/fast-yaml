@@ -2,10 +2,10 @@
 
 #![allow(clippy::missing_const_for_fn)]
 
-use super::{FormatterConfig, OutputConfig};
+use super::OutputConfig;
 use crate::cli::ResolvedCli;
 
-/// Common configuration aggregating output and formatter settings.
+/// Common configuration shared by every subcommand.
 ///
 /// Use this when a command needs multiple configuration aspects.
 /// This eliminates the need to pass many individual parameters.
@@ -13,8 +13,6 @@ use crate::cli::ResolvedCli;
 pub struct CommonConfig {
     /// Output configuration (verbosity, colors, timing)
     pub output: OutputConfig,
-    /// Formatter configuration (indent, width)
-    pub formatter: FormatterConfig,
 }
 
 impl CommonConfig {
@@ -32,7 +30,6 @@ impl CommonConfig {
     pub fn from_cli(cli: &ResolvedCli) -> Self {
         Self {
             output: OutputConfig::from_cli(cli.verbosity, cli.no_color),
-            formatter: FormatterConfig::default(),
         }
     }
 
@@ -43,34 +40,24 @@ impl CommonConfig {
         self.output = output;
         self
     }
-
-    /// Sets the formatter configuration.
-    #[must_use]
-    pub fn with_formatter(mut self, formatter: FormatterConfig) -> Self {
-        self.formatter = formatter;
-        self
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::Verbosity;
-    use fast_yaml_core::Indent;
 
     #[test]
     fn test_default_config() {
         let config = CommonConfig::default();
         assert!(!config.output.is_quiet());
         assert!(!config.output.is_verbose());
-        assert_eq!(config.formatter.indent(), Indent::DEFAULT);
     }
 
     #[test]
     fn test_new() {
         let config = CommonConfig::new();
         assert!(!config.output.is_quiet());
-        assert_eq!(config.formatter.indent(), Indent::DEFAULT);
     }
 
     #[test]
@@ -78,25 +65,5 @@ mod tests {
         let output = OutputConfig::new().with_verbosity(Verbosity::Quiet);
         let config = CommonConfig::new().with_output(output);
         assert!(config.output.is_quiet());
-    }
-
-    #[test]
-    fn test_with_formatter() {
-        let formatter = FormatterConfig::new().with_indent(Indent::new(4).unwrap());
-        let config = CommonConfig::new().with_formatter(formatter);
-        assert_eq!(config.formatter.indent().get(), 4);
-    }
-
-    #[test]
-    fn test_builder_chaining() {
-        let output = OutputConfig::new().with_verbosity(Verbosity::Verbose);
-        let formatter = FormatterConfig::new().with_indent(Indent::new(4).unwrap());
-
-        let config = CommonConfig::new()
-            .with_output(output)
-            .with_formatter(formatter);
-
-        assert!(config.output.is_verbose());
-        assert_eq!(config.formatter.indent().get(), 4);
     }
 }

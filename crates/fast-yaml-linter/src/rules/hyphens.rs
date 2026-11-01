@@ -59,14 +59,6 @@ impl super::LintRule for HyphensRule {
         RuleId::BuiltIn(RuleName::Hyphens)
     }
 
-    fn name(&self) -> &'static str {
-        "Hyphens"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates spacing after list item hyphens"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

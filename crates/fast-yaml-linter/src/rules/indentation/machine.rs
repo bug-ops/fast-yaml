@@ -67,7 +67,7 @@ pub(super) struct Machine<'a> {
     spaces: Option<isize>,
     sequences: IndentSequences,
     stack: Vec<Parent>,
-    cur_line: usize,
+    cur_line: Option<OneBased>,
     cur_line_indent: usize,
     /// The tokens around the one being checked: the previous one once there is one, the one
     /// being checked and the two after it.
@@ -90,7 +90,7 @@ impl<'a> Machine<'a> {
             spaces: spaces.map(signed),
             sequences,
             stack: vec![Parent::new(ParentKind::Root, 0)],
-            cur_line: 0,
+            cur_line: None,
             cur_line_indent: 0,
             window: VecDeque::with_capacity(4),
             has_prev: false,
@@ -157,6 +157,12 @@ impl<'a> Machine<'a> {
         base + spaces
     }
 
+    /// Whether `token` begins on a line after the last one a visible token ended on.
+    fn starts_after_current_line(&self, token: &Token) -> bool {
+        self.cur_line
+            .is_none_or(|last| OneBased::from_index(token.start.line) > last)
+    }
+
     fn check(
         &mut self,
         token: &Token,
@@ -164,7 +170,7 @@ impl<'a> Machine<'a> {
         next: Option<&Token>,
         nextnext: Option<&Token>,
     ) -> Result<(), Unexpected> {
-        let first_in_line = token.is_visible() && token.start.line + 1 > self.cur_line;
+        let first_in_line = token.is_visible() && self.starts_after_current_line(token);
 
         if first_in_line {
             let found = token.start.column;
@@ -195,7 +201,7 @@ impl<'a> Machine<'a> {
         }
 
         if token.is_visible() {
-            self.cur_line = token.end_line;
+            self.cur_line = OneBased::new(token.end_line);
             if first_in_line {
                 self.cur_line_indent = token.start.column;
             }
@@ -454,6 +460,7 @@ impl<'a> Machine<'a> {
         found: isize,
     ) -> Result<isize, Unexpected> {
         let column = signed(token.start.column);
+        let starts_new_line = self.starts_after_current_line(token);
         let mut detect = |base: isize| {
             let spaces = *self.spaces.get_or_insert(found - base);
             base + spaces
@@ -475,7 +482,7 @@ impl<'a> Machine<'a> {
                     ParentKind::Key => return Err(Unexpected),
                     ParentKind::Val => {
                         let below = below.ok_or(Unexpected)?;
-                        if token.start.line + 1 > self.cur_line {
+                        if starts_new_line {
                             detect(top.indent)
                         } else if below.explicit_key {
                             detect(column)

@@ -40,29 +40,27 @@ def temp_unformatted_yaml():
         yield str(path)
 
 
-class TestFileOutcome:
-    """Tests for FileOutcome enum."""
+class TestFileError:
+    """Tests for FileErrorKind and FileError."""
 
-    def test_outcomes_exist(self):
-        """Test that all outcomes exist."""
-        assert batch.FileOutcome.Success is not None
-        assert batch.FileOutcome.Changed is not None
-        assert batch.FileOutcome.Unchanged is not None
-        assert batch.FileOutcome.Error is not None
+    def test_kinds_exist_and_compare(self):
+        kinds = [
+            batch.FileErrorKind.Io,
+            batch.FileErrorKind.Decode,
+            batch.FileErrorKind.Parse,
+            batch.FileErrorKind.Limit,
+            batch.FileErrorKind.Format,
+            batch.FileErrorKind.EmptyDocument,
+            batch.FileErrorKind.Comments,
+            batch.FileErrorKind.Write,
+            batch.FileErrorKind.ThreadPool,
+        ]
+        assert len(set(kinds)) == len(kinds)
+        assert batch.FileErrorKind.Io == batch.FileErrorKind.Io
 
-    def test_outcome_repr(self):
-        """Test outcome repr."""
-        assert "Success" in repr(batch.FileOutcome.Success)
-
-    def test_outcome_equality(self):
-        """Test outcome equality."""
-        assert batch.FileOutcome.Success == batch.FileOutcome.Success
-        assert batch.FileOutcome.Success != batch.FileOutcome.Error
-
-    def test_outcome_hash(self):
-        """Test outcome is hashable."""
-        s = {batch.FileOutcome.Success, batch.FileOutcome.Changed}
-        assert len(s) == 2
+    def test_removed_file_result_types_are_gone(self):
+        assert not hasattr(batch, "FileResult")
+        assert not hasattr(batch, "FileOutcome")
 
 
 class TestBatchConfig:
@@ -94,16 +92,12 @@ class TestBatchConfig:
         """Test formatting options."""
         config = batch.BatchConfig(
             indent=4,
-            width=120,
-            sort_keys=True,
         )
         assert config is not None
 
     def test_builder_chaining(self):
         """Test chaining builder methods."""
-        config = (
-            batch.BatchConfig().with_workers(4).with_indent(4).with_width(120).with_sort_keys(True)
-        )
+        config = batch.BatchConfig().with_workers(4).with_indent(4)
         assert config is not None
 
     def test_config_repr(self):
@@ -156,7 +150,9 @@ class TestProcessFiles:
         assert result.success == 5
         assert result.failed == 1
         assert not result.is_success()
-        assert len(result.errors()) == 1
+        [(path, error)] = result.errors()
+        assert path == temp_invalid_yaml
+        assert error.kind == batch.FileErrorKind.Parse
 
     def test_process_empty_list(self):
         """Test processing empty list."""
@@ -190,27 +186,38 @@ class TestFormatFiles:
         """Test formatting valid files."""
         results = batch.format_files(temp_yaml_files)
         assert len(results) == 5
-        for path, content, error in results:
-            assert content is not None
-            assert error is None
+        for result in results:
+            assert isinstance(result, batch.FormatResult.Formatted)
+            assert result.content
 
     def test_format_preserves_explicit_tags(self):
         """Explicit tags must survive format_files."""
         with tempfile.TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "tagged.yaml"
             path.write_text("a: !!str 1\nb: !custom x\n")
-            [(_, content, error)] = batch.format_files([str(path)])
-        assert error is None
-        assert "a: !!str 1" in content
-        assert "b: !custom x" in content
+            [result] = batch.format_files([str(path)])
+        assert isinstance(result, batch.FormatResult.Formatted)
+        assert "a: !!str 1" in result.content
+        assert "b: !custom x" in result.content
 
     def test_format_with_invalid_file(self, temp_invalid_yaml):
         """Test formatting invalid file."""
         results = batch.format_files([temp_invalid_yaml])
         assert len(results) == 1
-        path, content, error = results[0]
-        assert content is None
-        assert error is not None
+        [result] = results
+        assert isinstance(result, batch.FormatResult.Failed)
+        assert result.error.kind == batch.FileErrorKind.Parse
+        assert not hasattr(result, "content")
+        match result:
+            case batch.FormatResult.Failed(path=path, error=error):
+                assert path == temp_invalid_yaml
+                assert error.message
+            case _:
+                pytest.fail("expected Failed")
+
+    def test_format_accepts_pathlike(self, temp_yaml_files):
+        results = batch.format_files([Path(p) for p in temp_yaml_files])
+        assert [r.path for r in results] == temp_yaml_files
 
     def test_format_empty_list(self):
         """Test formatting empty list."""
@@ -219,7 +226,7 @@ class TestFormatFiles:
 
     def test_format_with_config(self, temp_yaml_files):
         """Test formatting with custom config."""
-        config = batch.BatchConfig(indent=4, sort_keys=True)
+        config = batch.BatchConfig(indent=4)
         results = batch.format_files(temp_yaml_files, config)
         assert len(results) == 5
 
@@ -288,19 +295,10 @@ class TestBatchResult:
         errors = result.errors()
         assert isinstance(errors, list)
         assert len(errors) == 1
-        path, message = errors[0]
+        path, error = errors[0]
         assert isinstance(path, str)
-        assert isinstance(message, str)
-
-
-class TestFileResult:
-    """Tests for FileResult class."""
-
-    def test_file_result_from_process(self, temp_yaml_files):
-        """FileResult interface is exposed through BatchResult errors."""
-        result = batch.process_files(temp_yaml_files)
-        # All successful, no errors to inspect
-        assert result.failed == 0
+        assert isinstance(error, batch.FileError)
+        assert isinstance(error.message, str)
 
 
 class TestEdgeCases:

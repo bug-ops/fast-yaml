@@ -90,7 +90,7 @@ pub struct Diagnostic { code: DiagnosticCode, severity: Severity, message: Strin
 pub struct LintConfig { rules: RulesConfig, custom_rules: HashMap<CustomRuleCode, RuleSettings<NoOptions>>,
                         parse_limits: ParseLimits, max_input_bytes: MaxInputBytes }
 pub struct RuleSettings<O> { enabled: bool, severity: Option<Severity>, options: O }
-pub trait LintRule: Send + Sync { fn id(&self) -> RuleId<'_>; fn name(&self) -> &str; fn description(&self) -> &str;
+pub trait LintRule: Send + Sync { fn id(&self) -> RuleId<'_>;
     fn default_severity(&self) -> Severity; }
 pub trait SourceRule: LintRule { fn check(&self, ctx: &LintContext, cfg: &LintConfig) -> Vec<Finding>;
     fn diagnose(&self, ctx: &LintContext, cfg: &LintConfig) -> Vec<Diagnostic>; /* provided: stamps code and severity */ }

@@ -99,12 +99,6 @@ impl LintRule for NoTodo {
     fn id(&self) -> RuleId<'_> {
         RuleId::Custom(&self.0)
     }
-    fn name(&self) -> &str {
-        "No TODO"
-    }
-    fn description(&self) -> &str {
-        "Reports TODO markers"
-    }
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
@@ -400,9 +394,9 @@ Each formatter converts `Vec<Diagnostic>` to a specific format:
 
 ```rust
 use fast_yaml_linter::formatter::Findings;
-use fast_yaml_linter::{Formatter, TextFormatter};
+use fast_yaml_linter::{Coloring, Formatter, TextFormatter};
 
-let formatter = TextFormatter::new().with_color(true);
+let formatter = TextFormatter::new().with_color(Coloring::Ansi);
 let output = formatter.format(Findings::FromSource { diagnostics: &diagnostics, source: &context });
 ```
 
@@ -419,9 +413,9 @@ error[duplicate-key]: duplicate key 'name' (first defined at line 3)
 
 ```rust
 use fast_yaml_linter::formatter::Findings;
-use fast_yaml_linter::{Formatter, JsonFormatter};
+use fast_yaml_linter::{Formatter, JsonFormatter, JsonLayout};
 
-let formatter = JsonFormatter::new(true);
+let formatter = JsonFormatter::new(JsonLayout::Pretty);
 let json = formatter.format(Findings::FromSource { diagnostics: &diagnostics, source: &context });
 ```
 

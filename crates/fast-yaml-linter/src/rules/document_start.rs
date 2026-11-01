@@ -49,14 +49,6 @@ impl super::LintRule for DocumentStartRule {
         RuleId::BuiltIn(RuleName::DocumentStart)
     }
 
-    fn name(&self) -> &'static str {
-        "Document Start"
-    }
-
-    fn description(&self) -> &'static str {
-        "Requires or forbids the YAML document start marker '---'"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }
@@ -89,7 +81,10 @@ impl super::SourceRule for DocumentStartRule {
 /// Reports a document that starts without `---`, at the line of its first token.
 fn missing(context: &LintContext<'_>, first_token: Span) -> Finding {
     let source_context = context.source_context();
-    let span = source_context.span_at(source_context.line_start(first_token.start.line()), 0);
+    let span = source_context.span_at(
+        source_context.line_start(first_token.start.line_number()),
+        0,
+    );
     Finding::new("missing document start marker '---'", span).with_suggestion(
         "Add '---' before this document",
         span,

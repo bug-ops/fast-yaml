@@ -44,7 +44,16 @@ use std::path::{Path, PathBuf};
 ///   containers may not set. Any other failure, including permission denied on other
 ///   `security.*`, `system.*` or `trusted.*` names, fails the write instead of dropping the
 ///   attribute silently. If the old file cannot be opened for reading, no attributes are copied.
-///   POSIX ACLs and Windows ACLs are not preserved beyond what xattrs carry.
+///   POSIX ACLs on Linux ride on xattrs and are preserved that way.
+/// - On macOS, the ACL of the old file is read through its resolved path and set on the
+///   replacement right after the xattrs, replacing any entries the replacement inherited from
+///   its directory; a file without an ACL leaves it with none. The path is checked against the
+///   identity recorded at `create` time once the ACL is read: the ACL of a file that was swapped
+///   in meanwhile is never applied (the write itself still succeeds, as it does for xattrs),
+///   but a swap that is undone before the check is not seen. Only a file system that reports
+///   ACLs as unsupported is skipped silently; any other failure, including permission denied,
+///   fails the write. Windows ACLs are not preserved: the Win32 calls need `unsafe`, which this
+///   crate forbids.
 ///
 /// # Errors
 ///
@@ -153,6 +162,8 @@ impl AtomicFile {
             let permissions = {
                 let permissions = restore_owner(temp.as_file(), old)?;
                 copy_xattrs(old.source.as_ref(), temp.as_file())?;
+                #[cfg(target_os = "macos")]
+                copy_acl(old, &target, temp.path())?;
                 permissions
             };
             #[cfg(not(unix))]
@@ -305,6 +316,53 @@ fn copy_xattrs(from: Option<&fs::File>, to: &fs::File) -> io::Result<()> {
 fn permission_denied_is_tolerated(name: &[u8], error: &io::Error) -> bool {
     error.kind() == io::ErrorKind::PermissionDenied
         && (name.starts_with(b"com.apple.") || name == b"security.selinux")
+}
+
+/// Gives `temp` the ACL of `old`, read through `real`, and none of the entries it inherited from
+/// its directory; see [`write_atomic`] for what is skipped.
+///
+/// # Residual risk
+///
+/// The ACL is read by path, so `real` is stat-ed after the read and must still be the inode
+/// recorded in `old`, otherwise nothing is copied from it. A swap that is undone before the stat
+/// cannot be seen.
+#[cfg(target_os = "macos")]
+fn copy_acl(old: &Existing, real: &Path, temp: &Path) -> io::Result<()> {
+    let entries = read_acl(old, real)?;
+    match exacl::setfacl(&[temp], &entries, None) {
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(()),
+        other => other,
+    }
+}
+
+/// The ACL entries of the file `old` describes, or none when there is nothing trustworthy to read.
+#[cfg(target_os = "macos")]
+fn read_acl(old: &Existing, real: &Path) -> io::Result<Vec<exacl::AclEntry>> {
+    use std::os::unix::fs::MetadataExt;
+
+    if old.source.is_none() {
+        return Ok(Vec::new());
+    }
+    let entries = match exacl::getfacl(real, None) {
+        Ok(entries) => entries,
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::NotFound
+            ) =>
+        {
+            return Ok(Vec::new());
+        }
+        Err(e) => return Err(e),
+    };
+    let after = match fs::symlink_metadata(real) {
+        Ok(after) => after,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let same_inode =
+        after.is_file() && (after.dev(), after.ino()) == (old.identity.0, old.identity.1);
+    Ok(if same_inode { entries } else { Vec::new() })
 }
 
 /// Opens the file `real` for reading its xattrs, if it is still the inode `metadata` describes.
@@ -745,5 +803,88 @@ mod tests {
             // Unprivileged: EPERM is ignored; privileged: the chown simply succeeds
             assert!(restore_owner(&temp, &old).is_ok());
         }
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod acl_tests {
+    use super::*;
+    use exacl::{AclEntry, Flag, Perm};
+
+    fn deny_everyone_write() -> Vec<AclEntry> {
+        vec![AclEntry::deny_group("everyone", Perm::WRITE, None)]
+    }
+
+    fn has_everyone_entry(path: &Path) -> bool {
+        exacl::getfacl(path, None)
+            .unwrap()
+            .iter()
+            .any(|e| e.name == "everyone")
+    }
+
+    #[test]
+    fn acl_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("acl.yaml");
+        fs::write(&path, "a: 1\n").unwrap();
+        if exacl::setfacl(&[&path], &deny_everyone_write(), None).is_err() {
+            return;
+        }
+        write_atomic(&path, b"a: 2\n").unwrap();
+        assert!(has_everyone_entry(&path));
+    }
+
+    #[test]
+    fn acl_copy_tolerates_a_target_deleted_before_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("gone.yaml");
+        fs::write(&path, "a: 1\n").unwrap();
+        if exacl::setfacl(&[&path], &deny_everyone_write(), None).is_err() {
+            return;
+        }
+        let mut file = AtomicFile::create(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        file.write_all(b"a: 2\n").unwrap();
+        file.commit().unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a: 2\n");
+    }
+
+    #[test]
+    fn acl_inherited_from_the_directory_is_cleared() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plain.yaml");
+        fs::write(&path, "a: 1\n").unwrap();
+        let inheritable = [AclEntry::allow_group(
+            "everyone",
+            Perm::READ,
+            Flag::FILE_INHERIT,
+        )];
+        if exacl::setfacl(&[dir.path()], &inheritable, None).is_err() {
+            return;
+        }
+        let created = dir.path().join("probe.yaml");
+        fs::write(&created, "").unwrap();
+        if !has_everyone_entry(&created) {
+            return;
+        }
+        write_atomic(&path, b"a: 2\n").unwrap();
+        assert!(!has_everyone_entry(&path));
+    }
+
+    #[test]
+    fn acl_of_a_swapped_file_is_not_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("swap.yaml");
+        fs::write(&path, "a: 1\n").unwrap();
+        if exacl::setfacl(&[&path], &deny_everyone_write(), None).is_err() {
+            return;
+        }
+        let file = AtomicFile::create(&path).unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, "planted\n").unwrap();
+        exacl::setfacl(&[&path], &deny_everyone_write(), None).unwrap();
+        let old = file.existing.as_ref().unwrap();
+        copy_acl(old, &file.target, file.temp.path()).unwrap();
+        assert!(!has_everyone_entry(file.temp.path()));
     }
 }

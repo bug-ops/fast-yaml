@@ -11,17 +11,12 @@
 //! - A FIFO or device would block `open(2)` or yield unbounded data. The path is checked before it
 //!   is opened, and on Unix the file is opened with `O_NONBLOCK | O_NOCTTY` (a terminal device
 //!   never becomes the controlling terminal), so a path swapped for a FIFO
-//!   after the check still does not block; the opened handle is then checked again.
+//!   after the check still does not block; the opened handle is then checked again, and once it
+//!   is known to be a regular file `O_NONBLOCK` is cleared, so a FUSE or network file system
+//!   never fails a read with `WouldBlock`.
 //! - A file larger than the limit, or one that grows while it is read, is bounded by reading at
 //!   most one byte past the limit.
 //! - Symlinks are followed: the checks apply to the target.
-//!
-//! # Known limitation
-//!
-//! `O_NONBLOCK` stays set on the handle of a regular file, because clearing it needs `fcntl`,
-//! which would take `unsafe` code or an extra dependency. It has no effect on local file systems,
-//! but a FUSE or network file system that honors it could make a read fail with `WouldBlock`,
-//! which is reported as an I/O error.
 //!
 //! The returned bytes are a snapshot; nothing observes later changes to the file.
 
@@ -82,17 +77,41 @@ pub enum ReadFileError {
 
 #[cfg(unix)]
 fn open_non_blocking(path: &Path) -> std::io::Result<File> {
+    use rustix::fs::OFlags;
     use std::os::unix::fs::OpenOptionsExt;
 
     OpenOptions::new()
         .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOCTTY)
+        .custom_flags((OFlags::NONBLOCK | OFlags::NOCTTY).bits().cast_signed())
         .open(path)
 }
 
 #[cfg(not(unix))]
 fn open_non_blocking(path: &Path) -> std::io::Result<File> {
     OpenOptions::new().read(true).open(path)
+}
+
+#[cfg(unix)]
+fn clear_non_blocking(file: &File) -> std::io::Result<()> {
+    use rustix::fs::{OFlags, fcntl_getfl, fcntl_setfl};
+
+    let flags = fcntl_getfl(file)?;
+    Ok(fcntl_setfl(file, flags - OFlags::NONBLOCK)?)
+}
+
+/// Opens `path` as a regular file in blocking mode and returns it with its length.
+fn open_regular(path: &Path) -> Result<(File, u64), ReadFileError> {
+    if let Some(kind) = NotRegularKind::of(&std::fs::metadata(path)?) {
+        return Err(ReadFileError::NotRegular(kind));
+    }
+    let file = open_non_blocking(path)?;
+    let metadata = file.metadata()?;
+    if let Some(kind) = NotRegularKind::of(&metadata) {
+        return Err(ReadFileError::NotRegular(kind));
+    }
+    #[cfg(unix)]
+    clear_non_blocking(&file)?;
+    Ok((file, metadata.len()))
 }
 
 /// Reads a regular file of at most `max` bytes.
@@ -120,15 +139,7 @@ fn open_non_blocking(path: &Path) -> std::io::Result<File> {
 /// ));
 /// ```
 pub fn read_regular_file(path: &Path, max: MaxInputBytes) -> Result<Vec<u8>, ReadFileError> {
-    if let Some(kind) = NotRegularKind::of(&std::fs::metadata(path)?) {
-        return Err(ReadFileError::NotRegular(kind));
-    }
-    let file = open_non_blocking(path)?;
-    let metadata = file.metadata()?;
-    if let Some(kind) = NotRegularKind::of(&metadata) {
-        return Err(ReadFileError::NotRegular(kind));
-    }
-    let size = metadata.len();
+    let (file, size) = open_regular(path)?;
     max.check_file_len(size)?;
     read_bounded(file, max, usize::try_from(size).unwrap_or_default())
 }
@@ -304,5 +315,21 @@ mod display_path_tests {
         assert_eq!(DisplayPath::new(csi).to_string(), "a\\u{9b}31m.yaml");
         let bad = Path::new(std::ffi::OsStr::from_bytes(b"a\xffb.yaml"));
         assert_eq!(DisplayPath::new(bad).to_string(), "a\u{fffd}b.yaml");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod blocking_mode_tests {
+    use super::*;
+
+    #[test]
+    fn regular_file_handle_is_blocking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        std::fs::write(&path, "a: 1\n").unwrap();
+        let (file, len) = open_regular(&path).unwrap();
+        let flags = rustix::fs::fcntl_getfl(&file).unwrap();
+        assert!(!flags.contains(rustix::fs::OFlags::NONBLOCK));
+        assert_eq!(len, 5);
     }
 }

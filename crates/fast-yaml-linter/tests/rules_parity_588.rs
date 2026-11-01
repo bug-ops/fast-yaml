@@ -3,7 +3,8 @@
 //!
 //! Each expected `(line, column)` was taken from yamllint itself.
 
-use fast_yaml_linter::{ConfigFile, DiagnosticCode, Linter};
+use fast_yaml_linter::config::RuleName;
+use fast_yaml_linter::{ConfigFile, Linter};
 
 /// Lints `source` with `rules` (a YAML mapping of rule settings) and returns the `(line, column)`
 /// of every diagnostic with `code`.
@@ -25,7 +26,7 @@ fn ordering(source: &str) -> Vec<(usize, usize)> {
     positions(
         source,
         "  key-ordering: enable\n",
-        DiagnosticCode::KEY_ORDERING,
+        RuleName::KeyOrdering.as_str(),
     )
 }
 
@@ -33,7 +34,7 @@ fn quoting(source: &str) -> Vec<(usize, usize)> {
     positions(
         source,
         "  quoted-strings: {required: only-when-needed}\n",
-        DiagnosticCode::QUOTED_STRINGS,
+        RuleName::QuotedStrings.as_str(),
     )
 }
 
@@ -41,7 +42,7 @@ fn empty(source: &str) -> Vec<(usize, usize)> {
     positions(
         source,
         "  empty-values: enable\n",
-        DiagnosticCode::EMPTY_VALUES,
+        RuleName::EmptyValues.as_str(),
     )
 }
 

@@ -26,7 +26,7 @@ related:
 
 Give JavaScript/TypeScript users a js-yaml-shaped API (`safeLoad`, `safeDump`, `load`) backed by the Rust core, plus lint, multi-document parallel parsing and batch file formatting. Value: YAML 1.2.2 semantics and resource limits identical to the `fy` CLI, safe by construction (no custom types), typed options that reject out-of-range input instead of silently clamping.
 
-Exports (runtime): `safeLoad`, `safeLoadAll`, `load`, `loadAll`, `safeDump`, `safeDumpAll`, `lint`, `Linter`, `parseParallel`, `parseParallelAsync`, `processFiles`, `formatFiles`, `formatFilesInPlace`, `Mark`, `Schema`, `Severity`, `FileOutcome`, `version`. Interfaces `LoadOptions`, `DumpOptions`, `LintConfig`, `ParallelConfig`, `BatchConfig`, `BatchResult`, `FormatResult`, `Diagnostic`, `Span`, `Location`, `Suggestion`, `ContextLine`, `DiagnosticContext` are type-only. `lint-rules.d.ts` types the per-rule `rules` patch.
+Exports (runtime): `safeLoad`, `safeLoadAll`, `load`, `loadAll`, `safeDump`, `safeDumpAll`, `lint`, `Linter`, `parseParallel`, `parseParallelAsync`, `processFiles`, `formatFiles`, `formatFilesInPlace`, `Mark`, `Schema`, `Severity`, `FileErrorKind`, `version`. Interfaces `LoadOptions`, `DumpOptions`, `LintConfig`, `ParallelConfig`, `BatchConfig`, `BatchResult`, `FormatResult`, `FileError`, `Diagnostic`, `Span`, `Location`, `Suggestion`, `ContextLine`, `DiagnosticContext` are type-only. `lint-rules.d.ts` types the per-rule `rules` patch.
 
 ## 2. User stories
 
@@ -110,10 +110,10 @@ THEN   throws "document count exceeds 100000"      (every loader has a default c
 ```
 GIVEN  a valid file and a file containing "a: [1,2"
 WHEN   processFiles([ok, bad])
-THEN   { total: 2, success: 1, changed: 0, failed: 1, durationMs, errors: [{ path: bad, message: "failed to parse YAML: ..." }] }
+THEN   { total: 2, success: 1, changed: 0, failed: 1, durationMs, errors: [{ path: bad, error: { kind: "parse", message: "failed to parse YAML: ..." } }] }
 
 GIVEN  processFiles([ok], { maxInputBytes: 3 })
-THEN   errors[0].message == "input size 16 bytes exceeds maximum allowed 3 bytes"
+THEN   errors[0].error.message == "input size 16 bytes exceeds maximum allowed 3 bytes"
 
 GIVEN  formatFiles([file with "b:   1\na: 2\n"])
 THEN   [{ path, content: 'b: 1\na: 2\n' }]; a failing file yields { path, error }
@@ -131,12 +131,12 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | FR-003 | WHEN YAML contains a `!!set`, THE SYSTEM SHALL return an object with `null` values; WHEN it contains a complex key, SHALL throw. | must |
 | FR-004 | WHEN YAML contains unknown tags, THE SYSTEM SHALL NOT execute or construct anything; the node loads as its underlying scalar. | must |
 | FR-005 | Limit options (`maxDepth` 1..=512 default 256; `maxAliasBytes` 1..=1 GiB default 64 MiB; `maxScanAhead` 1..=1 GiB default 4 MiB; `maxDocuments` 1..=10 000 000 default 100 000; `maxInputBytes` 1..=1 GiB default 100 MiB where offered) SHALL throw on out-of-range or non-integer values. `maxDocuments` is accepted by `LoadOptions` (`safeLoad*`, `load*`), `LintConfig`, `ParallelConfig` and `BatchConfig`; a stream over the limit throws `document count exceeds N` (plus ` (document K)`); `safeDump*` take none. | must |
-| FR-006 | `safeDump*` SHALL accept `sortKeys`, `allowUnicode`, `indent` (1..=9, default 2), `width` (20..=1000), `defaultFlowStyle`, `explicitStart`; invalid values throw `InvalidArg`. | must |
+| FR-006 | `safeDump*` SHALL reject the removed `width` and `allowUnicode` keys (`InvalidArg`), and `BatchConfig` the removed `width` and `sortKeys`; it SHALL accept `sortKeys`, `indent` (1..=9, default 2), `defaultFlowStyle` (`true` writes flow collections, anything else block), `explicitStart`; invalid values throw `InvalidArg`. `sortKeys` orders keys and set members in core (`Value::sort_keys`): by kind, numbers by value, strings by code point. | must |
 | FR-007 | WHEN dumping strings that resolve to non-strings under YAML 1.1/1.2 (`yes`, `null`, `1`, `a: b`), THE SYSTEM SHALL quote them. | must |
 | FR-008 | WHEN a value cannot be represented (function, `Buffer`/typed array, circular reference, depth over 256), THE SYSTEM SHALL throw rather than emit lossy YAML. | must |
 | FR-009 | `lint`/`Linter.lint` SHALL accept `LintConfig` (`maxLineLength` 1..=4294967295, `indentSize` within the typed indentation range; an out-of-range value throws `InvalidArg` with `<name> must be between N and M, got V`, `requireDocumentStart/End`, `allowDuplicateKeys`, `disabledRules`, `rules`, limits) and return `Diagnostic[]` sorted by location; unknown rule names or rule options in `rules` SHALL throw, yamllint rule names (`trailing-spaces`, `key-duplicates`, `anchors`) are accepted in `rules` and `disabledRules`, and `indentation` takes `spaces`, `indent-sequences` and `check-multi-line-strings`. `lint(source, config?, path?)` and `linter.lint(source, path?)` take an optional file path for per-rule `ignore` (relative to the process working directory; resolved only when a rule has `ignore`, through its parent when missing, and an unresolvable parent throws only then). The `rules` patch is applied first, then `maxLineLength`, `indentSize`, `requireDocument*`, `allowDuplicateKeys`, then `disabledRules`. `context` is filled from the BOM-free source. | must |
 | FR-010 | `Linter.withAllRules()` SHALL create a linter with the full default rule set. | should |
-| FR-011 | `parseParallel`/`parseParallelAsync` SHALL preserve document order, run on the shared per-process pool, honor `ParallelConfig` (`threadCount`: omitted is auto, `0` sequential, `1..=128` a fixed pool; `minChunkSize`, `maxInputBytes`, `maxDocuments`, limits; `maxChunkSize` no longer exists and is ignored as an unknown key) and fall back to sequential parsing for single documents. | must |
+| FR-011 | `parseParallel`/`parseParallelAsync` SHALL preserve document order, run on the shared per-process pool, honor `ParallelConfig` (`threadCount`: omitted is auto, `0` sequential, `1..=128` a fixed pool; `minChunkSize`, `maxInputBytes`, `maxDocuments`, limits) and fall back to sequential parsing for single documents. | must |
 | FR-012 | `processFiles`/`formatFiles`/`formatFilesInPlace` SHALL never throw for a per-file failure (including `document count exceeds N`); they SHALL report it in `errors` / per-file `error`. `formatFilesInPlace` SHALL write atomically. Files are read into memory; `BatchConfig.mmapThreshold` no longer exists; `workers` takes the same `0..=128` range as `threadCount`. An explicit `maxScanAhead` is final (no scaling, no retry). | must |
 | FR-013 | `BatchConfig`/`ParallelConfig` renamed option `maxInputSize` SHALL throw with a message pointing to `maxInputBytes`. | must |
 | FR-014 | `version()` SHALL return the package version string (`"0.7.0"`). | must |
@@ -144,7 +144,7 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | FR-016 | The package SHALL load a prebuilt platform binary and fail with a clear error where none exists. | must |
 | FR-017 | `safeDump*` SHALL dump a `BigInt` as a YAML integer (`5n` is `5`, `2n ** 70n` is `1180591620717411303424`), `-0` as `-0.0`, a `Set` as `!!set` with null members and a `Map` as a mapping; a `Set` or `Map` subclass SHALL be recognized by its built-in brand (also across realms), not by an overridden `Symbol.toStringTag`; an object that only claims the tag SHALL fail with `incompatible receiver`. | must |
 | FR-018 | `safeLoad*` SHALL name a float mapping key like `String(number)` (`1e21` is `"1e+21"`, `.inf` is `"Infinity"`, `-0.0` is `"0"`), and key-collision errors SHALL spell it the same way. | must |
-| FR-020 | WHEN a numeric option (`indent`, `width`, `workers`, `threadCount`, limits, `maxLineLength`, `indentSize`, `sequentialThreshold`) is `NaN`, infinite, fractional, negative or out of range, THE SYSTEM SHALL throw `InvalidArg` with the shared message `<name> must be between N and M, got V` instead of wrapping or clamping; `null` throws `NumberExpected`. | must |
+| FR-020 | WHEN a numeric option (`indent`, `workers`, `threadCount`, limits, `maxLineLength`, `indentSize`, `sequentialThreshold`) is `NaN`, infinite, fractional, negative or out of range, THE SYSTEM SHALL throw `InvalidArg` with the shared message `<name> must be between N and M, got V` instead of wrapping or clamping; `null` throws `NumberExpected`. | must |
 | FR-021 | WHEN Rust code panics inside an exported function (`safeLoad*`, `safeDump*`, `lint`, `Linter`, batch and parallel entry points), THE SYSTEM SHALL surface a catchable JavaScript error (`catch_unwind` at the N-API boundary) and not abort the process. | must |
 | FR-022 | `safeDump*` SHALL bound conversion of host values by a dump budget (100 MiB of emitted text and 16 Mi nodes per call), so a shared-reference expansion throws instead of exhausting memory; dump failures throw rather than return partial text. | must |
 | FR-019 | `safeDump*` SHALL escape U+0085, U+2028 and U+2029 in double-quoted output, write a flow-style key longer than 1024 characters as `? key` and quote a scalar containing `?` in flow context, and the output SHALL load back to the same data. | must |
@@ -154,12 +154,12 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | Entity | Notes |
 |--------|-------|
 | `LoadOptions` | `schema`, `filename`, `allowDuplicateKeys` (accepted for compatibility, no effect), `maxDepth`, `maxAliasBytes`, `maxScanAhead`, `maxDocuments` |
-| `DumpOptions` | `sortKeys`, `allowUnicode` (no effect), `indent`, `width` (validated, no effect), `defaultFlowStyle`, `explicitStart` |
-| `BatchConfig` | `workers`, `maxInputBytes`, `sequentialThreshold`, `indent`, `width` (no effect), `sortKeys` (no effect), `maxDepth`, `maxAliasBytes`, `maxScanAhead`, `maxDocuments` |
+| `DumpOptions` | `sortKeys`, `indent`, `defaultFlowStyle`, `explicitStart` |
+| `BatchConfig` | `workers`, `maxInputBytes`, `sequentialThreshold`, `indent`, `maxDepth`, `maxAliasBytes`, `maxScanAhead`, `maxDocuments` |
 | `LintConfig` + `LintRulesConfig` | Rule patch typed by `lint-rules.d.ts` (kebab-case rule names and option keys, same as the CLI config file) |
 | `Diagnostic` | `code`, `severity`, `message`, `span{start,end}{line,column,offset}`, `context?`, `suggestions[]` |
-| `BatchConfig` / `BatchResult` / `BatchError` | Result shape `{ total, success, changed, failed, durationMs, errors[] }` |
-| `FormatResult` | `{ path, content?, error? }` |
+| `BatchConfig` / `BatchResult` / `BatchError` | Result shape `{ total, success, changed, failed, durationMs, errors[] }`; `BatchError` is `{ path, error: FileError }` |
+| `FormatResult`, `FileError`, `FileErrorKind` | `FormatResult` is `{ status: 'formatted', path, content } \| { status: 'failed', path, error: FileError }`; `FileError` is `{ kind, message }`, `kind` one of `'io'`, `'decode'`, `'parse'`, `'limit'`, `'format'`, `'emptyDocument'`, `'comments'`, `'write'`, `'threadPool'` (classified by the inner cause, so any limit is `'limit'`). Paths echo the UTF-8 input strings. |
 | `Mark` | Constructible position holder (`new Mark(name, line, column)`, `toString()` gives `name:line:column`); not attached to any thrown error |
 | Number model | JS `number` is an IEEE double: integers above 2^53 lose precision; integers beyond i64, decimal, hex or octal, load as exact decimal strings |
 
@@ -178,8 +178,8 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | `safeDump(Buffer.from('x'))` | throws "cannot serialize JavaScript value of type Function" |
 | UTF-8 BOM prefix | stripped |
 | Options object with unknown keys | ignored (see open questions) |
-| `null` for numeric options (`workers`, `width`) | throws `NumberExpected`; omit the key instead |
-| `parseParallel(src, { maxChunkSize: 5 })` | loads normally; the removed option is ignored |
+| `null` for numeric options (`workers`, `indent`) | throws `NumberExpected`; omit the key instead |
+| `safeDump(x, { width })`, `{ allowUnicode }`, `processFiles/formatFiles(.., { width })`, `{ sortKeys }` | throws `InvalidArg` "<name> was removed and is no longer accepted" |
 | 100,001 documents via `safeLoadAll` | throws `document count exceeds 100000`; 100,000 load |
 | `a:\t1` | rejected by the core scanner |
 
@@ -221,7 +221,6 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 |-------|------------------------------|----------|
 | Large integers (GAP-NODE-001) | Above 2^53 and within i64 silently rounded to a double; beyond i64 (any radix) returned as an exact decimal string | [NEEDS CLARIFICATION] `bigint`, string, or keep `number` with documentation? (X-14) **Proposed:** `bigint` for integers outside the safe range. |
 | Comment loss in `formatFiles*` (GAP-NODE-011) | Comments are silently stripped, also in place; the CLI refuses without `--strip-comments` | [NEEDS CLARIFICATION] Mirror CLI policy by default? (X-10) **Proposed:** mirror the CLI policy now (refuse unless explicitly allowed); preserve comments long term. |
-| `width`, `allowUnicode` in `DumpOptions`, `width` and `sortKeys` in `BatchConfig` (GAP-NODE-002/012, #639) | Accepted, validated, never applied by emitter/formatter; `safeDump*` `sortKeys` is applied (its own copy of the sort, see the `sortKeys` row) | [NEEDS CLARIFICATION] Implement or remove (X-9) **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. For `sortKeys`: preserve order by default, sorting opt-in. |
 | `allowDuplicateKeys`, `schema`, `filename` (GAP-NODE-006) | Accepted, ignored; duplicates always collapse (first position, last value) | Throw for `allowDuplicateKeys: false` (js-yaml-like), or remove the options? (X-11) **Proposed:** opt-in strict loader; keep lint as the default reporter. |
 | Error `code` and marks (GAP-NODE-005/008) | Loader/limit errors have no `code`; dump/lint use `GenericFailure`; option validation uses `InvalidArg`; `Mark` is never attached to errors | [NEEDS CLARIFICATION] Define an error contract (class, `code`, `line`, `column`) (X-13) **Proposed:** raise typed exceptions with marks; one error-code table for Node. |
 | `safeDumpAll` leading marker (GAP-NODE-004) | No leading `---` (`'a: 1\n---\nb: 2\n'`); JSDoc/README show one | Fix docs or output |
@@ -233,8 +232,6 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | Test coverage (GAP-NODE-010/024) | `edge-cases.spec.ts` (92 tests) excluded from vitest; crate Rust unit tests excluded from CI | Re-enable or split the 100 MB cases |
 | Docs drift (GAP-NODE-018) | JSDoc package name `@fast-yaml/core`, README Node version and sample versions stale | Fix docs |
 | Performance claims (GAP-NODE-025) | README 5-10x vs js-yaml has no reproducible benchmark | Which claims are contractual? (X-15) **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
-| Batch result shape (#641) | `BatchResult.errors` and `FormatResult { content?, error? }` allow contradictory states (both set or both unset); an error carries only a message, not its kind, and `path` is a lossy `String` | Model the outcome as one tagged result and keep the error kind and the raw path |
-| `sortKeys` implemented twice (#640) | `safeDump*` sorts in `emitter.rs`, and the same logic lives in the Python binding; the copies diverged and integer keys sort as text | Move the sort into the core, with numeric ordering for integer keys |
 | ~~Core positions (#638)~~ | Resolved: core `SourcePosition` and linter `Location::new` take `OneBased`; the binding `Location` still checks with `try_new` and keeps `u32` getters | none, no binding API change |
 | Prebuilt artifact | `nodejs/*.node` is an untracked build output and may predate HEAD | Rebuild before any parity check |
 

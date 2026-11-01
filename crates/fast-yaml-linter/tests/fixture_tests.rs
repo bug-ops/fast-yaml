@@ -2,7 +2,7 @@
 
 use std::num::NonZeroUsize;
 
-use fast_yaml_linter::{DiagnosticCode, LintConfig, Linter, Severity, config::RuleName};
+use fast_yaml_linter::{LintConfig, Linter, Severity, config::RuleName};
 
 #[cfg(test)]
 mod valid_fixtures {
@@ -58,7 +58,7 @@ mod invalid_fixtures {
 
         let has_long_lines = diagnostics
             .iter()
-            .any(|d| d.code.as_str() == DiagnosticCode::LINE_LENGTH);
+            .any(|d| d.code.as_str() == RuleName::LineLength.as_str());
 
         assert!(has_long_lines, "Expected long line violations");
     }
@@ -71,7 +71,7 @@ mod invalid_fixtures {
 
         let has_empty_values = diagnostics
             .iter()
-            .any(|d| d.code.as_str() == DiagnosticCode::EMPTY_VALUES);
+            .any(|d| d.code.as_str() == RuleName::EmptyValues.as_str());
 
         assert!(has_empty_values, "Expected empty value violations");
     }
@@ -83,8 +83,8 @@ mod invalid_fixtures {
         let diagnostics = linter.lint(yaml).unwrap();
 
         let has_comment_errors = diagnostics.iter().any(|d| {
-            d.code.as_str() == DiagnosticCode::COMMENTS
-                || d.code.as_str() == DiagnosticCode::COMMENTS_INDENTATION
+            d.code.as_str() == RuleName::Comments.as_str()
+                || d.code.as_str() == RuleName::CommentsIndentation.as_str()
         });
 
         assert!(has_comment_errors, "Expected comment formatting violations");
@@ -98,7 +98,7 @@ mod invalid_fixtures {
 
         let has_octal_errors = diagnostics
             .iter()
-            .any(|d| d.code.as_str() == DiagnosticCode::OCTAL_VALUES);
+            .any(|d| d.code.as_str() == RuleName::OctalValues.as_str());
 
         assert!(has_octal_errors, "Expected octal value violations");
     }
@@ -110,7 +110,7 @@ mod invalid_fixtures {
 
         let duplicate = diagnostics
             .iter()
-            .find(|d| d.code.as_str() == DiagnosticCode::DUPLICATE_KEY)
+            .find(|d| d.code.as_str() == RuleName::DuplicateKey.as_str())
             .expect("Expected a duplicate-key diagnostic for the repeated <<");
         assert_eq!(duplicate.span.start.line(), 7);
     }
@@ -122,7 +122,7 @@ mod invalid_fixtures {
 
         let duplicate = diagnostics
             .iter()
-            .find(|d| d.code.as_str() == DiagnosticCode::DUPLICATE_KEY)
+            .find(|d| d.code.as_str() == RuleName::DuplicateKey.as_str())
             .expect("Expected a duplicate-key diagnostic for the alias-written <<");
         assert_eq!(duplicate.span.start.line(), 5);
     }
@@ -134,7 +134,7 @@ mod invalid_fixtures {
 
         let lines: Vec<_> = diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == DiagnosticCode::SET_VALUES)
+            .filter(|d| d.code.as_str() == RuleName::SetValues.as_str())
             .map(|d| d.span.start.line())
             .collect();
         assert_eq!(lines, vec![2, 4]);
@@ -232,7 +232,7 @@ mod edge_case_fixtures {
             diagnostics
                 .iter()
                 .any(|d| d.span.start.line() == 7
-                    && d.code.as_str() == DiagnosticCode::QUOTED_STRINGS),
+                    && d.code.as_str() == RuleName::QuotedStrings.as_str()),
             "a quoted \\u escape of a plain-safe text is redundantly quoted: {diagnostics:?}"
         );
     }
@@ -258,7 +258,7 @@ mod integration_tests {
 
         let has_line_length = diagnostics
             .iter()
-            .any(|d| d.code.as_str() == DiagnosticCode::LINE_LENGTH);
+            .any(|d| d.code.as_str() == RuleName::LineLength.as_str());
 
         assert!(
             !has_line_length,

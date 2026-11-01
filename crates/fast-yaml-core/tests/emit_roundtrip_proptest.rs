@@ -3,7 +3,7 @@
 //! Trees mix nested lists, complex keys, sets, multiline and Unicode-whitespace strings and floats
 //! with source text, and are emitted at every indentation width.
 
-use fast_yaml_core::{Emitter, EmitterConfig, Float, Indent, Mapping, Parser, Set, Value};
+use fast_yaml_core::{Emitter, EmitterConfig, Float, Indent, Layout, Mapping, Parser, Set, Value};
 use proptest::prelude::*;
 
 mod common;
@@ -145,6 +145,6 @@ proptest! {
 
     #[test]
     fn flow_emit_round_trips(doc in flow_tree()) {
-        check(&doc, &EmitterConfig::new().with_default_flow_style(Some(true)))?;
+        check(&doc, &EmitterConfig::new().with_layout(Layout::Flow))?;
     }
 }

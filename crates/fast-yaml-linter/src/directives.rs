@@ -10,24 +10,35 @@
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::OneBased;
 use crate::config::RuleName;
 use crate::echo::{KEY_LIMIT, echo};
-use crate::rules::{LintDirectiveRule, RuleRegistry, stamp};
+use crate::rules::{LintDirectiveRule, OwnedRuleId, RuleRegistry, stamp};
 use crate::{
     CommentKind, Diagnostic, DiagnosticCode, Finding, LintConfig, LintContext, SourceContext, Span,
 };
 
 /// yamllint rule names that do not match a fast-yaml code 1:1.
-const ALIASES: &[(&str, &[&str])] = &[
-    ("key-duplicates", &[DiagnosticCode::DUPLICATE_KEY]),
+static ALIASES: &[(&str, &[DiagnosticCode])] = &[
+    (
+        "key-duplicates",
+        &[DiagnosticCode::Rule(OwnedRuleId::BuiltIn(
+            RuleName::DuplicateKey,
+        ))],
+    ),
     (
         "anchors",
         &[
-            DiagnosticCode::INVALID_ANCHOR,
-            DiagnosticCode::UNDEFINED_ALIAS,
+            DiagnosticCode::Rule(OwnedRuleId::BuiltIn(RuleName::InvalidAnchor)),
+            DiagnosticCode::UndefinedAlias,
         ],
     ),
-    ("trailing-spaces", &[DiagnosticCode::TRAILING_WHITESPACE]),
+    (
+        "trailing-spaces",
+        &[DiagnosticCode::Rule(OwnedRuleId::BuiltIn(
+            RuleName::TrailingWhitespace,
+        ))],
+    ),
 ];
 
 /// The rules a directive applies to; an empty `Codes` set never means "all rules".
@@ -155,7 +166,7 @@ impl NameIssues {
         if self.config_only {
             parts.push(format!(
                 "`{}` is config-only and cannot be named in a directive",
-                DiagnosticCode::LINT_DIRECTIVE
+                RuleName::LintDirective
             ));
         }
         if self.trailing_text {
@@ -191,25 +202,25 @@ fn is_rule_name(name: &str) -> bool {
 /// Adds the codes `name` stands for to `codes`, or records why it is not usable.
 fn resolve(
     name: &str,
-    is_known: &impl Fn(&str) -> bool,
+    known_code: &impl Fn(&str) -> Option<DiagnosticCode>,
     codes: &mut BTreeSet<DiagnosticCode>,
     issues: &mut NameIssues,
 ) {
     if !is_rule_name(name) {
         issues.malformed.insert(truncated(name));
-    } else if name == DiagnosticCode::LINT_DIRECTIVE {
+    } else if name == RuleName::LintDirective.as_str() {
         issues.config_only = true;
     } else if let Some((_, aliased)) = ALIASES.iter().find(|(alias, _)| *alias == name) {
-        codes.extend(aliased.iter().copied().map(DiagnosticCode::from));
-    } else if is_known(name) {
-        codes.insert(DiagnosticCode::from(name));
+        codes.extend(aliased.iter().cloned());
+    } else if let Some(code) = known_code(name) {
+        codes.insert(code);
     } else {
         issues.unknown.insert(truncated(name));
     }
 }
 
 /// Parses one comment (starting at `#`).
-fn parse(comment: &str, is_known: impl Fn(&str) -> bool) -> Parsed {
+fn parse(comment: &str, known_code: impl Fn(&str) -> Option<DiagnosticCode>) -> Parsed {
     let Some(body) = comment.strip_prefix('#').map(str::trim_start) else {
         return Parsed::NotDirective;
     };
@@ -253,7 +264,7 @@ fn parse(comment: &str, is_known: impl Fn(&str) -> bool) -> Parsed {
         has_names = true;
         resolve(
             token.strip_prefix("rule:").unwrap_or(token),
-            &is_known,
+            &known_code,
             &mut codes,
             &mut issues,
         );
@@ -309,7 +320,13 @@ impl Directives {
         }
 
         let ctx = context.source_context();
-        let is_known = |name: &str| is_known_code(name) || registry.find_by_code(name).is_some();
+        let known_code = |name: &str| {
+            builtin_code(name).or_else(|| {
+                registry
+                    .find_by_code(name)
+                    .map(|rule| DiagnosticCode::from(rule.info().id()))
+            })
+        };
         let mut state = DisabledRules::default();
         let mut problems: Vec<(Span, String)> = Vec::new();
         let mut content_line = None;
@@ -320,7 +337,7 @@ impl Directives {
             else {
                 continue;
             };
-            let (kind, mut problem) = match parse(text, is_known) {
+            let (kind, mut problem) = match parse(text, known_code) {
                 Parsed::NotDirective => continue,
                 Parsed::Invalid(problem) => {
                     problems.push((comment.span, problem));
@@ -415,9 +432,12 @@ impl Directives {
     }
 }
 
-/// Whether `name` is a built-in rule or a diagnostic code a built-in rule emits.
-fn is_known_code(name: &str) -> bool {
-    name == DiagnosticCode::UNDEFINED_ALIAS || name.parse::<RuleName>().is_ok()
+/// The code for `name` when it is a built-in rule or a diagnostic code a built-in rule emits.
+fn builtin_code(name: &str) -> Option<DiagnosticCode> {
+    if name == DiagnosticCode::UndefinedAlias.as_str() {
+        return Some(DiagnosticCode::UndefinedAlias);
+    }
+    name.parse::<RuleName>().ok().map(DiagnosticCode::from)
 }
 
 /// Cheap prefilter: some `#` is followed by a directive prefix.
@@ -432,13 +452,14 @@ fn may_contain_directive(source: &str) -> bool {
 
 /// 1-based number of the first line that is not blank, a full-line comment or a `%` directive.
 fn first_content_line(ctx: &SourceContext<'_>) -> usize {
-    (1..=ctx.line_count())
+    (0..ctx.line_count())
+        .map(OneBased::from_index)
         .find(|&n| {
             let line = ctx.get_line(n).unwrap_or_default();
             let text = line.trim();
             !text.is_empty() && !text.starts_with('#') && !line.starts_with('%')
         })
-        .unwrap_or_else(|| ctx.line_count() + 1)
+        .map_or_else(|| ctx.line_count() + 1, OneBased::get)
 }
 
 #[cfg(test)]
@@ -446,12 +467,21 @@ mod tests {
     use super::*;
     use crate::{Linter, Severity};
 
-    fn known(name: &str) -> bool {
-        is_known_code(name)
+    fn known(name: &str) -> Option<DiagnosticCode> {
+        builtin_code(name)
     }
 
     fn codes(names: &[&str]) -> RuleSelector {
-        RuleSelector::Codes(names.iter().copied().map(DiagnosticCode::from).collect())
+        RuleSelector::Codes(
+            names
+                .iter()
+                .map(|name| name.parse::<DiagnosticCode>().unwrap())
+                .collect(),
+        )
+    }
+
+    fn code(name: &str) -> DiagnosticCode {
+        name.parse().unwrap()
     }
 
     fn kind(comment: &str) -> Option<DirectiveKind> {
@@ -491,7 +521,7 @@ mod tests {
 
     #[test]
     fn grammar_prefixes_and_optional_rule_keyword() {
-        let dup = codes(&[DiagnosticCode::DUPLICATE_KEY]);
+        let dup = codes(&[RuleName::DuplicateKey.as_str()]);
         for comment in [
             "# fy: disable duplicate-key",
             "# fy:disable rule:duplicate-key",
@@ -681,10 +711,10 @@ mod tests {
         let registry = RuleRegistry::with_default_rules();
         for (_, targets) in ALIASES {
             for target in *targets {
-                assert!(is_known_code(target), "{target}");
+                assert!(builtin_code(target.as_str()).is_some(), "{target}");
                 // Undefined aliases are parse errors, so no registered rule emits that code.
-                if *target != DiagnosticCode::UNDEFINED_ALIAS {
-                    assert!(registry.find_by_code(target).is_some(), "{target}");
+                if *target != DiagnosticCode::UndefinedAlias {
+                    assert!(registry.find_by_code(target.as_str()).is_some(), "{target}");
                 }
             }
         }
@@ -729,17 +759,17 @@ mod tests {
     #[test]
     fn disabled_rules_transitions() {
         let mut state = DisabledRules::default();
-        assert!(!state.contains(&"a".into()));
+        assert!(!state.contains(&code("a")));
         state.disable(codes(&["a"]));
-        assert!(state.contains(&"a".into()) && !state.contains(&"b".into()));
+        assert!(state.contains(&code("a")) && !state.contains(&code("b")));
         state.disable(RuleSelector::All);
-        assert!(state.contains(&"b".into()));
+        assert!(state.contains(&code("b")));
         state.enable(codes(&["a"]));
-        assert!(!state.contains(&"a".into()) && state.contains(&"b".into()));
+        assert!(!state.contains(&code("a")) && state.contains(&code("b")));
         state.disable(codes(&["a"]));
-        assert!(state.contains(&"a".into()));
+        assert!(state.contains(&code("a")));
         state.enable(RuleSelector::All);
-        assert!(!state.contains(&"a".into()) && !state.contains(&"b".into()));
+        assert!(!state.contains(&code("a")) && !state.contains(&code("b")));
     }
 
     #[test]

@@ -426,7 +426,7 @@ impl FileDiscovery {
         found: &mut Found,
     ) -> Result<(), PathError> {
         if self.is_excluded(path) {
-            tracing::debug!("skipped: matches --exclude: {}", path.display());
+            tracing::debug!("skipped: matches --exclude: {}", DisplayPath::new(path));
             return Ok(());
         }
         let explicit = matches!(
@@ -447,7 +447,10 @@ impl FileDiscovery {
         let mut ignored_by_config = |canonical: &Path| {
             let ignored = self.config.file_filter.is_ignored(canonical, false);
             if ignored {
-                tracing::debug!("skipped: dropped by config ignore: {}", canonical.display());
+                tracing::debug!(
+                    "skipped: dropped by config ignore: {}",
+                    DisplayPath::new(canonical)
+                );
             }
             found.dropped_by_config |= ignored;
             ignored
@@ -465,7 +468,7 @@ impl FileDiscovery {
         if !self.matches_include(path, explicit) {
             tracing::debug!(
                 "skipped: does not match the include patterns: {}",
-                path.display()
+                DisplayPath::new(path)
             );
             return if explicit {
                 Err(PathError::NotIncluded {
@@ -535,7 +538,7 @@ impl FileDiscovery {
         builder.filter_entry(move |entry| {
             let is_dir = entry.file_type().is_some_and(|ft| ft.is_dir());
             if skip_hidden && entry.depth() > 0 && is_skipped_hidden(entry, is_dir, keep_yamllint) {
-                tracing::debug!("skipped: hidden entry: {}", entry.path().display());
+                tracing::debug!("skipped: hidden entry: {}", DisplayPath::new(entry.path()));
                 return false;
             }
             let Some((filter, root)) = &config_ignore else {
@@ -553,7 +556,7 @@ impl FileDiscovery {
             if pruned {
                 tracing::debug!(
                     "skipped: directory dropped by config ignore: {}",
-                    entry.path().display()
+                    DisplayPath::new(entry.path())
                 );
             }
             !pruned
@@ -574,8 +577,10 @@ impl FileDiscovery {
 
             if entry.file_type().is_some_and(|ft| ft.is_file()) {
                 let path = entry.path();
-                // Ignore errors for individual files during directory walk
-                let _ = self.discover_file(path, DiscoveryOrigin::DirectoryWalk, found);
+                if let Err(error) = self.discover_file(path, DiscoveryOrigin::DirectoryWalk, found)
+                {
+                    warn_skipped(&error);
+                }
             }
         }
         found.dropped_by_config |= dropped_dir.load(Ordering::Relaxed);
@@ -594,16 +599,19 @@ impl FileDiscovery {
             }
             if match_count > MAX_GLOB_MATCHES {
                 crate::error::stderr_line(format_args!(
-                    "Warning: glob pattern '{pattern}' exceeded {MAX_GLOB_MATCHES} matches, stopping"
+                    "Warning: glob pattern '{}' exceeded {MAX_GLOB_MATCHES} matches, stopping",
+                    EscapedText(pattern)
                 ));
                 break;
             }
 
             match entry {
                 Ok(path) => {
-                    if path.is_file() {
-                        // Ignore errors for individual files during glob expansion
-                        let _ = self.discover_file(&path, DiscoveryOrigin::GlobExpansion, found);
+                    if path.is_file()
+                        && let Err(error) =
+                            self.discover_file(&path, DiscoveryOrigin::GlobExpansion, found)
+                    {
+                        warn_skipped(&error);
                     }
                 }
                 Err(e) => {
@@ -623,6 +631,13 @@ impl FileDiscovery {
         }
         Ok(())
     }
+}
+
+/// Reports a file that a walk or glob found but could not use; the run continues without it.
+fn warn_skipped(error: &PathError) {
+    let message = EscapedText(&error.to_string()).to_string();
+    tracing::debug!("skipped during discovery: {message}");
+    crate::error::stderr_line(format_args!("Warning: skipped: {message}"));
 }
 
 /// Whether a walk entry is a hidden file or directory that the walk skips by default.

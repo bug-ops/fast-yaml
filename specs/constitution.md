@@ -29,7 +29,7 @@ Value proposition: correct YAML 1.2.2 semantics, bounded resource use on hostile
 
 ## 2. Principles (non-negotiable)
 
-1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Width`, `Workers`/`WorkerCount`, ...), positions are `OneBased` and documents are `DocumentIndex`, lint config uses typed enums, rules return typed `Finding`s that the linter turns into diagnostics, diagnostics carry typed spans. No stringly-typed options inside the core. Remaining 1-based `usize` APIs are tracked in #666.
+1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Workers`/`WorkerCount`, ...), positions are `OneBased` and documents are `DocumentIndex`, lint config uses typed enums, rules return typed `Finding`s that the linter turns into diagnostics, diagnostics carry typed spans. No stringly-typed options inside the core. Remaining 1-based `usize` APIs are tracked in #666.
 2. **One implementation, many surfaces.** Parsing, scalar resolution, merge keys, limits and linting live in the Rust crates. Bindings and the CLI are thin adapters; they must not re-implement semantics.
 3. **Surface parity.** The same input gives the same result on every surface unless a spec lists the difference as a deliberate deviation. Parity gaps are bugs, not features.
 4. **Bounded by default.** Every untrusted input passes the same size, NUL/BOM, depth, scan-ahead, document-count and expansion checks, whichever surface or rule reads it; config files are bounded too. Limits have documented defaults and validated ranges. See [[009-limits-security/spec]].

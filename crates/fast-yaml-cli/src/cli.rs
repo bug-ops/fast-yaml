@@ -3,7 +3,7 @@ use crate::commands::lint::ConfigSource;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use fast_yaml_core::limits::{
     Indent, LimitRangeError, MaxAliasBytes, MaxDepth, MaxDocuments, MaxInputBytes, MaxScanAhead,
-    ParseLimits, Width,
+    ParseLimits,
 };
 #[cfg(feature = "linter")]
 use fast_yaml_linter::config::{IndentSize, MaxDiagnostics};
@@ -194,6 +194,80 @@ impl WriteArgs {
     }
 }
 
+/// Layout of the JSON that `fy convert json` writes.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum JsonOutput {
+    /// Indented over several lines.
+    #[default]
+    Pretty,
+    /// A single line.
+    Compact,
+}
+
+/// `--pretty` and `--no-pretty`; the one given last wins.
+#[derive(Args, Debug, Clone, Copy)]
+pub struct JsonOutputArgs {
+    /// Pretty-print JSON output (default)
+    #[arg(long, overrides_with = "no_pretty")]
+    pretty: bool,
+
+    /// Print compact single-line JSON output
+    #[arg(long, overrides_with = "pretty")]
+    no_pretty: bool,
+}
+
+impl JsonOutputArgs {
+    /// The layout the flags select.
+    #[must_use]
+    pub const fn output(self) -> JsonOutput {
+        if self.no_pretty {
+            JsonOutput::Compact
+        } else {
+            JsonOutput::Pretty
+        }
+    }
+}
+
+/// Whether `fy lint` reports duplicate mapping keys, when a flag says so.
+#[cfg(feature = "linter")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DuplicateKeys {
+    /// Duplicate keys are accepted.
+    Allow,
+    /// Duplicate keys stay as the configuration has them. This is the same as passing no flag;
+    /// the variant exists so that the flag can cancel an earlier `--allow-duplicate-keys`.
+    Forbid,
+}
+
+/// `--allow-duplicate-keys` and `--no-allow-duplicate-keys`; the one given last wins, and
+/// neither leaves the decision to the config file.
+#[cfg(feature = "linter")]
+#[derive(Args, Debug, Clone, Copy)]
+pub struct DuplicateKeysArgs {
+    /// Allow duplicate keys; overrides the config file (suppresses duplicate key errors)
+    #[arg(long, overrides_with = "no_allow_duplicate_keys")]
+    allow_duplicate_keys: bool,
+
+    /// Report duplicate keys as the config file says; undoes an earlier --allow-duplicate-keys
+    #[arg(long, overrides_with = "allow_duplicate_keys")]
+    no_allow_duplicate_keys: bool,
+}
+
+#[cfg(feature = "linter")]
+impl DuplicateKeysArgs {
+    /// The choice the flags make, if any.
+    #[must_use]
+    pub const fn choice(self) -> Option<DuplicateKeys> {
+        if self.allow_duplicate_keys {
+            Some(DuplicateKeys::Allow)
+        } else if self.no_allow_duplicate_keys {
+            Some(DuplicateKeys::Forbid)
+        } else {
+            None
+        }
+    }
+}
+
 /// Discovery and parallelism flags shared by every batch-capable subcommand.
 #[derive(Args, Debug)]
 pub struct BatchArgs {
@@ -296,10 +370,6 @@ fn parse_indent(raw: &str) -> Result<Indent, String> {
     Indent::new(parse_number(raw)?).map_err(range_error)
 }
 
-fn parse_width(raw: &str) -> Result<Width, String> {
-    Width::new(parse_number(raw)?).map_err(range_error)
-}
-
 /// Parses `-j`: `0` selects [`Workers::Auto`] (the CLI never runs sequentially), `1..=128` a pool.
 fn parse_jobs(raw: &str) -> Result<Workers, String> {
     match Workers::from_count(parse_number(raw)?).map_err(range_error)? {
@@ -375,10 +445,6 @@ pub struct FormatArgs {
     #[arg(long, value_name = "N", value_parser = parse_indent, default_value_t = Indent::DEFAULT)]
     pub indent: Indent,
 
-    /// Maximum line width (min: 20, max: 1000)
-    #[arg(long, value_name = "N", value_parser = parse_width, default_value_t = Width::DEFAULT)]
-    pub width: Width,
-
     /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
     #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]
     pub max_depth: MaxDepth,
@@ -444,9 +510,8 @@ pub struct LintFlags {
     #[arg(long, value_enum, default_value = "text")]
     pub format: LintFormat,
 
-    /// Allow duplicate keys — overrides config file (opt-in, suppresses duplicate key errors)
-    #[arg(long, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
-    pub allow_duplicate_keys: Option<bool>,
+    #[command(flatten)]
+    pub duplicate_keys: DuplicateKeysArgs,
 
     /// Show at most N diagnostics per file, then one summary line; output only, the exit
     /// code is unaffected (overrides the `max-diagnostics` config key)
@@ -494,9 +559,8 @@ pub enum Command {
         /// Input file (default: stdin)
         file: Option<PathBuf>,
 
-        /// Pretty-print JSON output
-        #[arg(long, default_value_t = true, num_args = 0..=1, default_missing_value = "true", action = clap::ArgAction::Set)]
-        pretty: bool,
+        #[command(flatten)]
+        json: JsonOutputArgs,
 
         #[command(flatten)]
         write: WriteArgs,

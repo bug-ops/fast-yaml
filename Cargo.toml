@@ -36,6 +36,7 @@ anyhow = { version = "1" }
 bumpalo = { version = "3.20" }
 clap = { version = "4.6" }
 colored = { version = "3.1" }
+exacl = { version = "0.13" }
 glob = { version = "0.3" }
 globset = { version = "0.4" }
 ignore = { version = "0.4" }
@@ -48,6 +49,7 @@ napi-derive = { version = "3.6" }
 pyo3 = { version = "0.30" }
 rayon = { version = "1.12" }
 regex = { version = "1.13" }
+rustix = { version = "1.1", default-features = false }
 saphyr-parser = { version = "0.2.2" }
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }

@@ -1,7 +1,8 @@
 //! Fixture-based test for yamllint-style inline directives; the rest is covered by the unit
 //! tests in `src/directives.rs`.
 
-use fast_yaml_linter::{DiagnosticCode, Linter};
+use fast_yaml_linter::Linter;
+use fast_yaml_linter::config::RuleName;
 
 #[test]
 fn yamllint_spelling_and_aliases() {
@@ -14,6 +15,6 @@ fn yamllint_spelling_and_aliases() {
             .map(|d| d.span.start.line())
             .collect()
     };
-    assert_eq!(lines(DiagnosticCode::DUPLICATE_KEY), [6]);
-    assert_eq!(lines(DiagnosticCode::TRAILING_WHITESPACE), [7]);
+    assert_eq!(lines(RuleName::DuplicateKey.as_str()), [6]);
+    assert_eq!(lines(RuleName::TrailingWhitespace.as_str()), [7]);
 }

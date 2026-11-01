@@ -22,13 +22,14 @@ saphyr-parser = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-libc = { workspace = true }
+rustix = { workspace = true, features = ["fs", "std"] }
 
 [dev-dependencies]
 criterion = { workspace = true }
 indoc = { workspace = true }
 peak_alloc = { workspace = true }
 proptest = { workspace = true }
+tempfile = { workspace = true }
 
 [[bench]]
 name = "arena_benchmark"

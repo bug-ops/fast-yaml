@@ -645,7 +645,7 @@ impl Linter {
 
         let mut diagnostics = finish(diagnostics, directives);
         if path.is_some_and(|path| self.config.rules.is_ignored(RuleName::LintDirective, path)) {
-            diagnostics.retain(|d| d.code.as_str() != DiagnosticCode::LINT_DIRECTIVE);
+            diagnostics.retain(|d| d.code != DiagnosticCode::from(RuleName::LintDirective));
         }
         Ok(diagnostics)
     }
@@ -733,14 +733,6 @@ mod tests {
             RuleId::Custom(&self.0)
         }
 
-        fn name(&self) -> &'static str {
-            "Always Flags"
-        }
-
-        fn description(&self) -> &'static str {
-            "Flags every document"
-        }
-
         fn default_severity(&self) -> Severity {
             Severity::Hint
         }
@@ -750,7 +742,7 @@ mod tests {
         fn check(&self, context: &LintContext, _config: &LintConfig) -> Vec<crate::Finding> {
             let span = context
                 .source_context()
-                .span_at(context.source_context().line_start(1), 1);
+                .span_at(context.source_context().line_start(OneBased::FIRST), 1);
             vec![crate::Finding::new("flagged", span)]
         }
     }
@@ -760,14 +752,6 @@ mod tests {
     impl LintRule for DocumentLines {
         fn id(&self) -> RuleId<'_> {
             RuleId::Custom(&self.0)
-        }
-
-        fn name(&self) -> &'static str {
-            "Document Lines"
-        }
-
-        fn description(&self) -> &'static str {
-            "Flags the first line of every document"
         }
 
         fn default_severity(&self) -> Severity {
@@ -783,8 +767,7 @@ mod tests {
             _config: &LintConfig,
         ) -> Vec<crate::Finding> {
             let source_context = context.source_context();
-            let span =
-                source_context.span_at(source_context.line_start(document.first_line.get()), 1);
+            let span = source_context.span_at(source_context.line_start(document.first_line), 1);
             vec![crate::Finding::new(format!("{:?}", document.value), span)]
         }
     }
@@ -1194,7 +1177,7 @@ mod tests {
 
         let ordering_diags: Vec<_> = diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == crate::DiagnosticCode::KEY_ORDERING)
+            .filter(|d| d.code.as_str() == crate::config::RuleName::KeyOrdering.as_str())
             .collect();
 
         assert!(
@@ -1214,7 +1197,7 @@ mod tests {
 
         let empty_diags: Vec<_> = diagnostics
             .iter()
-            .filter(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES)
+            .filter(|d| d.code.as_str() == crate::config::RuleName::EmptyValues.as_str())
             .collect();
 
         assert_eq!(empty_diags.len(), 2, "{empty_diags:?}");
@@ -1225,7 +1208,7 @@ mod tests {
             .lint(yaml)
             .unwrap()
             .iter()
-            .filter(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES)
+            .filter(|d| d.code.as_str() == crate::config::RuleName::EmptyValues.as_str())
             .map(|d| d.span.start.line())
             .collect()
     }
@@ -1251,7 +1234,7 @@ mod tests {
             .unwrap();
         let lines: Vec<usize> = diags
             .iter()
-            .filter(|d| d.code.as_str() == crate::DiagnosticCode::TRUTHY)
+            .filter(|d| d.code.as_str() == crate::config::RuleName::Truthy.as_str())
             .map(|d| d.span.start.line())
             .collect();
         assert_eq!(lines, [1, 3]);
@@ -1267,7 +1250,7 @@ mod tests {
         assert!(
             !diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::KEY_ORDERING),
+                .any(|d| d.code.as_str() == crate::config::RuleName::KeyOrdering.as_str()),
             "correctly ordered single-doc should produce no key-ordering diagnostics"
         );
     }
@@ -1282,7 +1265,7 @@ mod tests {
         assert!(
             !diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::EMPTY_VALUES),
+                .any(|d| d.code.as_str() == crate::config::RuleName::EmptyValues.as_str()),
             "single-doc without empty values should produce no empty-values diagnostics"
         );
     }
@@ -1296,7 +1279,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
+                .any(|d| d.code.as_str() == crate::config::RuleName::DocumentStart.as_str()),
             "require_document_start=true must produce a diagnostic when '---' is absent"
         );
     }
@@ -1310,7 +1293,7 @@ mod tests {
         assert!(
             !diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
+                .any(|d| d.code.as_str() == crate::config::RuleName::DocumentStart.as_str()),
             "require_document_start=true must not produce a diagnostic when '---' is present"
         );
     }
@@ -1324,7 +1307,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_END),
+                .any(|d| d.code.as_str() == crate::config::RuleName::DocumentEnd.as_str()),
             "require_document_end=true must produce a diagnostic when '...' is absent"
         );
     }
@@ -1338,7 +1321,7 @@ mod tests {
         assert!(
             !diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_END),
+                .any(|d| d.code.as_str() == crate::config::RuleName::DocumentEnd.as_str()),
             "require_document_end=true must not produce a diagnostic when '...' is present"
         );
     }
@@ -1352,7 +1335,7 @@ mod tests {
         assert!(
             diagnostics
                 .iter()
-                .any(|d| d.code.as_str() == crate::DiagnosticCode::DOCUMENT_START),
+                .any(|d| d.code.as_str() == crate::config::RuleName::DocumentStart.as_str()),
             "present=forbidden must flag an existing '---'"
         );
     }

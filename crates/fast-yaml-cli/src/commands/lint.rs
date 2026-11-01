@@ -7,15 +7,15 @@ use fast_yaml_linter::formatter::{
     syntax_diagnostic,
 };
 use fast_yaml_linter::{
-    ConfigFile, Diagnostic, Formatter, JsonFormatter, LintConfig, LintError, Linter, Severity,
-    TextFormatter,
+    Coloring, ConfigFile, Diagnostic, Formatter, JsonFormatter, JsonLayout, LintConfig, LintError,
+    Linter, Severity, TextFormatter,
 };
 use fast_yaml_parallel::ScanAheadPolicy;
 use std::io::{BufWriter, Write as _};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
-use crate::cli::{LintFormat, LintOutput, ParseLimitArgs};
+use crate::cli::{DuplicateKeys, LintFormat, LintOutput, ParseLimitArgs};
 use crate::config::CommonConfig;
 use crate::error::{self, DiscoveryError, ExitCode};
 use crate::file_filter::FileFilter;
@@ -45,7 +45,7 @@ pub struct LintArgs {
     /// Lint output format.
     pub format: LintFormat,
     /// Allow duplicate keys override (from `--allow-duplicate-keys`).
-    pub allow_duplicate_keys: Option<bool>,
+    pub allow_duplicate_keys: Option<DuplicateKeys>,
     /// Per-file diagnostic cap override (from `--max-diagnostics`).
     pub max_diagnostics: Option<MaxDiagnostics>,
     /// Input size limit override (from `--max-input-bytes`).
@@ -74,11 +74,46 @@ pub struct LintCommand {
     format: LintFormat,
 }
 
+/// Which diagnostics `fy lint` shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shown {
+    /// Every diagnostic.
+    All,
+    /// `--quiet`: only errors.
+    ErrorsOnly,
+}
+
+impl Shown {
+    /// `--quiet` shows errors only.
+    #[must_use]
+    pub const fn of(quiet: bool) -> Self {
+        if quiet { Self::ErrorsOnly } else { Self::All }
+    }
+}
+
+/// Whether a file's diagnostics fail the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verdict {
+    /// No error is left to report.
+    Pass,
+    /// At least one error is left to report.
+    Fail,
+}
+
+/// The diagnostics to print for one file and what they mean for the exit code.
+#[derive(Debug)]
+pub struct Filtered {
+    /// What is shown, after `--quiet` and the cap.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Decided before the cap.
+    pub verdict: Verdict,
+}
+
 /// What `fy lint` shows of one file's diagnostics, shared by the single-file and batch paths.
 #[derive(Debug, Clone, Copy)]
 pub struct ReportFilter {
-    /// `--quiet`: only errors are shown.
-    pub quiet: bool,
+    /// Which diagnostics are shown.
+    pub shown: Shown,
     /// `--max-diagnostics`: the most diagnostics shown per file.
     pub max_diagnostics: Option<MaxDiagnostics>,
 }
@@ -91,15 +126,22 @@ impl ReportFilter {
     /// cap summary carries the highest omitted severity, so a quiet run never shows a non-error
     /// line.
     #[must_use]
-    pub fn apply(self, mut diagnostics: Vec<Diagnostic>) -> (Vec<Diagnostic>, bool) {
-        if self.quiet {
+    pub fn apply(self, mut diagnostics: Vec<Diagnostic>) -> Filtered {
+        if self.shown == Shown::ErrorsOnly {
             diagnostics.retain(|d| d.severity == Severity::Error);
         }
-        let has_errors = diagnostics.iter().any(|d| d.severity == Severity::Error);
+        let verdict = if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+            Verdict::Fail
+        } else {
+            Verdict::Pass
+        };
         if let Some(max) = self.max_diagnostics {
             max.truncate(&mut diagnostics);
         }
-        (diagnostics, has_errors)
+        Filtered {
+            diagnostics,
+            verdict,
+        }
     }
 }
 
@@ -144,8 +186,9 @@ fn write_report_or_warn(
 ) {
     let written = match kind {
         LintOutput::Text => return,
-        LintOutput::Json => output
-            .write_report(&JsonFormatter::new(true).format(Findings::Given(&[(diagnostic, None)]))),
+        LintOutput::Json => output.write_report(
+            &JsonFormatter::new(JsonLayout::Pretty).format(Findings::Given(&[(diagnostic, None)])),
+        ),
         LintOutput::Report(format) => write_file_report(output, format, path, &[diagnostic]),
     };
     if let Err(err) = written {
@@ -201,7 +244,8 @@ impl LintCommand {
             file_lint_config,
             args.max_line_length,
             args.indent_size,
-            args.allow_duplicate_keys,
+            args.allow_duplicate_keys
+                .map(|choice| choice == DuplicateKeys::Allow),
         )
         .with_parse_limits(args.limits.parse_limits(max_scan_ahead))
         .with_max_input_bytes(max_input_bytes);
@@ -270,7 +314,7 @@ impl LintCommand {
         match self.format.output() {
             LintOutput::Json => self
                 .output
-                .write_report(&JsonFormatter::new(true).format(Findings::EMPTY))?,
+                .write_report(&JsonFormatter::new(JsonLayout::Pretty).format(Findings::EMPTY))?,
             LintOutput::Text => {}
             LintOutput::Report(format) => self.output.write_report(&format.render(&[]))?,
         }
@@ -319,17 +363,7 @@ impl LintCommand {
             self.output.ensure_not_input(path)?;
         }
 
-        // A non-default formatter indent applies only while the lint config leaves the width unset
-        let formatter_indent = self.config.formatter.lint_indent_size();
-        let lint_config = if self.lint_config.rules.indentation.options.width_is_set()
-            || formatter_indent == IndentSize::default()
-        {
-            self.lint_config.clone()
-        } else {
-            self.lint_config.clone().with_indent_size(formatter_indent)
-        };
-
-        let linter = Linter::with_config(lint_config);
+        let linter = Linter::with_config(self.lint_config.clone());
         let source = match linter.source(input.as_str()) {
             Ok(source) => source,
             Err(err) => return self.report_lint_failure(input, err),
@@ -351,11 +385,15 @@ impl LintCommand {
             Err(err) => return self.report_lint_failure(input, err),
         };
 
-        let (filtered_diagnostics, has_errors) = ReportFilter {
-            quiet: self.config.output.is_quiet(),
+        let Filtered {
+            diagnostics: filtered_diagnostics,
+            verdict,
+        } = ReportFilter {
+            shown: Shown::of(self.config.output.is_quiet()),
             max_diagnostics: self.max_diagnostics,
         }
         .apply(diagnostics);
+        let has_errors = verdict == Verdict::Fail;
 
         let source_context = source.context();
         let findings = Findings::FromSource {
@@ -364,11 +402,13 @@ impl LintCommand {
         };
         match self.format.output() {
             LintOutput::Text => {
-                let mut formatter = TextFormatter::new();
-                formatter.use_color = self.config.output.use_color();
+                let formatter =
+                    TextFormatter::new().with_color(Coloring::from(self.config.output.use_color()));
                 self.write_findings(&formatter, findings)?;
             }
-            LintOutput::Json => self.write_findings(&JsonFormatter::new(true), findings)?,
+            LintOutput::Json => {
+                self.write_findings(&JsonFormatter::new(JsonLayout::Pretty), findings)?;
+            }
             LintOutput::Report(format) => {
                 let report_source = match &canonical {
                     Some(path) => ReportSource::File(ReportPath::from_absolute(path.as_path())?),
@@ -403,21 +443,16 @@ impl LintCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{FormatterConfig, OutputConfig, Verbosity};
+    use crate::config::{OutputConfig, Verbosity};
     use crate::io::input::InputOrigin;
-    use fast_yaml_core::Indent;
     use std::io::Write;
 
-    fn create_test_config(verbosity: Verbosity, use_color: bool, indent: u8) -> CommonConfig {
-        CommonConfig::new()
-            .with_output(
-                OutputConfig::new()
-                    .with_verbosity(verbosity)
-                    .with_color(use_color),
-            )
-            .with_formatter(
-                FormatterConfig::new().with_indent(Indent::new(usize::from(indent)).unwrap()),
-            )
+    fn create_test_config(verbosity: Verbosity, use_color: bool) -> CommonConfig {
+        CommonConfig::new().with_output(
+            OutputConfig::new()
+                .with_verbosity(verbosity)
+                .with_color(use_color),
+        )
     }
 
     fn stdin_input(content: &str) -> InputSource {
@@ -431,7 +466,7 @@ mod tests {
         config: CommonConfig,
         max_line_length: Option<NonZeroUsize>,
         format: LintFormat,
-        allow_duplicate_keys: Option<bool>,
+        allow_duplicate_keys: Option<DuplicateKeys>,
         input: &InputSource,
     ) -> LintCommand {
         LintCommand::build(
@@ -457,7 +492,7 @@ mod tests {
     fn test_build_defaults_input_size_limit() {
         let input = stdin_input("a: 1");
         let cmd = build_no_config(
-            create_test_config(Verbosity::Quiet, false, 2),
+            create_test_config(Verbosity::Quiet, false),
             None,
             LintFormat::Text,
             None,
@@ -472,7 +507,7 @@ mod tests {
             writeln!(f, "{text}").unwrap();
         }
         LintCommand::build(
-            create_test_config(Verbosity::Quiet, false, 2),
+            create_test_config(Verbosity::Quiet, false),
             LintArgs {
                 config: config_text.map_or(ConfigSource::Disabled, |_| {
                     ConfigSource::Explicit(f.path().to_owned())
@@ -511,7 +546,7 @@ mod tests {
     #[test]
     fn test_lint_valid_yaml() {
         let input = stdin_input("name: test\nvalue: 123");
-        let config = create_test_config(Verbosity::Quiet, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -528,7 +563,7 @@ mod tests {
     fn test_lint_with_warnings() {
         let long = "name: this is a very very very very very very very very very very very very very very very very very very long line that exceeds the maximum";
         let input = stdin_input(long);
-        let config = create_test_config(Verbosity::Quiet, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(80),
@@ -544,7 +579,7 @@ mod tests {
     #[test]
     fn test_lint_invalid_yaml() {
         let input = stdin_input("invalid: [unclosed");
-        let config = create_test_config(Verbosity::Quiet, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -559,7 +594,7 @@ mod tests {
     #[test]
     fn test_lint_quiet_mode() {
         let input = stdin_input("name: test");
-        let config = create_test_config(Verbosity::Quiet, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -575,7 +610,7 @@ mod tests {
     #[test]
     fn test_lint_json_format() {
         let input = stdin_input("name: test\nvalue: 123");
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -591,7 +626,7 @@ mod tests {
     #[test]
     fn test_lint_duplicate_keys_reported_by_default() {
         let input = stdin_input("key: value1\nkey: value2\nother: data");
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
@@ -607,12 +642,12 @@ mod tests {
     #[test]
     fn test_lint_duplicate_keys_allowed_when_flag_set() {
         let input = stdin_input("key: value1\nkey: value2\nother: data");
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = build_no_config(
             config,
             NonZeroUsize::new(120),
             LintFormat::Text,
-            Some(true),
+            Some(DuplicateKeys::Allow),
             &input,
         );
         let result = cmd.execute(&input);
@@ -625,7 +660,7 @@ mod tests {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  key-ordering:\n    enabled: false").unwrap();
         let input = stdin_input("b: 1\na: 2");
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -649,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_explicit_config_missing_file_returns_error() {
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let result = LintCommand::build(
             config,
             LintArgs {
@@ -674,7 +709,7 @@ mod tests {
         // Regression: config file line-length.max must reach the typed line-length options.
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -705,7 +740,7 @@ mod tests {
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
         let long_line = "name: a-sixty-character-line-that-exceeds-fifty-chars-limit!!";
         let input = stdin_input(long_line);
-        let config = create_test_config(Verbosity::Quiet, false, 2);
+        let config = create_test_config(Verbosity::Quiet, false);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -732,7 +767,7 @@ mod tests {
     fn test_cli_overrides_config_file_max_line_length() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules:\n  line-length:\n    max: 50").unwrap();
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = LintCommand::build(
             config,
             LintArgs {
@@ -761,7 +796,7 @@ mod tests {
     fn test_allow_duplicate_keys_none_does_not_override() {
         let mut f = tempfile::NamedTempFile::new().unwrap();
         writeln!(f, "rules: {{}}").unwrap();
-        let config = create_test_config(Verbosity::Normal, false, 2);
+        let config = create_test_config(Verbosity::Normal, false);
         let cmd = LintCommand::build(
             config,
             LintArgs {

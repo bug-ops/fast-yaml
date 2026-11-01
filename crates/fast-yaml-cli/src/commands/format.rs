@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use fast_yaml_core::{Emitter, NormalizedInput, has_comments_normalized};
 use fast_yaml_parallel::{CommentPolicy, Error as ParallelError};
 
-use crate::config::CommonConfig;
+use crate::config::{CommonConfig, FormatterConfig};
 use crate::error::ExitCode;
 use crate::io::{InputSource, OutputWriter, WriteTarget};
 use crate::reporter::{BatchStats, ReportEvent, Reporter};
@@ -42,6 +42,15 @@ pub enum WriteMode {
     DryRun,
 }
 
+/// Whether `fy format` may write its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunMode {
+    /// Write to the destination the write flags name.
+    Write,
+    /// `--dry-run`: report only.
+    DryRun,
+}
+
 /// What the user asked `fy format` to do with the result, resolved once from the CLI flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditIntent {
@@ -54,11 +63,10 @@ pub enum EditIntent {
 impl EditIntent {
     /// Resolves the flags; `--dry-run` wins over `-i`.
     #[must_use]
-    pub fn resolve(dry_run: bool, target: WriteTarget) -> Self {
-        if dry_run {
-            Self::Preview
-        } else {
-            Self::Write(target)
+    pub fn resolve(run: RunMode, target: WriteTarget) -> Self {
+        match run {
+            RunMode::DryRun => Self::Preview,
+            RunMode::Write => Self::Write(target),
         }
     }
 }
@@ -82,12 +90,21 @@ impl WriteMode {
 /// Format command implementation
 pub struct FormatCommand {
     config: CommonConfig,
+    format_config: FormatterConfig,
     comments: CommentPolicy,
 }
 
 impl FormatCommand {
-    pub const fn new(config: CommonConfig, comments: CommentPolicy) -> Self {
-        Self { config, comments }
+    pub const fn new(
+        config: CommonConfig,
+        format_config: FormatterConfig,
+        comments: CommentPolicy,
+    ) -> Self {
+        Self {
+            config,
+            format_config,
+            comments,
+        }
     }
 
     /// Formats the input and either writes it or, in dry-run mode, reports the summary.
@@ -129,7 +146,7 @@ impl FormatCommand {
 
     fn format(&self, input: &InputSource) -> Result<(String, FormatStatus)> {
         let normalized = NormalizedInput::new(input.as_str()).context("Failed to format YAML")?;
-        let emitter_config = self.config.formatter.to_emitter_config();
+        let emitter_config = self.format_config.to_emitter_config();
         let formatted = Emitter::format_normalized(&normalized, &emitter_config)
             .context("Failed to format YAML")?;
 
@@ -159,8 +176,7 @@ mod tests {
     use tempfile::NamedTempFile;
 
     fn make_cmd(comments: CommentPolicy) -> FormatCommand {
-        let config = CommonConfig::new().with_formatter(FormatterConfig::new());
-        FormatCommand::new(config, comments)
+        FormatCommand::new(CommonConfig::new(), FormatterConfig::new(), comments)
     }
 
     #[test]
@@ -208,10 +224,9 @@ mod tests {
         let temp_file = NamedTempFile::new().unwrap();
         let output = OutputWriter::new(OutputTarget::File(temp_file.path().to_path_buf()));
 
-        let config = CommonConfig::new()
-            .with_formatter(FormatterConfig::new().with_indent(Indent::new(4).unwrap()));
+        let format_config = FormatterConfig::new().with_indent(Indent::new(4).unwrap());
         assert!(
-            FormatCommand::new(config, CommentPolicy::Reject)
+            FormatCommand::new(CommonConfig::new(), format_config, CommentPolicy::Reject)
                 .run(&input, &WriteMode::Emit(output))
                 .is_ok()
         );

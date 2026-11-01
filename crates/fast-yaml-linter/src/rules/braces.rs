@@ -39,14 +39,6 @@ impl super::LintRule for BracesRule {
         RuleId::BuiltIn(RuleName::Braces)
     }
 
-    fn name(&self) -> &'static str {
-        "Braces"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates spacing and usage of flow mapping braces {}"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

@@ -175,14 +175,6 @@ impl super::LintRule for QuotedStringsRule {
         RuleId::BuiltIn(RuleName::QuotedStrings)
     }
 
-    fn name(&self) -> &'static str {
-        "Quoted Strings"
-    }
-
-    fn description(&self) -> &'static str {
-        "Validates string quoting style (quote-type, required)"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

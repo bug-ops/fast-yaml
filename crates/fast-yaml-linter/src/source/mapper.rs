@@ -1,5 +1,6 @@
 //! Source code position mapper for finding tokens and keys.
 
+use crate::OneBased;
 use crate::{Location, SourceContext, Span};
 use std::collections::HashMap;
 
@@ -45,7 +46,7 @@ impl<'a> SourceMapper<'a> {
         }
         self.index_built = true;
 
-        for line_num in 1..=self.context.line_count() {
+        for line_num in (0..self.context.line_count()).map(OneBased::from_index) {
             let Some(line_content) = self.context.get_line(line_num) else {
                 continue;
             };
@@ -166,8 +167,8 @@ impl<'a> SourceMapper<'a> {
     /// assert!(colon.is_some());
     /// ```
     pub fn find_colon_after_key(&self, key_span: Span) -> Option<Location> {
-        let line = self.context.get_line(key_span.end.line())?;
-        let line_start = self.context.get_line_offset(key_span.end.line());
+        let line = self.context.get_line(key_span.end.line_number())?;
+        let line_start = self.context.get_line_offset(key_span.end.line_number());
         let key_end = key_span.end.offset().checked_sub(line_start)?;
         let offset = line_start + key_end + line.get(key_end..)?.find(':')?;
         Some(self.context.offset_to_location(offset))
@@ -191,7 +192,7 @@ impl<'a> SourceMapper<'a> {
     pub fn find_all_chars(&self, ch: char) -> Vec<Location> {
         let mut locations = Vec::new();
 
-        for line_num in 1..=self.context.line_count() {
+        for line_num in (0..self.context.line_count()).map(OneBased::from_index) {
             if let Some(line) = self.context.get_line(line_num) {
                 let line_start = self.context.get_line_offset(line_num);
                 for (idx, c) in line.char_indices() {

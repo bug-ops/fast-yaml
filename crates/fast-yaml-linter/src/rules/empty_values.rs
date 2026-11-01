@@ -64,14 +64,6 @@ impl super::LintRule for EmptyValuesRule {
         RuleId::BuiltIn(RuleName::EmptyValues)
     }
 
-    fn name(&self) -> &'static str {
-        "Empty Values"
-    }
-
-    fn description(&self) -> &'static str {
-        "Forbids keys with implicit null values (missing explicit 'null' or '~')"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

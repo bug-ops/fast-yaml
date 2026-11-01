@@ -82,14 +82,6 @@ impl super::LintRule for KeyOrderingRule {
         RuleId::BuiltIn(RuleName::KeyOrdering)
     }
 
-    fn name(&self) -> &'static str {
-        "Key Ordering"
-    }
-
-    fn description(&self) -> &'static str {
-        "Checks if keys in mappings are alphabetically ordered"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Info
     }

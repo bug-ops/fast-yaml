@@ -58,7 +58,7 @@ crates/fast-yaml-core/src/
 ├── streaming/      # formatter.rs (StreamingFormatter), std_backend.rs, arena_backend.rs, anchors.rs, directives.rs, traits.rs
 ├── comments.rs     # has_comments*, find_comments, CommentScanner
 ├── input.rs        # NormalizedInput
-├── limits.rs       # Indent, Width, MaxDepth, ParseLimits, ...
+├── limits.rs       # Indent, MaxDepth, ParseLimits, ...
 crates/fast-yaml-cli/src/commands/format.rs   # EditIntent, WriteMode, FormatStatus, error hints
 crates/fast-yaml-parallel/src/files/          # batch format, CommentPolicy
 ```
@@ -67,8 +67,8 @@ crates/fast-yaml-parallel/src/files/          # batch format, CommentPolicy
 
 ```rust
 pub struct EmitterConfig {
-    pub indent: Indent, pub width: Width, pub explicit_start: bool,
-    pub default_flow_style: Option<bool>, pub multiline_strings: bool,
+    pub indent: Indent, pub explicit_start: bool,
+    pub layout: Layout, pub multiline_strings: bool,
     pub max_emit_depth: MaxDepth, pub parse_limits: ParseLimits,
 }
 pub enum EditIntent { Preview, InPlace, Print }   // --dry-run beats -i
@@ -122,7 +122,7 @@ Already shipped. Any change to default output is a breaking change before 1.0 an
 
 | Principle | Status | Notes |
 |-----------|--------|-------|
-| Type safety | Compliant | `Indent`, `Width`, `MaxDepth` newtypes; `EmitError` enum |
+| Type safety | Compliant | `Indent`, `MaxDepth` newtypes; `EmitError` enum |
 | Limits | Compliant | all inputs bounded; output size unbounded in core emit (see spec section 9) |
 | Surface parity | Partial | bindings strip comments silently |
 | Safe Rust | Compliant | file reads and writes in `fast-yaml-parallel` use no `unsafe` |
@@ -131,7 +131,7 @@ Already shipped. Any change to default output is a breaking change before 1.0 an
 
 | Risk | Impact | Probability | Mitigation |
 |------|--------|-------------|------------|
-| Users expect `--width` to wrap | med | high | decide implement vs remove |
+| Users expect `--width` to wrap | med | high | resolved: option removed (#639) |
 | Second parse for comment detection doubles cost | low | high | use `CommentScanner` in the format pass |
 | Dropping a 512-deep `Value` can overflow a small stack | med | low | iterative `Drop` or document stack need |
 

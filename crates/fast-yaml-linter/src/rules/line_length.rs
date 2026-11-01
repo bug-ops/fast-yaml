@@ -1,6 +1,7 @@
 //! Rule to check line length limits.
 
 use super::RuleId;
+use crate::OneBased;
 use crate::config::RuleName;
 use std::num::NonZeroUsize;
 
@@ -134,14 +135,6 @@ impl super::LintRule for LineLengthRule {
         RuleId::BuiltIn(RuleName::LineLength)
     }
 
-    fn name(&self) -> &'static str {
-        "Line Length"
-    }
-
-    fn description(&self) -> &'static str {
-        "Checks that lines do not exceed the configured maximum length"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Info
     }
@@ -157,7 +150,7 @@ impl super::SourceRule for LineLengthRule {
         let mut diagnostics = Vec::new();
         let ctx = context.source_context();
 
-        for line_num in 1..=ctx.line_count() {
+        for line_num in (0..ctx.line_count()).map(OneBased::from_index) {
             if let Some(line_content) = ctx.get_line(line_num) {
                 let line_len = line_content.chars().count();
                 if line_len > max_length && !options.is_non_breakable(line_content) {

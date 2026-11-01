@@ -130,7 +130,7 @@ fy convert json config.yaml
 
 ### format
 
-Format YAML with consistent style (fixed indentation and line width; keys keep their order). Comments are NOT preserved by the formatter — use `--strip-comments` to suppress the error if comments are present.
+Format YAML with consistent style (fixed indentation; keys keep their order). Comments are NOT preserved by the formatter — use `--strip-comments` to suppress the error if comments are present.
 
 ```bash
 fy format [OPTIONS] [PATHS]...
@@ -148,7 +148,6 @@ fy format [OPTIONS] [PATHS]...
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
 | `--indent N` | — | `2` | Indentation width: 1-9 spaces |
-| `--width N` | — | `80` | Maximum line width (20-1000) |
 | `-j, --jobs N` | — | `0` | Parallel workers: 0 = auto, 1-128 = explicit count (other values are a usage error) |
 | `--stdin-files` | — | — | Read file paths from stdin (one per line) — forces batch mode; a missing path, directory or non-YAML file is an error |
 | `--include PATTERN` | — | `*.yaml`, `*.yml` | Include files matching glob, case-insensitive (can repeat; replaces the defaults) |
@@ -216,13 +215,13 @@ fy convert [OPTIONS] <TO> [FILE]
 - `FILE`: Input file. If omitted, reads from stdin.
 
 **Options:**
-- `--pretty [PRETTY]`: Pretty-print JSON output (default: `true`). Set to `false` for compact JSON: `--pretty false`
+- `--pretty` / `--no-pretty`: pretty-print JSON (default) or print compact single-line JSON; the last one given wins. Both may precede the file: `--no-pretty config.yaml`
 - `-o, --output FILE`: Write to FILE instead of stdout
 - `-i, --in-place`: Replace the input file with the converted content, keeping its name (conflicts with `-o`)
 - `--max-depth`, `--max-alias-bytes`, `--max-documents`: parse limits (apply to YAML input only)
 
 **Output:**
-- YAML→JSON: formatted JSON (with `--pretty true`) or compact JSON (with `--pretty false`)
+- YAML→JSON: formatted JSON (default or `--pretty`) or compact JSON (`--no-pretty`)
 - JSON→YAML: formatted YAML with 2-space indent
 - Key order is preserved; a multi-document YAML stream becomes a JSON array
 - Integers beyond 64 bits (including `0x`/`0o` literals) are kept exact
@@ -233,7 +232,7 @@ fy convert [OPTIONS] <TO> [FILE]
 fy convert json config.yaml
 
 # Convert YAML to compact JSON
-fy convert json --pretty false config.yaml
+fy convert json --no-pretty config.yaml
 
 # Convert JSON to YAML
 fy convert yaml data.json
@@ -266,7 +265,7 @@ fy lint [OPTIONS] [PATHS]...
 | `--indent-size N` | — | — | Override the `indentation` width (1-16) |
 | `--format FORMAT` | — | `text` | Output format: `text`, `json`, `github`, `sarif` or `parsable` |
 | `-o, --output FILE` | — | stdout | Write the report to FILE (refused when FILE is an input) |
-| `--allow-duplicate-keys [BOOL]` | — | — | `true` disables the `duplicate-key` rule |
+| `--allow-duplicate-keys` / `--no-allow-duplicate-keys` | — | — | the first disables the `duplicate-key` rule; the second leaves the config's setting (the last one given wins) |
 | `--max-diagnostics N` | — | — | Show at most N diagnostics per file plus one summary line; output only, the exit code is unaffected |
 | `--stdin-files` | — | — | Read file paths from stdin (one per line) |
 | `--include PATTERN` | — | `*.yaml`, `*.yml`, `.yamllint` | Include files matching glob, case-insensitive (can repeat; replaces the defaults) |

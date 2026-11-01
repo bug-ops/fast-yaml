@@ -578,7 +578,7 @@ if (!nativeBinding) {
 module.exports = nativeBinding
 module.exports.Linter = nativeBinding.Linter
 module.exports.Mark = nativeBinding.Mark
-module.exports.FileOutcome = nativeBinding.FileOutcome
+module.exports.FileErrorKind = nativeBinding.FileErrorKind
 module.exports.formatFiles = nativeBinding.formatFiles
 module.exports.formatFilesInPlace = nativeBinding.formatFilesInPlace
 module.exports.lint = nativeBinding.lint

@@ -108,7 +108,17 @@ impl Location {
         self.line.get()
     }
 
-    pub(crate) const fn line_number(&self) -> OneBased {
+    /// The line number as a [`OneBased`], for APIs that take a typed line.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::Location;
+    ///
+    /// assert_eq!(Location::try_new(7, 1, 0).unwrap().line_number().get(), 7);
+    /// ```
+    #[must_use]
+    pub const fn line_number(&self) -> OneBased {
         self.line
     }
 

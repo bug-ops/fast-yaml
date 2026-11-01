@@ -29,14 +29,6 @@ impl super::LintRule for NewLineAtEndOfFileRule {
         RuleId::BuiltIn(RuleName::NewLineAtEndOfFile)
     }
 
-    fn name(&self) -> &'static str {
-        "New Line at End of File"
-    }
-
-    fn description(&self) -> &'static str {
-        "Requires files to end with a newline character"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Info
     }

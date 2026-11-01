@@ -27,10 +27,7 @@ class TestParallelConfig:
 
     def test_custom_chunk_sizes(self):
         """Test custom chunk sizes."""
-        config = parallel.ParallelConfig(
-            min_chunk_size=1024,
-            max_chunk_size=5 * 1024 * 1024,
-        )
+        config = parallel.ParallelConfig(min_chunk_size=1024)
         assert config is not None
 
     def test_custom_limits(self):
@@ -61,10 +58,14 @@ class TestParallelConfig:
         config = parallel.ParallelConfig().with_min_chunk_size(2048)
         assert config is not None
 
-    def test_with_max_chunk_size(self):
-        """Test with_max_chunk_size builder method."""
-        config = parallel.ParallelConfig().with_max_chunk_size(1024 * 1024)
-        assert config is not None
+    def test_removed_options_are_rejected(self):
+        """max_chunk_size and auto_tune no longer exist."""
+        with pytest.raises(TypeError):
+            parallel.ParallelConfig(max_chunk_size=1024)
+        with pytest.raises(TypeError):
+            parallel.ParallelConfig(auto_tune=True)
+        assert not hasattr(parallel.ParallelConfig, "with_max_chunk_size")
+        assert not hasattr(parallel.ParallelConfig, "with_auto_tune")
 
     def test_config_repr(self):
         """Test config repr."""
@@ -452,17 +453,17 @@ class TestDumpParallel:
         assert "item1" in result
         assert "data:" in result
 
-    def test_dump_with_auto_tune_disabled(self):
-        """Test dumping with auto_tune disabled."""
-        config = parallel.ParallelConfig(thread_count=1, auto_tune=False)
+    def test_dump_with_one_thread(self):
+        """Test dumping with a single thread."""
+        config = parallel.ParallelConfig(thread_count=1)
         docs = [{"id": i} for i in range(10)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
         assert result.count("id:") == 10
 
-    def test_dump_with_auto_tune_enabled(self):
-        """Test dumping with auto_tune enabled (default)."""
-        config = parallel.ParallelConfig(auto_tune=True)
+    def test_dump_with_default_config(self):
+        """Test dumping with the default (auto-tuned) config."""
+        config = parallel.ParallelConfig()
         docs = [{"id": i} for i in range(100)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
@@ -515,7 +516,7 @@ class TestDumpParallel:
     def test_dump_with_custom_formatting(self):
         """Test dumping with custom formatting options."""
         docs = [{"nested": {"key": "value"}}]
-        result = parallel.dump_parallel(docs, indent=4, width=120)
+        result = parallel.dump_parallel(docs, indent=4)
         assert isinstance(result, str)
 
     def test_dump_large_number_of_small_documents(self):
@@ -533,44 +534,39 @@ class TestDumpParallel:
 
     def test_dump_with_builder_pattern(self):
         """Test dumping with config builder pattern."""
-        config = (
-            parallel.ParallelConfig()
-            .with_thread_count(4)
-            .with_max_documents(200)
-            .with_auto_tune(False)
-        )
+        config = parallel.ParallelConfig().with_thread_count(4).with_max_documents(200)
         docs = [{"id": i} for i in range(50)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
 
 
 class TestAutoTune:
-    """Tests for auto_tune functionality."""
+    """Auto worker count tunes dump_parallel by workload."""
 
     def test_auto_tune_small_workload(self):
         """Test auto_tune with small workload (should use 1 thread)."""
-        config = parallel.ParallelConfig(auto_tune=True)
+        config = parallel.ParallelConfig()
         docs = [{"id": i} for i in range(2)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
 
     def test_auto_tune_medium_workload(self):
         """Test auto_tune with medium workload."""
-        config = parallel.ParallelConfig(auto_tune=True)
+        config = parallel.ParallelConfig()
         docs = [{"id": i} for i in range(50)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
 
     def test_auto_tune_large_workload(self):
         """Test auto_tune with large workload."""
-        config = parallel.ParallelConfig(auto_tune=True)
+        config = parallel.ParallelConfig()
         docs = [{"id": i, "data": list(range(100))} for i in range(500)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)
 
     def test_manual_thread_count_overrides_auto_tune(self):
-        """Test that explicit thread_count works with auto_tune enabled."""
-        config = parallel.ParallelConfig(thread_count=2, auto_tune=True)
+        """An explicit thread_count is used as given."""
+        config = parallel.ParallelConfig(thread_count=2)
         docs = [{"id": i} for i in range(100)]
         result = parallel.dump_parallel(docs, config)
         assert isinstance(result, str)

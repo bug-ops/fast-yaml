@@ -16,14 +16,6 @@ impl super::LintRule for LintDirectiveRule {
         RuleId::BuiltIn(RuleName::LintDirective)
     }
 
-    fn name(&self) -> &'static str {
-        "Lint Directive"
-    }
-
-    fn description(&self) -> &'static str {
-        "Reports invalid inline lint directives (config-only, never suppressible)"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

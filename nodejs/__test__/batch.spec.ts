@@ -3,7 +3,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { BatchConfig } from '../index.js';
-import { FileOutcome, formatFiles, formatFilesInPlace, processFiles } from '../index.js';
+import { formatFiles, formatFilesInPlace, processFiles } from '../index.js';
 
 describe('Batch Processing', () => {
   let tmpDir: string;
@@ -21,15 +21,6 @@ describe('Batch Processing', () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  describe('FileOutcome enum', () => {
-    it('should have all outcome values', () => {
-      expect(FileOutcome.Success).toBe('Success');
-      expect(FileOutcome.Changed).toBe('Changed');
-      expect(FileOutcome.Unchanged).toBe('Unchanged');
-      expect(FileOutcome.Error).toBe('Error');
-    });
   });
 
   describe('processFiles', () => {
@@ -81,8 +72,7 @@ describe('Batch Processing', () => {
       const results = formatFiles(testFiles);
       expect(results).toHaveLength(5);
       for (const r of results) {
-        expect(r.content).toBeDefined();
-        expect(r.error).toBeUndefined();
+        expect(r.status).toBe('formatted');
       }
     });
 
@@ -90,9 +80,10 @@ describe('Batch Processing', () => {
       const taggedPath = path.join(tmpDir, 'tagged.yaml');
       fs.writeFileSync(taggedPath, 'a: !!str 1\nb: !custom x\n');
       const [r] = formatFiles([taggedPath]);
-      expect(r.error).toBeUndefined();
-      expect(r.content).toContain('a: !!str 1');
-      expect(r.content).toContain('b: !custom x');
+      expect(r).toMatchObject({ status: 'formatted' });
+      const content = r.status === 'formatted' ? r.content : '';
+      expect(content).toContain('a: !!str 1');
+      expect(content).toContain('b: !custom x');
     });
 
     it('should handle invalid files', () => {
@@ -101,8 +92,12 @@ describe('Batch Processing', () => {
 
       const results = formatFiles([invalidPath]);
       expect(results).toHaveLength(1);
-      expect(results[0].content).toBeUndefined();
-      expect(results[0].error).toBeDefined();
+      expect(results[0]).toEqual({
+        status: 'failed',
+        path: invalidPath,
+        error: { kind: 'parse', message: expect.any(String) },
+      });
+      expect(results[0]).not.toHaveProperty('content');
     });
 
     it('should handle empty array', () => {
@@ -111,7 +106,7 @@ describe('Batch Processing', () => {
     });
 
     it('should accept config', () => {
-      const config: BatchConfig = { indent: 4, sortKeys: true };
+      const config: BatchConfig = { indent: 4 };
       const results = formatFiles(testFiles, config);
       expect(results).toHaveLength(5);
     });
@@ -171,7 +166,8 @@ describe('Batch Processing', () => {
       expect(result.total).toBe(1);
       expect(result.failed).toBe(1);
       expect(result.errors[0].path).toBe(big);
-      expect(result.errors[0].message).toMatch(/exceeds maximum allowed 64 bytes/);
+      expect(result.errors[0].error.kind).toBe('limit');
+      expect(result.errors[0].error.message).toMatch(/exceeds maximum allowed 64 bytes/);
     });
 
     it('reports a per-file error for files over maxDocuments', () => {
@@ -179,7 +175,8 @@ describe('Batch Processing', () => {
       fs.writeFileSync(many, '---\na: 1\n'.repeat(5));
       const result = processFiles([many], { maxDocuments: 3 });
       expect(result.failed).toBe(1);
-      expect(result.errors[0].message).toMatch(/document count exceeds 3/);
+      expect(result.errors[0].error.kind).toBe('limit');
+      expect(result.errors[0].error.message).toMatch(/document count exceeds 3/);
     });
 
     it('should accept all options', () => {
@@ -188,8 +185,6 @@ describe('Batch Processing', () => {
         maxInputBytes: 50 * 1024 * 1024,
         sequentialThreshold: 2048,
         indent: 4,
-        width: 120,
-        sortKeys: true,
       };
       const result = processFiles(testFiles, config);
       expect(result.success).toBe(5);

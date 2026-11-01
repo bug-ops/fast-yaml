@@ -9,7 +9,7 @@ use fast_yaml_parallel::{
 };
 
 use crate::commands::format::error_message;
-use crate::config::{CommonConfig, ParallelConfig};
+use crate::config::{CommonConfig, FormatterConfig, ParallelConfig};
 use crate::discovery::FileDiscovery;
 use crate::error::ExitCode;
 use crate::invocation::BatchTarget;
@@ -28,6 +28,7 @@ pub enum BatchWrite {
 /// Execute batch formatting on multiple files.
 pub fn execute_batch(
     common: &CommonConfig,
+    format_config: &FormatterConfig,
     target: &BatchTarget,
     write: BatchWrite,
     comments: CommentPolicy,
@@ -56,7 +57,7 @@ pub fn execute_batch(
 
     let file_paths: Vec<PathBuf> = files.iter().map(|f| f.path.clone()).collect();
 
-    let emitter_config = common.formatter.to_emitter_config();
+    let emitter_config = format_config.to_emitter_config();
 
     let processor = FileProcessor::with_config(
         ParallelConfig::new()

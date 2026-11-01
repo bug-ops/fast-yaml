@@ -5,7 +5,7 @@
 
 use std::fmt::Display;
 
-use fast_yaml_core::{Indent, Width};
+use fast_yaml_core::Indent;
 use napi::Status;
 
 /// Upper bound for options that were plain `u32` before validation was introduced.
@@ -66,24 +66,6 @@ pub(crate) fn emitter_indent(value: Option<f64>) -> napi::Result<Indent> {
         return Ok(Indent::DEFAULT);
     };
     Indent::new(n).map_err(|e| range_error("indent", e.min as u64, e.max as u64, e.value))
-}
-
-/// Validates an optional `width` option, defaulting to [`Width::DEFAULT`].
-///
-/// # Errors
-///
-/// Returns a `Status::InvalidArg` error unless the value is an integer in `20..=1000`.
-pub(crate) fn emitter_width(value: Option<f64>) -> napi::Result<Width> {
-    let Some(n) = checked_opt_uint(
-        "width",
-        value,
-        Width::MIN.get() as u64,
-        Width::MAX.get() as u64,
-    )?
-    else {
-        return Ok(Width::DEFAULT);
-    };
-    Width::new(n).map_err(|e| range_error("width", e.min as u64, e.max as u64, e.value))
 }
 
 /// Validates that `value` is an integer representable as `u32`.

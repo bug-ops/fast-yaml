@@ -62,7 +62,7 @@ fn escape_property(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DiagnosticBuilder, Location, Span};
+    use crate::{DiagnosticBuilder, Location, Span, config::RuleName};
     #[cfg(unix)]
     use {crate::formatter::ReportPath, std::path::Path};
 
@@ -73,7 +73,8 @@ mod tests {
             Location::try_new(1, 2, 1).unwrap(),
             Location::try_new(1, 5, 4).unwrap(),
         );
-        let d = DiagnosticBuilder::new("r", Severity::Info, "m", span).build_without_excerpt();
+        let d = DiagnosticBuilder::new(RuleName::Colons, Severity::Info, "m", span)
+            .build_without_excerpt();
         let source = ReportSource::File(
             ReportPath::from_absolute(Path::new("/w/a\u{1b}]0;x\u{7}.yaml")).unwrap(),
         );
@@ -93,7 +94,8 @@ mod tests {
             Location::try_new(1, 2, 1).unwrap(),
             Location::try_new(1, 5, 4).unwrap(),
         );
-        let d = DiagnosticBuilder::new("r", Severity::Info, "50%\nx", span).build_without_excerpt();
+        let d = DiagnosticBuilder::new(RuleName::Colons, Severity::Info, "50%\nx", span)
+            .build_without_excerpt();
         let source =
             ReportSource::File(ReportPath::from_absolute(Path::new("/a,b/c.yaml")).unwrap());
         let report = FileReport {
@@ -102,7 +104,7 @@ mod tests {
         };
         assert_eq!(
             render(&[report]),
-            "::notice file=/a%2Cb/c.yaml,line=1,col=2,endLine=1,endColumn=5,title=r::50%25%0Ax\n"
+            "::notice file=/a%2Cb/c.yaml,line=1,col=2,endLine=1,endColumn=5,title=colons::50%25%0Ax\n"
         );
     }
 
@@ -112,14 +114,15 @@ mod tests {
             Location::try_new(1, 1, 0).unwrap(),
             Location::try_new(2, 1, 4).unwrap(),
         );
-        let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
+        let d = DiagnosticBuilder::new(RuleName::Colons, Severity::Error, "m", span)
+            .build_without_excerpt();
         let report = FileReport {
             source: &ReportSource::Stdin,
             diagnostics: &[d],
         };
         assert_eq!(
             render(&[report]),
-            "::error line=1,col=1,endLine=2,title=r::m\n"
+            "::error line=1,col=1,endLine=2,title=colons::m\n"
         );
     }
 }

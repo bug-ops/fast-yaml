@@ -66,13 +66,6 @@ class TestSafeDumpTo:
         assert "nested:" in content
         assert "key: value" in content
 
-    def test_dump_to_with_width(self):
-        """Test dumping with custom width."""
-        stream = io.StringIO()
-        data = {"key": "value"}
-        fast_yaml.safe_dump_to(data, stream, width=40)
-        assert stream.getvalue()
-
     def test_dump_to_with_explicit_start(self):
         """Test dumping with explicit document start."""
         stream = io.StringIO()
@@ -115,19 +108,13 @@ class TestSafeDumpTo:
         fast_yaml.safe_dump_to(data, stream, chunk_size=1024)
         assert stream.getvalue() == fast_yaml.safe_dump(data)
 
-    def test_dump_to_with_very_small_chunk_size(self):
-        """Test dumping with very small chunk size (clamped to 1KB min)."""
+    @pytest.mark.parametrize("chunk_size", [100, 10 * 1024 * 1024])
+    def test_dump_to_rejects_out_of_range_chunk_size(self, chunk_size):
+        """chunk_size outside 1 KiB..1 MiB raises instead of clamping."""
         stream = io.StringIO()
-        data = {"key": "value"}
-        bytes_written = fast_yaml.safe_dump_to(data, stream, chunk_size=100)
-        assert bytes_written > 0
-
-    def test_dump_to_with_very_large_chunk_size(self):
-        """Test dumping with very large chunk size (clamped to 1MB max)."""
-        stream = io.StringIO()
-        data = {"key": "value"}
-        bytes_written = fast_yaml.safe_dump_to(data, stream, chunk_size=10 * 1024 * 1024)
-        assert bytes_written > 0
+        with pytest.raises(ValueError, match="chunk_size must be between 1024 and 1048576"):
+            fast_yaml.safe_dump_to({"key": "value"}, stream, chunk_size=chunk_size)
+        assert stream.getvalue() == ""
 
     def test_dump_to_complex_nested_structure(self):
         """Test dumping complex nested structure."""

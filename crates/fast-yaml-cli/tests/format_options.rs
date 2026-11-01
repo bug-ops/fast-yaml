@@ -44,8 +44,6 @@ fn out_of_range_options_are_rejected() {
     for (flag, message) in [
         ("--max-depth=0", "must be between 1 and 512, got 0"),
         ("--max-depth=513", "must be between 1 and 512, got 513"),
-        ("--width=19", "must be between 20 and 1000, got 19"),
-        ("--width=1001", "must be between 20 and 1000, got 1001"),
         ("--indent=0", "must be between 1 and 9, got 0"),
         ("--indent=10", "must be between 1 and 9, got 10"),
     ] {
@@ -56,8 +54,8 @@ fn out_of_range_options_are_rejected() {
 }
 
 #[test]
-fn in_range_width_and_indent_are_accepted() {
-    let (code, stdout, stderr) = format(&["--width=20", "--indent=8"], "a:\n  b: 1\n");
+fn in_range_indent_is_accepted() {
+    let (code, stdout, stderr) = format(&["--indent=8"], "a:\n  b: 1\n");
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(stdout, "a:\n        b: 1\n");
     for indent in ["--indent=1", "--indent=9"] {

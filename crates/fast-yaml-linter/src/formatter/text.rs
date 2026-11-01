@@ -7,6 +7,31 @@ use super::WRITE_BUFFER;
 
 const ELLIPSIS: &str = "\u{2026}";
 
+/// Whether [`TextFormatter`] wraps severities in ANSI escape sequences.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_linter::{Coloring, TextFormatter};
+///
+/// let formatter = TextFormatter::new().with_color(Coloring::Ansi);
+/// assert_eq!(formatter.coloring(), Coloring::Ansi);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Coloring {
+    /// No escape sequences.
+    #[default]
+    Plain,
+    /// ANSI colors for terminals.
+    Ansi,
+}
+
+impl From<bool> for Coloring {
+    fn from(enabled: bool) -> Self {
+        if enabled { Self::Ansi } else { Self::Plain }
+    }
+}
+
 /// Human-readable text formatter (rustc-style).
 ///
 /// Formats diagnostics in a style similar to the Rust compiler,
@@ -25,8 +50,7 @@ const ELLIPSIS: &str = "\u{2026}";
 pub struct TextFormatter {
     /// Show source context.
     pub show_context: bool,
-    /// Use ANSI colors.
-    pub use_color: bool,
+    use_color: Coloring,
     /// Maximum context lines to show.
     pub context_lines: usize,
 }
@@ -46,7 +70,7 @@ impl TextFormatter {
     pub const fn new() -> Self {
         Self {
             show_context: true,
-            use_color: false,
+            use_color: Coloring::Plain,
             context_lines: 2,
         }
     }
@@ -66,7 +90,7 @@ impl TextFormatter {
     pub fn with_color_auto() -> Self {
         Self {
             show_context: true,
-            use_color: std::io::IsTerminal::is_terminal(&std::io::stdout()),
+            use_color: Coloring::from(std::io::IsTerminal::is_terminal(&std::io::stdout())),
             context_lines: 2,
         }
     }
@@ -76,15 +100,21 @@ impl TextFormatter {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::TextFormatter;
+    /// use fast_yaml_linter::{Coloring, TextFormatter};
     ///
-    /// let formatter = TextFormatter::new().with_color(true);
-    /// assert!(formatter.use_color);
+    /// let formatter = TextFormatter::new().with_color(Coloring::Ansi);
+    /// assert_eq!(formatter.coloring(), Coloring::Ansi);
     /// ```
     #[must_use]
-    pub const fn with_color(mut self, use_color: bool) -> Self {
-        self.use_color = use_color;
+    pub const fn with_color(mut self, coloring: Coloring) -> Self {
+        self.use_color = coloring;
         self
+    }
+
+    /// Returns the configured coloring mode.
+    #[must_use]
+    pub const fn coloring(&self) -> Coloring {
+        self.use_color
     }
 
     /// Sets whether to show source context.
@@ -104,7 +134,7 @@ impl TextFormatter {
     }
 
     fn colorize(&self, text: &str, severity: Severity) -> String {
-        if self.use_color {
+        if self.use_color == Coloring::Ansi {
             format!(
                 "{}{}{}",
                 severity.color_code(),
@@ -209,7 +239,7 @@ impl Formatter for TextFormatter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Diagnostic, DiagnosticBuilder, DiagnosticCode, Location, SourceContext, Span};
+    use crate::{Diagnostic, DiagnosticBuilder, Location, SourceContext, Span, config::RuleName};
 
     fn show(diagnostics: &[Diagnostic], source: &str) -> String {
         let context = SourceContext::new(source);
@@ -227,8 +257,7 @@ mod tests {
             Location::try_new(1, 65_610, 65_609).unwrap(),
         );
         let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "long", span)
-                .build();
+            DiagnosticBuilder::new(RuleName::LineLength, Severity::Info, "long", span).build();
 
         let output = show(&[diagnostic], &source);
         assert!(output.len() < 2_000);
@@ -249,8 +278,7 @@ mod tests {
         );
         let diagnostics: Vec<_> = (0..3)
             .map(|_| {
-                DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "long", span)
-                    .build()
+                DiagnosticBuilder::new(RuleName::LineLength, Severity::Info, "long", span).build()
             })
             .collect();
         let output = show(&diagnostics, &source);
@@ -263,7 +291,7 @@ mod tests {
             Location::try_new(1, end_col, (end_col - 1) * bytes_per_char).unwrap(),
         );
         let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span).build();
+            DiagnosticBuilder::new(RuleName::LineLength, Severity::Info, "m", span).build();
         show(&[diagnostic], source)
     }
 
@@ -318,13 +346,13 @@ mod tests {
     fn test_formatter_new() {
         let formatter = TextFormatter::new();
         assert!(formatter.show_context);
-        assert!(!formatter.use_color);
+        assert_eq!(formatter.coloring(), Coloring::Plain);
     }
 
     #[test]
     fn test_formatter_with_color() {
-        let formatter = TextFormatter::new().with_color(true);
-        assert!(formatter.use_color);
+        let formatter = TextFormatter::new().with_color(Coloring::Ansi);
+        assert_eq!(formatter.coloring(), Coloring::Ansi);
     }
 
     #[test]
@@ -343,7 +371,7 @@ mod tests {
         );
 
         let diagnostic = DiagnosticBuilder::new(
-            DiagnosticCode::LINE_LENGTH,
+            RuleName::LineLength,
             Severity::Info,
             "test diagnostic",
             span,
@@ -364,21 +392,12 @@ mod tests {
             Location::try_new(1, 4, 3).unwrap(),
         );
 
-        let error = DiagnosticBuilder::new(
-            DiagnosticCode::DUPLICATE_KEY,
-            Severity::Error,
-            "error",
-            span,
-        )
-        .build_without_excerpt();
+        let error = DiagnosticBuilder::new(RuleName::DuplicateKey, Severity::Error, "error", span)
+            .build_without_excerpt();
 
-        let warning = DiagnosticBuilder::new(
-            DiagnosticCode::INDENTATION,
-            Severity::Warning,
-            "warning",
-            span,
-        )
-        .build_without_excerpt();
+        let warning =
+            DiagnosticBuilder::new(RuleName::Indentation, Severity::Warning, "warning", span)
+                .build_without_excerpt();
 
         let output = show(&[error, warning], source);
 
@@ -391,6 +410,7 @@ mod streaming_tests {
     use super::*;
     use crate::{
         DiagnosticBuilder, DiagnosticCode, LintSource, Linter, Location, SourceContext, Span,
+        config::RuleName,
     };
 
     #[test]
@@ -432,8 +452,7 @@ mod streaming_tests {
             Location::try_new(1, 3, 2).unwrap(),
         );
         let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::EMPTY_VALUES, Severity::Warning, "m", span)
-                .build();
+            DiagnosticBuilder::new(RuleName::EmptyValues, Severity::Warning, "m", span).build();
         let context = SourceContext::new("a: \n");
         let output = TextFormatter::new().format(Findings::FromSource {
             diagnostics: &[diagnostic],
@@ -455,7 +474,7 @@ mod streaming_tests {
             Location::try_new(1, 2, 1).unwrap(),
         );
         let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::SYNTAX, Severity::Error, "bad", span)
+            DiagnosticBuilder::new(DiagnosticCode::Syntax, Severity::Error, "bad", span)
                 .build_without_excerpt();
         let context = SourceContext::new("a: [\n");
         let output = TextFormatter::new().format(Findings::FromSource {

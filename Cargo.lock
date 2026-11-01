@@ -490,6 +490,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "exacl"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8de9e551ced9d700a31dacb8b168129640240fcd7a279a3fa4d59608b84ebcae"
+dependencies = [
+ "bitflags",
+ "log",
+ "scopeguard",
+ "uuid",
+]
+
+[[package]]
 name = "fancy-regex"
 version = "0.19.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -548,11 +560,12 @@ dependencies = [
  "criterion",
  "indexmap",
  "indoc",
- "libc",
  "memchr",
  "peak_alloc",
  "proptest",
+ "rustix",
  "saphyr-parser",
+ "tempfile",
  "thiserror",
 ]
 
@@ -593,6 +606,7 @@ name = "fast-yaml-parallel"
 version = "0.7.0"
 dependencies = [
  "criterion",
+ "exacl",
  "fast-yaml-core",
  "libc",
  "proptest",
@@ -1927,6 +1941,16 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "uuid"
+version = "1.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a0e2d11620c50695fe12bbbfde96b3477fe606e7284c22d505c12ce51214514"
+dependencies = [
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "uuid-simd"

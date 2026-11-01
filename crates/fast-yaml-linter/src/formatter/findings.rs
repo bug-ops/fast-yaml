@@ -102,7 +102,7 @@ impl<'a> Findings<'a> {
     }
 
     /// The diagnostics with access to their excerpts.
-    pub fn iter(self) -> impl Iterator<Item = Finding<'a>> + 'a {
+    pub fn iter(self) -> impl Iterator<Item = DiagnosticView<'a>> + 'a {
         let (from_source, given) = match self {
             Self::FromSource {
                 diagnostics,
@@ -113,12 +113,12 @@ impl<'a> Findings<'a> {
         from_source
             .into_iter()
             .flat_map(|(diagnostics, source)| {
-                diagnostics.iter().map(move |diagnostic| Finding {
+                diagnostics.iter().map(move |diagnostic| DiagnosticView {
                     diagnostic,
                     origin: Origin::Source(source),
                 })
             })
-            .chain(given.iter().map(|(diagnostic, context)| Finding {
+            .chain(given.iter().map(|(diagnostic, context)| DiagnosticView {
                 diagnostic,
                 origin: Origin::Given(context.as_ref()),
             }))
@@ -127,7 +127,7 @@ impl<'a> Findings<'a> {
 
 /// One diagnostic of [`Findings`].
 #[derive(Debug, Clone, Copy)]
-pub struct Finding<'a> {
+pub struct DiagnosticView<'a> {
     diagnostic: &'a Diagnostic,
     origin: Origin<'a>,
 }
@@ -138,7 +138,7 @@ enum Origin<'a> {
     Given(Option<&'a DiagnosticContext>),
 }
 
-impl<'a> Finding<'a> {
+impl<'a> DiagnosticView<'a> {
     /// The diagnostic.
     #[must_use]
     pub const fn diagnostic(&self) -> &'a Diagnostic {

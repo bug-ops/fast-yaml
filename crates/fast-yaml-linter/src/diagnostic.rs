@@ -1,9 +1,13 @@
 //! Diagnostic types for representing linting errors and warnings.
 
 use std::borrow::Cow;
+use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
 
-use crate::config::MaxDiagnostics;
-use crate::{Severity, Span};
+use crate::config::{CustomRuleCode, MaxDiagnostics, RuleConfigError, RuleName};
+use crate::rules::{OwnedRuleId, RuleId};
+use crate::{OneBased, Severity, Span};
 
 #[cfg(feature = "json-output")]
 use serde::{Deserialize, Serialize};
@@ -18,10 +22,11 @@ use serde::{Deserialize, Serialize};
 ///
 /// ```
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
+/// use fast_yaml_linter::config::RuleName;
 ///
 /// let span = Span::new(Location::try_new(10, 5, 145).unwrap(), Location::try_new(10, 9, 149).unwrap());
 /// let diagnostic = DiagnosticBuilder::new(
-///     DiagnosticCode::DUPLICATE_KEY,
+///     RuleName::DuplicateKey,
 ///     Severity::Error,
 ///     "duplicate key 'name' found",
 ///     span
@@ -61,9 +66,10 @@ pub struct Diagnostic {
 ///
 /// ```
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Location, Severity, Span};
+/// use fast_yaml_linter::config::RuleName;
 ///
 /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 2, 1).unwrap());
-/// let builder = DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span);
+/// let builder = DiagnosticBuilder::new(RuleName::LineLength, Severity::Info, "m", span);
 /// assert_eq!(builder.build().excerpt, Excerpt::SourceLines);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -77,44 +83,40 @@ pub enum Excerpt {
 
 /// Unique identifier for a diagnostic.
 ///
-/// Represents the type of diagnostic issue being reported.
-/// Diagnostic codes are used for filtering, configuration,
-/// and programmatic handling of specific issue types.
+/// Names the rule that produced a diagnostic, or one of the codes the linter reserves for
+/// diagnostics that no rule emits. Codes are used for filtering, configuration, and programmatic
+/// handling of specific issue types. The text form (see [`as_str`](Self::as_str)) is what
+/// configuration, directives and every output format use.
 ///
 /// # Examples
 ///
 /// ```
 /// use fast_yaml_linter::DiagnosticCode;
+/// use fast_yaml_linter::config::RuleName;
 ///
-/// let code = DiagnosticCode::new("duplicate-key");
+/// let code = DiagnosticCode::from(RuleName::DuplicateKey);
 /// assert_eq!(code.as_str(), "duplicate-key");
+/// assert_eq!("duplicate-key".parse::<DiagnosticCode>().unwrap(), code);
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "json-output", serde(transparent))]
-pub struct DiagnosticCode(Cow<'static, str>);
-
-/// Declares the predefined codes once: the constants and the lookup that lets a known code borrow
-/// its constant instead of allocating.
-macro_rules! predefined_codes {
-    ($($(#[$meta:meta])* $name:ident = $text:literal;)+) => {
-        $($(#[$meta])* pub const $name: &'static str = $text;)+
-
-        /// The predefined constant equal to `text`.
-        fn predefined(text: &str) -> Option<&'static str> {
-            match text {
-                $($text => Some(Self::$name),)+
-                _ => None,
-            }
-        }
-    };
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum DiagnosticCode {
+    /// A diagnostic of a built-in or custom rule.
+    Rule(OwnedRuleId),
+    /// A reference to an alias with no anchor (`undefined-alias`); a parse error, not a rule.
+    UndefinedAlias,
+    /// A YAML syntax error in the CI report formats (`syntax`); never configurable.
+    Syntax,
+    /// The summary of diagnostics left out by `--max-diagnostics` (`diagnostic-limit`); never
+    /// configurable.
+    DiagnosticLimit,
 }
 
 impl Diagnostic {
     /// Whether this is the summary [`MaxDiagnostics::truncate`] adds, not a finding of a rule.
     #[must_use]
     pub fn is_limit_summary(&self) -> bool {
-        self.code.as_str() == DiagnosticCode::DIAGNOSTIC_LIMIT
+        self.code == DiagnosticCode::DiagnosticLimit
     }
 }
 
@@ -122,7 +124,7 @@ impl MaxDiagnostics {
     /// Keeps the first diagnostics, in the order given, and replaces the rest with one summary.
     ///
     /// Nothing changes while `diagnostics` fits in the cap. Otherwise the summary has the code
-    /// [`DiagnosticCode::DIAGNOSTIC_LIMIT`], the highest severity among the omitted diagnostics
+    /// [`DiagnosticCode::DiagnosticLimit`], the highest severity among the omitted diagnostics
     /// (so an omitted error still shows as an error in every output format), the span of the first
     /// omitted one and no excerpt. Callers decide whether the run failed before truncating, since
     /// the omitted diagnostics no longer count.
@@ -131,10 +133,11 @@ impl MaxDiagnostics {
     ///
     /// ```
     /// use fast_yaml_linter::config::MaxDiagnostics;
+    /// use fast_yaml_linter::config::RuleName;
     /// use fast_yaml_linter::{DiagnosticBuilder, Location, Severity, Span};
     ///
     /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 2, 1).unwrap());
-    /// let make = |severity| DiagnosticBuilder::new("r", severity, "m", span).build();
+    /// let make = |severity| DiagnosticBuilder::new(RuleName::Colons, severity, "m", span).build();
     /// let mut found = vec![make(Severity::Warning), make(Severity::Warning), make(Severity::Error)];
     ///
     /// "1".parse::<MaxDiagnostics>().unwrap().truncate(&mut found);
@@ -167,7 +170,7 @@ impl MaxDiagnostics {
         })
         .collect();
         let summary = DiagnosticBuilder::new(
-            DiagnosticCode::DIAGNOSTIC_LIMIT,
+            DiagnosticCode::DiagnosticLimit,
             omitted
                 .iter()
                 .map(|d| d.severity)
@@ -186,79 +189,16 @@ impl MaxDiagnostics {
 }
 
 impl DiagnosticCode {
-    predefined_codes! {
-        /// Predefined code for duplicate keys.
-        DUPLICATE_KEY = "duplicate-key";
-        /// Predefined code for invalid anchors.
-        INVALID_ANCHOR = "invalid-anchor";
-        /// Predefined code for undefined aliases.
-        UNDEFINED_ALIAS = "undefined-alias";
-        /// Predefined code for indentation issues.
-        INDENTATION = "indentation";
-        /// Predefined code for line length violations.
-        LINE_LENGTH = "line-length";
-        /// Predefined code for trailing whitespace.
-        TRAILING_WHITESPACE = "trailing-whitespace";
-        /// Predefined code for missing document start marker.
-        DOCUMENT_START = "document-start";
-        /// Predefined code for missing document end marker.
-        DOCUMENT_END = "document-end";
-        /// Predefined code for empty values.
-        EMPTY_VALUES = "empty-values";
-        /// Predefined code for missing newline at end of file.
-        NEW_LINE_AT_END_OF_FILE = "new-line-at-end-of-file";
-        /// Predefined code for braces formatting.
-        BRACES = "braces";
-        /// Predefined code for brackets formatting.
-        BRACKETS = "brackets";
-        /// Predefined code for colons spacing.
-        COLONS = "colons";
-        /// Predefined code for commas spacing.
-        COMMAS = "commas";
-        /// Predefined code for hyphens spacing.
-        HYPHENS = "hyphens";
-        /// Predefined code for comment formatting.
-        COMMENTS = "comments";
-        /// Predefined code for comment indentation.
-        COMMENTS_INDENTATION = "comments-indentation";
-        /// Predefined code for empty lines.
-        EMPTY_LINES = "empty-lines";
-        /// Predefined code for line endings.
-        NEW_LINES = "new-lines";
-        /// Predefined code for octal values.
-        OCTAL_VALUES = "octal-values";
-        /// Predefined code for truthy values.
-        TRUTHY = "truthy";
-        /// Predefined code for quoted strings.
-        QUOTED_STRINGS = "quoted-strings";
-        /// Predefined code for key ordering.
-        KEY_ORDERING = "key-ordering";
-        /// Predefined code for float values.
-        FLOAT_VALUES = "float-values";
-        /// Predefined code for `!!set` members that carry a value.
-        SET_VALUES = "set-values";
-        /// Predefined code for YAML syntax errors in CI report formats (not a rule, never configurable).
-        SYNTAX = "syntax";
-        /// Predefined code for problems in inline lint directives (config-only, never suppressible).
-        LINT_DIRECTIVE = "lint-directive";
-        /// Predefined code for the summary of diagnostics left out by `--max-diagnostics` (not a
-        /// rule, never configurable).
-        DIAGNOSTIC_LIMIT = "diagnostic-limit";
-    }
-
-    /// Creates a new diagnostic code.
+    /// The reserved code spelled `text`, if there is one.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// use fast_yaml_linter::DiagnosticCode;
-    ///
-    /// let code = DiagnosticCode::new("custom-rule");
-    /// assert_eq!(code.as_str(), "custom-rule");
-    /// ```
-    #[must_use]
-    pub fn new(code: impl Into<String>) -> Self {
-        Self::from(code.into())
+    /// This is the single list of codes that are not rules; a custom rule may not use them.
+    pub(crate) fn reserved(text: &str) -> Option<Self> {
+        match text {
+            "undefined-alias" => Some(Self::UndefinedAlias),
+            "syntax" => Some(Self::Syntax),
+            "diagnostic-limit" => Some(Self::DiagnosticLimit),
+            _ => None,
+        }
     }
 
     /// Returns the code as a string slice.
@@ -267,25 +207,99 @@ impl DiagnosticCode {
     ///
     /// ```
     /// use fast_yaml_linter::DiagnosticCode;
+    /// use fast_yaml_linter::config::RuleName;
     ///
-    /// let code = DiagnosticCode::new(DiagnosticCode::DUPLICATE_KEY);
-    /// assert_eq!(code.as_str(), "duplicate-key");
+    /// assert_eq!(DiagnosticCode::from(RuleName::Braces).as_str(), "braces");
+    /// assert_eq!(DiagnosticCode::Syntax.as_str(), "syntax");
     /// ```
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        match self {
+            Self::Rule(id) => id.as_id().as_str(),
+            Self::UndefinedAlias => "undefined-alias",
+            Self::Syntax => "syntax",
+            Self::DiagnosticLimit => "diagnostic-limit",
+        }
     }
 }
 
-impl From<&str> for DiagnosticCode {
-    fn from(s: &str) -> Self {
-        Self(Self::predefined(s).map_or_else(|| Cow::Owned(s.to_owned()), Cow::Borrowed))
+impl fmt::Display for DiagnosticCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
-impl From<String> for DiagnosticCode {
-    fn from(s: String) -> Self {
-        Self(Self::predefined(&s).map_or(Cow::Owned(s), Cow::Borrowed))
+impl FromStr for DiagnosticCode {
+    type Err = RuleConfigError;
+
+    /// Parses the text form: a built-in rule name, a reserved code or a custom rule code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RuleConfigError::EmptyRuleCode`] for an empty string.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::DiagnosticCode;
+    ///
+    /// assert_eq!("syntax".parse::<DiagnosticCode>().unwrap(), DiagnosticCode::Syntax);
+    /// assert!("".parse::<DiagnosticCode>().is_err());
+    /// ```
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if let Some(reserved) = Self::reserved(text) {
+            return Ok(reserved);
+        }
+        if let Ok(name) = text.parse::<RuleName>() {
+            return Ok(name.into());
+        }
+        CustomRuleCode::new(text).map(|code| Self::Rule(OwnedRuleId::Custom(code)))
+    }
+}
+
+impl PartialOrd for DiagnosticCode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Orders by the text form, so sorted output stays alphabetical by code.
+impl Ord for DiagnosticCode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl From<RuleName> for DiagnosticCode {
+    fn from(name: RuleName) -> Self {
+        Self::Rule(OwnedRuleId::BuiltIn(name))
+    }
+}
+
+impl From<OwnedRuleId> for DiagnosticCode {
+    fn from(id: OwnedRuleId) -> Self {
+        Self::Rule(id)
+    }
+}
+
+impl From<RuleId<'_>> for DiagnosticCode {
+    fn from(id: RuleId<'_>) -> Self {
+        Self::Rule(id.to_owned_id())
+    }
+}
+
+#[cfg(feature = "json-output")]
+impl Serialize for DiagnosticCode {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+#[cfg(feature = "json-output")]
+impl<'de> Deserialize<'de> for DiagnosticCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let text = Cow::<str>::deserialize(deserializer)?;
+        text.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -298,12 +312,12 @@ impl From<String> for DiagnosticCode {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::{DiagnosticContext, ContextLine};
+/// use fast_yaml_linter::{DiagnosticContext, ContextLine, OneBased};
 ///
 /// let context = DiagnosticContext {
 ///     lines: vec![
 ///         ContextLine {
-///             line_number: 10,
+///             line_number: OneBased::new(10).unwrap(),
 ///             content: "name: value".to_string(),
 ///             column_offset: 0,
 ///             truncated_end: false,
@@ -319,6 +333,30 @@ pub struct DiagnosticContext {
     pub lines: Vec<ContextLine>,
 }
 
+/// Serde form of a line number: a plain integer that cannot be 0.
+#[cfg(feature = "json-output")]
+mod one_based_repr {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error};
+
+    use crate::OneBased;
+
+    // serde's `with` calls `serialize` with a reference
+    #[expect(clippy::trivially_copy_pass_by_ref)]
+    pub(super) fn serialize<S: Serializer>(
+        line: &OneBased,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        line.get().serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<OneBased, D::Error> {
+        OneBased::new(usize::deserialize(deserializer)?)
+            .ok_or_else(|| D::Error::custom("line numbers are counted from 1"))
+    }
+}
+
 /// A single line of source context.
 ///
 /// Represents one line of source code with optional highlighting
@@ -328,10 +366,10 @@ pub struct DiagnosticContext {
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_linter::ContextLine;
+/// use fast_yaml_linter::{ContextLine, OneBased};
 ///
 /// let line = ContextLine {
-///     line_number: 1,
+///     line_number: OneBased::FIRST,
 ///     content: "b: c".to_string(),
 ///     column_offset: 10,
 ///     truncated_end: true,
@@ -343,7 +381,8 @@ pub struct DiagnosticContext {
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
 pub struct ContextLine {
     /// Line number (1-indexed).
-    pub line_number: usize,
+    #[cfg_attr(feature = "json-output", serde(with = "one_based_repr"))]
+    pub line_number: OneBased,
     /// Windowed source text; the full line when it is short.
     pub content: String,
     /// Number of chars of the line dropped before `content`.
@@ -395,11 +434,12 @@ pub struct Suggestion {
 ///
 /// ```
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
+/// use fast_yaml_linter::config::RuleName;
 ///
 /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
 ///
 /// let diagnostic = DiagnosticBuilder::new(
-///     DiagnosticCode::LINE_LENGTH,
+///     RuleName::LineLength,
 ///     Severity::Info,
 ///     "line too long",
 ///     span
@@ -424,9 +464,10 @@ impl DiagnosticBuilder {
     ///
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
+    /// use fast_yaml_linter::config::RuleName;
     ///
     /// let builder = DiagnosticBuilder::new(
-    ///     DiagnosticCode::DUPLICATE_KEY,
+    ///     RuleName::DuplicateKey,
     ///     Severity::Error,
     ///     "duplicate key found",
     ///     Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 5, 4).unwrap())
@@ -454,10 +495,11 @@ impl DiagnosticBuilder {
     ///
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
+    /// use fast_yaml_linter::config::RuleName;
     ///
     /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 5, 4).unwrap());
     /// let builder = DiagnosticBuilder::new(
-    ///     DiagnosticCode::TRAILING_WHITESPACE,
+    ///     RuleName::TrailingWhitespace,
     ///     Severity::Hint,
     ///     "trailing whitespace",
     ///     span
@@ -484,11 +526,12 @@ impl DiagnosticBuilder {
     ///
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Severity, Location, Span};
+    /// use fast_yaml_linter::config::RuleName;
     ///
     /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
     ///
     /// let diagnostic = DiagnosticBuilder::new(
-    ///     DiagnosticCode::LINE_LENGTH,
+    ///     RuleName::LineLength,
     ///     Severity::Info,
     ///     "example",
     ///     span
@@ -509,11 +552,12 @@ impl DiagnosticBuilder {
     ///
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Severity, Location, Span};
+    /// use fast_yaml_linter::config::RuleName;
     ///
     /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
     ///
     /// let diagnostic = DiagnosticBuilder::new(
-    ///     DiagnosticCode::LINE_LENGTH,
+    ///     RuleName::LineLength,
     ///     Severity::Info,
     ///     "example",
     ///     span
@@ -632,9 +676,10 @@ impl Finding {
     ///
     /// ```
     /// use fast_yaml_linter::{DiagnosticCode, Finding, Location, Severity, Span};
+    /// use fast_yaml_linter::config::RuleName;
     ///
     /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
-    /// let diagnostic = Finding::new("m", span).into_diagnostic(DiagnosticCode::COLONS, Severity::Error);
+    /// let diagnostic = Finding::new("m", span).into_diagnostic(RuleName::Colons, Severity::Error);
     /// assert_eq!(diagnostic.code.as_str(), "colons");
     /// assert_eq!(diagnostic.severity, Severity::Error);
     /// ```
@@ -665,7 +710,7 @@ mod tests {
             Location::try_new(line, 1, line).unwrap(),
             Location::try_new(line, 2, line + 1).unwrap(),
         );
-        DiagnosticBuilder::new("r", severity, format!("m{line}"), span).build()
+        DiagnosticBuilder::new(RuleName::Colons, severity, format!("m{line}"), span).build()
     }
 
     fn cap(limit: usize) -> MaxDiagnostics {
@@ -681,7 +726,7 @@ mod tests {
         let lines: Vec<_> = found.iter().map(|d| d.span.start.line()).collect();
         assert_eq!(lines, [1, 2, 3]);
         let summary = &found[2];
-        assert_eq!(summary.code.as_str(), DiagnosticCode::DIAGNOSTIC_LIMIT);
+        assert_eq!(summary.code, DiagnosticCode::DiagnosticLimit);
         assert_eq!(summary.severity, Severity::Warning);
         assert_eq!(summary.excerpt, Excerpt::Omitted);
         assert_eq!(
@@ -749,24 +794,12 @@ mod tests {
     }
 
     #[test]
-    fn test_diagnostic_code_new() {
-        let code = DiagnosticCode::new("test-code");
-        assert_eq!(code.as_str(), "test-code");
-    }
-
-    #[test]
-    fn test_diagnostic_code_from_str() {
-        let code: DiagnosticCode = "test-code".into();
-        assert_eq!(code.as_str(), "test-code");
-    }
-
-    #[test]
     fn test_diagnostic_code_constants() {
-        assert_eq!(DiagnosticCode::DUPLICATE_KEY, "duplicate-key");
-        assert_eq!(DiagnosticCode::INVALID_ANCHOR, "invalid-anchor");
-        assert_eq!(DiagnosticCode::INDENTATION, "indentation");
-        assert_eq!(DiagnosticCode::SET_VALUES, "set-values");
-        assert_eq!(DiagnosticCode::SYNTAX, "syntax");
+        assert_eq!(RuleName::DuplicateKey.as_str(), "duplicate-key");
+        assert_eq!(RuleName::InvalidAnchor.as_str(), "invalid-anchor");
+        assert_eq!(RuleName::Indentation.as_str(), "indentation");
+        assert_eq!(RuleName::SetValues.as_str(), "set-values");
+        assert_eq!(DiagnosticCode::Syntax.as_str(), "syntax");
     }
 
     #[test]
@@ -776,14 +809,14 @@ mod tests {
             Location::try_new(1, 5, 4).unwrap(),
         );
         let diagnostic = DiagnosticBuilder::new(
-            DiagnosticCode::DUPLICATE_KEY,
+            RuleName::DuplicateKey,
             Severity::Error,
             "test message",
             span,
         )
         .build();
 
-        assert_eq!(diagnostic.code.as_str(), DiagnosticCode::DUPLICATE_KEY);
+        assert_eq!(diagnostic.code.as_str(), RuleName::DuplicateKey.as_str());
         assert_eq!(diagnostic.severity, Severity::Error);
         assert_eq!(diagnostic.message, "test message");
         assert_eq!(diagnostic.span, span);
@@ -798,7 +831,7 @@ mod tests {
             Location::try_new(1, 5, 4).unwrap(),
         );
         let diagnostic = DiagnosticBuilder::new(
-            DiagnosticCode::DUPLICATE_KEY,
+            RuleName::DuplicateKey,
             Severity::Error,
             "test message",
             span,
@@ -817,9 +850,8 @@ mod tests {
             Location::try_new(1, 5, 4).unwrap(),
         );
 
-        let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)
-                .build_without_excerpt();
+        let diagnostic = DiagnosticBuilder::new(RuleName::LineLength, Severity::Info, "test", span)
+            .build_without_excerpt();
 
         assert_eq!(diagnostic.excerpt, Excerpt::Omitted);
     }
@@ -827,14 +859,14 @@ mod tests {
     #[test]
     fn test_context_line() {
         let line = ContextLine {
-            line_number: 10,
+            line_number: OneBased::new(10).unwrap(),
             content: "name: value".to_string(),
             column_offset: 0,
             truncated_end: false,
             highlights: vec![(6, 11)],
         };
 
-        assert_eq!(line.line_number, 10);
+        assert_eq!(line.line_number.get(), 10);
         assert_eq!(line.content, "name: value");
         assert_eq!(line.highlights, vec![(6, 11)]);
     }
@@ -866,7 +898,7 @@ mod tests {
             Location::try_new(1, 5, 4).unwrap(),
         );
         let diagnostic =
-            DiagnosticBuilder::new(DiagnosticCode::DUPLICATE_KEY, Severity::Error, "test", span)
+            DiagnosticBuilder::new(RuleName::DuplicateKey, Severity::Error, "test", span)
                 .build_without_excerpt();
 
         let json = serde_json::to_string(&diagnostic).unwrap();
@@ -882,34 +914,13 @@ mod code_tests {
     use super::*;
 
     #[test]
-    fn predefined_codes_borrow_their_constant() {
-        for text in [
-            DiagnosticCode::DUPLICATE_KEY,
-            DiagnosticCode::LINT_DIRECTIVE,
-            DiagnosticCode::NEW_LINE_AT_END_OF_FILE,
-        ] {
-            assert!(matches!(DiagnosticCode::from(text).0, Cow::Borrowed(_)));
-            assert!(matches!(
-                DiagnosticCode::from(text.to_owned()).0,
-                Cow::Borrowed(_)
-            ));
-        }
-    }
-
-    #[test]
-    fn custom_codes_are_owned_and_equal_by_text() {
-        let code: DiagnosticCode = DiagnosticCode::from("always-flags");
-        assert!(matches!(code.0, Cow::Owned(_)));
-        assert_eq!(code, DiagnosticCode::new("always-flags"));
-    }
-
-    #[test]
     fn a_static_message_is_not_copied() {
         let span = Span::new(
             crate::Location::try_new(1, 1, 0).unwrap(),
             crate::Location::try_new(1, 1, 0).unwrap(),
         );
-        let diagnostic = DiagnosticBuilder::new("r", Severity::Info, "fixed", span).build();
+        let diagnostic =
+            DiagnosticBuilder::new(RuleName::Colons, Severity::Info, "fixed", span).build();
         assert!(matches!(diagnostic.message, Cow::Borrowed("fixed")));
     }
 }

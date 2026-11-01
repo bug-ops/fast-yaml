@@ -332,15 +332,14 @@ impl CustomRuleCode {
     /// # Errors
     ///
     /// Returns an error when the code is empty, equals a built-in rule name or is one of the
-    /// codes the linter reserves for its own diagnostics (`syntax`, `diagnostic-limit`).
+    /// codes the linter reserves for its own diagnostics (`undefined-alias`, `syntax`,
+    /// `diagnostic-limit`).
     pub fn new(code: impl Into<String>) -> Result<Self, RuleConfigError> {
         let code = code.into();
         if code.is_empty() {
             return Err(RuleConfigError::EmptyRuleCode);
         }
-        if RuleName::from_str(&code).is_ok()
-            || [DiagnosticCode::SYNTAX, DiagnosticCode::DIAGNOSTIC_LIMIT].contains(&code.as_str())
-        {
+        if RuleName::from_str(&code).is_ok() || DiagnosticCode::reserved(&code).is_some() {
             return Err(RuleConfigError::ReservedRuleCode { code });
         }
         Ok(Self(code))
@@ -897,31 +896,31 @@ macro_rules! builtin_rules {
 }
 
 builtin_rules! {
-    (DuplicateKey, duplicate_key, DiagnosticCode::DUPLICATE_KEY, DuplicateKeysOptions, DuplicateKeysRule, "Duplicate mapping keys."),
-    (LineLength, line_length, DiagnosticCode::LINE_LENGTH, LineLengthOptions, LineLengthRule, "Maximum line length."),
-    (TrailingWhitespace, trailing_whitespace, DiagnosticCode::TRAILING_WHITESPACE, NoOptions, TrailingWhitespaceRule, "Trailing whitespace at line ends."),
-    (DocumentStart, document_start, DiagnosticCode::DOCUMENT_START, DocumentStartOptions, DocumentStartRule, "Document start marker `---`."),
-    (DocumentEnd, document_end, DiagnosticCode::DOCUMENT_END, DocumentEndOptions, DocumentEndRule, "Document end marker `...`."),
-    (EmptyValues, empty_values, DiagnosticCode::EMPTY_VALUES, EmptyValuesOptions, EmptyValuesRule, "Empty mapping and sequence values."),
-    (NewLineAtEndOfFile, new_line_at_end_of_file, DiagnosticCode::NEW_LINE_AT_END_OF_FILE, NoOptions, NewLineAtEndOfFileRule, "Newline at the end of the file."),
-    (Braces, braces, DiagnosticCode::BRACES, FlowCollectionOptions, BracesRule, "Flow mapping braces `{}`."),
-    (Brackets, brackets, DiagnosticCode::BRACKETS, FlowCollectionOptions, BracketsRule, "Flow sequence brackets `[]`."),
-    (Colons, colons, DiagnosticCode::COLONS, ColonsOptions, ColonsRule, "Spacing around colons."),
-    (Commas, commas, DiagnosticCode::COMMAS, CommasOptions, CommasRule, "Spacing around commas."),
-    (Hyphens, hyphens, DiagnosticCode::HYPHENS, HyphensOptions, HyphensRule, "Spacing after sequence hyphens."),
-    (Comments, comments, DiagnosticCode::COMMENTS, CommentsOptions, CommentsRule, "Comment formatting."),
-    (CommentsIndentation, comments_indentation, DiagnosticCode::COMMENTS_INDENTATION, NoOptions, CommentsIndentationRule, "Comment indentation."),
-    (EmptyLines, empty_lines, DiagnosticCode::EMPTY_LINES, EmptyLinesOptions, EmptyLinesRule, "Consecutive empty lines."),
-    (NewLines, new_lines, DiagnosticCode::NEW_LINES, NewLinesOptions, NewLinesRule, "Line ending style."),
-    (OctalValues, octal_values, DiagnosticCode::OCTAL_VALUES, OctalValuesOptions, OctalValuesRule, "Octal number forms."),
-    (Truthy, truthy, DiagnosticCode::TRUTHY, TruthyOptions, TruthyRule, "Truthy value spellings."),
-    (QuotedStrings, quoted_strings, DiagnosticCode::QUOTED_STRINGS, QuotedStringsOptions, QuotedStringsRule, "Quoted string style."),
-    (KeyOrdering, key_ordering, DiagnosticCode::KEY_ORDERING, KeyOrderingOptions, KeyOrderingRule, "Alphabetical key ordering."),
-    (FloatValues, float_values, DiagnosticCode::FLOAT_VALUES, FloatValuesOptions, FloatValuesRule, "Float number forms."),
-    (InvalidAnchor, invalid_anchor, DiagnosticCode::INVALID_ANCHOR, InvalidAnchorsOptions, InvalidAnchorsRule, "Invalid anchor names."),
-    (Indentation, indentation, DiagnosticCode::INDENTATION, IndentationOptions, IndentationRule, "Indentation size."),
-    (SetValues, set_values, DiagnosticCode::SET_VALUES, NoOptions, SetValuesRule, "`!!set` members without values."),
-    (LintDirective, lint_directive, DiagnosticCode::LINT_DIRECTIVE, NoOptions, LintDirectiveRule, "Invalid inline lint directives."),
+    (DuplicateKey, duplicate_key, "duplicate-key", DuplicateKeysOptions, DuplicateKeysRule, "Duplicate mapping keys."),
+    (LineLength, line_length, "line-length", LineLengthOptions, LineLengthRule, "Maximum line length."),
+    (TrailingWhitespace, trailing_whitespace, "trailing-whitespace", NoOptions, TrailingWhitespaceRule, "Trailing whitespace at line ends."),
+    (DocumentStart, document_start, "document-start", DocumentStartOptions, DocumentStartRule, "Document start marker `---`."),
+    (DocumentEnd, document_end, "document-end", DocumentEndOptions, DocumentEndRule, "Document end marker `...`."),
+    (EmptyValues, empty_values, "empty-values", EmptyValuesOptions, EmptyValuesRule, "Empty mapping and sequence values."),
+    (NewLineAtEndOfFile, new_line_at_end_of_file, "new-line-at-end-of-file", NoOptions, NewLineAtEndOfFileRule, "Newline at the end of the file."),
+    (Braces, braces, "braces", FlowCollectionOptions, BracesRule, "Flow mapping braces `{}`."),
+    (Brackets, brackets, "brackets", FlowCollectionOptions, BracketsRule, "Flow sequence brackets `[]`."),
+    (Colons, colons, "colons", ColonsOptions, ColonsRule, "Spacing around colons."),
+    (Commas, commas, "commas", CommasOptions, CommasRule, "Spacing around commas."),
+    (Hyphens, hyphens, "hyphens", HyphensOptions, HyphensRule, "Spacing after sequence hyphens."),
+    (Comments, comments, "comments", CommentsOptions, CommentsRule, "Comment formatting."),
+    (CommentsIndentation, comments_indentation, "comments-indentation", NoOptions, CommentsIndentationRule, "Comment indentation."),
+    (EmptyLines, empty_lines, "empty-lines", EmptyLinesOptions, EmptyLinesRule, "Consecutive empty lines."),
+    (NewLines, new_lines, "new-lines", NewLinesOptions, NewLinesRule, "Line ending style."),
+    (OctalValues, octal_values, "octal-values", OctalValuesOptions, OctalValuesRule, "Octal number forms."),
+    (Truthy, truthy, "truthy", TruthyOptions, TruthyRule, "Truthy value spellings."),
+    (QuotedStrings, quoted_strings, "quoted-strings", QuotedStringsOptions, QuotedStringsRule, "Quoted string style."),
+    (KeyOrdering, key_ordering, "key-ordering", KeyOrderingOptions, KeyOrderingRule, "Alphabetical key ordering."),
+    (FloatValues, float_values, "float-values", FloatValuesOptions, FloatValuesRule, "Float number forms."),
+    (InvalidAnchor, invalid_anchor, "invalid-anchor", InvalidAnchorsOptions, InvalidAnchorsRule, "Invalid anchor names."),
+    (Indentation, indentation, "indentation", IndentationOptions, IndentationRule, "Indentation size."),
+    (SetValues, set_values, "set-values", NoOptions, SetValuesRule, "`!!set` members without values."),
+    (LintDirective, lint_directive, "lint-directive", NoOptions, LintDirectiveRule, "Invalid inline lint directives."),
 }
 
 impl fmt::Display for RuleName {

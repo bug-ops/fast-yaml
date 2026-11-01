@@ -62,14 +62,6 @@ impl super::LintRule for NewLinesRule {
         RuleId::BuiltIn(RuleName::NewLines)
     }
 
-    fn name(&self) -> &'static str {
-        "New Lines"
-    }
-
-    fn description(&self) -> &'static str {
-        "Enforces line ending type (Unix/DOS)"
-    }
-
     fn default_severity(&self) -> Severity {
         Severity::Warning
     }

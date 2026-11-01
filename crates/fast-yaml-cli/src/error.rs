@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use fast_yaml_core::fs::DisplayPath;
+use fast_yaml_core::fs::{DisplayPath, EscapedText};
 use thiserror::Error;
 
 /// Writes one line to stderr and ignores a failure such as a closed pipe.
@@ -121,7 +121,7 @@ impl DiscoveryError {
 #[derive(Debug, Error)]
 pub enum DiscoveryError {
     /// Invalid globset pattern (from include/exclude patterns)
-    #[error("invalid glob pattern '{pattern}': {source}")]
+    #[error("invalid glob pattern '{}': {source}", EscapedText(.pattern))]
     InvalidPattern {
         /// The pattern that was invalid
         pattern: String,
@@ -145,7 +145,7 @@ pub enum DiscoveryError {
     },
 
     /// Glob pattern matched nothing
-    #[error("glob pattern matched no files: '{pattern}'")]
+    #[error("glob pattern matched no files: '{}'", EscapedText(.pattern))]
     GlobNoMatch {
         /// The pattern that matched nothing
         pattern: String,
@@ -158,7 +158,7 @@ pub enum DiscoveryError {
     NoYamlFiles,
 
     /// Glob pattern is malformed
-    #[error("invalid glob pattern '{pattern}': {source}")]
+    #[error("invalid glob pattern '{}': {source}", EscapedText(.pattern))]
     GlobSyntax {
         /// The malformed pattern
         pattern: String,

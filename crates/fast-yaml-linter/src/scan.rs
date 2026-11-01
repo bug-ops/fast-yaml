@@ -416,8 +416,9 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
 
     /// The `%YAML` directive among the directive, comment and blank lines above `marker_line`.
     fn directive_version(&self, marker_line: usize) -> Option<YamlVersion> {
-        (1..marker_line)
+        (0..marker_line.saturating_sub(1))
             .rev()
+            .map(OneBased::from_index)
             .map_while(|line| self.context.get_line(line))
             .map(str::trim)
             .filter(|line| !line.is_empty() && !line.starts_with('#'))

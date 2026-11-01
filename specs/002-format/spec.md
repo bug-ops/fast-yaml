@@ -32,7 +32,7 @@ After `fy format`, the document parses to the same data as before, formatting th
 
 ### Non-goals
 - Preserving comments, blank lines, or flow style (`{a: 1}` becomes block).
-- Wrapping or folding long lines (`--width` is accepted but inert, see section 9).
+- Wrapping or folding long lines (the `--width` option was removed, #639; output never wraps).
 - Style options beyond indent (no quote-style, key sorting, or `---` forcing flags on the CLI).
 - Linting or fixing semantic problems (see lint spec).
 - Choosing between JSON/YAML output: `fy format` always emits YAML (the former `-f/--format` flag is removed).
@@ -170,8 +170,8 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 
 | Type | Role |
 |------|------|
-| `EmitterConfig` | Options for emit and format: `indent: Indent`, `width: Width`, `explicit_start`, `default_flow_style`, `multiline_strings`, `max_emit_depth: MaxDepth`, `parse_limits: ParseLimits`. The format pipeline reads only `indent`, `explicit_start` and `parse_limits`. |
-| `Indent` (1..=9), `Width` (20..=1000) | Range-checked newtypes (`LimitRangeError` on violation). |
+| `EmitterConfig` | Options for emit and format: `indent: Indent`, `explicit_start`, `layout: Layout` (`Block` default, `Flow`; set with `with_layout`), `multiline_strings`, `max_emit_depth: MaxDepth`, `parse_limits: ParseLimits`. The format pipeline reads only `indent`, `explicit_start` and `parse_limits`. |
+| `Indent` (1..=9) | Range-checked newtype (`LimitRangeError` on violation). |
 | `Emitter::format*` / `streaming::format_streaming*` | Text to text formatter over parser events (std and optional arena backend). |
 | `CommentScanner`, `has_comments*`, `find_comments` | Detect comments during/after parsing using byte ranges. |
 | `NormalizedInput` | Input after BOM/encoding normalization shared by parse, format, and comment scan. |
@@ -196,7 +196,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | Comment plus syntax error in the same file | the format error is reported, not the comment error |
 | Missing path / glob with no match / explicit non-YAML file | `error: path does not exist: '...'`, exit 1 |
 | Implicit key longer than 1024 chars | parser error (YAML 1.2 limit), not a formatter bug |
-| `--indent 0|10`, `--max-depth 513`, `--width 19` | usage error, exit 2 |
+| `--indent 0|10`, `--max-depth 513` | usage error, exit 2 |
 | Flow nesting over 255 levels | rejected by the scanner regardless of `--max-depth` |
 
 ## 6. Non-functional requirements
@@ -230,7 +230,7 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 - Making the formatter preserve comments or flow style.
 
 ### Never
-- Weaken `Indent`/`Width` newtypes into plain integers.
+- Weaken the `Indent` newtype into a plain integer.
 - Make comment stripping the silent default.
 - Write to a file before the whole result is computed and verified.
 
@@ -238,7 +238,6 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 
 | # | Item | Status |
 |---|------|--------|
-| 1 | `--width` is validated (20..=1000) but never applied; CLI help, Python stub and Node typings still promise "maximum line width". Verified: a 120-character string stays on one line. (GAP-CORE-EMIT-001, X-9, #639; `allow_unicode` and batch `sort_keys` are likewise accepted and unused, and the binding `sort_keys` is implemented twice, #640) | [NEEDS CLARIFICATION: implement folding, or remove the option from every surface (pre-1.0 breaking change)] **Proposed:** remove the option on every surface (pre-1.0 breaking change allowed); wrapping risks round-trip fidelity. |
 | 2 | `fy format -v` prints nothing extra although README says it lists each file. (GAP-CLI-004) | [NEEDS CLARIFICATION: implement or drop from docs] |
 | 3 | Format re-parses the input a second time to find comments; with a file that is both commented and invalid/over-limit the format error wins. (GAP-CORE-EMIT-010) | accepted; use `CommentScanner` in the single pass |
 | 4 | BOM asymmetry: `Emitter::format*` and `fy format` keep the BOM; `streaming::format_streaming*` drop it. (GAP-CORE-EMIT-009) | [NEEDS CLARIFICATION: converge on one behavior] |

@@ -868,3 +868,21 @@ fn test_lint_directive_unknown_rule_reported_in_json() {
         .stdout(predicate::str::contains("\"lint-directive\""))
         .stdout(predicate::str::contains("no-such-rule"));
 }
+
+#[test]
+fn glob_patterns_in_errors_never_carry_raw_escape_characters() {
+    let output = cargo_bin_cmd!("fy")
+        .args(["format", "-n", "no-such-\u{1b}-*.yaml"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("glob pattern matched no files"), "{stderr}");
+    assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
+
+    let output = cargo_bin_cmd!("fy")
+        .args(["format", "-n", "[\u{1b}[2J"])
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains('\u{1b}'), "{stderr:?}");
+}
