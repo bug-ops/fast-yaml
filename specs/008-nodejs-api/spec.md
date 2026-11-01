@@ -235,7 +235,7 @@ AS A TypeScript user I WANT generated typings for every export and option SO THA
 | Performance claims (GAP-NODE-025) | README 5-10x vs js-yaml has no reproducible benchmark | Which claims are contractual? (X-15) **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
 | Batch result shape (#641) | `BatchResult.errors` and `FormatResult { content?, error? }` allow contradictory states (both set or both unset); an error carries only a message, not its kind, and `path` is a lossy `String` | Model the outcome as one tagged result and keep the error kind and the raw path |
 | `sortKeys` implemented twice (#640) | `safeDump*` sorts in `emitter.rs`, and the same logic lives in the Python binding; the copies diverged and integer keys sort as text | Move the sort into the core, with numeric ordering for integer keys |
-| Core positions (#638) | Core `SourcePosition` and `Location::new` still carry raw `usize` for one-based positions; the binding `Location` is already `OneBased`-checked | Type-safety follow-up in core, no binding API change expected |
+| ~~Core positions (#638)~~ | Resolved: core `SourcePosition` and linter `Location::new` take `OneBased`; the binding `Location` still checks with `try_new` and keeps `u32` getters | none, no binding API change |
 | Prebuilt artifact | `nodejs/*.node` is an untracked build output and may predate HEAD | Rebuild before any parity check |
 
 ## 10. Parity with CLI / core

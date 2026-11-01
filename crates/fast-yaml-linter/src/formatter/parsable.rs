@@ -50,7 +50,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn newline_in_path_cannot_start_a_new_line() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 2, 1).unwrap(),
+        );
         let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
         let path = std::path::Path::new("/w/a\n::error::x.yaml");
         let source = ReportSource::File(crate::formatter::ReportPath::from_absolute(path).unwrap());
@@ -64,7 +67,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn control_characters_in_a_path_are_escaped() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 2, 1).unwrap(),
+        );
         let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
         let path = std::path::Path::new("/w/a\u{1b}]0;x\u{7}.yaml");
         let source = ReportSource::File(crate::formatter::ReportPath::from_absolute(path).unwrap());
@@ -80,7 +86,10 @@ mod tests {
 
     #[test]
     fn info_and_hint_print_as_warning() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 2, 1).unwrap(),
+        );
         let diagnostics = [Severity::Info, Severity::Hint]
             .map(|s| DiagnosticBuilder::new("r", s, "m", span).build_without_excerpt());
         let report = FileReport {
@@ -95,7 +104,10 @@ mod tests {
 
     #[test]
     fn stdin_and_multiline_message() {
-        let span = Span::new(Location::new(2, 3, 5), Location::new(2, 4, 6));
+        let span = Span::new(
+            Location::try_new(2, 3, 5).unwrap(),
+            Location::try_new(2, 4, 6).unwrap(),
+        );
         let d =
             DiagnosticBuilder::new("rule", Severity::Error, "a\nb", span).build_without_excerpt();
         let report = FileReport {

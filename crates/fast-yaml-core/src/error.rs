@@ -1,109 +1,9 @@
 use crate::keys::KeyError;
 use crate::limits::{LimitKind, MaxTagBytes};
 use crate::merge::MergeError;
-use saphyr_parser::Span;
+use crate::position::{DocumentCount, DocumentIndex, LineCount, SourcePosition};
 use std::fmt;
 use thiserror::Error;
-
-/// Start of a node in the source text, as reported in error messages.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::{ParseError, Parser};
-///
-/// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err();
-/// let ParseError::Merge { at, .. } = err else { panic!("merge error expected") };
-/// assert_eq!((at.line, at.column), (2, 3));
-/// assert_eq!(at.to_string(), "line 2, column 3");
-/// ```
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct SourcePosition {
-    /// Line number (1-indexed).
-    pub line: usize,
-    /// Column number (1-indexed, in characters).
-    pub column: usize,
-}
-
-impl SourcePosition {
-    /// A position at `line` and `column`, both counted from 1.
-    #[must_use]
-    pub const fn new(line: usize, column: usize) -> Self {
-        Self { line, column }
-    }
-
-    // Char-based column, 1-indexed like saphyr's own errors; no source text to convert from.
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn from_span(span: Span) -> Self {
-        Self {
-            line: span.start.line(),
-            column: span.start.col() + 1,
-        }
-    }
-
-    // Same convention as `from_span`, for the end of the span.
-    #[allow(clippy::disallowed_methods)]
-    pub(crate) fn end_of(span: Span) -> Self {
-        Self {
-            line: span.end.line(),
-            column: span.end.col() + 1,
-        }
-    }
-}
-
-impl fmt::Display for SourcePosition {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "line {}, column {}", self.line, self.column)
-    }
-}
-
-/// Index of a document in a stream, counted from 0.
-///
-/// A [`SourcePosition`] counts from 1, so the two are distinct types: an index cannot be passed
-/// where a line or a column is expected, nor the other way round.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_core::{DocumentIndex, Parser};
-///
-/// let err = Parser::parse_all("a: 1\n---\nm: {<<: 1}\n").unwrap_err();
-/// assert_eq!(err.document_index(), DocumentIndex::new(1));
-/// assert_eq!(err.document_index().get(), 1);
-/// assert_eq!(err.document_index().number(), 2);
-/// assert_eq!(DocumentIndex::FIRST.number(), 1);
-/// ```
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct DocumentIndex(usize);
-
-impl DocumentIndex {
-    /// The first document of a stream.
-    pub const FIRST: Self = Self(0);
-
-    /// The document at `index`, counted from 0.
-    #[must_use]
-    pub const fn new(index: usize) -> Self {
-        Self(index)
-    }
-
-    /// The index, counted from 0.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0
-    }
-
-    /// The ordinal of the document, counted from 1, as shown in messages.
-    #[must_use]
-    pub const fn number(self) -> usize {
-        self.0.saturating_add(1)
-    }
-
-    /// The index `documents` documents later.
-    #[must_use]
-    pub const fn after(self, documents: usize) -> Self {
-        Self(self.0.saturating_add(documents))
-    }
-}
 
 /// Why a `!!set` member with a value is rejected.
 const SET_VALUE_REASON: &str = "!!set member has a non-null value, but a set holds members only (write `key:` without a value)";
@@ -188,7 +88,7 @@ impl SyntaxError {
     /// ```
     /// use fast_yaml_core::{DocumentIndex, SourcePosition, SyntaxError};
     ///
-    /// let err = SyntaxError::recursive_alias(SourcePosition::new(1, 5), DocumentIndex::FIRST);
+    /// let err = SyntaxError::recursive_alias(SourcePosition::START, DocumentIndex::FIRST);
     /// assert!(err.to_string().contains("still being defined"));
     /// ```
     #[must_use]
@@ -199,13 +99,13 @@ impl SyntaxError {
     /// Line number of the error (1-indexed).
     #[must_use]
     pub const fn line(&self) -> usize {
-        self.position.line
+        self.position.line().get()
     }
 
     /// Column number of the error (1-indexed, in characters).
     #[must_use]
     pub const fn column(&self) -> usize {
-        self.position.column
+        self.position.column().get()
     }
 
     /// Position of the error in the source text.
@@ -253,12 +153,12 @@ pub enum ParseError {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{DocumentIndex, MergeError, ParseError, Parser, SourcePosition};
+    /// use fast_yaml_core::{DocumentIndex, MergeError, ParseError, Parser};
     ///
     /// let err = Parser::parse_all("a: 1\n---\nm:\n  <<: 1\n").unwrap_err();
     /// let ParseError::Merge { error, at, document } = err else { panic!("merge error expected") };
     /// assert_eq!(error, MergeError::NotMapping);
-    /// assert_eq!(at, SourcePosition::new(4, 3));
+    /// assert_eq!((at.line().get(), at.column().get()), (4, 3));
     /// assert_eq!(document, DocumentIndex::new(1));
     /// ```
     #[error("{error} at {at}{}", InDocument(*.document))]
@@ -276,11 +176,11 @@ pub enum ParseError {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{DocumentIndex, ParseError, Parser, SourcePosition};
+    /// use fast_yaml_core::{DocumentIndex, ParseError, Parser};
     ///
     /// let err = Parser::parse_str("!!set {a: 1}").unwrap_err();
     /// let ParseError::SetValue { at, document } = err else { panic!("set error expected") };
-    /// assert_eq!(at, SourcePosition::new(1, 8));
+    /// assert_eq!((at.line().get(), at.column().get()), (1, 8));
     /// assert_eq!(document, DocumentIndex::FIRST);
     /// assert!(Parser::parse_str("!!set {a: , b: null}").is_ok());
     /// ```
@@ -297,14 +197,14 @@ pub enum ParseError {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{DocumentIndex, KeyDomain, LoadOptions, ParseError, Parser, SourcePosition};
+    /// use fast_yaml_core::{DocumentIndex, KeyDomain, LoadOptions, ParseError, Parser};
     /// use fast_yaml_core::limits::ParseLimits;
     ///
     /// let options = LoadOptions::new().with_keys(KeyDomain::StringKeys);
     /// let err = Parser::parse_all_with_options("a: 1\n1: x\n\"1\": y\n", &ParseLimits::default(), options)
     ///     .unwrap_err();
     /// let ParseError::Key { at, document, .. } = err else { panic!("key error expected") };
-    /// assert_eq!(at, SourcePosition::new(3, 1));
+    /// assert_eq!((at.line().get(), at.column().get()), (3, 1));
     /// assert_eq!(document, DocumentIndex::FIRST);
     /// ```
     #[error("{error} at {at}{}", InDocument(*.document))]
@@ -328,20 +228,23 @@ impl ParseError {
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_core::{DocumentIndex, ParseError, Parser, SourcePosition};
+    /// use fast_yaml_core::{DocumentCount, DocumentIndex, LineCount, ParseError, Parser};
     ///
-    /// let err = Parser::parse_str("a: [").unwrap_err().relocated(4, 0);
-    /// assert!(err.position().line > 4);
+    /// let err = Parser::parse_str("a: [")
+    ///     .unwrap_err()
+    ///     .relocated(LineCount::new(4), DocumentCount::ZERO);
+    /// assert!(err.position().line().get() > 4);
     ///
-    /// let err = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().relocated(4, 2);
+    /// let err = Parser::parse_str("m:\n  <<: 1\n")
+    ///     .unwrap_err()
+    ///     .relocated(LineCount::new(4), DocumentCount::new(2));
     /// let ParseError::Merge { at, document, .. } = err else { panic!("merge error expected") };
-    /// assert_eq!(at, SourcePosition::new(6, 3));
+    /// assert_eq!((at.line().get(), at.column().get()), (6, 3));
     /// assert_eq!(document, DocumentIndex::new(2));
     /// ```
     #[must_use]
-    pub fn relocated(self, lines: usize, documents: usize) -> Self {
-        let line_down =
-            |at: SourcePosition| SourcePosition::new(at.line.saturating_add(lines), at.column);
+    pub fn relocated(self, lines: LineCount, documents: DocumentCount) -> Self {
+        let line_down = |at: SourcePosition| at.below(lines);
         match self {
             Self::Syntax(mut e) => {
                 e.position = line_down(e.position);
@@ -386,7 +289,7 @@ impl ParseError {
     /// use fast_yaml_core::Parser;
     ///
     /// let position = Parser::parse_str("m:\n  <<: 1\n").unwrap_err().position();
-    /// assert_eq!((position.line, position.column), (2, 3));
+    /// assert_eq!((position.line().get(), position.column().get()), (2, 3));
     /// ```
     #[must_use]
     pub const fn position(&self) -> SourcePosition {
@@ -503,14 +406,8 @@ const SCANNER_FLOW_NESTING_INFO: &str = "recursion limit exceeded";
 impl ParseError {
     /// Wraps a scanner error found in the document with zero-based index `document`.
     #[must_use]
-    // Char-based column, 1-indexed like the scanner's own messages; no source text to convert from.
-    #[allow(clippy::disallowed_methods)]
     pub(crate) fn scanner(error: &saphyr_parser::ScanError, document: DocumentIndex) -> Self {
-        let marker = error.marker();
-        let position = SourcePosition {
-            line: marker.line(),
-            column: marker.col() + 1,
-        };
+        let position = SourcePosition::from_marker(*error.marker());
         if error.info() == SCANNER_FLOW_NESTING_INFO {
             return Self::LimitExceeded {
                 kind: LimitKind::FlowNesting,
@@ -535,12 +432,13 @@ pub type EmitResult<T> = std::result::Result<T, EmitError>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::OneBased;
 
     #[test]
     fn test_limit_exceeded_display() {
         let err = ParseError::LimitExceeded {
             kind: LimitKind::Depth(crate::limits::MaxDepth::new(8).unwrap()),
-            at: SourcePosition::new(3, 7),
+            at: SourcePosition::new(OneBased::from_index(2), OneBased::from_index(6)),
             document: DocumentIndex::FIRST,
         };
         let msg = err.to_string();
@@ -575,11 +473,14 @@ mod tests {
     fn position_covers_every_variant() {
         let limit = ParseError::LimitExceeded {
             kind: LimitKind::Depth(crate::limits::MaxDepth::MIN),
-            at: SourcePosition::new(3, 7),
+            at: SourcePosition::new(OneBased::from_index(2), OneBased::from_index(6)),
             document: DocumentIndex::FIRST,
         };
-        assert_eq!(limit.position(), SourcePosition { line: 3, column: 7 });
+        assert_eq!(
+            limit.position(),
+            SourcePosition::new(OneBased::from_index(2), OneBased::from_index(6))
+        );
         let syntax = crate::Parser::parse_str("a: [").unwrap_err();
-        assert_eq!(syntax.position().line, 2);
+        assert_eq!(syntax.position().line().get(), 2);
     }
 }

@@ -331,10 +331,16 @@ fn mapper_find_all_chars_quotes_and_non_ascii() {
 fn mapper_find_colon_after_key_edges() {
     use fast_yaml_linter::{Location, Span};
     let mapper = SourceMapper::new("ключ\nother: 1\n");
-    let key = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 8));
+    let key = Span::new(
+        Location::try_new(1, 1, 0).unwrap(),
+        Location::try_new(1, 5, 8).unwrap(),
+    );
     assert!(mapper.find_colon_after_key(key).is_none());
 
-    let past = Span::new(Location::new(1, 1, 0), Location::new(9, 1, 500));
+    let past = Span::new(
+        Location::try_new(1, 1, 0).unwrap(),
+        Location::try_new(9, 1, 500).unwrap(),
+    );
     assert!(mapper.find_colon_after_key(past).is_none());
 }
 

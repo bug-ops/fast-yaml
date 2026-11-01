@@ -12,8 +12,8 @@ use crate::directives::Directives;
 use crate::rules::{DuplicateRule, LintDocument, MarkerPresence, Rule, RuleId};
 use crate::scan::{ScanCollector, ScanNeeds, lint_load_options};
 use crate::{Diagnostic, DiagnosticCode, LintContext, LintSource, Severity, rules::RuleRegistry};
-use fast_yaml_core::Parser;
 use fast_yaml_core::limits::{InputTooLarge, MaxInputBytes, ParseLimits, StreamBudget};
+use fast_yaml_core::{OneBased, Parser};
 
 /// Configuration for the linter.
 ///
@@ -618,7 +618,10 @@ impl Linter {
             };
             let mut found = Vec::new();
             for (idx, value) in docs.iter().flatten().enumerate() {
-                let first_line = context.documents().get(idx).map_or(1, |d| d.first_line);
+                let first_line = context
+                    .documents()
+                    .get(idx)
+                    .map_or(OneBased::FIRST, |d| d.first_line);
                 let document = LintDocument { value, first_line };
                 found.extend(rule.diagnose(&context, document, &self.config));
             }
@@ -780,7 +783,8 @@ mod tests {
             _config: &LintConfig,
         ) -> Vec<crate::Finding> {
             let source_context = context.source_context();
-            let span = source_context.span_at(source_context.line_start(document.first_line), 1);
+            let span =
+                source_context.span_at(source_context.line_start(document.first_line.get()), 1);
             vec![crate::Finding::new(format!("{:?}", document.value), span)]
         }
     }

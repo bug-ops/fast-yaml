@@ -410,7 +410,7 @@ fn max_depth_bounds_the_formatter_and_defaults_to_256() {
         panic!("depth error expected, got {err:?}");
     };
     assert_eq!(kind, LimitKind::Depth(MaxDepth::DEFAULT));
-    assert_eq!(at.line, 1);
+    assert_eq!(at.line().get(), 1);
 
     let shallow = EmitterConfig::new().with_parse_limits(ParseLimits {
         max_depth: MaxDepth::new(2).unwrap(),

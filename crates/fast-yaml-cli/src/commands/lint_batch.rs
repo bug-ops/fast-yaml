@@ -645,7 +645,10 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     fn diagnostic(line: usize, severity: Severity) -> Diagnostic {
-        let span = Span::new(Location::new(line, 1, 0), Location::new(line, 2, 1));
+        let span = Span::new(
+            Location::try_new(line, 1, 0).unwrap(),
+            Location::try_new(line, 2, 1).unwrap(),
+        );
         DiagnosticBuilder::new("test-rule", severity, "message", span)
             .with_suggestion("fix", span, Some("x".to_owned()))
             .build()

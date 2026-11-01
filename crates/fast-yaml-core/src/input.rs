@@ -8,8 +8,9 @@ use crate::DocumentIndex;
 use std::borrow::Cow;
 use std::ops::Range;
 
-use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
+use crate::error::{ParseError, ParseResult, SyntaxError};
 use crate::limits::{DocumentCursor, MaxScanAhead};
+use crate::position::{OneBased, SourcePosition};
 use crate::scalar::is_c_printable;
 use crate::scan_guard::GuardedParser;
 
@@ -276,9 +277,7 @@ fn document_at(prefix: &str) -> DocumentIndex {
             Ok((event, span)) => {
                 // The parser closes the truncated prefix with a DocumentEnd at its end; the text after it is not past that document.
                 let at = SourcePosition::from_span(span);
-                if matches!(event, saphyr_parser::Event::DocumentEnd)
-                    && (at.line, at.column) >= (end.line, end.column)
-                {
+                if matches!(event, saphyr_parser::Event::DocumentEnd) && at >= end {
                     break;
                 }
                 cursor.observe(&event);
@@ -286,7 +285,7 @@ fn document_at(prefix: &str) -> DocumentIndex {
             Err(ParseError::LimitExceeded { .. }) => {
                 let markers = prefix
                     .lines()
-                    .skip(parser.last_position().line)
+                    .skip(parser.last_position().line().get())
                     .filter(|line| is_document_start(line))
                     .count();
                 return DocumentIndex::new(
@@ -307,17 +306,17 @@ fn is_document_start(line: &str) -> bool {
 /// Line and column (1-indexed, in characters) of a byte offset, counting `\n`, `\r\n` and lone
 /// `\r` as one line break each.
 fn position_at(text: &str, offset: usize) -> SourcePosition {
-    let (mut line, mut column) = (1, 1);
+    let (mut line, mut column) = (0, 0);
     let mut prev = None;
     for c in text.get(..offset).unwrap_or_default().chars() {
         match c {
-            '\n' => (line, column) = (line + usize::from(prev != Some('\r')), 1),
-            '\r' => (line, column) = (line + 1, 1),
+            '\n' => (line, column) = (line + usize::from(prev != Some('\r')), 0),
+            '\r' => (line, column) = (line + 1, 0),
             _ => column += 1,
         }
         prev = Some(c);
     }
-    SourcePosition { line, column }
+    SourcePosition::new(OneBased::from_index(line), OneBased::from_index(column))
 }
 
 /// What a line holds, as far as BOM placement cares.

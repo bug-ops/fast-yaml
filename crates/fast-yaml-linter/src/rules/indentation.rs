@@ -173,7 +173,11 @@ impl super::SourceRule for IndentationRule {
                 .map_or(0, char::len_utf8);
             let span = Span::new(
                 Location::new(problem.line, problem.column, problem.offset),
-                Location::new(problem.line, problem.column + 1, problem.offset + width),
+                Location::new(
+                    problem.line,
+                    problem.column.saturating_add(1),
+                    problem.offset + width,
+                ),
             );
             Finding::new(problem.message, span)
         }));
@@ -232,11 +236,7 @@ fn mixed_whitespace(context: &LintContext) -> Vec<Finding> {
         if !indent.contains(&other) {
             continue;
         }
-        let line_offset = ctx.get_line_offset(line_num);
-        let span = Span::new(
-            Location::new(line_num, 1, line_offset),
-            Location::new(line_num, width + 1, line_offset + width),
-        );
+        let span = ctx.span_at(ctx.line_start(line_num), width);
         diagnostics.push(Finding::new(
             "mixed tabs and spaces in indentation".to_string(),
             span,

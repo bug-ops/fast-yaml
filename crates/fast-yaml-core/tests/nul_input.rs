@@ -34,7 +34,7 @@ fn parse_rejects_nul() {
 #[test]
 fn error_points_at_the_nul() {
     let position = Parser::parse_all("a: 1\n# é\0\n").unwrap_err().position();
-    assert_eq!((position.line, position.column), (2, 4));
+    assert_eq!((position.line().get(), position.column().get()), (2, 4));
 }
 
 #[test]
@@ -82,6 +82,10 @@ fn nul_free_input_still_parses() {
 fn error_position_matches_scanner_line_breaks() {
     for input in ["a: 1\rb: 2\r c\0: d", "a: 1\r\nb: 2\n c\0: d"] {
         let position = Parser::parse_all(input).unwrap_err().position();
-        assert_eq!((position.line, position.column), (3, 3), "{input:?}");
+        assert_eq!(
+            (position.line().get(), position.column().get()),
+            (3, 3),
+            "{input:?}"
+        );
     }
 }

@@ -5,6 +5,7 @@ use crate::{
     scan::SourceScan,
     source::offset::{ByteOffset, ByteRange},
 };
+use fast_yaml_core::OneBased;
 use fast_yaml_core::events::{Event, ScalarStyle};
 
 /// Types of tokens in YAML flow syntax.
@@ -381,7 +382,7 @@ impl<'a> FlowTokenizer<'a> {
             tokenizer: self,
             token_type,
             ch: Self::token_char(token_type),
-            next_line: 1,
+            next_line: OneBased::FIRST,
             line: None,
             carry: 0,
         }
@@ -483,9 +484,10 @@ impl<'a> FlowTokenizer<'a> {
     }
 
     /// Builds a one-character token at 0-indexed `char_col` on `line`.
-    const fn single_char_token(line: usize, char_col: usize, offset: ByteOffset) -> Token {
-        let start = Location::new(line, char_col + 1, offset.get());
-        let end = Location::new(line, char_col + 2, offset.get() + 1);
+    const fn single_char_token(line: OneBased, char_col: usize, offset: ByteOffset) -> Token {
+        let column = OneBased::from_index(char_col);
+        let start = Location::new(line, column, offset.get());
+        let end = Location::new(line, column.saturating_add(1), offset.get() + 1);
         Token::new(Span::new(start, end))
     }
 
@@ -523,7 +525,7 @@ impl<'a> FlowTokenizer<'a> {
 
 /// The line [`Tokens`] is reading.
 struct LineCursor<'a> {
-    number: usize,
+    number: OneBased,
     text: &'a str,
     start: ByteOffset,
     chars: std::iter::Enumerate<std::str::CharIndices<'a>>,
@@ -535,7 +537,7 @@ pub struct Tokens<'t, 'a> {
     tokenizer: &'t FlowTokenizer<'a>,
     token_type: TokenType,
     ch: char,
-    next_line: usize,
+    next_line: OneBased,
     line: Option<LineCursor<'a>>,
     /// Flow depth the previous line ended at, when the next line continues its collection.
     carry: usize,
@@ -557,16 +559,16 @@ impl Iterator for Tokens<'_, '_> {
         loop {
             let Some(cursor) = &mut self.line else {
                 let number = self.next_line;
-                if number > self.tokenizer.context.line_count() {
+                if number.get() > self.tokenizer.context.line_count() {
                     return None;
                 }
-                self.next_line += 1;
-                let start = self.tokenizer.context.line_start(number);
+                self.next_line = number.saturating_add(1);
+                let start = self.tokenizer.context.line_start(number.get());
                 let carry = std::mem::take(&mut self.carry);
                 self.line = self
                     .tokenizer
                     .context
-                    .get_line(number)
+                    .get_line(number.get())
                     .map(|text| LineCursor {
                         number,
                         text,
@@ -580,10 +582,10 @@ impl Iterator for Tokens<'_, '_> {
             let Some((char_col, (byte_col, c))) = cursor.chars.next() else {
                 // The next line goes on in this line's flow collection at the depth this one ends
                 if heuristic
-                    && self.next_line <= self.tokenizer.context.line_count()
-                    && self
-                        .tokenizer
-                        .is_in_flow_interior(self.tokenizer.context.line_start(self.next_line))
+                    && self.next_line.get() <= self.tokenizer.context.line_count()
+                    && self.tokenizer.is_in_flow_interior(
+                        self.tokenizer.context.line_start(self.next_line.get()),
+                    )
                 {
                     self.carry = cursor
                         .scanner
@@ -888,9 +890,10 @@ mod tests {
             let mut tokens = Vec::new();
 
             // Single-pass scan of only the span range
-            for line_num in span.start.line()..=span.end.line() {
-                if let Some(line) = self.context.get_line(line_num) {
-                    let line_start = self.context.line_start(line_num);
+            for line_idx in span.start.line_number().index()..=span.end.line_number().index() {
+                let line_num = OneBased::from_index(line_idx);
+                if let Some(line) = self.context.get_line(line_num.get()) {
+                    let line_start = self.context.line_start(line_num.get());
 
                     for (char_col, (byte_col, c)) in line.char_indices().enumerate() {
                         let offset = line_start.add_bytes(byte_col);
@@ -951,7 +954,10 @@ mod tests {
         let context = SourceContext::new(yaml);
         let index = FlowIndex::new(yaml, &context);
         let tokenizer = FlowTokenizer::new(&index, &context);
-        let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
+        let span = Span::new(
+            Location::try_new(2, 1, 5).unwrap(),
+            Location::try_new(2, 10, 14).unwrap(),
+        );
         assert_eq!(tokenizer.find_in_span(span).len(), 4);
     }
 
@@ -1061,7 +1067,10 @@ mod tests {
         let tokenizer = FlowTokenizer::new(&index, &context);
 
         // Search only in line 2
-        let span = Span::new(Location::new(2, 1, 5), Location::new(2, 10, 14));
+        let span = Span::new(
+            Location::try_new(2, 1, 5).unwrap(),
+            Location::try_new(2, 10, 14).unwrap(),
+        );
         let tokens = tokenizer.find_in_span(span);
 
         // Should find `:`, `{`, `:`, `}`
@@ -1273,8 +1282,8 @@ mod tests {
         let index = FlowIndex::new(yaml, &context);
         let tokenizer = FlowTokenizer::new(&index, &context);
         let span = Span::new(
-            Location::new(1, 1, 0),
-            Location::new(1, yaml.len() + 1, yaml.len()),
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, yaml.len() + 1, yaml.len()).unwrap(),
         );
         let commas = tokenizer
             .find_in_span(span)
@@ -1357,7 +1366,10 @@ mod tests {
         let index = FlowIndex::new(yaml, &context);
         let tokenizer = FlowTokenizer::new(&index, &context);
         let start = yaml.find("second").unwrap();
-        let span = Span::new(Location::new(2, 3, start), Location::new(3, 9, yaml.len()));
+        let span = Span::new(
+            Location::try_new(2, 3, start).unwrap(),
+            Location::try_new(3, 9, yaml.len()).unwrap(),
+        );
         let tokens = tokenizer.find_in_span(span);
         assert!(tokens.iter().all(|t| t.span.start.line() == 3));
         assert_eq!(tokens.len(), 4);

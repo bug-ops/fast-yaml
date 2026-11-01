@@ -13,8 +13,9 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use saphyr_parser::input::{Input, SkipTabs};
 use saphyr_parser::{Event, Parser, Span, StrInput};
 
-use crate::error::{ParseError, ParseResult, SourcePosition};
+use crate::error::{ParseError, ParseResult};
 use crate::limits::{DocumentCursor, LimitKind, MaxScanAhead};
+use crate::position::SourcePosition;
 
 #[derive(Debug, Default)]
 struct ScanState {
@@ -322,7 +323,7 @@ impl<'a> GuardedParser<'a> {
             state,
             limit,
             cursor: DocumentCursor::default(),
-            last: SourcePosition { line: 1, column: 1 },
+            last: SourcePosition::START,
         }
     }
 
@@ -529,7 +530,7 @@ mod tests {
             panic!("scan-ahead error expected");
         };
         assert_eq!((limit.get(), document.get()), (4, 0));
-        assert!(at.line <= 3);
+        assert!(at.line().get() <= 3);
     }
 
     fn yamlish() -> impl Strategy<Value = String> {

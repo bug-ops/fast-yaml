@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{MarkerPresence, RuleOptions};
 use crate::context::source_lines;
 use crate::source::offset::ByteOffset;
-use crate::{Finding, LintConfig, LintContext, Location, Severity, Span};
+use crate::{Finding, LintConfig, LintContext, Severity};
 
 /// Linting rule for document end marker.
 ///
@@ -68,7 +68,7 @@ impl super::SourceRule for DocumentEndRule {
         match config.rules.document_end.options.present {
             MarkerPresence::Allowed => Vec::new(),
             MarkerPresence::Required => check_required(context),
-            MarkerPresence::Forbidden => check_forbidden(context.source()),
+            MarkerPresence::Forbidden => check_forbidden(context),
         }
     }
 }
@@ -117,18 +117,15 @@ fn check_required(context: &LintContext) -> Vec<Finding> {
 }
 
 /// Flags every `...` at column 0; YAML makes such a line end the document even inside scalars.
-fn check_forbidden(source: &str) -> Vec<Finding> {
-    source_lines(source)
-        .enumerate()
-        .filter(|(_, (_, line))| {
+fn check_forbidden(context: &LintContext) -> Vec<Finding> {
+    let source_context = context.source_context();
+    source_lines(context.source())
+        .filter(|(_, line)| {
             line.strip_prefix("...")
                 .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '\t']))
         })
-        .map(|(line_num, (offset, _))| {
-            let span = Span::new(
-                Location::new(line_num + 1, 1, offset),
-                Location::new(line_num + 1, 4, offset + 3),
-            );
+        .map(|(offset, _)| {
+            let span = source_context.span_at(ByteOffset::new(offset), 3);
             Finding::new("document end marker '...' is forbidden", span).with_suggestion(
                 "Remove '...'",
                 span,

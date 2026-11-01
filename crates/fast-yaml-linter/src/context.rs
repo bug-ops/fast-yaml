@@ -10,8 +10,8 @@ use crate::{
     source::offset::{ByteOffset, ByteRange},
     tokenizer::{FlowIndex, FlowTokenizer},
 };
-use fast_yaml_core::SourcePosition;
 use fast_yaml_core::limits::ParseLimits;
+use fast_yaml_core::{OneBased, SourcePosition};
 #[cfg(test)]
 use saphyr_parser::{Marker, Span as SaphyrSpan};
 use std::ops::RangeInclusive;
@@ -279,8 +279,8 @@ impl<'a> SourceContext<'a> {
     /// let ctx = SourceContext::new(source);
     ///
     /// let span = Span::new(
-    ///     Location::new(2, 1, 7),
-    ///     Location::new(2, 6, 12)
+    ///     Location::try_new(2, 1, 7).unwrap(),
+    ///     Location::try_new(2, 6, 12).unwrap()
     /// );
     ///
     /// let diagnostic_ctx = ctx.extract_context(span, 1);
@@ -352,8 +352,8 @@ impl<'a> SourceContext<'a> {
     /// let ctx = SourceContext::new(source);
     ///
     /// let span = Span::new(
-    ///     Location::new(1, 1, 0),
-    ///     Location::new(1, 4, 3)
+    ///     Location::try_new(1, 1, 0).unwrap(),
+    ///     Location::try_new(1, 4, 3).unwrap()
     /// );
     ///
     /// assert_eq!(ctx.get_snippet(span), "key");
@@ -398,7 +398,6 @@ impl<'a> SourceContext<'a> {
             Err(idx) => idx.saturating_sub(1),
         };
 
-        let line = line_idx + 1;
         let line_start = self.line_starts.get(line_idx).copied().unwrap_or_default();
 
         let prefix_len = offset.saturating_sub(line_start);
@@ -408,9 +407,13 @@ impl<'a> SourceContext<'a> {
             .map_or(0, |end| end - line_start);
         let column = self.char_starts(line_idx).map_or(prefix_len, |table| {
             table.chars_before(prefix_len) + prefix_len.saturating_sub(line_len)
-        }) + 1;
+        });
 
-        Location::new(line, column, offset)
+        Location::new(
+            OneBased::from_index(line_idx),
+            OneBased::from_index(column),
+            offset,
+        )
     }
 
     /// Returns the total number of lines.
@@ -463,11 +466,15 @@ impl<'a> SourceContext<'a> {
         ByteOffset::new(self.get_line_offset(line_num))
     }
 
-    /// Converts a 1-indexed `line` and a 0-indexed char `column` to a byte offset.
+    /// Converts the line and char column of `position` to a byte offset.
     ///
     /// A column past the end maps to the end of its line, or of the source when the line does
     /// not exist.
-    pub(crate) fn byte_offset_at(&self, line: usize, column: usize) -> ByteOffset {
+    pub(crate) fn byte_offset_of_position(&self, position: SourcePosition) -> ByteOffset {
+        self.byte_offset_at(position.line().get(), position.column().index())
+    }
+
+    fn byte_offset_at(&self, line: usize, column: usize) -> ByteOffset {
         let Some(text) = self.get_line(line) else {
             return ByteOffset::new(self.source.len());
         };
@@ -490,10 +497,8 @@ impl<'a> SourceContext<'a> {
 
     /// Converts a saphyr marker to a [`Location`] with a 1-indexed char column.
     #[cfg(test)]
-    #[expect(clippy::disallowed_methods)]
     pub(crate) fn location_of(&self, marker: Marker) -> Location {
-        let offset = self.byte_offset_of(marker);
-        Location::new(marker.line(), marker.col() + 1, offset.get())
+        self.location_at(self.byte_offset_of(marker))
     }
 
     /// Converts a saphyr span to a [`Span`].
@@ -505,8 +510,8 @@ impl<'a> SourceContext<'a> {
     /// Converts the positions of a parser event to a byte range.
     pub(crate) fn byte_range_between(&self, from: SourcePosition, to: SourcePosition) -> ByteRange {
         ByteRange::new(
-            self.byte_offset_at(from.line, from.column.saturating_sub(1)),
-            self.byte_offset_at(to.line, to.column.saturating_sub(1)),
+            self.byte_offset_of_position(from),
+            self.byte_offset_of_position(to),
         )
     }
 
@@ -737,10 +742,16 @@ mod tests {
         let source = "key: value";
         let ctx = SourceContext::new(source);
 
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 4, 3).unwrap(),
+        );
         assert_eq!(ctx.get_snippet(span), "key");
 
-        let span = Span::new(Location::new(1, 6, 5), Location::new(1, 11, 10));
+        let span = Span::new(
+            Location::try_new(1, 6, 5).unwrap(),
+            Location::try_new(1, 11, 10).unwrap(),
+        );
         assert_eq!(ctx.get_snippet(span), "value");
     }
 
@@ -749,7 +760,10 @@ mod tests {
         let source = "line 1\nline 2\nline 3";
         let ctx = SourceContext::new(source);
 
-        let span = Span::new(Location::new(2, 1, 7), Location::new(2, 6, 12));
+        let span = Span::new(
+            Location::try_new(2, 1, 7).unwrap(),
+            Location::try_new(2, 6, 12).unwrap(),
+        );
         let diagnostic_ctx = ctx.extract_context(span, 1);
 
         assert_eq!(diagnostic_ctx.lines.len(), 3);
@@ -763,7 +777,10 @@ mod tests {
     #[test]
     fn test_extract_context_short_line_unchanged() {
         let ctx = SourceContext::new("key: value");
-        let span = Span::new(Location::new(1, 6, 5), Location::new(1, 11, 10));
+        let span = Span::new(
+            Location::try_new(1, 6, 5).unwrap(),
+            Location::try_new(1, 11, 10).unwrap(),
+        );
         let line = &ctx.extract_context(span, 0).lines[0];
 
         assert_eq!(line.content, "key: value");
@@ -776,7 +793,10 @@ mod tests {
     fn test_extract_context_long_line_is_windowed() {
         let source = "a".repeat(1000);
         let ctx = SourceContext::new(&source);
-        let span = Span::new(Location::new(1, 501, 500), Location::new(1, 511, 510));
+        let span = Span::new(
+            Location::try_new(1, 501, 500).unwrap(),
+            Location::try_new(1, 511, 510).unwrap(),
+        );
         let line = &ctx.extract_context(span, 0).lines[0];
 
         assert_eq!(line.content.chars().count(), MAX_CONTEXT_COLUMNS);
@@ -789,7 +809,10 @@ mod tests {
     fn test_extract_context_whole_line_highlight_is_clipped() {
         let source = format!("{}\nend", "a".repeat(1000));
         let ctx = SourceContext::new(&source);
-        let span = Span::new(Location::new(1, 1, 0), Location::new(2, 4, 1004));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(2, 4, 1004).unwrap(),
+        );
         let line = &ctx.extract_context(span, 0).lines[0];
 
         assert_eq!(line.column_offset, 0);
@@ -798,8 +821,8 @@ mod tests {
 
     fn ascii_span(start_col: usize, end_col: usize) -> Span {
         Span::new(
-            Location::new(1, start_col, start_col - 1),
-            Location::new(1, end_col, end_col - 1),
+            Location::try_new(1, start_col, start_col - 1).unwrap(),
+            Location::try_new(1, end_col, end_col - 1).unwrap(),
         )
     }
 
@@ -857,8 +880,8 @@ mod tests {
             "c".repeat(500)
         );
         let span = Span::new(
-            Location::new(1, 300, 299),
-            Location::new(3, 400, 1002 + 399),
+            Location::try_new(1, 300, 299).unwrap(),
+            Location::try_new(3, 400, 1002 + 399).unwrap(),
         );
         let lines = SourceContext::new(&source).extract_context(span, 0).lines;
 
@@ -899,14 +922,20 @@ mod tests {
         let source = format!("{}\u{1F600}{}", "я".repeat(300), "ж".repeat(300));
         let ctx = SourceContext::new(&source);
         let byte = source.find('\u{1F600}').unwrap();
-        let span = Span::new(Location::new(1, 301, byte), Location::new(1, 302, byte + 4));
+        let span = Span::new(
+            Location::try_new(1, 301, byte).unwrap(),
+            Location::try_new(1, 302, byte + 4).unwrap(),
+        );
         let line = &ctx.extract_context(span, 0).lines[0];
 
         assert!(line.content.contains('\u{1F600}'));
         assert_eq!(line.content.chars().count(), MAX_CONTEXT_COLUMNS);
         assert_eq!(line.highlights, vec![(301, 302)]);
 
-        let inconsistent = Span::new(Location::new(1, 301, byte + 1), Location::new(1, 302, byte));
+        let inconsistent = Span::new(
+            Location::try_new(1, 301, byte + 1).unwrap(),
+            Location::try_new(1, 302, byte).unwrap(),
+        );
         let _ = ctx.extract_context(inconsistent, 0);
     }
 
@@ -915,7 +944,10 @@ mod tests {
         let source = "line 1\nline 2\nline 3\nline 4";
         let ctx = SourceContext::new(source);
 
-        let span = Span::new(Location::new(2, 3, 9), Location::new(3, 4, 17));
+        let span = Span::new(
+            Location::try_new(2, 3, 9).unwrap(),
+            Location::try_new(3, 4, 17).unwrap(),
+        );
         let diagnostic_ctx = ctx.extract_context(span, 0);
 
         assert_eq!(diagnostic_ctx.lines.len(), 2);
@@ -928,7 +960,10 @@ mod tests {
         let source = "line 1\nline 2\nline 3";
         let ctx = SourceContext::new(source);
 
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 6, 5));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 6, 5).unwrap(),
+        );
         let diagnostic_ctx = ctx.extract_context(span, 5);
 
         assert!(diagnostic_ctx.lines[0].line_number >= 1);

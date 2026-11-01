@@ -198,7 +198,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | FR-040 | THE SYSTEM SHALL provide `Parser::{parse_str, parse_str_with_limits, parse_all, parse_all_with_limits, parse_all_with_budget, parse_all_with_options, parse_normalized, parse_normalized_observed, validate_normalized_observed}` and `decode_input[_owned]`; no entry point takes raw bytes. | must |
 | FR-041 | THE SYSTEM SHALL expose a public event stream (`events::EventStream`) so linter and chunked parsing consume the same events as the loader. | must |
 | FR-042 | THE SYSTEM SHALL expose `merge_into<T: MergeTarget>` so bindings with their own mapping type get identical merge order. | should |
-| FR-043 | `ParseError` SHALL be `#[non_exhaustive]` with variants `Syntax`, `LimitExceeded`, `Merge`, `SetValue`, `Key`, each carrying `at: SourcePosition` (1-based line and column; `Syntax` holds it in `SyntaxError`) and `document: DocumentIndex` (0-based, a type distinct from the 1-based position), and SHALL expose `position()`, `reason()`, `document_index() -> DocumentIndex` (#621). | must |
+| FR-043 | `ParseError` SHALL be `#[non_exhaustive]` with variants `Syntax`, `LimitExceeded`, `Merge`, `SetValue`, `Key`, each carrying `at: SourcePosition` (private `OneBased` line and column read with `line()` and `column()`; `Syntax` holds it in `SyntaxError`) and `document: DocumentIndex` (0-based, a type distinct from the 1-based position), SHALL expose `position()`, `reason()`, `document_index() -> DocumentIndex`, and `relocated(LineCount, DocumentCount)` SHALL shift a fragment error into whole-input coordinates (#621, #638). | must |
 | FR-044 | `fy parse` SHALL honor `--max-depth`, `--max-alias-bytes`, `--max-documents`, `--max-input-bytes`, `--max-scan-ahead`, `--stats`, `-q`, `-v`, `--no-color` and read stdin when FILE is omitted. | must |
 | FR-045 | WHEN a stream holds more documents than `ParseLimits::max_documents` (default 100 000) THE SYSTEM SHALL fail every entry point that loads documents (`parse_all*`, `parse_str*`, events, formatter, parallel chunks sharing a `StreamBudget`) with `ParseError::LimitExceeded{Documents}` at the start of the first rejected document, including empty and comment-only documents ([[009-limits-security/spec]] FR-017). | must |
 | FR-046 | WHEN a float is used as a mapping key THE SYSTEM SHALL spell it for key collision and `StringKeys` conversion like ECMAScript `Number` toString (`1e21` is `1e+21`, `100.0` is `100`, `.inf` is `Infinity`, `-.inf` is `-Infinity`, `.nan` is `NaN`, `-0.0` is `0`). | must |
@@ -215,7 +215,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | `ResolvedScalar`, `ScalarStyle` | Borrowed scalar classification; styles `Plain/SingleQuoted/DoubleQuoted/Literal/Folded`. |
 | `LoadOptions` | `KeyDomain` x `DuplicateMergeKeys` x `SetValues`; all `#[non_exhaustive]`, defaults `Yaml/Reject/Reject`. |
 | `NormalizedInput` | Validated, BOM-stripped text with original-offset mapping. |
-| `ParseError`, `SyntaxError`, `SourcePosition`, `DocumentIndex` | Positioned, document-indexed errors; `SourcePosition` counts from 1 and `DocumentIndex` from 0, so the two cannot be swapped. |
+| `ParseError`, `SyntaxError`, `SourcePosition`, `OneBased`, `DocumentIndex`, `LineCount`, `DocumentCount` | Positioned, document-indexed errors; `SourcePosition` holds `OneBased` (never 0) line and column and `DocumentIndex` counts from 0, so the two cannot be swapped; `LineCount` and `DocumentCount` are the shifts `relocated` applies. |
 | `ParseLimits`, `StreamBudget` | See [[009-limits-security/spec|Limits and security]]. |
 
 ## 5. Edge cases
@@ -275,7 +275,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | 12 | Stale docs | Core README (`0.3`, `parse_all_str`), SKILL.md `fy parse -f json` example (-015, -016) | Fix docs; there is no `fy validate` command |
 | 13 | Performance claims | README speed claims have no reproducible benchmark in the repo (X-15) | [NEEDS CLARIFICATION: which claims are contractual?] **Proposed:** latest minor only; add a reproducible benchmark before keeping speed claims. |
 
-| 14 | Raw one-based positions | `SourcePosition` fields, `ParseError::relocated` and the linter's `LintDocument` still hold raw `usize` line and column; only `DocumentIndex` and the linter `Location` are typed (#638) | Introduce a one-based newtype in core and use it at every call site |
+| 14 | ~~Raw one-based positions~~ | Resolved by #638: `OneBased` lives in core and `SourcePosition`, `relocated` and the linter `Location` use it | none |
 
 Resolved and removed: item 3 (`MaxDocuments` is a `ParseLimits` field enforced in core, #574).
 

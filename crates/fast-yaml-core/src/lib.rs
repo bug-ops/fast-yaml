@@ -61,6 +61,8 @@ mod merge_check;
 pub mod options;
 /// YAML parser for deserializing strings to documents.
 pub mod parser;
+/// Typed 1-based source coordinates and document counters.
+pub mod position;
 /// YAML 1.2 core-schema scalar resolution shared by the core loader and bindings.
 pub mod scalar;
 mod scan_guard;
@@ -78,9 +80,7 @@ pub use emitter::{Emitter, EmitterConfig};
 pub use encoding::{
     DecodeError, EncodingEvidence, UnsupportedEncoding, decode_input, decode_input_owned,
 };
-pub use error::{
-    DocumentIndex, EmitError, EmitResult, ParseError, ParseResult, SourcePosition, SyntaxError,
-};
+pub use error::{EmitError, EmitResult, ParseError, ParseResult, SyntaxError};
 pub use events::ScalarStyle;
 pub use input::NormalizedInput;
 pub use keys::{KeyError, KeyKind};
@@ -92,5 +92,6 @@ pub use limits::{
 pub use merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 pub use options::{DuplicateMergeKeys, KeyDomain, LoadOptions, SetValues};
 pub use parser::{Parser, strip_bom};
+pub use position::{DocumentCount, DocumentIndex, LineCount, OneBased, SourcePosition};
 pub use scalar::{BigIntRef, IntRadix, ResolvedScalar, resolve_scalar};
 pub use value::{BigInt, Float, Mapping, Set, Value};

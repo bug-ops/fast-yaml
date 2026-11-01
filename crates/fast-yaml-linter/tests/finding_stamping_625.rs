@@ -56,7 +56,7 @@ impl DocumentRule for FlagsDocuments {
         document: LintDocument<'_>,
         _config: &LintConfig,
     ) -> Vec<Finding> {
-        let span = line_span(context, document.first_line);
+        let span = line_span(context, document.first_line.get());
         vec![Finding::new("document", span).without_excerpt()]
     }
 }
@@ -64,8 +64,8 @@ impl DocumentRule for FlagsDocuments {
 fn line_span(context: &LintContext, line: usize) -> Span {
     let offset = context.source_context().get_line_offset(line);
     Span::new(
-        Location::new(line, 1, offset),
-        Location::new(line, 2, offset + 1),
+        Location::try_new(line, 1, offset).unwrap(),
+        Location::try_new(line, 2, offset + 1).unwrap(),
     )
 }
 

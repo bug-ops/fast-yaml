@@ -223,8 +223,8 @@ mod tests {
     fn test_format_long_line_is_windowed_and_aligned() {
         let source = "a".repeat(70_000);
         let span = Span::new(
-            Location::new(1, 65_600, 65_599),
-            Location::new(1, 65_610, 65_609),
+            Location::try_new(1, 65_600, 65_599).unwrap(),
+            Location::try_new(1, 65_610, 65_609).unwrap(),
         );
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "long", span)
@@ -244,8 +244,8 @@ mod tests {
     fn test_format_long_non_ascii_line_is_bounded() {
         let source = "\u{44f}".repeat(70_000);
         let span = Span::new(
-            Location::new(1, 65_600, 65_599 * 2),
-            Location::new(1, 65_610, 65_609 * 2),
+            Location::try_new(1, 65_600, 65_599 * 2).unwrap(),
+            Location::try_new(1, 65_610, 65_609 * 2).unwrap(),
         );
         let diagnostics: Vec<_> = (0..3)
             .map(|_| {
@@ -259,8 +259,8 @@ mod tests {
 
     fn render(source: &str, bytes_per_char: usize, start_col: usize, end_col: usize) -> String {
         let span = Span::new(
-            Location::new(1, start_col, (start_col - 1) * bytes_per_char),
-            Location::new(1, end_col, (end_col - 1) * bytes_per_char),
+            Location::try_new(1, start_col, (start_col - 1) * bytes_per_char).unwrap(),
+            Location::try_new(1, end_col, (end_col - 1) * bytes_per_char).unwrap(),
         );
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span).build();
@@ -337,7 +337,10 @@ mod tests {
     #[test]
     fn test_formatter_single_diagnostic() {
         let source = "key: value";
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 4, 3).unwrap(),
+        );
 
         let diagnostic = DiagnosticBuilder::new(
             DiagnosticCode::LINE_LENGTH,
@@ -356,7 +359,10 @@ mod tests {
     #[test]
     fn test_formatter_counts() {
         let source = "key: value";
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 4, 3).unwrap(),
+        );
 
         let error = DiagnosticBuilder::new(
             DiagnosticCode::DUPLICATE_KEY,
@@ -421,7 +427,10 @@ mod streaming_tests {
 
     #[test]
     fn zero_width_span_gets_a_single_caret_at_its_column() {
-        let span = Span::new(Location::new(1, 3, 2), Location::new(1, 3, 2));
+        let span = Span::new(
+            Location::try_new(1, 3, 2).unwrap(),
+            Location::try_new(1, 3, 2).unwrap(),
+        );
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::EMPTY_VALUES, Severity::Warning, "m", span)
                 .build();
@@ -441,7 +450,10 @@ mod streaming_tests {
 
     #[test]
     fn omitted_excerpt_prints_no_source_lines() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 2, 1).unwrap(),
+        );
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::SYNTAX, Severity::Error, "bad", span)
                 .build_without_excerpt();

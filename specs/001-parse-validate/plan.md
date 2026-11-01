@@ -69,7 +69,8 @@ crates/fast-yaml-core/src/
 ├── merge_check.rs  MergeKeyValidator
 ├── events.rs       EventStream and public event types
 ├── options.rs      LoadOptions and policy enums
-└── error.rs        ParseError, SyntaxError, SourcePosition
+├── position.rs     OneBased, SourcePosition, DocumentIndex, LineCount, DocumentCount
+└── error.rs        ParseError, SyntaxError
 crates/fast-yaml-cli/src/commands/parse.rs   `fy parse`
 ```
 
@@ -90,7 +91,7 @@ pub enum ParseError {
 pub struct LoadOptions { pub keys: KeyDomain, pub duplicate_merge_keys: DuplicateMergeKeys, pub set_values: SetValues }
 ```
 
-Invariants: `NormalizedInput` holds only c-printable characters and no prefix BOM; anchors reset per document; aliases are deep clones (so alias-cost accounting bounds real memory); every `ParseError` variant carries a `SourcePosition` (1-based line and column, raw `usize` fields until #638) and a 0-based `DocumentIndex`.
+Invariants: `NormalizedInput` holds only c-printable characters and no prefix BOM; anchors reset per document; aliases are deep clones (so alias-cost accounting bounds real memory); every `ParseError` variant carries a `SourcePosition` (`OneBased` line and column) and a 0-based `DocumentIndex`.
 
 ## 4. API design
 

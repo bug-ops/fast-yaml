@@ -113,7 +113,7 @@ mod tests {
             index: 1,
             source: CoreParseError::LimitExceeded {
                 kind: LimitKind::Depth(MaxDepth::DEFAULT),
-                at: fast_yaml_core::SourcePosition::new(1, 1),
+                at: fast_yaml_core::SourcePosition::START,
                 document: fast_yaml_core::DocumentIndex::new(1),
             },
         };

@@ -5,7 +5,8 @@
 //! and stack usage are still bounded.
 
 use crate::DocumentIndex;
-use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
+use crate::error::{ParseError, ParseResult, SyntaxError};
+use crate::position::SourcePosition;
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
 use std::fmt;

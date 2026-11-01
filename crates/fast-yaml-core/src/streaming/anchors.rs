@@ -7,8 +7,8 @@
 
 use saphyr_parser::{Event, Span};
 
-use crate::error::SourcePosition;
 use crate::marker::ByteCursor;
+use crate::position::SourcePosition;
 
 /// Whether `c` ends an anchor name in saphyr's scanner (blank, flow indicator, NUL or BOM).
 const fn is_anchor_terminator(c: char) -> bool {
@@ -78,7 +78,7 @@ impl<'a> AnchorNames<'a> {
         Self {
             source,
             cursor: ByteCursor::new(source),
-            prev_end: SourcePosition { line: 1, column: 1 },
+            prev_end: SourcePosition::START,
         }
     }
 
@@ -109,6 +109,7 @@ impl<'a> AnchorNames<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::OneBased;
 
     #[test]
     fn first_anchor_skips_comments_tags_and_directives() {
@@ -124,7 +125,7 @@ mod tests {
     }
 
     const fn at(line: usize, column: usize) -> SourcePosition {
-        SourcePosition { line, column }
+        SourcePosition::new(OneBased::new(line).unwrap(), OneBased::new(column).unwrap())
     }
 
     #[test]

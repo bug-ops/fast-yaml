@@ -4,7 +4,7 @@ use std::fmt;
 
 use crate::config::{CustomRuleCode, RuleName};
 use crate::{Diagnostic, DiagnosticCode, Finding, LintConfig, LintContext, Severity};
-use fast_yaml_core::Value;
+use fast_yaml_core::{OneBased, Value};
 
 mod braces;
 mod brackets;
@@ -267,18 +267,19 @@ pub trait SourceRule: LintRule {
 ///
 /// ```
 /// use fast_yaml_core::Value;
+/// use fast_yaml_linter::OneBased;
 /// use fast_yaml_linter::rules::LintDocument;
 ///
 /// let value = Value::Null;
-/// let document = LintDocument { value: &value, first_line: 1 };
-/// assert_eq!(document.first_line, 1);
+/// let document = LintDocument { value: &value, first_line: OneBased::FIRST };
+/// assert_eq!(document.first_line.get(), 1);
 /// ```
 #[derive(Debug, Clone, Copy)]
 pub struct LintDocument<'a> {
     /// The loaded value of the document.
     pub value: &'a Value,
-    /// 1-based line where the document's content begins, after its `---` marker.
-    pub first_line: usize,
+    /// Line where the document's content begins, after its `---` marker.
+    pub first_line: OneBased,
 }
 
 /// A rule that walks the value tree of each document.
@@ -322,9 +323,12 @@ pub struct LintDocument<'a> {
 ///         if *document.value != Value::Null {
 ///             return Vec::new();
 ///         }
-///         let line = document.first_line;
-///         let offset = context.source_context().get_line_offset(line);
-///         let span = Span::new(Location::new(line, 1, offset), Location::new(line, 2, offset + 1));
+///         let source = context.source_context();
+///         let offset = source.get_line_offset(document.first_line.get());
+///         let span = Span::new(
+///             source.offset_to_location(offset),
+///             source.offset_to_location(offset + 1),
+///         );
 ///         vec![Finding::new("null document", span)]
 ///     }
 /// }

@@ -9,10 +9,11 @@ use std::collections::HashMap;
 
 use saphyr_parser::{Event, Span};
 
-use crate::error::{ParseError, SourcePosition};
+use crate::error::ParseError;
 use crate::events::ScalarStyle;
 use crate::merge::{MergeError, MergeKeyTracker, NodeRole, is_core_set_tag};
 use crate::options::{DuplicateMergeKeys, LoadOptions, SetValues};
+use crate::position::SourcePosition;
 use crate::scalar::{ResolvedScalar, resolve_scalar_raw};
 
 /// What a finished node is, as far as merge validation cares.
@@ -319,7 +320,7 @@ mod tests {
                 error,
                 at,
                 document,
-            }) => Some((error, at.line, at.column, document.get())),
+            }) => Some((error, at.line().get(), at.column().get(), document.get())),
             _ => None,
         }
     }
@@ -543,9 +544,9 @@ mod tests {
                     validate(&bad),
                     Err(ParseError::Merge {
                         error: MergeError::NotMapping,
-                        at: SourcePosition { line: 2, .. },
+                        at,
                         ..
-                    })
+                    }) if at.line().get() == 2
                 ),
                 "{key}"
             );
