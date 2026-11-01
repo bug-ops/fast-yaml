@@ -113,10 +113,10 @@ RUSTFLAGS="-D warnings" RUSTDOCFLAGS="--deny rustdoc::broken_intra_doc_links" ca
 
 [mise](https://mise.jdx.dev) pins the non-Rust dev tools and exposes the CI checks as named tasks. CI installs its tools with mise and runs the format, lint, test, coverage, audit and build jobs through `mise run <task>`, so a task reproduces the matching CI job locally. The MSRV check, the release build check and the SARIF tool install stay outside mise. mise is optional for contributors: plain `cargo`, `pnpm` and `uv` commands keep working, and the commands above remain the reference.
 
-Pinned in `mise.toml` and `mise.lock`: Node.js, pnpm, Python, uv, cargo-nextest, cargo-deny, cargo-hack, cargo-llvm-cov and cargo-semver-checks. Rust stays on rustup (see [What stays outside mise](#what-stays-outside-mise)).
+Pinned in `.config/mise/config.toml` and `.config/mise/mise.lock`: Node.js, pnpm, Python, uv, cargo-nextest, cargo-deny, cargo-hack, cargo-llvm-cov and cargo-semver-checks. Rust stays on rustup (see [What stays outside mise](#what-stays-outside-mise)).
 
 ```bash
-mise install --locked     # install exactly the versions and checksums in mise.lock
+mise install --locked     # install exactly the versions and checksums in .config/mise/mise.lock
 mise tasks                # list tasks
 mise run ci               # local pre-PR gate
 mise run lint:clippy      # a single task
@@ -151,9 +151,9 @@ CI tests other Python and Node.js versions through mise environments. `MISE_ENV`
 
 | `MISE_ENV` | Config | Lockfile | Overrides |
 |------------|--------|----------|-----------|
-| `py310` | `mise.py310.toml` | `mise.py310.lock` | Python 3.10 |
-| `py314` | `mise.py314.toml` | `mise.py314.lock` | Python 3.14 |
-| `node22` | `mise.node22.toml` | `mise.node22.lock` | Node.js 22 |
+| `py310` | `.config/mise/config.py310.toml` | `.config/mise/mise.py310.lock` | Python 3.10 |
+| `py314` | `.config/mise/config.py314.toml` | `.config/mise/mise.py314.lock` | Python 3.14 |
+| `node22` | `.config/mise/config.node22.toml` | `.config/mise/mise.node22.lock` | Node.js 22 |
 
 Run a leg locally:
 
@@ -162,11 +162,11 @@ MISE_ENV=py310 mise install --locked
 MISE_ENV=py310 mise run test:python
 ```
 
-Environment names must not contain dots (`py3.10` would write into `mise.lock`). Node.js 24 and Python 3.12 are the defaults in `mise.toml`.
+Environment names must not contain dots (`py3.10` would write into `.config/mise/mise.lock`). Node.js 24 and Python 3.12 are the defaults in `.config/mise/config.toml`. All mise files live in `.config/mise/`; tasks still run from the repository root.
 
 ##### Adding or updating a tool
 
-1. Edit `[tools]` in `mise.toml` (or the `mise.<env>.toml` file for a version leg). Prefer the `aqua:` backend; use `github:` when aqua has no entry. Avoid the `cargo:` backend: it builds from source and does not lock transitive tools.
+1. Edit `[tools]` in `.config/mise/config.toml` (or the `.config/mise/config.<env>.toml` file for a version leg). Prefer the `aqua:` backend; use `github:` when aqua has no entry. Avoid the `cargo:` backend: it builds from source and does not lock transitive tools.
 2. Regenerate every lockfile for the platforms CI uses:
 
    ```bash
@@ -179,17 +179,17 @@ Environment names must not contain dots (`py3.10` would write into `mise.lock`).
 4. If CI needs the tool in a job, add it to that job's `install_args` in `.github/workflows/ci.yml`. Jobs set `MISE_TASK_RUN_AUTO_INSTALL=false`, so a tool missing from `install_args` fails the job instead of being installed silently.
 5. `jdx/mise-action` steps pin `version: 2026.10.25` (the mise release the lockfiles were generated with). Dependabot does not bump it: when regenerating lockfiles with a newer mise, change all 13 occurrences in `.github/workflows/ci.yml` together and keep them equal to that mise version.
 
-To see what is stale, run `mise outdated`. A tool bump changes `mise.lock` (and the `mise.<env>.lock` files if a leg is affected); `mise.toml`, `mise.*.toml` and `mise.*.lock` are in the CI path filter, so such a PR runs the full pipeline.
+To see what is stale, run `mise outdated`. A tool bump changes `.config/mise/mise.lock` (and the `.config/mise/mise.<env>.lock` files if a leg is affected); `.config/mise/**` is in the CI path filter, so such a PR runs the full pipeline.
 
 ##### Adding a task
 
-Add a `[tasks."name"]` table to `mise.toml` with a `description` and `run`. Tasks that CI runs must produce the same result as the command they replace. New CI jobs call `mise run <task>` instead of a `setup-*` action followed by raw commands.
+Add a `[tasks."name"]` table to `.config/mise/config.toml` with a `description` and `run`. Tasks that CI runs must produce the same result as the command they replace. New CI jobs call `mise run <task>` instead of a `setup-*` action followed by raw commands.
 
 ##### Security notes
 
-- `mise.lock` pins each tool version with a per-platform sha256 checksum (and GitHub attestation provenance where the release provides it). Always install with `--locked` so a drifting upstream cannot change what you run.
+- `.config/mise/mise.lock` pins each tool version with a per-platform sha256 checksum (and GitHub attestation provenance where the release provides it). Always install with `--locked` so a drifting upstream cannot change what you run.
 - CI runs the install step with `MISE_SAFE=1` (safe mode). Safe mode disables `mise run`, so it is set on the install step only, never at job level. Whether safe mode is honored by the setup action in real CI is unverified until the first run.
-- mise executes tasks and `[env]` values from `mise.toml`. Treat `mise.toml` like a build script: review changes to it, and trust a checkout (`mise trust`) only after you have read the file. Never put secrets in `[env]`; the file is committed. Per-task `env` holds only build flags.
+- mise executes tasks and `[env]` values from `.config/mise/config.toml`. Treat that file like a build script: review changes to it, and trust a checkout (`mise trust`) only after you have read the file. Never put secrets in `[env]`; the file is committed. Per-task `env` holds only build flags.
 - The setup action runs with `cache: false`, so a poisoned cache cannot supply binaries; only the checksum-verified downloads are used.
 - Third-party actions stay pinned to a full commit SHA.
 
@@ -204,7 +204,7 @@ Add a `[tasks."name"]` table to `mise.toml` with a `description` and `run`. Task
 - `nodejs/pnpm-lock.yaml` shows as modified after a task: the Node.js tasks run `pnpm install --no-frozen-lockfile`, as CI does, and the lockfile drifts. Revert it with `git checkout nodejs/pnpm-lock.yaml` unless you changed dependencies.
 - A task hangs on "Blocking waiting for file lock": another cargo process holds the build directory. Do not run cargo-based tasks in parallel; `mise run ci` is sequential for this reason.
 - `mise install --locked` fails with a missing lock entry: regenerate the lockfile for all platforms as above.
-- mise refuses to run in a checkout: run `mise trust` after reviewing `mise.toml`.
+- mise refuses to run in a checkout: run `mise trust` after reviewing `.config/mise/config.toml`.
 - `mise run test:python` skips most of the yaml-test-suite: set `YAML_TEST_SUITE_PATH`.
 
 Behavior changes also update the matching spec in `specs/` (start at `specs/constitution.md`; one `NNN-feature/spec.md` per capability) and the `[Unreleased]` section of `CHANGELOG.md`.

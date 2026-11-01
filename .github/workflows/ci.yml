@@ -60,10 +60,7 @@ jobs:
               - 'crates/fast-yaml-core/**'
             ci:
               - '.github/workflows/**'
-              - 'mise.toml'
-              - 'mise.*.toml'
-              - 'mise.lock'
-              - 'mise.*.lock'
+              - '.config/mise/**'
 
   # Rust format and clippy in one job: a 10s nightly install is cheaper than a separate runner, and this job gates the tests either way
   # mise-action steps: MISE_SAFE applies to the install step only, because safe mode disables `mise run`
@@ -460,7 +457,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
-      # Selects mise.<env>.toml and its own lockfile, so the tested Python stays lock-pinned
+      # Selects .config/mise/config.<env>.toml and its own lockfile, so the tested Python stays lock-pinned
       MISE_ENV: ${{ matrix.mise-env }}
     strategy:
       fail-fast: false
@@ -566,7 +563,7 @@ jobs:
         with:
           toolchain: stable
 
-      # node22 selects mise.node22.toml and its own lockfile; default legs leave MISE_ENV unset
+      # node22 selects .config/mise/config.node22.toml and its own lockfile; default legs leave MISE_ENV unset
       - name: Select mise environment
         if: ${{ matrix.mise-env }}
         shell: bash
