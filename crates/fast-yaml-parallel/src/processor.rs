@@ -8,7 +8,9 @@ use crate::error::{Error, Result};
 use crate::pool;
 use crate::workers::Workers;
 use fast_yaml_core::limits::StreamBudget;
-use fast_yaml_core::{LoadOptions, NormalizedInput, ParseError, ParseResult, Parser, Value};
+use fast_yaml_core::{
+    DocumentCount, LineCount, LoadOptions, NormalizedInput, ParseError, ParseResult, Parser, Value,
+};
 use rayon::prelude::*;
 
 /// Process YAML input in parallel.
@@ -101,13 +103,13 @@ fn parse_chunk(
     options: LoadOptions,
 ) -> ParseResult<Vec<Value>> {
     Parser::parse_normalized(&chunk.input, budget, options)
-        .map_err(|source| source.relocated(chunk.origin.line, 0))
+        .map_err(|source| source.relocated(LineCount::new(chunk.origin.line), DocumentCount::ZERO))
 }
 
 /// Attributes a chunk error to its document, given the documents parsed before the chunk.
 fn collect_chunk(parsed: ParseResult<Vec<Value>>, preceding: usize) -> Result<Vec<Value>> {
     parsed.map_err(|source: ParseError| {
-        let source = source.relocated(0, preceding);
+        let source = source.relocated(LineCount::ZERO, DocumentCount::new(preceding));
         Error::Parse {
             index: source.document_index().get(),
             source,

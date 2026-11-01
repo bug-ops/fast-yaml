@@ -3,12 +3,12 @@
 
 use fast_yaml_core::limits::{MaxDepth, ParseLimits};
 use fast_yaml_core::{
-    DocumentIndex, KeyDomain, LimitKind, LoadOptions, MergeError, ParseError, Parser,
-    SourcePosition,
+    DocumentCount, DocumentIndex, KeyDomain, LimitKind, LineCount, LoadOptions, MergeError,
+    OneBased, ParseError, Parser, SourcePosition,
 };
 
 const fn at(line: usize, column: usize) -> SourcePosition {
-    SourcePosition::new(line, column)
+    SourcePosition::new(OneBased::new(line).unwrap(), OneBased::new(column).unwrap())
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn limit_errors_carry_the_event_position_and_the_document() {
         panic!("limit error expected");
     };
     assert!(matches!(kind, LimitKind::Depth(_)));
-    assert_eq!(position.line, 5);
+    assert_eq!(position.line().get(), 5);
     assert_eq!(document, DocumentIndex::new(1));
 }
 
@@ -88,7 +88,7 @@ fn syntax_errors_carry_the_position_and_the_document() {
     let err = Parser::parse_all("a: 1\n---\nb: 2\n---\nc: [\n").unwrap_err();
     assert!(matches!(err, ParseError::Syntax(_)));
     assert_eq!(err.document_index(), DocumentIndex::new(2));
-    assert!(err.position().line >= 5);
+    assert!(err.position().line().get() >= 5);
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn display_names_the_document_only_after_the_first() {
 fn relocated_moves_the_line_and_the_document_but_not_the_column() {
     let err = Parser::parse_all("m:\n  <<: 1\n")
         .unwrap_err()
-        .relocated(10, 3);
+        .relocated(LineCount::new(10), DocumentCount::new(3));
     let ParseError::Merge {
         at: position,
         document,
@@ -121,7 +121,7 @@ fn relocated_moves_the_line_and_the_document_but_not_the_column() {
 #[test]
 fn document_index_arithmetic_does_not_overflow() {
     let last = DocumentIndex::new(usize::MAX);
-    assert_eq!(last.after(1), last);
+    assert_eq!(last.after(DocumentCount::new(1)), last);
     assert_eq!(last.number(), usize::MAX);
 }
 
@@ -129,7 +129,7 @@ fn document_index_arithmetic_does_not_overflow() {
 fn relocating_by_a_huge_amount_saturates() {
     let err = Parser::parse_all("m:\n  <<: 1\n")
         .unwrap_err()
-        .relocated(usize::MAX, usize::MAX);
+        .relocated(LineCount::new(usize::MAX), DocumentCount::new(usize::MAX));
     assert_eq!(err.position(), at(usize::MAX, 3));
     assert_eq!(err.document_index(), DocumentIndex::new(usize::MAX));
 }

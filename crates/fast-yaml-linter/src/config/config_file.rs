@@ -964,13 +964,11 @@ mod tests {
     #[test]
     fn test_tab_indented_flow_collection_is_rejected_with_its_position() {
         let err = load_str("rules: {\n\tline-length: {max: 10}\n}\n").unwrap_err();
-        assert!(matches!(err, ConfigFileError::Rejected { .. }), "{err:?}");
-        let message = format!("{err:?}");
-        assert!(message.contains("tab"), "{message}");
-        assert!(
-            message.contains("line: 2") || message.contains("line 2"),
-            "{message}"
-        );
+        let ConfigFileError::Rejected { source, .. } = err else {
+            panic!("rejection expected, got {err:?}");
+        };
+        assert!(source.reason().contains("tab"), "{source}");
+        assert_eq!(source.position().line().get(), 2);
     }
 
     #[test]

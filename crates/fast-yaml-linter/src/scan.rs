@@ -7,8 +7,8 @@ use fast_yaml_core::events::{AnchorId, Event, EventItem};
 use fast_yaml_core::limits::{ParseLimits, StreamBudget};
 use fast_yaml_core::scalar::core_tag_suffix;
 use fast_yaml_core::{
-    CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, ParseError, Parser,
-    SetValues, Value, resolve_scalar,
+    CommentScanner, DuplicateMergeKeys, LoadOptions, NodeRole, NormalizedInput, OneBased,
+    ParseError, Parser, SetValues, Value, resolve_scalar,
 };
 
 use crate::config::RuleName;
@@ -82,17 +82,17 @@ pub struct DocumentMarkers {
     pub start: DocumentStart,
     /// Span of the explicit `...`, `None` when the document end is implicit.
     pub end: Option<Span>,
-    /// 1-based line where a forward key search for the document begins.
-    pub first_line: usize,
+    /// Line where a forward key search for the document begins.
+    pub first_line: OneBased,
     /// The `%YAML` directive in front of the document's `---`; it applies to this document only.
     pub yaml_version: Option<YamlVersion>,
 }
 
 /// Stand-in for the document of a source the parser reports no document for.
 pub const IMPLICIT_DOCUMENT: DocumentMarkers = DocumentMarkers {
-    start: DocumentStart::Implicit(Span::new(Location::new(1, 1, 0), Location::new(1, 1, 0))),
+    start: DocumentStart::Implicit(Span::new(Location::start(), Location::start())),
     end: None,
-    first_line: 1,
+    first_line: OneBased::FIRST,
     yaml_version: None,
 };
 
@@ -113,8 +113,8 @@ pub enum RepeatedKey {
 pub struct KeyRepeat {
     /// The key as written.
     pub key: String,
-    /// 1-indexed line of the first occurrence.
-    pub first_line: usize,
+    /// Line of the first occurrence.
+    pub first_line: OneBased,
     /// Span of the repeating key.
     pub span: Span,
     /// Whether it is an ordinary or a merge key.
@@ -220,16 +220,16 @@ struct AnchoredKey {
     text: String,
 }
 
-/// Keys seen so far in one open mapping, with the 1-indexed line of their first occurrence.
+/// Keys seen so far in one open mapping, with the line of their first occurrence.
 #[derive(Default)]
 struct MappingKeys {
-    values: HashMap<KeyIdentity, usize>,
-    merge_first_line: Option<usize>,
+    values: HashMap<KeyIdentity, OneBased>,
+    merge_first_line: Option<OneBased>,
 }
 
 impl MappingKeys {
     /// Records `key` and returns the first line it was seen on if it repeats.
-    fn record(&mut self, kind: RepeatedKey, key: KeyIdentity, line: usize) -> Option<usize> {
+    fn record(&mut self, kind: RepeatedKey, key: KeyIdentity, line: OneBased) -> Option<OneBased> {
         if kind == RepeatedKey::Merge {
             let first = self.merge_first_line;
             self.merge_first_line.get_or_insert(line);
@@ -299,7 +299,7 @@ pub struct ScanCollector<'a, 'c, 'n> {
     remap: Option<Remap<'n>>,
     scanner: CommentScanner,
     documents: Vec<DocumentMarkers>,
-    open: Option<(DocumentStart, usize, Option<YamlVersion>)>,
+    open: Option<(DocumentStart, OneBased, Option<YamlVersion>)>,
     needs: ScanNeeds,
     mappings: Vec<MappingKeys>,
     anchors: HashMap<AnchorId, AnchoredKey>,
@@ -379,9 +379,9 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
                 self.anchors.clear();
                 let span = self.span(item);
                 let first_line = match (self.documents.is_empty(), explicit) {
-                    (true, _) => 1,
-                    (false, true) => span.start.line() + 1,
-                    (false, false) => span.start.line(),
+                    (true, _) => OneBased::FIRST,
+                    (false, true) => span.start.line_number().saturating_add(1),
+                    (false, false) => span.start.line_number(),
                 };
                 let start = if *explicit {
                     DocumentStart::Explicit(span)
@@ -554,7 +554,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
         let Some(keys) = self.mappings.last_mut() else {
             return;
         };
-        if let Some(first_line) = keys.record(kind, identity, item.at.line) {
+        if let Some(first_line) = keys.record(kind, identity, item.at.line()) {
             let span = self.span(item);
             self.key_repeats.push(KeyRepeat {
                 key: text.to_owned(),
@@ -622,7 +622,7 @@ mod tests {
                 (
                     d.start.marker().map(|s| s.start.line()),
                     d.end.map(|s| s.start.line()),
-                    d.first_line,
+                    d.first_line.get(),
                 )
             })
             .collect()

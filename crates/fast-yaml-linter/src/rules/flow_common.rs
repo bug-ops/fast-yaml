@@ -357,7 +357,10 @@ mod tests {
     }
 
     fn dummy_span() -> Span {
-        Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1))
+        Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 2, 1).unwrap(),
+        )
     }
 
     #[test]

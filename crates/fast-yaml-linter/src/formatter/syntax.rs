@@ -2,7 +2,7 @@
 
 use std::borrow::Cow;
 
-use fast_yaml_core::NormalizedInput;
+use fast_yaml_core::{NormalizedInput, SourcePosition};
 
 use crate::{
     Diagnostic, DiagnosticBuilder, DiagnosticCode, LintError, Location, Severity, SourceContext,
@@ -33,10 +33,7 @@ pub fn syntax_diagnostic(err: &LintError, source: &str) -> Diagnostic {
     let (span, message) = match err {
         LintError::ParseError(parse) => {
             let position = parse.position();
-            (
-                located_span(source, position.line, position.column),
-                parse.reason(),
-            )
+            (located_span(source, position), parse.reason())
         }
         _ => (unlocated_span(), err.to_string()),
     };
@@ -67,11 +64,11 @@ const fn unlocated_span() -> Span {
     Span::new(Location::start(), Location::start())
 }
 
-fn located_span(source: &str, line: usize, column: usize) -> Span {
+fn located_span(source: &str, position: SourcePosition) -> Span {
     let normalized = NormalizedInput::new(source).ok();
     let text = normalized.as_ref().map_or(source, NormalizedInput::as_str);
     let ctx = SourceContext::new(text);
-    let offset = ctx.byte_offset_at(line, column.saturating_sub(1));
+    let offset = ctx.byte_offset_of_position(position);
     ctx.span_at(offset, 0)
 }
 

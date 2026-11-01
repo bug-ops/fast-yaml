@@ -1,5 +1,5 @@
 use crate::DocumentIndex;
-use crate::error::{ParseError, ParseResult, SourcePosition, SyntaxError};
+use crate::error::{ParseError, ParseResult, SyntaxError};
 use crate::events::{self, EventItem, ScalarStyle};
 use crate::input::NormalizedInput;
 use crate::keys::{KeyError, KeyGuard};
@@ -7,6 +7,7 @@ use crate::limits::{LimitGuard, ParseLimits, StreamBudget};
 use crate::merge::{MergeError, MergeSource, MergeTarget, NodeRole, merge_into};
 use crate::merge_check::MergeKeyValidator;
 use crate::options::{KeyDomain, LoadOptions};
+use crate::position::SourcePosition;
 use crate::scalar::{ResolvedScalar, core_tag_suffix_raw, resolve_scalar_raw};
 use crate::value::{Mapping, Value};
 use saphyr_parser::{Event, Span};
@@ -607,6 +608,7 @@ impl Builder {
 mod tests {
     use super::*;
     use crate::options::DuplicateMergeKeys;
+    use crate::position::{DocumentCount, LineCount};
     use crate::value::BigInt;
 
     mod validate_matches_load {
@@ -1242,7 +1244,7 @@ m:
 
     fn merge_at(result: ParseResult<impl std::fmt::Debug>) -> (MergeError, usize, usize) {
         match result {
-            Err(ParseError::Merge { error, at, .. }) => (error, at.line, at.column),
+            Err(ParseError::Merge { error, at, .. }) => (error, at.line().get(), at.column().get()),
             other => panic!("merge error expected, got {other:?}"),
         }
     }
@@ -1586,11 +1588,12 @@ b: 2\n---\nc: [\n",
     fn test_relocated_shifts_merge_document() {
         let err = Parser::parse_all("m: {<<: 1}\n")
             .unwrap_err()
-            .relocated(4, 3);
+            .relocated(LineCount::new(4), DocumentCount::new(3));
         assert!(matches!(
             err,
-            ParseError::Merge { at: SourcePosition { line: 5, column: 5 }, document, .. }
-                if document == DocumentIndex::new(3)
+            ParseError::Merge { at, document, .. }
+                if (at.line().get(), at.column().get()) == (5, 5)
+                    && document == DocumentIndex::new(3)
         ));
     }
 
@@ -2394,7 +2397,7 @@ m:
                     kind: LimitKind::Depth(_),
                     at,
                     ..
-                }) => assert_eq!(at.line, 1),
+                }) => assert_eq!(at.line().get(), 1),
                 other => panic!("expected depth limit, got {other:?}"),
             }
         }
@@ -2776,7 +2779,7 @@ m:
                 assert!(err.to_string().contains("still being defined"), "{err}");
             }
             let position = Parser::parse_all("&a [*a]").unwrap_err().position();
-            assert_eq!((position.line, position.column), (1, 5));
+            assert_eq!((position.line().get(), position.column().get()), (1, 5));
         }
 
         #[test]
@@ -3067,7 +3070,11 @@ m:
                 let err = Parser::parse_all(yaml).unwrap_err();
                 assert!(matches!(err, ParseError::SetValue { .. }), "{yaml}: {err}");
                 let at = err.position();
-                assert_eq!((at.line, at.column), (line, column), "{yaml}");
+                assert_eq!(
+                    (at.line().get(), at.column().get()),
+                    (line, column),
+                    "{yaml}"
+                );
             }
         }
 
@@ -3091,7 +3098,13 @@ m:
             let err = Parser::parse_all("a: 1\n---\n!!set {x: 1}\n").unwrap_err();
             assert_eq!(err.document_index().get(), 1);
             assert!(err.to_string().ends_with("(document 2)"), "{err}");
-            assert!(err.relocated(4, 1).position().line > 4);
+            assert!(
+                err.relocated(LineCount::new(4), DocumentCount::new(1))
+                    .position()
+                    .line()
+                    .get()
+                    > 4
+            );
         }
 
         #[test]
@@ -3111,7 +3124,11 @@ m:
                 };
                 assert!(matches!(error, KeyError::StringCollision { .. }), "{yaml}");
                 let at = err.position();
-                assert_eq!((at.line, at.column), (line, column), "{yaml}");
+                assert_eq!(
+                    (at.line().get(), at.column().get()),
+                    (line, column),
+                    "{yaml}"
+                );
             }
             assert!(load("1: a\n'1': b\n", KeyDomain::Yaml).is_ok());
         }
@@ -3129,7 +3146,11 @@ m:
                     "{yaml}: {err}"
                 );
                 let at = err.position();
-                assert_eq!((at.line, at.column), (line, column), "{yaml}");
+                assert_eq!(
+                    (at.line().get(), at.column().get()),
+                    (line, column),
+                    "{yaml}"
+                );
             }
             let err = load("b: &b {x: 1}\nm: {'1': y, 1: z}\n", KeyDomain::StringKeys).unwrap_err();
             assert!(!err.to_string().contains("merge key"), "{err}");
@@ -3168,7 +3189,7 @@ m:
                     panic!("limit error expected");
                 };
                 assert_eq!(kind, LimitKind::FlowNesting);
-                assert_eq!((at.line, at.column), (1, 256));
+                assert_eq!((at.line().get(), at.column().get()), (1, 256));
             }
             let message = Parser::parse_all(&flow(256)).unwrap_err().to_string();
             assert!(message.contains("255"), "{message}");

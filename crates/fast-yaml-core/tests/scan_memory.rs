@@ -180,7 +180,7 @@ fn overrun_in_a_later_document_is_positioned() {
         panic!("scan-ahead error expected");
     };
     assert_eq!(document.get(), 2);
-    assert!(at.line >= 4, "line {}", at.line);
+    assert!(at.line().get() >= 4, "line {}", at.line().get());
 }
 
 /// Peak heap growth of normalizing `input`, with the result.

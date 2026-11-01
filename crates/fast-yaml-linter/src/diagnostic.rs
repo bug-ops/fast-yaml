@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 /// ```
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
 ///
-/// let span = Span::new(Location::new(10, 5, 145), Location::new(10, 9, 149));
+/// let span = Span::new(Location::try_new(10, 5, 145).unwrap(), Location::try_new(10, 9, 149).unwrap());
 /// let diagnostic = DiagnosticBuilder::new(
 ///     DiagnosticCode::DUPLICATE_KEY,
 ///     Severity::Error,
@@ -62,7 +62,7 @@ pub struct Diagnostic {
 /// ```
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Location, Severity, Span};
 ///
-/// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+/// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 2, 1).unwrap());
 /// let builder = DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "m", span);
 /// assert_eq!(builder.build().excerpt, Excerpt::SourceLines);
 /// ```
@@ -133,7 +133,7 @@ impl MaxDiagnostics {
     /// use fast_yaml_linter::config::MaxDiagnostics;
     /// use fast_yaml_linter::{DiagnosticBuilder, Location, Severity, Span};
     ///
-    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+    /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 2, 1).unwrap());
     /// let make = |severity| DiagnosticBuilder::new("r", severity, "m", span).build();
     /// let mut found = vec![make(Severity::Warning), make(Severity::Warning), make(Severity::Error)];
     ///
@@ -368,7 +368,7 @@ pub struct ContextLine {
 ///
 /// let suggestion = Suggestion {
 ///     message: "Remove duplicate key".to_string(),
-///     span: Span::new(Location::new(3, 1, 20), Location::new(3, 11, 30)),
+///     span: Span::new(Location::try_new(3, 1, 20).unwrap(), Location::try_new(3, 11, 30).unwrap()),
 ///     replacement: None,
 /// };
 /// ```
@@ -396,7 +396,7 @@ pub struct Suggestion {
 /// ```
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
 ///
-/// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+/// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
 ///
 /// let diagnostic = DiagnosticBuilder::new(
 ///     DiagnosticCode::LINE_LENGTH,
@@ -429,7 +429,7 @@ impl DiagnosticBuilder {
     ///     DiagnosticCode::DUPLICATE_KEY,
     ///     Severity::Error,
     ///     "duplicate key found",
-    ///     Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4))
+    ///     Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 5, 4).unwrap())
     /// );
     /// ```
     #[must_use]
@@ -455,7 +455,7 @@ impl DiagnosticBuilder {
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Severity, Location, Span};
     ///
-    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+    /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 5, 4).unwrap());
     /// let builder = DiagnosticBuilder::new(
     ///     DiagnosticCode::TRAILING_WHITESPACE,
     ///     Severity::Hint,
@@ -485,7 +485,7 @@ impl DiagnosticBuilder {
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Severity, Location, Span};
     ///
-    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+    /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
     ///
     /// let diagnostic = DiagnosticBuilder::new(
     ///     DiagnosticCode::LINE_LENGTH,
@@ -510,7 +510,7 @@ impl DiagnosticBuilder {
     /// ```
     /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Excerpt, Severity, Location, Span};
     ///
-    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+    /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
     ///
     /// let diagnostic = DiagnosticBuilder::new(
     ///     DiagnosticCode::LINE_LENGTH,
@@ -549,7 +549,7 @@ impl DiagnosticBuilder {
 /// ```
 /// use fast_yaml_linter::{Excerpt, Finding, Location, Span};
 ///
-/// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+/// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
 /// let finding = Finding::new("line too long", span);
 /// assert_eq!(finding.message(), "line too long");
 /// assert_eq!(finding.excerpt(), Excerpt::SourceLines);
@@ -633,7 +633,7 @@ impl Finding {
     /// ```
     /// use fast_yaml_linter::{DiagnosticCode, Finding, Location, Severity, Span};
     ///
-    /// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+    /// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 4, 3).unwrap());
     /// let diagnostic = Finding::new("m", span).into_diagnostic(DiagnosticCode::COLONS, Severity::Error);
     /// assert_eq!(diagnostic.code.as_str(), "colons");
     /// assert_eq!(diagnostic.severity, Severity::Error);
@@ -662,8 +662,8 @@ mod tests {
 
     fn finding(severity: Severity, line: usize) -> Diagnostic {
         let span = Span::new(
-            Location::new(line, 1, line),
-            Location::new(line, 2, line + 1),
+            Location::try_new(line, 1, line).unwrap(),
+            Location::try_new(line, 2, line + 1).unwrap(),
         );
         DiagnosticBuilder::new("r", severity, format!("m{line}"), span).build()
     }
@@ -771,7 +771,10 @@ mod tests {
 
     #[test]
     fn test_diagnostic_builder() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let diagnostic = DiagnosticBuilder::new(
             DiagnosticCode::DUPLICATE_KEY,
             Severity::Error,
@@ -790,7 +793,10 @@ mod tests {
 
     #[test]
     fn test_diagnostic_builder_with_suggestion() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let diagnostic = DiagnosticBuilder::new(
             DiagnosticCode::DUPLICATE_KEY,
             Severity::Error,
@@ -806,7 +812,10 @@ mod tests {
 
     #[test]
     fn test_diagnostic_builder_without_context() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
 
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)
@@ -832,7 +841,10 @@ mod tests {
 
     #[test]
     fn test_suggestion() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let suggestion = Suggestion {
             message: "Remove this".to_string(),
             span,
@@ -849,7 +861,10 @@ mod tests {
     fn test_diagnostic_serialization() {
         use serde_json;
 
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::DUPLICATE_KEY, Severity::Error, "test", span)
                 .build_without_excerpt();
@@ -890,7 +905,10 @@ mod code_tests {
 
     #[test]
     fn a_static_message_is_not_copied() {
-        let span = Span::new(crate::Location::new(1, 1, 0), crate::Location::new(1, 1, 0));
+        let span = Span::new(
+            crate::Location::try_new(1, 1, 0).unwrap(),
+            crate::Location::try_new(1, 1, 0).unwrap(),
+        );
         let diagnostic = DiagnosticBuilder::new("r", Severity::Info, "fixed", span).build();
         assert!(matches!(diagnostic.message, Cow::Borrowed("fixed")));
     }

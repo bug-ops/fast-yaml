@@ -12,11 +12,12 @@ use std::num::NonZeroUsize;
 
 use saphyr_parser::{ScanError, Span};
 
-use crate::error::{ParseError, ParseResult, SourcePosition};
+use crate::error::{ParseError, ParseResult};
 use crate::input::NormalizedInput;
 use crate::limits::{LimitGuard, ParseLimits};
 use crate::merge::NodeRole;
 use crate::merge_check::MergeKeyValidator;
+use crate::position::SourcePosition;
 use crate::scan_guard::GuardedParser;
 
 /// How a scalar was written in the source.
@@ -609,8 +610,8 @@ mod tests {
         let span_of = |wanted: &Event<'_>| {
             let item = items.iter().find(|item| &item.event == wanted).unwrap();
             (
-                (item.at.line, item.at.column),
-                (item.end.line, item.end.column),
+                (item.at.line().get(), item.at.column().get()),
+                (item.end.line().get(), item.end.column().get()),
             )
         };
         let quoted = Event::Scalar {

@@ -191,7 +191,7 @@ pub struct FileReport<'a> {
 /// use fast_yaml_linter::formatter::{FileReport, ReportFormat, ReportPath, ReportSource};
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Location, Severity, Span};
 ///
-/// let span = Span::new(Location::new(3, 5, 20), Location::new(3, 9, 24));
+/// let span = Span::new(Location::try_new(3, 5, 20).unwrap(), Location::try_new(3, 9, 24).unwrap());
 /// let diagnostic =
 ///     DiagnosticBuilder::new(DiagnosticCode::TRUTHY, Severity::Warning, "truthy value", span)
 ///         .build_without_excerpt();

@@ -1,65 +1,9 @@
 //! Source location and span tracking for diagnostics.
 
-use std::fmt;
-use std::num::NonZeroUsize;
+pub use fast_yaml_core::OneBased;
 
 #[cfg(feature = "json-output")]
 use serde::{Deserialize, Serialize};
-
-/// A line or column number, counted from 1.
-///
-/// Zero is not a value, so a position cannot be built from a 0-based index by mistake: a 0-based
-/// index has to be turned into a number with `index + 1` before it can become a `OneBased`.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_linter::OneBased;
-///
-/// assert_eq!(OneBased::new(3).unwrap().get(), 3);
-/// assert_eq!(OneBased::new(0), None);
-/// assert_eq!(OneBased::FIRST.get(), 1);
-/// assert_eq!(OneBased::from_index(0).get(), 1);
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
-#[cfg_attr(feature = "json-output", serde(transparent))]
-pub struct OneBased(NonZeroUsize);
-
-impl OneBased {
-    /// The first line or column, 1.
-    pub const FIRST: Self = Self(NonZeroUsize::MIN);
-
-    /// The number `value`, or `None` for 0.
-    #[must_use]
-    pub const fn new(value: usize) -> Option<Self> {
-        match NonZeroUsize::new(value) {
-            Some(number) => Some(Self(number)),
-            None => None,
-        }
-    }
-
-    /// The number of the 0-based `index`: line index 0 is line 1.
-    #[must_use]
-    pub const fn from_index(index: usize) -> Self {
-        match NonZeroUsize::new(index.saturating_add(1)) {
-            Some(number) => Self(number),
-            None => Self::FIRST,
-        }
-    }
-
-    /// The number, 1 or more.
-    #[must_use]
-    pub const fn get(self) -> usize {
-        self.0.get()
-    }
-}
-
-impl fmt::Display for OneBased {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
 
 /// A position in the source file.
 ///
@@ -74,13 +18,17 @@ impl fmt::Display for OneBased {
 /// ```
 /// use fast_yaml_linter::Location;
 ///
-/// let loc = Location::new(10, 5, 145);
+/// let loc = Location::try_new(10, 5, 145).unwrap();
 /// assert_eq!(loc.line(), 10);
 /// assert_eq!(loc.column(), 5);
 /// assert_eq!(loc.offset(), 145);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "json-output", derive(Serialize, Deserialize))]
+#[cfg_attr(
+    feature = "json-output",
+    serde(try_from = "LocationRepr", into = "LocationRepr")
+)]
 pub struct Location {
     /// Line number (1-indexed, human-readable).
     line: OneBased,
@@ -95,31 +43,25 @@ pub struct Location {
 }
 
 impl Location {
-    /// Creates a new location from a 1-based `line` and `column` and a 0-based byte `offset`.
+    /// Creates a location from a 1-based `line` and `column` and a 0-based byte `offset`.
     ///
-    /// A `line` or `column` of 0 is raised to 1, so no location holds one; use
-    /// [`try_new`](Self::try_new) to reject it instead, as for numbers that come from outside.
+    /// Zero cannot be passed: [`OneBased`] has no zero. Use [`try_new`](Self::try_new) for
+    /// numbers that come from outside.
     ///
     /// # Examples
     ///
     /// ```
-    /// use fast_yaml_linter::Location;
+    /// use fast_yaml_linter::{Location, OneBased};
     ///
-    /// let loc = Location::new(1, 1, 0);
-    /// assert_eq!(loc, Location::start());
-    /// assert_eq!(Location::new(0, 0, 7).line(), 1);
+    /// let loc = Location::new(OneBased::FIRST, OneBased::from_index(4), 4);
+    /// assert_eq!((loc.line(), loc.column(), loc.offset()), (1, 5, 4));
+    /// assert_eq!(Location::new(OneBased::FIRST, OneBased::FIRST, 0), Location::start());
     /// ```
     #[must_use]
-    pub const fn new(line: usize, column: usize, offset: usize) -> Self {
+    pub const fn new(line: OneBased, column: OneBased, offset: usize) -> Self {
         Self {
-            line: match OneBased::new(line) {
-                Some(line) => line,
-                None => OneBased::FIRST,
-            },
-            column: match OneBased::new(column) {
-                Some(column) => column,
-                None => OneBased::FIRST,
-            },
+            line,
+            column,
             offset,
         }
     }
@@ -131,18 +73,14 @@ impl Location {
     /// ```
     /// use fast_yaml_linter::Location;
     ///
-    /// assert_eq!(Location::try_new(2, 3, 10), Some(Location::new(2, 3, 10)));
+    /// assert_eq!(Location::try_new(2, 3, 10).map(|loc| loc.line()), Some(2));
     /// assert_eq!(Location::try_new(0, 3, 10), None);
     /// assert_eq!(Location::try_new(2, 0, 10), None);
     /// ```
     #[must_use]
     pub const fn try_new(line: usize, column: usize, offset: usize) -> Option<Self> {
         match (OneBased::new(line), OneBased::new(column)) {
-            (Some(line), Some(column)) => Some(Self {
-                line,
-                column,
-                offset,
-            }),
+            (Some(line), Some(column)) => Some(Self::new(line, column, offset)),
             _ => None,
         }
     }
@@ -161,13 +99,17 @@ impl Location {
     /// ```
     #[must_use]
     pub const fn start() -> Self {
-        Self::new(1, 1, 0)
+        Self::new(OneBased::FIRST, OneBased::FIRST, 0)
     }
 
     /// The line number, counted from 1.
     #[must_use]
     pub const fn line(&self) -> usize {
         self.line.get()
+    }
+
+    pub(crate) const fn line_number(&self) -> OneBased {
+        self.line
     }
 
     /// The column number, counted from 1.
@@ -183,6 +125,35 @@ impl Location {
     }
 }
 
+#[cfg(feature = "json-output")]
+#[derive(Serialize, Deserialize)]
+struct LocationRepr {
+    line: usize,
+    column: usize,
+    offset: usize,
+}
+
+#[cfg(feature = "json-output")]
+impl From<Location> for LocationRepr {
+    fn from(loc: Location) -> Self {
+        Self {
+            line: loc.line(),
+            column: loc.column(),
+            offset: loc.offset,
+        }
+    }
+}
+
+#[cfg(feature = "json-output")]
+impl TryFrom<LocationRepr> for Location {
+    type Error = &'static str;
+
+    fn try_from(repr: LocationRepr) -> Result<Self, Self::Error> {
+        Self::try_new(repr.line, repr.column, repr.offset)
+            .ok_or("line and column are counted from 1")
+    }
+}
+
 /// A span of text in the source file.
 ///
 /// Represents a range from a start location to an end location,
@@ -193,8 +164,8 @@ impl Location {
 /// ```
 /// use fast_yaml_linter::{Location, Span};
 ///
-/// let start = Location::new(10, 5, 145);
-/// let end = Location::new(10, 9, 149);
+/// let start = Location::try_new(10, 5, 145).unwrap();
+/// let end = Location::try_new(10, 9, 149).unwrap();
 /// let span = Span::new(start, end);
 ///
 /// assert_eq!(span.len(), 4);
@@ -218,8 +189,8 @@ impl Span {
     /// use fast_yaml_linter::{Location, Span};
     ///
     /// let span = Span::new(
-    ///     Location::new(1, 1, 0),
-    ///     Location::new(1, 5, 4)
+    ///     Location::try_new(1, 1, 0).unwrap(),
+    ///     Location::try_new(1, 5, 4).unwrap()
     /// );
     /// assert_eq!(span.len(), 4);
     /// ```
@@ -236,12 +207,12 @@ impl Span {
     /// use fast_yaml_linter::{Location, Span};
     ///
     /// let span = Span::new(
-    ///     Location::new(10, 5, 145),
-    ///     Location::new(10, 9, 149)
+    ///     Location::try_new(10, 5, 145).unwrap(),
+    ///     Location::try_new(10, 9, 149).unwrap()
     /// );
     ///
-    /// assert!(span.contains(Location::new(10, 7, 147)));
-    /// assert!(!span.contains(Location::new(11, 1, 150)));
+    /// assert!(span.contains(Location::try_new(10, 7, 147).unwrap()));
+    /// assert!(!span.contains(Location::try_new(11, 1, 150).unwrap()));
     /// ```
     #[must_use]
     pub const fn contains(&self, loc: Location) -> bool {
@@ -258,12 +229,12 @@ impl Span {
     /// use fast_yaml_linter::{Location, Span};
     ///
     /// let span1 = Span::new(
-    ///     Location::new(10, 1, 140),
-    ///     Location::new(10, 5, 144)
+    ///     Location::try_new(10, 1, 140).unwrap(),
+    ///     Location::try_new(10, 5, 144).unwrap()
     /// );
     /// let span2 = Span::new(
-    ///     Location::new(10, 10, 149),
-    ///     Location::new(10, 15, 154)
+    ///     Location::try_new(10, 10, 149).unwrap(),
+    ///     Location::try_new(10, 15, 154).unwrap()
     /// );
     ///
     /// let merged = span1.union(span2);
@@ -294,8 +265,8 @@ impl Span {
     /// use fast_yaml_linter::{Location, Span};
     ///
     /// let span = Span::new(
-    ///     Location::new(1, 1, 0),
-    ///     Location::new(1, 10, 9)
+    ///     Location::try_new(1, 1, 0).unwrap(),
+    ///     Location::try_new(1, 10, 9).unwrap()
     /// );
     /// assert_eq!(span.len(), 9);
     /// ```
@@ -312,14 +283,14 @@ impl Span {
     /// use fast_yaml_linter::{Location, Span};
     ///
     /// let empty = Span::new(
-    ///     Location::new(1, 5, 4),
-    ///     Location::new(1, 5, 4)
+    ///     Location::try_new(1, 5, 4).unwrap(),
+    ///     Location::try_new(1, 5, 4).unwrap()
     /// );
     /// assert!(empty.is_empty());
     ///
     /// let non_empty = Span::new(
-    ///     Location::new(1, 5, 4),
-    ///     Location::new(1, 10, 9)
+    ///     Location::try_new(1, 5, 4).unwrap(),
+    ///     Location::try_new(1, 10, 9).unwrap()
     /// );
     /// assert!(!non_empty.is_empty());
     /// ```
@@ -335,40 +306,35 @@ mod tests {
 
     #[test]
     fn test_location_new() {
-        let loc = Location::new(10, 5, 145);
+        let loc = Location::try_new(10, 5, 145).unwrap();
         assert_eq!(loc.line(), 10);
         assert_eq!(loc.column(), 5);
         assert_eq!(loc.offset(), 145);
     }
 
     #[test]
-    fn test_location_never_holds_a_zero_line_or_column() {
-        let raised = Location::new(0, 0, 9);
-        assert_eq!((raised.line(), raised.column(), raised.offset()), (1, 1, 9));
+    fn test_try_new_rejects_a_zero_line_or_column() {
         assert_eq!(Location::try_new(0, 1, 0), None);
         assert_eq!(Location::try_new(1, 0, 0), None);
-        assert_eq!(Location::try_new(3, 4, 5), Some(Location::new(3, 4, 5)));
-    }
-
-    #[test]
-    fn test_one_based() {
-        assert_eq!(OneBased::new(0), None);
-        assert_eq!(OneBased::new(7).map(OneBased::get), Some(7));
-        assert_eq!(OneBased::from_index(0), OneBased::FIRST);
-        assert_eq!(OneBased::from_index(4).get(), 5);
-        assert_eq!(OneBased::from_index(usize::MAX).get(), usize::MAX);
-        assert!(OneBased::FIRST < OneBased::from_index(1));
-        assert_eq!(OneBased::from_index(2).to_string(), "3");
+        assert_eq!(
+            Location::try_new(3, 4, 5),
+            Some(Location::new(
+                OneBased::from_index(2),
+                OneBased::from_index(3),
+                5
+            ))
+        );
     }
 
     #[cfg(feature = "json-output")]
     #[test]
     fn test_location_serializes_as_plain_numbers() {
-        let loc = Location::new(2, 3, 14);
+        let loc = Location::try_new(2, 3, 14).unwrap();
         let json = serde_json::to_string(&loc).unwrap();
         assert_eq!(json, r#"{"line":2,"column":3,"offset":14}"#);
         assert_eq!(serde_json::from_str::<Location>(&json).unwrap(), loc);
         assert!(serde_json::from_str::<Location>(r#"{"line":0,"column":3,"offset":14}"#).is_err());
+        assert!(serde_json::from_str::<Location>(r#"{"line":2,"column":0,"offset":14}"#).is_err());
     }
 
     #[test]
@@ -381,9 +347,9 @@ mod tests {
 
     #[test]
     fn test_location_ordering() {
-        let loc1 = Location::new(10, 5, 145);
-        let loc2 = Location::new(10, 7, 147);
-        let loc3 = Location::new(11, 1, 150);
+        let loc1 = Location::try_new(10, 5, 145).unwrap();
+        let loc2 = Location::try_new(10, 7, 147).unwrap();
+        let loc3 = Location::try_new(11, 1, 150).unwrap();
 
         assert!(loc1 < loc2);
         assert!(loc2 < loc3);
@@ -392,8 +358,8 @@ mod tests {
 
     #[test]
     fn test_span_new() {
-        let start = Location::new(10, 5, 145);
-        let end = Location::new(10, 9, 149);
+        let start = Location::try_new(10, 5, 145).unwrap();
+        let end = Location::try_new(10, 9, 149).unwrap();
         let span = Span::new(start, end);
 
         assert_eq!(span.start, start);
@@ -402,18 +368,27 @@ mod tests {
 
     #[test]
     fn test_span_contains() {
-        let span = Span::new(Location::new(10, 5, 145), Location::new(10, 9, 149));
+        let span = Span::new(
+            Location::try_new(10, 5, 145).unwrap(),
+            Location::try_new(10, 9, 149).unwrap(),
+        );
 
-        assert!(span.contains(Location::new(10, 5, 145)));
-        assert!(span.contains(Location::new(10, 7, 147)));
-        assert!(!span.contains(Location::new(10, 9, 149)));
-        assert!(!span.contains(Location::new(11, 1, 150)));
+        assert!(span.contains(Location::try_new(10, 5, 145).unwrap()));
+        assert!(span.contains(Location::try_new(10, 7, 147).unwrap()));
+        assert!(!span.contains(Location::try_new(10, 9, 149).unwrap()));
+        assert!(!span.contains(Location::try_new(11, 1, 150).unwrap()));
     }
 
     #[test]
     fn test_span_union() {
-        let span1 = Span::new(Location::new(10, 1, 140), Location::new(10, 5, 144));
-        let span2 = Span::new(Location::new(10, 10, 149), Location::new(10, 15, 154));
+        let span1 = Span::new(
+            Location::try_new(10, 1, 140).unwrap(),
+            Location::try_new(10, 5, 144).unwrap(),
+        );
+        let span2 = Span::new(
+            Location::try_new(10, 10, 149).unwrap(),
+            Location::try_new(10, 15, 154).unwrap(),
+        );
 
         let merged = span1.union(span2);
         assert_eq!(merged.start.offset, 140);
@@ -422,30 +397,42 @@ mod tests {
 
     #[test]
     fn test_span_len() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 10, 9));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 10, 9).unwrap(),
+        );
         assert_eq!(span.len(), 9);
 
-        let empty = Span::new(Location::new(1, 5, 4), Location::new(1, 5, 4));
+        let empty = Span::new(
+            Location::try_new(1, 5, 4).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         assert_eq!(empty.len(), 0);
     }
 
     #[test]
     fn test_span_is_empty() {
-        let empty = Span::new(Location::new(1, 5, 4), Location::new(1, 5, 4));
+        let empty = Span::new(
+            Location::try_new(1, 5, 4).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         assert!(empty.is_empty());
 
-        let non_empty = Span::new(Location::new(1, 5, 4), Location::new(1, 10, 9));
+        let non_empty = Span::new(
+            Location::try_new(1, 5, 4).unwrap(),
+            Location::try_new(1, 10, 9).unwrap(),
+        );
         assert!(!non_empty.is_empty());
     }
 
     #[test]
     fn test_span_edge_cases() {
         let start_of_file = Location::start();
-        let eof = Location::new(100, 1, 5000);
+        let eof = Location::try_new(100, 1, 5000).unwrap();
         let file_span = Span::new(start_of_file, eof);
 
         assert!(!file_span.is_empty());
         assert_eq!(file_span.len(), 5000);
-        assert!(file_span.contains(Location::new(50, 10, 2500)));
+        assert!(file_span.contains(Location::try_new(50, 10, 2500).unwrap()));
     }
 }

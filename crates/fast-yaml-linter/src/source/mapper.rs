@@ -158,8 +158,8 @@ impl<'a> SourceMapper<'a> {
     /// let mapper = SourceMapper::new(yaml);
     ///
     /// let key_span = Span::new(
-    ///     Location::new(1, 1, 0),
-    ///     Location::new(1, 5, 4),
+    ///     Location::try_new(1, 1, 0).unwrap(),
+    ///     Location::try_new(1, 5, 4).unwrap(),
     /// );
     ///
     /// let colon = mapper.find_colon_after_key(key_span);
@@ -284,7 +284,10 @@ mod tests {
         let source = "name: John";
         let mapper = SourceMapper::new(source);
 
-        let key_span = Span::new(Location::new(1, 1, 0), Location::new(1, 5, 4));
+        let key_span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let colon = mapper.find_colon_after_key(key_span).unwrap();
         assert_eq!(colon.column(), 5);
     }

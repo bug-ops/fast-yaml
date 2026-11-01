@@ -3,7 +3,7 @@
 //! The parser's own marker index counts characters and drifts after non-ASCII directive names,
 //! while line and column stay exact, so offsets are always derived from those two.
 
-use crate::error::SourcePosition;
+use crate::position::SourcePosition;
 
 /// Char offsets at which each line starts, splitting like saphyr (`\n`, `\r\n`, lone `\r`).
 pub fn line_starts(chars: &[char]) -> Vec<usize> {
@@ -20,10 +20,8 @@ pub fn line_starts(chars: &[char]) -> Vec<usize> {
 /// Converts a line and column to a char offset, or `usize::MAX` past the last line.
 pub fn char_offset(line_starts: &[usize], position: SourcePosition) -> usize {
     line_starts
-        .get(position.line.wrapping_sub(1))
-        .map_or(usize::MAX, |start| {
-            start + position.column.saturating_sub(1)
-        })
+        .get(position.line().index())
+        .map_or(usize::MAX, |start| start + position.column().index())
 }
 
 /// Forward-only converter from line/column to byte offsets in a source text.
@@ -43,29 +41,30 @@ impl<'a> ByteCursor<'a> {
     pub const fn new(source: &'a str) -> Self {
         Self {
             source,
-            line: 1,
+            line: 0,
             line_start: 0,
-            column: 1,
+            column: 0,
             byte: 0,
         }
     }
 
     /// Returns the byte offset of `position`, clamped to the end of the source.
     pub fn offset(&mut self, position: SourcePosition) -> usize {
-        if (position.line, position.column) < (self.line, self.column) {
+        let (line, column) = (position.line().index(), position.column().index());
+        if (line, column) < (self.line, self.column) {
             *self = Self::new(self.source);
         }
-        while self.line < position.line {
+        while self.line < line {
             match self.next_line_start() {
                 Some(start) => {
                     self.line += 1;
-                    (self.line_start, self.column, self.byte) = (start, 1, start);
+                    (self.line_start, self.column, self.byte) = (start, 0, start);
                 }
                 None => return self.source.len(),
             }
         }
         for c in self.source[self.byte..].chars() {
-            if self.column >= position.column || matches!(c, '\n' | '\r') {
+            if self.column >= column || matches!(c, '\n' | '\r') {
                 break;
             }
             self.byte += c.len_utf8();
@@ -91,9 +90,13 @@ impl<'a> ByteCursor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::position::OneBased;
 
     const fn at(line: usize, column: usize) -> SourcePosition {
-        SourcePosition { line, column }
+        SourcePosition::new(
+            OneBased::from_index(line - 1),
+            OneBased::from_index(column - 1),
+        )
     }
 
     #[test]

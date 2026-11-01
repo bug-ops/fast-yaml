@@ -69,7 +69,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn control_characters_in_a_path_are_escaped() {
-        let span = Span::new(Location::new(1, 2, 1), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 2, 1).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let d = DiagnosticBuilder::new("r", Severity::Info, "m", span).build_without_excerpt();
         let source = ReportSource::File(
             ReportPath::from_absolute(Path::new("/w/a\u{1b}]0;x\u{7}.yaml")).unwrap(),
@@ -86,7 +89,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn escapes_properties_and_data() {
-        let span = Span::new(Location::new(1, 2, 1), Location::new(1, 5, 4));
+        let span = Span::new(
+            Location::try_new(1, 2, 1).unwrap(),
+            Location::try_new(1, 5, 4).unwrap(),
+        );
         let d = DiagnosticBuilder::new("r", Severity::Info, "50%\nx", span).build_without_excerpt();
         let source =
             ReportSource::File(ReportPath::from_absolute(Path::new("/a,b/c.yaml")).unwrap());
@@ -102,7 +108,10 @@ mod tests {
 
     #[test]
     fn stdin_has_no_file_property() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(2, 1, 4));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(2, 1, 4).unwrap(),
+        );
         let d = DiagnosticBuilder::new("r", Severity::Error, "m", span).build_without_excerpt();
         let report = FileReport {
             source: &ReportSource::Stdin,

@@ -71,7 +71,7 @@ impl Default for JsonFormatter {
 /// use fast_yaml_linter::formatter::{Findings, JsonDiagnostic};
 /// use fast_yaml_linter::{DiagnosticBuilder, DiagnosticCode, Location, Severity, Span};
 ///
-/// let span = Span::new(Location::new(1, 1, 0), Location::new(1, 2, 1));
+/// let span = Span::new(Location::try_new(1, 1, 0).unwrap(), Location::try_new(1, 2, 1).unwrap());
 /// let pairs = [(
 ///     DiagnosticBuilder::new(DiagnosticCode::TRUTHY, Severity::Warning, "m", span)
 ///         .build_without_excerpt(),
@@ -162,7 +162,10 @@ mod tests {
 
     #[test]
     fn test_json_formatter_with_diagnostic() {
-        let span = Span::new(Location::new(1, 1, 0), Location::new(1, 4, 3));
+        let span = Span::new(
+            Location::try_new(1, 1, 0).unwrap(),
+            Location::try_new(1, 4, 3).unwrap(),
+        );
 
         let diagnostic =
             DiagnosticBuilder::new(DiagnosticCode::LINE_LENGTH, Severity::Info, "test", span)

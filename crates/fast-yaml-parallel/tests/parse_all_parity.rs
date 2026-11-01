@@ -212,7 +212,7 @@ fn merge_error_position_is_whole_input_on_parallel_path() {
     }
     input.push_str("---\nm:\n  <<: 1\n");
     let expected = match Parser::parse_all(&input).unwrap_err() {
-        fast_yaml_core::ParseError::Merge { at, .. } => (at.line, at.column),
+        fast_yaml_core::ParseError::Merge { at, .. } => (at.line().get(), at.column().get()),
         other => panic!("expected ParseError::Merge, got {other:?}"),
     };
     assert_eq!(expected, (19, 3));
@@ -227,7 +227,7 @@ fn merge_error_position_is_whole_input_on_parallel_path() {
             Error::Parse {
                 source: fast_yaml_core::ParseError::Merge { at, .. },
                 ..
-            } => assert_eq!((at.line, at.column), expected),
+            } => assert_eq!((at.line().get(), at.column().get()), expected),
             other => panic!("expected a merge error, got {other:?}"),
         }
     }

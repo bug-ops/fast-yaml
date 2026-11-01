@@ -13,16 +13,14 @@
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_core::{KeyDomain, LoadOptions, ParseError, Parser, SourcePosition};
+/// use fast_yaml_core::{KeyDomain, LoadOptions, ParseError, Parser};
 /// use fast_yaml_core::limits::ParseLimits;
 ///
 /// let options = LoadOptions::new().with_keys(KeyDomain::StringKeys);
 /// let err = Parser::parse_all_with_options("1: a\n\"1\": b\n", &ParseLimits::default(), options)
 ///     .unwrap_err();
-/// assert!(matches!(
-///     err,
-///     ParseError::Key { at: SourcePosition { line: 2, column: 1 }, .. }
-/// ));
+/// let ParseError::Key { at, .. } = err else { panic!("key error expected") };
+/// assert_eq!((at.line().get(), at.column().get()), (2, 1));
 ///
 /// let yaml = Parser::parse_all("1: a\n\"1\": b\n").unwrap();
 /// assert_eq!(yaml.len(), 1);
@@ -79,7 +77,7 @@ pub enum DuplicateMergeKeys {
 ///
 /// let yaml = "!!set {a: 1}\n";
 /// let err = Parser::parse_all(yaml).unwrap_err();
-/// assert!(matches!(err, ParseError::SetValue { at, .. } if at.line == 1));
+/// assert!(matches!(err, ParseError::SetValue { at, .. } if at.line().get() == 1));
 ///
 /// let lenient = LoadOptions::new().with_set_values(SetValues::Ignore);
 /// assert!(Parser::parse_all_with_options(yaml, &ParseLimits::default(), lenient).is_ok());

@@ -37,7 +37,7 @@ pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Ve
         stream: EventStream::new(&normalized, limits).sharing_anchors(),
         anchors: HashMap::new(),
         nan: None,
-        last: START,
+        last: SourcePosition::START,
     };
     let docs = loader.load_stream(py)?;
     // Replicate fast-yaml-core: inject implicit null for non-empty, zero-doc streams
@@ -47,8 +47,6 @@ pub fn load_all(py: Python<'_>, input: &str, limits: ParseLimits) -> PyResult<Ve
         Ok(docs)
     }
 }
-
-const START: SourcePosition = SourcePosition { line: 1, column: 1 };
 
 /// The position of a key that `merge_into` reported on; it only reports keys it was given.
 fn known(at: Option<SourcePosition>) -> SourcePosition {

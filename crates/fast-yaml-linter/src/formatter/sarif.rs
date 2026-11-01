@@ -196,7 +196,10 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn result_has_uri_level_and_clamped_region() {
-        let inverted = Span::new(Loc::new(3, 9, 30), Loc::new(3, 2, 23));
+        let inverted = Span::new(
+            Loc::try_new(3, 9, 30).unwrap(),
+            Loc::try_new(3, 2, 23).unwrap(),
+        );
         let source =
             ReportSource::File(ReportPath::from_absolute(Path::new("/w/a b.yaml")).unwrap());
         let diagnostics = [diagnostic(inverted)];
