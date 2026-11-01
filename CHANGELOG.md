@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: `write_atomic` preserves the DACL on Windows (#673) (#674)
 - CI: `lint:clippy-windows` and `msrv` mise tasks, with a Windows clippy step in `test-rust` (#668) (#674)
 - Linter: yamllint-compatible column placement for colons, commas, hyphens, braces and brackets (#602) (#674)
+- CI: `unsafe-allow` gate (`lint:unsafe-allow`) compares every lint-level `unsafe_code` occurrence with an exact allowlist (#678) (#684)
 
 ### Fixed
 
@@ -43,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI: debug events and glob patterns in errors escape control characters in paths (#624) (#671)
 - Core: `read_regular_file` clears `O_NONBLOCK` on regular-file handles (#599) (#671)
 - CI: `CI Success` fails when `Detect Changes` does not succeed (#670) (#674)
+- Parallel: `write_atomic` applies the Windows DACL through a handle read from a no-follow source and drops `libc` for rustix open flags (#677) (#684)
+- Parallel: in-place targets naming one file are written one after the other (#678) (#684)
+- Node.js: `unsafe_code` allowance narrowed to `to_static` (now `unsafe fn`) and `resolve` (#678) (#684)
+- Linter: `indentation` positions agree with the other rules after LS, PS and NEL separators; D-28 is kept (#676) (#684)
 
 ### Added
 
