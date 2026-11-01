@@ -747,3 +747,93 @@ fn spans_consistent_with_markers_required() {
         }
     }
 }
+
+const YAML_1_2_NON_BREAKS: [char; 3] = ['\u{85}', '\u{2028}', '\u{2029}'];
+
+fn finding_positions(yaml: &str, config: LintConfig, code: &str) -> Vec<(usize, usize)> {
+    lint_with(yaml, config, code)
+        .iter()
+        .map(|d| (d.span.start.line().get(), d.span.start.column().get()))
+        .collect()
+}
+
+fn multi_line_strings_config() -> LintConfig {
+    let mut config = LintConfig::default();
+    config
+        .rules
+        .apply_rule(
+            RuleName::Indentation,
+            serde_norway::Deserializer::from_str("{spaces: 2, check-multi-line-strings: true}"),
+        )
+        .unwrap();
+    config
+}
+
+#[test]
+fn indentation_counts_only_yaml_line_breaks_after_separators() {
+    let code = RuleName::Indentation.as_str();
+    for separator in YAML_1_2_NON_BREAKS {
+        let yaml = format!("a: x{separator}y\nb:\n  c: 1\nd:\n    e: 1\n");
+        let diags = lint_with(&yaml, LintConfig::default(), code);
+        assert_eq!(diags.len(), 1, "{yaml:?}: {diags:?}");
+        let span = diags[0].span;
+        let ctx = SourceContext::new(&yaml);
+        assert_eq!(
+            (span.start.line().get(), span.start.column().get()),
+            (5, 5),
+            "{yaml:?}"
+        );
+        assert_eq!(span.start, ctx.offset_to_location(span.start.offset()));
+        assert_eq!(span.end, ctx.offset_to_location(span.end.offset()));
+        assert_eq!(span.end.column().get(), 6, "{yaml:?}");
+        assert_eq!(ctx.get_snippet(span), "e", "{yaml:?}");
+    }
+}
+
+#[test]
+fn indentation_multi_line_scalar_counts_only_yaml_line_breaks() {
+    let code = RuleName::Indentation.as_str();
+    for separator in YAML_1_2_NON_BREAKS {
+        let yaml = format!("a: x{separator}y\nb: p\n  q\n   r\n");
+        assert_eq!(
+            finding_positions(&yaml, multi_line_strings_config(), code),
+            [(3, 3)],
+            "{yaml:?}"
+        );
+    }
+}
+
+#[test]
+fn indentation_after_separator_matches_for_bom_and_lone_cr() {
+    let code = RuleName::Indentation.as_str();
+    for yaml in [
+        "\u{feff}a: x\u{2028}y\nb:\n  c: 1\nd:\n    e: 1\n",
+        "a: x\u{2028}y\rb:\r  c: 1\rd:\r    e: 1\r",
+        "a: x\u{2028}y\r\nb:\r\n  c: 1\r\nd:\r\n    e: 1\r\n",
+        "\u{feff}a: 1\rb:\r  c: 1\rd:\r    e: 1\r",
+    ] {
+        assert_eq!(
+            finding_positions(yaml, LintConfig::default(), code),
+            [(5, 5)],
+            "{yaml:?}"
+        );
+    }
+}
+
+#[test]
+fn colons_and_syntax_errors_agree_with_indentation_after_separators() {
+    for separator in YAML_1_2_NON_BREAKS {
+        let yaml = format!("a: x{separator}y\nb  : 1\n");
+        assert_eq!(
+            finding_positions(&yaml, LintConfig::default(), RuleName::Colons.as_str()),
+            [(2, 3)],
+            "{yaml:?}"
+        );
+        let broken = format!("a: x{separator}y\nb: [\n");
+        let error = Linter::with_all_rules()
+            .lint(&broken)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("line 3, column 1"), "{broken:?}: {error}");
+    }
+}

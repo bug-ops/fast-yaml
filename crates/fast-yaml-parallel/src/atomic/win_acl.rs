@@ -2,7 +2,7 @@
 //!
 //! The replacement file is created next to the target, so it already carries the DACL entries
 //! inherited from the directory. [`copy_dacl`] gives it the descriptor the old file had instead,
-//! and does nothing when that would change nothing.
+//! through handles only, and does nothing when that would change nothing.
 
 #![warn(
     clippy::undocumented_unsafe_blocks,
@@ -13,9 +13,7 @@ use std::ffi::c_void;
 use std::fs::File;
 use std::io;
 use std::mem::offset_of;
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::io::AsRawHandle;
-use std::path::Path;
+use std::os::windows::io::{AsRawHandle, HandleOrInvalid, OwnedHandle};
 use std::ptr;
 use std::slice;
 
@@ -23,7 +21,7 @@ use windows_sys::Win32::Foundation::{
     ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_SUCCESS, HLOCAL, LocalFree, WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
-    GetSecurityInfo, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+    GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo,
 };
 use windows_sys::Win32::Security::{
     ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation, DACL_SECURITY_INFORMATION, GetAce,
@@ -31,16 +29,23 @@ use windows_sys::Win32::Security::{
     PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, SE_DACL_PRESENT, SE_DACL_PROTECTED,
     UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
+use windows_sys::Win32::Storage::FileSystem::{
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, ReOpenFile, WRITE_DAC,
+};
 
-/// Gives the file at `to` the DACL of the open file `from`.
+/// Gives the open file `to` the DACL of the open file `from`.
 ///
-/// `from` must have been opened with `READ_CONTROL`. In order, the first rule that applies wins:
+/// `from` must have been opened with `READ_CONTROL`. Both are used through their handles, so
+/// the DACL lands on the file `to` was created as, whatever its name has become. In order, the
+/// first rule that applies wins:
 ///
 /// 1. The source has no DACL (everyone has full access): a NULL DACL is applied, protected so
 ///    that nothing is inherited on top of it.
 /// 2. The source DACL is unprotected and holds only inherited entries: nothing is copied, since
 ///    the replacement inherited the same entries from the same directory. This is the common
-///    case, and it never reads the parent descriptor.
+///    case, and it never reads the parent descriptor. The owner is not copied, so an inherited
+///    entry for the creator-owner resolves to the account that writes, which differs from the
+///    old owner when someone else formats the file.
 /// 3. Otherwise the DACL is applied with the protection flag of the source. Applying an
 ///    unprotected DACL makes Windows read the parent descriptor, so a parent that denies
 ///    `READ_CONTROL` fails the write.
@@ -51,7 +56,7 @@ use windows_sys::Win32::Security::{
 /// The replacement keeps the rights the old file had to be deleted: it receives the DACL of a
 /// file in the same directory, so renaming it over the old name needs exactly the delete rights
 /// that replacing the old file needed. A commit that fails here would have failed before.
-pub(super) fn copy_dacl(from: &File, to: &Path) -> io::Result<()> {
+pub(super) fn copy_dacl(from: &File, to: &File) -> io::Result<()> {
     let Some(source) = read_dacl(from)? else {
         return Ok(());
     };
@@ -61,7 +66,8 @@ pub(super) fn copy_dacl(from: &File, to: &Path) -> io::Result<()> {
         DaclKind::Explicit if source.protected => PROTECTED_DACL_SECURITY_INFORMATION,
         DaclKind::Explicit => UNPROTECTED_DACL_SECURITY_INFORMATION,
     };
-    set_dacl(to, source.dacl, flags)
+    let handle = reopen_for_dac(to)?;
+    set_dacl(&handle, source.dacl, flags)
 }
 
 enum DaclKind {
@@ -201,13 +207,35 @@ fn is_inherited(dacl: *const ACL, bytes: usize, index: u32) -> bool {
         .is_some_and(|flags| u32::from(*flags) & INHERITED_ACE != 0)
 }
 
-fn set_dacl(path: &Path, dacl: *const ACL, flags: OBJECT_SECURITY_INFORMATION) -> io::Result<()> {
-    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    // SAFETY: `wide` is a NUL-terminated UTF-16 path that outlives the call, `dacl` is null or
-    // a valid ACL kept alive by the caller, and the unused owner, group and SACL are null.
+/// A second handle on `file` that may change its DACL.
+///
+/// The share mode lets the original handle, and the later rename, coexist with it.
+fn reopen_for_dac(file: &File) -> io::Result<OwnedHandle> {
+    // SAFETY: the handle is open for the lifetime of `file`, and the call has no other inputs.
+    let raw = unsafe {
+        ReOpenFile(
+            file.as_raw_handle(),
+            WRITE_DAC | READ_CONTROL,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            0,
+        )
+    };
+    let error = io::Error::last_os_error();
+    // SAFETY: `raw` is the result of `ReOpenFile`: a new handle we own, or `INVALID_HANDLE_VALUE`.
+    let handle = unsafe { HandleOrInvalid::from_raw_handle(raw) };
+    OwnedHandle::try_from(handle).map_err(|_| error)
+}
+
+fn set_dacl(
+    handle: &OwnedHandle,
+    dacl: *const ACL,
+    flags: OBJECT_SECURITY_INFORMATION,
+) -> io::Result<()> {
+    // SAFETY: `handle` is open with `WRITE_DAC`, `dacl` is null or a valid ACL kept alive by
+    // the caller, and the unused owner, group and SACL are null.
     let code = unsafe {
-        SetNamedSecurityInfoW(
-            wide.as_ptr(),
+        SetSecurityInfo(
+            handle.as_raw_handle(),
             SE_FILE_OBJECT,
             DACL_SECURITY_INFORMATION | flags,
             ptr::null_mut(),

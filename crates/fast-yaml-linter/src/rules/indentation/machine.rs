@@ -7,11 +7,9 @@ use fast_yaml_core::{OneBased, ScalarStyle};
 use crate::config::IndentSequences;
 use crate::rules::token_stream::tokens::{Kind, Token};
 
-/// A finding of the machine, with a 1-based line and column and a byte offset.
+/// A finding of the machine, at a byte offset; its line and column are derived from the source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Problem {
-    pub line: OneBased,
-    pub column: OneBased,
     pub offset: usize,
     pub message: String,
 }
@@ -123,8 +121,6 @@ impl<'a> Machine<'a> {
                 .is_err()
             {
                 self.problems.push(Problem {
-                    line: OneBased::from_index(token.start.line),
-                    column: OneBased::from_index(token.start.column),
                     offset: token.start.pointer,
                     message: "cannot infer indentation: unexpected token".to_owned(),
                 });
@@ -188,8 +184,6 @@ impl<'a> Machine<'a> {
                     format!("wrong indentation: expected {expected} but found {found}")
                 };
                 self.problems.push(Problem {
-                    line: OneBased::from_index(token.start.line),
-                    column: OneBased::from_index(found),
                     offset: token.start.pointer,
                     message,
                 });
@@ -414,7 +408,6 @@ impl<'a> Machine<'a> {
             .source
             .floor_char_boundary(token.end.pointer.saturating_sub(1));
         let mut expected: Option<isize> = None;
-        let mut line_idx = token.start.line;
         let mut line_start = token.start.pointer;
         loop {
             let newline = self
@@ -425,7 +418,6 @@ impl<'a> Machine<'a> {
                 return Ok(());
             };
             line_start += newline + 1;
-            line_idx += 1;
             let indent = bytes
                 .get(line_start..)
                 .unwrap_or_default()
@@ -444,8 +436,6 @@ impl<'a> Machine<'a> {
             };
             if signed(indent) != wanted {
                 self.problems.push(Problem {
-                    line: OneBased::from_index(line_idx),
-                    column: OneBased::from_index(indent),
                     offset: line_start + indent,
                     message: format!("wrong indentation: expected {wanted} but found {indent}"),
                 });
