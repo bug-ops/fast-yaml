@@ -3,7 +3,6 @@
 #![allow(clippy::missing_docs_in_private_items)]
 
 use assert_cmd::{Command, cargo_bin_cmd};
-use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
@@ -62,6 +61,7 @@ fn the_old_value_form_is_rejected() {
 #[cfg(feature = "linter")]
 mod lint {
     use super::*;
+    use predicates::prelude::*;
 
     const DUPLICATE: &str = "a: 1\na: 2\n";
 
