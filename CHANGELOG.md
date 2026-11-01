@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
-- Core: `OneBased` moves to `fast_yaml_core::position` with `SourcePosition` (private `OneBased` line and column, `START`), `DocumentIndex`, `LineCount` and `DocumentCount`; `ParseError::relocated` takes `LineCount` and `DocumentCount` (#PR)
-- Core: `SourcePosition::new` takes `OneBased` line and column and `DocumentIndex::after` takes `DocumentCount` (#PR)
-- Core: `fast_yaml_core::error::{SourcePosition, DocumentIndex}` paths are gone, import from the crate root or `fast_yaml_core::position` (#PR)
-- Linter: `Location::new` takes `OneBased` line and column and no longer raises 0 to 1, and `LintDocument::first_line` is `OneBased` (#PR)
-- Linter: `fast_yaml_linter::OneBased` is the core type and no longer implements `Serialize`/`Deserialize` under `json-output` (#PR)
+- Core: `OneBased` moves to `fast_yaml_core::position` with `SourcePosition` (private `OneBased` line and column, `START`), `DocumentIndex`, `LineCount` and `DocumentCount`; `ParseError::relocated` takes `LineCount` and `DocumentCount` (#667)
+- Core: `SourcePosition::new` takes `OneBased` line and column and `DocumentIndex::after` takes `DocumentCount` (#667)
+- Core: `fast_yaml_core::error::{SourcePosition, DocumentIndex}` paths are gone, import from the crate root or `fast_yaml_core::position` (#667)
+- Linter: `Location::new` takes `OneBased` line and column and no longer raises 0 to 1, and `LintDocument::first_line` is `OneBased` (#667)
+- Linter: `fast_yaml_linter::OneBased` is the core type and no longer implements `Serialize`/`Deserialize` under `json-output` (#667)
 
 ### Security
 
