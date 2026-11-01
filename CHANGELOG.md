@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CI: `lint:clippy-windows` and `msrv` mise tasks, with a Windows clippy step in `test-rust` (#668) (#674)
 - Linter: yamllint-compatible column placement for colons, commas, hyphens, braces and brackets (#602) (#674)
 - CI: `unsafe-allow` gate (`lint:unsafe-allow`) compares every lint-level `unsafe_code` occurrence with an exact allowlist (#678) (#684)
+- Parallel: `FileId`, `TargetChanged`, `write_atomic_bound` and `read_file_identified`, and core `read_regular_file_with_handle`, bind an in-place write to the file that was read (#680) (#PR)
+- CI: `.github/CODEOWNERS` requires owner review for the unsafe-allow gate, its allowlist, `.config/mise/` and workflows (#681) (#PR)
 
 ### Fixed
 
@@ -48,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: in-place targets naming one file are written one after the other (#678) (#684)
 - Node.js: `unsafe_code` allowance narrowed to `to_static` (now `unsafe fn`) and `resolve` (#678) (#684)
 - Linter: `indentation` positions agree with the other rules after LS, PS and NEL separators; D-28 is kept (#676) (#684)
+- Parallel/CLI: in-place format (batch and single file) refuses a file swapped after the read (#680) (#PR)
+- Parallel: `write_atomic` keeps `Zone.Identifier` on Windows (#679) (#PR)
+- Parallel: Windows same-file keys are computed inside the worker pool (#683) (#PR)
+- Python/Node.js: tests cover two names of one file in batch in-place formatting (#682) (#PR)
 
 ### Added
 

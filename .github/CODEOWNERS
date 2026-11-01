@@ -1,0 +1,5 @@
+/scripts/check-unsafe-allow.sh   @bug-ops
+/scripts/unsafe-allow.allowlist  @bug-ops
+/.config/mise/                   @bug-ops
+/.github/workflows/              @bug-ops
+/.github/CODEOWNERS              @bug-ops

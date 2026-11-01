@@ -252,7 +252,7 @@ fn run_lint(ctx: Context, flags: LintFlags) -> Result<ExitCode> {
             let cmd = commands::lint::LintCommand::build(
                 common,
                 args,
-                &io::input::InputOrigin::File(path.clone()),
+                &io::input::InputOrigin::unidentified(path.clone()),
             )?;
             if cmd.is_ignored(&path) {
                 cmd.execute_ignored()

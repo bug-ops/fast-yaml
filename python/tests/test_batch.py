@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tempfile
 from pathlib import Path
 
@@ -270,6 +271,37 @@ class TestFormatFilesInPlace:
         result = batch.format_files_in_place(["/nonexistent/file.yaml"])
         assert result.total == 1
         assert result.failed == 1
+
+    def test_two_names_of_one_file(self, tmp_path):
+        """Hard-link and symlink names of one file among many targets stay consistent."""
+        distinct = []
+        for i in range(10):
+            path = tmp_path / f"file{i}.yaml"
+            path.write_text(f"key{i}:     value{i}\nnested:    {{a: {i}, b: 2}}\n")
+            distinct.append(path)
+        hardlink = tmp_path / "hardlink.yaml"
+        symlink = tmp_path / "symlink.yaml"
+        try:
+            os.link(distinct[0], hardlink)
+            symlink.symlink_to(distinct[0])
+        except (OSError, NotImplementedError) as exc:
+            if os.environ.get("CI"):
+                pytest.fail(f"links unavailable in CI: {exc}")
+            pytest.skip(f"hard links or symlinks unavailable: {exc}")
+
+        targets = [*distinct, hardlink, symlink]
+        result = batch.format_files_in_place([str(p) for p in targets])
+
+        assert result.total == len(targets)
+        assert result.success == len(targets)
+        assert result.failed == 0
+        assert result.errors() == []
+        for i, path in enumerate(distinct):
+            assert path.read_text() == f"key{i}: value{i}\nnested:\n  a: {i}\n  b: 2\n"
+        assert hardlink.read_text() == distinct[0].read_text()
+        assert symlink.read_text() == distinct[0].read_text()
+        assert symlink.is_symlink()
+        assert os.path.samefile(hardlink, distinct[0])
 
 
 class TestBatchResult:

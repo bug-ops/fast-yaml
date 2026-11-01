@@ -19,3 +19,4 @@
 pub mod reader;
 
 pub use reader::read_file;
+pub use reader::read_file_identified;

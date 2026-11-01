@@ -9,6 +9,121 @@ use std::path::{Path, PathBuf};
 #[allow(unsafe_code)]
 mod win_acl;
 
+/// The identity of an open file on its volume, independent of the path it was reached by.
+///
+/// On Unix it is the device and inode, on Windows the volume serial number and the 64-bit file
+/// index. Take it from the handle a file was read through, then pass it to
+/// [`write_atomic_bound`] so the write cannot land on a file that replaced the one read.
+///
+/// An identity is only as good as what the file system reports. On a platform other than Unix
+/// and Windows, and on Windows when the file system reports a zero file index (some network
+/// shares), [`FileId::of`] returns `None` rather than an identity that matches every file, and
+/// a write that has no identity is not bound. The 64-bit index is not guaranteed unique on
+/// `ReFS`, and a file system with unstable inode numbers (some FUSE mounts) can refuse a write
+/// to an unchanged file; running the command again resolves that.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::FileId;
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("a.yaml");
+/// std::fs::write(&path, "a: 1\n")?;
+/// let id = FileId::of(&std::fs::File::open(&path)?)?;
+/// assert_eq!(id, FileId::of(&std::fs::File::open(&path)?)?);
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FileId {
+    #[cfg(unix)]
+    dev: u64,
+    #[cfg(unix)]
+    ino: u64,
+    #[cfg(windows)]
+    volume: u32,
+    #[cfg(windows)]
+    index: u64,
+}
+
+impl FileId {
+    /// The identity of the file `file` is open on, or `None` when the platform or file system
+    /// cannot tell files apart.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error if the system cannot describe the handle.
+    pub fn of(file: &fs::File) -> io::Result<Option<Self>> {
+        #[cfg(unix)]
+        return Ok(Some(Self::of_metadata(&file.metadata()?)));
+        #[cfg(windows)]
+        return win_acl::file_id(file)
+            .map(|(volume, index)| (index != 0).then_some(Self { volume, index }));
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = file;
+            Ok(None)
+        }
+    }
+
+    #[cfg(unix)]
+    fn of_metadata(metadata: &fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+        }
+    }
+}
+
+/// The payload of the error returned by [`write_atomic_bound`] when the target is not the file
+/// that was read.
+///
+/// Callers find it with [`io::Error::get_ref`] and `downcast_ref`, which tells a file that
+/// changed concurrently apart from an ordinary I/O failure.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::{FileId, HardLinkPolicy, TargetChanged, write_atomic_bound};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("a.yaml");
+/// std::fs::write(&path, "a: 1\n")?;
+/// let id = FileId::of(&std::fs::File::open(&path)?)?;
+/// std::fs::remove_file(&path)?;
+///
+/// # if id.is_some() {
+/// let err = write_atomic_bound(&path, b"a: 2\n", HardLinkPolicy::WriteInPlace, id).unwrap_err();
+/// assert!(err.get_ref().is_some_and(|e| e.is::<TargetChanged>()));
+/// # }
+/// # Ok::<(), std::io::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetChanged {
+    path: PathBuf,
+}
+
+impl TargetChanged {
+    /// The path that no longer names the file that was read.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::fmt::Display for TargetChanged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} is not the file that was read; run the command again",
+            DisplayPath::new(&self.path)
+        )
+    }
+}
+
+impl std::error::Error for TargetChanged {}
+
 /// What [`write_atomic`] does with a target that has several hard links.
 ///
 /// The policy only has an effect on Unix; on other platforms every target is replaced by rename
@@ -136,7 +251,14 @@ impl std::error::Error for HardLinkRefused {}
 ///   parent directory, so a parent that denies `READ_CONTROL` fails the write. A file system
 ///   without security descriptors is skipped. The owner is not copied (the replacement belongs
 ///   to the writer, so inherited creator-owner entries resolve to the writer), nor are the
-///   SACL, the integrity label and alternate data streams.
+///   SACL and the integrity label. Of the alternate data streams only `Zone.Identifier` (the
+///   mark of the web) is copied, before the DACL, so that a downloaded file stays marked; it is
+///   read by path and skipped if the path no longer names the file opened at `create` time
+///   (for a write bound by [`write_atomic_bound`] the identity check before the rename then
+///   fails the write). A file system without streams is skipped, and any other stream is
+///   dropped. A stream that exists but cannot be read, for example because a browser or virus
+///   scanner holds it with a sharing violation, fails the write rather than silently dropping
+///   the mark of the web.
 ///
 /// # Errors
 ///
@@ -157,15 +279,64 @@ impl std::error::Error for HardLinkRefused {}
 /// # Ok::<(), std::io::Error>(())
 /// ```
 pub fn write_atomic(path: &Path, content: &[u8], hard_links: HardLinkPolicy) -> io::Result<()> {
-    let mut file = AtomicFile::create(path)?;
+    write_resolved(AtomicFile::create(path)?, content, hard_links)
+}
+
+/// Like [`write_atomic`], but only replaces the file whose identity is `expected`.
+///
+/// A caller that read the content of `path` and writes a result derived from it passes the
+/// [`FileId`] of the handle it read through. If the path names another file by the time the
+/// target is resolved (renamed over, deleted, or re-pointed through a symlink), nothing is
+/// written and the call fails with [`TargetChanged`], so the old file's content is never
+/// replaced by output computed from a different file. The identity is checked again right
+/// before the rename; a swap in the instant between that check and the rename is not seen.
+///
+/// `expected` is `None` when the read could not take an identity (see [`FileId`]); the write
+/// is then unbound and behaves like [`write_atomic`].
+///
+/// # Errors
+///
+/// Returns the errors of [`write_atomic`], and an I/O error carrying [`TargetChanged`] if the
+/// target is missing or is not the file `expected` describes.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::{FileId, HardLinkPolicy, write_atomic_bound};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("a.yaml");
+/// std::fs::write(&path, "a: 1\n")?;
+/// let id = FileId::of(&std::fs::File::open(&path)?)?;
+///
+/// write_atomic_bound(&path, b"a: 2\n", HardLinkPolicy::WriteInPlace, id)?;
+/// assert_eq!(std::fs::read_to_string(&path)?, "a: 2\n");
+/// # Ok::<(), std::io::Error>(())
+/// ```
+pub fn write_atomic_bound(
+    path: &Path,
+    content: &[u8],
+    hard_links: HardLinkPolicy,
+    expected: Option<FileId>,
+) -> io::Result<()> {
+    write_resolved(
+        AtomicFile::create_bound(path, expected)?,
+        content,
+        hard_links,
+    )
+}
+
+fn write_resolved(
+    mut file: AtomicFile,
+    content: &[u8],
+    hard_links: HardLinkPolicy,
+) -> io::Result<()> {
     #[cfg(unix)]
     if let Some(old) = file.existing.as_ref().filter(|old| old.hardlinked()) {
         if hard_links == HardLinkPolicy::Refuse {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
-                HardLinkRefused {
-                    links: old.identity.2,
-                },
+                HardLinkRefused { links: old.links },
             ));
         }
         if old.owned_by(&file.temp.as_file().metadata()?) {
@@ -208,6 +379,7 @@ pub struct AtomicFile {
     temp: tempfile::NamedTempFile,
     target: PathBuf,
     existing: Option<Existing>,
+    expected: Option<FileId>,
 }
 
 impl AtomicFile {
@@ -218,7 +390,12 @@ impl AtomicFile {
     /// Returns an I/O error if the target cannot be resolved, is not a regular file, or the
     /// temporary file cannot be created.
     pub fn create(path: &Path) -> io::Result<Self> {
-        let (target, existing) = resolve_target(path)?;
+        Self::create_bound(path, None)
+    }
+
+    /// [`create`](Self::create) that, given `expected`, fails unless the target is that file.
+    fn create_bound(path: &Path, expected: Option<FileId>) -> io::Result<Self> {
+        let (target, existing) = resolve_target(path, expected)?;
         let dir = parent_dir(&target);
         let temp = create_temp(dir, existing.is_none()).map_err(|e| {
             io::Error::new(
@@ -233,6 +410,7 @@ impl AtomicFile {
             temp,
             target,
             existing,
+            expected,
         })
     }
 
@@ -247,6 +425,7 @@ impl AtomicFile {
             temp,
             target,
             existing,
+            expected,
         } = self;
         let read_only = existing
             .as_ref()
@@ -264,6 +443,8 @@ impl AtomicFile {
             #[cfg(not(unix))]
             let permissions = old.permissions.clone();
             #[cfg(windows)]
+            copy_zone_identifier(old, &target, temp.path())?;
+            #[cfg(windows)]
             if let Some(source) = old.source.as_ref() {
                 win_acl::copy_dacl(source, temp.as_file())?;
             }
@@ -275,6 +456,7 @@ impl AtomicFile {
         temp.as_file().sync_all()?;
         // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
         let temp_path = temp.into_temp_path();
+        ensure_still_expected(&target, expected)?;
         replace(&temp_path, &target, read_only)?;
         let _ = temp_path.keep();
         sync_dir(parent_dir(&target));
@@ -350,6 +532,90 @@ fn changed(path: &Path) -> io::Error {
     ))
 }
 
+/// The error for a target that is not the file the caller read.
+fn not_the_file_read(path: &Path) -> io::Error {
+    io::Error::other(TargetChanged {
+        path: path.to_path_buf(),
+    })
+}
+
+/// Fails with [`TargetChanged`] unless `target` still names the file `expected`; best effort,
+/// since it cannot close the instant between this check and the rename that follows.
+fn ensure_still_expected(target: &Path, expected: Option<FileId>) -> io::Result<()> {
+    let Some(expected) = expected else {
+        return Ok(());
+    };
+    #[cfg(unix)]
+    let now = fs::metadata(target).map(|metadata| Some(FileId::of_metadata(&metadata)));
+    #[cfg(windows)]
+    let now = open_dacl_source(target).and_then(|(file, _)| FileId::of(&file));
+    #[cfg(not(any(unix, windows)))]
+    let now: io::Result<Option<FileId>> = Ok(None);
+    match now {
+        Ok(Some(id)) if id == expected => Ok(()),
+        Ok(_) => Err(not_the_file_read(target)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Err(not_the_file_read(target)),
+        Err(e) => Err(e),
+    }
+}
+
+/// The largest `Zone.Identifier` stream that is copied; real ones are a few dozen bytes.
+#[cfg(windows)]
+const MAX_ZONE_IDENTIFIER_BYTES: u64 = 64 * 1024;
+
+#[cfg(windows)]
+fn zone_identifier_path(file: &Path) -> PathBuf {
+    let mut name = file.as_os_str().to_owned();
+    name.push(":Zone.Identifier");
+    PathBuf::from(name)
+}
+
+/// Whether `error` says the file system has no alternate data streams (or none of that name).
+#[cfg(windows)]
+fn no_stream(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::InvalidFilename | io::ErrorKind::Unsupported
+    )
+}
+
+/// Copies the `Zone.Identifier` stream of `real` onto the not yet renamed `temp`; any failure
+/// other than "no such stream" is returned.
+///
+/// The stream is read by path, since std cannot open a stream relative to a handle, so `real` is
+/// opened again afterwards and nothing is written unless it is still the file `old` describes.
+#[cfg(windows)]
+fn copy_zone_identifier(old: &Existing, real: &Path, temp: &Path) -> io::Result<()> {
+    use std::io::Read;
+
+    let source = match fs::File::open(zone_identifier_path(real)) {
+        Ok(source) => source,
+        Err(e) if no_stream(&e) => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let mut data = Vec::new();
+    source
+        .take(MAX_ZONE_IDENTIFIER_BYTES + 1)
+        .read_to_end(&mut data)?;
+    if data.len() as u64 > MAX_ZONE_IDENTIFIER_BYTES {
+        return Err(io::Error::other(format!(
+            "Zone.Identifier of {} is too large to copy",
+            DisplayPath::new(real)
+        )));
+    }
+    let still_old = open_dacl_source(real)
+        .and_then(|(file, _)| FileId::of(&file))
+        .is_ok_and(|id| id.is_some() && id == old.id);
+    if !still_old {
+        return Ok(());
+    }
+    match fs::File::create_new(zone_identifier_path(temp)) {
+        Ok(mut stream) => stream.write_all(&data),
+        Err(e) if no_stream(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
 /// Overwrites a target that other names share, so every hard link observes the new content.
 ///
 /// The target is opened without truncation and without following a symlink, and written only
@@ -365,7 +631,10 @@ fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<(
         .custom_flags(NO_FOLLOW_OPEN.bits().cast_signed())
         .open(target)?;
     let opened = file.metadata()?;
-    if !opened.is_file() || (opened.dev(), opened.ino(), opened.nlink()) != old.identity {
+    if !opened.is_file()
+        || Some(FileId::of_metadata(&opened)) != old.id
+        || opened.nlink() != old.links
+    {
         return Err(changed(target));
     }
     fcntl_setfl(&file, fcntl_getfl(&file)? - OFlags::NONBLOCK)?;
@@ -459,8 +728,6 @@ fn copy_acl(old: &Existing, real: &Path, temp: &Path) -> io::Result<()> {
 /// The ACL entries of the file `old` describes, or none when there is nothing trustworthy to read.
 #[cfg(target_os = "macos")]
 fn read_acl(old: &Existing, real: &Path) -> io::Result<Vec<exacl::AclEntry>> {
-    use std::os::unix::fs::MetadataExt;
-
     if old.source.is_none() {
         return Ok(Vec::new());
     }
@@ -481,8 +748,7 @@ fn read_acl(old: &Existing, real: &Path) -> io::Result<Vec<exacl::AclEntry>> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(e) => return Err(e),
     };
-    let same_inode =
-        after.is_file() && (after.dev(), after.ino()) == (old.identity.0, old.identity.1);
+    let same_inode = after.is_file() && Some(FileId::of_metadata(&after)) == old.id;
     Ok(if same_inode { entries } else { Vec::new() })
 }
 
@@ -556,24 +822,27 @@ struct Existing {
     /// `(uid, gid)`
     #[cfg(unix)]
     owner: (u32, u32),
-    /// `(dev, ino, nlink)`
+    /// Number of hard links.
     #[cfg(unix)]
-    identity: (u64, u64, u64),
+    links: u64,
+    /// Identity of the file the other fields describe, when the file system reports one.
+    id: Option<FileId>,
     /// Handle on the old file, the source of its extended attributes (Unix) or DACL (Windows).
     #[cfg(any(unix, windows))]
     source: Option<fs::File>,
 }
 
 impl Existing {
-    fn of(metadata: &fs::Metadata) -> Self {
+    fn of(metadata: &fs::Metadata, id: Option<FileId>) -> Self {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         Self {
+            id,
             permissions: metadata.permissions(),
             #[cfg(unix)]
             owner: (metadata.uid(), metadata.gid()),
             #[cfg(unix)]
-            identity: (metadata.dev(), metadata.ino(), metadata.nlink()),
+            links: metadata.nlink(),
             #[cfg(any(unix, windows))]
             source: None,
         }
@@ -584,7 +853,7 @@ impl Existing {
     fn open(real: &Path, metadata: &fs::Metadata) -> io::Result<Self> {
         Ok(Self {
             source: open_xattr_source(real, metadata)?,
-            ..Self::of(metadata)
+            ..Self::of(metadata, Some(FileId::of_metadata(metadata)))
         })
     }
 
@@ -592,15 +861,16 @@ impl Existing {
     #[cfg(windows)]
     fn open(real: &Path, _path_metadata: &fs::Metadata) -> io::Result<Self> {
         let (source, opened) = open_dacl_source(real)?;
+        let id = FileId::of(&source)?;
         Ok(Self {
             source: Some(source),
-            ..Self::of(&opened)
+            ..Self::of(&opened, id)
         })
     }
 
     #[cfg(unix)]
     const fn hardlinked(&self) -> bool {
-        self.identity.2 > 1
+        self.links > 1
     }
 
     /// Whether the file belongs to the user that `process_file` (made by this process) has.
@@ -612,7 +882,25 @@ impl Existing {
 }
 
 /// Resolves the real replacement target and what to preserve of it, if it exists.
-fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
+///
+/// With `expected`, the target must exist and be that file.
+fn resolve_target(
+    path: &Path,
+    expected: Option<FileId>,
+) -> io::Result<(PathBuf, Option<Existing>)> {
+    let resolved = resolve_unbound(path)?;
+    if let Some(expected) = expected
+        && resolved
+            .1
+            .as_ref()
+            .is_none_or(|old| old.id != Some(expected))
+    {
+        return Err(not_the_file_read(path));
+    }
+    Ok(resolved)
+}
+
+fn resolve_unbound(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
     match fs::canonicalize(path) {
         Ok(real) => {
             let metadata = fs::metadata(&real)?;
@@ -625,7 +913,7 @@ fn resolve_target(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
             #[cfg(any(unix, windows))]
             let existing = Existing::open(&real, &metadata)?;
             #[cfg(not(any(unix, windows)))]
-            let existing = Existing::of(&metadata);
+            let existing = Existing::of(&metadata, None);
             Ok((real, Some(existing)))
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -647,6 +935,104 @@ mod tests {
 
     fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
         super::write_atomic(path, content, HardLinkPolicy::WriteInPlace)
+    }
+
+    fn id_of(path: &Path) -> Option<FileId> {
+        FileId::of(&fs::File::open(path).unwrap()).unwrap()
+    }
+
+    fn bound(path: &Path, content: &[u8], expected: Option<FileId>) -> io::Result<()> {
+        write_atomic_bound(path, content, HardLinkPolicy::WriteInPlace, expected)
+    }
+
+    fn is_target_changed(error: &io::Error) -> bool {
+        error
+            .get_ref()
+            .is_some_and(<dyn std::error::Error + Send + Sync>::is::<TargetChanged>)
+    }
+
+    #[test]
+    fn bound_write_replaces_the_file_that_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "old").unwrap();
+        bound(&path, b"new", id_of(&path)).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn bound_write_refuses_a_file_renamed_over_the_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        let other = dir.path().join("other.yaml");
+        fs::write(&path, "read").unwrap();
+        let read = id_of(&path);
+        fs::write(&other, "unrelated").unwrap();
+        fs::rename(&other, &path).unwrap();
+
+        let err = bound(&path, b"new", read).unwrap_err();
+
+        assert!(is_target_changed(&err));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn unbound_write_replaces_any_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "old").unwrap();
+        bound(&path, b"new", None).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn final_check_refuses_a_file_swapped_after_resolution() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        let other = dir.path().join("other.yaml");
+        fs::write(&path, "read").unwrap();
+        let read = id_of(&path);
+        assert!(ensure_still_expected(&path, read).is_ok());
+        fs::write(&other, "unrelated").unwrap();
+        fs::rename(&other, &path).unwrap();
+        assert!(is_target_changed(
+            &ensure_still_expected(&path, read).unwrap_err()
+        ));
+        assert!(ensure_still_expected(&path, None).is_ok());
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn bound_write_refuses_a_deleted_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "read").unwrap();
+        let read = id_of(&path);
+        fs::remove_file(&path).unwrap();
+
+        assert!(is_target_changed(&bound(&path, b"new", read).unwrap_err()));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn bound_write_follows_a_symlink_to_the_file_that_was_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real.yaml");
+        let link = dir.path().join("link.yaml");
+        fs::write(&real, "old").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(&real, &link).is_err() {
+            return;
+        }
+        #[cfg(not(any(unix, windows)))]
+        return;
+        bound(&link, b"new", id_of(&link)).unwrap();
+        assert_eq!(fs::read_to_string(&real).unwrap(), "new");
     }
 
     #[test]
@@ -949,7 +1335,8 @@ mod tests {
         }
 
         fn existing_of(path: &Path) -> Existing {
-            Existing::of(&fs::metadata(path).unwrap())
+            let metadata = fs::metadata(path).unwrap();
+            Existing::of(&metadata, Some(FileId::of_metadata(&metadata)))
         }
 
         #[test]
@@ -1016,7 +1403,8 @@ mod tests {
             let old = Existing {
                 permissions: metadata.permissions(),
                 owner: (metadata.uid().wrapping_add(1), metadata.gid()),
-                identity: (metadata.dev(), metadata.ino(), 1),
+                links: 1,
+                id: Some(FileId::of_metadata(&metadata)),
                 source: None,
             };
             let temp = tempfile::tempfile_in(dir.path()).unwrap();
@@ -1247,5 +1635,90 @@ mod dacl_tests {
         }
         let err = open_dacl_source(&link).unwrap_err();
         assert!(err.to_string().contains("changed while"), "{err}");
+    }
+
+    const ZONE: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
+
+    fn stream_of(path: &Path) -> io::Result<Vec<u8>> {
+        fs::read(zone_identifier_path(path))
+    }
+
+    #[test]
+    fn zone_identifier_survives_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        fs::write(zone_identifier_path(&path), ZONE).unwrap();
+
+        write_atomic(&path, b"a: 2\n").unwrap();
+
+        assert_eq!(stream_of(&path).unwrap(), ZONE);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a: 2\n");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn zone_identifier_survives_replacement_of_a_read_only_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        fs::write(zone_identifier_path(&path), ZONE).unwrap();
+        set_read_only(&path, true).unwrap();
+
+        write_atomic(&path, b"a: 2\n").unwrap();
+
+        assert_eq!(stream_of(&path).unwrap(), ZONE);
+        assert!(fs::metadata(&path).unwrap().permissions().readonly());
+    }
+
+    #[test]
+    fn file_without_zone_identifier_gets_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+
+        write_atomic(&path, b"a: 2\n").unwrap();
+
+        assert_eq!(
+            stream_of(&path).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn zone_identifier_of_a_replaced_file_is_not_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir);
+        fs::write(zone_identifier_path(&path), ZONE).unwrap();
+        let old = Existing::open(&path, &fs::metadata(&path).unwrap()).unwrap();
+        let other = dir.path().join("other.yaml");
+        fs::write(&other, "b: 1\n").unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::rename(&other, &path).unwrap();
+        fs::write(
+            zone_identifier_path(&path),
+            b"[ZoneTransfer]\r\nZoneId=4\r\n",
+        )
+        .unwrap();
+        let temp = dir.path().join("temp.tmp");
+        fs::write(&temp, "").unwrap();
+
+        copy_zone_identifier(&old, &path, &temp).unwrap();
+
+        assert_eq!(
+            stream_of(&temp).unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
+    }
+
+    #[test]
+    fn file_id_tells_files_apart_and_names_one_file_by_any_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = file_in(&dir);
+        let b = dir.path().join("b.yaml");
+        fs::write(&b, "b: 1\n").unwrap();
+        let spelled = dir.path().join(".").join("acl.yaml");
+
+        let id = |path: &Path| FileId::of(&fs::File::open(path).unwrap()).unwrap().unwrap();
+
+        assert_eq!(id(&a), id(&spelled));
+        assert_ne!(id(&a), id(&b));
     }
 }

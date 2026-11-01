@@ -118,7 +118,11 @@ impl FormatCommand {
                 let rewrites_unchanged_input = status == FormatStatus::Unchanged
                     && input.file_path().is_some_and(|path| output.targets(path));
                 if !rewrites_unchanged_input {
-                    output.write(&formatted)?;
+                    let read_as = input
+                        .file_path()
+                        .filter(|path| output.targets(path))
+                        .and_then(|_| input.file_id());
+                    output.write_replacing(&formatted, read_as)?;
                 }
                 Ok(ExitCode::Success)
             }
