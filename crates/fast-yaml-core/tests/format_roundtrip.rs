@@ -90,8 +90,8 @@ fn anchor_with_colon_re_parses_and_control_chars_are_rejected() {
 }
 
 #[test]
-fn anchor_with_bom_is_idempotent() {
-    check("&0\u{feff}");
+fn anchor_with_bom_is_rejected() {
+    assert!(Emitter::format("&0\u{feff}").is_err());
 }
 
 #[test]
@@ -121,7 +121,6 @@ fn flow_plain_scalars_starting_with_indicators_are_quoted() {
 
 #[test]
 fn aliases_follow_renamed_anchors() {
-    check("&a\u{feff}b [1]\n---\nk: &b [2]\nv: *b\n");
     check("x: &keep [1]\ny: *keep\nz: 'it''s'\n");
 }
 

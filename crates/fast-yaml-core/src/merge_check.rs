@@ -307,7 +307,7 @@ mod tests {
 
     fn validate(yaml: &str) -> Result<(), ParseError> {
         let mut validator = MergeKeyValidator::default();
-        for event in Parser::new_from_str(yaml) {
+        for event in crate::scan_guard::GuardedParser::new(yaml, crate::limits::MaxScanAhead::MAX) {
             let (event, span) = event.unwrap();
             validator.observe(&event, span)?;
         }

@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Core: bump `saphyr-parser` to 0.3.3; node spans keep starting at their content, a BOM inside a document is rejected and an empty block scalar is `""` in `parse_all` and `parse_parallel` (#691)
 - Linter: `colons` no longer reports the mandatory space after an alias key (#644) (#671)
 - CLI: `--pretty` and `--allow-duplicate-keys` no longer swallow the next path (#632) (#671)
 - CLI: discovery warns about files skipped during directory walk and glob expansion (#629) (#671)

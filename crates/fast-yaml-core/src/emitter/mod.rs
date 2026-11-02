@@ -1143,7 +1143,7 @@ mod tests {
 
     #[test]
     fn test_format_escapes_a_bom_inside_scalars() {
-        for input in ["\"\t\u{FEFF}}\"\n", "a: \" \u{FEFF}\"\n", "k: x\u{FEFF}y\n"] {
+        for input in ["\"\t\u{FEFF}}\"\n", "a: \" \u{FEFF}\"\n"] {
             let out = Emitter::format(input).unwrap();
             assert_eq!(
                 crate::Parser::parse_all(input).unwrap(),
@@ -1180,18 +1180,17 @@ mod tests {
     }
 
     #[test]
-    fn test_format_keeps_a_bom_that_starts_a_root_plain_scalar() {
+    fn test_format_rejects_a_bom_inside_a_document() {
         for input in [
             "--- \u{FEFF}x\n",
             "---\n\u{FEFF}x\n",
             "--- |-\n  \u{FEFF}x\n",
+            "k: x\u{FEFF}y\n",
+            "  \u{FEFF}{a: 1}",
+            "\t\u{FEFF}}",
+            " \u{FEFF}",
         ] {
-            let out = Emitter::format(input).unwrap();
-            assert_eq!(
-                crate::Parser::parse_all(input).unwrap(),
-                crate::Parser::parse_all(&out).unwrap(),
-                "{input:?} -> {out:?}"
-            );
+            assert!(Emitter::format(input).is_err(), "{input:?}");
         }
     }
 
@@ -1201,9 +1200,6 @@ mod tests {
             "\n\u{FEFF}- a\n",
             "\n\u{FEFF}[1, 2]\n",
             "# c\n\u{FEFF}admin: true\n",
-            "  \u{FEFF}{a: 1}",
-            "\t\u{FEFF}}",
-            " \u{FEFF}",
         ] {
             let out = Emitter::format(input).unwrap();
             assert_eq!(

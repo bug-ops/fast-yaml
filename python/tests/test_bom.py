@@ -26,8 +26,10 @@ def test_safe_load_bom_only_is_none():
     assert fast_yaml.safe_load(BOM) is None
 
 
-def test_safe_load_mid_text_bom_is_data():
-    assert fast_yaml.safe_load(f"b: {BOM}x") == {"b": f"{BOM}x"}
+def test_safe_load_mid_text_bom_is_data_only_inside_quotes():
+    assert fast_yaml.safe_load(f'b: "{BOM}x"') == {"b": f"{BOM}x"}
+    with pytest.raises(ValueError, match="byte order mark"):
+        fast_yaml.safe_load(f"b: {BOM}x")
 
 
 def test_bom_in_a_later_document_prefix_is_not_data():

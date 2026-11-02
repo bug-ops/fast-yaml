@@ -2251,10 +2251,10 @@ m:
     }
 
     #[test]
-    fn test_parse_all_strips_only_one_of_double_bom() {
+    fn test_parse_all_treats_a_second_leading_bom_as_a_document_prefix() {
         let budget = StreamBudget::new(ParseLimits::default());
         let docs = Parser::parse_all_with_budget("\u{FEFF}\u{FEFF}", &budget).unwrap();
-        assert_eq!(docs, vec![Value::String("\u{FEFF}".into())]);
+        assert_eq!(docs, vec![Value::Null]);
     }
 
     #[test]
@@ -2282,9 +2282,10 @@ m:
     }
 
     #[test]
-    fn test_mid_text_bom_stays_data() {
-        let v = get_mapping_val("b: \u{FEFF}x", "b");
+    fn test_mid_text_bom_stays_data_inside_quotes() {
+        let v = get_mapping_val("b: \"\u{FEFF}x\"", "b");
         assert!(matches!(v, Value::String(ref s) if s == "\u{FEFF}x"));
+        assert!(Parser::parse_str("b: \u{FEFF}x").is_err());
     }
 
     #[test]
@@ -2995,11 +2996,15 @@ m:
 
     #[test]
     fn bom_elsewhere_is_content() {
-        let docs = Parser::parse_all(&format!("a: {B}1\n...\nb{B}")).unwrap();
-        assert_eq!(docs[0], Parser::parse_all(&format!("a: {B}1")).unwrap()[0]);
-        assert_eq!(texts(&docs[1..]), [format!("b{B}")]);
-        let docs = Parser::parse_all(&format!("a\n{B}b")).unwrap();
-        assert_eq!(texts(&docs), [format!("a {B}b")]);
+        for yaml in [
+            format!("a: {B}1\n...\nb{B}"),
+            format!("a\n{B}b"),
+            format!("b{B}"),
+        ] {
+            assert!(Parser::parse_all(&yaml).is_err(), "{yaml:?}");
+        }
+        let docs = Parser::parse_all(&format!("a: \"x{B}y\"")).unwrap();
+        assert_eq!(docs, Parser::parse_all(&format!("a: \"x{B}y\"")).unwrap());
     }
 
     #[test]
