@@ -1,4 +1,7 @@
-//! Windows DACL copy for [`AtomicFile`](super::AtomicFile): the only `unsafe` in this crate.
+//! Windows handle-based file calls for [`AtomicFile`](super::AtomicFile): the only `unsafe` in
+//! this crate.
+//!
+//! [`file_id`] reads the identity of an open file. The rest copies the DACL.
 //!
 //! The replacement file is created next to the target, so it already carries the DACL entries
 //! inherited from the directory. [`copy_dacl`] gives it the descriptor the old file had instead,
@@ -18,7 +21,8 @@ use std::ptr;
 use std::slice;
 
 use windows_sys::Win32::Foundation::{
-    ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_SUCCESS, HLOCAL, LocalFree, WIN32_ERROR,
+    ERROR_INVALID_FUNCTION, ERROR_NOT_SUPPORTED, ERROR_SUCCESS, FILETIME, HLOCAL, LocalFree,
+    WIN32_ERROR,
 };
 use windows_sys::Win32::Security::Authorization::{
     GetSecurityInfo, SE_FILE_OBJECT, SetSecurityInfo,
@@ -30,8 +34,42 @@ use windows_sys::Win32::Security::{
     UNPROTECTED_DACL_SECURITY_INFORMATION,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, READ_CONTROL, ReOpenFile, WRITE_DAC,
+    BY_HANDLE_FILE_INFORMATION, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+    GetFileInformationByHandle, READ_CONTROL, ReOpenFile, WRITE_DAC,
 };
+
+/// The volume serial number and the 64-bit file index of the open file `file`.
+///
+/// Together they name the file on its volume for as long as it exists, whatever path it is
+/// reached by. The handle needs no access rights beyond what opening it took.
+pub(super) fn file_id(file: &File) -> io::Result<(u32, u64)> {
+    const ZERO_TIME: FILETIME = FILETIME {
+        dwLowDateTime: 0,
+        dwHighDateTime: 0,
+    };
+    let mut info = BY_HANDLE_FILE_INFORMATION {
+        dwFileAttributes: 0,
+        ftCreationTime: ZERO_TIME,
+        ftLastAccessTime: ZERO_TIME,
+        ftLastWriteTime: ZERO_TIME,
+        dwVolumeSerialNumber: 0,
+        nFileSizeHigh: 0,
+        nFileSizeLow: 0,
+        nNumberOfLinks: 0,
+        nFileIndexHigh: 0,
+        nFileIndexLow: 0,
+    };
+    // SAFETY: the handle is open for the lifetime of `file` and `info` is a live out-buffer of
+    // the type the call fills.
+    let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((
+        info.dwVolumeSerialNumber,
+        u64::from(info.nFileIndexHigh) << 32 | u64::from(info.nFileIndexLow),
+    ))
+}
 
 /// Gives the open file `to` the DACL of the open file `from`.
 ///

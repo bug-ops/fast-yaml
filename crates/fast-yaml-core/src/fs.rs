@@ -139,9 +139,43 @@ fn open_regular(path: &Path) -> Result<(File, u64), ReadFileError> {
 /// ));
 /// ```
 pub fn read_regular_file(path: &Path, max: MaxInputBytes) -> Result<Vec<u8>, ReadFileError> {
+    read_regular_file_with_handle(path, max).map(|(bytes, _)| bytes)
+}
+
+/// Like [`read_regular_file`], and also returns the handle the bytes were read from.
+///
+/// The handle identifies the file that was actually read, whatever the path names afterwards,
+/// so a caller can bind a later operation to it. It is positioned at the end of the data;
+/// drop it as soon as the identity is taken, since an open handle can block a rename on Windows.
+///
+/// # Errors
+///
+/// The same as [`read_regular_file`].
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::fs::read_regular_file_with_handle;
+/// use fast_yaml_core::limits::MaxInputBytes;
+///
+/// let dir = std::env::temp_dir().join("fy-read-with-handle-doc");
+/// std::fs::create_dir_all(&dir)?;
+/// let path = dir.join("a.yaml");
+/// std::fs::write(&path, "a: 1\n")?;
+/// let (bytes, file) = read_regular_file_with_handle(&path, MaxInputBytes::DEFAULT)?;
+/// assert_eq!(bytes, b"a: 1\n");
+/// assert!(file.metadata()?.is_file());
+/// # std::fs::remove_dir_all(&dir)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn read_regular_file_with_handle(
+    path: &Path,
+    max: MaxInputBytes,
+) -> Result<(Vec<u8>, File), ReadFileError> {
     let (file, size) = open_regular(path)?;
     max.check_file_len(size)?;
-    read_bounded(file, max, usize::try_from(size).unwrap_or_default())
+    let bytes = read_bounded(&file, max, usize::try_from(size).unwrap_or_default())?;
+    Ok((bytes, file))
 }
 
 /// Reads `reader` to its end, taking at most `max` bytes.

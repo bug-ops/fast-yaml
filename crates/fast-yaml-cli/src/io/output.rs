@@ -3,7 +3,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use fast_yaml_core::fs::DisplayPath;
-use fast_yaml_parallel::AtomicFile;
+use fast_yaml_parallel::{AtomicFile, FileId};
 
 /// Destination for output data
 #[derive(Debug)]
@@ -127,8 +127,19 @@ impl OutputWriter {
     ///
     /// Returns an error on I/O failure for any destination variant, except a closed pipe.
     pub fn write(&self, content: &str) -> Result<()> {
+        self.write_replacing(content, None)
+    }
+
+    /// [`write`](Self::write) that, for a file destination, only replaces the file `read_as`
+    /// identifies; pass the identity of the input when the destination is that input file.
+    ///
+    /// # Errors
+    ///
+    /// As [`write`](Self::write), and an error if the destination is no longer the file that was
+    /// read.
+    pub fn write_replacing(&self, content: &str, read_as: Option<FileId>) -> Result<()> {
         match &self.destination {
-            OutputDestination::File(path) => Self::write_file(path, content),
+            OutputDestination::File(path) => Self::write_file(path, content, read_as),
             OutputDestination::Null => Ok(()),
             OutputDestination::Stdout | OutputDestination::Stderr => {
                 let mut sink = self.sink()?;
@@ -209,11 +220,12 @@ impl OutputWriter {
     }
 
     /// Write to file via the shared secure atomic writer
-    fn write_file(path: &Path, content: &str) -> Result<()> {
-        fast_yaml_parallel::write_atomic(
+    fn write_file(path: &Path, content: &str, read_as: Option<FileId>) -> Result<()> {
+        fast_yaml_parallel::write_atomic_bound(
             path,
             content.as_bytes(),
             fast_yaml_parallel::HardLinkPolicy::WriteInPlace,
+            read_as,
         )
         .with_context(|| format!("Failed to write file: {}", DisplayPath::new(path)))
     }
@@ -436,10 +448,37 @@ mod tests {
         write!(temp_file, "original content").unwrap();
         let path = temp_file.path();
 
-        OutputWriter::write_file(path, "new content").unwrap();
+        OutputWriter::write_file(path, "new content", None).unwrap();
 
         let content = fs::read_to_string(path).unwrap();
         assert_eq!(content, "new content");
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_write_replacing_refuses_a_file_swapped_after_the_read() {
+        use fast_yaml_core::limits::MaxInputBytes;
+        use fast_yaml_parallel::TargetChanged;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        let other = dir.path().join("other.yaml");
+        fs::write(&path, "a:   1\n").unwrap();
+        let input = crate::io::InputSource::from_file(&path, MaxInputBytes::DEFAULT).unwrap();
+        fs::write(&other, "unrelated: 1\n").unwrap();
+        fs::rename(&other, &path).unwrap();
+        let writer = OutputWriter::new(OutputTarget::File(path.clone()));
+
+        let err = writer
+            .write_replacing("a: 1\n", input.file_id())
+            .unwrap_err();
+
+        assert!(
+            err.downcast_ref::<io::Error>()
+                .and_then(io::Error::get_ref)
+                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<TargetChanged>)
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated: 1\n");
     }
 
     #[test]

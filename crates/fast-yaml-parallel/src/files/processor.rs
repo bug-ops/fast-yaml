@@ -12,10 +12,10 @@ use fast_yaml_core::limits::MaxScanAhead;
 use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comments_normalized};
 use rayon::prelude::*;
 
-use crate::atomic::HardLinkPolicy;
+use crate::atomic::{FileId, HardLinkPolicy};
 use crate::config::Config;
 use crate::error::{Error, Result};
-use crate::io::read_file;
+use crate::io::{read_file, read_file_identified};
 use crate::pool;
 use crate::result::{BatchResult, FileOutcome, FileResult};
 use crate::scan_ahead::ScanAheadLane;
@@ -192,7 +192,10 @@ impl FileProcessor {
         comments: CommentPolicy,
     ) -> Vec<(PathBuf, Result<FormatOutput>)> {
         let lane = self.lane();
-        let process_file = |path: &Path| self.format_content(path, emitter_config, comments, &lane);
+        let process_file = |path: &Path| {
+            self.format_content(path, emitter_config, comments, &lane)
+                .map(|(output, _)| output)
+        };
 
         if self.should_use_sequential(paths) {
             paths
@@ -270,9 +273,11 @@ impl FileProcessor {
             return sequential();
         }
 
-        let groups = same_file_groups(probes.into_iter().map(|probe| probe.key));
         self.install(
-            || run_grouped(targets, &groups, format_one),
+            || {
+                let keys = file_keys(targets, &probes);
+                run_grouped(targets, &same_file_groups(keys), format_one)
+            },
             |error| {
                 targets
                     .iter()
@@ -291,14 +296,16 @@ impl FileProcessor {
     }
 
     /// Reads `path` once, enforces the size limit and comment policy, and formats it.
+    ///
+    /// Also returns the identity of the file that was read, which a write must be bound to.
     fn format_content(
         &self,
         path: &Path,
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
         lane: &ScanAheadLane,
-    ) -> Result<FormatOutput> {
-        let content = read_file(path, self.config.max_input_bytes())?;
+    ) -> Result<(FormatOutput, Option<FileId>)> {
+        let (content, id) = read_file_identified(path, self.config.max_input_bytes())?;
 
         let normalized = NormalizedInput::new(&content).map_err(|source| Error::Format {
             path: path.to_path_buf(),
@@ -325,10 +332,11 @@ impl FileProcessor {
         };
         let formatted = lane.run(format_at, exceeds_scan_ahead)?;
 
-        Ok(FormatOutput {
+        let output = FormatOutput {
             changed: content != formatted,
             formatted,
-        })
+        };
+        Ok((output, id))
     }
 
     /// Format a single file in place
@@ -342,8 +350,8 @@ impl FileProcessor {
         let start = std::time::Instant::now();
         let path = target.path();
 
-        let output = match self.format_content(path, emitter_config, comments, lane) {
-            Ok(output) => output,
+        let (output, id) = match self.format_content(path, emitter_config, comments, lane) {
+            Ok(read) => read,
             Err(error) => {
                 return FileResult::new(
                     path.to_path_buf(),
@@ -356,7 +364,8 @@ impl FileProcessor {
         };
 
         if output.changed
-            && let Err(error) = Self::write_file_atomic(path, &output.formatted, target.hard_links)
+            && let Err(error) =
+                Self::write_file_atomic(path, &output.formatted, target.hard_links, id)
         {
             return FileResult::new(
                 path.to_path_buf(),
@@ -467,12 +476,20 @@ impl FileProcessor {
         Ok(())
     }
 
-    /// Writes content to file via the shared secure writer [`crate::write_atomic`].
-    fn write_file_atomic(path: &Path, content: &str, hard_links: HardLinkPolicy) -> Result<()> {
-        crate::write_atomic(path, content.as_bytes(), hard_links).map_err(|source| Error::Write {
-            path: path.to_path_buf(),
-            source,
-        })
+    /// Writes content to the file `expected` via the shared secure writer
+    /// [`crate::write_atomic_bound`].
+    fn write_file_atomic(
+        path: &Path,
+        content: &str,
+        hard_links: HardLinkPolicy,
+        expected: Option<FileId>,
+    ) -> Result<()> {
+        crate::write_atomic_bound(path, content.as_bytes(), hard_links, expected).map_err(
+            |source| Error::Write {
+                path: path.to_path_buf(),
+                source,
+            },
+        )
     }
 
     /// Returns true if sequential processing should be used.
@@ -529,18 +546,34 @@ type FileKey = PathBuf;
 /// What one stat of a target tells the scheduler.
 struct Probe {
     len: u64,
-    key: Option<FileKey>,
+    metadata: Option<fs::Metadata>,
 }
 
 impl Probe {
-    /// Size and identity of the file `path` resolves to; a path that cannot be stat-ed has
-    /// size 0 and no identity.
+    /// Size of the file `path` resolves to and what the stat returned; a path that cannot be
+    /// stat-ed has size 0 and no metadata.
     fn of(path: &Path) -> Self {
-        fs::metadata(path).map_or(Self { len: 0, key: None }, |metadata| Self {
-            len: metadata.len(),
-            key: file_key(path, &metadata),
-        })
+        let metadata = fs::metadata(path).ok();
+        Self {
+            len: metadata.as_ref().map_or(0, fs::Metadata::len),
+            metadata,
+        }
     }
+}
+
+/// The same-file key of every target, in order. It is computed on the current rayon pool: on
+/// Windows it canonicalizes each path, which on a network share costs a round trip per file.
+fn file_keys(targets: &[InPlaceTarget], probes: &[Probe]) -> Vec<Option<FileKey>> {
+    targets
+        .par_iter()
+        .zip(probes.par_iter())
+        .map(|(target, probe)| {
+            probe
+                .metadata
+                .as_ref()
+                .and_then(|metadata| file_key(&target.path, metadata))
+        })
+        .collect()
 }
 
 /// `(dev, ino)` of the file `path` resolves to.
@@ -623,6 +656,14 @@ mod tests {
     use fast_yaml_core::limits::MaxInputBytes;
     use std::fs;
     use tempfile::TempDir;
+
+    fn id_of(path: &Path) -> Option<FileId> {
+        FileId::of(&fs::File::open(path).unwrap()).unwrap()
+    }
+
+    fn write_existing(path: &Path, content: &str, hard_links: HardLinkPolicy) -> Result<()> {
+        FileProcessor::write_file_atomic(path, content, hard_links, id_of(path))
+    }
 
     fn in_place(path: &Path) -> InPlaceTarget {
         InPlaceTarget::new(path.to_path_buf(), HardLinkPolicy::WriteInPlace)
@@ -759,14 +800,31 @@ mod tests {
         assert_eq!(result.total, 1);
     }
 
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_atomic_write_refuses_a_file_swapped_after_the_read() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.yaml");
+        let other = dir.path().join("other.yaml");
+        fs::write(&path, "read: 1").unwrap();
+        let read_id = id_of(&path);
+        fs::write(&other, "unrelated: 1").unwrap();
+        fs::rename(&other, &path).unwrap();
+
+        let result =
+            FileProcessor::write_file_atomic(&path, "x: 1", HardLinkPolicy::WriteInPlace, read_id);
+
+        assert!(matches!(result, Err(Error::Write { .. })));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated: 1");
+    }
+
     #[test]
     fn test_atomic_write() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.yaml");
         fs::write(&path, "old content").unwrap();
 
-        FileProcessor::write_file_atomic(&path, "new content", HardLinkPolicy::WriteInPlace)
-            .unwrap();
+        write_existing(&path, "new content", HardLinkPolicy::WriteInPlace).unwrap();
 
         let content = fs::read_to_string(&path).unwrap();
         assert_eq!(content, "new content");
@@ -945,12 +1003,12 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.yaml");
 
-        // Initial write
-        FileProcessor::write_file_atomic(&path, "content1", HardLinkPolicy::WriteInPlace).unwrap();
+        fs::write(&path, "initial").unwrap();
+        write_existing(&path, "content1", HardLinkPolicy::WriteInPlace).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "content1");
 
         // Update
-        FileProcessor::write_file_atomic(&path, "content2", HardLinkPolicy::WriteInPlace).unwrap();
+        write_existing(&path, "content2", HardLinkPolicy::WriteInPlace).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "content2");
 
         // Verify atomic write succeeded
@@ -964,6 +1022,8 @@ mod tests {
 
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("test.yaml");
+        fs::write(&path, "old").unwrap();
+        let id = id_of(&path);
 
         // Make directory read-only
         let mut perms = fs::metadata(dir.path()).unwrap().permissions();
@@ -972,7 +1032,7 @@ mod tests {
 
         // Attempt to write should fail
         let result =
-            FileProcessor::write_file_atomic(&path, "content", HardLinkPolicy::WriteInPlace);
+            FileProcessor::write_file_atomic(&path, "content", HardLinkPolicy::WriteInPlace, id);
 
         // Restore permissions for cleanup
         let mut perms = fs::metadata(dir.path()).unwrap().permissions();
@@ -1230,7 +1290,12 @@ mod tests {
     }
 
     fn groups_of(paths: &[PathBuf]) -> Vec<Vec<usize>> {
-        same_file_groups(paths.iter().map(|path| Probe::of(path).key))
+        let probes: Vec<Probe> = paths.iter().map(|path| Probe::of(path)).collect();
+        let targets: Vec<InPlaceTarget> = paths
+            .iter()
+            .map(|path| InPlaceTarget::new(path.clone(), HardLinkPolicy::WriteInPlace))
+            .collect();
+        same_file_groups(file_keys(&targets, &probes))
     }
 
     #[test]
@@ -1274,6 +1339,15 @@ mod tests {
             groups_of(&[a, other, hard, soft]),
             vec![vec![0, 2, 3], vec![1]]
         );
+    }
+
+    #[test]
+    fn test_same_file_groups_merge_spellings_of_one_path() {
+        let dir = TempDir::new().unwrap();
+        let a = create_test_file(&dir, "a.yaml", "a: 1\n");
+        let spelled = dir.path().join(".").join("a.yaml");
+        let other = create_test_file(&dir, "other.yaml", "b: 1\n");
+        assert_eq!(groups_of(&[a, other, spelled]), vec![vec![0, 2], vec![1]]);
     }
 
     #[test]

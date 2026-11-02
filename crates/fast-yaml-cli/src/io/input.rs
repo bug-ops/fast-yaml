@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use fast_yaml_core::decode_input_owned;
 use fast_yaml_core::fs::{DisplayPath, ReadFileError, read_bounded};
 use fast_yaml_core::limits::MaxInputBytes;
-use fast_yaml_parallel::read_file;
+use fast_yaml_parallel::{FileId, read_file_identified};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -16,15 +16,34 @@ pub struct InputSource {
 /// Origin of input (file or stdin)
 #[derive(Debug, Clone)]
 pub enum InputOrigin {
-    File(PathBuf),
+    /// A file, with the identity of the file the content was read from when the file system
+    /// reports one.
+    File {
+        path: PathBuf,
+        id: Option<FileId>,
+    },
     Stdin,
 }
 
 impl InputOrigin {
+    /// A file origin that carries no identity, for callers that never write back to it.
+    #[cfg(feature = "linter")]
+    pub const fn unidentified(path: PathBuf) -> Self {
+        Self::File { path, id: None }
+    }
+
     /// The file path when the input is a file.
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::File(path) => Some(path),
+            Self::File { path, .. } => Some(path),
+            Self::Stdin => None,
+        }
+    }
+
+    /// The identity of the file the content was read from, if known.
+    pub const fn file_id(&self) -> Option<FileId> {
+        match self {
+            Self::File { id, .. } => *id,
             Self::Stdin => None,
         }
     }
@@ -42,12 +61,15 @@ impl InputSource {
 
     /// Read from file; the read never buffers more than `max` bytes plus one
     pub fn from_file(path: &Path, max: MaxInputBytes) -> Result<Self> {
-        let content = read_file(path, max)
+        let (content, id) = read_file_identified(path, max)
             .with_context(|| format!("Failed to read file: {}", DisplayPath::new(path)))?;
 
         Ok(Self {
             content,
-            origin: InputOrigin::File(path.to_path_buf()),
+            origin: InputOrigin::File {
+                path: path.to_path_buf(),
+                id,
+            },
         })
     }
 
@@ -74,6 +96,12 @@ impl InputSource {
         &self.content
     }
 
+    /// Identity of the file the content was read from, so a write back can refuse a file that
+    /// was swapped meanwhile.
+    pub const fn file_id(&self) -> Option<FileId> {
+        self.origin.file_id()
+    }
+
     /// Get file path if input is from file
     pub fn file_path(&self) -> Option<&Path> {
         self.origin.path()
@@ -93,7 +121,7 @@ mod tests {
 
         let input = InputSource::from_file(temp_file.path(), MaxInputBytes::DEFAULT).unwrap();
         assert_eq!(input.as_str(), "test: value");
-        assert!(matches!(input.origin, InputOrigin::File(_)));
+        assert!(matches!(input.origin, InputOrigin::File { .. }));
         assert_eq!(input.file_path(), Some(temp_file.path()));
     }
 

@@ -1,18 +1,21 @@
 //! Bounded reading of YAML files into memory.
 
+use std::fs::File;
 use std::io::ErrorKind;
 use std::path::Path;
 
 use fast_yaml_core::decode_input_owned;
-use fast_yaml_core::fs::{ReadFileError, read_regular_file};
+use fast_yaml_core::fs::{ReadFileError, read_regular_file_with_handle};
 use fast_yaml_core::limits::MaxInputBytes;
 
+use crate::atomic::FileId;
 use crate::error::{Error, Result};
 
 /// Reads a YAML file into an owned string, decoding it and enforcing `max`.
 ///
-/// Reading is done by [`read_regular_file`], which checks the size against `max` before any
-/// content is read and never blocks on a FIFO or device; see its threat model.
+/// Reading is done by [`read_regular_file`](fast_yaml_core::fs::read_regular_file), which
+/// checks the size against `max` before any content is read and never blocks on a FIFO or
+/// device; see its threat model.
 ///
 /// # Errors
 ///
@@ -42,11 +45,50 @@ use crate::error::{Error, Result};
 /// # Ok::<(), Error>(())
 /// ```
 pub fn read_file(path: &Path, max: MaxInputBytes) -> Result<String> {
+    read_decoded(path, max).map(|(content, _)| content)
+}
+
+/// [`read_file`] that also returns the [`FileId`] of the file the content was read from, or
+/// `None` when the platform or file system reports no identity.
+///
+/// Pass the identity to [`write_atomic_bound`](crate::write_atomic_bound) to write back only to
+/// that file.
+///
+/// # Errors
+///
+/// The errors of [`read_file`], and [`Error::Io`] if the identity of the opened file cannot be
+/// read.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_core::limits::MaxInputBytes;
+/// use fast_yaml_parallel::{HardLinkPolicy, read_file_identified, write_atomic_bound};
+///
+/// let dir = tempfile::tempdir()?;
+/// let path = dir.path().join("a.yaml");
+/// std::fs::write(&path, "a: 1\n")?;
+///
+/// let (content, id) = read_file_identified(&path, MaxInputBytes::DEFAULT)?;
+/// write_atomic_bound(&path, content.to_uppercase().as_bytes(), HardLinkPolicy::WriteInPlace, id)?;
+/// assert_eq!(std::fs::read_to_string(&path)?, "A: 1\n");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn read_file_identified(path: &Path, max: MaxInputBytes) -> Result<(String, Option<FileId>)> {
+    let (content, file) = read_decoded(path, max)?;
+    let id = FileId::of(&file).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok((content, id))
+}
+
+fn read_decoded(path: &Path, max: MaxInputBytes) -> Result<(String, File)> {
     let io_error = |source| Error::Io {
         path: path.to_path_buf(),
         source,
     };
-    let bytes = read_regular_file(path, max).map_err(|error| match error {
+    let (bytes, file) = read_regular_file_with_handle(path, max).map_err(|error| match error {
         ReadFileError::Io(source) => io_error(source),
         ReadFileError::NotRegular(kind) => {
             io_error(std::io::Error::new(ErrorKind::InvalidInput, kind.message()))
@@ -54,10 +96,11 @@ pub fn read_file(path: &Path, max: MaxInputBytes) -> Result<String> {
         ReadFileError::TooLarge(too_large) => Error::InputTooLarge(too_large),
         other => io_error(std::io::Error::other(other)),
     })?;
-    decode_input_owned(bytes).map_err(|source| Error::Decode {
+    let content = decode_input_owned(bytes).map_err(|source| Error::Decode {
         path: path.to_path_buf(),
         source,
-    })
+    })?;
+    Ok((content, file))
 }
 
 #[cfg(test)]
@@ -65,6 +108,32 @@ mod tests {
     use super::*;
     use std::io::Write;
     use tempfile::NamedTempFile;
+
+    #[test]
+    fn test_read_identified_returns_the_id_of_the_file_read() {
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "a: 1").unwrap();
+
+        let (content, id) = read_file_identified(file.path(), MaxInputBytes::DEFAULT).unwrap();
+
+        assert_eq!(content, "a: 1");
+        assert_eq!(id, FileId::of(&File::open(file.path()).unwrap()).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_read_identified_through_a_symlink_returns_the_target_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("target.yaml");
+        let link = dir.path().join("link.yaml");
+        std::fs::write(&target, "a: 1").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let (_, id) = read_file_identified(&link, MaxInputBytes::DEFAULT).unwrap();
+
+        assert!(id.is_some());
+        assert_eq!(id, FileId::of(&File::open(&target).unwrap()).unwrap());
+    }
 
     fn read(file: &NamedTempFile) -> Result<String> {
         read_file(file.path(), MaxInputBytes::DEFAULT)

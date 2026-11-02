@@ -86,7 +86,10 @@ mod trace;
 mod workers;
 
 // Core public API
-pub use atomic::{AtomicFile, HardLinkPolicy, HardLinkRefused, write_atomic};
+pub use atomic::{
+    AtomicFile, FileId, HardLinkPolicy, HardLinkRefused, TargetChanged, write_atomic,
+    write_atomic_bound,
+};
 pub use config::Config;
 pub use error::{Error, ErrorKind, Result};
 pub use fast_yaml_core::Value;
@@ -94,7 +97,7 @@ pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
 
 // File-level parallelism
 pub use files::{CommentPolicy, FileProcessor, FormatOutput, InPlaceTarget};
-pub use io::read_file;
+pub use io::{read_file, read_file_identified};
 pub use pool::shared_pool;
 pub use result::{BatchResult, FileOutcome, FileResult};
 pub use scan_ahead::{ScanAheadLane, ScanAheadPolicy};

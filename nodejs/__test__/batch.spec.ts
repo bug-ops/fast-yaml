@@ -156,6 +156,45 @@ describe('Batch Processing', () => {
       expect(result.total).toBe(1);
       expect(result.failed).toBe(1);
     });
+
+    it('should format hard-link and symlink names of one file among many targets', (ctx) => {
+      const distinct: string[] = [];
+      for (let i = 0; i < 10; i++) {
+        const file = path.join(tmpDir, `distinct${i}.yaml`);
+        fs.writeFileSync(file, `key${i}:     value${i}\nnested:    {a: ${i}, b: 2}\n`);
+        distinct.push(file);
+      }
+      const hardlink = path.join(tmpDir, 'hardlink.yaml');
+      const symlink = path.join(tmpDir, 'symlink.yaml');
+      try {
+        fs.linkSync(distinct[0], hardlink);
+        fs.symlinkSync(distinct[0], symlink);
+      } catch (err) {
+        if (process.env.CI) {
+          throw err;
+        }
+        ctx.skip();
+      }
+
+      const targets = [...distinct, hardlink, symlink];
+      const result = formatFilesInPlace(targets);
+
+      expect(result.total).toBe(targets.length);
+      expect(result.success).toBe(targets.length);
+      expect(result.failed).toBe(0);
+      expect(result.errors).toEqual([]);
+      distinct.forEach((file, i) => {
+        expect(fs.readFileSync(file, 'utf8')).toBe(
+          `key${i}: value${i}\nnested:\n  a: ${i}\n  b: 2\n`
+        );
+      });
+      expect(fs.readFileSync(hardlink, 'utf8')).toBe(fs.readFileSync(distinct[0], 'utf8'));
+      expect(fs.readFileSync(symlink, 'utf8')).toBe(fs.readFileSync(distinct[0], 'utf8'));
+      expect(fs.lstatSync(symlink).isSymbolicLink()).toBe(true);
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(hardlink).ino).toBe(fs.statSync(distinct[0]).ino);
+      }
+    });
   });
 
   describe('BatchConfig', () => {
