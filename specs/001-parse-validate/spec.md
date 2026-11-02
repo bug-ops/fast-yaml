@@ -125,6 +125,7 @@ GIVEN keys 1 and "1" with KeyDomain::Yaml        THEN both are kept (distinct ke
 
 ```
 GIVEN a UTF-8 file starting with a BOM       THEN valid, exit 0
+GIVEN a BOM inside a document (not at a document start) THEN exit 1: "a byte order mark must not appear inside a document"
 GIVEN a UTF-16LE file with a BOM             THEN exit 1: "unsupported encoding: input starts with a UTF-16LE byte order mark; only UTF-8 is supported (convert the file to UTF-8, for example with iconv)"
 GIVEN CRLF line endings                      THEN valid
 ```

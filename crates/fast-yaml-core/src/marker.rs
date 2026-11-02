@@ -3,6 +3,8 @@
 //! The parser's own marker index counts characters and drifts after non-ASCII directive names,
 //! while line and column stay exact, so offsets are always derived from those two.
 
+use saphyr_parser::Marker;
+
 use crate::position::SourcePosition;
 
 /// Char offsets at which each line starts, splitting like saphyr (`\n`, `\r\n`, lone `\r`).
@@ -22,6 +24,71 @@ pub fn char_offset(line_starts: &[usize], position: SourcePosition) -> usize {
     line_starts
         .get(position.line().index())
         .map_or(usize::MAX, |start| start + position.column().index())
+}
+
+type Chars<'t> = std::iter::Peekable<std::str::Chars<'t>>;
+
+/// Line, column and char index while walking text the way the parser counts them.
+struct Walk {
+    index: usize,
+    line: usize,
+    col: usize,
+}
+
+impl Walk {
+    fn take(&mut self, chars: &mut Chars<'_>) {
+        let Some(c) = chars.next() else { return };
+        self.index += 1;
+        if c == '\n' || (c == '\r' && chars.peek() != Some(&'\n')) {
+            self.line += 1;
+            self.col = 0;
+        } else {
+            self.col += 1;
+        }
+    }
+
+    fn take_while(&mut self, chars: &mut Chars<'_>, keep: impl Fn(char) -> bool) {
+        while chars.peek().is_some_and(|&c| keep(c)) {
+            self.take(chars);
+        }
+    }
+}
+
+/// Moves `start`, where `text` begins, past the leading `&anchor` and `!tag` tokens, comments and
+/// blanks of a node, to the first character of its content.
+///
+/// saphyr 0.3 reports a node's span from its first property; positions in this crate refer to the
+/// content, as they did before.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "advances the parser's own char-based marker"
+)]
+pub fn skip_properties(text: &str, start: Marker) -> Marker {
+    let mut walk = Walk {
+        index: start.index(),
+        line: start.line(),
+        col: start.col(),
+    };
+    let mut chars = text.chars().peekable();
+    let token = |c: char| !matches!(c, ' ' | '\t' | '\r' | '\n' | ',' | '[' | ']' | '{' | '}');
+    while let Some(&c) = chars.peek() {
+        match c {
+            ' ' | '\t' | '\r' | '\n' => walk.take(&mut chars),
+            '#' => walk.take_while(&mut chars, |c| !matches!(c, '\n' | '\r')),
+            '&' => walk.take_while(&mut chars, token),
+            '!' => {
+                walk.take(&mut chars);
+                if chars.peek() == Some(&'<') {
+                    walk.take_while(&mut chars, |c| c != '>');
+                    walk.take(&mut chars);
+                } else {
+                    walk.take_while(&mut chars, token);
+                }
+            }
+            _ => break,
+        }
+    }
+    Marker::new(walk.index, walk.line, walk.col)
 }
 
 /// Forward-only converter from line/column to byte offsets in a source text.
@@ -97,6 +164,32 @@ mod tests {
             OneBased::from_index(line - 1),
             OneBased::from_index(column - 1),
         )
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "reads the char-based marker back"
+    )]
+    fn skipped(text: &str) -> (usize, usize, usize) {
+        let end = skip_properties(text, Marker::new(0, 1, 0));
+        (end.index(), end.line(), end.col())
+    }
+
+    #[test]
+    fn properties_comments_and_blanks_are_skipped_up_to_the_content() {
+        assert_eq!(skipped("&a 1"), (3, 1, 3));
+        assert_eq!(skipped("!!str &a x"), (9, 1, 9));
+        assert_eq!(skipped("&a # c\n  !t\n  [1]"), (14, 3, 2));
+        assert_eq!(skipped("!<tag:a,b> v"), (11, 1, 11));
+        assert_eq!(skipped("&a\r\n  x"), (6, 2, 2));
+        assert_eq!(skipped("&a\r  x"), (5, 2, 2));
+        assert_eq!(skipped("&a[1]"), (2, 1, 2));
+    }
+
+    #[test]
+    fn content_is_never_skipped() {
+        assert_eq!(skipped("foo &x"), (0, 1, 0));
+        assert_eq!(skipped("'&x'"), (0, 1, 0));
     }
 
     #[test]

@@ -15,6 +15,7 @@ use saphyr_parser::{Event, Parser, Span, StrInput};
 
 use crate::error::{ParseError, ParseResult};
 use crate::limits::{DocumentCursor, LimitKind, MaxScanAhead};
+use crate::marker::{ByteCursor, skip_properties};
 use crate::position::SourcePosition;
 
 #[derive(Debug, Default)]
@@ -301,6 +302,8 @@ pub struct GuardedParser<'a> {
     limit: MaxScanAhead,
     cursor: DocumentCursor,
     last: SourcePosition,
+    text: &'a str,
+    offsets: ByteCursor<'a>,
 }
 
 impl<'a> GuardedParser<'a> {
@@ -324,6 +327,8 @@ impl<'a> GuardedParser<'a> {
             limit,
             cursor: DocumentCursor::default(),
             last: SourcePosition::START,
+            text,
+            offsets: ByteCursor::new(text),
         }
     }
 
@@ -355,6 +360,7 @@ impl<'a> GuardedParser<'a> {
         }
         Some(match next? {
             Ok((event, span)) => {
+                let span = self.content_span(&event, span);
                 self.cursor.observe(&event);
                 self.cover(span);
                 Ok((event, span))
@@ -364,6 +370,27 @@ impl<'a> GuardedParser<'a> {
                 DocumentIndex::new(self.cursor.index()),
             )),
         })
+    }
+
+    /// Starts the span of a node with properties at its content, where saphyr 0.2 started it.
+    fn content_span(&mut self, event: &Event<'_>, span: Span) -> Span {
+        let has_properties = match event {
+            Event::Scalar(_, _, anchor, tag)
+            | Event::SequenceStart(anchor, tag)
+            | Event::MappingStart(anchor, tag) => *anchor > 0 || tag.is_some(),
+            _ => false,
+        };
+        if !has_properties {
+            return span;
+        }
+        let offset = self.offsets.offset(SourcePosition::from_span(span));
+        let start = skip_properties(&self.text[offset..], span.start);
+        if SourcePosition::from_span(Span::empty(start))
+            > SourcePosition::from_span(Span::empty(span.end))
+        {
+            return Span::empty(span.end);
+        }
+        Span::new(start, span.end)
     }
 
     // saphyr counts bytes for non-ASCII directive names, so the end is clamped to the (published)
@@ -497,8 +524,10 @@ mod tests {
             let (_, guarded) = drain(text, MaxScanAhead::MAX);
             assert_eq!(raw.len(), guarded.len(), "{text:?}");
             for (raw, guarded) in raw.iter().zip(&guarded) {
-                if let (Ok(raw), Ok(guarded)) = (raw, guarded) {
-                    assert_eq!(raw, guarded, "{text:?}");
+                if let (Ok((raw_event, raw_span)), Ok((event, span))) = (raw, guarded) {
+                    assert_eq!(raw_event, event, "{text:?}");
+                    assert_eq!(raw_span.end, span.end, "{text:?}");
+                    assert!(raw_span.start.index() <= span.start.index(), "{text:?}");
                 }
             }
         }

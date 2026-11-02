@@ -128,10 +128,6 @@ pub use workers::{WorkerCount, Workers};
 /// `--- |2\n---\nb: 1\n` `parse_all` fails where this function returns two documents. A
 /// column-0 `...` ends the scalar in both.
 ///
-/// An empty block scalar before `---` (`a: |\n---\nx\n`) is `""` from `parse_all`, which is
-/// the spec result, and `"\n"` from this function: the chunk ends right after the header,
-/// where `saphyr` yields `"\n"` (as `Parser::parse_all("a: |\n")` does).
-///
 /// An unclosed quoted scalar or flow collection cut by `---` is an error in both; the
 /// message and position may differ.
 ///
@@ -162,8 +158,7 @@ pub fn parse_parallel(input: &str) -> Result<Vec<Value>> {
 /// # Known differences
 ///
 /// Same as [`parse_parallel`]: a column-0 `---` inside a top-level block scalar splits the
-/// document here but is scalar content for `Parser::parse_all`, and an empty block scalar
-/// before `---` is `"\n"` here (a `saphyr` EOF behavior) versus `""` there.
+/// document here but is scalar content for `Parser::parse_all`.
 ///
 /// # Examples
 ///

@@ -62,7 +62,7 @@ let docs = parse_parallel_with_config(yaml, &config)?;
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
-**Known differences from `Parser::parse_all`:** a top-level block scalar with an explicit indentation indicator followed directly by `---` (for example `--- |2\n---\nb: 1\n`) fails in `parse_all` but yields two documents in `parse_parallel`. Top-level block scalars without an indentation indicator agree with `parse_all`, whether the body is unindented (`--- |\nx\n---\nb: 1\n`) or indented. An empty block scalar before `---` is `""` in `parse_all` but `"\n"` in `parse_parallel`, because the chunk ends at EOF where `saphyr` yields `"\n"`.
+**Known differences from `Parser::parse_all`:** a top-level block scalar with an explicit indentation indicator followed directly by `---` (for example `--- |2\n---\nb: 1\n`) fails in `parse_all` but yields two documents in `parse_parallel`. Top-level block scalars without an indentation indicator agree with `parse_all`, whether the body is unindented (`--- |\nx\n---\nb: 1\n`) or indented.
 
 ### File-Level Parallelism
 

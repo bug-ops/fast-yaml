@@ -1,9 +1,8 @@
 //! Pins known divergences between `Parser::parse_all` (saphyr) and `parse_parallel` (#407).
 //!
-//! Pinned: `--- |2\n---\n` is an error for saphyr but not for the chunker, and an empty
-//! clip/keep block scalar at EOF yields `"\n"` instead of `""` (#456). Tests flip when saphyr
-//! fixes either one; where the parallel side is itself an EOF-chomping result it flips on both
-//! fixes. Column-0 `---` inside an unindented top-level block scalar is scalar content in both
+//! Pinned: `--- |2\n---\n` is an error for saphyr but not for the chunker. Tests flip when saphyr
+//! fixes it. An empty clip/keep block scalar yields `""` in both engines since saphyr 0.3 (#456).
+//! Column-0 `---` inside an unindented top-level block scalar is scalar content in both
 //! engines (#552). Update deliberately.
 
 use fast_yaml_core::limits::{MaxDocuments, ParseLimits};
@@ -32,15 +31,6 @@ fn parallel_results(input: &str) -> [Vec<Value>; 2] {
         parse_parallel(input).unwrap(),
         parse_parallel_with_config(input, &sequential).unwrap(),
     ]
-}
-
-fn assert_diverges(input: &str, saphyr: &[Value], parallel: &[Value]) {
-    let all = Parser::parse_all(input).unwrap();
-    assert_eq!(all, saphyr, "parse_all: {input:?}");
-    for docs in parallel_results(input) {
-        assert_eq!(docs, parallel, "parse_parallel: {input:?}");
-        assert_ne!(docs, all, "{input:?}");
-    }
 }
 
 fn assert_agrees(input: &str, expected: &[Value]) {
@@ -185,7 +175,7 @@ fn marker_after_block_scalar_with_explicit_indent_indicator_errors_only_in_saphy
     ] {
         assert!(Parser::parse_all(input).is_err(), "{input:?}");
         for docs in parallel_results(input) {
-            assert_eq!(docs, [string("\n"), int_map("b", 1)], "{input:?}");
+            assert_eq!(docs, [string(""), int_map("b", 1)], "{input:?}");
         }
     }
 }
@@ -203,9 +193,8 @@ fn document_end_marker_terminates_top_level_block_scalar_in_both() {
     );
 }
 
-// Parallel is the non-spec side here: the chunk ends at EOF, where saphyr yields "\n" (spec: "").
 #[test]
-fn empty_block_scalar_before_marker_differs_from_eof() {
+fn empty_block_scalar_before_marker_agrees() {
     for (header, gap) in [
         ("|", ""),
         (">", ""),
@@ -216,40 +205,24 @@ fn empty_block_scalar_before_marker_differs_from_eof() {
         (">", "\n"),
         ("|2", "\n"),
     ] {
-        assert_diverges(
+        assert_agrees(
             &format!("a: {header}\n{gap}---\nx\n"),
             &[str_map("a", ""), string("x")],
-            &[str_map("a", "\n"), string("x")],
         );
     }
-    assert_diverges(
-        "a: |\r\n---\r\nx\r\n",
-        &[str_map("a", ""), string("x")],
-        &[str_map("a", "\n"), string("x")],
-    );
+    assert_agrees("a: |\r\n---\r\nx\r\n", &[str_map("a", ""), string("x")]);
 }
 
-// Spec-correct value for the "\n" rows is "" (empty clip/keep); flip once saphyr fixes it.
 #[test]
-fn empty_block_scalar_at_eof_keeps_header_newline_in_both_engines() {
-    for (input, value) in [
-        ("a: |\n", "\n"),
-        ("a: >\n", "\n"),
-        ("a: |+\n", "\n"),
-        ("a: >+\n", "\n"),
-        ("a: |2\n", "\n"),
-        ("a: |+2\n", "\n"),
-        ("a: |2+\n", "\n"),
-        ("a: |\n\n", "\n"),
-        ("a: >\n\n", "\n"),
-        ("a: |-\n", ""),
-        ("a: >-\n", ""),
-        ("a: |", ""),
+fn empty_block_scalar_at_eof_is_empty_in_both_engines() {
+    for input in [
+        "a: |\n", "a: >\n", "a: |+\n", "a: >+\n", "a: |2\n", "a: |+2\n", "a: |2+\n", "a: |\n\n",
+        "a: >\n\n", "a: |-\n", "a: >-\n", "a: |",
     ] {
-        assert_agrees(input, &[str_map("a", value)]);
+        assert_agrees(input, &[str_map("a", "")]);
     }
     for input in ["--- |\n", "|\n"] {
-        assert_agrees(input, &[string("\n")]);
+        assert_agrees(input, &[string("")]);
     }
 }
 

@@ -430,14 +430,14 @@ fn test_bom_only_convert_json_yields_null() {
 }
 
 #[test]
-fn test_double_bom_strips_only_one() {
+fn test_double_bom_second_is_a_document_prefix() {
     cargo_bin_cmd!("fy")
         .arg("convert")
         .arg("json")
         .write_stdin("\u{FEFF}\u{FEFF}a: 1\n")
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"\u{FEFF}a\": 1"));
+        .stdout(predicate::str::contains("\"a\": 1"));
 }
 
 #[test]

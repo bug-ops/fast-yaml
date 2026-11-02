@@ -16,7 +16,6 @@ const INPUTS: &[&str] = &[
     "日本\n...\n\u{FEFF}\n: v\n",
     "a\n...\n\u{FEFF}%YAML 1.2\n---\nb\n",
     "a\n...\n\u{FEFF}# c\n\u{FEFF}---\nb\n",
-    "a\n\u{FEFF}b\n",
     "a: 1\n---\n\u{FEFF}--- b\n",
     "a: 1\n...\n\u{FEFF}b: 2\n",
     "\u{FEFF}\u{FEFF}a: 1\n",
