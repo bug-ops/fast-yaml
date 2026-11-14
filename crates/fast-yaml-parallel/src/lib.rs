@@ -87,8 +87,8 @@ mod workers;
 
 // Core public API
 pub use atomic::{
-    AtomicFile, FileId, HardLinkPolicy, HardLinkRefused, TargetChanged, write_atomic,
-    write_atomic_bound,
+    AtomicFile, AtomicWriteError, FileId, HardLinkPolicy, HardLinkRefused, TargetChanged,
+    write_atomic, write_atomic_bound,
 };
 pub use config::Config;
 pub use error::{Error, ErrorKind, Result};

@@ -5,8 +5,8 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use fast_yaml_parallel::{
-    BatchResult as ParallelBatchResult, CommentPolicy, Error as ParallelError, FileProcessor,
-    FormatOutput, HardLinkPolicy, HardLinkRefused, InPlaceTarget, ScanAheadPolicy,
+    AtomicWriteError, BatchResult as ParallelBatchResult, CommentPolicy, Error as ParallelError,
+    FileProcessor, FormatOutput, HardLinkPolicy, InPlaceTarget, ScanAheadPolicy,
 };
 
 use crate::commands::format::error_message;
@@ -41,9 +41,12 @@ fn batch_error_message(error: &ParallelError) -> String {
     let message = error_message(error);
     match error {
         ParallelError::Write { source, .. }
-            if source
-                .get_ref()
-                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<HardLinkRefused>) =>
+            if matches!(
+                source
+                    .get_ref()
+                    .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+                Some(AtomicWriteError::HardLinkRefused(_))
+            ) =>
         {
             format!("{message}; {HARD_LINK_HINT}")
         }

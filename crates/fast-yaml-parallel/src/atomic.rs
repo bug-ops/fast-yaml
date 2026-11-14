@@ -5,9 +5,12 @@ use std::fs::{self, Permissions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
+mod error;
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod win_acl;
+
+pub use error::AtomicWriteError;
 
 /// The identity of an open file on its volume, independent of the path it was reached by.
 ///
@@ -134,13 +137,14 @@ pub fn stat_identified(path: &Path) -> io::Result<(fs::Metadata, Option<FileId>)
 /// The payload of the error returned by [`write_atomic_bound`] when the target is not the file
 /// that was read.
 ///
-/// Callers find it with [`io::Error::get_ref`] and `downcast_ref`, which tells a file that
-/// changed concurrently apart from an ordinary I/O failure.
+/// It is the payload of [`AtomicWriteError::TargetChanged`]. Callers find that with
+/// [`io::Error::get_ref`] and `downcast_ref`, which tells a file that changed concurrently apart
+/// from an ordinary I/O failure.
 ///
 /// # Examples
 ///
 /// ```
-/// use fast_yaml_parallel::{FileId, HardLinkPolicy, TargetChanged, write_atomic_bound};
+/// use fast_yaml_parallel::{AtomicWriteError, FileId, HardLinkPolicy, write_atomic_bound};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("a.yaml");
@@ -150,7 +154,8 @@ pub fn stat_identified(path: &Path) -> io::Result<(fs::Metadata, Option<FileId>)
 ///
 /// # if id.is_some() {
 /// let err = write_atomic_bound(&path, b"a: 2\n", HardLinkPolicy::WriteInPlace, id).unwrap_err();
-/// assert!(err.get_ref().is_some_and(|e| e.is::<TargetChanged>()));
+/// let payload = err.get_ref().and_then(|e| e.downcast_ref::<AtomicWriteError>());
+/// assert!(matches!(payload, Some(AtomicWriteError::TargetChanged(_))));
 /// # }
 /// # Ok::<(), std::io::Error>(())
 /// ```
@@ -199,20 +204,21 @@ impl std::error::Error for TargetChanged {}
 pub enum HardLinkPolicy {
     /// Write the content through the shared inode so every link sees it.
     WriteInPlace,
-    /// Fail with an [`io::Error`] that carries [`HardLinkRefused`] and leave the file untouched.
+    /// Fail with an [`io::Error`] that carries [`AtomicWriteError::HardLinkRefused`] and leave the file untouched.
     Refuse,
 }
 
 /// The payload of the [`io::ErrorKind::InvalidInput`] error returned for [`HardLinkPolicy::Refuse`].
 ///
-/// Callers find it with [`io::Error::get_ref`] and `downcast_ref`, which lets them add their own
-/// advice to the neutral message.
+/// It is the payload of [`AtomicWriteError::HardLinkRefused`]. Callers find that with
+/// [`io::Error::get_ref`] and `downcast_ref`, which lets them add their own advice to the
+/// neutral message.
 ///
 /// # Examples
 ///
 /// ```
 /// # #[cfg(unix)] {
-/// use fast_yaml_parallel::{HardLinkPolicy, HardLinkRefused, write_atomic};
+/// use fast_yaml_parallel::{AtomicWriteError, HardLinkPolicy, write_atomic};
 ///
 /// let dir = tempfile::tempdir()?;
 /// let path = dir.path().join("a.yaml");
@@ -220,7 +226,8 @@ pub enum HardLinkPolicy {
 /// std::fs::hard_link(&path, dir.path().join("b.yaml"))?;
 ///
 /// let err = write_atomic(&path, b"a: 2\n", HardLinkPolicy::Refuse).unwrap_err();
-/// let refused = err.get_ref().and_then(|e| e.downcast_ref::<HardLinkRefused>()).unwrap();
+/// let payload = err.get_ref().and_then(|e| e.downcast_ref::<AtomicWriteError>());
+/// let Some(AtomicWriteError::HardLinkRefused(refused)) = payload else { panic!() };
 /// assert_eq!(refused.links(), 2);
 /// # }
 /// # Ok::<(), std::io::Error>(())
@@ -389,10 +396,7 @@ fn write_resolved(
     #[cfg(unix)]
     if let Some(old) = file.existing.as_ref().filter(|old| old.hardlinked()) {
         if hard_links == HardLinkPolicy::Refuse {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                HardLinkRefused { links: old.links },
-            ));
+            return Err(AtomicWriteError::from(HardLinkRefused { links: old.links }).into());
         }
         if old.owned_by(&file.temp.as_file().metadata()?) {
             return write_in_place(&file.target, content, old);
@@ -452,15 +456,11 @@ impl AtomicFile {
     fn create_bound(path: &Path, expected: Option<FileId>) -> io::Result<Self> {
         let (target, existing) = resolve_target(path, expected)?;
         let dir = parent_dir(&target);
-        let temp = create_temp(dir, existing.is_none()).map_err(|e| {
-            io::Error::new(
-                e.kind(),
-                format!(
-                    "cannot create temporary file in {}: {e}",
-                    DisplayPath::new(dir)
-                ),
-            )
-        })?;
+        let temp =
+            create_temp(dir, existing.is_none()).map_err(|source| AtomicWriteError::TempFile {
+                dir: dir.to_path_buf(),
+                source,
+            })?;
         Ok(Self {
             temp,
             target,
@@ -578,20 +578,12 @@ const NO_FOLLOW_OPEN: rustix::fs::OFlags = rustix::fs::OFlags::NOFOLLOW
     .union(rustix::fs::OFlags::NONBLOCK)
     .union(rustix::fs::OFlags::NOCTTY);
 
-/// The error for a target that stopped being the file resolved at `create` time.
-#[cfg(any(unix, windows))]
-fn changed(path: &Path) -> io::Error {
-    io::Error::other(format!(
-        "{} changed while it was being replaced",
-        DisplayPath::new(path)
-    ))
-}
-
-/// The error for a target that is not the file the caller read.
+/// The error for a target that is not the file the caller read or the writer resolved.
 fn not_the_file_read(path: &Path) -> io::Error {
-    io::Error::other(TargetChanged {
+    AtomicWriteError::from(TargetChanged {
         path: path.to_path_buf(),
     })
+    .into()
 }
 
 /// Fails with [`TargetChanged`] unless `target` still names the file `expected`; best effort,
@@ -653,10 +645,10 @@ fn copy_zone_identifier(old: &Existing, real: &Path, temp: &Path) -> io::Result<
         .take(MAX_ZONE_IDENTIFIER_BYTES + 1)
         .read_to_end(&mut data)?;
     if data.len() as u64 > MAX_ZONE_IDENTIFIER_BYTES {
-        return Err(io::Error::other(format!(
-            "Zone.Identifier of {} is too large to copy",
-            DisplayPath::new(real)
-        )));
+        return Err(AtomicWriteError::ZoneIdentifierTooLarge {
+            path: real.to_path_buf(),
+        }
+        .into());
     }
     let still_old = open_dacl_source(real)
         .and_then(|(file, _)| FileId::of(&file))
@@ -690,7 +682,7 @@ fn write_in_place(target: &Path, content: &[u8], old: &Existing) -> io::Result<(
         || Some(FileId::of_metadata(&opened)) != old.id
         || opened.nlink() != old.links
     {
-        return Err(changed(target));
+        return Err(not_the_file_read(target));
     }
     fcntl_setfl(&file, fcntl_getfl(&file)? - OFlags::NONBLOCK)?;
     file.set_len(0)?;
@@ -823,7 +815,7 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
     };
     let opened = file.metadata()?;
     if !opened.is_file() || FileId::of_metadata(&opened) != FileId::of_metadata(metadata) {
-        return Err(changed(real));
+        return Err(not_the_file_read(real));
     }
     Ok(Some(file))
 }
@@ -851,7 +843,7 @@ fn open_dacl_source(real: &Path) -> io::Result<(fs::File, fs::Metadata)> {
         .open(real)?;
     let opened = file.metadata()?;
     if !opened.is_file() {
-        return Err(changed(real));
+        return Err(not_the_file_read(real));
     }
     Ok((file, opened))
 }
@@ -970,10 +962,10 @@ fn resolve_unbound(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
         Ok(real) => {
             let metadata = fs::metadata(&real)?;
             if !metadata.is_file() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidInput,
-                    format!("not a regular file: {}", DisplayPath::new(path)),
-                ));
+                return Err(AtomicWriteError::NotRegular {
+                    path: path.to_path_buf(),
+                }
+                .into());
             }
             #[cfg(any(unix, windows))]
             let existing = Existing::open(&real, &metadata)?;
@@ -983,10 +975,10 @@ fn resolve_unbound(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
             if fs::symlink_metadata(path).is_ok() {
-                return Err(io::Error::new(
-                    io::ErrorKind::NotFound,
-                    format!("refused: dangling symlink {}", DisplayPath::new(path)),
-                ));
+                return Err(AtomicWriteError::DanglingSymlink {
+                    path: path.to_path_buf(),
+                }
+                .into());
             }
             Ok((path.to_path_buf(), None))
         }
@@ -1011,9 +1003,24 @@ mod tests {
     }
 
     fn is_target_changed(error: &io::Error) -> bool {
-        error
-            .get_ref()
-            .is_some_and(<dyn std::error::Error + Send + Sync>::is::<TargetChanged>)
+        matches!(
+            error
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::TargetChanged(_))
+        )
+    }
+
+    #[test]
+    fn a_directory_target_is_refused_with_a_typed_payload() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = write_atomic(dir.path(), b"x").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        assert!(matches!(
+            err.get_ref()
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::NotRegular { .. })
+        ));
     }
 
     #[test]
@@ -1315,6 +1322,12 @@ mod tests {
             let link = dir.path().join("link.yaml");
             symlink(dir.path().join("missing"), &link).unwrap();
             let err = write_atomic(&link, b"x").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::NotFound);
+            assert!(matches!(
+                err.get_ref()
+                    .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+                Some(AtomicWriteError::DanglingSymlink { .. })
+            ));
             assert!(err.to_string().contains("dangling symlink"));
             assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
         }
@@ -1381,10 +1394,12 @@ mod tests {
             let err = crate::write_atomic(&path, b"new", HardLinkPolicy::Refuse).unwrap_err();
 
             assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-            let refused = err
+            let Some(AtomicWriteError::HardLinkRefused(refused)) = err
                 .get_ref()
-                .and_then(|e| e.downcast_ref::<HardLinkRefused>())
-                .unwrap();
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>())
+            else {
+                panic!("not HardLinkRefused: {err}");
+            };
             assert_eq!(refused.links(), 2);
             assert_eq!(fs::read_to_string(&path).unwrap(), "old");
             assert_eq!(fs::read_to_string(&link).unwrap(), "old");
@@ -1454,7 +1469,7 @@ mod tests {
 
             let err = write_in_place(&path, b"new", &existing_of(&other)).unwrap_err();
 
-            assert!(err.to_string().contains("changed while"), "{err}");
+            assert!(is_target_changed(&err), "{err}");
             assert_eq!(fs::read_to_string(&path).unwrap(), "old");
         }
 

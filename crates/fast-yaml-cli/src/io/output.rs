@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn test_write_replacing_refuses_a_file_swapped_after_the_read() {
         use fast_yaml_core::limits::MaxInputBytes;
-        use fast_yaml_parallel::TargetChanged;
+        use fast_yaml_parallel::AtomicWriteError;
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");
@@ -455,11 +455,12 @@ mod tests {
             .write_replacing("a: 1\n", input.file_id())
             .unwrap_err();
 
-        assert!(
+        assert!(matches!(
             err.downcast_ref::<io::Error>()
                 .and_then(io::Error::get_ref)
-                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<TargetChanged>)
-        );
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::TargetChanged(_))
+        ));
         assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated: 1\n");
     }
 

@@ -90,9 +90,10 @@ fn read_decoded(path: &Path, max: MaxInputBytes) -> Result<(String, File)> {
     };
     let (bytes, file) = read_regular_file_with_handle(path, max).map_err(|error| match error {
         ReadFileError::Io(source) => io_error(source),
-        ReadFileError::NotRegular(kind) => {
-            io_error(std::io::Error::new(ErrorKind::InvalidInput, kind.message()))
-        }
+        ReadFileError::NotRegular(kind) => io_error(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            ReadFileError::NotRegular(kind),
+        )),
         ReadFileError::TooLarge(too_large) => Error::InputTooLarge(too_large),
         other => io_error(std::io::Error::other(other)),
     })?;

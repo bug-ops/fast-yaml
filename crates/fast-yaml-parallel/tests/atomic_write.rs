@@ -81,6 +81,13 @@ mod unix {
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         let message = err.to_string();
         assert!(message.starts_with("cannot create temporary file in "));
+        let Some(fast_yaml_parallel::AtomicWriteError::TempFile { source, .. }) = err
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<fast_yaml_parallel::AtomicWriteError>())
+        else {
+            panic!("not TempFile: {err}");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&path).unwrap(), "old");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
@@ -178,7 +185,7 @@ mod unix {
 
     #[test]
     fn format_in_place_applies_the_policy_of_each_target() {
-        use fast_yaml_parallel::HardLinkRefused;
+        use fast_yaml_parallel::AtomicWriteError;
         use std::os::unix::fs::MetadataExt;
 
         let dir = TempDir::new().unwrap();
@@ -211,11 +218,12 @@ mod unix {
             fast_yaml_parallel::Error::Write { source, .. } => source,
             other => panic!("unexpected error: {other}"),
         };
-        assert!(
+        assert!(matches!(
             io_error
                 .get_ref()
-                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<HardLinkRefused>)
-        );
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::HardLinkRefused(_))
+        ));
         for untouched in [&refused, &refused_alias] {
             assert_eq!(fs::read_to_string(untouched).unwrap(), "key:   value\n");
         }
