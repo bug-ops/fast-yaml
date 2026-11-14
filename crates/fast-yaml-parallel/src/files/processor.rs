@@ -264,18 +264,28 @@ impl FileProcessor {
         if self.sequential_by_count(targets.len()) {
             return sequential();
         }
-        let probes: Vec<Probe> = targets
-            .iter()
-            .map(|target| Probe::of(&target.path))
-            .collect();
-        let total_size = probes.iter().map(|probe| probe.len).sum();
-        if Self::sequential_by_size(targets.len(), total_size) {
-            return sequential();
-        }
+        let serial_ids = if targets.len() < SEQUENTIAL_MAX_FILES {
+            let probes: Vec<Probe> = targets
+                .iter()
+                .map(|target| Probe::of(&target.path))
+                .collect();
+            let total_size = probes.iter().map(|probe| probe.len).sum();
+            if Self::sequential_by_size(targets.len(), total_size) {
+                return sequential();
+            }
+            Some(probes.iter().map(|probe| probe.id).collect::<Vec<_>>())
+        } else {
+            None
+        };
 
         self.install(
             || {
-                let ids = probes.iter().map(|probe| probe.id);
+                let ids = serial_ids.unwrap_or_else(|| {
+                    targets
+                        .par_iter()
+                        .map(|target| FileId::of_path(&target.path).ok().flatten())
+                        .collect()
+                });
                 run_grouped(targets, &same_file_groups(ids), format_one)
             },
             |error| {
@@ -524,7 +534,7 @@ impl FileProcessor {
 
     /// The part of [`Self::should_use_sequential`] decided by the size of the workload.
     fn sequential_by_size(file_count: usize, total_size: u64) -> bool {
-        let sequential = total_size < 1_000_000 && file_count < 10;
+        let sequential = total_size < SEQUENTIAL_MAX_BYTES && file_count < SEQUENTIAL_MAX_FILES;
         debug_event!(
             "{file_count} files, {total_size} bytes: running {}",
             if sequential {
@@ -536,6 +546,12 @@ impl FileProcessor {
         sequential
     }
 }
+
+/// Total size below which a small batch runs without a pool.
+const SEQUENTIAL_MAX_BYTES: u64 = 1_000_000;
+
+/// File count from which a batch always runs in the pool, so its sizes are never probed.
+const SEQUENTIAL_MAX_FILES: usize = 10;
 
 /// What one stat of a target tells the scheduler.
 struct Probe {
@@ -1361,6 +1377,31 @@ mod tests {
 
         assert_eq!(results, vec![0, 10, 20, 30]);
         assert_eq!(peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_format_in_place_groups_hard_links_in_a_large_batch() {
+        let dir = TempDir::new().unwrap();
+        let mut targets: Vec<InPlaceTarget> = (0..10)
+            .map(|n| {
+                let path = create_test_file(&dir, &format!("f{n}.yaml"), "a:   1\n");
+                InPlaceTarget::new(path, HardLinkPolicy::WriteInPlace)
+            })
+            .collect();
+        let first = targets[0].path.clone();
+        for name in ["link1.yaml", "link2.yaml"] {
+            let link = dir.path().join(name);
+            fs::hard_link(&first, &link).unwrap();
+            targets.push(InPlaceTarget::new(link, HardLinkPolicy::WriteInPlace));
+        }
+        let batch = FileProcessor::new().format_in_place(
+            &targets,
+            &EmitterConfig::default(),
+            CommentPolicy::Reject,
+        );
+        assert_eq!(batch.failed, 0);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "a: 1\n");
     }
 
     #[test]
