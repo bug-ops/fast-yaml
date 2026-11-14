@@ -66,13 +66,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: a failed write no longer leaves an undeletable temp file under a macOS deny-delete ACL, and an unremovable one is named in `TempFileLeft` (#705) (#713)
 - CLI: `fy convert -i` refuses a file swapped after the read (#703) (#713)
 - Core/Linter/Python: clippy 1.100 `empty_enums` and `used_underscore_items` fixed in the limit markers, `NoOptions` and the Python module entry point (#709) (#713)
-- Parallel: batches of 10 or more files skip the serial stat pass in `should_use_sequential` (#711) (#PR)
-- Parallel: a Windows read-only flag lost after the atomic rename is returned as `AtomicWriteError::ReadOnlyNotRestored` (new `#[non_exhaustive]` variant) (#710) (#PR)
-- CLI: glob expansion matches each entry without a per-entry `Vec` and `String` allocation (#712) (#PR)
-- Linter: diagnostic context no longer ends with a phantom empty line after the final newline (#704) (#PR)
-- Linter: `colons` ignores the indented colon that opens an explicit-key value line (#702) (#PR)
-- CI: Windows clippy covers core, linter, parallel and cli, a `wasm32-wasip1` clippy task checks the fallback `cfg` branches, and the Node.js crate uses the workspace lints (#698) (#PR)
-- Workspace: `allow_attributes_without_reason` is enforced at zero sites and `#[allow]` becomes `#[expect(..., reason)]` where the lint fires (#698) (#PR)
+- Parallel: batches of 10 or more files skip the serial stat pass in `should_use_sequential` (#711) (#715)
+- Parallel: a Windows read-only flag lost after the atomic rename is returned as `AtomicWriteError::ReadOnlyNotRestored` (new `#[non_exhaustive]` variant) (#710) (#715)
+- CLI: glob expansion matches each entry without a per-entry `Vec` and `String` allocation (#712) (#715)
+- Linter: diagnostic context no longer ends with a phantom empty line after the final newline (#704) (#715)
+- Linter: `colons` ignores the indented colon that opens an explicit-key value line (#702) (#715)
+- CI: Windows clippy covers core, linter, parallel and cli, a `wasm32-wasip1` clippy task checks the fallback `cfg` branches, and the Node.js crate uses the workspace lints (#698) (#715)
+- Workspace: `allow_attributes_without_reason` is enforced at zero sites and `#[allow]` becomes `#[expect(..., reason)]` where the lint fires (#698) (#715)
 
 ### Added
 
@@ -87,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: in-place writes cannot hang on a swapped FIFO (#608) (#674)
 - CLI: quoted globs no longer follow symlinks out of the tree, closing out-of-tree writes, source echo and the exponential hang (#692) (#713)
 - Node.js: `// SAFETY:` documentation and clippy lints for `unsafe` in the rule-config converter (#608) (#674)
-- CI: Dependabot cargo, pip and npm (`nodejs/`) updates wait 7 days (cooldown) before auto-merge, and every `jdx/mise-action` step pins the mise binary `sha256` (#693) (#PR)
+- CI: Dependabot cargo, pip and npm (`nodejs/`) updates wait 7 days (cooldown) before auto-merge, and every `jdx/mise-action` step pins the mise binary `sha256` (#693) (#715)
 
 ## [0.7.0] - 2026-10-02
 
