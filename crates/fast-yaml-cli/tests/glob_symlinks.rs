@@ -133,3 +133,16 @@ fn a_missing_base_matches_nothing_without_a_warning() {
         .stderr(predicate::str::contains("glob pattern matched no files"))
         .stderr(predicate::str::contains("Warning").not());
 }
+
+#[test]
+fn no_recursive_does_not_limit_a_double_star_glob() {
+    let temp = tree();
+    fs::create_dir_all(temp.path().join("repo/a/b")).unwrap();
+    fs::write(temp.path().join("repo/a/b/deep.yaml"), "a: 1\n").unwrap();
+
+    fy(temp.path())
+        .args(["format", "-n", "--no-recursive", "repo/**/*.yaml"])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("1 unchanged"));
+}

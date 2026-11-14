@@ -7,7 +7,7 @@ tags:
   - dependencies
   - parser
 created: 2026-11-02
-status: in-progress
+status: implemented
 related:
   - "[[constitution]]"
   - "[[plan]]"
@@ -19,7 +19,7 @@ related:
 > **Author**: research session (continuous improvement)
 > **Branch**: `fix/{issue}-saphyr-parser-0-3` (per `.claude/rules/branching.md`; issue number pending)
 > **Priority**: P2 (enhancement, breaking 0.x minor bump)
-> **Tracking**: issue #701 (PR for #694-#705 hardening batch). Dependabot PR #691 already merged the `saphyr-parser` 0.3.3 pin and most of the migration (anchor recovery); #701 closes the remaining failures. Decisions of the user: OQ-2 = (a), see FR-005.
+> **Tracking**: issue #701. Dependabot PR #691 merged the `saphyr-parser` 0.3.3 bump together with every code and test step of the plan (anchor recovery and content-start positions, BOM policy, empty block scalar, divergence tests); verified green on Rust, Python (yaml-test-suite xfail list empty) and Node.js. The batch PR for #701 only records the decisions: OQ-2 = (a), see FR-005, plus the CHANGELOG and spec updates.
 
 ## 1. Overview
 

@@ -7,7 +7,7 @@ tags:
   - dependencies
   - parser
 created: 2026-11-02
-status: draft
+status: implemented
 related:
   - "[[spec]]"
   - "[[constitution]]"

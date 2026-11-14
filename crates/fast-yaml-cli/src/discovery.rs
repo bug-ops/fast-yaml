@@ -609,6 +609,15 @@ impl FileDiscovery {
     }
 
     fn discover_glob(&self, pattern: &str, found: &mut Found) -> Result<(), DiscoveryError> {
+        self.discover_glob_bounded(pattern, MAX_GLOB_VISITED, found)
+    }
+
+    fn discover_glob_bounded(
+        &self,
+        pattern: &str,
+        max_visited: usize,
+        found: &mut Found,
+    ) -> Result<(), DiscoveryError> {
         let split = GlobSplit::new(pattern);
         let matcher =
             glob::Pattern::new(&split.rest).map_err(|source| DiscoveryError::GlobSyntax {
@@ -626,9 +635,9 @@ impl FileDiscovery {
         let mut match_count = 0_usize;
         for entry in walk.build() {
             visited += 1;
-            if visited > MAX_GLOB_VISITED {
+            if visited > max_visited {
                 crate::error::stderr_line(format_args!(
-                    "Warning: glob pattern '{}' visited more than {MAX_GLOB_VISITED} entries, \
+                    "Warning: glob pattern '{}' visited more than {max_visited} entries, \
                      stopping",
                     EscapedText(pattern)
                 ));
@@ -1431,6 +1440,28 @@ mod tests {
 
         let err = discovery.discover(&[input(pattern)]).unwrap_err();
         assert!(matches!(err, DiscoveryError::GlobNoMatch { .. }));
+    }
+
+    #[test]
+    fn test_glob_stops_after_the_visit_cap() {
+        let temp = TempDir::new().unwrap();
+        for i in 0..20 {
+            write(temp.path(), &format!("f{i:02}.yaml"));
+        }
+        let pattern = temp.path().join("*.yaml").display().to_string();
+        let discovery = FileDiscovery::new(default_config()).unwrap();
+
+        let mut found = Found::default();
+        discovery
+            .discover_glob_bounded(&pattern, 6, &mut found)
+            .unwrap();
+        assert_eq!(found.files.len(), 5);
+
+        let mut all = Found::default();
+        discovery
+            .discover_glob_bounded(&pattern, 100, &mut all)
+            .unwrap();
+        assert_eq!(all.files.len(), 20);
     }
 
     #[test]
