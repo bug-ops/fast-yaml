@@ -1,5 +1,6 @@
 //! Secure atomic file replacement shared by the CLI and batch file processing.
 
+use crate::trace::debug_event;
 use fast_yaml_core::fs::DisplayPath;
 use std::fs::{self, Permissions};
 use std::io::{self, Write};
@@ -543,7 +544,12 @@ fn replace(from: &Path, to: &Path, read_only: bool) -> io::Result<()> {
         set_read_only(to, false)?;
         let renamed = fs::rename(from, to);
         // Best effort: the rename outcome is what the caller needs to hear about
-        let _ = set_read_only(to, true);
+        if let Err(e) = set_read_only(to, true) {
+            debug_event!(
+                "could not restore read-only on {}: {e}",
+                DisplayPath::new(to)
+            );
+        }
         return renamed;
     }
     #[cfg(not(windows))]
@@ -562,8 +568,13 @@ fn set_read_only(path: &Path, read_only: bool) -> io::Result<()> {
 /// committed and not every file system supports syncing a directory.
 #[cfg(unix)]
 fn sync_dir(dir: &Path) {
-    if let Ok(handle) = fs::File::open(dir) {
-        let _ = handle.sync_all();
+    match fs::File::open(dir) {
+        Ok(handle) => {
+            if let Err(e) = handle.sync_all() {
+                debug_event!("could not sync directory {}: {e}", DisplayPath::new(dir));
+            }
+        }
+        Err(e) => debug_event!("could not open directory {}: {e}", DisplayPath::new(dir)),
     }
 }
 
@@ -654,11 +665,21 @@ fn copy_zone_identifier(old: &Existing, real: &Path, temp: &Path) -> io::Result<
         .and_then(|(file, _)| FileId::of(&file))
         .is_ok_and(|id| id.is_some() && id == old.id);
     if !still_old {
+        debug_event!(
+            "Zone.Identifier of {} not copied: the path no longer names the file",
+            DisplayPath::new(real)
+        );
         return Ok(());
     }
     match fs::File::create_new(zone_identifier_path(temp)) {
         Ok(mut stream) => stream.write_all(&data),
-        Err(e) if no_stream(&e) => Ok(()),
+        Err(e) if no_stream(&e) => {
+            debug_event!(
+                "Zone.Identifier not written to {}: {e}",
+                DisplayPath::new(temp)
+            );
+            Ok(())
+        }
         Err(e) => Err(e),
     }
 }
@@ -726,21 +747,29 @@ fn copy_xattrs(from: Option<&fs::File>, to: &fs::File) -> io::Result<()> {
     };
     let names = match from.list_xattr() {
         Ok(names) => names,
-        Err(e) if unsupported(&e) => return Ok(()),
+        Err(e) if unsupported(&e) => {
+            debug_event!("extended attributes are not supported: {e}");
+            return Ok(());
+        }
         Err(e) => return Err(e),
     };
     for name in names {
         let value = match from.get_xattr(&name) {
             Ok(Some(value)) => value,
             Ok(None) => continue,
-            Err(e) if unsupported(&e) || e.kind() == io::ErrorKind::NotFound => continue,
+            Err(e) if unsupported(&e) || e.kind() == io::ErrorKind::NotFound => {
+                debug_event!("skipped extended attribute {name:?}: {e}");
+                continue;
+            }
             Err(e) => return Err(e),
         };
         if to.get_xattr(&name).ok().flatten().as_deref() == Some(value.as_slice()) {
             continue;
         }
         match to.set_xattr(&name, &value) {
-            Err(e) if unsupported(&e) || permission_denied_is_tolerated(name.as_bytes(), &e) => {}
+            Err(e) if unsupported(&e) || permission_denied_is_tolerated(name.as_bytes(), &e) => {
+                debug_event!("did not copy extended attribute {name:?}: {e}");
+            }
             Err(e) => return Err(e),
             Ok(()) => {}
         }
@@ -767,7 +796,10 @@ fn permission_denied_is_tolerated(name: &[u8], error: &io::Error) -> bool {
 fn copy_acl(old: &Existing, real: &Path, temp: &Path) -> io::Result<()> {
     let entries = read_acl(old, real)?;
     match exacl::setfacl(&[temp], &entries, None) {
-        Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::Unsupported => {
+            debug_event!("ACLs are not supported on {}: {e}", DisplayPath::new(temp));
+            Ok(())
+        }
         other => other,
     }
 }
@@ -776,6 +808,10 @@ fn copy_acl(old: &Existing, real: &Path, temp: &Path) -> io::Result<()> {
 #[cfg(target_os = "macos")]
 fn read_acl(old: &Existing, real: &Path) -> io::Result<Vec<exacl::AclEntry>> {
     if old.source.is_none() {
+        debug_event!(
+            "ACL of {} not copied: no source handle",
+            DisplayPath::new(real)
+        );
         return Ok(Vec::new());
     }
     let entries = match exacl::getfacl(real, None) {
@@ -786,16 +822,26 @@ fn read_acl(old: &Existing, real: &Path) -> io::Result<Vec<exacl::AclEntry>> {
                 io::ErrorKind::Unsupported | io::ErrorKind::NotFound
             ) =>
         {
+            debug_event!("ACL of {} not copied: {e}", DisplayPath::new(real));
             return Ok(Vec::new());
         }
         Err(e) => return Err(e),
     };
     let after = match fs::symlink_metadata(real) {
         Ok(after) => after,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            debug_event!("ACL of {} not copied: {e}", DisplayPath::new(real));
+            return Ok(Vec::new());
+        }
         Err(e) => return Err(e),
     };
     let same_inode = after.is_file() && Some(FileId::of_metadata(&after)) == old.id;
+    if !same_inode {
+        debug_event!(
+            "ACL of {} not copied: the path no longer names the file",
+            DisplayPath::new(real)
+        );
+    }
     Ok(if same_inode { entries } else { Vec::new() })
 }
 
