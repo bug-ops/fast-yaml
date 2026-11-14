@@ -103,9 +103,7 @@ describe('numeric option validation', () => {
   });
 
   it('rejects the removed sequentialThreshold batch option', () => {
-    expect(() => processFiles([], { sequentialThreshold: 1024 })).toThrow(
-      /sequentialThreshold was removed/,
-    );
+    expect(() => processFiles([], { sequentialThreshold: 1024 })).toThrow(/sequentialThreshold was removed/);
   });
 
   it('accepts boundary values', () => {

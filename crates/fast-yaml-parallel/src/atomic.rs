@@ -532,6 +532,10 @@ fn install(
 }
 
 /// Copies what the old target had onto the temporary file `file` and flushes it to disk.
+#[cfg_attr(
+    not(any(target_os = "macos", windows)),
+    expect(unused_variables, reason = "only macOS and Windows copy by path")
+)]
 fn stage(
     file: &fs::File,
     temp: &Path,
