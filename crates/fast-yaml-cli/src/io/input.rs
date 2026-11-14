@@ -27,7 +27,7 @@ pub enum InputOrigin {
 
 impl InputOrigin {
     /// A file origin that carries no identity, for callers that never write back to it.
-    #[cfg(feature = "linter")]
+    #[cfg(any(feature = "linter", test))]
     pub const fn unidentified(path: PathBuf) -> Self {
         Self::File { path, id: None }
     }
