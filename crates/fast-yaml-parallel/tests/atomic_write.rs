@@ -176,7 +176,7 @@ mod unix {
             CommentPolicy::Reject,
         );
 
-        assert_eq!(result.failed, 0);
+        assert_eq!(result.failed(), 0);
         for (path, m) in &paths {
             assert_eq!(fs::read_to_string(path).unwrap(), "key: value\n");
             assert_eq!(mode(path), *m);
@@ -211,8 +211,11 @@ mod unix {
             CommentPolicy::Reject,
         );
 
-        assert_eq!((result.total, result.failed, result.changed), (3, 1, 2));
-        let (path, error) = &result.errors[0];
+        assert_eq!(
+            (result.total(), result.failed(), result.changed()),
+            (3, 1, 2)
+        );
+        let (path, error) = &result.errors()[0];
         assert_eq!(path, &refused);
         let io_error = match error {
             fast_yaml_parallel::Error::Write { source, .. } => source,
@@ -262,7 +265,10 @@ mod unix {
         );
 
         // The second name finds the file already formatted only when it runs after the first
-        assert_eq!((result.total, result.failed, result.changed), (12, 0, 11));
+        assert_eq!(
+            (result.total(), result.failed(), result.changed()),
+            (12, 0, 11)
+        );
         for path in [&first, &second] {
             assert_eq!(fs::read_to_string(path).unwrap(), "key: value\n");
         }

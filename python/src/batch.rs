@@ -161,13 +161,13 @@ impl PyBatchResult {
 impl From<RustBatchResult> for PyBatchResult {
     fn from(result: RustBatchResult) -> Self {
         Self {
-            total: result.total,
-            success: result.success,
-            changed: result.changed,
-            failed: result.failed,
-            duration_ms: result.duration.as_secs_f64() * 1000.0,
+            total: result.total(),
+            success: result.succeeded(),
+            changed: result.changed(),
+            failed: result.failed(),
+            duration_ms: result.duration().as_secs_f64() * 1000.0,
             errors: result
-                .errors
+                .errors()
                 .iter()
                 .map(|(path, error)| (path.clone().into_os_string(), error.into()))
                 .collect(),

@@ -105,13 +105,13 @@ impl From<RustBatchResult> for BatchResult {
     fn from(result: RustBatchResult) -> Self {
         #[allow(clippy::cast_possible_truncation)]
         Self {
-            total: result.total as u32,
-            success: result.success as u32,
-            changed: result.changed as u32,
-            failed: result.failed as u32,
-            duration_ms: result.duration.as_secs_f64() * 1000.0,
+            total: result.total() as u32,
+            success: result.succeeded() as u32,
+            changed: result.changed() as u32,
+            failed: result.failed() as u32,
+            duration_ms: result.duration().as_secs_f64() * 1000.0,
             errors: result
-                .errors
+                .errors()
                 .iter()
                 .map(|(p, e)| BatchError {
                     path: p.to_string_lossy().to_string(),

@@ -48,7 +48,7 @@
 //! let result = processor.parse_files(&paths);
 //!
 //! println!("Processed {} files, {} successful, {} failed",
-//!          result.total, result.success, result.failed);
+//!          result.total(), result.succeeded(), result.failed());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -189,7 +189,7 @@ pub fn parse_parallel_with_config(input: &str, config: &Config) -> Result<Vec<Va
 /// let paths = vec![PathBuf::from("file1.yaml"), PathBuf::from("file2.yaml")];
 /// let result = process_files(&paths);
 ///
-/// println!("Processed {} files", result.total);
+/// println!("Processed {} files", result.total());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn process_files(paths: &[std::path::PathBuf]) -> BatchResult {
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn test_process_files_empty() {
         let result = process_files(&[]);
-        assert_eq!(result.total, 0);
+        assert_eq!(result.total(), 0);
         assert!(result.is_success());
     }
 }

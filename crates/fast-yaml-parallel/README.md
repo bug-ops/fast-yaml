@@ -80,7 +80,7 @@ let files = vec![
 
 // Parse all files
 let result: BatchResult = FileProcessor::new().parse_files(&files);
-println!("Processed {} files, {} failed", result.total, result.failed);
+println!("Processed {} files, {} failed", result.total(), result.failed());
 
 // With custom configuration
 let config = Config::new().with_workers(Workers::Fixed(WorkerCount::new(4)?));
@@ -104,9 +104,11 @@ let emitter_config = EmitterConfig::new()
 let processor = FileProcessor::new();
 let result = processor.format_in_place(&files, &emitter_config, CommentPolicy::Reject);
 
-println!("Changed {} files", result.changed);
+println!("Changed {} files", result.changed());
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+`check_format(&paths, &emitter_config, CommentPolicy::Reject)` takes the same arguments without writing and reports in `changed()` how many files would change.
 
 ### Convenience Function
 
@@ -153,16 +155,14 @@ let config = Config::new()
 Aggregated result from file processing:
 
 ```rust
-pub struct BatchResult {
-    pub total: usize,      // Total files processed
-    pub success: usize,    // Successfully processed
-    pub changed: usize,    // Files modified (for format_in_place)
-    pub failed: usize,     // Failed files
-    pub duration: Duration, // Processing time
-    pub errors: Vec<(PathBuf, Error)>, // Error details
-}
-
 impl BatchResult {
+    pub fn total(&self) -> usize;      // unchanged + changed + failed
+    pub fn succeeded(&self) -> usize;  // unchanged + changed
+    pub fn changed(&self) -> usize;    // Files modified (would change, for check_format)
+    pub fn unchanged(&self) -> usize;
+    pub fn failed(&self) -> usize;     // errors().len()
+    pub fn duration(&self) -> Duration; // Processing time
+    pub fn errors(&self) -> &[(PathBuf, Error)]; // Error details
     pub fn is_success(&self) -> bool;
     pub fn files_per_second(&self) -> f64;
 }

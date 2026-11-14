@@ -124,16 +124,17 @@ impl FileProcessor {
     /// Process files with custom operation.
     ///
     /// Generic function for applying custom processing to files in parallel.
-    pub fn process<F, R>(&self, paths: &[PathBuf], f: F) -> BatchResult
+    ///
+    /// `f` is called at most once per readable path with its content; an `Err` from `f` is
+    /// recorded in [`BatchResult::errors`].
+    pub fn process<F>(&self, paths: &[PathBuf], f: F) -> BatchResult
     where
-        F: Fn(&Path, &str) -> Result<R> + Sync,
-        R: Send,
+        F: Fn(&Path, &str) -> Result<()> + Sync,
     {
         let batch_start = Instant::now();
-        let total = paths.len();
 
-        if total == 0 {
-            return BatchResult::new();
+        if paths.is_empty() {
+            return BatchResult::default();
         }
 
         let results = if self.should_use_sequential(paths) {
@@ -142,9 +143,7 @@ impl FileProcessor {
             self.process_files_parallel(paths, &f)
         };
 
-        let mut batch = BatchResult::from_results(results);
-        batch.duration = batch_start.elapsed();
-        batch
+        BatchResult::from_results(results, batch_start.elapsed())
     }
 
     /// Parse all files and return `BatchResult`.
@@ -220,6 +219,70 @@ impl FileProcessor {
         }
     }
 
+    /// Formats files without writing anything and reports how many would change.
+    ///
+    /// The result is the one [`format_in_place`](Self::format_in_place) returns, except that
+    /// [`BatchResult::changed`] counts the files that would change. Errors are those of
+    /// [`format_files`](Self::format_files); each file's duration is its own formatting time.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::PathBuf;
+    /// use fast_yaml_core::EmitterConfig;
+    /// use fast_yaml_parallel::{CommentPolicy, FileProcessor};
+    ///
+    /// let batch = FileProcessor::new().check_format(
+    ///     &[PathBuf::from("a.yaml")],
+    ///     &EmitterConfig::new(),
+    ///     CommentPolicy::Reject,
+    /// );
+    /// println!("{} of {} files would change", batch.changed(), batch.total());
+    /// ```
+    pub fn check_format(
+        &self,
+        paths: &[PathBuf],
+        emitter_config: &EmitterConfig,
+        comments: CommentPolicy,
+    ) -> BatchResult {
+        let batch_start = Instant::now();
+        if paths.is_empty() {
+            return BatchResult::default();
+        }
+
+        let lane = self.lane();
+        let check = |path: &PathBuf| {
+            let start = Instant::now();
+            match self.format_content(path, emitter_config, comments, &lane) {
+                Ok((output, _)) => {
+                    let duration = start.elapsed();
+                    let outcome = if output.changed {
+                        FileOutcome::Changed { duration }
+                    } else {
+                        FileOutcome::Unchanged { duration }
+                    };
+                    FileResult::new(path.clone(), outcome)
+                }
+                Err(error) => Self::failed(path, error, start.elapsed()),
+            }
+        };
+
+        let results = if self.should_use_sequential(paths) {
+            paths.iter().map(check).collect()
+        } else {
+            self.install(
+                || paths.par_iter().map(check).collect(),
+                |error| {
+                    paths
+                        .iter()
+                        .map(|path| Self::failed(path, error(), Duration::ZERO))
+                        .collect()
+                },
+            )
+        };
+        BatchResult::from_results(results, batch_start.elapsed())
+    }
+
     /// Format files in place (write back if changed).
     ///
     /// With [`CommentPolicy::Reject`], files containing comments are reported as
@@ -231,18 +294,15 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> BatchResult {
-        let batch_start = std::time::Instant::now();
-        let total = targets.len();
+        let batch_start = Instant::now();
 
-        if total == 0 {
-            return BatchResult::new();
+        if targets.is_empty() {
+            return BatchResult::default();
         }
 
         let results = self.format_targets(targets, emitter_config, comments);
 
-        let mut batch = BatchResult::from_results(results);
-        batch.duration = batch_start.elapsed();
-        batch
+        BatchResult::from_results(results, batch_start.elapsed())
     }
 
     /// Formats every target and returns one result per target, in input order.
@@ -291,7 +351,7 @@ impl FileProcessor {
             |error| {
                 targets
                     .iter()
-                    .map(|target| Self::failed(&target.path, error()))
+                    .map(|target| Self::failed(&target.path, error(), Duration::ZERO))
                     .collect()
             },
         )
@@ -362,28 +422,14 @@ impl FileProcessor {
 
         let (output, id) = match self.format_content(path, emitter_config, comments, lane) {
             Ok(read) => read,
-            Err(error) => {
-                return FileResult::new(
-                    path.to_path_buf(),
-                    FileOutcome::Error {
-                        error,
-                        duration: start.elapsed(),
-                    },
-                );
-            }
+            Err(error) => return Self::failed(path, error, start.elapsed()),
         };
 
         if output.changed
             && let Err(error) =
                 Self::write_file_atomic(path, &output.formatted, target.hard_links, id)
         {
-            return FileResult::new(
-                path.to_path_buf(),
-                FileOutcome::Error {
-                    error,
-                    duration: start.elapsed(),
-                },
-            );
+            return Self::failed(path, error, start.elapsed());
         }
 
         let duration = start.elapsed();
@@ -397,10 +443,9 @@ impl FileProcessor {
     }
 
     /// Processes files in parallel using Rayon's `par_iter`
-    fn process_files_parallel<F, R>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
+    fn process_files_parallel<F>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
     where
-        F: Fn(&Path, &str) -> Result<R> + Sync,
-        R: Send,
+        F: Fn(&Path, &str) -> Result<()> + Sync,
     {
         self.install(
             || {
@@ -412,7 +457,7 @@ impl FileProcessor {
             |error| {
                 paths
                     .iter()
-                    .map(|path| Self::failed(path, error()))
+                    .map(|path| Self::failed(path, error(), Duration::ZERO))
                     .collect()
             },
         )
@@ -432,20 +477,14 @@ impl FileProcessor {
         }
     }
 
-    fn failed(path: &Path, error: Error) -> FileResult {
-        FileResult::new(
-            path.to_path_buf(),
-            FileOutcome::Error {
-                error,
-                duration: Duration::ZERO,
-            },
-        )
+    fn failed(path: &Path, error: Error, duration: Duration) -> FileResult {
+        FileResult::new(path.to_path_buf(), FileOutcome::Error { error, duration })
     }
 
     /// Processes files sequentially without parallel overhead.
-    fn process_files_sequential<F, R>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
+    fn process_files_sequential<F>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
     where
-        F: Fn(&Path, &str) -> Result<R>,
+        F: Fn(&Path, &str) -> Result<()>,
     {
         paths
             .iter()
@@ -454,9 +493,9 @@ impl FileProcessor {
     }
 
     /// Processes a single file and returns the result
-    fn process_single_file<F, R>(&self, path: &Path, f: &F) -> FileResult
+    fn process_single_file<F>(&self, path: &Path, f: &F) -> FileResult
     where
-        F: Fn(&Path, &str) -> Result<R>,
+        F: Fn(&Path, &str) -> Result<()>,
     {
         let start = Instant::now();
 
@@ -465,25 +504,17 @@ impl FileProcessor {
                 let duration = start.elapsed();
                 FileResult::new(path.to_path_buf(), FileOutcome::Success { duration })
             }
-            Err(error) => FileResult::new(
-                path.to_path_buf(),
-                FileOutcome::Error {
-                    error,
-                    duration: start.elapsed(),
-                },
-            ),
+            Err(error) => Self::failed(path, error, start.elapsed()),
         }
     }
 
     /// Process file content with given function
-    fn process_file_content<F, R>(&self, path: &Path, f: &F) -> Result<()>
+    fn process_file_content<F>(&self, path: &Path, f: &F) -> Result<()>
     where
-        F: Fn(&Path, &str) -> Result<R>,
+        F: Fn(&Path, &str) -> Result<()>,
     {
         let content = read_file(path, self.config.max_input_bytes())?;
-
-        f(path, &content)?;
-        Ok(())
+        f(path, &content)
     }
 
     /// Writes content to the file `expected` via the shared secure writer
@@ -674,8 +705,8 @@ mod tests {
         let bad = create_test_file(&dir, "bad.yaml", "x: 1\n---\nm:\n  <<: [1]\n");
         let good = create_test_file(&dir, "good.yaml", "x: 1\n---\nb: &b {y: 2}\nm:\n  <<: *b\n");
         let result = FileProcessor::new().parse_files(&[bad, good]);
-        assert_eq!(result.failed, 1);
-        assert_eq!(result.success, 1);
+        assert_eq!(result.failed(), 1);
+        assert_eq!(result.succeeded(), 1);
     }
 
     #[test]
@@ -697,7 +728,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&[path]);
 
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
         assert!(result.is_success());
     }
 
@@ -713,7 +744,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 3);
+        assert_eq!(result.total(), 3);
         assert!(result.is_success());
     }
 
@@ -722,7 +753,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&[]);
 
-        assert_eq!(result.total, 0);
+        assert_eq!(result.total(), 0);
         assert!(result.is_success());
     }
 
@@ -737,9 +768,9 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 2);
+        assert_eq!(result.total(), 2);
         assert!(!result.is_success());
-        assert!(result.failed >= 1);
+        assert!(result.failed() >= 1);
     }
 
     #[test]
@@ -776,7 +807,7 @@ mod tests {
         let result =
             processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
     }
 
     #[cfg(any(unix, windows))]
@@ -839,7 +870,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 9);
+        assert_eq!(result.total(), 9);
         assert!(result.is_success());
     }
 
@@ -860,7 +891,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 10);
+        assert_eq!(result.total(), 10);
         assert!(result.is_success());
     }
 
@@ -881,7 +912,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 50);
+        assert_eq!(result.total(), 50);
         assert!(result.is_success());
     }
 
@@ -898,9 +929,9 @@ mod tests {
             processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         // Should process successfully
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
         // Changed count depends on emitter behavior
-        assert!(result.changed <= result.total);
+        assert!(result.changed() <= result.total());
     }
 
     #[test]
@@ -916,7 +947,7 @@ mod tests {
             processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         // File should be changed
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
         // Note: Result depends on whether emitter normalizes spacing
     }
 
@@ -937,9 +968,9 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 5);
-        assert_eq!(result.failed, 5);
-        assert_eq!(result.success, 0);
+        assert_eq!(result.total(), 5);
+        assert_eq!(result.failed(), 5);
+        assert_eq!(result.succeeded(), 0);
         assert!(!result.is_success());
     }
 
@@ -954,7 +985,7 @@ mod tests {
         let processor = FileProcessor::new();
 
         let result = processor.parse_files(&[small, large]);
-        assert_eq!(result.total, 2);
+        assert_eq!(result.total(), 2);
         assert!(result.is_success());
     }
 
@@ -971,9 +1002,9 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 3);
-        assert_eq!(result.success, 2);
-        assert_eq!(result.failed, 1);
+        assert_eq!(result.total(), 3);
+        assert_eq!(result.succeeded(), 2);
+        assert_eq!(result.failed(), 1);
         assert!(!result.is_success());
     }
 
@@ -1028,8 +1059,11 @@ mod tests {
 
         let processor = FileProcessor::new();
 
-        // Custom operation that counts characters
-        let result = processor.process(&[path], |_path, content| Ok(content.len()));
+        // Custom operation that inspects the content
+        let result = processor.process(&[path], |_path, content| {
+            assert_eq!(content, "key: value\n");
+            Ok(())
+        });
 
         assert!(result.is_success());
     }
@@ -1068,6 +1102,40 @@ mod tests {
     }
 
     #[test]
+    fn test_check_format_counts_without_writing() {
+        let dir = TempDir::new().unwrap();
+        let messy = create_test_file(&dir, "messy.yaml", "a:   1\n");
+        let clean = create_test_file(&dir, "clean.yaml", "a: 1\n");
+        let commented = create_test_file(&dir, "commented.yaml", "a: 1 # note\n");
+        let missing = dir.path().join("missing.yaml");
+        let paths = [messy.clone(), clean.clone(), commented, missing.clone()];
+
+        let batch =
+            FileProcessor::new().check_format(&paths, &EmitterConfig::new(), CommentPolicy::Reject);
+
+        assert_eq!(batch.total(), 4);
+        assert_eq!(
+            (batch.changed(), batch.unchanged(), batch.failed()),
+            (1, 1, 2)
+        );
+        assert!(matches!(
+            batch.errors()[0].1,
+            Error::CommentsWouldBeStripped
+        ));
+        assert_eq!(batch.errors()[1].0, missing);
+        assert_eq!(fs::read_to_string(&messy).unwrap(), "a:   1\n");
+        assert_eq!(fs::read_to_string(&clean).unwrap(), "a: 1\n");
+    }
+
+    #[test]
+    fn test_check_format_of_nothing_is_an_empty_success() {
+        let batch =
+            FileProcessor::new().check_format(&[], &EmitterConfig::new(), CommentPolicy::Reject);
+        assert_eq!(batch.total(), 0);
+        assert!(batch.is_success());
+    }
+
+    #[test]
     fn test_format_files_comment_policy() {
         let dir = TempDir::new().unwrap();
         let path = create_test_file(&dir, "c.yaml", "a: 1 # note\n");
@@ -1095,8 +1163,11 @@ mod tests {
             CommentPolicy::Reject,
         );
 
-        assert_eq!(result.failed, 1);
-        assert!(matches!(result.errors[0].1, Error::CommentsWouldBeStripped));
+        assert_eq!(result.failed(), 1);
+        assert!(matches!(
+            result.errors()[0].1,
+            Error::CommentsWouldBeStripped
+        ));
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
 
@@ -1111,7 +1182,7 @@ mod tests {
             CommentPolicy::Reject,
         );
 
-        assert_eq!((result.success, result.changed), (1, 0));
+        assert_eq!((result.succeeded(), result.changed()), (1, 0));
     }
 
     #[test]
@@ -1157,8 +1228,8 @@ mod tests {
         let result = processor.parse_files(&[path]);
 
         // Should fail with InputTooLarge error
-        assert_eq!(result.total, 1);
-        assert_eq!(result.failed, 1);
+        assert_eq!(result.total(), 1);
+        assert_eq!(result.failed(), 1);
         assert!(!result.is_success());
     }
 
@@ -1244,15 +1315,20 @@ mod tests {
 
         let strict = FileProcessor::with_config(limited(64));
         let batch = strict.format_in_place(&[in_place(&path)], &emitter, CommentPolicy::Reject);
-        assert_eq!(batch.failed, 1);
-        assert!(batch.errors.iter().all(|(_, e)| is_scan_ahead_rejection(e)));
+        assert_eq!(batch.failed(), 1);
+        assert!(
+            batch
+                .errors()
+                .iter()
+                .all(|(_, e)| is_scan_ahead_rejection(e))
+        );
 
         let batch = FileProcessor::new().format_in_place(
             &[in_place(&path)],
             &emitter,
             CommentPolicy::Reject,
         );
-        assert_eq!(batch.failed, 0);
+        assert_eq!(batch.failed(), 0);
     }
 
     #[test]
@@ -1401,7 +1477,7 @@ mod tests {
             &EmitterConfig::default(),
             CommentPolicy::Reject,
         );
-        assert_eq!(batch.failed, 0);
+        assert_eq!(batch.failed(), 0);
         assert_eq!(fs::read_to_string(&first).unwrap(), "a: 1\n");
     }
 
