@@ -65,6 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: the atomic writer emits a debug event for every tolerated metadata skip (#699) (#PR)
 - Parallel: a failed write no longer leaves an undeletable temp file under a macOS deny-delete ACL, and an unremovable one is named in `TempFileLeft` (#705) (#PR)
 - CLI: `fy convert -i` refuses a file swapped after the read (#703) (#PR)
+- Core/Linter/Python: clippy 1.100 `empty_enums` and `used_underscore_items` fixed in the limit markers, `NoOptions` and the Python module entry point (#709) (#PR)
 
 ### Added
 
