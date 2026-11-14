@@ -222,7 +222,7 @@ mod tests {
 
         // On Windows, should report error
         #[cfg(target_os = "windows")]
-        assert!(!diagnostics.is_empty());
+        assert_ne!(diagnostics, []);
     }
 
     #[test]
