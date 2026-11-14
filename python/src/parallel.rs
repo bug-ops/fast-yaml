@@ -52,7 +52,10 @@ impl PyParallelConfig {
         max_alias_bytes=None,
         max_scan_ahead=None
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the public Python call signature"
+    )]
     fn new(
         thread_count: Option<&Bound<'_, PyAny>>,
         min_chunk_size: Option<&Bound<'_, PyAny>>,
@@ -197,7 +200,7 @@ impl PyParallelConfig {
         })
     }
 
-    #[allow(clippy::unused_self)] // PyO3 requires &self for __repr__
+    #[allow(clippy::unused_self, reason = "PyO3 requires &self for __repr__")]
     fn __repr__(&self) -> String {
         "ParallelConfig()".to_string()
     }
@@ -325,7 +328,10 @@ fn parse_parallel(
     default_flow_style=None,
     explicit_start=false
 ))]
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the public Python call signature"
+)]
 fn dump_parallel(
     py: Python<'_>,
     documents: &Bound<'_, PyAny>,

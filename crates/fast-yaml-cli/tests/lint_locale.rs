@@ -1,7 +1,5 @@
 //! The top-level `locale` key of the config file (#585).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::fs;
 use std::path::Path;
 

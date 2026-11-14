@@ -1,7 +1,5 @@
 //! `fy lint` output destination, input-error reports and closed pipes (#569, #575).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::Command;
 use std::fs;
 use std::path::{Path, PathBuf};

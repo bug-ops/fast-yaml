@@ -20,7 +20,10 @@
 //! - `TypeError`: Type conversion errors (unsupported Python types)
 //! - `IOError`: I/O failures (stream write errors)
 
-#![allow(clippy::doc_markdown)] // Python docstrings use different conventions
+#![allow(
+    clippy::doc_markdown,
+    reason = "Python docstrings use different conventions"
+)]
 
 use fast_yaml_core::events::Tag;
 use fast_yaml_core::{
@@ -68,7 +71,7 @@ impl SafeLoader {
         Self
     }
 
-    #[allow(clippy::unused_self)]
+    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "SafeLoader()".to_string()
     }
@@ -94,7 +97,7 @@ impl FullLoader {
         Self
     }
 
-    #[allow(clippy::unused_self)]
+    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "FullLoader()".to_string()
     }
@@ -120,7 +123,7 @@ impl Loader {
         Self
     }
 
-    #[allow(clippy::unused_self)]
+    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "Loader()".to_string()
     }
@@ -150,7 +153,7 @@ impl SafeDumper {
         Self
     }
 
-    #[allow(clippy::unused_self)]
+    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "SafeDumper()".to_string()
     }
@@ -176,7 +179,7 @@ impl Dumper {
         Self
     }
 
-    #[allow(clippy::unused_self)]
+    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "Dumper()".to_string()
     }
@@ -278,7 +281,10 @@ impl Mark {
     ///     line: Line number (0-indexed)
     ///     column: Column number (0-indexed)
     #[new]
-    #[allow(clippy::missing_const_for_fn)] // PyO3 #[new] with String can't be const
+    #[allow(
+        clippy::missing_const_for_fn,
+        reason = "PyO3 #[new] with String can't be const"
+    )]
     fn new(name: String, line: usize, column: usize) -> Self {
         Self { name, line, column }
     }
@@ -702,7 +708,10 @@ fn safe_load_all(
     default_flow_style=None,
     explicit_start=false
 ))]
-#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
+#[allow(
+    clippy::too_many_arguments,
+    reason = "PyYAML API compatibility requires these parameters"
+)]
 fn safe_dump(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -826,7 +835,10 @@ pub(crate) fn estimate_dump_yaml_size(yaml: &Value) -> usize {
     explicit_start=false,
     chunk_size=None
 ))]
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "mirrors the public Python call signature"
+)]
 fn safe_dump_to(
     py: Python<'_>,
     data: &Bound<'_, PyAny>,
@@ -923,7 +935,10 @@ fn safe_dump_to(
     default_flow_style=None,
     explicit_start=false
 ))]
-#[allow(clippy::too_many_arguments)] // PyYAML API compatibility requires these parameters
+#[allow(
+    clippy::too_many_arguments,
+    reason = "PyYAML API compatibility requires these parameters"
+)]
 fn safe_dump_all(
     py: Python<'_>,
     documents: &Bound<'_, PyAny>,
@@ -995,7 +1010,10 @@ fn safe_dump_all(
 ///     >>> data = fast_yaml.load("key: value", fast_yaml.SafeLoader())
 #[pyfunction]
 #[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
-#[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 requires by-value for Python objects"
+)]
 fn load(
     py: Python<'_>,
     stream: &str,
@@ -1046,7 +1064,10 @@ fn load(
 ///     [{'foo': 1}, {'bar': 2}]
 #[pyfunction]
 #[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
-#[allow(clippy::needless_pass_by_value)] // PyO3 requires by-value for Python objects
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "PyO3 requires by-value for Python objects"
+)]
 fn load_all(
     py: Python<'_>,
     stream: &str,

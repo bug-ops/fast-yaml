@@ -61,9 +61,14 @@ env = { RUSTFLAGS = "-D warnings" }
 run = "cargo hack clippy --feature-powerset --all-targets -p fast-yaml-cli -p fast-yaml-linter -p fast-yaml-core -p fast-yaml-parallel -- -D warnings"
 
 [tasks."lint:clippy-windows"]
-description = "Clippy over Windows-only code in fast-yaml-parallel (CI: Test Rust (windows-latest))"
+description = "Clippy over Windows-only code in the non-FFI crates (CI: Test Rust (windows-latest))"
 env = { RUSTFLAGS = "-D warnings" }
-run = "cargo clippy -p fast-yaml-parallel --all-targets --all-features -- -D warnings"
+run = "cargo clippy -p fast-yaml-core -p fast-yaml-linter -p fast-yaml-parallel -p fast-yaml-cli --all-targets --all-features -- -D warnings"
+
+[tasks."lint:clippy-wasm"]
+description = "Clippy over the non-unix, non-windows fallback cfg branches of fast-yaml-parallel on wasm32-wasip1 (CI: Lint (rust))"
+env = { RUSTFLAGS = "-D warnings" }
+run = "cargo clippy -p fast-yaml-parallel --lib --all-features --target wasm32-wasip1 -- -D warnings"
 
 [tasks."lint:python"]
 description = "mypy (non-blocking as in CI) and ruff (CI: Python Quality Checks)"

@@ -6,7 +6,10 @@
 //! equality, and reports the first key that would collapse into a key of another kind.
 
 // The module is private, but explicit crate visibility documents that nothing here is public API.
-#![allow(clippy::redundant_pub_crate)]
+#![expect(
+    clippy::redundant_pub_crate,
+    reason = "explicit crate visibility documents that nothing here is public API"
+)]
 
 use fast_yaml_core::{KeyError, KeyKind};
 use pyo3::prelude::*;

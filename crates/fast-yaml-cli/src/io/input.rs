@@ -51,7 +51,10 @@ impl InputOrigin {
 
 impl InputSource {
     /// Read input from file or stdin based on arguments, reading at most `max` bytes
-    #[allow(clippy::option_if_let_else)]
+    #[expect(
+        clippy::option_if_let_else,
+        reason = "a match on the file option reads clearer than map_or_else"
+    )]
     pub fn from_args(file: Option<PathBuf>, max: MaxInputBytes) -> Result<Self> {
         match file {
             Some(path) => Self::from_file(&path, max),

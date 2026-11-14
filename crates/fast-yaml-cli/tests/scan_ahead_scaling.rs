@@ -1,8 +1,6 @@
 //! Batch runs scale the default scan-ahead limit per worker and retry rejected files at the full
 //! limit, so the result never depends on `-j` or the machine (#577).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::fs;
 use tempfile::TempDir;

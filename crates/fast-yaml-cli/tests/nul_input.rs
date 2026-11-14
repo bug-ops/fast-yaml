@@ -1,7 +1,5 @@
 //! Regression tests for #417 and #393: NUL input fails with a message; `.5` and `+.inf` are floats.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::time::Duration;
 

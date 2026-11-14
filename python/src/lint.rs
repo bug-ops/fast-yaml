@@ -48,7 +48,7 @@ pub struct PySeverity {
 impl PySeverity {
     /// Critical error that prevents YAML parsing or violates spec.
     #[classattr]
-    #[allow(non_snake_case)] // Python convention for constants
+    #[expect(non_snake_case, reason = "Python convention for constants")]
     const fn ERROR() -> Self {
         Self {
             inner: RustSeverity::Error,
@@ -57,7 +57,7 @@ impl PySeverity {
 
     /// Potential issue that should be addressed.
     #[classattr]
-    #[allow(non_snake_case)] // Python convention for constants
+    #[expect(non_snake_case, reason = "Python convention for constants")]
     const fn WARNING() -> Self {
         Self {
             inner: RustSeverity::Warning,
@@ -66,7 +66,7 @@ impl PySeverity {
 
     /// Informational message about style or best practices.
     #[classattr]
-    #[allow(non_snake_case)] // Python convention for constants
+    #[expect(non_snake_case, reason = "Python convention for constants")]
     const fn INFO() -> Self {
         Self {
             inner: RustSeverity::Info,
@@ -75,7 +75,7 @@ impl PySeverity {
 
     /// Suggestion for improvement.
     #[classattr]
-    #[allow(non_snake_case)] // Python convention for constants
+    #[expect(non_snake_case, reason = "Python convention for constants")]
     const fn HINT() -> Self {
         Self {
             inner: RustSeverity::Hint,
@@ -87,22 +87,22 @@ impl PySeverity {
         self.inner.as_str()
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)] // Required by PyO3
+    #[expect(clippy::trivially_copy_pass_by_ref, reason = "required by PyO3")]
     fn __str__(&self) -> String {
         self.inner.as_str().to_string()
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)] // Required by PyO3
+    #[expect(clippy::trivially_copy_pass_by_ref, reason = "required by PyO3")]
     fn __repr__(&self) -> String {
         format!("Severity.{}", self.inner.as_str().to_uppercase())
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)] // Required by PyO3
+    #[expect(clippy::trivially_copy_pass_by_ref, reason = "required by PyO3")]
     fn __eq__(&self, other: &Self) -> bool {
         self.inner == other.inner
     }
 
-    #[allow(clippy::trivially_copy_pass_by_ref)] // Required by PyO3
+    #[expect(clippy::trivially_copy_pass_by_ref, reason = "required by PyO3")]
     fn __hash__(&self) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -559,7 +559,10 @@ impl PyLintConfig {
         max_scan_ahead=None,
         max_documents=None,
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the public Python call signature"
+    )]
     fn new(
         max_line_length: MaxLineLengthArg,
         indent_size: Option<i128>,
@@ -870,7 +873,7 @@ impl PyLinter {
             .map_err(|e| PyValueError::new_err(format!("Linting failed: {e}")))
     }
 
-    #[allow(clippy::unused_self)] // PyO3 requires &self for __repr__
+    #[expect(clippy::unused_self, reason = "PyO3 requires &self for __repr__")]
     fn __repr__(&self) -> String {
         "Linter()".to_string()
     }

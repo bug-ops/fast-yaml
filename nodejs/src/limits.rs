@@ -18,7 +18,7 @@ fn core_error(option: &str, e: LimitRangeError) -> napi::Error {
 }
 
 /// Validates an optional worker count: absent is auto, `0` sequential, `1..=128` a fixed pool.
-pub(crate) fn workers(option: &str, value: Option<f64>) -> NapiResult<Workers> {
+pub fn workers(option: &str, value: Option<f64>) -> NapiResult<Workers> {
     value.map_or(Ok(Workers::Auto), |v| {
         let n = checked_uint(option, v, 0, WorkerCount::MAX.get() as u64)?;
         Workers::from_count(n).map_err(|e| core_error(option, e))
@@ -26,7 +26,7 @@ pub(crate) fn workers(option: &str, value: Option<f64>) -> NapiResult<Workers> {
 }
 
 /// Validates an optional limit of kind `K`, defaulting to [`Bounded::DEFAULT`].
-pub(crate) fn bounded<K: Bounds>(option: &str, value: Option<f64>) -> NapiResult<Bounded<K>> {
+pub fn bounded<K: Bounds>(option: &str, value: Option<f64>) -> NapiResult<Bounded<K>> {
     value.map_or_else(
         || Ok(Bounded::default()),
         |v| {
@@ -37,7 +37,7 @@ pub(crate) fn bounded<K: Bounds>(option: &str, value: Option<f64>) -> NapiResult
 }
 
 /// Rejects the removed `maxInputSize` option so a lowered limit is never silently ignored.
-pub(crate) fn reject_legacy_max_input_size(value: Option<f64>) -> NapiResult<()> {
+pub fn reject_legacy_max_input_size(value: Option<f64>) -> NapiResult<()> {
     value.map_or(Ok(()), |_| {
         Err(napi::Error::new(
             napi::Status::InvalidArg,
@@ -47,7 +47,7 @@ pub(crate) fn reject_legacy_max_input_size(value: Option<f64>) -> NapiResult<()>
 }
 
 /// Rejects an option that was removed, so a caller relying on it is told instead of ignored.
-pub(crate) fn reject_removed_option(name: &str, present: bool) -> NapiResult<()> {
+pub fn reject_removed_option(name: &str, present: bool) -> NapiResult<()> {
     if present {
         return Err(napi::Error::new(
             napi::Status::InvalidArg,
@@ -58,19 +58,19 @@ pub(crate) fn reject_removed_option(name: &str, present: bool) -> NapiResult<()>
 }
 
 /// Validates an optional `maxInputBytes` value, defaulting to [`MaxInputBytes::DEFAULT`].
-pub(crate) fn max_input_bytes(value: Option<f64>) -> NapiResult<MaxInputBytes> {
+pub fn max_input_bytes(value: Option<f64>) -> NapiResult<MaxInputBytes> {
     bounded("maxInputBytes", value)
 }
 
 /// Validates an optional `maxDocuments` value, defaulting to [`MaxDocuments::DEFAULT`].
-pub(crate) fn max_documents(value: Option<f64>) -> NapiResult<MaxDocuments> {
+pub fn max_documents(value: Option<f64>) -> NapiResult<MaxDocuments> {
     bounded("maxDocuments", value)
 }
 
 /// Validates the optional `maxDepth` / `maxAliasBytes` / `maxScanAhead` / `maxDocuments` values into [`ParseLimits`].
 ///
 /// Absent values keep the core defaults.
-pub(crate) fn parse_limits(
+pub fn parse_limits(
     max_depth_opt: Option<f64>,
     max_alias_bytes_opt: Option<f64>,
     max_scan_ahead_opt: Option<f64>,

@@ -4,7 +4,7 @@
 //! cyclic JS value overflows the native stack before any validation runs. This conversion is
 //! type-exact and capped in depth and node count, so hostile input fails with `InvalidArg`.
 
-#![allow(unsafe_code)]
+#![allow(unsafe_code, reason = "raw napi access; SAFETY at each block")]
 
 use napi::{
     Error, Result, Status, ValueType,
@@ -18,7 +18,7 @@ const MAX_DEPTH: usize = 16;
 const MAX_NODES: usize = 100_000;
 
 /// A rule configuration read from JavaScript under depth and node limits.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuleInput(pub Value);
 
 struct RawValue(sys::napi_value);

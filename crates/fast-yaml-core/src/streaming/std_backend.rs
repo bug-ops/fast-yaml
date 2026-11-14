@@ -40,7 +40,7 @@ impl StdBackend {
 }
 
 // Implementation of ContextStackOps for Vec<Context>
-#[allow(clippy::use_self)] // Vec method names match trait names
+#[expect(clippy::use_self, reason = "vec method names match trait names")]
 impl ContextStackOps for Vec<Context> {
     #[inline]
     fn push(&mut self, ctx: Context) {
@@ -64,7 +64,6 @@ impl ContextStackOps for Vec<Context> {
 }
 
 // Implementation of AnchorStoreOps for Vec<String>
-#[allow(clippy::use_self)] // Vec/slice method names used
 impl AnchorStoreOps for Vec<String> {
     fn ensure_capacity(&mut self, anchor_id: usize) {
         if self.len() <= anchor_id {

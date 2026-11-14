@@ -110,7 +110,7 @@ impl ParallelConfig {
 /// napi-rs converts it before that call's handle scope closes, so the handle never outlives the
 /// env.
 #[inline]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, reason = "lifetime-only transmute, see contract")]
 unsafe fn to_static(v: Unknown<'_>) -> Unknown<'static> {
     // SAFETY: lifetime-only change; the caller upholds the contract above.
     unsafe { std::mem::transmute::<Unknown<'_>, Unknown<'static>>(v) }
@@ -150,7 +150,10 @@ unsafe fn to_static(v: Unknown<'_>) -> Unknown<'static> {
 /// console.log(docs.length); // 3
 /// ```
 #[napi(catch_unwind)]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 pub fn parse_parallel(
     env: &Env,
     yaml_str: String,
@@ -214,7 +217,7 @@ impl Task for ParseParallelTask {
         })
     }
 
-    #[allow(unsafe_code)]
+    #[allow(unsafe_code, reason = "calls to_static; SAFETY comment at the call")]
     fn resolve(&mut self, env: Env, output: Self::Output) -> napi::Result<Self::JsValue> {
         contain_panic(|| {
             let mut js_docs = Vec::with_capacity(output.len());
@@ -251,7 +254,7 @@ impl Task for PanicTask {
 ///
 /// `AsyncTask` phases run outside the `#[napi(catch_unwind)]` trampolines, where an
 /// unwinding panic would abort the Node process.
-pub(crate) fn contain_panic<T>(f: impl FnOnce() -> napi::Result<T>) -> napi::Result<T> {
+pub fn contain_panic<T>(f: impl FnOnce() -> napi::Result<T>) -> napi::Result<T> {
     catch_unwind(AssertUnwindSafe(f)).map_err(panic_to_error)?
 }
 
@@ -279,7 +282,10 @@ pub(crate) fn contain_panic<T>(f: impl FnOnce() -> napi::Result<T>) -> napi::Res
 /// console.log(docs); // [{ foo: 1 }, { bar: 2 }]
 /// ```
 #[napi(catch_unwind)]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 pub fn parse_parallel_async(
     yaml_str: String,
     config: Option<ParallelConfig>,

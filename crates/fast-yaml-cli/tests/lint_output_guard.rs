@@ -1,7 +1,5 @@
 //! `--output` must never overwrite any file of a batch run (`OutputWriter::ensure_not_inputs`).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::fs;
 
 use assert_cmd::Command;

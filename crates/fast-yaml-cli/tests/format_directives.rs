@@ -1,7 +1,5 @@
 //! Regression tests for #447 (directives of later documents, directive comments) and #362 (plain `inf`/`NaN`).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 
 fn format(input: &str, extra: &[&str]) -> String {

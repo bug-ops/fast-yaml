@@ -1,7 +1,5 @@
 //! Rayon-based parallel processing.
 
-#![allow(clippy::redundant_pub_crate)]
-
 use crate::chunker::{Chunk, chunk_documents};
 use crate::config::{Config, MIN_PARALLEL_ITEMS};
 use crate::error::{Error, Result};
@@ -23,7 +21,7 @@ use rayon::prelude::*;
 /// - Input size exceeds configured maximum
 /// - The chunk count, or later the parsed document count, exceeds `ParseLimits::max_documents`
 /// - Any document fails to parse
-pub(crate) fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value>> {
+pub fn process_parallel(input: &str, config: &Config) -> Result<Vec<Value>> {
     config.max_input_bytes().check(input.len())?;
 
     let normalized = NormalizedInput::new(input).map_err(|source| Error::Parse {

@@ -47,7 +47,6 @@ impl<'bump> ArenaBackend<'bump> {
 }
 
 // Implementation of ContextStackOps for bumpalo::collections::Vec<'bump, Context>
-#[allow(clippy::use_self)] // bumpalo Vec method names match trait names
 impl ContextStackOps for bumpalo::collections::Vec<'_, Context> {
     #[inline]
     fn push(&mut self, ctx: Context) {
@@ -71,7 +70,6 @@ impl ContextStackOps for bumpalo::collections::Vec<'_, Context> {
 }
 
 // Implementation of AnchorStoreOps for bumpalo::collections::Vec<'bump, String<'bump>>
-#[allow(clippy::use_self)] // bumpalo Vec/slice method names used
 impl<'bump> AnchorStoreOps
     for bumpalo::collections::Vec<'bump, bumpalo::collections::String<'bump>>
 {

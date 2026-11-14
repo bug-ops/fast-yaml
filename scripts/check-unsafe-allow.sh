@@ -87,9 +87,8 @@ check() {
     status=1
   fi
 
-  # Crates inherit the workspace lint table; nodejs/ declares its own table, which the
-  # allowlist pins. fuzz/ is outside the workspace, so it must never be a dependency of a
-  # shipped crate.
+  # Crates inherit the workspace lint table. fuzz/ is outside the workspace, so it must never be
+  # a dependency of a shipped crate.
   local manifest
   while IFS= read -r manifest; do
     case "$manifest" in
@@ -100,7 +99,7 @@ check() {
       status=1
     fi
     case "$manifest" in
-      Cargo.toml | nodejs/Cargo.toml) continue ;;
+      Cargo.toml) continue ;;
     esac
     if ! awk '
       /^\[/ { in_lints = ($0 == "[lints]") }
@@ -152,7 +151,7 @@ self_test() {
     case_in_copy fail "workspace level turned into allow" \
       sed -i.bak 's/^unsafe_code = "deny"/unsafe_code = "allow"/' Cargo.toml || rc=1
     case_in_copy fail "allow moved to a wider item" \
-      sh -c "awk '/^    #\\[allow\\(unsafe_code\\)\\]\$/ { next } /^impl Task for ParseParallelTask/ { print \"#[allow(unsafe_code)]\" } { print }' nodejs/src/parallel.rs >p.tmp && mv p.tmp nodejs/src/parallel.rs" || rc=1
+      sh -c "awk '/^    #\\[allow\\(unsafe_code, reason = .*\\)\\]\$/ { next } /^impl Task for ParseParallelTask/ { print \"#[allow(unsafe_code)]\" } { print }' nodejs/src/parallel.rs >p.tmp && mv p.tmp nodejs/src/parallel.rs" || rc=1
     case_in_copy fail "hyphenated spelling in a workflow" \
       sh -c "echo '  RUSTFLAGS: \"-A unsafe-code\"' >>.github/workflows/ci.yml" || rc=1
     case_in_copy fail "cap-lints" \

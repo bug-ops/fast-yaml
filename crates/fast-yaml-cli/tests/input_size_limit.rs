@@ -1,7 +1,5 @@
 //! End-to-end tests for the `--max-input-bytes` cap on single-file and stdin input.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use std::fs;
 use tempfile::TempDir;

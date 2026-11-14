@@ -45,7 +45,10 @@ settings:
     - monitoring
 ";
 
-#[allow(clippy::cast_precision_loss)]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "benchmark figures are approximate"
+)]
 fn generate_large_yaml(num_items: usize) -> String {
     let mut yaml = String::from("items:\n");
     for i in 0..num_items {

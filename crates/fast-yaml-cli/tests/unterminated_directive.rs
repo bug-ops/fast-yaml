@@ -1,7 +1,5 @@
 //! Regression tests for #403: input ending in an unterminated `%` directive must fail, not hang.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::time::Duration;
 

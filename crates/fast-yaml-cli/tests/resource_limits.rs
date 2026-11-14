@@ -1,8 +1,6 @@
 //! End-to-end tests for parser resource limits: hostile input must fail cleanly
 //! (non-zero exit, no signal) instead of overflowing the stack or exhausting memory.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::fmt::Write as _;
 use std::fs;

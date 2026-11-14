@@ -1,7 +1,5 @@
 //! Write flags (`-o`, `-i`) exist only on the subcommands that write, and `-f` is gone (#611).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 #[cfg(feature = "linter")]
 use predicates::prelude::*;

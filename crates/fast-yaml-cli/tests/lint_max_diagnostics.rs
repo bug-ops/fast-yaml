@@ -1,7 +1,5 @@
 //! `fy lint --max-diagnostics` caps the output per file and never the exit code (#603).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;

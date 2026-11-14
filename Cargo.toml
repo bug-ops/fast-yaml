@@ -91,6 +91,10 @@ missing_panics_doc = "allow"
 cargo_common_metadata = "allow"
 multiple_crate_versions = "allow"
 
+# Restriction lint kept workspace-wide so the FFI crates keep documenting every unsafe block
+undocumented_unsafe_blocks = "warn"
+allow_attributes_without_reason = "warn"
+
 [profile.release]
 lto = true
 codegen-units = 1

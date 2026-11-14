@@ -467,7 +467,10 @@ impl Indent {
                 max: Self::MAX.0 as usize,
             });
         }
-        #[allow(clippy::cast_possible_truncation)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the value is range-checked before the cast"
+        )]
         Ok(Self(width as u8))
     }
 
@@ -916,7 +919,10 @@ pub const ANCHOR_COPY_FACTOR: usize = 24;
 const COPY_NODE_BYTES: usize = std::mem::size_of::<crate::value::Value>();
 
 /// Source position of `span`'s end in characters, which never exceeds its byte offset.
-#[allow(clippy::disallowed_methods)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the single place that converts saphyr markers"
+)]
 fn source_end(span: Span) -> usize {
     span.end.index()
 }

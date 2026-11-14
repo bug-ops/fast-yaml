@@ -1,8 +1,6 @@
 //! `format -i` and hard links: files found by a walk are refused, named files are written through.
 
 #![cfg(unix)]
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::Command;
 use assert_cmd::cargo_bin_cmd;
 use predicates::prelude::*;

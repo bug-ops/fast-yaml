@@ -1,7 +1,6 @@
 //! `-o /dev/null` discards the output instead of failing the atomic write, and the
 //! `--max-line-length` range error names its bounds (#634).
 
-#![allow(clippy::missing_docs_in_private_items)]
 #![cfg(unix)]
 
 use assert_cmd::{Command, cargo_bin_cmd};

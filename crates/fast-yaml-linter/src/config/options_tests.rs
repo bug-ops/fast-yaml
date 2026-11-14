@@ -52,7 +52,10 @@ fn round_trip<O: RuleOptions>(options: &O) {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one table-driven test covers every options type"
+)]
 fn every_options_type_round_trips_with_non_default_values() {
     for forbid in [Forbid::No, Forbid::NonEmpty, Forbid::All] {
         for limit in [Limit::Disabled, Limit::Max(3)] {

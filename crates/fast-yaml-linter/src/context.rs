@@ -297,9 +297,13 @@ impl<'a> SourceContext<'a> {
         let end_line = span.end.line().get();
 
         let first_line = start_line.saturating_sub(context_lines).max(1);
-        let last_line = end_line
-            .saturating_add(context_lines)
-            .min(self.line_starts.len());
+        // The empty line after a final terminator is shown only when the span points at it
+        let ceiling = if end_line > self.last_content_line() {
+            self.line_starts.len()
+        } else {
+            self.last_content_line()
+        };
+        let last_line = end_line.saturating_add(context_lines).min(ceiling);
 
         let mut lines = Vec::with_capacity((last_line + 1).saturating_sub(first_line));
 
@@ -344,6 +348,17 @@ impl<'a> SourceContext<'a> {
         }
 
         DiagnosticContext { lines }
+    }
+
+    /// Number of lines that hold text: excludes the empty line after a final terminator,
+    /// but an empty source keeps its sole line.
+    fn last_content_line(&self) -> usize {
+        match self.line_starts.last() {
+            Some(&start) if start == self.source.len() && self.line_starts.len() > 1 => {
+                self.line_starts.len() - 1
+            }
+            _ => self.line_starts.len(),
+        }
     }
 
     /// Gets the source snippet for a span.
@@ -493,7 +508,10 @@ impl<'a> SourceContext<'a> {
 
     /// Converts a saphyr marker (char-based column) to a byte offset.
     #[cfg(test)]
-    #[expect(clippy::disallowed_methods)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the single place that converts saphyr markers"
+    )]
     pub(crate) fn byte_offset_of(&self, marker: Marker) -> ByteOffset {
         OneBased::new(marker.line()).map_or_else(
             || ByteOffset::new(self.source.len()),
@@ -732,6 +750,53 @@ mod tests {
             assert_eq!(actual, expected, "{source:?}");
             assert_eq!(LintContext::new(source).lines(), expected.as_slice());
         }
+    }
+
+    #[test]
+    fn test_extract_context_has_no_phantom_line_after_final_terminator() {
+        for (source, real_lines) in [
+            ("a:   1\n", 1),
+            ("a: 1\nb:   2\n", 2),
+            ("a: 1\r\nb:   2\r\n", 2),
+            ("a: 1\rb:   2\r", 2),
+            ("a: 1\nb:   2", 2),
+        ] {
+            let ctx = SourceContext::new(source);
+            let start = ctx.location_at(ByteOffset::new(0));
+            let diag = ctx.extract_context(Span::new(start, start), 5);
+            let numbers: Vec<usize> = diag.lines.iter().map(|l| l.line_number.get()).collect();
+            assert_eq!(numbers, (1..=real_lines).collect::<Vec<_>>(), "{source:?}");
+        }
+        let empty = SourceContext::new("");
+        let start = empty.location_at(ByteOffset::new(0));
+        assert_eq!(
+            empty
+                .extract_context(Span::new(start, start), 2)
+                .lines
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_extract_context_keeps_the_eof_line_a_span_points_at() {
+        let source = "a: 1\nb: 2\n";
+        let ctx = SourceContext::new(source);
+        let eof = ctx.location_at(ByteOffset::new(source.len()));
+        assert_eq!(eof.line().get(), 3);
+        for (context_lines, expected) in [(0, vec![3]), (1, vec![2, 3]), (5, vec![1, 2, 3])] {
+            let diag = ctx.extract_context(Span::new(eof, eof), context_lines);
+            let numbers: Vec<usize> = diag.lines.iter().map(|l| l.line_number.get()).collect();
+            assert_eq!(numbers, expected, "context_lines={context_lines}");
+        }
+    }
+
+    #[test]
+    fn test_extract_context_zero_lines_keeps_the_spans_own_line() {
+        let ctx = SourceContext::new("a:   1\n");
+        let start = ctx.location_at(ByteOffset::new(0));
+        let diag = ctx.extract_context(Span::new(start, start), 0);
+        assert_eq!(diag.lines.len(), 1);
     }
 
     #[test]

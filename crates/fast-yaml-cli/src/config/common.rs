@@ -1,7 +1,5 @@
 //! Common configuration aggregating multiple config types.
 
-#![allow(clippy::missing_const_for_fn)]
-
 use super::OutputConfig;
 use crate::cli::ResolvedCli;
 
@@ -36,7 +34,7 @@ impl CommonConfig {
     /// Sets the output configuration.
     #[cfg(test)]
     #[must_use]
-    pub fn with_output(mut self, output: OutputConfig) -> Self {
+    pub const fn with_output(mut self, output: OutputConfig) -> Self {
         self.output = output;
         self
     }

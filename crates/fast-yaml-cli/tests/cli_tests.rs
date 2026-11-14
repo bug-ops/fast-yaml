@@ -1,7 +1,5 @@
 //! Integration tests for the `fy` CLI tool.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use predicates::prelude::*;
 

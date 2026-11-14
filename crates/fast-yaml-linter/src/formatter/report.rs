@@ -105,11 +105,7 @@ const fn is_drive_path(bytes: &[u8]) -> bool {
 
 /// A leading `//` is a UNC path only on Windows; on Unix it is an ordinary absolute path.
 const fn is_unc_path(bytes: &[u8]) -> bool {
-    match bytes {
-        [b'\\', b'\\', ..] => true,
-        [b'/', b'/', ..] => cfg!(windows),
-        _ => false,
-    }
+    matches!(bytes, [b'\\', b'\\', ..]) || (cfg!(windows) && matches!(bytes, [b'/', b'/', ..]))
 }
 
 fn file_uri_of(path: &[u8]) -> String {

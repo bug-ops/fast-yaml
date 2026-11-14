@@ -1,7 +1,5 @@
 //! Regression test for #416: a diagnostic column beyond `u16::MAX` must not panic the text formatter.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::fs;
 

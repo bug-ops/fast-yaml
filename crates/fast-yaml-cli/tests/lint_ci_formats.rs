@@ -1,7 +1,5 @@
 //! End-to-end tests for the `github`, `parsable` and `sarif` lint report formats (#314).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use serde_json::Value;
 use std::fs;

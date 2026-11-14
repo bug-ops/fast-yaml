@@ -176,6 +176,13 @@ fn check_spaces_before_colon(
         }
     }
 
+    // A colon that opens its line (explicit-key `: value`) has indentation before it, not a gap
+    let gap_start = colon_offset - spaces;
+    let opens_line = gap_start == 0 || matches!(bytes.get(gap_start - 1), Some(b'\n' | b'\r'));
+    if opens_line {
+        return None;
+    }
+
     // `*k:` scans as the alias `k:`, so one space is mandatory between an alias key and its colon
     let after_alias = spaces == 1 && alias_ends.binary_search(&(colon_offset - 1)).is_ok();
 

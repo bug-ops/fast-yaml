@@ -426,7 +426,11 @@ impl<'a> KeyedCollections<'a> {
                 kind.name()
             )));
         }
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "size is checked integral within 0..=u32::MAX before the cast"
+        )]
         let count = size as usize;
         budget
             .charge_nodes(count.saturating_mul(kind.nodes_per_entry()))
@@ -575,7 +579,10 @@ fn classify<'a>(
 fn number_to_scalar(num: f64) -> Value {
     // Safe integer range for f64 is -(2^53) to 2^53
     const MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_992.0; // 2^53
-    #[allow(clippy::cast_possible_truncation)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "the value is range-checked before the cast"
+    )]
     if num.fract() == 0.0
         && num.is_finite()
         && num.abs() <= MAX_SAFE_INTEGER

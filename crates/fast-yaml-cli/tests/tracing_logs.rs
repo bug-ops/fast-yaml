@@ -1,7 +1,5 @@
 //! `RUST_LOG` debug events go to stderr only, and stay off without it (#614).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;

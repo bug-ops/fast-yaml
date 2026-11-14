@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 //! Benchmarks for fast-yaml-parallel performance characteristics.
 //!
 //! These benchmarks measure:

@@ -1,8 +1,11 @@
 //! Performance benchmarks for file discovery module.
 
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::cast_sign_loss)]
+#![expect(
+    clippy::cast_precision_loss,
+    reason = "benchmark figures are approximate"
+)]
+#![expect(clippy::cast_possible_truncation, reason = "benchmark sizes are small")]
+#![expect(clippy::cast_sign_loss, reason = "benchmark sizes are non-negative")]
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use fast_yaml_cli::discovery::{DiscoveryConfig, FileDiscovery, InputPath};

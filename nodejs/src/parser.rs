@@ -108,7 +108,10 @@ fn throw_and_undefined<'env>(env: &'env Env, msg: &str) -> napi::Result<Unknown<
 /// console.log(data); // { name: 'test', value: 123 }
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 #[napi(catch_unwind)]
 pub fn safe_load(
     env: &Env,
@@ -173,7 +176,10 @@ pub fn safe_load(
 /// console.log(docs); // [{ foo: 1 }, { bar: 2 }]
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 #[napi(catch_unwind)]
 pub fn safe_load_all(
     env: &Env,
@@ -250,7 +256,10 @@ pub fn safe_load_all(
 /// console.log(data); // { name: 'test' }
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 #[napi(catch_unwind)]
 pub fn load(
     env: &Env,
@@ -290,7 +299,10 @@ pub fn load(
 /// console.log(docs); // [{ foo: 1 }, { bar: 2 }]
 /// ```
 // NAPI-RS requires String by value for proper FFI handling
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 #[napi(catch_unwind)]
 pub fn load_all(
     env: &Env,

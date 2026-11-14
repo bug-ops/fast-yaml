@@ -1,7 +1,5 @@
 //! Document boundary detection and chunking.
 
-#![allow(clippy::redundant_pub_crate)]
-
 use fast_yaml_core::limits::MaxDocuments;
 use fast_yaml_core::{
     DocumentIndex, LimitKind, NormalizedInput, OneBased, ParseError, SourcePosition,
@@ -11,14 +9,14 @@ use crate::error::{Error, Result};
 
 /// Position of a chunk in the whole input, used to relocate parse error marks.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub(crate) struct SourceOrigin {
+pub struct SourceOrigin {
     /// Line breaks before the chunk.
     pub line: usize,
 }
 
 /// Represents a document chunk with metadata.
 #[derive(Debug, Clone)]
-pub(crate) struct Chunk<'a> {
+pub struct Chunk<'a> {
     /// Normalized text of this chunk (includes `---` prefix if present).
     pub input: NormalizedInput<'a>,
 
@@ -125,7 +123,7 @@ impl RootNode {
 ///
 /// Returns [`Error::Parse`] carrying `LimitKind::Documents` as soon as the chunk count would
 /// pass `max`, so an input of millions of empty documents is never fully materialized.
-pub(crate) fn chunk_documents<'a>(
+pub fn chunk_documents<'a>(
     whole: &'a NormalizedInput<'_>,
     max: Option<MaxDocuments>,
 ) -> Result<Vec<Chunk<'a>>> {

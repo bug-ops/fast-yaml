@@ -1,6 +1,5 @@
 //! File names with terminal control sequences are escaped in every human-readable output (#607).
 
-#![allow(clippy::missing_docs_in_private_items)]
 #![cfg(unix)]
 
 use std::fs;

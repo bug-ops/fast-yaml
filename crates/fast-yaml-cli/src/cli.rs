@@ -316,7 +316,7 @@ impl BatchArgs {
 
 /// Parser resource limits shared by every subcommand that parses YAML.
 #[derive(Args, Debug, Clone, Copy)]
-#[allow(clippy::struct_field_names)] // field names are the flag names
+#[expect(clippy::struct_field_names, reason = "field names are the flag names")]
 pub struct ParseLimitArgs {
     /// Maximum nesting depth of sequences and mappings (min: 1, max: 512); flow collections stop at 255
     #[arg(long, value_name = "N", value_parser = parse_max_depth, default_value_t = MaxDepth::DEFAULT)]

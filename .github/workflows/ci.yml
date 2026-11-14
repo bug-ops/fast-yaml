@@ -22,6 +22,10 @@ env:
   RUSTUP_MAX_RETRIES: 10
   # Fail loudly when a task needs a tool its job did not list in install_args
   MISE_TASK_RUN_AUTO_INSTALL: "false"
+  # SHA256 of the extracted mise / mise.exe binary of 2026.10.25 per runner, not of the release archive; to refresh, extract the archive and hash the binary; update together with every `version:` of jdx/mise-action
+  MISE_SHA256_LINUX_X64: 5d362ecc578dc7c146679b841dda949d6472cbf86ff5635db7afdca1b6b3fd87
+  MISE_SHA256_MACOS_ARM64: 8a3ef00765b009278197aba627ac00d6e9c63f6aeb04d4f4b2cfe0e59ddc2fd6
+  MISE_SHA256_WINDOWS_X64: dd293220cb8c53fb97ba81378b43062d34047881d57a15bec8b1d53aae35108e
 
 # Cancel previous runs on new push
 concurrency:
@@ -88,6 +92,7 @@ jobs:
         with:
           toolchain: stable
           components: clippy
+          targets: wasm32-wasip1
 
       - name: Cache Cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -98,6 +103,7 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install: false
@@ -125,6 +131,11 @@ jobs:
         if: ${{ !cancelled() }}
         run: mise run lint:clippy
 
+      # Fallback cfg branches (neither unix nor windows) are invisible to the host clippy run
+      - name: Clippy fallback cfg branches (wasm32-wasip1)
+        if: ${{ !cancelled() }}
+        run: mise run lint:clippy-wasm
+
       - name: Upload SARIF to GitHub
         if: ${{ !cancelled() }}
         uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
@@ -149,6 +160,7 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install: false
@@ -185,6 +197,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: github:taiki-e/cargo-hack
@@ -215,6 +228,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: aqua:EmbarkStudios/cargo-deny github:obi1kenobi/cargo-semver-checks
@@ -258,6 +272,7 @@ jobs:
       - name: Set up mise
         uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install: false
@@ -303,6 +318,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ runner.os == 'Windows' && env.MISE_SHA256_WINDOWS_X64 || runner.os == 'macOS' && env.MISE_SHA256_MACOS_ARM64 || env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: github:nextest-rs/nextest[version_prefix=cargo-nextest-]
@@ -353,6 +369,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: github:nextest-rs/nextest[version_prefix=cargo-nextest-]
@@ -390,6 +407,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: aqua:taiki-e/cargo-llvm-cov github:nextest-rs/nextest[version_prefix=cargo-nextest-]
@@ -438,6 +456,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: python uv
@@ -467,6 +486,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: node pnpm
@@ -525,6 +545,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ runner.os == 'Windows' && env.MISE_SHA256_WINDOWS_X64 || runner.os == 'macOS' && env.MISE_SHA256_MACOS_ARM64 || env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: python uv
@@ -609,6 +630,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ runner.os == 'Windows' && env.MISE_SHA256_WINDOWS_X64 || runner.os == 'macOS' && env.MISE_SHA256_MACOS_ARM64 || env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: node pnpm
@@ -653,6 +675,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: python uv
@@ -710,6 +733,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: node pnpm
@@ -760,6 +784,7 @@ jobs:
         env:
           MISE_SAFE: "1"
         with:
+          sha256: ${{ runner.os == 'Windows' && env.MISE_SHA256_WINDOWS_X64 || runner.os == 'macOS' && env.MISE_SHA256_MACOS_ARM64 || env.MISE_SHA256_LINUX_X64 }}
           cache: false
           version: 2026.10.25
           install_args: node pnpm

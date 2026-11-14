@@ -1,8 +1,6 @@
 //! Per-rule `ignore` / `ignore-from-file` through `fy lint` (#585) and the JSON report of input
 //! errors (#591).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::fs;
 use std::path::Path;
 
