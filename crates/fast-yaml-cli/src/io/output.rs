@@ -231,52 +231,34 @@ impl OutputWriter {
     }
 }
 
-/// What names a destination file, resolved once: its canonical path and, on Unix, its inode.
+/// What names a destination file, resolved once: its canonical path and its identity on the
+/// volume, which also catches a hard link on every platform.
 struct FileIdentity {
     canonical: Option<PathBuf>,
-    #[cfg(unix)]
-    inode: Option<(u64, u64)>,
+    id: Option<FileId>,
 }
 
 impl FileIdentity {
     fn of(path: &Path) -> Self {
         Self {
             canonical: path.canonicalize().ok(),
-            #[cfg(unix)]
-            inode: inode_of(path),
+            id: FileId::of_path(path).ok().flatten(),
         }
     }
 
-    #[cfg(unix)]
-    const fn resolves_to(_: &Path, _: &Path) -> bool {
-        false
-    }
-
-    #[cfg(not(unix))]
-    fn resolves_to(other: &Path, canonical: &Path) -> bool {
-        other.canonicalize().is_ok_and(|o| o == canonical)
-    }
-
-    /// Whether `other` is the same file: the same canonical path, or on Unix the same inode
-    /// (a hard link).
+    /// Whether `other` is the same file: the same canonical path, or the same file identity.
     fn is(&self, other: &Path) -> bool {
-        if let Some(canonical) = &self.canonical
-            && (canonical == other || Self::resolves_to(other, canonical))
-        {
+        if self.canonical.as_deref() == Some(other) {
             return true;
         }
-        #[cfg(unix)]
-        if let (Some(a), Some(b)) = (self.inode, inode_of(other)) {
-            return a == b;
+        match (self.id, FileId::of_path(other).ok().flatten()) {
+            (Some(a), Some(b)) => a == b,
+            _ => match (&self.canonical, other.canonicalize()) {
+                (Some(canonical), Ok(other)) => *canonical == other,
+                _ => false,
+            },
         }
-        false
     }
-}
-
-#[cfg(unix)]
-fn inode_of(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
 #[cfg(feature = "linter")]
@@ -518,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn test_ensure_not_input_refuses_a_hard_link_to_the_input() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");

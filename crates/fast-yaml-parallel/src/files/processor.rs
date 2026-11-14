@@ -12,7 +12,7 @@ use fast_yaml_core::limits::MaxScanAhead;
 use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comments_normalized};
 use rayon::prelude::*;
 
-use crate::atomic::{FileId, HardLinkPolicy};
+use crate::atomic::{FileId, HardLinkPolicy, stat_identified};
 use crate::config::Config;
 use crate::error::{Error, Result};
 use crate::io::{read_file, read_file_identified};
@@ -275,8 +275,8 @@ impl FileProcessor {
 
         self.install(
             || {
-                let keys = file_keys(targets, &probes);
-                run_grouped(targets, &same_file_groups(keys), format_one)
+                let ids = probes.iter().map(|probe| probe.id);
+                run_grouped(targets, &same_file_groups(ids), format_one)
             },
             |error| {
                 targets
@@ -537,65 +537,27 @@ impl FileProcessor {
     }
 }
 
-/// Identity of a file independent of the name it was given.
-#[cfg(unix)]
-type FileKey = (u64, u64);
-#[cfg(not(unix))]
-type FileKey = PathBuf;
-
 /// What one stat of a target tells the scheduler.
 struct Probe {
     len: u64,
-    metadata: Option<fs::Metadata>,
+    id: Option<FileId>,
 }
 
 impl Probe {
-    /// Size of the file `path` resolves to and what the stat returned; a path that cannot be
-    /// stat-ed has size 0 and no metadata.
+    /// Size and identity of the file `path` resolves to; a path that cannot be stat-ed has
+    /// size 0 and no identity.
     fn of(path: &Path) -> Self {
-        let metadata = fs::metadata(path).ok();
-        Self {
-            len: metadata.as_ref().map_or(0, fs::Metadata::len),
-            metadata,
-        }
-    }
-}
-
-/// The same-file key of every target, in order. It is computed on the current rayon pool: on
-/// Windows it canonicalizes each path, which on a network share costs a round trip per file.
-fn file_keys(targets: &[InPlaceTarget], probes: &[Probe]) -> Vec<Option<FileKey>> {
-    targets
-        .par_iter()
-        .zip(probes.par_iter())
-        .map(|(target, probe)| {
-            probe
-                .metadata
-                .as_ref()
-                .and_then(|metadata| file_key(&target.path, metadata))
+        stat_identified(path).map_or(Self { len: 0, id: None }, |(metadata, id)| Self {
+            len: metadata.len(),
+            id,
         })
-        .collect()
-}
-
-/// `(dev, ino)` of the file `path` resolves to.
-#[cfg(unix)]
-#[allow(clippy::unnecessary_wraps)] // same signature as the platforms that can fail
-fn file_key(_path: &Path, metadata: &fs::Metadata) -> Option<FileKey> {
-    use std::os::unix::fs::MetadataExt;
-    Some((metadata.dev(), metadata.ino()))
-}
-
-/// The canonical path: an open source handle on Windows can block the rename fallback, and
-/// bindings pass the names as given. Hard links of different names are not grouped there; every
-/// write on Windows is a rename, so they do not race on one inode.
-#[cfg(not(unix))]
-fn file_key(path: &Path, _metadata: &fs::Metadata) -> Option<FileKey> {
-    fs::canonicalize(path).ok()
+    }
 }
 
 /// Indices grouped by key; an index without a key is alone in its group. Groups are in order
 /// of first appearance, indices ascending within one.
-fn same_file_groups(keys: impl IntoIterator<Item = Option<FileKey>>) -> Vec<Vec<usize>> {
-    let mut group_of: HashMap<FileKey, usize> = HashMap::new();
+fn same_file_groups(keys: impl IntoIterator<Item = Option<FileId>>) -> Vec<Vec<usize>> {
+    let mut group_of: HashMap<FileId, usize> = HashMap::new();
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for (index, key) in keys.into_iter().enumerate() {
         match key.map(|key| group_of.entry(key)) {
@@ -1290,12 +1252,7 @@ mod tests {
     }
 
     fn groups_of(paths: &[PathBuf]) -> Vec<Vec<usize>> {
-        let probes: Vec<Probe> = paths.iter().map(|path| Probe::of(path)).collect();
-        let targets: Vec<InPlaceTarget> = paths
-            .iter()
-            .map(|path| InPlaceTarget::new(path.clone(), HardLinkPolicy::WriteInPlace))
-            .collect();
-        same_file_groups(file_keys(&targets, &probes))
+        same_file_groups(paths.iter().map(|path| Probe::of(path).id))
     }
 
     #[test]
@@ -1358,20 +1315,13 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    fn key(n: u8) -> FileKey {
-        (0, n.into())
-    }
-
-    #[cfg(not(unix))]
-    fn key(n: u8) -> FileKey {
-        PathBuf::from(n.to_string())
-    }
-
     #[test]
     fn test_same_file_groups_collect_equal_keys_in_input_order() {
+        let dir = TempDir::new().unwrap();
+        let a = id_of(&create_test_file(&dir, "a.yaml", "a: 1\n"));
+        let b = id_of(&create_test_file(&dir, "b.yaml", "b: 1\n"));
         assert_eq!(
-            same_file_groups([Some(key(1)), Some(key(2)), Some(key(1)), None, Some(key(1))]),
+            same_file_groups([a, b, a, None, a]),
             vec![vec![0, 2, 4], vec![1], vec![3]]
         );
     }

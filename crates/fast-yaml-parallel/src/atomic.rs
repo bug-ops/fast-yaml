@@ -66,6 +66,32 @@ impl FileId {
         }
     }
 
+    /// The identity of the file `path` resolves to, following symlinks, or `None` when the
+    /// platform or file system cannot tell files apart.
+    ///
+    /// It names the same file as [`FileId::of`] on a handle opened through `path`, so a symlink
+    /// and its target, or two hard links, compare equal. Unlike a canonical path it also
+    /// recognises hard links on Windows.
+    ///
+    /// # Errors
+    ///
+    /// Returns an I/O error, `NotFound` for a missing path, if the path cannot be examined.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_parallel::FileId;
+    ///
+    /// let dir = tempfile::tempdir()?;
+    /// let path = dir.path().join("a.yaml");
+    /// std::fs::write(&path, "a: 1\n")?;
+    /// assert_eq!(FileId::of_path(&path)?, FileId::of(&std::fs::File::open(&path)?)?);
+    /// # Ok::<(), std::io::Error>(())
+    /// ```
+    pub fn of_path(path: &Path) -> io::Result<Option<Self>> {
+        stat_identified(path).map(|(_, id)| id)
+    }
+
     #[cfg(unix)]
     fn of_metadata(metadata: &fs::Metadata) -> Self {
         use std::os::unix::fs::MetadataExt;
@@ -74,6 +100,35 @@ impl FileId {
             ino: metadata.ino(),
         }
     }
+}
+
+/// The metadata of the file `path` resolves to with its identity, both taken from one stat.
+///
+/// On Windows both come from one handle opened through reparse points, so they describe a single
+/// file even if the path is swapped meanwhile.
+pub fn stat_identified(path: &Path) -> io::Result<(fs::Metadata, Option<FileId>)> {
+    #[cfg(unix)]
+    {
+        let metadata = fs::metadata(path)?;
+        let id = Some(FileId::of_metadata(&metadata));
+        Ok((metadata, id))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+        };
+
+        let file = fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?;
+        let id = FileId::of(&file)?;
+        Ok((file.metadata()?, id))
+    }
+    #[cfg(not(any(unix, windows)))]
+    fs::metadata(path).map(|metadata| (metadata, None))
 }
 
 /// The payload of the error returned by [`write_atomic_bound`] when the target is not the file
@@ -657,7 +712,7 @@ fn restore_owner(file: &fs::File, old: &Existing) -> io::Result<Permissions> {
         other => other.map(|()| true),
     };
     let mut permissions = old.permissions.clone();
-    let (uid, gid) = old.owner;
+    let Owner { uid, gid } = old.owner;
     if !denied(fchown(file, Some(uid), Some(gid)))? && !denied(fchown(file, None, Some(gid)))? {
         permissions.set_mode(permissions.mode() & 0o700);
     }
@@ -755,7 +810,7 @@ fn read_acl(old: &Existing, real: &Path) -> io::Result<Vec<exacl::AclEntry>> {
 /// Opens the file `real` for reading its xattrs, if it is still the inode `metadata` describes.
 #[cfg(unix)]
 fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<fs::File>> {
-    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    use std::os::unix::fs::OpenOptionsExt;
 
     let file = match fs::OpenOptions::new()
         .read(true)
@@ -767,7 +822,7 @@ fn open_xattr_source(real: &Path, metadata: &fs::Metadata) -> io::Result<Option<
         Err(e) => return Err(e),
     };
     let opened = file.metadata()?;
-    if !opened.is_file() || (opened.dev(), opened.ino()) != (metadata.dev(), metadata.ino()) {
+    if !opened.is_file() || FileId::of_metadata(&opened) != FileId::of_metadata(metadata) {
         return Err(changed(real));
     }
     Ok(Some(file))
@@ -815,13 +870,20 @@ fn create_temp(dir: &Path, new_target: bool) -> io::Result<tempfile::NamedTempFi
     tempfile::NamedTempFile::new_in(dir)
 }
 
+/// The user and group that own a file.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+struct Owner {
+    uid: u32,
+    gid: u32,
+}
+
 /// What an existing target has that its replacement must keep.
 #[derive(Debug)]
 struct Existing {
     permissions: Permissions,
-    /// `(uid, gid)`
     #[cfg(unix)]
-    owner: (u32, u32),
+    owner: Owner,
     /// Number of hard links.
     #[cfg(unix)]
     links: u64,
@@ -840,7 +902,10 @@ impl Existing {
             id,
             permissions: metadata.permissions(),
             #[cfg(unix)]
-            owner: (metadata.uid(), metadata.gid()),
+            owner: Owner {
+                uid: metadata.uid(),
+                gid: metadata.gid(),
+            },
             #[cfg(unix)]
             links: metadata.nlink(),
             #[cfg(any(unix, windows))]
@@ -877,7 +942,7 @@ impl Existing {
     #[cfg(unix)]
     fn owned_by(&self, process_file: &fs::Metadata) -> bool {
         use std::os::unix::fs::MetadataExt;
-        self.owner.0 == process_file.uid()
+        self.owner.uid == process_file.uid()
     }
 }
 
@@ -949,6 +1014,46 @@ mod tests {
         error
             .get_ref()
             .is_some_and(<dyn std::error::Error + Send + Sync>::is::<TargetChanged>)
+    }
+
+    #[test]
+    fn of_path_matches_the_identity_of_an_open_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "a").unwrap();
+        assert_eq!(FileId::of_path(&path).unwrap(), id_of(&path));
+    }
+
+    #[test]
+    fn of_path_reports_a_missing_file_as_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = FileId::of_path(&dir.path().join("missing")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn of_path_names_a_hard_link_as_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "a").unwrap();
+        let link = dir.path().join("b.yaml");
+        fs::hard_link(&path, &link).unwrap();
+        assert_eq!(
+            FileId::of_path(&link).unwrap(),
+            FileId::of_path(&path).unwrap()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn of_path_follows_a_symlink_to_its_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "a").unwrap();
+        let link = dir.path().join("link.yaml");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert_eq!(FileId::of_path(&link).unwrap(), id_of(&path));
     }
 
     #[test]
@@ -1371,7 +1476,7 @@ mod tests {
             let path = dir.path().join("a.yaml");
             fs::write(&path, "old").unwrap();
             let mut old = existing_of(&path);
-            old.owner.0 = old.owner.0.wrapping_add(1);
+            old.owner.uid = old.owner.uid.wrapping_add(1);
             let probe = tempfile::tempfile_in(dir.path()).unwrap();
             assert!(!old.owned_by(&probe.metadata().unwrap()));
         }
@@ -1383,9 +1488,12 @@ mod tests {
             fs::write(&path, "old").unwrap();
             fs::set_permissions(&path, Permissions::from_mode(0o640)).unwrap();
             let mut old = existing_of(&path);
-            old.owner = (old.owner.0.wrapping_add(1), old.owner.1.wrapping_add(1));
+            old.owner = Owner {
+                uid: old.owner.uid.wrapping_add(1),
+                gid: old.owner.gid.wrapping_add(1),
+            };
             let probe = tempfile::tempfile_in(dir.path()).unwrap();
-            if std::os::unix::fs::fchown(&probe, None, Some(old.owner.1)).is_ok() {
+            if std::os::unix::fs::fchown(&probe, None, Some(old.owner.gid)).is_ok() {
                 return; // privileged, or a group the caller belongs to
             }
 
@@ -1402,7 +1510,10 @@ mod tests {
             let metadata = fs::metadata(&path).unwrap();
             let old = Existing {
                 permissions: metadata.permissions(),
-                owner: (metadata.uid().wrapping_add(1), metadata.gid()),
+                owner: Owner {
+                    uid: metadata.uid().wrapping_add(1),
+                    gid: metadata.gid(),
+                },
                 links: 1,
                 id: Some(FileId::of_metadata(&metadata)),
                 source: None,
