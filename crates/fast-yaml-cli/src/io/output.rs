@@ -253,6 +253,10 @@ impl FileIdentity {
         if self.canonical.as_deref() == Some(other) {
             return true;
         }
+        // A destination that does not exist yet cannot be an input
+        if self.id.is_none() && self.canonical.is_none() {
+            return false;
+        }
         match (self.id, FileId::of_path(other).ok().flatten()) {
             (Some(a), Some(b)) => a == b,
             _ => match (&self.canonical, other.canonicalize()) {

@@ -219,7 +219,6 @@ fn resolve_min_chunk_size(arg: Option<&Bound<'_, PyAny>>) -> PyResult<usize> {
 fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> WorkerCount {
     let cpu_count = Workers::Auto.threads().get();
 
-    // At least 4 documents to justify parallelism
     if doc_count < MIN_PARALLEL_ITEMS {
         return WorkerCount::MIN;
     }
