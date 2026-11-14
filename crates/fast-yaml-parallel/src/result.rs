@@ -390,8 +390,22 @@ mod tests {
                 .map(|(i, kind)| file(&format!("/{i}.yaml"), outcome_of(*kind)))
                 .collect();
             let len = results.len();
+            let expected_errors: Vec<PathBuf> = results
+                .iter()
+                .filter(|result| !result.is_success())
+                .map(|result| result.path.clone())
+                .collect();
+            let expected_changed = results
+                .iter()
+                .filter(|result| result.outcome.was_changed())
+                .count();
 
             let batch = BatchResult::from_results(results, Duration::from_secs(1));
+
+            let error_paths: Vec<PathBuf> =
+                batch.errors().iter().map(|(path, _)| path.clone()).collect();
+            prop_assert_eq!(error_paths, expected_errors);
+            prop_assert_eq!(batch.changed(), expected_changed);
 
             prop_assert_eq!(batch.total(), len);
             prop_assert_eq!(batch.succeeded() + batch.failed(), batch.total());

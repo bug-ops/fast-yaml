@@ -193,6 +193,7 @@ impl PyBatchConfig {
     #[pyo3(signature = (
         workers=None,
         max_input_bytes=None,
+        *,
         indent=None,
         max_depth=None,
         max_alias_bytes=None,

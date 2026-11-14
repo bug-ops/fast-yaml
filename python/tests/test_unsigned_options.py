@@ -59,6 +59,12 @@ def test_batch_config_no_longer_accepts_sequential_threshold():
         batch.BatchConfig(sequential_threshold=1024)
 
 
+def test_batch_config_limits_are_keyword_only():
+    with pytest.raises(TypeError):
+        batch.BatchConfig(None, None, 4)
+    assert batch.BatchConfig(4, 1024) is not None
+
+
 def test_safe_dump_to_rejects_chunk_size_instead_of_clamping():
     with pytest.raises(ValueError, match="chunk_size must be between 1024 and 1048576, got 10"):
         fast_yaml.safe_dump_to(DOC, io.StringIO(), chunk_size=10)

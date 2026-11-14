@@ -485,21 +485,32 @@ impl AtomicFile {
             expected,
         } = self;
         let (file, temp_path) = temp.into_parts();
-        match install(file, &temp_path, &target, existing, expected) {
+        let mut file = Some(file);
+        match install(&mut file, &temp_path, &target, existing, expected) {
             Ok(()) => {
                 // The rename moved the file: dropping the path would unlink the new target's name
                 let _ = temp_path.keep();
                 sync_dir(parent_dir(&target));
                 Ok(())
             }
-            Err(cause) => Err(discard(temp_path, cause)),
+            Err(cause) => Err(discard(temp_path, file.as_ref(), cause)),
         }
     }
 }
 
 /// Gives the written temporary file what the old target had and renames it over `target`.
+///
+/// `file` is the temporary file's handle; it stays open for [`discard`] unless a Windows rename
+/// needs it closed.
+#[cfg_attr(
+    not(windows),
+    expect(
+        clippy::needless_pass_by_ref_mut,
+        reason = "only a Windows rename needs the handle closed"
+    )
+)]
 fn install(
-    file: fs::File,
+    file: &mut Option<fs::File>,
     temp: &Path,
     target: &Path,
     existing: Option<Existing>,
@@ -508,12 +519,31 @@ fn install(
     let read_only = existing
         .as_ref()
         .is_some_and(|old| old.permissions.readonly());
-    if let Some(old) = &existing {
+    if let Some(handle) = file.as_ref() {
+        stage(handle, temp, target, existing.as_ref())?;
+    }
+    // Close the source handle first so the rename never meets another open handle on the target
+    drop(existing);
+    // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
+    #[cfg(windows)]
+    drop(file.take());
+    ensure_still_expected(target, expected)?;
+    replace(temp, target, read_only)
+}
+
+/// Copies what the old target had onto the temporary file `file` and flushes it to disk.
+fn stage(
+    file: &fs::File,
+    temp: &Path,
+    target: &Path,
+    existing: Option<&Existing>,
+) -> io::Result<()> {
+    if let Some(old) = existing {
         // Before chmod: changing the owner can clear mode bits
         #[cfg(unix)]
         let permissions = {
-            let permissions = restore_owner(&file, old)?;
-            copy_xattrs(old.source.as_ref(), &file)?;
+            let permissions = restore_owner(file, old)?;
+            copy_xattrs(old.source.as_ref(), file)?;
             #[cfg(target_os = "macos")]
             copy_acl(old, target, temp)?;
             permissions
@@ -524,27 +554,36 @@ fn install(
         copy_zone_identifier(old, target, temp)?;
         #[cfg(windows)]
         if let Some(source) = old.source.as_ref() {
-            win_acl::copy_dacl(source, &file)?;
+            win_acl::copy_dacl(source, file)?;
         }
         file.set_permissions(permissions)?;
     }
-    // Close the source handle first so the rename never meets another open handle on the target
-    drop(existing);
-    file.sync_all()?;
-    // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
-    drop(file);
-    ensure_still_expected(target, expected)?;
-    replace(temp, target, read_only)
+    file.sync_all()
 }
 
 /// Removes the temporary file after `cause` made the commit fail and returns the error to report.
 ///
-/// On macOS the ACL copied from the target is cleared first: a `deny delete` entry would
-/// otherwise make the file undeletable. The file is closed even when that fails. When it cannot
-/// be removed the error names it, since the user has to.
-fn discard(temp: tempfile::TempPath, cause: io::Error) -> io::Error {
+/// On Unix the temporary file is narrowed to `0o600` through its open handle first, so a copy
+/// that outlives the commit (an unremovable file, a hard link made by someone else) is never more
+/// readable than the target's ACL made it. On macOS the ACL copied from the target is then
+/// cleared, since a `deny delete` entry would otherwise make the file undeletable. The file is
+/// closed even when either step fails. When it cannot be removed the error names it, since the
+/// user has to.
+fn discard(temp: tempfile::TempPath, handle: Option<&fs::File>, cause: io::Error) -> io::Error {
+    #[cfg(unix)]
+    if let Some(handle) = handle {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = handle.set_permissions(Permissions::from_mode(0o600)) {
+            debug_event!(
+                "could not narrow the mode of {}: {e}",
+                DisplayPath::new(&temp)
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = handle;
     #[cfg(target_os = "macos")]
-    if let Err(e) = exacl::setfacl(&[&temp], &[], None) {
+    if let Err(e) = exacl::setfacl(&[&temp], &[], Some(exacl::AclOption::SYMLINK_ACL)) {
         debug_event!(
             "could not clear the ACL of {}: {e}",
             DisplayPath::new(&temp)
@@ -832,7 +871,7 @@ fn permission_denied_is_tolerated(name: &[u8], error: &io::Error) -> bool {
 #[cfg(target_os = "macos")]
 fn copy_acl(old: &Existing, real: &Path, temp: &Path) -> io::Result<()> {
     let entries = read_acl(old, real)?;
-    match exacl::setfacl(&[temp], &entries, None) {
+    match exacl::setfacl(&[temp], &entries, Some(exacl::AclOption::SYMLINK_ACL)) {
         Err(e) if e.kind() == io::ErrorKind::Unsupported => {
             debug_event!("ACLs are not supported on {}: {e}", DisplayPath::new(temp));
             Ok(())
@@ -1544,7 +1583,7 @@ mod tests {
                 .unwrap()
                 .into_temp_path();
 
-            let err = discard(temp, io::Error::other("cause"));
+            let err = discard(temp, None, io::Error::other("cause"));
 
             assert_eq!(err.to_string(), "cause");
             assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -1555,9 +1594,11 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
 
             let dir = tempfile::tempdir().unwrap();
-            let temp = tempfile::NamedTempFile::new_in(dir.path())
+            let (file, temp) = tempfile::NamedTempFile::new_in(dir.path())
                 .unwrap()
-                .into_temp_path();
+                .into_parts();
+            file.set_permissions(fs::Permissions::from_mode(0o644))
+                .unwrap();
             let path = temp.to_path_buf();
             fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
             // Root ignores directory modes, which makes the scenario meaningless
@@ -1566,9 +1607,10 @@ mod tests {
                 return;
             }
 
-            let err = discard(temp, io::Error::other("cause"));
+            let err = discard(temp, Some(&file), io::Error::other("cause"));
 
             fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+            assert_eq!(mode(&path), 0o600);
             let Some(AtomicWriteError::TempFileLeft { temp, cause }) = err
                 .get_ref()
                 .and_then(|e| e.downcast_ref::<AtomicWriteError>())
@@ -1866,11 +1908,20 @@ mod dacl_tests {
         set_read_only(&path, false).unwrap();
     }
 
+    fn is_target_changed_error(error: &io::Error) -> bool {
+        matches!(
+            error
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::TargetChanged(_))
+        )
+    }
+
     #[test]
     fn open_dacl_source_refuses_a_directory() {
         let dir = tempfile::tempdir().unwrap();
         let err = open_dacl_source(dir.path()).unwrap_err();
-        assert!(err.to_string().contains("changed while"), "{err}");
+        assert!(is_target_changed_error(&err), "{err}");
     }
 
     #[test]
@@ -1887,7 +1938,7 @@ mod dacl_tests {
             return;
         }
         let err = open_dacl_source(&link).unwrap_err();
-        assert!(err.to_string().contains("changed while"), "{err}");
+        assert!(is_target_changed_error(&err), "{err}");
     }
 
     const ZONE: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";

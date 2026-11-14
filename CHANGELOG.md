@@ -26,9 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linter: `Location::line()`/`column()` return `OneBased` and `Location::line_number()` is removed (#672) (#674)
 - Linter: `indentation.spaces` accepts 1 to 255 instead of 1 to 16 (#602) (#674)
 - Parallel: `write_atomic` and `FileProcessor::format_in_place` take a `HardLinkPolicy`/`InPlaceTarget`, and `fy format -i` refuses hard-linked files found by directory walk or glob (#608) (#674)
+- Core: a BOM inside a document is now a parse error (quoted scalars still accept it) and an empty block scalar parses as `""` in `parse_all` and `parse_parallel`, following `saphyr-parser` 0.3.3 (#701) (#PR)
 - Parallel: every `io::Error` the atomic writer builds carries the new `AtomicWriteError` payload (`TargetChanged` and `HardLinkRefused` become its variants), and a swapped target now reports `<path> is not the file that was read; run the command again` (#695) (#PR)
 - Parallel: `BatchResult` fields are private with derived getters, `from_results` takes the duration, `new()` is removed, and `FileProcessor::process` takes `Fn(&Path, &str) -> Result<()>` (#697) (#PR)
-- Python/Node.js: `BatchConfig` drops `sequential_threshold`/`sequentialThreshold`, which the file processor never read; passing it raises `TypeError`/`InvalidArg` (#696) (#PR)
+- Python/Node.js: `BatchConfig` drops `sequential_threshold`/`sequentialThreshold`, which the file processor never read, passing it raises `TypeError`/`InvalidArg`, and the Python limits after `max_input_bytes` are keyword-only (#696) (#PR)
 
 ### Added
 
@@ -64,7 +65,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: the atomic writer emits a debug event for every tolerated metadata skip (#699) (#PR)
 - Parallel: a failed write no longer leaves an undeletable temp file under a macOS deny-delete ACL, and an unremovable one is named in `TempFileLeft` (#705) (#PR)
 - CLI: `fy convert -i` refuses a file swapped after the read (#703) (#PR)
-- CLI: quoted globs no longer follow symlinks out of the tree, closing out-of-tree writes, source echo and the exponential hang (#692) (#PR)
 
 ### Added
 
@@ -77,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Node.js: bump `vitest` to 4.1.12 and pin `vite` >=8.1.6 to clear `pnpm audit` advisories (#664)
 - Linter: ignore patterns share a per-load budget and compiled matchers are cached, bounding `ignore-from-file` and `extends` amplification (#608) (#674)
 - Parallel: in-place writes cannot hang on a swapped FIFO (#608) (#674)
+- CLI: quoted globs no longer follow symlinks out of the tree, closing out-of-tree writes, source echo and the exponential hang (#692) (#PR)
 - Node.js: `// SAFETY:` documentation and clippy lints for `unsafe` in the rule-config converter (#608) (#674)
 
 ## [0.7.0] - 2026-10-02

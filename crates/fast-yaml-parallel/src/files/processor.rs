@@ -319,33 +319,15 @@ impl FileProcessor {
         let format_one = |target: &InPlaceTarget| {
             self.format_single_file(target, emitter_config, comments, &lane)
         };
-        let sequential = || targets.iter().map(&format_one).collect();
-
-        if self.sequential_by_count(targets.len()) {
-            return sequential();
-        }
-        let serial_ids = if targets.len() < SEQUENTIAL_MAX_FILES {
-            let probes: Vec<Probe> = targets
-                .iter()
-                .map(|target| Probe::of(&target.path))
-                .collect();
-            let total_size = probes.iter().map(|probe| probe.len).sum();
-            if Self::sequential_by_size(targets.len(), total_size) {
-                return sequential();
-            }
-            Some(probes.iter().map(|probe| probe.id).collect::<Vec<_>>())
-        } else {
-            None
+        let probed_ids = match self.schedule(targets) {
+            Schedule::Sequential => return targets.iter().map(&format_one).collect(),
+            Schedule::Probed(ids) => Some(ids),
+            Schedule::Unprobed => None,
         };
 
         self.install(
             || {
-                let ids = serial_ids.unwrap_or_else(|| {
-                    targets
-                        .par_iter()
-                        .map(|target| FileId::of_path(&target.path).ok().flatten())
-                        .collect()
-                });
+                let ids = probed_ids.unwrap_or_else(|| pooled_ids(targets));
                 run_grouped(targets, &same_file_groups(ids), format_one)
             },
             |error| {
@@ -355,6 +337,26 @@ impl FileProcessor {
                     .collect()
             },
         )
+    }
+
+    /// Decides how a batch of in-place targets runs; see [`Schedule`].
+    fn schedule(&self, targets: &[InPlaceTarget]) -> Schedule {
+        if self.sequential_by_count(targets.len()) {
+            return Schedule::Sequential;
+        }
+        if targets.len() >= SEQUENTIAL_MAX_FILES {
+            return Schedule::Unprobed;
+        }
+        let probes: Vec<Probe> = targets
+            .iter()
+            .map(|target| Probe::of(&target.path))
+            .collect();
+        let total_size = probes.iter().map(|probe| probe.len).sum();
+        if Self::sequential_by_size(targets.len(), total_size) {
+            Schedule::Sequential
+        } else {
+            Schedule::Probed(probes.iter().map(|probe| probe.id).collect())
+        }
     }
 
     /// The scan-ahead lane of one format run.
@@ -584,6 +586,24 @@ const SEQUENTIAL_MAX_BYTES: u64 = 1_000_000;
 
 /// File count from which a batch always runs in the pool, so its sizes are never probed.
 const SEQUENTIAL_MAX_FILES: usize = 10;
+
+/// How a batch of in-place targets runs.
+enum Schedule {
+    /// One after another on the calling thread, without a pool.
+    Sequential,
+    /// On the pool; the identities were taken by the serial size probe.
+    Probed(Vec<Option<FileId>>),
+    /// On the pool; the batch is too large to probe, so identities are taken inside the pool.
+    Unprobed,
+}
+
+/// The identity of every target, taken on the current rayon pool.
+fn pooled_ids(targets: &[InPlaceTarget]) -> Vec<Option<FileId>> {
+    targets
+        .par_iter()
+        .map(|target| FileId::of_path(&target.path).ok().flatten())
+        .collect()
+}
 
 /// What one stat of a target tells the scheduler.
 struct Probe {
@@ -1472,6 +1492,11 @@ mod tests {
             fs::hard_link(&first, &link).unwrap();
             targets.push(InPlaceTarget::new(link, HardLinkPolicy::WriteInPlace));
         }
+        let ids = pooled_ids(&targets);
+        assert!(ids[0].is_some());
+        assert_eq!(ids[0], ids[10]);
+        assert_eq!(ids[0], ids[11]);
+        assert_eq!(same_file_groups(ids)[0], vec![0, 10, 11]);
         let batch = FileProcessor::new().format_in_place(
             &targets,
             &EmitterConfig::default(),
@@ -1479,6 +1504,67 @@ mod tests {
         );
         assert_eq!(batch.failed(), 0);
         assert_eq!(fs::read_to_string(&first).unwrap(), "a: 1\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_probed_batch_groups_hard_links_over_the_size_cut_off() {
+        let dir = TempDir::new().unwrap();
+        let big = create_test_file(
+            &dir,
+            "big.yaml",
+            &format!(
+                "a: {}\n",
+                "x".repeat(usize::try_from(SEQUENTIAL_MAX_BYTES).unwrap())
+            ),
+        );
+        let link = dir.path().join("link.yaml");
+        fs::hard_link(&big, &link).unwrap();
+        let mut targets = vec![
+            InPlaceTarget::new(big, HardLinkPolicy::WriteInPlace),
+            InPlaceTarget::new(link, HardLinkPolicy::WriteInPlace),
+        ];
+        for n in 0..3 {
+            let path = create_test_file(&dir, &format!("f{n}.yaml"), "a: 1\n");
+            targets.push(InPlaceTarget::new(path, HardLinkPolicy::WriteInPlace));
+        }
+
+        let Schedule::Probed(ids) = FileProcessor::new().schedule(&targets) else {
+            panic!("expected a probed pool schedule");
+        };
+
+        assert!(ids[0].is_some());
+        assert_eq!(ids[0], ids[1]);
+        assert_eq!(
+            same_file_groups(ids),
+            vec![vec![0, 1], vec![2], vec![3], vec![4]]
+        );
+    }
+
+    #[test]
+    fn test_schedule_bands() {
+        let dir = TempDir::new().unwrap();
+        let targets = |count: usize| -> Vec<InPlaceTarget> {
+            (0..count)
+                .map(|n| {
+                    let path = create_test_file(&dir, &format!("s{count}-{n}.yaml"), "a: 1\n");
+                    InPlaceTarget::new(path, HardLinkPolicy::WriteInPlace)
+                })
+                .collect()
+        };
+        let processor = FileProcessor::new();
+        assert!(matches!(
+            processor.schedule(&targets(3)),
+            Schedule::Sequential
+        ));
+        assert!(matches!(
+            processor.schedule(&targets(9)),
+            Schedule::Sequential
+        ));
+        assert!(matches!(
+            processor.schedule(&targets(10)),
+            Schedule::Unprobed
+        ));
     }
 
     #[test]
