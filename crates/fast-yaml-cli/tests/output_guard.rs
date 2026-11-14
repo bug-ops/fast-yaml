@@ -47,6 +47,21 @@ fn convert_refuses_an_output_equal_to_the_input() {
     assert_eq!(fs::read_to_string(&path).unwrap(), SOURCE);
 }
 
+#[test]
+fn a_hard_link_to_the_input_is_refused_on_every_platform() {
+    let (dir, path) = input();
+    let hard = dir.path().join("hard.yaml");
+    fs::hard_link(&path, &hard).unwrap();
+    let out = fy()
+        .args(["format", "-o", hard.to_str().unwrap()])
+        .arg(&path)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("also an input file"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), SOURCE);
+}
+
 #[cfg(unix)]
 #[test]
 fn a_hard_link_or_symlink_to_the_input_is_refused() {

@@ -81,6 +81,13 @@ mod unix {
         assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
         let message = err.to_string();
         assert!(message.starts_with("cannot create temporary file in "));
+        let Some(fast_yaml_parallel::AtomicWriteError::TempFile { source, .. }) = err
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<fast_yaml_parallel::AtomicWriteError>())
+        else {
+            panic!("not TempFile: {err}");
+        };
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
         assert_eq!(fs::read_to_string(&path).unwrap(), "old");
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
@@ -169,7 +176,7 @@ mod unix {
             CommentPolicy::Reject,
         );
 
-        assert_eq!(result.failed, 0);
+        assert_eq!(result.failed(), 0);
         for (path, m) in &paths {
             assert_eq!(fs::read_to_string(path).unwrap(), "key: value\n");
             assert_eq!(mode(path), *m);
@@ -178,7 +185,7 @@ mod unix {
 
     #[test]
     fn format_in_place_applies_the_policy_of_each_target() {
-        use fast_yaml_parallel::HardLinkRefused;
+        use fast_yaml_parallel::AtomicWriteError;
         use std::os::unix::fs::MetadataExt;
 
         let dir = TempDir::new().unwrap();
@@ -204,18 +211,22 @@ mod unix {
             CommentPolicy::Reject,
         );
 
-        assert_eq!((result.total, result.failed, result.changed), (3, 1, 2));
-        let (path, error) = &result.errors[0];
+        assert_eq!(
+            (result.total(), result.failed(), result.changed()),
+            (3, 1, 2)
+        );
+        let (path, error) = &result.errors()[0];
         assert_eq!(path, &refused);
         let io_error = match error {
             fast_yaml_parallel::Error::Write { source, .. } => source,
             other => panic!("unexpected error: {other}"),
         };
-        assert!(
+        assert!(matches!(
             io_error
                 .get_ref()
-                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<HardLinkRefused>)
-        );
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::HardLinkRefused(_))
+        ));
         for untouched in [&refused, &refused_alias] {
             assert_eq!(fs::read_to_string(untouched).unwrap(), "key:   value\n");
         }
@@ -254,10 +265,41 @@ mod unix {
         );
 
         // The second name finds the file already formatted only when it runs after the first
-        assert_eq!((result.total, result.failed, result.changed), (12, 0, 11));
+        assert_eq!(
+            (result.total(), result.failed(), result.changed()),
+            (12, 0, 11)
+        );
         for path in [&first, &second] {
             assert_eq!(fs::read_to_string(path).unwrap(), "key: value\n");
         }
         assert_eq!(fs::metadata(&first).unwrap().nlink(), 2);
     }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_deny_delete_acl_leaves_no_undeletable_temp_file() {
+    use std::process::Command;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("f.yaml");
+    fs::write(&path, "a:   1\n").unwrap();
+    let chmod = |args: &[&str]| {
+        assert!(
+            Command::new("chmod")
+                .args(args)
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    chmod(&["+a", "everyone deny delete"]);
+
+    let result = write_atomic(&path, b"a: 1\n");
+
+    chmod(&["-N"]);
+    assert!(result.is_err());
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "a:   1\n");
 }

@@ -21,8 +21,8 @@ fn parse_files_reports_the_failing_document_index() {
 
     let result = FileProcessor::new().parse_files(&[second.clone(), third]);
 
-    assert_eq!(result.failed, 2);
-    for (path, error) in &result.errors {
+    assert_eq!(result.failed(), 2);
+    for (path, error) in result.errors() {
         let Error::Parse { index, .. } = error else {
             panic!("expected Error::Parse, got {error:?}");
         };
@@ -39,7 +39,7 @@ fn parse_files_reports_the_failing_document_index_for_scanner_errors() {
 
     let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
 
-    let Some((_, Error::Parse { index, .. })) = result.errors.first() else {
+    let Some((_, Error::Parse { index, .. })) = result.errors().first() else {
         panic!("expected a parse error");
     };
     assert_eq!(*index, 2);
@@ -53,7 +53,7 @@ fn parse_files_reports_index_zero_for_first_document_errors() {
 
     let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
 
-    let Some((_, Error::Parse { index, .. })) = result.errors.first() else {
+    let Some((_, Error::Parse { index, .. })) = result.errors().first() else {
         panic!("expected a parse error");
     };
     assert_eq!(*index, 0);
@@ -73,7 +73,7 @@ fn parse_files_reports_the_failing_document_index_for_limit_errors() {
     let processor = FileProcessor::with_config(Config::new().with_parse_limits(limits));
     let result = processor.parse_files(std::slice::from_ref(&path));
 
-    let Some((_, Error::Parse { index, source })) = result.errors.first() else {
+    let Some((_, Error::Parse { index, source })) = result.errors().first() else {
         panic!("expected a parse error");
     };
     assert!(
@@ -91,7 +91,7 @@ fn parse_files_index_counts_empty_and_terminated_documents() {
 
     let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
 
-    let Some((_, Error::Parse { index, source })) = result.errors.first() else {
+    let Some((_, Error::Parse { index, source })) = result.errors().first() else {
         panic!("expected a parse error");
     };
     assert_eq!(*index, 2);
@@ -106,7 +106,7 @@ fn error_message_uses_one_based_document_numbers() {
 
     let result = FileProcessor::new().parse_files(std::slice::from_ref(&path));
 
-    let text = result.errors[0].1.to_string();
+    let text = result.errors()[0].1.to_string();
     assert!(text.starts_with("failed to parse YAML:"), "{text}");
     assert_eq!(text.matches("document 2").count(), 1, "{text}");
 }
@@ -126,8 +126,8 @@ fn format_in_place_rewrites_valid_merge_keys() {
         CommentPolicy::Reject,
     );
 
-    assert_eq!(result.failed, 0, "{:?}", result.errors);
-    assert_eq!(result.changed, 1);
+    assert_eq!(result.failed(), 0, "{:?}", result.errors());
+    assert_eq!(result.changed(), 1);
     assert_eq!(
         fs::read_to_string(&path).unwrap(),
         "a: &a\n  x: 1\nm:\n  <<: *a\n"
@@ -149,6 +149,6 @@ fn format_in_place_rejects_invalid_merge_and_keeps_the_file() {
         CommentPolicy::Reject,
     );
 
-    assert_eq!(result.failed, 1);
+    assert_eq!(result.failed(), 1);
     assert_eq!(fs::read_to_string(&path).unwrap(), BAD_SECOND_DOCUMENT);
 }

@@ -26,12 +26,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Linter: `Location::line()`/`column()` return `OneBased` and `Location::line_number()` is removed (#672) (#674)
 - Linter: `indentation.spaces` accepts 1 to 255 instead of 1 to 16 (#602) (#674)
 - Parallel: `write_atomic` and `FileProcessor::format_in_place` take a `HardLinkPolicy`/`InPlaceTarget`, and `fy format -i` refuses hard-linked files found by directory walk or glob (#608) (#674)
+- Core: a BOM inside a document is now a parse error (quoted scalars still accept it) and an empty block scalar parses as `""` in `parse_all` and `parse_parallel`, following `saphyr-parser` 0.3.3 (#701) (#713)
+- Parallel: every `io::Error` the atomic writer builds carries the new `AtomicWriteError` payload (`TargetChanged` and `HardLinkRefused` become its variants), and a swapped target now reports `<path> is not the file that was read; run the command again` (#695) (#713)
+- Parallel: `BatchResult` fields are private with derived getters, `from_results` takes the duration, `new()` is removed, and `FileProcessor::process` takes `Fn(&Path, &str) -> Result<()>` (#697) (#713)
+- Python/Node.js: `BatchConfig` drops `sequential_threshold`/`sequentialThreshold`, which the file processor never read, passing it raises `TypeError`/`InvalidArg`, and the Python limits after `max_input_bytes` are keyword-only (#696) (#713)
 
 ### Added
 
 - Core: `Value::sort_keys`, one type-aware iterative sort shared by the Python and Node.js bindings (#640) (#671)
 - Parallel: `write_atomic` preserves ACLs on macOS (#598) (#671)
 - Parallel: `write_atomic` preserves the DACL on Windows (#673) (#674)
+- Parallel: `FileId::of_path`, `FileProcessor::check_format` (dry-run `BatchResult`) and `MIN_PARALLEL_ITEMS` (#694) (#697) (#696) (#713)
 - CI: `lint:clippy-windows` and `msrv` mise tasks, with a Windows clippy step in `test-rust` (#668) (#674)
 - Linter: yamllint-compatible column placement for colons, commas, hyphens, braces and brackets (#602) (#674)
 - CI: `unsafe-allow` gate (`lint:unsafe-allow`) compares every lint-level `unsafe_code` occurrence with an exact allowlist (#678) (#684)
@@ -55,6 +60,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: `write_atomic` keeps `Zone.Identifier` on Windows (#679) (#686)
 - Parallel: Windows same-file keys are computed inside the worker pool (#683) (#686)
 - Python/Node.js: tests cover two names of one file in batch in-place formatting (#682) (#686)
+- Parallel/CLI: one `FileId` identifies files for batch grouping and the `-o` guard, so Windows hard links are recognised (#694) (#713)
+- Parallel: batches of 10 or more files stat inside the pool and `Probe` keeps only length and `FileId` (#685) (#713)
+- Parallel: the atomic writer emits a debug event for every tolerated metadata skip (#699) (#713)
+- Parallel: a failed write no longer leaves an undeletable temp file under a macOS deny-delete ACL, and an unremovable one is named in `TempFileLeft` (#705) (#713)
+- CLI: `fy convert -i` refuses a file swapped after the read (#703) (#713)
+- Core/Linter/Python: clippy 1.100 `empty_enums` and `used_underscore_items` fixed in the limit markers, `NoOptions` and the Python module entry point (#709) (#713)
 
 ### Added
 
@@ -67,6 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Node.js: bump `vitest` to 4.1.12 and pin `vite` >=8.1.6 to clear `pnpm audit` advisories (#664)
 - Linter: ignore patterns share a per-load budget and compiled matchers are cached, bounding `ignore-from-file` and `extends` amplification (#608) (#674)
 - Parallel: in-place writes cannot hang on a swapped FIFO (#608) (#674)
+- CLI: quoted globs no longer follow symlinks out of the tree, closing out-of-tree writes, source echo and the exponential hang (#692) (#713)
 - Node.js: `// SAFETY:` documentation and clippy lints for `unsafe` in the rule-config converter (#608) (#674)
 
 ## [0.7.0] - 2026-10-02

@@ -1086,7 +1086,8 @@ const fn version() -> &'static str {
 ///     >>> `fast_yaml.safe_dump(data)`
 ///     'name: test\\n'
 #[pymodule]
-fn _core(m: &Bound<'_, PyModule>) -> PyResult<()> {
+#[pyo3(name = "_core")]
+fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core parsing functions
     m.add_function(wrap_pyfunction!(safe_load, m)?)?;
     m.add_function(wrap_pyfunction!(safe_load_all, m)?)?;

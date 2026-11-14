@@ -90,9 +90,10 @@ fn read_decoded(path: &Path, max: MaxInputBytes) -> Result<(String, File)> {
     };
     let (bytes, file) = read_regular_file_with_handle(path, max).map_err(|error| match error {
         ReadFileError::Io(source) => io_error(source),
-        ReadFileError::NotRegular(kind) => {
-            io_error(std::io::Error::new(ErrorKind::InvalidInput, kind.message()))
-        }
+        ReadFileError::NotRegular(kind) => io_error(std::io::Error::new(
+            ErrorKind::InvalidInput,
+            ReadFileError::NotRegular(kind),
+        )),
         ReadFileError::TooLarge(too_large) => Error::InputTooLarge(too_large),
         other => io_error(std::io::Error::other(other)),
     })?;
@@ -273,6 +274,26 @@ mod tests {
             }
             other => panic!("expected Io error, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_read_of_a_directory_carries_the_typed_not_regular_payload() {
+        use fast_yaml_core::fs::{NotRegularKind, ReadFileError};
+
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let Err(Error::Io { source, .. }) = read_file(temp_dir.path(), MaxInputBytes::DEFAULT)
+        else {
+            panic!("expected an Io error");
+        };
+
+        assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(matches!(
+            source
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<ReadFileError>()),
+            Some(ReadFileError::NotRegular(NotRegularKind::Directory))
+        ));
     }
 
     #[test]

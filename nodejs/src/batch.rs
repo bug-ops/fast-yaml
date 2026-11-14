@@ -12,7 +12,7 @@ use fast_yaml_parallel::{
 };
 use napi_derive::napi;
 
-use crate::options::{U32_MAX, checked_opt_uint, emitter_indent};
+use crate::options::emitter_indent;
 
 /// Class of a failure, the same for every file-level error.
 #[napi(string_enum = "camelCase")]
@@ -105,13 +105,13 @@ impl From<RustBatchResult> for BatchResult {
     fn from(result: RustBatchResult) -> Self {
         #[allow(clippy::cast_possible_truncation)]
         Self {
-            total: result.total as u32,
-            success: result.success as u32,
-            changed: result.changed as u32,
-            failed: result.failed as u32,
-            duration_ms: result.duration.as_secs_f64() * 1000.0,
+            total: result.total() as u32,
+            success: result.succeeded() as u32,
+            changed: result.changed() as u32,
+            failed: result.failed() as u32,
+            duration_ms: result.duration().as_secs_f64() * 1000.0,
             errors: result
-                .errors
+                .errors()
                 .iter()
                 .map(|(p, e)| BatchError {
                     path: p.to_string_lossy().to_string(),
@@ -132,7 +132,7 @@ pub struct BatchConfig {
     pub max_input_bytes: Option<f64>,
     /// Removed: renamed to `maxInputBytes`; passing it throws.
     pub max_input_size: Option<f64>,
-    /// Sequential threshold (default: 4KB)
+    /// Removed: batch processing decides by file count and size; passing it throws.
     pub sequential_threshold: Option<f64>,
     /// Indentation width in spaces (integer, 1..=9, default: 2)
     pub indent: Option<f64>,
@@ -163,12 +163,8 @@ impl BatchConfig {
         reject_legacy_max_input_size(self.max_input_size)?;
         reject_removed_option("width", self.width.is_some())?;
         reject_removed_option("sortKeys", self.sort_keys.is_some())?;
+        reject_removed_option("sequentialThreshold", self.sequential_threshold.is_some())?;
         config = config.with_max_input_bytes(max_input_bytes(self.max_input_bytes)?);
-        if let Some(t) =
-            checked_opt_uint("sequentialThreshold", self.sequential_threshold, 0, U32_MAX)?
-        {
-            config = config.with_sequential_threshold(t);
-        }
         Ok(config.with_parse_limits(parse_limits(
             self.max_depth,
             self.max_alias_bytes,

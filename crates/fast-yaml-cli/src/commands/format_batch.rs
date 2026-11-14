@@ -1,12 +1,11 @@
 //! Batch format command execution.
 
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use fast_yaml_parallel::{
-    BatchResult as ParallelBatchResult, CommentPolicy, Error as ParallelError, FileProcessor,
-    FormatOutput, HardLinkPolicy, HardLinkRefused, InPlaceTarget, ScanAheadPolicy,
+    AtomicWriteError, CommentPolicy, Error as ParallelError, FileProcessor, HardLinkPolicy,
+    InPlaceTarget, ScanAheadPolicy,
 };
 
 use crate::commands::format::error_message;
@@ -41,9 +40,12 @@ fn batch_error_message(error: &ParallelError) -> String {
     let message = error_message(error);
     match error {
         ParallelError::Write { source, .. }
-            if source
-                .get_ref()
-                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<HardLinkRefused>) =>
+            if matches!(
+                source
+                    .get_ref()
+                    .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+                Some(AtomicWriteError::HardLinkRefused(_))
+            ) =>
         {
             format!("{message}; {HARD_LINK_HINT}")
         }
@@ -93,11 +95,7 @@ pub fn execute_batch(
     );
 
     let result = match write {
-        BatchWrite::DryRun => {
-            let start = Instant::now();
-            let formatted = processor.format_files(&file_paths, &emitter_config, comments);
-            convert_format_results_to_batch_result(formatted, start.elapsed())
-        }
+        BatchWrite::DryRun => processor.check_format(&file_paths, &emitter_config, comments),
         BatchWrite::InPlace => {
             let targets: Vec<InPlaceTarget> = files
                 .iter()
@@ -109,21 +107,21 @@ pub fn execute_batch(
 
     // In dry-run mode, 'changed' means "would change"; in in-place mode it means "formatted".
     let (would_change, formatted) = match write {
-        BatchWrite::DryRun => (result.changed, 0),
-        BatchWrite::InPlace => (0, result.changed),
+        BatchWrite::DryRun => (result.changed(), 0),
+        BatchWrite::InPlace => (0, result.changed()),
     };
 
     reporter.report(ReportEvent::BatchSummary(BatchStats {
-        total: result.total,
+        total: result.total(),
         formatted,
-        unchanged: result.success - result.changed,
+        unchanged: result.unchanged(),
         would_change,
-        failed: result.failed,
-        duration: result.duration,
+        failed: result.failed(),
+        duration: result.duration(),
     }))?;
 
     // Report errors
-    for (path, error) in &result.errors {
+    for (path, error) in result.errors() {
         reporter.report(ReportEvent::Error {
             path: Some(path),
             message: &batch_error_message(error),
@@ -131,41 +129,11 @@ pub fn execute_batch(
     }
 
     // Return appropriate exit code
-    Ok(if result.failed > 0 {
+    Ok(if result.failed() > 0 {
         ExitCode::Failure
     } else if would_change > 0 {
         ExitCode::WouldChange
     } else {
         ExitCode::Success
     })
-}
-
-/// Convert `format_files` results to `BatchResult` for dry-run reporting
-fn convert_format_results_to_batch_result(
-    results: Vec<(PathBuf, Result<FormatOutput, fast_yaml_parallel::Error>)>,
-    duration: Duration,
-) -> ParallelBatchResult {
-    use fast_yaml_parallel::{FileOutcome, FileResult};
-
-    let mut file_results = Vec::with_capacity(results.len());
-
-    for (path, result) in results {
-        let outcome = match result {
-            Ok(output) if output.changed => FileOutcome::Changed {
-                duration: Duration::ZERO,
-            },
-            Ok(_) => FileOutcome::Unchanged {
-                duration: Duration::ZERO,
-            },
-            Err(error) => FileOutcome::Error {
-                error,
-                duration: Duration::ZERO,
-            },
-        };
-        file_results.push(FileResult::new(path, outcome));
-    }
-
-    let mut batch = ParallelBatchResult::from_results(file_results);
-    batch.duration = duration;
-    batch
 }

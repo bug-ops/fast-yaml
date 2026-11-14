@@ -3,7 +3,7 @@
 #![allow(clippy::redundant_pub_crate)]
 
 use crate::chunker::{Chunk, chunk_documents};
-use crate::config::Config;
+use crate::config::{Config, MIN_PARALLEL_ITEMS};
 use crate::error::{Error, Result};
 use crate::pool;
 use crate::workers::Workers;
@@ -76,7 +76,7 @@ fn should_use_sequential(chunks: &[Chunk<'_>], config: &Config) -> bool {
     let total_bytes: usize = chunks.iter().map(|c| c.input.as_str().len()).sum();
 
     // Use sequential only if both small total size AND few documents
-    total_bytes < config.sequential_threshold() && chunks.len() < 4
+    total_bytes < config.sequential_threshold() && chunks.len() < MIN_PARALLEL_ITEMS
 }
 
 /// Parse chunks sequentially (fallback for small inputs).

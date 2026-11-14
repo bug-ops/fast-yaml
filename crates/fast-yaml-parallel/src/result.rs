@@ -76,76 +76,110 @@ impl FileResult {
 }
 
 /// Aggregated results from batch processing.
+///
+/// The counts are derived from what was recorded, so they cannot contradict each other:
+/// [`total`](Self::total) is [`unchanged`](Self::unchanged) plus [`changed`](Self::changed) plus
+/// [`failed`](Self::failed), and [`failed`](Self::failed) is the length of
+/// [`errors`](Self::errors).
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+/// use std::time::Duration;
+/// use fast_yaml_parallel::{BatchResult, FileOutcome, FileResult};
+///
+/// let ok = Duration::from_millis(1);
+/// let batch = BatchResult::from_results(
+///     vec![
+///         FileResult::new(PathBuf::from("a.yaml"), FileOutcome::Changed { duration: ok }),
+///         FileResult::new(PathBuf::from("b.yaml"), FileOutcome::Unchanged { duration: ok }),
+///     ],
+///     Duration::from_secs(1),
+/// );
+/// assert_eq!((batch.total(), batch.succeeded(), batch.changed()), (2, 2, 1));
+/// assert!(batch.is_success());
+/// ```
 #[derive(Debug, Default)]
 pub struct BatchResult {
-    /// Total number of files processed
-    pub total: usize,
-    /// Number of files successfully processed
-    pub success: usize,
-    /// Number of files changed
-    pub changed: usize,
-    /// Number of files that failed processing
-    pub failed: usize,
-    /// Total processing duration
-    pub duration: Duration,
-    /// List of errors with file paths
-    pub errors: Vec<(PathBuf, Error)>,
+    unchanged: usize,
+    changed: usize,
+    duration: Duration,
+    errors: Vec<(PathBuf, Error)>,
 }
 
 impl BatchResult {
-    /// Creates a new empty `BatchResult`
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Creates a `BatchResult` from a list of `FileResult`s
-    pub fn from_results(results: Vec<FileResult>) -> Self {
-        let start = std::time::Instant::now();
-        let total = results.len();
-        let mut success = 0;
-        let mut changed = 0;
-        let mut failed = 0;
-        let mut errors = Vec::with_capacity(total);
+    /// Creates a `BatchResult` from the outcomes of a batch that took `duration` in total.
+    ///
+    /// A [`FileOutcome::Success`] counts as unchanged. Errors keep the order of `results`.
+    pub fn from_results(results: Vec<FileResult>, duration: Duration) -> Self {
+        let mut batch = Self {
+            duration,
+            ..Self::default()
+        };
 
         for result in results {
             match result.outcome {
                 FileOutcome::Success { .. } | FileOutcome::Unchanged { .. } => {
-                    success += 1;
+                    batch.unchanged += 1;
                 }
-                FileOutcome::Changed { .. } => {
-                    success += 1;
-                    changed += 1;
-                }
-                FileOutcome::Error { error, .. } => {
-                    failed += 1;
-                    errors.push((result.path, error));
-                }
+                FileOutcome::Changed { .. } => batch.changed += 1,
+                FileOutcome::Error { error, .. } => batch.errors.push((result.path, error)),
             }
         }
 
-        let duration = start.elapsed();
+        batch
+    }
 
-        Self {
-            total,
-            success,
-            changed,
-            failed,
-            duration,
-            errors,
-        }
+    /// Number of files processed, successfully or not.
+    pub const fn total(&self) -> usize {
+        self.succeeded() + self.errors.len()
+    }
+
+    /// Number of files processed without error.
+    pub const fn succeeded(&self) -> usize {
+        self.unchanged + self.changed
+    }
+
+    /// Number of files that were changed, or in a dry run would change.
+    pub const fn changed(&self) -> usize {
+        self.changed
+    }
+
+    /// Number of files that were processed without being changed.
+    pub const fn unchanged(&self) -> usize {
+        self.unchanged
+    }
+
+    /// Number of files that failed.
+    pub const fn failed(&self) -> usize {
+        self.errors.len()
+    }
+
+    /// Total processing duration of the batch.
+    pub const fn duration(&self) -> Duration {
+        self.duration
+    }
+
+    /// The failed files with their errors, in input order.
+    pub fn errors(&self) -> &[(PathBuf, Error)] {
+        &self.errors
     }
 
     /// Returns true if all files were processed successfully
     pub const fn is_success(&self) -> bool {
-        self.failed == 0
+        self.errors.is_empty()
     }
 
     /// Calculates files processed per second
-    #[allow(clippy::cast_precision_loss)]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a file count above 2^52 is not reachable"
+    )]
     pub fn files_per_second(&self) -> f64 {
         let secs = self.duration.as_secs_f64();
         if secs > 0.0 {
-            self.total as f64 / secs
+            self.total() as f64 / secs
         } else {
             0.0
         }
@@ -220,174 +254,6 @@ mod tests {
     }
 
     #[test]
-    fn test_batch_result_from_results() {
-        let results = vec![
-            FileResult::new(
-                PathBuf::from("/test/file1.yaml"),
-                FileOutcome::Changed {
-                    duration: Duration::from_millis(10),
-                },
-            ),
-            FileResult::new(
-                PathBuf::from("/test/file2.yaml"),
-                FileOutcome::Unchanged {
-                    duration: Duration::from_millis(5),
-                },
-            ),
-            FileResult::new(
-                PathBuf::from("/test/file3.yaml"),
-                FileOutcome::Success {
-                    duration: Duration::from_millis(3),
-                },
-            ),
-            FileResult::new(
-                PathBuf::from("/test/file4.yaml"),
-                FileOutcome::Error {
-                    error: Error::EmptyDocument {
-                        path: PathBuf::from("error"),
-                    },
-                    duration: Duration::from_millis(2),
-                },
-            ),
-        ];
-
-        let batch = BatchResult::from_results(results);
-        assert_eq!(batch.total, 4);
-        assert_eq!(batch.success, 3);
-        assert_eq!(batch.changed, 1);
-        assert_eq!(batch.failed, 1);
-        assert_eq!(batch.errors.len(), 1);
-        assert!(!batch.is_success());
-    }
-
-    #[test]
-    fn test_batch_result_is_success() {
-        let mut batch = BatchResult::new();
-        assert!(batch.is_success());
-
-        batch.failed = 1;
-        assert!(!batch.is_success());
-    }
-
-    #[test]
-    fn test_batch_result_files_per_second() {
-        let batch = BatchResult {
-            total: 100,
-            success: 100,
-            changed: 50,
-            failed: 0,
-            duration: Duration::from_secs(2),
-            errors: vec![],
-        };
-        assert!((batch.files_per_second() - 50.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_batch_result_files_per_second_zero_duration() {
-        let batch = BatchResult {
-            total: 100,
-            success: 100,
-            changed: 0,
-            failed: 0,
-            duration: Duration::from_secs(0),
-            errors: vec![],
-        };
-        assert!((batch.files_per_second() - 0.0).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn test_batch_result_from_empty_vec() {
-        let batch = BatchResult::from_results(vec![]);
-        assert_eq!(batch.total, 0);
-        assert_eq!(batch.success, 0);
-        assert_eq!(batch.changed, 0);
-        assert_eq!(batch.failed, 0);
-        assert!(batch.is_success());
-        assert_eq!(batch.errors.len(), 0);
-    }
-
-    #[test]
-    fn test_batch_result_all_success() {
-        let results = vec![
-            FileResult::new(
-                PathBuf::from("/a.yaml"),
-                FileOutcome::Success {
-                    duration: Duration::from_millis(1),
-                },
-            ),
-            FileResult::new(
-                PathBuf::from("/b.yaml"),
-                FileOutcome::Success {
-                    duration: Duration::from_millis(2),
-                },
-            ),
-        ];
-
-        let batch = BatchResult::from_results(results);
-        assert_eq!(batch.total, 2);
-        assert_eq!(batch.success, 2);
-        assert_eq!(batch.changed, 0);
-        assert_eq!(batch.failed, 0);
-        assert!(batch.is_success());
-    }
-
-    #[test]
-    fn test_batch_result_all_failures() {
-        let results = vec![
-            FileResult::new(
-                PathBuf::from("/a.yaml"),
-                FileOutcome::Error {
-                    error: Error::EmptyDocument {
-                        path: PathBuf::from("error1"),
-                    },
-                    duration: Duration::from_millis(1),
-                },
-            ),
-            FileResult::new(
-                PathBuf::from("/b.yaml"),
-                FileOutcome::Error {
-                    error: Error::EmptyDocument {
-                        path: PathBuf::from("error2"),
-                    },
-                    duration: Duration::from_millis(2),
-                },
-            ),
-        ];
-
-        let batch = BatchResult::from_results(results);
-        assert_eq!(batch.total, 2);
-        assert_eq!(batch.success, 0);
-        assert_eq!(batch.failed, 2);
-        assert!(!batch.is_success());
-        assert_eq!(batch.errors.len(), 2);
-    }
-
-    #[test]
-    fn test_batch_result_all_changed() {
-        let results = vec![
-            FileResult::new(
-                PathBuf::from("/a.yaml"),
-                FileOutcome::Changed {
-                    duration: Duration::from_millis(1),
-                },
-            ),
-            FileResult::new(
-                PathBuf::from("/b.yaml"),
-                FileOutcome::Changed {
-                    duration: Duration::from_millis(2),
-                },
-            ),
-        ];
-
-        let batch = BatchResult::from_results(results);
-        assert_eq!(batch.total, 2);
-        assert_eq!(batch.success, 2);
-        assert_eq!(batch.changed, 2);
-        assert_eq!(batch.failed, 0);
-        assert!(batch.is_success());
-    }
-
-    #[test]
     fn test_file_outcome_zero_duration() {
         let outcome = FileOutcome::Success {
             duration: Duration::ZERO,
@@ -396,130 +262,172 @@ mod tests {
         assert!(outcome.is_success());
     }
 
-    #[test]
-    fn test_batch_result_files_per_second_nanoseconds() {
-        let batch = BatchResult {
-            total: 1000,
-            success: 1000,
-            changed: 0,
-            failed: 0,
-            duration: Duration::from_nanos(1),
-            errors: vec![],
-        };
-
-        let fps = batch.files_per_second();
-        assert!(fps > 0.0);
-        assert!(fps.is_finite());
+    fn file(name: &str, outcome: FileOutcome) -> FileResult {
+        FileResult::new(PathBuf::from(name), outcome)
     }
 
-    // Property-based tests using proptest
+    fn error_outcome(name: &str) -> FileOutcome {
+        FileOutcome::Error {
+            error: Error::EmptyDocument {
+                path: PathBuf::from(name),
+            },
+            duration: Duration::from_millis(2),
+        }
+    }
+
+    #[test]
+    fn test_batch_result_from_results() {
+        let ms = Duration::from_millis;
+        let results = vec![
+            file(
+                "/test/file1.yaml",
+                FileOutcome::Changed { duration: ms(10) },
+            ),
+            file(
+                "/test/file2.yaml",
+                FileOutcome::Unchanged { duration: ms(5) },
+            ),
+            file("/test/file3.yaml", FileOutcome::Success { duration: ms(3) }),
+            file("/test/file4.yaml", error_outcome("error")),
+        ];
+
+        let batch = BatchResult::from_results(results, Duration::from_secs(7));
+        assert_eq!(batch.total(), 4);
+        assert_eq!(batch.succeeded(), 3);
+        assert_eq!(batch.changed(), 1);
+        assert_eq!(batch.unchanged(), 2);
+        assert_eq!(batch.failed(), 1);
+        assert_eq!(batch.errors().len(), 1);
+        assert_eq!(batch.duration(), Duration::from_secs(7));
+        assert!(!batch.is_success());
+    }
+
+    #[test]
+    fn test_batch_result_default_is_empty_and_successful() {
+        let batch = BatchResult::default();
+        assert_eq!(batch.total(), 0);
+        assert!(batch.is_success());
+    }
+
+    #[test]
+    fn test_batch_result_files_per_second() {
+        let results = (0..100)
+            .map(|n| {
+                file(
+                    &format!("/{n}.yaml"),
+                    FileOutcome::Changed {
+                        duration: Duration::ZERO,
+                    },
+                )
+            })
+            .collect();
+        let batch = BatchResult::from_results(results, Duration::from_secs(2));
+        assert!((batch.files_per_second() - 50.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_batch_result_files_per_second_zero_duration() {
+        let results = vec![file(
+            "/a.yaml",
+            FileOutcome::Success {
+                duration: Duration::ZERO,
+            },
+        )];
+        let batch = BatchResult::from_results(results, Duration::ZERO);
+        assert!((batch.files_per_second() - 0.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_batch_result_from_empty_vec() {
+        let batch = BatchResult::from_results(vec![], Duration::ZERO);
+        assert_eq!(batch.total(), 0);
+        assert_eq!(batch.succeeded(), 0);
+        assert_eq!(batch.changed(), 0);
+        assert_eq!(batch.failed(), 0);
+        assert!(batch.is_success());
+        assert!(batch.errors().is_empty());
+    }
+
+    #[test]
+    fn test_batch_result_all_failures_keep_input_order() {
+        let results = vec![
+            file("/a.yaml", error_outcome("error1")),
+            file("/b.yaml", error_outcome("error2")),
+        ];
+
+        let batch = BatchResult::from_results(results, Duration::ZERO);
+        assert_eq!(batch.total(), 2);
+        assert_eq!(batch.succeeded(), 0);
+        assert_eq!(batch.failed(), 2);
+        assert!(!batch.is_success());
+        let paths: Vec<_> = batch
+            .errors()
+            .iter()
+            .map(|(path, _)| path.clone())
+            .collect();
+        assert_eq!(paths, [PathBuf::from("/a.yaml"), PathBuf::from("/b.yaml")]);
+    }
+
     use proptest::prelude::*;
 
+    fn outcome_of(kind: u8) -> FileOutcome {
+        let duration = Duration::from_millis(1);
+        match kind % 4 {
+            0 => FileOutcome::Success { duration },
+            1 => FileOutcome::Changed { duration },
+            2 => FileOutcome::Unchanged { duration },
+            _ => error_outcome("e"),
+        }
+    }
+
     proptest! {
-        /// Property: BatchResult.total == success + failed
+        /// The counts of `from_results` always add up, whatever the outcomes.
         #[test]
-        fn prop_batch_total_invariant(
-            success in 0usize..1000,
-            failed in 0usize..1000,
-        ) {
-            let total = success + failed;
-            let batch = BatchResult {
-                total,
-                success,
-                changed: 0,
-                failed,
-                duration: Duration::from_secs(1),
-                errors: vec![],
-            };
+        fn prop_from_results_counts_are_consistent(kinds in proptest::collection::vec(any::<u8>(), 0..200)) {
+            let results: Vec<FileResult> = kinds
+                .iter()
+                .enumerate()
+                .map(|(i, kind)| file(&format!("/{i}.yaml"), outcome_of(*kind)))
+                .collect();
+            let len = results.len();
+            let expected_errors: Vec<PathBuf> = results
+                .iter()
+                .filter(|result| !result.is_success())
+                .map(|result| result.path.clone())
+                .collect();
+            let expected_changed = results
+                .iter()
+                .filter(|result| result.outcome.was_changed())
+                .count();
 
-            prop_assert_eq!(batch.total, batch.success + batch.failed);
+            let batch = BatchResult::from_results(results, Duration::from_secs(1));
+
+            let error_paths: Vec<PathBuf> =
+                batch.errors().iter().map(|(path, _)| path.clone()).collect();
+            prop_assert_eq!(error_paths, expected_errors);
+            prop_assert_eq!(batch.changed(), expected_changed);
+
+            prop_assert_eq!(batch.total(), len);
+            prop_assert_eq!(batch.succeeded() + batch.failed(), batch.total());
+            prop_assert_eq!(batch.changed() + batch.unchanged(), batch.succeeded());
+            prop_assert_eq!(batch.failed(), batch.errors().len());
+            prop_assert_eq!(batch.duration(), Duration::from_secs(1));
         }
 
-        /// Property: success_count is always >= 0 and <= total
-        #[test]
-        fn prop_success_count_bounds(
-            total in 0usize..1000,
-            failed in 0usize..1000,
-        ) {
-            let success = total.saturating_sub(failed);
-            let batch = BatchResult {
-                total,
-                success,
-                changed: 0,
-                failed,
-                duration: Duration::from_secs(1),
-                errors: vec![],
-            };
-
-            prop_assert!(batch.success <= batch.total);
-        }
-
-        /// Property: files_per_second is always >= 0.0
+        /// `files_per_second` is never negative or non-finite.
         #[test]
         fn prop_files_per_second_non_negative(
             total in 0usize..1000,
             duration_ms in 0u64..10000,
         ) {
-            let batch = BatchResult {
-                total,
-                success: total,
-                changed: 0,
-                failed: 0,
-                duration: Duration::from_millis(duration_ms),
-                errors: vec![],
-            };
+            let results = (0..total)
+                .map(|n| file(&format!("/{n}.yaml"), FileOutcome::Unchanged { duration: Duration::ZERO }))
+                .collect();
+            let batch = BatchResult::from_results(results, Duration::from_millis(duration_ms));
 
             let fps = batch.files_per_second();
             prop_assert!(fps >= 0.0);
             prop_assert!(fps.is_finite());
-        }
-
-        /// Property: changed <= success
-        #[test]
-        fn prop_changed_le_success(
-            total in 0usize..1000,
-            success in 0usize..1000,
-            changed in 0usize..1000,
-        ) {
-            let success = success.min(total);
-            let changed = changed.min(success);
-            let batch = BatchResult {
-                total,
-                success,
-                changed,
-                failed: total.saturating_sub(success),
-                duration: Duration::from_secs(1),
-                errors: vec![],
-            };
-
-            prop_assert!(batch.changed <= batch.success);
-        }
-
-        /// Property: errors.len() == failed
-        #[test]
-        fn prop_errors_len_eq_failed(
-            success in 0usize..100,
-            failed in 0usize..100,
-        ) {
-            let total = success + failed;
-            let mut errors = Vec::with_capacity(failed);
-            for i in 0..failed {
-                errors.push((
-                    PathBuf::from(format!("/file{i}.yaml")),
-                    Error::EmptyDocument { path: PathBuf::from(format!("error{i}")) }
-                ));
-            }
-
-            let batch = BatchResult {
-                total,
-                success,
-                changed: 0,
-                failed,
-                duration: Duration::from_secs(1),
-                errors,
-            };
-
-            prop_assert_eq!(batch.errors.len(), batch.failed);
         }
     }
 }

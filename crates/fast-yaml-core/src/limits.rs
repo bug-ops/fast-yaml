@@ -9,6 +9,7 @@ use crate::error::{ParseError, ParseResult, SyntaxError};
 use crate::position::SourcePosition;
 use saphyr_parser::{Event, ScanError, Span, Tag};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::fmt;
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -153,25 +154,25 @@ impl<K: Bounds> fmt::Display for Bounded<K> {
     }
 }
 
-/// Marker for [`MaxDepth`].
+/// Marker for [`MaxDepth`]; uninhabited, used only as a type parameter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Depth {}
+pub struct Depth(Infallible);
 
 /// Marker for [`MaxAliasBytes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AliasBytes {}
+pub struct AliasBytes(Infallible);
 
 /// Marker for [`MaxInputBytes`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InputBytes {}
+pub struct InputBytes(Infallible);
 
 /// Marker for [`MaxScanAhead`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScanAhead {}
+pub struct ScanAhead(Infallible);
 
 /// Marker for [`MaxDocuments`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Documents {}
+pub struct Documents(Infallible);
 
 impl sealed::Sealed for Depth {}
 impl sealed::Sealed for AliasBytes {}

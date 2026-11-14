@@ -37,8 +37,8 @@ fn bom_less_wide_encodings_are_reported_as_unsupported() {
     ] {
         let path = write(&dir, name, &bytes);
         let parsed = processor.parse_files(std::slice::from_ref(&path));
-        assert_eq!(parsed.failed, 1, "{name}");
-        let message = parsed.errors[0].1.to_string().to_lowercase();
+        assert_eq!(parsed.failed(), 1, "{name}");
+        let message = parsed.errors()[0].1.to_string().to_lowercase();
         assert!(
             message.contains("unsupported encoding"),
             "{name}: {message}"

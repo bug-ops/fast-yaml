@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_parallel::{AtomicFile, FileId};
 
+use super::input::InputOrigin;
+
 /// Destination for output data
 #[derive(Debug)]
 pub enum OutputDestination {
@@ -19,6 +21,8 @@ pub enum OutputDestination {
 #[derive(Debug)]
 pub struct OutputWriter {
     destination: OutputDestination,
+    /// The identity of the file the destination must still be, for an in-place write.
+    read_as: Option<FileId>,
 }
 
 /// Returns the `OutputDestination` for paths that should bypass the temp-file strategy.
@@ -74,32 +78,39 @@ impl OutputWriter {
                 detect_special_device(&path).unwrap_or(OutputDestination::File(path))
             }
         };
-        Self { destination }
+        Self {
+            destination,
+            read_as: None,
+        }
     }
 
-    /// Creates a writer for `target`, resolving [`WriteTarget::InPlace`] to `input_file`.
+    /// Creates a writer for `target`, resolving [`WriteTarget::InPlace`] to the file `origin`
+    /// names.
     ///
-    /// Unless `in_place` is set, a destination that is the same file as `input_file` is refused,
-    /// since an explicit `--output` must never overwrite the input it was read from.
+    /// An in-place writer only replaces the file `origin` was read from, so a file swapped in
+    /// after the read is refused. A destination that is the same file as the input is refused
+    /// otherwise, since an explicit `--output` must never overwrite the input it was read from.
     ///
     /// # Errors
     ///
-    /// Returns an error if the target is [`WriteTarget::InPlace`] and `input_file` is `None`, or
-    /// if an explicit output is the same file as `input_file`.
-    pub fn for_write(target: WriteTarget, input_file: Option<&Path>) -> Result<Self> {
+    /// Returns an error if the target is [`WriteTarget::InPlace`] and `origin` is not a file, or
+    /// if an explicit output is the same file as the input.
+    pub fn for_write(target: WriteTarget, origin: &InputOrigin) -> Result<Self> {
         match target {
             WriteTarget::Output(output) => {
                 let writer = Self::new(output);
-                if let Some(input) = input_file {
+                if let Some(input) = origin.path() {
                     writer.ensure_not_input(input)?;
                 }
                 Ok(writer)
             }
             WriteTarget::InPlace => {
-                let path = input_file
+                let path = origin
+                    .path()
                     .ok_or_else(|| anyhow::anyhow!("--in-place requires a file argument"))?;
                 Ok(Self {
                     destination: OutputDestination::File(path.to_path_buf()),
+                    read_as: origin.file_id(),
                 })
             }
         }
@@ -110,6 +121,7 @@ impl OutputWriter {
     pub const fn stdout() -> Self {
         Self {
             destination: OutputDestination::Stdout,
+            read_as: None,
         }
     }
 
@@ -125,21 +137,11 @@ impl OutputWriter {
     ///
     /// # Errors
     ///
-    /// Returns an error on I/O failure for any destination variant, except a closed pipe.
+    /// Returns an error on I/O failure for any destination variant, except a closed pipe, and
+    /// for an in-place writer an error if the file is no longer the one that was read.
     pub fn write(&self, content: &str) -> Result<()> {
-        self.write_replacing(content, None)
-    }
-
-    /// [`write`](Self::write) that, for a file destination, only replaces the file `read_as`
-    /// identifies; pass the identity of the input when the destination is that input file.
-    ///
-    /// # Errors
-    ///
-    /// As [`write`](Self::write), and an error if the destination is no longer the file that was
-    /// read.
-    pub fn write_replacing(&self, content: &str, read_as: Option<FileId>) -> Result<()> {
         match &self.destination {
-            OutputDestination::File(path) => Self::write_file(path, content, read_as),
+            OutputDestination::File(path) => Self::write_file(path, content, self.read_as),
             OutputDestination::Null => Ok(()),
             OutputDestination::Stdout | OutputDestination::Stderr => {
                 let mut sink = self.sink()?;
@@ -231,52 +233,38 @@ impl OutputWriter {
     }
 }
 
-/// What names a destination file, resolved once: its canonical path and, on Unix, its inode.
+/// What names a destination file, resolved once: its canonical path and its identity on the
+/// volume, which also catches a hard link on every platform.
 struct FileIdentity {
     canonical: Option<PathBuf>,
-    #[cfg(unix)]
-    inode: Option<(u64, u64)>,
+    id: Option<FileId>,
 }
 
 impl FileIdentity {
     fn of(path: &Path) -> Self {
         Self {
             canonical: path.canonicalize().ok(),
-            #[cfg(unix)]
-            inode: inode_of(path),
+            id: FileId::of_path(path).ok().flatten(),
         }
     }
 
-    #[cfg(unix)]
-    const fn resolves_to(_: &Path, _: &Path) -> bool {
-        false
-    }
-
-    #[cfg(not(unix))]
-    fn resolves_to(other: &Path, canonical: &Path) -> bool {
-        other.canonicalize().is_ok_and(|o| o == canonical)
-    }
-
-    /// Whether `other` is the same file: the same canonical path, or on Unix the same inode
-    /// (a hard link).
+    /// Whether `other` is the same file: the same canonical path, or the same file identity.
     fn is(&self, other: &Path) -> bool {
-        if let Some(canonical) = &self.canonical
-            && (canonical == other || Self::resolves_to(other, canonical))
-        {
+        if self.canonical.as_deref() == Some(other) {
             return true;
         }
-        #[cfg(unix)]
-        if let (Some(a), Some(b)) = (self.inode, inode_of(other)) {
-            return a == b;
+        // A destination that does not exist yet cannot be an input
+        if self.id.is_none() && self.canonical.is_none() {
+            return false;
         }
-        false
+        match (self.id, FileId::of_path(other).ok().flatten()) {
+            (Some(a), Some(b)) => a == b,
+            _ => match (&self.canonical, other.canonicalize()) {
+                (Some(canonical), Ok(other)) => *canonical == other,
+                _ => false,
+            },
+        }
     }
-}
-
-#[cfg(unix)]
-fn inode_of(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata(path).ok().map(|m| (m.dev(), m.ino()))
 }
 
 #[cfg(feature = "linter")]
@@ -387,7 +375,8 @@ mod tests {
     #[test]
     fn test_for_write_in_place() {
         let input_path = PathBuf::from("/tmp/input.yaml");
-        let writer = OutputWriter::for_write(WriteTarget::InPlace, Some(&input_path)).unwrap();
+        let origin = InputOrigin::unidentified(input_path.clone());
+        let writer = OutputWriter::for_write(WriteTarget::InPlace, &origin).unwrap();
         match writer.destination {
             OutputDestination::File(path) => assert_eq!(path, input_path),
             _ => panic!("Expected File destination"),
@@ -396,7 +385,7 @@ mod tests {
 
     #[test]
     fn test_for_write_in_place_without_file() {
-        let result = OutputWriter::for_write(WriteTarget::InPlace, None);
+        let result = OutputWriter::for_write(WriteTarget::InPlace, &InputOrigin::Stdin);
         assert!(result.is_err());
         assert!(
             result
@@ -456,9 +445,9 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     #[test]
-    fn test_write_replacing_refuses_a_file_swapped_after_the_read() {
+    fn test_in_place_write_refuses_a_file_swapped_after_the_read() {
         use fast_yaml_core::limits::MaxInputBytes;
-        use fast_yaml_parallel::TargetChanged;
+        use fast_yaml_parallel::AtomicWriteError;
 
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");
@@ -467,17 +456,16 @@ mod tests {
         let input = crate::io::InputSource::from_file(&path, MaxInputBytes::DEFAULT).unwrap();
         fs::write(&other, "unrelated: 1\n").unwrap();
         fs::rename(&other, &path).unwrap();
-        let writer = OutputWriter::new(OutputTarget::File(path.clone()));
+        let writer = OutputWriter::for_write(WriteTarget::InPlace, &input.origin).unwrap();
 
-        let err = writer
-            .write_replacing("a: 1\n", input.file_id())
-            .unwrap_err();
+        let err = writer.write("a: 1\n").unwrap_err();
 
-        assert!(
+        assert!(matches!(
             err.downcast_ref::<io::Error>()
                 .and_then(io::Error::get_ref)
-                .is_some_and(<dyn std::error::Error + Send + Sync>::is::<TargetChanged>)
-        );
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
+            Some(AtomicWriteError::TargetChanged(_))
+        ));
         assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated: 1\n");
     }
 
@@ -518,7 +506,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     fn test_ensure_not_input_refuses_a_hard_link_to_the_input() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("a.yaml");

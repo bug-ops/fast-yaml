@@ -75,21 +75,32 @@ pub struct OptionConflict {
     pub message: String,
 }
 
-/// Marker options type for rules that have no options.
-///
-/// Deserializing anything but an empty mapping is an error.
-///
-/// # Examples
-///
-/// ```
-/// use fast_yaml_linter::config::NoOptions;
-///
-/// assert!(serde_norway::from_str::<NoOptions>("{}").is_ok());
-/// assert!(serde_norway::from_str::<NoOptions>("{x: 1}").is_err());
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoOptions {}
+pub use no_options::NoOptions;
+
+// A lint level on the struct does not reach serde's generated code, so the allow sits on the module.
+#[allow(
+    clippy::empty_enums,
+    reason = "serde derives an empty field enum for a struct without fields"
+)]
+mod no_options {
+    use serde::{Deserialize, Serialize};
+
+    /// Marker options type for rules that have no options.
+    ///
+    /// Deserializing anything but an empty mapping is an error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use fast_yaml_linter::config::NoOptions;
+    ///
+    /// assert!(serde_norway::from_str::<NoOptions>("{}").is_ok());
+    /// assert!(serde_norway::from_str::<NoOptions>("{x: 1}").is_err());
+    /// ```
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    pub struct NoOptions {}
+}
 
 impl RuleOptions for NoOptions {}
 

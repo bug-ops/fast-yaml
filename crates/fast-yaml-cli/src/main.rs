@@ -55,7 +55,7 @@ use commands::parse::Stats;
 use config::{CommonConfig, FormatterConfig};
 use error::{ExitCode, format_error};
 use invocation::Target;
-use io::{InputSource, OutputTarget, OutputWriter, WriteTarget};
+use io::{InputOrigin, InputSource, OutputTarget, OutputWriter, WriteTarget};
 
 /// Stack size of the command thread; deep values recurse per level (larger frames with
 /// `preserve_order`) and would overflow the 1 MiB Windows main-thread stack.
@@ -141,7 +141,7 @@ fn run(cli: ResolvedCli) -> Result<ExitCode> {
             limits,
         }) => {
             let input = InputSource::from_args(file, ctx.max_input)?;
-            let output = OutputWriter::for_write(write.target(), input.file_path())?;
+            let output = OutputWriter::for_write(write.target(), &input.origin)?;
             let cmd = commands::convert::ConvertCommand::new(
                 to,
                 json.output(),
@@ -194,7 +194,7 @@ fn run_format(ctx: Context, args: FormatArgs) -> Result<ExitCode> {
         }
         Target::File(path) => {
             let input = InputSource::from_file(&path, ctx.max_input)?;
-            let mode = WriteMode::new(intent, Some(&path))?;
+            let mode = WriteMode::new(intent, &input.origin)?;
             FormatCommand::new(common, format_config, comments).run(&input, &mode)
         }
         Target::Batch(target) => {
@@ -291,5 +291,5 @@ fn stdin_write_mode(intent: EditIntent) -> Result<WriteMode> {
     if intent == EditIntent::Write(WriteTarget::InPlace) {
         anyhow::bail!("--in-place (-i) requires a file argument");
     }
-    WriteMode::new(intent, None)
+    WriteMode::new(intent, &InputOrigin::Stdin)
 }

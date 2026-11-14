@@ -27,7 +27,7 @@ pub enum InputOrigin {
 
 impl InputOrigin {
     /// A file origin that carries no identity, for callers that never write back to it.
-    #[cfg(feature = "linter")]
+    #[cfg(any(feature = "linter", test))]
     pub const fn unidentified(path: PathBuf) -> Self {
         Self::File { path, id: None }
     }
@@ -94,12 +94,6 @@ impl InputSource {
     /// Get reference to content
     pub fn as_str(&self) -> &str {
         &self.content
-    }
-
-    /// Identity of the file the content was read from, so a write back can refuse a file that
-    /// was swapped meanwhile.
-    pub const fn file_id(&self) -> Option<FileId> {
-        self.origin.file_id()
     }
 
     /// Get file path if input is from file
