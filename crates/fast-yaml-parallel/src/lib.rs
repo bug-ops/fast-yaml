@@ -90,7 +90,7 @@ pub use atomic::{
     AtomicFile, AtomicWriteError, FileId, HardLinkPolicy, HardLinkRefused, TargetChanged,
     write_atomic, write_atomic_bound,
 };
-pub use config::Config;
+pub use config::{Config, MIN_PARALLEL_ITEMS};
 pub use error::{Error, ErrorKind, Result};
 pub use fast_yaml_core::Value;
 pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};

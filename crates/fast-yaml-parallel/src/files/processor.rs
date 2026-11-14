@@ -13,7 +13,7 @@ use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comm
 use rayon::prelude::*;
 
 use crate::atomic::{FileId, HardLinkPolicy, stat_identified};
-use crate::config::Config;
+use crate::config::{Config, MIN_PARALLEL_ITEMS};
 use crate::error::{Error, Result};
 use crate::io::{read_file, read_file_identified};
 use crate::pool;
@@ -506,7 +506,7 @@ impl FileProcessor {
     ///
     /// Sequential processing is preferred when:
     /// - Workers are set to 0
-    /// - Very few files (< 4)
+    /// - Very few files (< [`MIN_PARALLEL_ITEMS`])
     /// - Small total size (< 1MB) AND moderate file count (< 10)
     ///
     /// This avoids parallelism overhead for small workloads while enabling
@@ -525,7 +525,8 @@ impl FileProcessor {
 
     /// The part of [`Self::should_use_sequential`] decided without touching the file system.
     fn sequential_by_count(&self, file_count: usize) -> bool {
-        let sequential = self.config.workers() == Workers::Sequential || file_count < 4;
+        let sequential =
+            self.config.workers() == Workers::Sequential || file_count < MIN_PARALLEL_ITEMS;
         if sequential {
             debug_event!("running {file_count} files sequentially");
         }

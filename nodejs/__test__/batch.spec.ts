@@ -222,7 +222,6 @@ describe('Batch Processing', () => {
       const config: BatchConfig = {
         workers: 4,
         maxInputBytes: 50 * 1024 * 1024,
-        sequentialThreshold: 2048,
         indent: 4,
       };
       const result = processFiles(testFiles, config);

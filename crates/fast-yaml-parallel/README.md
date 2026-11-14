@@ -128,7 +128,7 @@ assert!(result.is_success());
 | `workers` | Auto (CPU cores) | Number of worker threads. `Workers::Auto`, `Workers::Sequential` or `Workers::Fixed(WorkerCount)` (1..=128) |
 | `max_input_bytes` | 100 MiB | Maximum input size (DoS protection); files are checked before being read |
 | `parse_limits.max_documents` | 100 000 | Maximum documents per input (DoS protection); set through `with_parse_limits`, checked before parsing |
-| `sequential_threshold` | 4 KB | Skip parallelism for inputs smaller than this |
+| `sequential_threshold` | 4 KB | Skip parallelism for document-level parsing (`parse_parallel`) of inputs smaller than this; the file processor ignores it |
 
 ### Configuration Example
 

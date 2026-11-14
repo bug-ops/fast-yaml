@@ -16,12 +16,6 @@ CALLS = [
     ("workers", lambda v: batch.BatchConfig().with_workers(v), 0, 128),
     ("thread_count", lambda v: parallel.ParallelConfig(thread_count=v), 0, 128),
     ("thread_count", lambda v: parallel.ParallelConfig().with_thread_count(v), 0, 128),
-    (
-        "sequential_threshold",
-        lambda v: batch.BatchConfig(sequential_threshold=v),
-        0,
-        4294967295,
-    ),
     ("min_chunk_size", lambda v: parallel.ParallelConfig(min_chunk_size=v), 1, 4294967295),
     ("min_chunk_size", lambda v: parallel.ParallelConfig().with_min_chunk_size(v), 1, 4294967295),
     ("indent", lambda v: batch.BatchConfig(indent=v), 1, 9),
@@ -58,6 +52,11 @@ def test_bounds_are_accepted_and_bool_is_a_type_error(call, low, high):
         call(True)
     with pytest.raises(TypeError):
         call("4")
+
+
+def test_batch_config_no_longer_accepts_sequential_threshold():
+    with pytest.raises(TypeError, match="sequential_threshold"):
+        batch.BatchConfig(sequential_threshold=1024)
 
 
 def test_safe_dump_to_rejects_chunk_size_instead_of_clamping():

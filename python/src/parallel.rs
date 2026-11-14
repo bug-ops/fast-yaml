@@ -15,7 +15,7 @@ use fast_yaml_core::{
     DumpBudget, Emitter, EmitterConfig, KeyDomain, Layout, LimitKind, MaxDocuments, Value,
 };
 use fast_yaml_parallel::{
-    Config as RustParallelConfig, Error as ParallelError, WorkerCount, Workers,
+    Config as RustParallelConfig, Error as ParallelError, MIN_PARALLEL_ITEMS, WorkerCount, Workers,
     parse_parallel_with_config, shared_pool,
 };
 use pyo3::exceptions::PyValueError;
@@ -220,7 +220,7 @@ fn auto_tune_threads(doc_count: usize, avg_doc_size: usize) -> WorkerCount {
     let cpu_count = Workers::Auto.threads().get();
 
     // At least 4 documents to justify parallelism
-    if doc_count < 4 {
+    if doc_count < MIN_PARALLEL_ITEMS {
         return WorkerCount::MIN;
     }
 
@@ -383,26 +383,27 @@ fn dump_parallel(
     });
 
     // Release GIL and emit in parallel
-    let emitted: Vec<String> = if threads == WorkerCount::MIN || yaml_values.len() < 4 {
-        // Sequential for small workloads
-        yaml_values
-            .iter()
-            .map(|v| Emitter::emit_str_with_config(v, &emitter_config))
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?
-    } else {
-        // Parallel emission
-        let pool = shared_pool(threads).map_err(|e| PyValueError::new_err(e.to_string()))?;
-        py.detach(|| {
-            pool.install(|| {
-                yaml_values
-                    .par_iter()
-                    .map(|v| Emitter::emit_str_with_config(v, &emitter_config))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| PyValueError::new_err(e.to_string()))
-            })
-        })?
-    };
+    let emitted: Vec<String> =
+        if threads == WorkerCount::MIN || yaml_values.len() < MIN_PARALLEL_ITEMS {
+            // Sequential for small workloads
+            yaml_values
+                .iter()
+                .map(|v| Emitter::emit_str_with_config(v, &emitter_config))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| PyValueError::new_err(e.to_string()))?
+        } else {
+            // Parallel emission
+            let pool = shared_pool(threads).map_err(|e| PyValueError::new_err(e.to_string()))?;
+            py.detach(|| {
+                pool.install(|| {
+                    yaml_values
+                        .par_iter()
+                        .map(|v| Emitter::emit_str_with_config(v, &emitter_config))
+                        .collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| PyValueError::new_err(e.to_string()))
+                })
+            })?
+        };
 
     // Combine outputs with document separators
     let total_size: usize = emitted.iter().map(String::len).sum::<usize>() + emitted.len() * 5;

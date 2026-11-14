@@ -198,7 +198,7 @@ export interface BatchConfig {
   maxInputBytes?: number
   /** Removed: renamed to `maxInputBytes`; passing it throws. */
   maxInputSize?: number
-  /** Sequential threshold (default: 4KB) */
+  /** Removed: batch processing decides by file count and size; passing it throws. */
   sequentialThreshold?: number
   /** Indentation width in spaces (integer, 1..=9, default: 2) */
   indent?: number

@@ -6,6 +6,21 @@ use fast_yaml_core::limits::{MaxInputBytes, MaxScanAhead, ParseLimits};
 use crate::scan_ahead::ScanAheadPolicy;
 use crate::workers::Workers;
 
+/// The fewest documents or files that are worth running in parallel.
+///
+/// Below this count the document-level processor ([`parse_parallel`](crate::parse_parallel)),
+/// [`FileProcessor`](crate::FileProcessor) and the Python `dump_parallel` run sequentially,
+/// whatever their size.
+///
+/// # Examples
+///
+/// ```
+/// use fast_yaml_parallel::MIN_PARALLEL_ITEMS;
+///
+/// assert_eq!(MIN_PARALLEL_ITEMS, 4);
+/// ```
+pub const MIN_PARALLEL_ITEMS: usize = 4;
+
 /// Configuration for parallel processing behavior.
 ///
 /// Simplified configuration with essential fields for both document-level
@@ -137,6 +152,10 @@ impl Config {
     ///
     /// Inputs smaller than this threshold will use sequential processing
     /// to avoid parallelism overhead. Default: 4KB
+    ///
+    /// It applies to document-level parsing ([`parse_parallel`](crate::parse_parallel)) only.
+    /// [`FileProcessor`](crate::FileProcessor) ignores it and decides by file count and total
+    /// size.
     ///
     /// # Examples
     ///
