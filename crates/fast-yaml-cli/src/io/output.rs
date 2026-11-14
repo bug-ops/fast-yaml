@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use fast_yaml_core::fs::DisplayPath;
 use fast_yaml_parallel::{AtomicFile, FileId};
 
+use super::input::InputOrigin;
+
 /// Destination for output data
 #[derive(Debug)]
 pub enum OutputDestination {
@@ -19,6 +21,8 @@ pub enum OutputDestination {
 #[derive(Debug)]
 pub struct OutputWriter {
     destination: OutputDestination,
+    /// The identity of the file the destination must still be, for an in-place write.
+    read_as: Option<FileId>,
 }
 
 /// Returns the `OutputDestination` for paths that should bypass the temp-file strategy.
@@ -74,32 +78,39 @@ impl OutputWriter {
                 detect_special_device(&path).unwrap_or(OutputDestination::File(path))
             }
         };
-        Self { destination }
+        Self {
+            destination,
+            read_as: None,
+        }
     }
 
-    /// Creates a writer for `target`, resolving [`WriteTarget::InPlace`] to `input_file`.
+    /// Creates a writer for `target`, resolving [`WriteTarget::InPlace`] to the file `origin`
+    /// names.
     ///
-    /// Unless `in_place` is set, a destination that is the same file as `input_file` is refused,
-    /// since an explicit `--output` must never overwrite the input it was read from.
+    /// An in-place writer only replaces the file `origin` was read from, so a file swapped in
+    /// after the read is refused. A destination that is the same file as the input is refused
+    /// otherwise, since an explicit `--output` must never overwrite the input it was read from.
     ///
     /// # Errors
     ///
-    /// Returns an error if the target is [`WriteTarget::InPlace`] and `input_file` is `None`, or
-    /// if an explicit output is the same file as `input_file`.
-    pub fn for_write(target: WriteTarget, input_file: Option<&Path>) -> Result<Self> {
+    /// Returns an error if the target is [`WriteTarget::InPlace`] and `origin` is not a file, or
+    /// if an explicit output is the same file as the input.
+    pub fn for_write(target: WriteTarget, origin: &InputOrigin) -> Result<Self> {
         match target {
             WriteTarget::Output(output) => {
                 let writer = Self::new(output);
-                if let Some(input) = input_file {
+                if let Some(input) = origin.path() {
                     writer.ensure_not_input(input)?;
                 }
                 Ok(writer)
             }
             WriteTarget::InPlace => {
-                let path = input_file
+                let path = origin
+                    .path()
                     .ok_or_else(|| anyhow::anyhow!("--in-place requires a file argument"))?;
                 Ok(Self {
                     destination: OutputDestination::File(path.to_path_buf()),
+                    read_as: origin.file_id(),
                 })
             }
         }
@@ -110,6 +121,7 @@ impl OutputWriter {
     pub const fn stdout() -> Self {
         Self {
             destination: OutputDestination::Stdout,
+            read_as: None,
         }
     }
 
@@ -125,21 +137,11 @@ impl OutputWriter {
     ///
     /// # Errors
     ///
-    /// Returns an error on I/O failure for any destination variant, except a closed pipe.
+    /// Returns an error on I/O failure for any destination variant, except a closed pipe, and
+    /// for an in-place writer an error if the file is no longer the one that was read.
     pub fn write(&self, content: &str) -> Result<()> {
-        self.write_replacing(content, None)
-    }
-
-    /// [`write`](Self::write) that, for a file destination, only replaces the file `read_as`
-    /// identifies; pass the identity of the input when the destination is that input file.
-    ///
-    /// # Errors
-    ///
-    /// As [`write`](Self::write), and an error if the destination is no longer the file that was
-    /// read.
-    pub fn write_replacing(&self, content: &str, read_as: Option<FileId>) -> Result<()> {
         match &self.destination {
-            OutputDestination::File(path) => Self::write_file(path, content, read_as),
+            OutputDestination::File(path) => Self::write_file(path, content, self.read_as),
             OutputDestination::Null => Ok(()),
             OutputDestination::Stdout | OutputDestination::Stderr => {
                 let mut sink = self.sink()?;
@@ -369,7 +371,8 @@ mod tests {
     #[test]
     fn test_for_write_in_place() {
         let input_path = PathBuf::from("/tmp/input.yaml");
-        let writer = OutputWriter::for_write(WriteTarget::InPlace, Some(&input_path)).unwrap();
+        let origin = InputOrigin::unidentified(input_path.clone());
+        let writer = OutputWriter::for_write(WriteTarget::InPlace, &origin).unwrap();
         match writer.destination {
             OutputDestination::File(path) => assert_eq!(path, input_path),
             _ => panic!("Expected File destination"),
@@ -378,7 +381,7 @@ mod tests {
 
     #[test]
     fn test_for_write_in_place_without_file() {
-        let result = OutputWriter::for_write(WriteTarget::InPlace, None);
+        let result = OutputWriter::for_write(WriteTarget::InPlace, &InputOrigin::Stdin);
         assert!(result.is_err());
         assert!(
             result
@@ -438,7 +441,7 @@ mod tests {
 
     #[cfg(any(unix, windows))]
     #[test]
-    fn test_write_replacing_refuses_a_file_swapped_after_the_read() {
+    fn test_in_place_write_refuses_a_file_swapped_after_the_read() {
         use fast_yaml_core::limits::MaxInputBytes;
         use fast_yaml_parallel::AtomicWriteError;
 
@@ -449,11 +452,9 @@ mod tests {
         let input = crate::io::InputSource::from_file(&path, MaxInputBytes::DEFAULT).unwrap();
         fs::write(&other, "unrelated: 1\n").unwrap();
         fs::rename(&other, &path).unwrap();
-        let writer = OutputWriter::new(OutputTarget::File(path.clone()));
+        let writer = OutputWriter::for_write(WriteTarget::InPlace, &input.origin).unwrap();
 
-        let err = writer
-            .write_replacing("a: 1\n", input.file_id())
-            .unwrap_err();
+        let err = writer.write("a: 1\n").unwrap_err();
 
         assert!(matches!(
             err.downcast_ref::<io::Error>()
