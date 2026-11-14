@@ -21,6 +21,12 @@ const MAX_LINE_LENGTH: usize = 4096;
 /// Maximum number of glob matches to prevent memory exhaustion.
 const MAX_GLOB_MATCHES: usize = 100_000;
 
+/// Maximum number of entries a glob expansion visits, matching or not.
+const MAX_GLOB_VISITED: usize = 1_000_000;
+
+/// Default recursion depth of a directory walk and of a `**` glob.
+const DEFAULT_MAX_DEPTH: usize = 100;
+
 /// Name of the yamllint config file, a hidden file that yamllint lints by default.
 const YAMLLINT_FILE_NAME: &str = ".yamllint";
 
@@ -78,7 +84,7 @@ impl Default for DiscoveryConfig {
         Self {
             include: IncludePatterns::Default,
             exclude_patterns: vec![],
-            max_depth: Some(100),
+            max_depth: Some(DEFAULT_MAX_DEPTH),
             include_hidden: false,
             respect_gitignore: true,
             follow_symlinks: false,
@@ -603,16 +609,54 @@ impl FileDiscovery {
     }
 
     fn discover_glob(&self, pattern: &str, found: &mut Found) -> Result<(), DiscoveryError> {
-        let glob = glob::glob(pattern).map_err(|source| DiscoveryError::GlobSyntax {
-            pattern: pattern.to_owned(),
-            source,
-        })?;
+        let split = GlobSplit::new(pattern);
+        let matcher =
+            glob::Pattern::new(&split.rest).map_err(|source| DiscoveryError::GlobSyntax {
+                pattern: pattern.to_owned(),
+                source,
+            })?;
 
-        let mut match_count = 0;
-        for entry in glob {
-            if entry.is_ok() {
-                match_count += 1;
+        let mut walk = ignore::WalkBuilder::new(&split.base);
+        walk.standard_filters(false)
+            .follow_links(self.config.follow_symlinks)
+            .max_depth(Some(split.max_depth))
+            .sort_by_file_name(std::cmp::Ord::cmp);
+
+        let mut visited = 0_usize;
+        let mut match_count = 0_usize;
+        for entry in walk.build() {
+            visited += 1;
+            if visited > MAX_GLOB_VISITED {
+                crate::error::stderr_line(format_args!(
+                    "Warning: glob pattern '{}' visited more than {MAX_GLOB_VISITED} entries, \
+                     stopping",
+                    EscapedText(pattern)
+                ));
+                break;
             }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(e) if is_missing_base(&e) => continue,
+                Err(e) => {
+                    crate::error::stderr_line(format_args!(
+                        "Warning: glob error: {}",
+                        EscapedText(&e.to_string())
+                    ));
+                    continue;
+                }
+            };
+            if entry.depth() == 0 {
+                continue;
+            }
+            if !self.config.follow_symlinks && entry.path_is_symlink() {
+                tracing::debug!("skipped: symlink: {}", DisplayPath::new(entry.path()));
+                continue;
+            }
+            if !split.matches(&matcher, entry.path()) {
+                continue;
+            }
+
+            match_count += 1;
             if match_count > MAX_GLOB_MATCHES {
                 crate::error::stderr_line(format_args!(
                     "Warning: glob pattern '{}' exceeded {MAX_GLOB_MATCHES} matches, stopping",
@@ -620,22 +664,11 @@ impl FileDiscovery {
                 ));
                 break;
             }
-
-            match entry {
-                Ok(path) => {
-                    if path.is_file()
-                        && let Err(error) =
-                            self.discover_file(&path, DiscoveryOrigin::GlobExpansion, found)
-                    {
-                        warn_skipped(&error);
-                    }
-                }
-                Err(e) => {
-                    crate::error::stderr_line(format_args!(
-                        "Warning: glob error: {}: {}",
-                        DisplayPath::new(e.path()),
-                        e.error()
-                    ));
+            if entry.file_type().is_some_and(|ft| ft.is_file()) {
+                let path = split.display_path(entry.path());
+                if let Err(error) = self.discover_file(path, DiscoveryOrigin::GlobExpansion, found)
+                {
+                    warn_skipped(&error);
                 }
             }
         }
@@ -647,6 +680,79 @@ impl FileDiscovery {
         }
         Ok(())
     }
+}
+
+/// A glob pattern split into the literal directory it starts from and the part to match below it.
+struct GlobSplit {
+    base: PathBuf,
+    /// The base was not typed by the user, so `./` is stripped from reported paths.
+    implicit_base: bool,
+    rest: String,
+    max_depth: usize,
+}
+
+impl GlobSplit {
+    fn new(pattern: &str) -> Self {
+        let mut base = PathBuf::new();
+        let mut rest = Vec::new();
+        for component in Path::new(pattern).components() {
+            let text = component.as_os_str().to_string_lossy();
+            if !rest.is_empty() || text.contains(['*', '?', '[']) {
+                rest.push(text.into_owned());
+            } else {
+                base.push(component);
+            }
+        }
+        let implicit_base = base.as_os_str().is_empty();
+        if implicit_base {
+            base.push(".");
+        }
+        let max_depth = if rest.iter().any(|c| c.contains("**")) {
+            DEFAULT_MAX_DEPTH
+        } else {
+            rest.len()
+        };
+        Self {
+            base,
+            implicit_base,
+            rest: rest.join("/"),
+            max_depth,
+        }
+    }
+
+    /// Whether `path` (below the base) matches the pattern; `*` never crosses a separator.
+    fn matches(&self, matcher: &glob::Pattern, path: &Path) -> bool {
+        const OPTIONS: glob::MatchOptions = glob::MatchOptions {
+            case_sensitive: true,
+            require_literal_separator: true,
+            require_literal_leading_dot: false,
+        };
+        let Ok(relative) = path.strip_prefix(&self.base) else {
+            return false;
+        };
+        let relative = relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
+        matcher.matches_with(&relative, OPTIONS)
+    }
+
+    fn display_path<'a>(&self, path: &'a Path) -> &'a Path {
+        if self.implicit_base {
+            path.strip_prefix(".").unwrap_or(path)
+        } else {
+            path
+        }
+    }
+}
+
+/// The walk root itself does not exist: the pattern matches nothing, as with no matches below it.
+fn is_missing_base(error: &ignore::Error) -> bool {
+    error.depth() == Some(0)
+        && error
+            .io_error()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::NotFound)
 }
 
 /// Reports a file that a walk or glob found but could not use; the run continues without it.
