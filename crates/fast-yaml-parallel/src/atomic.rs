@@ -1,5 +1,6 @@
 //! Secure atomic file replacement shared by the CLI and batch file processing.
 
+#[cfg(any(unix, windows))]
 use crate::trace::debug_event;
 use fast_yaml_core::fs::DisplayPath;
 use std::fs::{self, Permissions};
@@ -8,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 mod error;
 #[cfg(windows)]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, reason = "Win32 calls; SAFETY at each block")]
 mod win_acl;
 
 pub use error::AtomicWriteError;
@@ -57,6 +58,13 @@ impl FileId {
     /// # Errors
     ///
     /// Returns an I/O error if the system cannot describe the handle.
+    #[cfg_attr(
+        not(any(unix, windows)),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "the Unix and Windows branches call non-const functions"
+        )
+    )]
     pub fn of(file: &fs::File) -> io::Result<Option<Self>> {
         #[cfg(unix)]
         return Ok(Some(Self::of_metadata(&file.metadata()?)));
@@ -477,7 +485,19 @@ impl AtomicFile {
     /// Returns an I/O error if the owner, permissions or data cannot be set, or the rename
     /// fails. The temporary file is removed on failure; when it cannot be removed the error is
     /// [`AtomicWriteError::TempFileLeft`], which names it.
+    ///
+    /// On Windows, when the target was read-only and the attribute cannot be restored after the
+    /// rename, the data is already in place and the error is
+    /// [`AtomicWriteError::ReadOnlyNotRestored`]; there is no temporary file to clean up then.
     pub fn commit(self) -> io::Result<()> {
+        self.commit_with(replace)
+    }
+
+    /// [`commit`](Self::commit) with the final rename injected, so tests can drive its outcomes.
+    fn commit_with(
+        self,
+        replace: impl FnOnce(&Path, &Path, bool) -> io::Result<Option<io::Error>>,
+    ) -> io::Result<()> {
         let Self {
             temp,
             target,
@@ -486,12 +506,18 @@ impl AtomicFile {
         } = self;
         let (file, temp_path) = temp.into_parts();
         let mut file = Some(file);
-        match install(&mut file, &temp_path, &target, existing, expected) {
-            Ok(()) => {
+        match install(&mut file, &temp_path, &target, existing, expected, replace) {
+            Ok(unrestored) => {
                 // The rename moved the file: dropping the path would unlink the new target's name
                 let _ = temp_path.keep();
                 sync_dir(parent_dir(&target));
-                Ok(())
+                unrestored.map_or(Ok(()), |source| {
+                    Err(AtomicWriteError::ReadOnlyNotRestored {
+                        path: target,
+                        source,
+                    }
+                    .into())
+                })
             }
             Err(cause) => Err(discard(temp_path, file.as_ref(), cause)),
         }
@@ -501,7 +527,8 @@ impl AtomicFile {
 /// Gives the written temporary file what the old target had and renames it over `target`.
 ///
 /// `file` is the temporary file's handle; it stays open for [`discard`] unless a Windows rename
-/// needs it closed.
+/// needs it closed. `Ok(Some(error))` means the rename happened but the read-only attribute of
+/// the old target could not be restored.
 #[cfg_attr(
     not(windows),
     expect(
@@ -515,7 +542,8 @@ fn install(
     target: &Path,
     existing: Option<Existing>,
     expected: Option<FileId>,
-) -> io::Result<()> {
+    replace: impl FnOnce(&Path, &Path, bool) -> io::Result<Option<io::Error>>,
+) -> io::Result<Option<io::Error>> {
     let read_only = existing
         .as_ref()
         .is_some_and(|old| old.permissions.readonly());
@@ -523,6 +551,13 @@ fn install(
         stage(handle, temp, target, existing.as_ref())?;
     }
     // Close the source handle first so the rename never meets another open handle on the target
+    #[cfg_attr(
+        not(any(unix, windows)),
+        expect(
+            clippy::drop_non_drop,
+            reason = "`Existing` holds a handle only on Unix and Windows"
+        )
+    )]
     drop(existing);
     // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
     #[cfg(windows)]
@@ -618,23 +653,43 @@ fn parent_dir(target: &Path) -> &Path {
 }
 
 /// Renames `from` over `to`; on Windows a read-only `to` is made writable first and restored.
-fn replace(from: &Path, to: &Path, read_only: bool) -> io::Result<()> {
+///
+/// When the rename succeeds but the read-only attribute cannot be restored, the data is already
+/// replaced and the restore error comes back as `Ok(Some(_))`; [`AtomicFile::commit`] reports it
+/// as [`AtomicWriteError::ReadOnlyNotRestored`], a hard error, because a silently writable file
+/// is a permission change the caller never asked for. A rename failure wins over a restore
+/// failure, since the old file is then still in place.
+fn replace(from: &Path, to: &Path, read_only: bool) -> io::Result<Option<io::Error>> {
     #[cfg(windows)]
     if read_only {
         set_read_only(to, false)?;
         let renamed = fs::rename(from, to);
-        // Best effort: the rename outcome is what the caller needs to hear about
-        if let Err(e) = set_read_only(to, true) {
-            debug_event!(
-                "could not restore read-only on {}: {e}",
-                DisplayPath::new(to)
-            );
-        }
-        return renamed;
+        return after_read_only_restore(to, renamed, set_read_only(to, true));
     }
     #[cfg(not(windows))]
     let _ = read_only;
-    fs::rename(from, to)
+    fs::rename(from, to).map(|()| None)
+}
+
+/// Combines the rename outcome with the outcome of restoring the read-only attribute.
+#[cfg(any(windows, test))]
+fn after_read_only_restore(
+    to: &Path,
+    renamed: io::Result<()>,
+    restored: io::Result<()>,
+) -> io::Result<Option<io::Error>> {
+    match (renamed, restored) {
+        (Err(rename_error), restored) => {
+            if let Err(e) = restored {
+                debug_event!(
+                    "could not restore read-only on {}: {e}",
+                    DisplayPath::new(to)
+                );
+            }
+            Err(rename_error)
+        }
+        (Ok(()), restored) => Ok(restored.err()),
+    }
 }
 
 #[cfg(windows)]
@@ -1115,6 +1170,69 @@ fn resolve_unbound(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn restore_error() -> io::Error {
+        io::Error::new(io::ErrorKind::PermissionDenied, "denied")
+    }
+
+    #[test]
+    fn lost_read_only_flag_after_rename_is_reported_not_swallowed() {
+        let outcome = after_read_only_restore(Path::new("a"), Ok(()), Err(restore_error()));
+        assert_eq!(
+            outcome.unwrap().map(|e| e.kind()),
+            Some(io::ErrorKind::PermissionDenied)
+        );
+    }
+
+    #[test]
+    fn rename_failure_wins_over_a_restore_failure() {
+        let rename = io::Error::new(io::ErrorKind::NotFound, "gone");
+        let err =
+            after_read_only_restore(Path::new("a"), Err(rename), Err(restore_error())).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(
+            err.get_ref()
+                .is_some_and(|e| e.downcast_ref::<AtomicWriteError>().is_none())
+        );
+    }
+
+    #[test]
+    fn restored_read_only_flag_is_success() {
+        assert!(
+            after_read_only_restore(Path::new("a"), Ok(()), Ok(()))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn commit_reports_a_lost_read_only_flag_without_a_phantom_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.yaml");
+        fs::write(&path, "a: 1\n").unwrap();
+        let mut file = AtomicFile::create(&path).unwrap();
+        file.write_all(b"a: 2\n").unwrap();
+
+        let err = file
+            .commit_with(|from, to, _| {
+                fs::rename(from, to)?;
+                Ok(Some(restore_error()))
+            })
+            .unwrap_err();
+
+        let payload = err
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<AtomicWriteError>());
+        let Some(AtomicWriteError::ReadOnlyNotRestored { path: reported, .. }) = payload else {
+            panic!("unexpected error: {err}");
+        };
+        // The target is resolved, so a symlinked temp dir (macOS `/var`) changes the prefix
+        assert_eq!(reported.file_name(), path.file_name());
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert!(err.to_string().contains("was replaced"), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "a: 2\n");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     fn write_atomic(path: &Path, content: &[u8]) -> io::Result<()> {
         super::write_atomic(path, content, HardLinkPolicy::WriteInPlace)

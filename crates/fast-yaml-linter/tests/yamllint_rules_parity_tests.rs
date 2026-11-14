@@ -32,6 +32,28 @@ fn colons_allow_one_space_after_an_alias_key() {
     assert_eq!(lines, [6]);
 }
 
+fn colons_positions(source: &str) -> Vec<(usize, usize)> {
+    positions(source, "  colons: enable\n", RuleName::Colons.as_str())
+}
+
+#[test]
+fn colons_ignore_the_indented_colon_of_an_explicit_key() {
+    for source in [
+        "a:\n  ? x\n  : y\n",
+        "- ? x\n  : y\n",
+        "a:\n  ? [x]\n  : y\n",
+        "a:\n  b:\n    ? x\n    : y\n",
+        "? x\n: y\n",
+    ] {
+        assert_eq!(colons_positions(source), [], "{source:?}");
+    }
+}
+
+#[test]
+fn colons_still_report_a_wide_gap_after_an_explicit_key_colon() {
+    assert_eq!(colons_positions("a:\n  ? x\n  :   y\n"), [(3, 6)]);
+}
+
 #[test]
 fn comments_skip_repeated_hashes() {
     let source = "## double hash\n#### many\n##glued\n# ok\n";

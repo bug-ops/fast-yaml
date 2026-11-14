@@ -135,7 +135,10 @@ impl PyBatchResult {
         self.failed == 0
     }
 
-    #[allow(clippy::cast_precision_loss)]
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a file count converts to f64 for a rate"
+    )]
     fn files_per_second(&self) -> f64 {
         let secs = self.duration_ms / 1000.0;
         if secs > 0.0 {
@@ -200,7 +203,10 @@ impl PyBatchConfig {
         max_scan_ahead=None,
         max_documents=None
     ))]
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "mirrors the public Python call signature"
+    )]
     fn new(
         workers: Option<&Bound<'_, PyAny>>,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
@@ -360,7 +366,8 @@ impl PyBatchConfig {
 #[allow(
     clippy::needless_pass_by_value,
     clippy::doc_link_with_quotes,
-    clippy::unnecessary_wraps
+    clippy::unnecessary_wraps,
+    reason = "PyO3 hands arguments over by value; docstring examples contain quoted lists, not links; the binding signature requires PyResult"
 )]
 fn process_files(
     py: Python<'_>,
@@ -403,7 +410,8 @@ fn process_files(
 #[allow(
     clippy::needless_pass_by_value,
     clippy::doc_link_with_quotes,
-    clippy::unnecessary_wraps
+    clippy::unnecessary_wraps,
+    reason = "PyO3 hands arguments over by value; docstring examples contain quoted lists, not links; the binding signature requires PyResult"
 )]
 fn format_files(
     py: Python<'_>,
@@ -459,7 +467,8 @@ fn format_files(
 #[allow(
     clippy::needless_pass_by_value,
     clippy::doc_link_with_quotes,
-    clippy::unnecessary_wraps
+    clippy::unnecessary_wraps,
+    reason = "PyO3 hands arguments over by value; docstring examples contain quoted lists, not links; the binding signature requires PyResult"
 )]
 fn format_files_in_place(
     py: Python<'_>,

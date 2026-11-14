@@ -1,7 +1,5 @@
 //! Regression tests for #478 and #481: only a plain `<<` merges, and its value must be a mapping.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::time::Duration;
 

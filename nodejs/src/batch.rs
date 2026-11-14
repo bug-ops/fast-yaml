@@ -103,7 +103,10 @@ pub struct BatchResult {
 
 impl From<RustBatchResult> for BatchResult {
     fn from(result: RustBatchResult) -> Self {
-        #[allow(clippy::cast_possible_truncation)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "counts are exposed to JavaScript as u32"
+        )]
         Self {
             total: result.total() as u32,
             success: result.succeeded() as u32,
@@ -227,7 +230,10 @@ pub enum FormatResult {
 /// console.log(`Processed ${result.total} files, ${result.failed} failed`);
 /// ```
 #[napi(catch_unwind)]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> napi::Result<BatchResult> {
     let config = config.unwrap_or_default();
     let rust_config = config.to_rust_config()?;
@@ -262,7 +268,10 @@ pub fn process_files(paths: Vec<String>, config: Option<BatchConfig>) -> napi::R
 /// });
 /// ```
 #[napi(catch_unwind)]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 pub fn format_files(
     paths: Vec<String>,
     config: Option<BatchConfig>,
@@ -315,7 +324,10 @@ pub fn format_files(
 /// console.log(`Changed ${result.changed} files`);
 /// ```
 #[napi(catch_unwind)]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 pub fn format_files_in_place(
     paths: Vec<String>,
     config: Option<BatchConfig>,

@@ -548,6 +548,13 @@ impl FileProcessor {
         if self.sequential_by_count(paths.len()) {
             return true;
         }
+        if paths.len() >= SEQUENTIAL_MAX_FILES {
+            debug_event!(
+                "{} files: running in parallel without probing sizes",
+                paths.len()
+            );
+            return false;
+        }
         let total_size = paths
             .iter()
             .filter_map(|p| fs::metadata(p).ok())
@@ -1578,6 +1585,30 @@ mod tests {
         let sequential =
             FileProcessor::with_config(Config::new().with_workers(Workers::Sequential));
         assert!(sequential.sequential_by_count(100));
+    }
+
+    #[test]
+    fn test_should_use_sequential_decides_on_the_ten_file_boundary() {
+        use crate::workers::{WorkerCount, Workers};
+
+        let fixed = Config::new().with_workers(Workers::Fixed(WorkerCount::new(2).unwrap()));
+        let processor = FileProcessor::with_config(fixed);
+        let dir = tempfile::tempdir().unwrap();
+        let paths = |count: usize| -> Vec<PathBuf> {
+            (0..count)
+                .map(|i| {
+                    let path = dir.path().join(format!("{i}.yaml"));
+                    fs::write(&path, "a: 1\n").unwrap();
+                    path
+                })
+                .collect()
+        };
+        assert!(processor.should_use_sequential(&paths(9)));
+        assert!(!processor.should_use_sequential(&paths(10)));
+        let missing: Vec<PathBuf> = (0..SEQUENTIAL_MAX_FILES)
+            .map(|i| dir.path().join(format!("missing-{i}.yaml")))
+            .collect();
+        assert!(!processor.should_use_sequential(&missing));
     }
 
     #[test]

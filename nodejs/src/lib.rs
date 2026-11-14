@@ -129,7 +129,10 @@ impl Mark {
     ///
     /// Returns format: "name:line:column"
     #[napi(catch_unwind)]
-    #[allow(clippy::inherent_to_string)]
+    #[allow(
+        clippy::inherent_to_string,
+        reason = "exposed to JavaScript as toString()"
+    )]
     pub fn to_string(&self) -> String {
         format!("{}:{}:{}", self.name, self.line, self.column)
     }

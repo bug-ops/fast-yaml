@@ -3,8 +3,6 @@
 //! Building a pool spawns OS threads, so a pool per call would dominate small batches. One
 //! pool is cached and replaced only when a different worker count is requested.
 
-#![allow(clippy::redundant_pub_crate)]
-
 use std::sync::{Arc, Mutex, PoisonError};
 
 use rayon::{ThreadPool, ThreadPoolBuildError, ThreadPoolBuilder};
@@ -44,7 +42,7 @@ pub fn shared_pool(workers: WorkerCount) -> Result<Arc<ThreadPool>> {
 }
 
 /// Failure to spawn the pool's threads; shared so one failure can be reported for many files.
-pub(crate) type BuildError = Arc<ThreadPoolBuildError>;
+pub type BuildError = Arc<ThreadPoolBuildError>;
 
 fn build(workers: WorkerCount) -> std::result::Result<Arc<ThreadPool>, BuildError> {
     build_in(&POOL, workers)
@@ -75,9 +73,7 @@ fn build_in(
 /// The pool `config` asks for, or `None` when the current Rayon pool already fits.
 ///
 /// `None` also covers sequential settings, which callers handle without a pool.
-pub(crate) fn for_config(
-    config: &Config,
-) -> std::result::Result<Option<Arc<ThreadPool>>, BuildError> {
+pub fn for_config(config: &Config) -> std::result::Result<Option<Arc<ThreadPool>>, BuildError> {
     config.workers().dedicated_pool().map(build).transpose()
 }
 

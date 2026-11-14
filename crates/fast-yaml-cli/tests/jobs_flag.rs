@@ -1,8 +1,6 @@
 //! `-j/--jobs` is a bounded worker setting: 0 is auto, 1..=128 a fixed pool, anything else a
 //! usage error (#610).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;

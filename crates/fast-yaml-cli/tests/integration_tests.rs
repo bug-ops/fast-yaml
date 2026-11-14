@@ -2,8 +2,6 @@
 //!
 //! Tests cover all commands, options, flags, and error conditions.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use indoc::indoc;
 use predicates::prelude::*;

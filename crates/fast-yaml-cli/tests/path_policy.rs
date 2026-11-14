@@ -1,7 +1,5 @@
 //! Regression tests for #497/#498: literal bracket paths and explicit non-YAML input are errors.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;

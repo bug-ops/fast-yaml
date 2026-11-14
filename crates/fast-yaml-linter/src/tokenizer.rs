@@ -1443,7 +1443,10 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::literal_string_with_formatting_args)]
+    #[expect(
+        clippy::literal_string_with_formatting_args,
+        reason = "the braces are YAML content, not format arguments"
+    )]
     fn test_block_scalar_folded_no_brace_tokens() {
         let yaml = "message: >\n  This has {braces} and [brackets] inside.\n";
         let context = SourceContext::new(yaml);

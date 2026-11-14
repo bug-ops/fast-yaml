@@ -220,7 +220,10 @@ fn exceeds_bit_cap(digits: &str, bits_per_digit: u32) -> bool {
 /// Digits are consumed in groups of at most 28 bits so each limb pass multiplies by up to `2^28`
 /// (`limb * 2^28 + carry` stays below `2^64`). Leading zeros are free: the limb vector stays empty
 /// until the first non-zero group.
-#[allow(clippy::cast_possible_truncation)] // limbs are reduced below 1e9 before the cast
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "limbs are reduced below 1e9 before the cast"
+)]
 fn radix_digits_to_decimal(digits: &str, bits_per_digit: u32) -> String {
     use std::fmt::Write;
 
@@ -466,7 +469,11 @@ fn parse_int(s: &str) -> Option<ResolvedScalar<'_>> {
 /// Attempt to coerce a float string to `i64` via truncation toward zero (`PyYAML` convention).
 ///
 /// Returns `None` for non-finite values (.nan, .inf) and values outside the `i64` range.
-#[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "the i64 bounds round when widened to f64; the filter keeps the value inside them"
+)]
 fn float_str_to_int(s: &str) -> Option<i64> {
     parse_core_schema_float(s)
         .filter(|f| f.is_finite() && *f >= i64::MIN as f64 && *f < i64::MAX as f64)

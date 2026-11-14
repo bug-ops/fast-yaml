@@ -1,7 +1,5 @@
 //! Regression tests for #334: UTF-16/UTF-32 input fails with an encoding-specific message.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use std::time::Duration;
 

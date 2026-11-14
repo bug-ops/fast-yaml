@@ -1,7 +1,5 @@
 //! `fy format` and `fy convert` end quietly when the reader of stdout goes away.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Child;

@@ -358,7 +358,10 @@ impl Linter {
     /// Returns an error if the YAML cannot be parsed, the source exceeds `maxInputBytes`
     /// (default 100 MiB), or the directory of `path` does not exist.
     #[napi(catch_unwind)]
-    #[allow(clippy::needless_pass_by_value)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "the binding layer hands arguments over by value"
+    )]
     pub fn lint(&self, source: String, path: Option<String>) -> napi::Result<Vec<Diagnostic>> {
         lint_diagnostics(&self.inner, &source, path.as_deref())
     }
@@ -380,7 +383,10 @@ impl Linter {
 /// const diagnostics = lint('key: value\nkey: duplicate');
 /// ```
 #[napi(catch_unwind)]
-#[allow(clippy::needless_pass_by_value)]
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "the binding layer hands arguments over by value"
+)]
 pub fn lint(
     source: String,
     config: Option<LintConfig>,

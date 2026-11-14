@@ -1,7 +1,5 @@
 //! Paired `--flag` / `--no-flag` options that must not swallow the next positional (#632).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use std::fs;
 use tempfile::TempDir;

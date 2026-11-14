@@ -291,7 +291,10 @@ fn python_group(key: &Value) -> Option<(Group, KeyKind)> {
 /// An integral float is the integer it holds when that fits `i128`, else its bit pattern.
 fn float_group(value: f64) -> Group {
     if (-I128_LIMIT..I128_LIMIT).contains(&value) {
-        #[expect(clippy::cast_possible_truncation)]
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "the value is range-checked before the cast"
+        )]
         return Group::Int(value as i128);
     }
     Group::FloatBits(value.to_bits())

@@ -1,8 +1,6 @@
 //! `fy format -o` and `fy convert -o` must not overwrite the file they read, as `fy lint -o`
 //! does not (`OutputWriter::from_args`, #604).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::fs;
 
 use assert_cmd::Command;

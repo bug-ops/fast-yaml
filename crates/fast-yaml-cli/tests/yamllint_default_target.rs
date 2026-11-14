@@ -1,7 +1,5 @@
 //! `.yamllint` is a default target of `fy lint` only (#571).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::fs;
 use tempfile::TempDir;

@@ -117,7 +117,10 @@ impl SourcePosition {
     }
 
     // Char-based column, 1-indexed like saphyr's own errors; no source text to convert from.
-    #[allow(clippy::disallowed_methods)]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the single place that converts saphyr markers"
+    )]
     pub(crate) fn from_marker(marker: Marker) -> Self {
         Self {
             // Parsed lines start at 1; line 0 comes from the synthetic default spans of emitter events.

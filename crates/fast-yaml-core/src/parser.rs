@@ -857,7 +857,10 @@ development:
     fn test_explicit_tag_float() {
         let v = get_mapping_val("val: !!float '3.14'", "val");
         if let Value::Float(f) = v {
-            #[allow(clippy::approx_constant)]
+            #[expect(
+                clippy::approx_constant,
+                reason = "3.14 is the literal under test, not pi"
+            )]
             let expected = 3.14_f64;
             assert!((f.get() - expected).abs() < 1e-9);
         } else {

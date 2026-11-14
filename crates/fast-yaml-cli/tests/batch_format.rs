@@ -116,7 +116,10 @@ fn test_batch_exclude_pattern() {
 }
 
 #[test]
-#[allow(clippy::similar_names)]
+#[expect(
+    clippy::similar_names,
+    reason = "fixture paths are named after the files they hold"
+)]
 fn test_batch_include_pattern() {
     let temp = TempDir::new().unwrap();
     let dir = temp.path().join("yaml");

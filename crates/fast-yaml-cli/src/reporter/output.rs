@@ -96,7 +96,6 @@ impl Reporter {
         Ok(())
     }
 
-    #[allow(clippy::uninlined_format_args)]
     fn write_error(&self, path: Option<&Path>, message: &str) -> io::Result<()> {
         let mut lock = self.stderr.lock();
         #[cfg(feature = "colors")]
@@ -116,11 +115,10 @@ impl Reporter {
         if let Some(p) = path {
             writeln!(lock, "error: {}: {}", DisplayPath::new(p), message)
         } else {
-            writeln!(lock, "error: {}", message)
+            writeln!(lock, "error: {message}")
         }
     }
 
-    #[allow(clippy::uninlined_format_args)]
     fn write_success(&self, message: &str) -> io::Result<()> {
         let mut lock = self.stdout.lock();
         #[cfg(feature = "colors")]
@@ -128,7 +126,7 @@ impl Reporter {
             use colored::Colorize;
             return writeln!(lock, "{} {}", "✓".green().bold(), message);
         }
-        writeln!(lock, "✓ {}", message)
+        writeln!(lock, "✓ {message}")
     }
 
     /// Writes the `parse --stats` figures to stdout; `-q` does not hide what was asked for.
@@ -168,7 +166,6 @@ impl Reporter {
         )
     }
 
-    #[allow(clippy::uninlined_format_args)]
     fn write_batch_summary(&self, stats: BatchStats) -> io::Result<()> {
         let BatchStats {
             total,
@@ -214,16 +211,16 @@ impl Reporter {
             duration.as_secs_f64() * 1000.0
         )?;
         if formatted > 0 {
-            writeln!(lock, "  {} formatted", formatted)?;
+            writeln!(lock, "  {formatted} formatted")?;
         }
         if unchanged > 0 {
-            writeln!(lock, "  {} unchanged", unchanged)?;
+            writeln!(lock, "  {unchanged} unchanged")?;
         }
         if would_change > 0 {
-            writeln!(lock, "  {} would change", would_change)?;
+            writeln!(lock, "  {would_change} would change")?;
         }
         if failed > 0 {
-            writeln!(lock, "  {} failed", failed)?;
+            writeln!(lock, "  {failed} failed")?;
         }
         Ok(())
     }

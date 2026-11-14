@@ -1,8 +1,6 @@
 //! End-to-end tests for `--max-input-bytes`, the `max-input-bytes` config key and the
 //! single-file lint error message (#509, #519, #508).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use predicates::prelude::*;
 use std::fs;

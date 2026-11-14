@@ -9,10 +9,10 @@ use fast_yaml_core::Indent;
 use napi::Status;
 
 /// Upper bound for options that were plain `u32` before validation was introduced.
-pub(crate) const U32_MAX: u64 = u32::MAX as u64;
+pub const U32_MAX: u64 = u32::MAX as u64;
 
 /// Builds the `InvalidArg` error for an option outside `min..=max`.
-pub(crate) fn range_error(name: &str, min: u64, max: u64, got: impl Display) -> napi::Error {
+pub fn range_error(name: &str, min: u64, max: u64, got: impl Display) -> napi::Error {
     napi::Error::new(
         Status::InvalidArg,
         format!("{name} must be between {min} and {max}, got {got}"),
@@ -39,9 +39,10 @@ fn display_f64(value: f64) -> String {
 #[expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
+    clippy::cast_sign_loss,
+    reason = "the bounds widen to f64 for the comparison; the value is integral and in range before the cast"
 )]
-pub(crate) fn checked_uint(name: &str, value: f64, min: u64, max: u64) -> napi::Result<usize> {
+pub fn checked_uint(name: &str, value: f64, min: u64, max: u64) -> napi::Result<usize> {
     let in_range =
         value.is_finite() && value.fract() == 0.0 && value >= min as f64 && value <= max as f64;
     if !in_range {
@@ -55,7 +56,7 @@ pub(crate) fn checked_uint(name: &str, value: f64, min: u64, max: u64) -> napi::
 /// # Errors
 ///
 /// Returns a `Status::InvalidArg` error unless the value is an integer in `1..=9`.
-pub(crate) fn emitter_indent(value: Option<f64>) -> napi::Result<Indent> {
+pub fn emitter_indent(value: Option<f64>) -> napi::Result<Indent> {
     let Some(n) = checked_opt_uint(
         "indent",
         value,
@@ -73,7 +74,7 @@ pub(crate) fn emitter_indent(value: Option<f64>) -> napi::Result<Indent> {
 /// # Errors
 ///
 /// Same conditions as [`checked_uint`] with the range `0..=u32::MAX`.
-pub(crate) fn checked_u32(name: &str, value: f64) -> napi::Result<u32> {
+pub fn checked_u32(name: &str, value: f64) -> napi::Result<u32> {
     let n = checked_uint(name, value, 0, U32_MAX)?;
     u32::try_from(n)
         .map_err(|_| napi::Error::new(Status::InvalidArg, format!("{name} exceeds {}", u32::MAX)))
@@ -84,7 +85,7 @@ pub(crate) fn checked_u32(name: &str, value: f64) -> napi::Result<u32> {
 /// # Errors
 ///
 /// Propagates the error of [`checked_uint`] when a value is present and invalid.
-pub(crate) fn checked_opt_uint(
+pub fn checked_opt_uint(
     name: &str,
     value: Option<f64>,
     min: u64,

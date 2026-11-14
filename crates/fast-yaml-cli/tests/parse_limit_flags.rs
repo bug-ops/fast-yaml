@@ -1,7 +1,5 @@
 //! End-to-end tests for the `--max-depth` and `--max-alias-bytes` flags.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use std::fmt::Write as _;
 use std::fs;

@@ -109,7 +109,13 @@ impl DiscoveryConfig {
 
     /// Set the config-file file selection (builder pattern).
     #[must_use]
-    #[cfg_attr(not(feature = "linter"), expect(clippy::missing_const_for_fn))]
+    #[cfg_attr(
+        not(feature = "linter"),
+        expect(
+            clippy::missing_const_for_fn,
+            reason = "the linter-feature body is not const"
+        )
+    )]
     pub fn with_file_filter(mut self, filter: FileFilter) -> Self {
         self.file_filter = filter;
         self
@@ -633,6 +639,7 @@ impl FileDiscovery {
 
         let mut visited = 0_usize;
         let mut match_count = 0_usize;
+        let mut relative = String::new();
         for entry in walk.build() {
             visited += 1;
             if visited > max_visited {
@@ -661,7 +668,7 @@ impl FileDiscovery {
                 tracing::debug!("skipped: symlink: {}", DisplayPath::new(entry.path()));
                 continue;
             }
-            if !split.matches(&matcher, entry.path()) {
+            if !split.matches(&matcher, entry.path(), &mut relative) {
                 continue;
             }
 
@@ -730,21 +737,25 @@ impl GlobSplit {
     }
 
     /// Whether `path` (below the base) matches the pattern; `*` never crosses a separator.
-    fn matches(&self, matcher: &glob::Pattern, path: &Path) -> bool {
+    ///
+    /// `relative` is a scratch buffer reused across calls so matching does not allocate per entry.
+    fn matches(&self, matcher: &glob::Pattern, path: &Path, relative: &mut String) -> bool {
         const OPTIONS: glob::MatchOptions = glob::MatchOptions {
             case_sensitive: true,
             require_literal_separator: true,
             require_literal_leading_dot: false,
         };
-        let Ok(relative) = path.strip_prefix(&self.base) else {
+        let Ok(below_base) = path.strip_prefix(&self.base) else {
             return false;
         };
-        let relative = relative
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/");
-        matcher.matches_with(&relative, OPTIONS)
+        relative.clear();
+        for (index, component) in below_base.components().enumerate() {
+            if index > 0 {
+                relative.push('/');
+            }
+            relative.push_str(&component.as_os_str().to_string_lossy());
+        }
+        matcher.matches_with(relative, OPTIONS)
     }
 
     fn display_path<'a>(&self, path: &'a Path) -> &'a Path {
@@ -829,6 +840,42 @@ mod tests {
                 cause: StdinLineCause::TooLong { .. }
             }
         )
+    }
+
+    fn glob_matches(pattern: &str, path: &str) -> bool {
+        let split = GlobSplit::new(pattern);
+        let matcher = glob::Pattern::new(&split.rest).unwrap();
+        let mut buf = String::from("stale");
+        split.matches(&matcher, Path::new(path), &mut buf)
+    }
+
+    #[test]
+    fn test_glob_split_matches_semantics() {
+        assert!(glob_matches("dir/*.yaml", "dir/a.yaml"));
+        assert!(!glob_matches("dir/*.yaml", "dir/sub/a.yaml"));
+        assert!(glob_matches("dir/**/*.yaml", "dir/a/b/c.yaml"));
+        assert!(glob_matches("dir/**/*.yaml", "dir/a.yaml"));
+        assert!(glob_matches("dir/*/", "dir/sub"));
+        assert!(!glob_matches("dir/*.yaml", "other/a.yaml"));
+        assert!(glob_matches("*.yaml", "./a.yaml"));
+    }
+
+    #[test]
+    fn test_glob_split_matches_normalizes_components() {
+        assert!(glob_matches("dir/*/*.yaml", "dir//sub///a.yaml"));
+        assert!(glob_matches("dir/*.yaml", "dir/a.yaml/"));
+        assert!(glob_matches("dir/**", "dir/a/b/"));
+    }
+
+    #[test]
+    fn test_glob_split_matches_reuses_buffer_without_leaking_state() {
+        let split = GlobSplit::new("dir/*.yaml");
+        let matcher = glob::Pattern::new(&split.rest).unwrap();
+        let mut buf = String::new();
+        assert!(split.matches(&matcher, Path::new("dir/a.yaml"), &mut buf));
+        assert!(!split.matches(&matcher, Path::new("dir/b.txt"), &mut buf));
+        assert!(!split.matches(&matcher, Path::new("elsewhere/a.yaml"), &mut buf));
+        assert!(split.matches(&matcher, Path::new("dir/c.yaml"), &mut buf));
     }
 
     fn input(path: impl Into<PathBuf>) -> InputPath {

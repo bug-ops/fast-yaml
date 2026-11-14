@@ -1,7 +1,5 @@
 //! End-to-end tests for the `--max-scan-ahead` flag and the `max-scan-ahead` config key (#563).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::{Command, cargo_bin_cmd};
 use std::fs;
 use std::path::{Path, PathBuf};

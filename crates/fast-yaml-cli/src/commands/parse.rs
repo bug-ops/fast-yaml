@@ -1,5 +1,3 @@
-#![allow(clippy::needless_pass_by_ref_mut)]
-
 use anyhow::{Context, Result};
 use fast_yaml_core::Parser;
 use fast_yaml_core::limits::ParseLimits;

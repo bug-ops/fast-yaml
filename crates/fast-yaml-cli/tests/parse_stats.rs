@@ -1,7 +1,5 @@
 //! `fy parse --stats` prints through the reporter (#628).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 use predicates::prelude::*;
 

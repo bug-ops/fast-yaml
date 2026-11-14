@@ -80,6 +80,22 @@ pub enum AtomicWriteError {
         cause: io::Error,
     },
 
+    /// Windows only: the target was replaced, but its read-only attribute could not be restored.
+    ///
+    /// The new content is already in place, so the write is not retried; the file is writable
+    /// until the caller sets the attribute again.
+    #[error(
+        "{} was replaced but its read-only attribute could not be restored: {source}",
+        DisplayPath::new(.path)
+    )]
+    ReadOnlyNotRestored {
+        /// The target, which now holds the new content.
+        path: PathBuf,
+        /// The operating system's error.
+        #[source]
+        source: io::Error,
+    },
+
     /// The `Zone.Identifier` stream of the target is too large to copy.
     #[error("Zone.Identifier of {} is too large to copy", DisplayPath::new(.path))]
     ZoneIdentifierTooLarge {
@@ -94,7 +110,9 @@ impl AtomicWriteError {
             Self::TargetChanged(_) | Self::ZoneIdentifierTooLarge { .. } => io::ErrorKind::Other,
             Self::HardLinkRefused(_) | Self::NotRegular { .. } => io::ErrorKind::InvalidInput,
             Self::DanglingSymlink { .. } => io::ErrorKind::NotFound,
-            Self::TempFile { source: cause, .. } | Self::TempFileLeft { cause, .. } => cause.kind(),
+            Self::TempFile { source: cause, .. }
+            | Self::TempFileLeft { cause, .. }
+            | Self::ReadOnlyNotRestored { source: cause, .. } => cause.kind(),
         }
     }
 }

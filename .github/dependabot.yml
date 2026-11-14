@@ -12,6 +12,8 @@ updates:
       time: "09:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "rust"
@@ -36,9 +38,29 @@ updates:
       time: "09:00"
       timezone: "UTC"
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # Node.js dependencies (pnpm lockfile is covered by the npm ecosystem)
+  - package-ecosystem: "npm"
+    directory: "/nodejs"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    labels:
+      - "dependencies"
+      - "component:nodejs"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"

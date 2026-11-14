@@ -38,7 +38,10 @@ use fast_yaml_core::{ResolvedScalar, ScalarStyle, resolve_scalar};
 pub struct FloatValuesRule;
 
 /// Options of the float-values rule.
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is an independent rule option"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case", default)]
 pub struct FloatValuesOptions {

@@ -671,7 +671,10 @@ fn big_order(left: &str, right: &str) -> Ordering {
     }
 }
 
-#[allow(clippy::cast_precision_loss)] // ordering against floats only needs the nearest f64
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "ordering against floats only needs the nearest f64"
+)]
 fn integer_as_f64(value: &Value) -> f64 {
     match value {
         Value::Int(i) => *i as f64,

@@ -1,7 +1,5 @@
 //! Batch lint reports every file with a syntax or encoding error in every format (tester item 1).
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use std::fs;
 
 use tempfile::TempDir;

@@ -341,7 +341,10 @@ mod one_based_repr {
     use crate::OneBased;
 
     // serde's `with` calls `serialize` with a reference
-    #[expect(clippy::trivially_copy_pass_by_ref)]
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde `with` calls serialize with a reference"
+    )]
     pub(super) fn serialize<S: Serializer>(
         line: &OneBased,
         serializer: S,

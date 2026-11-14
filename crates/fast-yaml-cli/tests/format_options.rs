@@ -1,7 +1,5 @@
 //! End-to-end tests for `fy format` option validation, depth limit and anchor names.
 
-#![allow(clippy::missing_docs_in_private_items)]
-
 use assert_cmd::cargo_bin_cmd;
 
 fn format(args: &[&str], stdin: &str) -> (Option<i32>, String, String) {

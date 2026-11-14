@@ -3,8 +3,6 @@
 //! Events use the format-string form only, so the disabled macro can still borrow and
 //! type-check its arguments and a feature combination never leaves a binding unused.
 
-#![allow(clippy::redundant_pub_crate)]
-
 /// Emits a `tracing` debug event.
 #[cfg(feature = "tracing")]
 macro_rules! debug_event {
