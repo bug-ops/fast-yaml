@@ -161,21 +161,19 @@ impl PyBatchResult {
 impl From<RustBatchResult> for PyBatchResult {
     fn from(result: RustBatchResult) -> Self {
         Self {
-            total: result.total,
-            success: result.success,
-            changed: result.changed,
-            failed: result.failed,
-            duration_ms: result.duration.as_secs_f64() * 1000.0,
+            total: result.total(),
+            success: result.succeeded(),
+            changed: result.changed(),
+            failed: result.failed(),
+            duration_ms: result.duration().as_secs_f64() * 1000.0,
             errors: result
-                .errors
+                .errors()
                 .iter()
                 .map(|(path, error)| (path.clone().into_os_string(), error.into()))
                 .collect(),
         }
     }
 }
-
-const DEFAULT_SEQUENTIAL_THRESHOLD: usize = 4096;
 
 /// Configuration for batch file processing.
 ///
@@ -195,7 +193,7 @@ impl PyBatchConfig {
     #[pyo3(signature = (
         workers=None,
         max_input_bytes=None,
-        sequential_threshold=None,
+        *,
         indent=None,
         max_depth=None,
         max_alias_bytes=None,
@@ -206,7 +204,6 @@ impl PyBatchConfig {
     fn new(
         workers: Option<&Bound<'_, PyAny>>,
         max_input_bytes: Option<&Bound<'_, PyAny>>,
-        sequential_threshold: Option<&Bound<'_, PyAny>>,
         indent: Option<&Bound<'_, PyAny>>,
         max_depth: Option<&Bound<'_, PyAny>>,
         max_alias_bytes: Option<&Bound<'_, PyAny>>,
@@ -221,13 +218,6 @@ impl PyBatchConfig {
             .with_max_input_bytes(limits::bounded::<InputBytes>(
                 "max_input_bytes",
                 max_input_bytes,
-            )?)
-            .with_sequential_threshold(limits::in_range_or(
-                "sequential_threshold",
-                0,
-                limits::U32_MAX,
-                DEFAULT_SEQUENTIAL_THRESHOLD,
-                sequential_threshold,
             )?)
             .with_parse_limits(parse_limits);
 

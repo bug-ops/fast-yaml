@@ -12,8 +12,8 @@ use fast_yaml_core::limits::MaxScanAhead;
 use fast_yaml_core::{EmitError, LimitKind, NormalizedInput, ParseError, has_comments_normalized};
 use rayon::prelude::*;
 
-use crate::atomic::{FileId, HardLinkPolicy};
-use crate::config::Config;
+use crate::atomic::{FileId, HardLinkPolicy, stat_identified};
+use crate::config::{Config, MIN_PARALLEL_ITEMS};
 use crate::error::{Error, Result};
 use crate::io::{read_file, read_file_identified};
 use crate::pool;
@@ -124,16 +124,17 @@ impl FileProcessor {
     /// Process files with custom operation.
     ///
     /// Generic function for applying custom processing to files in parallel.
-    pub fn process<F, R>(&self, paths: &[PathBuf], f: F) -> BatchResult
+    ///
+    /// `f` is called at most once per readable path with its content; an `Err` from `f` is
+    /// recorded in [`BatchResult::errors`].
+    pub fn process<F>(&self, paths: &[PathBuf], f: F) -> BatchResult
     where
-        F: Fn(&Path, &str) -> Result<R> + Sync,
-        R: Send,
+        F: Fn(&Path, &str) -> Result<()> + Sync,
     {
         let batch_start = Instant::now();
-        let total = paths.len();
 
-        if total == 0 {
-            return BatchResult::new();
+        if paths.is_empty() {
+            return BatchResult::default();
         }
 
         let results = if self.should_use_sequential(paths) {
@@ -142,9 +143,7 @@ impl FileProcessor {
             self.process_files_parallel(paths, &f)
         };
 
-        let mut batch = BatchResult::from_results(results);
-        batch.duration = batch_start.elapsed();
-        batch
+        BatchResult::from_results(results, batch_start.elapsed())
     }
 
     /// Parse all files and return `BatchResult`.
@@ -220,6 +219,70 @@ impl FileProcessor {
         }
     }
 
+    /// Formats files without writing anything and reports how many would change.
+    ///
+    /// The result is the one [`format_in_place`](Self::format_in_place) returns, except that
+    /// [`BatchResult::changed`] counts the files that would change. Errors are those of
+    /// [`format_files`](Self::format_files); each file's duration is its own formatting time.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use std::path::PathBuf;
+    /// use fast_yaml_core::EmitterConfig;
+    /// use fast_yaml_parallel::{CommentPolicy, FileProcessor};
+    ///
+    /// let batch = FileProcessor::new().check_format(
+    ///     &[PathBuf::from("a.yaml")],
+    ///     &EmitterConfig::new(),
+    ///     CommentPolicy::Reject,
+    /// );
+    /// println!("{} of {} files would change", batch.changed(), batch.total());
+    /// ```
+    pub fn check_format(
+        &self,
+        paths: &[PathBuf],
+        emitter_config: &EmitterConfig,
+        comments: CommentPolicy,
+    ) -> BatchResult {
+        let batch_start = Instant::now();
+        if paths.is_empty() {
+            return BatchResult::default();
+        }
+
+        let lane = self.lane();
+        let check = |path: &PathBuf| {
+            let start = Instant::now();
+            match self.format_content(path, emitter_config, comments, &lane) {
+                Ok((output, _)) => {
+                    let duration = start.elapsed();
+                    let outcome = if output.changed {
+                        FileOutcome::Changed { duration }
+                    } else {
+                        FileOutcome::Unchanged { duration }
+                    };
+                    FileResult::new(path.clone(), outcome)
+                }
+                Err(error) => Self::failed(path, error, start.elapsed()),
+            }
+        };
+
+        let results = if self.should_use_sequential(paths) {
+            paths.iter().map(check).collect()
+        } else {
+            self.install(
+                || paths.par_iter().map(check).collect(),
+                |error| {
+                    paths
+                        .iter()
+                        .map(|path| Self::failed(path, error(), Duration::ZERO))
+                        .collect()
+                },
+            )
+        };
+        BatchResult::from_results(results, batch_start.elapsed())
+    }
+
     /// Format files in place (write back if changed).
     ///
     /// With [`CommentPolicy::Reject`], files containing comments are reported as
@@ -231,18 +294,15 @@ impl FileProcessor {
         emitter_config: &EmitterConfig,
         comments: CommentPolicy,
     ) -> BatchResult {
-        let batch_start = std::time::Instant::now();
-        let total = targets.len();
+        let batch_start = Instant::now();
 
-        if total == 0 {
-            return BatchResult::new();
+        if targets.is_empty() {
+            return BatchResult::default();
         }
 
         let results = self.format_targets(targets, emitter_config, comments);
 
-        let mut batch = BatchResult::from_results(results);
-        batch.duration = batch_start.elapsed();
-        batch
+        BatchResult::from_results(results, batch_start.elapsed())
     }
 
     /// Formats every target and returns one result per target, in input order.
@@ -259,10 +319,33 @@ impl FileProcessor {
         let format_one = |target: &InPlaceTarget| {
             self.format_single_file(target, emitter_config, comments, &lane)
         };
-        let sequential = || targets.iter().map(&format_one).collect();
+        let probed_ids = match self.schedule(targets) {
+            Schedule::Sequential => return targets.iter().map(&format_one).collect(),
+            Schedule::Probed(ids) => Some(ids),
+            Schedule::Unprobed => None,
+        };
 
+        self.install(
+            || {
+                let ids = probed_ids.unwrap_or_else(|| pooled_ids(targets));
+                run_grouped(targets, &same_file_groups(ids), format_one)
+            },
+            |error| {
+                targets
+                    .iter()
+                    .map(|target| Self::failed(&target.path, error(), Duration::ZERO))
+                    .collect()
+            },
+        )
+    }
+
+    /// Decides how a batch of in-place targets runs; see [`Schedule`].
+    fn schedule(&self, targets: &[InPlaceTarget]) -> Schedule {
         if self.sequential_by_count(targets.len()) {
-            return sequential();
+            return Schedule::Sequential;
+        }
+        if targets.len() >= SEQUENTIAL_MAX_FILES {
+            return Schedule::Unprobed;
         }
         let probes: Vec<Probe> = targets
             .iter()
@@ -270,21 +353,10 @@ impl FileProcessor {
             .collect();
         let total_size = probes.iter().map(|probe| probe.len).sum();
         if Self::sequential_by_size(targets.len(), total_size) {
-            return sequential();
+            Schedule::Sequential
+        } else {
+            Schedule::Probed(probes.iter().map(|probe| probe.id).collect())
         }
-
-        self.install(
-            || {
-                let keys = file_keys(targets, &probes);
-                run_grouped(targets, &same_file_groups(keys), format_one)
-            },
-            |error| {
-                targets
-                    .iter()
-                    .map(|target| Self::failed(&target.path, error()))
-                    .collect()
-            },
-        )
     }
 
     /// The scan-ahead lane of one format run.
@@ -352,28 +424,14 @@ impl FileProcessor {
 
         let (output, id) = match self.format_content(path, emitter_config, comments, lane) {
             Ok(read) => read,
-            Err(error) => {
-                return FileResult::new(
-                    path.to_path_buf(),
-                    FileOutcome::Error {
-                        error,
-                        duration: start.elapsed(),
-                    },
-                );
-            }
+            Err(error) => return Self::failed(path, error, start.elapsed()),
         };
 
         if output.changed
             && let Err(error) =
                 Self::write_file_atomic(path, &output.formatted, target.hard_links, id)
         {
-            return FileResult::new(
-                path.to_path_buf(),
-                FileOutcome::Error {
-                    error,
-                    duration: start.elapsed(),
-                },
-            );
+            return Self::failed(path, error, start.elapsed());
         }
 
         let duration = start.elapsed();
@@ -387,10 +445,9 @@ impl FileProcessor {
     }
 
     /// Processes files in parallel using Rayon's `par_iter`
-    fn process_files_parallel<F, R>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
+    fn process_files_parallel<F>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
     where
-        F: Fn(&Path, &str) -> Result<R> + Sync,
-        R: Send,
+        F: Fn(&Path, &str) -> Result<()> + Sync,
     {
         self.install(
             || {
@@ -402,7 +459,7 @@ impl FileProcessor {
             |error| {
                 paths
                     .iter()
-                    .map(|path| Self::failed(path, error()))
+                    .map(|path| Self::failed(path, error(), Duration::ZERO))
                     .collect()
             },
         )
@@ -422,20 +479,14 @@ impl FileProcessor {
         }
     }
 
-    fn failed(path: &Path, error: Error) -> FileResult {
-        FileResult::new(
-            path.to_path_buf(),
-            FileOutcome::Error {
-                error,
-                duration: Duration::ZERO,
-            },
-        )
+    fn failed(path: &Path, error: Error, duration: Duration) -> FileResult {
+        FileResult::new(path.to_path_buf(), FileOutcome::Error { error, duration })
     }
 
     /// Processes files sequentially without parallel overhead.
-    fn process_files_sequential<F, R>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
+    fn process_files_sequential<F>(&self, paths: &[PathBuf], f: &F) -> Vec<FileResult>
     where
-        F: Fn(&Path, &str) -> Result<R>,
+        F: Fn(&Path, &str) -> Result<()>,
     {
         paths
             .iter()
@@ -444,9 +495,9 @@ impl FileProcessor {
     }
 
     /// Processes a single file and returns the result
-    fn process_single_file<F, R>(&self, path: &Path, f: &F) -> FileResult
+    fn process_single_file<F>(&self, path: &Path, f: &F) -> FileResult
     where
-        F: Fn(&Path, &str) -> Result<R>,
+        F: Fn(&Path, &str) -> Result<()>,
     {
         let start = Instant::now();
 
@@ -455,25 +506,17 @@ impl FileProcessor {
                 let duration = start.elapsed();
                 FileResult::new(path.to_path_buf(), FileOutcome::Success { duration })
             }
-            Err(error) => FileResult::new(
-                path.to_path_buf(),
-                FileOutcome::Error {
-                    error,
-                    duration: start.elapsed(),
-                },
-            ),
+            Err(error) => Self::failed(path, error, start.elapsed()),
         }
     }
 
     /// Process file content with given function
-    fn process_file_content<F, R>(&self, path: &Path, f: &F) -> Result<()>
+    fn process_file_content<F>(&self, path: &Path, f: &F) -> Result<()>
     where
-        F: Fn(&Path, &str) -> Result<R>,
+        F: Fn(&Path, &str) -> Result<()>,
     {
         let content = read_file(path, self.config.max_input_bytes())?;
-
-        f(path, &content)?;
-        Ok(())
+        f(path, &content)
     }
 
     /// Writes content to the file `expected` via the shared secure writer
@@ -496,7 +539,7 @@ impl FileProcessor {
     ///
     /// Sequential processing is preferred when:
     /// - Workers are set to 0
-    /// - Very few files (< 4)
+    /// - Very few files (< [`MIN_PARALLEL_ITEMS`])
     /// - Small total size (< 1MB) AND moderate file count (< 10)
     ///
     /// This avoids parallelism overhead for small workloads while enabling
@@ -515,7 +558,8 @@ impl FileProcessor {
 
     /// The part of [`Self::should_use_sequential`] decided without touching the file system.
     fn sequential_by_count(&self, file_count: usize) -> bool {
-        let sequential = self.config.workers() == Workers::Sequential || file_count < 4;
+        let sequential =
+            self.config.workers() == Workers::Sequential || file_count < MIN_PARALLEL_ITEMS;
         if sequential {
             debug_event!("running {file_count} files sequentially");
         }
@@ -524,7 +568,7 @@ impl FileProcessor {
 
     /// The part of [`Self::should_use_sequential`] decided by the size of the workload.
     fn sequential_by_size(file_count: usize, total_size: u64) -> bool {
-        let sequential = total_size < 1_000_000 && file_count < 10;
+        let sequential = total_size < SEQUENTIAL_MAX_BYTES && file_count < SEQUENTIAL_MAX_FILES;
         debug_event!(
             "{file_count} files, {total_size} bytes: running {}",
             if sequential {
@@ -537,65 +581,51 @@ impl FileProcessor {
     }
 }
 
-/// Identity of a file independent of the name it was given.
-#[cfg(unix)]
-type FileKey = (u64, u64);
-#[cfg(not(unix))]
-type FileKey = PathBuf;
+/// Total size below which a small batch runs without a pool.
+const SEQUENTIAL_MAX_BYTES: u64 = 1_000_000;
+
+/// File count from which a batch always runs in the pool, so its sizes are never probed.
+const SEQUENTIAL_MAX_FILES: usize = 10;
+
+/// How a batch of in-place targets runs.
+enum Schedule {
+    /// One after another on the calling thread, without a pool.
+    Sequential,
+    /// On the pool; the identities were taken by the serial size probe.
+    Probed(Vec<Option<FileId>>),
+    /// On the pool; the batch is too large to probe, so identities are taken inside the pool.
+    Unprobed,
+}
+
+/// The identity of every target, taken on the current rayon pool.
+fn pooled_ids(targets: &[InPlaceTarget]) -> Vec<Option<FileId>> {
+    targets
+        .par_iter()
+        .map(|target| FileId::of_path(&target.path).ok().flatten())
+        .collect()
+}
 
 /// What one stat of a target tells the scheduler.
 struct Probe {
     len: u64,
-    metadata: Option<fs::Metadata>,
+    id: Option<FileId>,
 }
 
 impl Probe {
-    /// Size of the file `path` resolves to and what the stat returned; a path that cannot be
-    /// stat-ed has size 0 and no metadata.
+    /// Size and identity of the file `path` resolves to; a path that cannot be stat-ed has
+    /// size 0 and no identity.
     fn of(path: &Path) -> Self {
-        let metadata = fs::metadata(path).ok();
-        Self {
-            len: metadata.as_ref().map_or(0, fs::Metadata::len),
-            metadata,
-        }
-    }
-}
-
-/// The same-file key of every target, in order. It is computed on the current rayon pool: on
-/// Windows it canonicalizes each path, which on a network share costs a round trip per file.
-fn file_keys(targets: &[InPlaceTarget], probes: &[Probe]) -> Vec<Option<FileKey>> {
-    targets
-        .par_iter()
-        .zip(probes.par_iter())
-        .map(|(target, probe)| {
-            probe
-                .metadata
-                .as_ref()
-                .and_then(|metadata| file_key(&target.path, metadata))
+        stat_identified(path).map_or(Self { len: 0, id: None }, |(metadata, id)| Self {
+            len: metadata.len(),
+            id,
         })
-        .collect()
-}
-
-/// `(dev, ino)` of the file `path` resolves to.
-#[cfg(unix)]
-#[allow(clippy::unnecessary_wraps)] // same signature as the platforms that can fail
-fn file_key(_path: &Path, metadata: &fs::Metadata) -> Option<FileKey> {
-    use std::os::unix::fs::MetadataExt;
-    Some((metadata.dev(), metadata.ino()))
-}
-
-/// The canonical path: an open source handle on Windows can block the rename fallback, and
-/// bindings pass the names as given. Hard links of different names are not grouped there; every
-/// write on Windows is a rename, so they do not race on one inode.
-#[cfg(not(unix))]
-fn file_key(path: &Path, _metadata: &fs::Metadata) -> Option<FileKey> {
-    fs::canonicalize(path).ok()
+    }
 }
 
 /// Indices grouped by key; an index without a key is alone in its group. Groups are in order
 /// of first appearance, indices ascending within one.
-fn same_file_groups(keys: impl IntoIterator<Item = Option<FileKey>>) -> Vec<Vec<usize>> {
-    let mut group_of: HashMap<FileKey, usize> = HashMap::new();
+fn same_file_groups(keys: impl IntoIterator<Item = Option<FileId>>) -> Vec<Vec<usize>> {
+    let mut group_of: HashMap<FileId, usize> = HashMap::new();
     let mut groups: Vec<Vec<usize>> = Vec::new();
     for (index, key) in keys.into_iter().enumerate() {
         match key.map(|key| group_of.entry(key)) {
@@ -695,8 +725,8 @@ mod tests {
         let bad = create_test_file(&dir, "bad.yaml", "x: 1\n---\nm:\n  <<: [1]\n");
         let good = create_test_file(&dir, "good.yaml", "x: 1\n---\nb: &b {y: 2}\nm:\n  <<: *b\n");
         let result = FileProcessor::new().parse_files(&[bad, good]);
-        assert_eq!(result.failed, 1);
-        assert_eq!(result.success, 1);
+        assert_eq!(result.failed(), 1);
+        assert_eq!(result.succeeded(), 1);
     }
 
     #[test]
@@ -718,7 +748,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&[path]);
 
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
         assert!(result.is_success());
     }
 
@@ -734,7 +764,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 3);
+        assert_eq!(result.total(), 3);
         assert!(result.is_success());
     }
 
@@ -743,7 +773,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&[]);
 
-        assert_eq!(result.total, 0);
+        assert_eq!(result.total(), 0);
         assert!(result.is_success());
     }
 
@@ -758,9 +788,9 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 2);
+        assert_eq!(result.total(), 2);
         assert!(!result.is_success());
-        assert!(result.failed >= 1);
+        assert!(result.failed() >= 1);
     }
 
     #[test]
@@ -797,7 +827,7 @@ mod tests {
         let result =
             processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
     }
 
     #[cfg(any(unix, windows))]
@@ -860,7 +890,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 9);
+        assert_eq!(result.total(), 9);
         assert!(result.is_success());
     }
 
@@ -881,7 +911,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 10);
+        assert_eq!(result.total(), 10);
         assert!(result.is_success());
     }
 
@@ -902,7 +932,7 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 50);
+        assert_eq!(result.total(), 50);
         assert!(result.is_success());
     }
 
@@ -919,9 +949,9 @@ mod tests {
             processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         // Should process successfully
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
         // Changed count depends on emitter behavior
-        assert!(result.changed <= result.total);
+        assert!(result.changed() <= result.total());
     }
 
     #[test]
@@ -937,7 +967,7 @@ mod tests {
             processor.format_in_place(&[in_place(&path)], &emitter_config, CommentPolicy::Strip);
 
         // File should be changed
-        assert_eq!(result.total, 1);
+        assert_eq!(result.total(), 1);
         // Note: Result depends on whether emitter normalizes spacing
     }
 
@@ -958,9 +988,9 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 5);
-        assert_eq!(result.failed, 5);
-        assert_eq!(result.success, 0);
+        assert_eq!(result.total(), 5);
+        assert_eq!(result.failed(), 5);
+        assert_eq!(result.succeeded(), 0);
         assert!(!result.is_success());
     }
 
@@ -975,7 +1005,7 @@ mod tests {
         let processor = FileProcessor::new();
 
         let result = processor.parse_files(&[small, large]);
-        assert_eq!(result.total, 2);
+        assert_eq!(result.total(), 2);
         assert!(result.is_success());
     }
 
@@ -992,9 +1022,9 @@ mod tests {
         let processor = FileProcessor::new();
         let result = processor.parse_files(&paths);
 
-        assert_eq!(result.total, 3);
-        assert_eq!(result.success, 2);
-        assert_eq!(result.failed, 1);
+        assert_eq!(result.total(), 3);
+        assert_eq!(result.succeeded(), 2);
+        assert_eq!(result.failed(), 1);
         assert!(!result.is_success());
     }
 
@@ -1049,8 +1079,11 @@ mod tests {
 
         let processor = FileProcessor::new();
 
-        // Custom operation that counts characters
-        let result = processor.process(&[path], |_path, content| Ok(content.len()));
+        // Custom operation that inspects the content
+        let result = processor.process(&[path], |_path, content| {
+            assert_eq!(content, "key: value\n");
+            Ok(())
+        });
 
         assert!(result.is_success());
     }
@@ -1089,6 +1122,40 @@ mod tests {
     }
 
     #[test]
+    fn test_check_format_counts_without_writing() {
+        let dir = TempDir::new().unwrap();
+        let messy = create_test_file(&dir, "messy.yaml", "a:   1\n");
+        let clean = create_test_file(&dir, "clean.yaml", "a: 1\n");
+        let commented = create_test_file(&dir, "commented.yaml", "a: 1 # note\n");
+        let missing = dir.path().join("missing.yaml");
+        let paths = [messy.clone(), clean.clone(), commented, missing.clone()];
+
+        let batch =
+            FileProcessor::new().check_format(&paths, &EmitterConfig::new(), CommentPolicy::Reject);
+
+        assert_eq!(batch.total(), 4);
+        assert_eq!(
+            (batch.changed(), batch.unchanged(), batch.failed()),
+            (1, 1, 2)
+        );
+        assert!(matches!(
+            batch.errors()[0].1,
+            Error::CommentsWouldBeStripped
+        ));
+        assert_eq!(batch.errors()[1].0, missing);
+        assert_eq!(fs::read_to_string(&messy).unwrap(), "a:   1\n");
+        assert_eq!(fs::read_to_string(&clean).unwrap(), "a: 1\n");
+    }
+
+    #[test]
+    fn test_check_format_of_nothing_is_an_empty_success() {
+        let batch =
+            FileProcessor::new().check_format(&[], &EmitterConfig::new(), CommentPolicy::Reject);
+        assert_eq!(batch.total(), 0);
+        assert!(batch.is_success());
+    }
+
+    #[test]
     fn test_format_files_comment_policy() {
         let dir = TempDir::new().unwrap();
         let path = create_test_file(&dir, "c.yaml", "a: 1 # note\n");
@@ -1116,8 +1183,11 @@ mod tests {
             CommentPolicy::Reject,
         );
 
-        assert_eq!(result.failed, 1);
-        assert!(matches!(result.errors[0].1, Error::CommentsWouldBeStripped));
+        assert_eq!(result.failed(), 1);
+        assert!(matches!(
+            result.errors()[0].1,
+            Error::CommentsWouldBeStripped
+        ));
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
 
@@ -1132,7 +1202,7 @@ mod tests {
             CommentPolicy::Reject,
         );
 
-        assert_eq!((result.success, result.changed), (1, 0));
+        assert_eq!((result.succeeded(), result.changed()), (1, 0));
     }
 
     #[test]
@@ -1178,8 +1248,8 @@ mod tests {
         let result = processor.parse_files(&[path]);
 
         // Should fail with InputTooLarge error
-        assert_eq!(result.total, 1);
-        assert_eq!(result.failed, 1);
+        assert_eq!(result.total(), 1);
+        assert_eq!(result.failed(), 1);
         assert!(!result.is_success());
     }
 
@@ -1265,15 +1335,20 @@ mod tests {
 
         let strict = FileProcessor::with_config(limited(64));
         let batch = strict.format_in_place(&[in_place(&path)], &emitter, CommentPolicy::Reject);
-        assert_eq!(batch.failed, 1);
-        assert!(batch.errors.iter().all(|(_, e)| is_scan_ahead_rejection(e)));
+        assert_eq!(batch.failed(), 1);
+        assert!(
+            batch
+                .errors()
+                .iter()
+                .all(|(_, e)| is_scan_ahead_rejection(e))
+        );
 
         let batch = FileProcessor::new().format_in_place(
             &[in_place(&path)],
             &emitter,
             CommentPolicy::Reject,
         );
-        assert_eq!(batch.failed, 0);
+        assert_eq!(batch.failed(), 0);
     }
 
     #[test]
@@ -1290,12 +1365,7 @@ mod tests {
     }
 
     fn groups_of(paths: &[PathBuf]) -> Vec<Vec<usize>> {
-        let probes: Vec<Probe> = paths.iter().map(|path| Probe::of(path)).collect();
-        let targets: Vec<InPlaceTarget> = paths
-            .iter()
-            .map(|path| InPlaceTarget::new(path.clone(), HardLinkPolicy::WriteInPlace))
-            .collect();
-        same_file_groups(file_keys(&targets, &probes))
+        same_file_groups(paths.iter().map(|path| Probe::of(path).id))
     }
 
     #[test]
@@ -1358,20 +1428,13 @@ mod tests {
         );
     }
 
-    #[cfg(unix)]
-    fn key(n: u8) -> FileKey {
-        (0, n.into())
-    }
-
-    #[cfg(not(unix))]
-    fn key(n: u8) -> FileKey {
-        PathBuf::from(n.to_string())
-    }
-
     #[test]
     fn test_same_file_groups_collect_equal_keys_in_input_order() {
+        let dir = TempDir::new().unwrap();
+        let a = id_of(&create_test_file(&dir, "a.yaml", "a: 1\n"));
+        let b = id_of(&create_test_file(&dir, "b.yaml", "b: 1\n"));
         assert_eq!(
-            same_file_groups([Some(key(1)), Some(key(2)), Some(key(1)), None, Some(key(1))]),
+            same_file_groups([a, b, a, None, a]),
             vec![vec![0, 2, 4], vec![1], vec![3]]
         );
     }
@@ -1411,6 +1474,97 @@ mod tests {
 
         assert_eq!(results, vec![0, 10, 20, 30]);
         assert_eq!(peak.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_format_in_place_groups_hard_links_in_a_large_batch() {
+        let dir = TempDir::new().unwrap();
+        let mut targets: Vec<InPlaceTarget> = (0..10)
+            .map(|n| {
+                let path = create_test_file(&dir, &format!("f{n}.yaml"), "a:   1\n");
+                InPlaceTarget::new(path, HardLinkPolicy::WriteInPlace)
+            })
+            .collect();
+        let first = targets[0].path.clone();
+        for name in ["link1.yaml", "link2.yaml"] {
+            let link = dir.path().join(name);
+            fs::hard_link(&first, &link).unwrap();
+            targets.push(InPlaceTarget::new(link, HardLinkPolicy::WriteInPlace));
+        }
+        let ids = pooled_ids(&targets);
+        assert!(ids[0].is_some());
+        assert_eq!(ids[0], ids[10]);
+        assert_eq!(ids[0], ids[11]);
+        assert_eq!(same_file_groups(ids)[0], vec![0, 10, 11]);
+        let batch = FileProcessor::new().format_in_place(
+            &targets,
+            &EmitterConfig::default(),
+            CommentPolicy::Reject,
+        );
+        assert_eq!(batch.failed(), 0);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "a: 1\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_probed_batch_groups_hard_links_over_the_size_cut_off() {
+        let dir = TempDir::new().unwrap();
+        let big = create_test_file(
+            &dir,
+            "big.yaml",
+            &format!(
+                "a: {}\n",
+                "x".repeat(usize::try_from(SEQUENTIAL_MAX_BYTES).unwrap())
+            ),
+        );
+        let link = dir.path().join("link.yaml");
+        fs::hard_link(&big, &link).unwrap();
+        let mut targets = vec![
+            InPlaceTarget::new(big, HardLinkPolicy::WriteInPlace),
+            InPlaceTarget::new(link, HardLinkPolicy::WriteInPlace),
+        ];
+        for n in 0..3 {
+            let path = create_test_file(&dir, &format!("f{n}.yaml"), "a: 1\n");
+            targets.push(InPlaceTarget::new(path, HardLinkPolicy::WriteInPlace));
+        }
+
+        let Schedule::Probed(ids) = FileProcessor::new().schedule(&targets) else {
+            panic!("expected a probed pool schedule");
+        };
+
+        assert!(ids[0].is_some());
+        assert_eq!(ids[0], ids[1]);
+        assert_eq!(
+            same_file_groups(ids),
+            vec![vec![0, 1], vec![2], vec![3], vec![4]]
+        );
+    }
+
+    #[test]
+    fn test_schedule_bands() {
+        let dir = TempDir::new().unwrap();
+        let targets = |count: usize| -> Vec<InPlaceTarget> {
+            (0..count)
+                .map(|n| {
+                    let path = create_test_file(&dir, &format!("s{count}-{n}.yaml"), "a: 1\n");
+                    InPlaceTarget::new(path, HardLinkPolicy::WriteInPlace)
+                })
+                .collect()
+        };
+        let processor = FileProcessor::new();
+        assert!(matches!(
+            processor.schedule(&targets(3)),
+            Schedule::Sequential
+        ));
+        assert!(matches!(
+            processor.schedule(&targets(9)),
+            Schedule::Sequential
+        ));
+        assert!(matches!(
+            processor.schedule(&targets(10)),
+            Schedule::Unprobed
+        ));
     }
 
     #[test]

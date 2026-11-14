@@ -48,7 +48,7 @@
 //! let result = processor.parse_files(&paths);
 //!
 //! println!("Processed {} files, {} successful, {} failed",
-//!          result.total, result.success, result.failed);
+//!          result.total(), result.succeeded(), result.failed());
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
@@ -87,10 +87,10 @@ mod workers;
 
 // Core public API
 pub use atomic::{
-    AtomicFile, FileId, HardLinkPolicy, HardLinkRefused, TargetChanged, write_atomic,
-    write_atomic_bound,
+    AtomicFile, AtomicWriteError, FileId, HardLinkPolicy, HardLinkRefused, TargetChanged,
+    write_atomic, write_atomic_bound,
 };
-pub use config::Config;
+pub use config::{Config, MIN_PARALLEL_ITEMS};
 pub use error::{Error, ErrorKind, Result};
 pub use fast_yaml_core::Value;
 pub use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes};
@@ -189,7 +189,7 @@ pub fn parse_parallel_with_config(input: &str, config: &Config) -> Result<Vec<Va
 /// let paths = vec![PathBuf::from("file1.yaml"), PathBuf::from("file2.yaml")];
 /// let result = process_files(&paths);
 ///
-/// println!("Processed {} files", result.total);
+/// println!("Processed {} files", result.total());
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 pub fn process_files(paths: &[std::path::PathBuf]) -> BatchResult {
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn test_process_files_empty() {
         let result = process_files(&[]);
-        assert_eq!(result.total, 0);
+        assert_eq!(result.total(), 0);
         assert!(result.is_success());
     }
 }

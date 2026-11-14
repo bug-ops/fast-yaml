@@ -43,11 +43,6 @@ const cases: OptionCase[] = [
     valid: 1024,
     outOfRange: [0, 1024 ** 3 + 1],
   },
-  {
-    name: 'sequentialThreshold',
-    call: (v) => processFiles([], { sequentialThreshold: v }),
-    valid: 1024,
-  },
   { name: 'indent (batch)', call: (v) => formatFiles([], { indent: v }), valid: 4 },
   {
     name: 'threadCount',
@@ -107,6 +102,10 @@ describe('numeric option validation', () => {
     expect(() => safeDumpAll([{ a: 1 }], opts)).toThrow(new RegExp(`${name} must be between`));
   });
 
+  it('rejects the removed sequentialThreshold batch option', () => {
+    expect(() => processFiles([], { sequentialThreshold: 1024 })).toThrow(/sequentialThreshold was removed/);
+  });
+
   it('accepts boundary values', () => {
     expect(() => lint(YAML, { maxLineLength: 1 })).not.toThrow();
     expect(() => lint(YAML, { maxLineLength: 1000 })).not.toThrow();
@@ -125,7 +124,6 @@ describe('numeric option validation', () => {
 
   it('accepts exactly 2**32 - 1 in u32 options', () => {
     const max = 2 ** 32 - 1;
-    expect(() => processFiles([], { sequentialThreshold: max })).not.toThrow();
     expect(() => formatFiles([], { indent: 9 })).not.toThrow();
     expect(() => parseParallel(MULTI, { minChunkSize: max })).not.toThrow();
   });

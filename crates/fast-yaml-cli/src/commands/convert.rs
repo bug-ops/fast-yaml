@@ -291,6 +291,35 @@ mod tests {
         );
     }
 
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn test_in_place_convert_refuses_a_file_swapped_after_the_read() {
+        use crate::io::WriteTarget;
+        use fast_yaml_core::limits::MaxInputBytes;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("c.yaml");
+        let other = dir.path().join("repl.yaml");
+        std::fs::write(&path, "a:   1\n").unwrap();
+        let input = InputSource::from_file(&path, MaxInputBytes::DEFAULT).unwrap();
+        std::fs::write(&other, "REPLACEMENT\n").unwrap();
+        std::fs::rename(&other, &path).unwrap();
+        let output = OutputWriter::for_write(WriteTarget::InPlace, &input.origin).unwrap();
+        let cmd = ConvertCommand::new(
+            ConvertFormat::Json,
+            JsonOutput::Pretty,
+            ParseLimits::default(),
+        );
+
+        let err = cmd.execute(&input, &output).unwrap_err();
+
+        assert!(
+            format!("{err:#}").contains("is not the file that was read"),
+            "{err:#}"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "REPLACEMENT\n");
+    }
+
     #[test]
     fn test_yaml_to_json() {
         let input = InputSource {

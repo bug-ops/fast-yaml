@@ -96,12 +96,6 @@ impl InputSource {
         &self.content
     }
 
-    /// Identity of the file the content was read from, so a write back can refuse a file that
-    /// was swapped meanwhile.
-    pub const fn file_id(&self) -> Option<FileId> {
-        self.origin.file_id()
-    }
-
     /// Get file path if input is from file
     pub fn file_path(&self) -> Option<&Path> {
         self.origin.path()

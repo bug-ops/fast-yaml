@@ -736,7 +736,7 @@ class batch:  # noqa: N801
             self,
             workers: int | None = None,
             max_input_bytes: int | None = None,
-            sequential_threshold: int | None = None,
+            *,
             indent: int | None = None,
             max_depth: int | None = None,
             max_alias_bytes: int | None = None,

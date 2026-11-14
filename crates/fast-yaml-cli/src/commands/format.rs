@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -7,7 +6,7 @@ use fast_yaml_parallel::{CommentPolicy, Error as ParallelError};
 
 use crate::config::{CommonConfig, FormatterConfig};
 use crate::error::ExitCode;
-use crate::io::{InputSource, OutputWriter, WriteTarget};
+use crate::io::{InputOrigin, InputSource, OutputWriter, WriteTarget};
 use crate::reporter::{BatchStats, ReportEvent, Reporter};
 
 /// Hint appended to [`ParallelError::CommentsWouldBeStripped`] messages.
@@ -76,13 +75,11 @@ impl WriteMode {
     ///
     /// # Errors
     ///
-    /// Returns an error if the intent writes in place and there is no input file.
-    pub fn new(intent: EditIntent, input_file: Option<&Path>) -> Result<Self> {
+    /// Returns an error if the intent writes in place and `origin` is not a file.
+    pub fn new(intent: EditIntent, origin: &InputOrigin) -> Result<Self> {
         match intent {
             EditIntent::Preview => Ok(Self::DryRun),
-            EditIntent::Write(target) => {
-                Ok(Self::Emit(OutputWriter::for_write(target, input_file)?))
-            }
+            EditIntent::Write(target) => Ok(Self::Emit(OutputWriter::for_write(target, origin)?)),
         }
     }
 }
@@ -118,11 +115,7 @@ impl FormatCommand {
                 let rewrites_unchanged_input = status == FormatStatus::Unchanged
                     && input.file_path().is_some_and(|path| output.targets(path));
                 if !rewrites_unchanged_input {
-                    let read_as = input
-                        .file_path()
-                        .filter(|path| output.targets(path))
-                        .and_then(|_| input.file_id());
-                    output.write_replacing(&formatted, read_as)?;
+                    output.write(&formatted)?;
                 }
                 Ok(ExitCode::Success)
             }
