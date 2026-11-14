@@ -269,3 +269,31 @@ mod unix {
         assert_eq!(fs::metadata(&first).unwrap().nlink(), 2);
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_deny_delete_acl_leaves_no_undeletable_temp_file() {
+    use std::process::Command;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("f.yaml");
+    fs::write(&path, "a:   1\n").unwrap();
+    let chmod = |args: &[&str]| {
+        assert!(
+            Command::new("chmod")
+                .args(args)
+                .arg(&path)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    chmod(&["+a", "everyone deny delete"]);
+
+    let result = write_atomic(&path, b"a: 1\n");
+
+    chmod(&["-N"]);
+    assert!(result.is_err());
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "a:   1\n");
+}

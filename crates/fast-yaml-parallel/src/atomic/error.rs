@@ -67,6 +67,19 @@ pub enum AtomicWriteError {
         source: io::Error,
     },
 
+    /// The commit failed and the temporary file could not be removed, so it was left behind.
+    ///
+    /// The cause is the failure of the commit itself; a caller that tells failures apart looks
+    /// at it first.
+    #[error("{cause}; temporary file {} was left behind", DisplayPath::new(.temp))]
+    TempFileLeft {
+        /// The temporary file that is still in the directory.
+        temp: PathBuf,
+        /// Why the commit failed.
+        #[source]
+        cause: io::Error,
+    },
+
     /// The `Zone.Identifier` stream of the target is too large to copy.
     #[error("Zone.Identifier of {} is too large to copy", DisplayPath::new(.path))]
     ZoneIdentifierTooLarge {
@@ -81,7 +94,7 @@ impl AtomicWriteError {
             Self::TargetChanged(_) | Self::ZoneIdentifierTooLarge { .. } => io::ErrorKind::Other,
             Self::HardLinkRefused(_) | Self::NotRegular { .. } => io::ErrorKind::InvalidInput,
             Self::DanglingSymlink { .. } => io::ErrorKind::NotFound,
-            Self::TempFile { source, .. } => source.kind(),
+            Self::TempFile { source: cause, .. } | Self::TempFileLeft { cause, .. } => cause.kind(),
         }
     }
 }

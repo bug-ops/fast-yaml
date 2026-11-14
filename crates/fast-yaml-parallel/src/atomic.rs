@@ -475,7 +475,8 @@ impl AtomicFile {
     /// # Errors
     ///
     /// Returns an I/O error if the owner, permissions or data cannot be set, or the rename
-    /// fails. The temporary file is removed on failure.
+    /// fails. The temporary file is removed on failure; when it cannot be removed the error is
+    /// [`AtomicWriteError::TempFileLeft`], which names it.
     pub fn commit(self) -> io::Result<()> {
         let Self {
             temp,
@@ -483,40 +484,76 @@ impl AtomicFile {
             existing,
             expected,
         } = self;
-        let read_only = existing
-            .as_ref()
-            .is_some_and(|old| old.permissions.readonly());
-        if let Some(old) = &existing {
-            // Before chmod: changing the owner can clear mode bits
-            #[cfg(unix)]
-            let permissions = {
-                let permissions = restore_owner(temp.as_file(), old)?;
-                copy_xattrs(old.source.as_ref(), temp.as_file())?;
-                #[cfg(target_os = "macos")]
-                copy_acl(old, &target, temp.path())?;
-                permissions
-            };
-            #[cfg(not(unix))]
-            let permissions = old.permissions.clone();
-            #[cfg(windows)]
-            copy_zone_identifier(old, &target, temp.path())?;
-            #[cfg(windows)]
-            if let Some(source) = old.source.as_ref() {
-                win_acl::copy_dacl(source, temp.as_file())?;
+        let (file, temp_path) = temp.into_parts();
+        match install(file, &temp_path, &target, existing, expected) {
+            Ok(()) => {
+                // The rename moved the file: dropping the path would unlink the new target's name
+                let _ = temp_path.keep();
+                sync_dir(parent_dir(&target));
+                Ok(())
             }
-            temp.as_file().set_permissions(permissions)?;
+            Err(cause) => Err(discard(temp_path, cause)),
         }
-        // Close the source handle first so the rename never meets another open handle on the target
+    }
+}
+
+/// Gives the written temporary file what the old target had and renames it over `target`.
+fn install(
+    file: fs::File,
+    temp: &Path,
+    target: &Path,
+    existing: Option<Existing>,
+    expected: Option<FileId>,
+) -> io::Result<()> {
+    let read_only = existing
+        .as_ref()
+        .is_some_and(|old| old.permissions.readonly());
+    if let Some(old) = &existing {
+        // Before chmod: changing the owner can clear mode bits
+        #[cfg(unix)]
+        let permissions = {
+            let permissions = restore_owner(&file, old)?;
+            copy_xattrs(old.source.as_ref(), &file)?;
+            #[cfg(target_os = "macos")]
+            copy_acl(old, target, temp)?;
+            permissions
+        };
+        #[cfg(not(unix))]
+        let permissions = old.permissions.clone();
         #[cfg(windows)]
-        drop(existing);
-        temp.as_file().sync_all()?;
-        // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
-        let temp_path = temp.into_temp_path();
-        ensure_still_expected(&target, expected)?;
-        replace(&temp_path, &target, read_only)?;
-        let _ = temp_path.keep();
-        sync_dir(parent_dir(&target));
-        Ok(())
+        copy_zone_identifier(old, target, temp)?;
+        #[cfg(windows)]
+        if let Some(source) = old.source.as_ref() {
+            win_acl::copy_dacl(source, &file)?;
+        }
+        file.set_permissions(permissions)?;
+    }
+    // Close the source handle first so the rename never meets another open handle on the target
+    drop(existing);
+    file.sync_all()?;
+    // std's rename replaces files that are open elsewhere on Windows; `persist` does not.
+    drop(file);
+    ensure_still_expected(target, expected)?;
+    replace(temp, target, read_only)
+}
+
+/// Removes the temporary file after `cause` made the commit fail and returns the error to report.
+///
+/// On macOS the ACL copied from the target is cleared first: a `deny delete` entry would
+/// otherwise make the file undeletable. The file is closed even when that fails. When it cannot
+/// be removed the error names it, since the user has to.
+fn discard(temp: tempfile::TempPath, cause: io::Error) -> io::Error {
+    #[cfg(target_os = "macos")]
+    if let Err(e) = exacl::setfacl(&[&temp], &[], None) {
+        debug_event!(
+            "could not clear the ACL of {}: {e}",
+            DisplayPath::new(&temp)
+        );
+    }
+    let path = temp.to_path_buf();
+    match temp.close() {
+        Ok(()) => cause,
+        Err(_) => AtomicWriteError::TempFileLeft { temp: path, cause }.into(),
     }
 }
 
@@ -1498,6 +1535,50 @@ mod tests {
             assert_ne!(after.ino(), before.ino());
             assert_eq!((after.uid(), after.gid()), (before.uid(), before.gid()));
             assert_eq!(mode(&path), 0o640);
+        }
+
+        #[test]
+        fn discard_removes_the_temp_file_and_returns_the_cause() {
+            let dir = tempfile::tempdir().unwrap();
+            let temp = tempfile::NamedTempFile::new_in(dir.path())
+                .unwrap()
+                .into_temp_path();
+
+            let err = discard(temp, io::Error::other("cause"));
+
+            assert_eq!(err.to_string(), "cause");
+            assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
+        }
+
+        #[test]
+        fn discard_names_a_temp_file_it_cannot_remove() {
+            use std::os::unix::fs::PermissionsExt;
+
+            let dir = tempfile::tempdir().unwrap();
+            let temp = tempfile::NamedTempFile::new_in(dir.path())
+                .unwrap()
+                .into_temp_path();
+            let path = temp.to_path_buf();
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o555)).unwrap();
+            // Root ignores directory modes, which makes the scenario meaningless
+            if fs::File::create(dir.path().join("probe")).is_ok() {
+                fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+                return;
+            }
+
+            let err = discard(temp, io::Error::other("cause"));
+
+            fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+            let Some(AtomicWriteError::TempFileLeft { temp, cause }) = err
+                .get_ref()
+                .and_then(|e| e.downcast_ref::<AtomicWriteError>())
+            else {
+                panic!("not TempFileLeft: {err}");
+            };
+            assert_eq!(temp, &path);
+            assert_eq!(cause.to_string(), "cause");
+            assert!(path.exists());
+            assert!(err.to_string().contains("was left behind"));
         }
 
         fn existing_of(path: &Path) -> Existing {
