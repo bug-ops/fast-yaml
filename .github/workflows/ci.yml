@@ -101,7 +101,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
@@ -158,7 +158,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
@@ -193,7 +193,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -224,7 +224,7 @@ jobs:
           toolchain: stable
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -270,7 +270,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         with:
           sha256: ${{ env.MISE_SHA256_LINUX_X64 }}
           cache: false
@@ -314,7 +314,7 @@ jobs:
           components: clippy
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -365,7 +365,7 @@ jobs:
           components: clippy
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -403,7 +403,7 @@ jobs:
           toolchain: stable
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -452,7 +452,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -482,7 +482,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -541,7 +541,7 @@ jobs:
           toolchain: stable
 
       - name: Set up mise (Python ${{ matrix.python-version }})
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -626,7 +626,7 @@ jobs:
           MISE_ENV_NAME: ${{ matrix.mise-env }}
 
       - name: Set up mise (Node ${{ matrix.node-version }})
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -671,7 +671,7 @@ jobs:
           toolchain: stable
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -729,7 +729,7 @@ jobs:
           toolchain: stable
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
@@ -780,7 +780,7 @@ jobs:
           toolchain: stable
 
       - name: Set up mise
-        uses: jdx/mise-action@6612f0ef07ed2a736cd1e00a94a065522dd41195 # v5.2.5
+        uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
         env:
           MISE_SAFE: "1"
         with:
