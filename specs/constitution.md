@@ -13,7 +13,7 @@ status: reverse-specified
 # fast-yaml: constitution and overview
 
 > [!abstract]
-> fast-yaml is a YAML 1.2.2 toolkit with a Rust core: one parser, one resolver, one emitter and one linter, exposed through the `fy` CLI, Rust crates, a Python package and a Node.js package. This document states what the product is for, the principles every feature obeys, the architecture on one page, and the map of feature specs. Behavior described in the specs is what the code at v0.7.0 (branch release/v0.7.0, commit dbe1f2b, PRs through #637) does or is intended to do; the specs were first reverse-specified from v0.6.6 (e5e6cfb) and are kept in sync with every later PR; where the two differ, the spec says so in its "Open questions / Known deviations" section.
+> fast-yaml is a YAML 1.2.2 toolkit with a Rust core: one parser, one resolver, one emitter and one linter, exposed through the `fy` CLI, Rust crates, a Python package and a Node.js package. This document states what the product is for, the principles every feature obeys, the architecture on one page, and the map of feature specs. Behavior described in the specs is what the code at v0.8.0 (branch release/v0.8.0, PRs through #730) does or is intended to do; the specs were first reverse-specified from v0.6.6 (e5e6cfb) and are kept in sync with every later PR; where the two differ, the spec says so in its "Open questions / Known deviations" section.
 
 ## 1. Purpose
 
@@ -29,15 +29,15 @@ Value proposition: correct YAML 1.2.2 semantics, bounded resource use on hostile
 
 ## 2. Principles (non-negotiable)
 
-1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Workers`/`WorkerCount`, ...), positions are `OneBased` and documents are `DocumentIndex`, lint config uses typed enums, rules return typed `Finding`s that the linter turns into diagnostics, diagnostics carry typed spans. No stringly-typed options inside the core. Remaining 1-based `usize` APIs are tracked in #666.
+1. **Type safety first.** Illegal states are made unrepresentable: limits are validated newtypes (`MaxInputBytes`, `MaxDepth`, `MaxScanAhead`, `Indent`, `Workers`/`WorkerCount`, ...), positions are `OneBased` and documents are `DocumentIndex`, lint config uses typed enums, rules return typed `Finding`s that the linter turns into diagnostics, diagnostics carry typed spans. No stringly-typed options inside the core. `OneBased`, `SourcePosition` and `DocumentIndex` live in `fast_yaml_core::position`. The linter's `Location`, `LintDocument::first_line` and `SourceContext` lines use `OneBased` too (#666, #667).
 2. **One implementation, many surfaces.** Parsing, scalar resolution, merge keys, limits and linting live in the Rust crates. Bindings and the CLI are thin adapters; they must not re-implement semantics.
 3. **Surface parity.** The same input gives the same result on every surface unless a spec lists the difference as a deliberate deviation. Parity gaps are bugs, not features.
 4. **Bounded by default.** Every untrusted input passes the same size, NUL/BOM, depth, scan-ahead, document-count and expansion checks, whichever surface or rule reads it; config files are bounded too. Limits have documented defaults and validated ranges. See [[009-limits-security/spec]].
 5. **No silent data loss.** Operations that can drop information (comment stripping, key reordering, precision loss) must be explicit or refused, never implicit.
 6. **Deterministic output.** Batch and parallel runs produce the same ordered output as a sequential run.
 7. **Atomic writes.** File rewrites and `-o` outputs go through a temp file plus rename (`write_atomic`, `AtomicFile`); a failed run leaves originals intact. The one exception is a hard-linked target owned by the caller, written in place (see [[005-batch-parallel/spec]] FR-008).
-8. **Safe Rust.** `unsafe_code = deny` workspace-wide; `fast-yaml-core` and `fast-yaml-linter` set `forbid(unsafe_code)`; `fast-yaml-parallel` forbids unsafe except one Windows-only module (`atomic::win_acl`, DACL copy) that documents every block with a SAFETY comment; other local `allow` only at FFI boundaries, each justified and pinned by `scripts/unsafe-allow.allowlist` (checked in CI). There is no memory mapping.
-9. **Quality gate.** `cargo +nightly fmt --check`, `clippy -D warnings` (pedantic and nursery), `cargo nextest`, rustdoc without broken links. Every public item is documented.
+8. **Safe Rust.** `unsafe_code = deny` workspace-wide; `fast-yaml-core` and `fast-yaml-linter` set `forbid(unsafe_code)`; `fast-yaml-parallel` forbids unsafe except one Windows-only module (`atomic::win_acl`, DACL copy) that documents every block with a SAFETY comment; other local `allow` only at FFI boundaries, each justified and pinned by `scripts/unsafe-allow.allowlist` (checked in CI; the gate scans every `unsafe_code` occurrence against an exact allowlist, and `.github/CODEOWNERS` routes the gate, mise config and workflows to the code owner, enforced only once the `master` ruleset requires Code Owners review). `allow_attributes_without_reason` is enforced, so every `allow`/`expect` carries a `reason`. There is no memory mapping.
+9. **Quality gate.** `cargo +nightly fmt --check`, `clippy -D warnings` (pedantic and nursery), `cargo nextest`, rustdoc without broken links; clippy also runs on Windows (non-FFI crates) and on `wasm32-wasip1`, and the MSRV (1.99.0) is type-checked. Every public item is documented.
 10. **Pre-1.0 policy.** Breaking changes are allowed and recorded in `CHANGELOG.md`; no deprecation shims.
 
 ## 3. Architecture on one page
@@ -72,7 +72,7 @@ graph TD
 
 Data flow of every command: bytes -> input checks (size, NUL, encoding/BOM) -> `NormalizedInput` -> bounded scanner -> events -> resolved `Value` (or lint context) -> emitter / report.
 
-Toolchain: Rust edition 2024, MSRV 1.99, workspace version 0.7.0, license MIT OR Apache-2.0. FFI crates build separately (`maturin`, `napi`).
+Toolchain: Rust edition 2024, MSRV 1.99, workspace version 0.8.0, license MIT OR Apache-2.0. FFI crates build separately (`maturin`, `napi`).
 
 ## 4. Spec map
 
@@ -94,7 +94,7 @@ Reading order for a newcomer: 001, 009, 002, 003, 004, 005, 006, then the bindin
 ## 5. Conventions used in the specs
 
 - Requirement IDs `FR-NNN` are local to a spec; cross-references read "spec 003 FR-012".
-- MUST means verified in code at v0.7.0 or required by the stated principle; SHOULD means desired but not fully met or only partly tested.
+- MUST means verified in code at v0.8.0 or required by the stated principle; SHOULD means desired but not fully met or only partly tested.
 - Examples labeled "verified" were produced by running `fy` built from main; binding examples marked "from tests" were taken from the binding test suites.
 - `[NEEDS CLARIFICATION]` marks a product decision the code cannot answer; each lives in the spec it affects, with a **Proposed:** resolution where one exists; a decision that spans several specs is repeated in each affected spec.
 - Plans describe the existing implementation, not future work. No `tasks.md` is produced: unresolved items are product decisions, not yet implementation tasks. Once a decision is made, run `/sdd tasks` on the affected spec.

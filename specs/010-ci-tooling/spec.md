@@ -19,7 +19,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: `.config/mise/config.toml`, `.config/mise/config.<env>.toml`, the matching lockfiles and the jobs of `.github/workflows/ci.yml` that install tools and run checks. Not product behavior: this spec covers how the repository's checks are installed and run.
-> **Baseline**: PR #669 (issue #665), branch `ci-pilot-mise-as-unified-toolc`. Reverse-specified from the implementation as implemented in that PR (HEAD d8c212d plus uncommitted doc and workflow fixes), which is not yet merged. Windows and macOS legs, `MISE_SAFE` installs and the version assertions are verified by main push run 41342007315 (see section 8); the remaining unverified points are listed in section 8. The adoption decision is tracked in issue #668.
+> **Baseline**: PR #669 (issue #665) is merged; the spec is kept in sync with `main` through v0.8.0 (PRs #674, #684, #686, #693, #698, #715, #727). Windows and macOS legs, `MISE_SAFE` installs and the version assertions are verified by main push run 41342007315 (see section 8); the remaining unverified points are listed in section 8. The adoption decision (adopt partially, issue #675) is recorded in section 8 item 9.
 
 > [!note] Verification marks
 > Constitution section 5 reads MUST as verified in code. Requirements that have not run in a real CI job carry `[unverified in real CI]`; everything else is verified by inspection of the files or a local run (`mise install --locked --dry-run`, actionlint, zizmor). Verified-in-CI claims cite run 41342007315 (push to main, all Windows, macOS and Linux legs green).
@@ -131,6 +131,7 @@ THEN  the Python 3.10 pinned in the lock runs the binding tests
 | FR-038 | THE `.github/dependabot.yml` entries for `cargo`, `pip` (`/python`) and `npm` (`/nodejs`, which covers the pnpm lockfile) SHALL set `cooldown: default-days: 7`, so a freshly published release is not proposed for a week. Dependabot opens the PR only after the cooldown, so `dependabot-automerge.yml` (which acts on already opened PRs) cannot bypass it; security updates are not delayed by cooldown (#693). | must |
 | FR-032 | ALL actions SHALL be pinned to a full commit SHA with a version comment. | must |
 | FR-033 | THE lockfiles SHALL be reviewed like code: a lock diff that changes a version or checksum not mentioned in the PR is a review blocker. | should |
+| FR-039 | THE workspace lint table (`[workspace.lints.clippy]` in `Cargo.toml`) SHALL set `allow_attributes_without_reason = "warn"`, which `lint:clippy` and `lint:clippy-windows` (run with `-D warnings`) turn into a failure, so every `#[allow]` and `#[expect]` carries a `reason`; `#[expect(..., reason)]` is used wherever the lint fires reliably, and `#[allow]` stays only on macro-expanded items and `unsafe_code` items, which the `lint:unsafe-allow` allowlist pins (#698, #715, #727). | must |
 
 ## 4. Key entities
 

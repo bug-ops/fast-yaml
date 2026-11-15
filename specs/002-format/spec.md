@@ -18,7 +18,7 @@ related:
 # Feature: Format
 
 > [!info] Metadata
-> **Product version**: fast-yaml v0.7.0 at HEAD dbe1f2b (release/v0.7.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637. **Surfaces**: `fy format`, `fast_yaml_core::Emitter::format*`, `streaming::format_streaming*`, bindings' format APIs.
+> **Product version**: fast-yaml v0.8.0 (release/v0.8.0), reverse-specified from v0.6.6 (e5e6cfb) at v0.7.0 and kept in sync through #713. **Surfaces**: `fy format`, `fast_yaml_core::Emitter::format*`, `streaming::format_streaming*`, bindings' format APIs.
 > **Method**: requirements reverse-specified from code and confirmed by real `fy` runs.
 
 ## 1. Purpose and value
@@ -165,6 +165,8 @@ THEN  stderr shows "YAML resource limit exceeded at line 4, column 9: nesting de
 | FR-020 | WHEN an alias references an unknown anchor THE SYSTEM SHALL fail instead of emitting a dangling alias. | MUST |
 | FR-021 | WHEN a file is rewritten in place THE SYSTEM SHALL write it atomically (temporary file, `fsync`, owner, mode and (on Unix) extended attributes kept, then rename via `write_atomic`), so a failure never leaves a half-written file; a hard-linked file the caller owns is written in place so all links see the result ([[005-batch-parallel/spec]] FR-008). | MUST |
 | FR-022 | WHEN the input is empty THE SYSTEM SHALL succeed with empty output. | SHOULD |
+| FR-023 | WHEN a BOM appears inside a document outside a quoted scalar THE SYSTEM SHALL fail with `a byte order mark must not appear inside a document` and a position (`saphyr-parser` 0.3.3, #713); a BOM inside a quoted scalar is written escaped as `\uFEFF`. | MUST |
+| FR-024 | WHEN a block scalar header is followed by end of input THE SYSTEM SHALL treat its value as the empty string and write it as `|-` (`a: |` becomes `a: |-`; `saphyr-parser` 0.3.3). | SHOULD |
 
 ## 4. Key entities and types
 

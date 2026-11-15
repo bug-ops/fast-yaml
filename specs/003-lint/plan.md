@@ -15,7 +15,7 @@ related:
 # Technical Plan: Lint
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.7.0 (release/v0.7.0, commit dbe1f2b), reverse-specified from v0.6.6 (commit e5e6cfb) and kept in sync through #637; it is not a proposal.
+> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.8.0 (release/v0.8.0; v0.7.0 was commit dbe1f2b), reverse-specified from v0.6.6 (commit e5e6cfb) and kept in sync through #637 and the v0.8.0 changes (#608, #642, #643, #667, #674); it is not a proposal.
 
 ## 1. Architecture
 
@@ -52,7 +52,7 @@ graph TD
 | Directives applied after rules | Rules run unaware of directives; `Directives::apply` filters by span start line and adds `lint-directive` warnings | Rules stay simple; suppression uniform for built-in and custom rules; `disable-file` short-circuits rule execution | Pass suppression state into each rule |
 | Single guarded parse | Parse once with `validate_normalized_observed` (`parse_normalized_observed` only when a `DocumentRule` is enabled), collecting comments, doc boundaries, the node index and flow ranges in the same pass; lazy `LintContext::scan()` uses `SourceScan::of_source(.., ParseLimits)`, also guarded | Lint RSS is about 1.1x parse on the measured input (3.6x with the former extra passes); no unguarded parser is reachable from a rule, pinned by `clippy::disallowed_methods` | Per-rule re-parses (previous design) |
 | Rule tokenisation | Text-scan rules use `tokenizer.rs` / `flow_common.rs` and `node_roles.rs` over ranges from the scan; no rule re-parses the source | Gives exact columns for spacing rules without a second parse | Event-only (not possible for whitespace rules) |
-| Config files | One bounded regular-file reader for config, `extends` and `ignore-from-file`; `extends` is resolved recursively (depth 8, cycle check) and the extended file's errors are redacted | A FIFO, `/dev/zero` or a huge file in an untrusted checkout must not hang or exhaust CI | `std::fs::read` per file |
+| Config files | One bounded regular-file reader for config, `extends` and `ignore-from-file`; `extends` is resolved recursively (depth 8, cycle check) and the extended file's errors are redacted; ignore patterns of one load share a `PatternBudget` (4096 lines, 256 KiB, 4096 wildcards) and a `PatternState` cache of compiled matchers keyed by canonical files and root (#608) | A FIFO, `/dev/zero` or a huge file in an untrusted checkout must not hang or exhaust CI | `std::fs::read` per file |
 | yamllint compatibility | `Preset` mirrors yamllint `default`/`relaxed`; unsupported yamllint options are rejected, not ignored | No silent behaviour difference | Accept and ignore |
 | Report formats outside the lint core | `formatter::ReportFormat::render(&[FileReport])` takes absolute `ReportPath`s; library does no I/O | Library stays pure; CLI canonicalises | Formatters that read files |
 | Ordering | Per file sort by span start; batch collects results in index order from a worker pool through a bounded reorder window | Deterministic output with bounded memory | Collect all then sort (unbounded memory) |

@@ -19,7 +19,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 rust-version = "1.99.0"
 license = "MIT OR Apache-2.0"
@@ -27,9 +27,9 @@ repository = "https://github.com/bug-ops/fast-yaml"
 
 [workspace.dependencies]
 # Internal crates
-fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.7.0" }
-fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.7.0" }
-fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.7.0" }
+fast-yaml-core = { path = "crates/fast-yaml-core", version = "0.8.0" }
+fast-yaml-linter = { path = "crates/fast-yaml-linter", version = "0.8.0" }
+fast-yaml-parallel = { path = "crates/fast-yaml-parallel", version = "0.8.0" }
 
 # External dependencies - production
 anyhow = { version = "1" }
@@ -42,14 +42,14 @@ globset = { version = "0.4" }
 ignore = { version = "0.4" }
 indexmap = { version = "2" }
 memchr = { version = "2.8" }
-napi = { version = "3.14" }
+napi = { version = "3.16" }
 napi-build = { version = "2.6" }
-napi-derive = { version = "3.6" }
+napi-derive = { version = "3.7" }
 pyo3 = { version = "0.30" }
 rayon = { version = "1.12" }
 regex = { version = "1.13" }
 rustix = { version = "1.1", default-features = false }
-saphyr-parser = { version = "0.3.3" }
+saphyr-parser = { version = "0.3" }
 serde = { version = "1.0" }
 serde_json = { version = "1.0" }
 serde_norway = { version = "0.9" }
@@ -58,16 +58,16 @@ thiserror = { version = "2.0" }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "std"] }
 windows-sys = { version = "0.61.2" }
-xattr = { version = "1.6" }
+xattr = { version = "1.7" }
 
 # External dependencies - dev/test
 assert_cmd = { version = "2.2" }
 criterion = { version = "0.8" }
 indoc = { version = "2.0" }
-jsonschema = { version = "0.60.0", default-features = false }
+jsonschema = { version = "0.61", default-features = false }
 peak_alloc = { version = "0.3" }
 predicates = { version = "3.1" }
-proptest = { version = "1.11" }
+proptest = { version = "1.12" }
 tempfile = { version = "3.27" }
 
 [workspace.lints.rust]

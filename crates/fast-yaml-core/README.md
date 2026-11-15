@@ -62,7 +62,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-fast-yaml-core = "0.7"
+fast-yaml-core = "0.8"
 ```
 
 Or with cargo-add:
@@ -146,7 +146,7 @@ This library implements the YAML 1.2.2 specification with the Core Schema:
 
 ```toml
 # Enable arena allocation
-fast-yaml-core = { version = "0.7", features = ["arena"] }
+fast-yaml-core = { version = "0.8", features = ["arena"] }
 ```
 
 > [!TIP]
