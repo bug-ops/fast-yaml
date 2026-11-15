@@ -126,8 +126,11 @@ mise run lint:clippy      # a single task
 |------|------|--------|
 | `fmt` | rustfmt (nightly), `ruff format`, `pnpm run format` (rewrites files) | - |
 | `fmt:check`, `fmt:check:rust`, `fmt:check:python`, `fmt:check:nodejs` | formatting checks | Lint (rust), Python Quality Checks, NodeJS Quality Checks |
-| `lint` | `lint:clippy`, `lint:python`, `lint:nodejs` | - |
+| `lint` | `lint:clippy`, `lint:unsafe-allow`, `lint:python`, `lint:nodejs` | - |
 | `lint:clippy` | `cargo clippy --workspace --all-targets --all-features -- -D warnings` | Lint (rust) |
+| `lint:unsafe-allow` | `scripts/check-unsafe-allow.sh` plus its `--self-test`: every lint-level `unsafe_code` occurrence must match an entry of `scripts/unsafe-allow.allowlist` exactly | Unsafe Allowances |
+| `lint:clippy-windows` | clippy over Windows-only code of the non-FFI crates | Test Rust (windows-latest) |
+| `lint:clippy-wasm` | clippy over the non-unix, non-windows branches of `fast-yaml-parallel` on `wasm32-wasip1` | Lint (rust) |
 | `lint:clippy-hack` | clippy over the feature powerset of the non-FFI crates | Clippy Feature Powerset |
 | `lint:python` | `uv sync`, mypy (non-blocking), `ruff check` | Python Quality Checks |
 | `lint:nodejs` | `pnpm install`, biome lint, `tsc` | NodeJS Quality Checks |
@@ -139,11 +142,12 @@ mise run lint:clippy      # a single task
 | `test:python`, `test:nodejs` | binding tests (depend on the build tasks) | Test Python, Test NodeJS |
 | `release:nodejs` | release build of the Node.js addon | NodeJS Build |
 | `coverage:rust`, `coverage:python`, `coverage:nodejs` | coverage runs | Code Coverage, Python Coverage, NodeJS Coverage |
+| `msrv` | `cargo +1.99.0 check --workspace --all-targets` | Check MSRV (1.99.0) |
 | `deny` | `cargo deny check` | Security Audit |
 | `semver` | `cargo semver-checks` of `fast-yaml-core` (non-blocking) | Security Audit |
 | `ci` | `fmt:check`, `lint`, `doc`, `test:rust`, `test:python`, `test:nodejs`, `deny`, sequentially | - |
 
-`mise run ci` is the local pre-PR gate. It covers the format, lint, test and security jobs but not coverage, `lint:clippy-hack`, `test:core-no-arena`, `audit:nodejs`, `semver`, `release:nodejs`, the `msrv` task or the SARIF upload; run those tasks individually when your change touches them. It runs tasks sequentially because parallel tasks race on the cargo lock and on concurrent `pnpm install` runs. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
+`mise run ci` is the local pre-PR gate. It covers the format, lint, test and security jobs but not coverage, `lint:clippy-hack`, `lint:clippy-windows`, `lint:clippy-wasm`, `test:core-no-arena`, `audit:nodejs`, `semver`, `release:nodejs`, the `msrv` task or the SARIF upload; run those tasks individually when your change touches them. It runs tasks sequentially because parallel tasks race on the cargo lock and on concurrent `pnpm install` runs. Set `YAML_TEST_SUITE_PATH` to a `yaml-test-suite` checkout (tag `data-2022-01-17`) before `mise run test:python` to run the full suite as CI does.
 
 ##### Version legs
 
@@ -248,7 +252,9 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 
 The project uses workspace-level lint configuration in root `Cargo.toml`:
 
-- `unsafe_code = "deny"` - Unsafe code denied by default, must be explicitly allowed with `#[allow(unsafe_code)]` and SAFETY documentation
+- `unsafe_code = "deny"` - Unsafe code denied by default, must be explicitly allowed with `#[allow(unsafe_code, reason = "...")]` and SAFETY documentation. Every lint-level `unsafe_code` occurrence must also be listed in `scripts/unsafe-allow.allowlist`; the `lint:unsafe-allow` task fails on any difference, so edit the allowlist in the same PR
+- `allow_attributes_without_reason = "warn"` - Use `#[expect(lint, reason = "...")]` instead of `#[allow]`; keep `#[allow]` only on macro-expanded items and `unsafe_code` items, where `expect` would be unfulfilled
+- `.github/CODEOWNERS` names owners for the allowlist and its script, `.config/mise/` and `.github/workflows/`; Code Owners review is enforced once the repository ruleset requires it
 - `missing_docs = "warn"` - Public items should be documented
 - Clippy: `all`, `pedantic`, `nursery`, `cargo` warnings enabled
 

@@ -19,13 +19,13 @@ related:
 > **Author**: research session (continuous improvement)
 > **Branch**: `fix/{issue}-saphyr-parser-0-3` (per `.claude/rules/branching.md`; issue number pending)
 > **Priority**: P2 (enhancement, breaking 0.x minor bump)
-> **Tracking**: issue #701. Dependabot PR #691 merged the `saphyr-parser` 0.3.3 bump together with every code and test step of the plan (anchor recovery and content-start positions, BOM policy, empty block scalar, divergence tests); verified green on Rust, Python (yaml-test-suite xfail list empty) and Node.js. The batch PR for #701 only records the decisions: OQ-2 = (a), see FR-005, plus the CHANGELOG and spec updates.
+> **Tracking**: issue #701. Dependabot PR #691 merged the `saphyr-parser` 0.3.3 bump together with every code and test step of the plan (anchor recovery and content-start positions, BOM policy, empty block scalar, divergence tests); verified green on Rust, Python (yaml-test-suite xfail list empty) and Node.js. The batch PR #713 recorded the decisions (OQ-2 = (a), see FR-005) and shipped the CHANGELOG 0.8.0 breaking-change entry; the workspace pins `saphyr-parser = "0.3.3"` and the MSRV is 1.99.0.
 
 ## 1. Overview
 
 ### Problem Statement
 
-`Cargo.toml` pins `saphyr-parser = "0.2.2"`; 0.3.3 is on crates.io (rust-version 1.85, project MSRV 1.91). Dependabot PR #691 bumps it and is red: it compiles, but `cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs` runs 3115 tests with 3056 passed and 59 failed (Test Rust on all OSes, Test Python, coverage). The failures are not random: they come from four upstream behavior changes that fy's own code and tests depend on. The bump cannot merge until each is either adapted to or deliberately accepted and documented.
+Before the migration `Cargo.toml` pinned `saphyr-parser = "0.2.2"`; 0.3.3 is on crates.io (rust-version 1.85, project MSRV 1.91 at the time). Dependabot PR #691 bumped it and was red: it compiles, but `cargo nextest run --workspace --all-features --exclude fast-yaml --exclude fast-yaml-nodejs` runs 3115 tests with 3056 passed and 59 failed (Test Rust on all OSes, Test Python, coverage). The failures are not random: they come from four upstream behavior changes that fy's own code and tests depend on. The bump could not merge until each is either adapted to or deliberately accepted and documented.
 
 > [!info] Evidence (verified against crate sources in the cargo registry and a scratch copy at 0.3.3)
 > - 0.3.x `parse_node` returns node events with `start_mark` taken from the first token of the node, so the span now includes the anchor and tag. 0.2.2 reported the content token's mark.
@@ -116,7 +116,7 @@ THEN  all required checks pass with zero failing tests
 |----|----------|-------------|
 | NFR-001 | Performance | Anchor recovery stays a single forward pass (O(n)); formatter and parse throughput within 5% of the 0.2.2 baseline on the existing benches. |
 | NFR-002 | Security | No weakening of resource limits; hostile-input tests in spec 009 (alias bomb, deep nesting, scan-ahead) pass unmodified. |
-| NFR-003 | Compatibility | MSRV 1.91 unchanged; saphyr-parser 0.3.3 requires 1.85. `cargo deny check` passes (new transitive deps, licenses). |
+| NFR-003 | Compatibility | MSRV was 1.91 at migration time (now 1.99.0, #727); saphyr-parser 0.3.3 requires 1.85. `cargo deny check` passes (new transitive deps, licenses). |
 | NFR-004 | Consistency | CLI, Python and Node.js give identical results for anchor names, BOM and empty block scalars (cross-binding check). |
 | NFR-005 | Quality gate | `mise run ci` plus `lint:clippy-hack`, `test:core-no-arena`, MSRV job all green. |
 

@@ -25,7 +25,7 @@ related:
 
 Bump `saphyr-parser` to 0.3.3 in the workspace `Cargo.toml` (single pin, `saphyr-parser = { version = "0.3.3" }`; used by `fast-yaml-core` and `fast-yaml-linter`) on a branch that already contains dependabot's `Cargo.lock` change, then fix the 59 failures class by class, re-running the saved list after each step to measure progress. The order is chosen so each step removes a large, mechanically explained group before the judgment calls: anchors first (about 40 tests plus most of the "misc" group), then BOM (policy), then empty block scalars (expectation flips), then the residual triage, then documentation.
 
-Alternative considered: pin 0.2.2 and ignore dependabot. Rejected: 0.3.x fixes real bugs (flow mapping state in compact pairs, empty block scalar, BOM rejection) and holding back accumulates a larger migration later.
+Implemented in v0.8.0 (#691, #713). Alternative considered: pin 0.2.2 and ignore dependabot. Rejected: 0.3.x fixes real bugs (flow mapping state in compact pairs, empty block scalar, BOM rejection) and holding back accumulates a larger migration later.
 
 ### Component diagram
 

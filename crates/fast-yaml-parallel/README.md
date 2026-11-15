@@ -21,7 +21,7 @@ This crate provides two types of parallelism:
 
 ```toml
 [dependencies]
-fast-yaml-parallel = "0.7"
+fast-yaml-parallel = "0.8"
 ```
 
 Or with cargo-add:

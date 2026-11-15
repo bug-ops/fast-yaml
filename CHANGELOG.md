@@ -7,95 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-15
+
 ### Breaking Changes
 
-- Core: `OneBased` moves to `fast_yaml_core::position` with `SourcePosition` (private `OneBased` line and column, `START`), `DocumentIndex`, `LineCount` and `DocumentCount`; `ParseError::relocated` takes `LineCount` and `DocumentCount` (#667)
-- Core: `SourcePosition::new` takes `OneBased` line and column and `DocumentIndex::after` takes `DocumentCount` (#667)
-- Core: `fast_yaml_core::error::{SourcePosition, DocumentIndex}` paths are gone, import from the crate root or `fast_yaml_core::position` (#667)
-- Linter: `Location::new` takes `OneBased` line and column and no longer raises 0 to 1, and `LintDocument::first_line` is `OneBased` (#667)
-- Linter: `fast_yaml_linter::OneBased` is the core type and no longer implements `Serialize`/`Deserialize` under `json-output` (#667)
+- Core: `OneBased`, `SourcePosition`, `DocumentIndex`, `LineCount` and `DocumentCount` move to `fast_yaml_core::position`, `SourcePosition::new`, `DocumentIndex::after` and `ParseError::relocated` take the typed values, and the `error::{SourcePosition, DocumentIndex}` paths are gone (#667)
 - Core: `EmitterConfig` drops `width` and `default_flow_style` for `layout: Layout`, and `Width` is removed (#639) (#671)
-- CLI: `fy format --width` is removed, `--pretty=false` becomes `--no-pretty`, and `--allow-duplicate-keys=<bool>` becomes the `--allow-duplicate-keys`/`--no-allow-duplicate-keys` pair (#639) (#632) (#671)
-- Python/Node.js: `width`, `allow_unicode`/`allowUnicode` and batch `width`/`sort_keys` are removed and now raise `TypeError`/`InvalidArg` (#639) (#671)
-- Python: `ParallelConfig` drops `max_chunk_size` and `auto_tune`, and `safe_dump_to` rejects an out-of-range `chunk_size` with `ValueError` (#627) (#671)
-- Python/Node.js: batch results reshaped (`FormatResult`, `FileError` with `ErrorKind`), and the never-returned `FileResult`/`FileOutcome` are removed (#641) (#671)
-- Python: negative `workers`, `thread_count` and other unsigned options, and `lint.Location`/`ContextLine` fields, raise `ValueError` instead of `OverflowError` (#633) (#671)
+- Core: a BOM inside a document is a parse error (quoted scalars still accept it) and an empty block scalar parses as `""` in `parse_all` and `parse_parallel`, following `saphyr-parser` 0.3.3 (#701) (#713)
+- Linter: `Location::new`, `Location::line()`/`column()`, `LintDocument::first_line`, `SourceContext::get_line*` and `ContextLine::line_number` use `OneBased`, `Location::line_number()` is removed, and `fast_yaml_linter::OneBased` is the core type without `Serialize`/`Deserialize` (#667) (#666) (#672) (#671) (#674)
 - Linter: `DiagnosticCode` is an enum, `LintRule::name`/`description` are removed, `flow_common` is private, and `formatter::Finding` is renamed `DiagnosticView` (#642) (#671)
-- Linter: `JsonFormatter::new` takes `JsonLayout` and `TextFormatter::with_color` takes `Coloring` (#643) (#671)
-- Linter: `SourceContext::get_line*` and `ContextLine::line_number` use `OneBased` (#666) (#671)
-- Linter: `Location::line()`/`column()` return `OneBased` and `Location::line_number()` is removed (#672) (#674)
-- Linter: `indentation.spaces` accepts 1 to 255 instead of 1 to 16 (#602) (#674)
-- Parallel: `write_atomic` and `FileProcessor::format_in_place` take a `HardLinkPolicy`/`InPlaceTarget`, and `fy format -i` refuses hard-linked files found by directory walk or glob (#608) (#674)
-- Core: a BOM inside a document is now a parse error (quoted scalars still accept it) and an empty block scalar parses as `""` in `parse_all` and `parse_parallel`, following `saphyr-parser` 0.3.3 (#701) (#713)
-- Parallel: every `io::Error` the atomic writer builds carries the new `AtomicWriteError` payload (`TargetChanged` and `HardLinkRefused` become its variants), and a swapped target now reports `<path> is not the file that was read; run the command again` (#695) (#713)
-- Parallel: `BatchResult` fields are private with derived getters, `from_results` takes the duration, `new()` is removed, and `FileProcessor::process` takes `Fn(&Path, &str) -> Result<()>` (#697) (#713)
-- Python/Node.js: `BatchConfig` drops `sequential_threshold`/`sequentialThreshold`, which the file processor never read, passing it raises `TypeError`/`InvalidArg`, and the Python limits after `max_input_bytes` are keyword-only (#696) (#713)
+- Linter: `JsonFormatter::new` takes `JsonLayout`, `TextFormatter::with_color` takes `Coloring`, and `indentation.spaces` accepts 1 to 255 (#643) (#602) (#671) (#674)
+- Parallel: `write_atomic` and `FileProcessor::format_in_place` take `HardLinkPolicy`/`InPlaceTarget`, `fy format -i` refuses hard-linked files found by walk or glob, and every atomic-writer `io::Error` carries `AtomicWriteError` with `TargetChanged` and `HardLinkRefused` as variants (#608) (#695) (#674) (#713)
+- Parallel: `BatchResult` fields are private with getters, `from_results` takes the duration, `new()` is removed, and `FileProcessor::process` takes `Fn(&Path, &str) -> Result<()>` (#697) (#713)
+- CLI: `fy format --width` is removed, `--pretty=false` becomes `--no-pretty`, and `--allow-duplicate-keys=<bool>` becomes the `--allow-duplicate-keys`/`--no-allow-duplicate-keys` pair (#639) (#632) (#671)
+- Python/Node.js: `width`, `allow_unicode`/`allowUnicode`, batch `width`/`sort_keys` and `BatchConfig.sequential_threshold` are removed and raise `TypeError`/`InvalidArg`, and Python limits after `max_input_bytes` are keyword-only (#639) (#696) (#671) (#713)
+- Python/Node.js: batch results are reshaped (`FormatResult`, `FileError` with `ErrorKind`) and the never-returned `FileResult`/`FileOutcome` are removed (#641) (#671)
+- Python: `ParallelConfig` drops `max_chunk_size` and `auto_tune`, `safe_dump_to` rejects an out-of-range `chunk_size`, and negative unsigned options and `lint.Location`/`ContextLine` fields raise `ValueError` instead of `OverflowError` (#627) (#633) (#671)
 - Raise the minimum supported Rust version from 1.91.0 to 1.99.0 (#700) (#727)
+
+### Added
+
+- Core: `Value::sort_keys`, one type-aware iterative sort shared by the Python and Node.js bindings (#640) (#671)
+- Parallel: `FileId::of_path`, `FileProcessor::check_format` (dry-run `BatchResult`) and `MIN_PARALLEL_ITEMS` (#694) (#697) (#696) (#713)
+- Parallel: `FileId`, `TargetChanged`, `write_atomic_bound` and `read_file_identified`, and core `read_regular_file_with_handle`, bind an in-place write to the file that was read (#680) (#686)
+- Parallel: `write_atomic` preserves ACLs on macOS and the DACL on Windows (#598) (#673) (#671) (#674)
+- Linter: yamllint-compatible column placement for colons, commas, hyphens, braces and brackets (#602) (#674)
+- CI: tools install with `mise` and jobs run `mise run <task>`, with new `lint:clippy-windows`, `msrv` and `lint:unsafe-allow` tasks (the last compares every lint-level `unsafe_code` occurrence with an exact allowlist) (#669) (#668) (#678) (#674) (#684)
+- CI: `.github/CODEOWNERS` names owners for the unsafe-allow gate, `.config/mise/` and workflows; enforced once the `master` ruleset requires Code Owners review (#681) (#686)
 
 ### Changed
 
 - Python/Node.js: 16 `#[allow]` attributes become `#[expect]`, the 20 on macro-expanded or `unsafe_code` items stay `allow` (#714) (#727)
 - CI: record the mise migration median (541 s over 10 push runs, baseline 600 s) and the adopt-partially decision in `specs/010-ci-tooling/` (#675) (#727)
-
-### Added
-
-- Core: `Value::sort_keys`, one type-aware iterative sort shared by the Python and Node.js bindings (#640) (#671)
-- Parallel: `write_atomic` preserves ACLs on macOS (#598) (#671)
-- Parallel: `write_atomic` preserves the DACL on Windows (#673) (#674)
-- Parallel: `FileId::of_path`, `FileProcessor::check_format` (dry-run `BatchResult`) and `MIN_PARALLEL_ITEMS` (#694) (#697) (#696) (#713)
-- CI: `lint:clippy-windows` and `msrv` mise tasks, with a Windows clippy step in `test-rust` (#668) (#674)
-- Linter: yamllint-compatible column placement for colons, commas, hyphens, braces and brackets (#602) (#674)
-- CI: `unsafe-allow` gate (`lint:unsafe-allow`) compares every lint-level `unsafe_code` occurrence with an exact allowlist (#678) (#684)
-- Parallel: `FileId`, `TargetChanged`, `write_atomic_bound` and `read_file_identified`, and core `read_regular_file_with_handle`, bind an in-place write to the file that was read (#680) (#686)
-- CI: `.github/CODEOWNERS` names owners for the unsafe-allow gate, its allowlist, `.config/mise/` and workflows; review is enforced only once the `master` ruleset requires Code Owners review (#681) (#686)
+- Parallel: batches of 10 or more files stat inside the pool, skip the serial stat pass in `should_use_sequential`, and `Probe` keeps only length and `FileId` (#685) (#711) (#713) (#715)
+- CLI: glob expansion matches each entry without a per-entry `Vec` and `String` allocation (#712) (#715)
+- Workspace: `allow_attributes_without_reason` is enforced and `#[allow]` becomes `#[expect(..., reason)]` where the lint fires (#698) (#715)
 
 ### Fixed
 
-- Linter: the repeated-names ignore-file test no longer asserts on wall-clock time, so it stops flaking on loaded CI runners (#723) (#730)
-- Parallel: guarded `assert_matches!` calls in tests are re-indented to the surrounding style (#726) (#730)
-- Core: bump `saphyr-parser` to 0.3.3; node spans keep starting at their content, a BOM inside a document is rejected and an empty block scalar is `""` in `parse_all` and `parse_parallel` (#691)
-- Linter: `colons` no longer reports the mandatory space after an alias key (#644) (#671)
-- CLI: `--pretty` and `--allow-duplicate-keys` no longer swallow the next path (#632) (#671)
-- CLI: discovery warns about files skipped during directory walk and glob expansion (#629) (#671)
-- CLI: debug events and glob patterns in errors escape control characters in paths (#624) (#671)
-- Core: `read_regular_file` clears `O_NONBLOCK` on regular-file handles (#599) (#671)
-- CI: `CI Success` fails when `Detect Changes` does not succeed (#670) (#674)
-- Parallel: `write_atomic` applies the Windows DACL through a handle read from a no-follow source and drops `libc` for rustix open flags (#677) (#684)
-- Parallel: in-place targets naming one file are written one after the other (#678) (#684)
-- Node.js: `unsafe_code` allowance narrowed to `to_static` (now `unsafe fn`) and `resolve` (#678) (#684)
-- Linter: `indentation` positions agree with the other rules after LS, PS and NEL separators; D-28 is kept (#676) (#684)
-- Parallel/CLI: in-place format (batch and single file) refuses a file swapped after the read (#680) (#686)
-- Parallel: `write_atomic` keeps `Zone.Identifier` on Windows (#679) (#686)
+- Linter: `colons` no longer reports the alias-key space or the indented colon opening an explicit-key value line, `indentation` positions agree after LS, PS and NEL separators, and context no longer ends with a phantom empty line (#644) (#702) (#676) (#704) (#671) (#684) (#715)
+- Linter/Parallel: tests no longer flake on wall-clock time and guarded `assert_matches!` calls are re-indented (#723) (#726) (#730)
+- Parallel/CLI: in-place format and `fy convert -i` refuse a file swapped after the read, targets naming one file are written in turn, and one `FileId` groups files so Windows hard links are recognised (#680) (#703) (#678) (#694) (#684) (#686) (#713)
+- Parallel: `write_atomic` keeps `Zone.Identifier`, applies the Windows DACL through a no-follow handle, returns `ReadOnlyNotRestored` (new `#[non_exhaustive]` variant), leaves no undeletable temp file under a macOS deny-delete ACL, and logs tolerated metadata skips (#679) (#677) (#710) (#705) (#699) (#684) (#686) (#713) (#715)
 - Parallel: Windows same-file keys are computed inside the worker pool (#683) (#686)
+- CLI: `--pretty` and `--allow-duplicate-keys` no longer swallow the next path, discovery warns about skipped files, and debug events and glob errors escape control characters (#632) (#629) (#624) (#671)
+- Core: `read_regular_file` clears `O_NONBLOCK` on regular-file handles, and clippy 1.100 `empty_enums` and `used_underscore_items` are fixed (#599) (#709) (#671) (#713)
+- Node.js: the `unsafe_code` allowance in `parallel.rs` is narrowed to `to_static` (now `unsafe fn`) and `resolve` (#678) (#684)
 - Python/Node.js: tests cover two names of one file in batch in-place formatting (#682) (#686)
-- Parallel/CLI: one `FileId` identifies files for batch grouping and the `-o` guard, so Windows hard links are recognised (#694) (#713)
-- Parallel: batches of 10 or more files stat inside the pool and `Probe` keeps only length and `FileId` (#685) (#713)
-- Parallel: the atomic writer emits a debug event for every tolerated metadata skip (#699) (#713)
-- Parallel: a failed write no longer leaves an undeletable temp file under a macOS deny-delete ACL, and an unremovable one is named in `TempFileLeft` (#705) (#713)
-- CLI: `fy convert -i` refuses a file swapped after the read (#703) (#713)
-- Core/Linter/Python: clippy 1.100 `empty_enums` and `used_underscore_items` fixed in the limit markers, `NoOptions` and the Python module entry point (#709) (#713)
-- Parallel: batches of 10 or more files skip the serial stat pass in `should_use_sequential` (#711) (#715)
-- Parallel: a Windows read-only flag lost after the atomic rename is returned as `AtomicWriteError::ReadOnlyNotRestored` (new `#[non_exhaustive]` variant) (#710) (#715)
-- CLI: glob expansion matches each entry without a per-entry `Vec` and `String` allocation (#712) (#715)
-- Linter: diagnostic context no longer ends with a phantom empty line after the final newline (#704) (#715)
-- Linter: `colons` ignores the indented colon that opens an explicit-key value line (#702) (#715)
-- CI: Windows clippy covers core, linter, parallel and cli, a `wasm32-wasip1` clippy task checks the fallback `cfg` branches, and the Node.js crate uses the workspace lints (#698) (#715)
-- Workspace: `allow_attributes_without_reason` is enforced at zero sites and `#[allow]` becomes `#[expect(..., reason)]` where the lint fires (#698) (#715)
-
-### Added
-
-- CI: fmt, clippy, docs, test, coverage, audit, Python and Node.js jobs install tools with `mise` and run `mise run <task>`; setup-node, setup-python, setup-uv, pnpm/action-setup and most install-action steps removed (#669)
+- CI: `CI Success` fails when `Detect Changes` does not succeed, and Windows clippy covers core, linter, parallel and cli plus a `wasm32-wasip1` clippy task (#670) (#698) (#674) (#715)
 
 ### Security
 
-- Node.js: override transitive `source-map-js` to `>=1.2.2` (GHSA-68fv-2mgg-jv7q) (#650)
-- CI: repin `dtolnay/rust-toolchain` to the current `v1` tag commit (zizmor `ref-version-mismatch`) (#658)
-- Node.js: bump `vitest` to 4.1.12 and pin `vite` >=8.1.6 to clear `pnpm audit` advisories (#664)
+- CLI: quoted globs no longer follow symlinks out of the tree, closing out-of-tree writes, source echo and the exponential hang (#692) (#713)
 - Linter: ignore patterns share a per-load budget and compiled matchers are cached, bounding `ignore-from-file` and `extends` amplification (#608) (#674)
 - Parallel: in-place writes cannot hang on a swapped FIFO (#608) (#674)
-- CLI: quoted globs no longer follow symlinks out of the tree, closing out-of-tree writes, source echo and the exponential hang (#692) (#713)
 - Node.js: `// SAFETY:` documentation and clippy lints for `unsafe` in the rule-config converter (#608) (#674)
-- CI: Dependabot cargo, pip and npm (`nodejs/`) updates wait 7 days (cooldown) before auto-merge, and every `jdx/mise-action` step pins the mise binary `sha256` (#693) (#715)
+- Node.js: override `source-map-js` to `>=1.2.2` (GHSA-68fv-2mgg-jv7q) and bump `vitest` to 4.1.12 with `vite` >=8.1.6 to clear `pnpm audit` (#650) (#664)
+- CI: repin `dtolnay/rust-toolchain` to the current `v1` commit, Dependabot updates wait 7 days, and every `jdx/mise-action` step pins the mise binary `sha256` (#658) (#651) (#693) (#715)
+
+### Dependencies
+
+- Core: `saphyr-parser` 0.1.0 to 0.3.3 (#655) (#691)
+- Python: `pyo3` 0.29.3 to 0.30.1 (#656)
+- Core: `jsonschema` 0.58.6 to 0.60.0 and routine rust-minor-patch group updates (#663) (#646) (#653) (#662) (#690)
+- Node.js: `@napi-rs/cli`, `@biomejs/biome`, `@types/node` and `vite` dev-dependency bumps (#716) (#721) (#722) (#719)
+- CI: routine GitHub Actions bumps (#647) (#649) (#652) (#657) (#659) (#660) (#661) (#687) (#688) (#689) (#706) (#707) (#708) (#717) (#718) (#720)
 
 ## [0.7.0] - 2026-10-02
 
@@ -1030,7 +1006,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Python package documentation
 - Node.js package documentation
 
-[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/bug-ops/fast-yaml/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/bug-ops/fast-yaml/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/bug-ops/fast-yaml/compare/v0.6.6...v0.7.0
 [0.6.6]: https://github.com/bug-ops/fast-yaml/compare/v0.6.5...v0.6.6
 [0.6.5]: https://github.com/bug-ops/fast-yaml/compare/v0.6.4...v0.6.5

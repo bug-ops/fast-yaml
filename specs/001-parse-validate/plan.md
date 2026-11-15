@@ -16,13 +16,13 @@ related:
 # Technical Plan: Parse and validate YAML 1.2.2
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation that exists at v0.7.0 (HEAD dbe1f2b), reverse-specified from v0.6.6 and kept in sync through #637; it is the reference for changes, not a to-do list.
+> **Spec**: [[spec]]. This plan describes the implementation that exists at v0.8.0, reverse-specified from v0.6.6 at v0.7.0 and kept in sync through #713; it is the reference for changes, not a to-do list.
 
 ## 1. Architecture
 
 ### Approach
 
-`saphyr-parser` 0.1.0 produces raw events; everything user-visible is built on top in `fast-yaml-core` so that parser upgrades never change the public API. Input is validated once (`NormalizedInput`), events pass through a chain of guards on the way to a single consumer (tree builder or public `EventStream`). Limits are enforced on the event stream before any tree is built, so hostile input is rejected while memory is still bounded.
+`saphyr-parser` 0.3.3 produces raw events; everything user-visible is built on top in `fast-yaml-core` so that parser upgrades never change the public API. Input is validated once (`NormalizedInput`), events pass through a chain of guards on the way to a single consumer (tree builder or public `EventStream`). Limits are enforced on the event stream before any tree is built, so hostile input is rejected while memory is still bounded.
 
 ```mermaid
 flowchart LR

@@ -18,7 +18,7 @@ related:
 
 > [!info] Metadata
 > **Scope**: `fast-yaml-core` load API (`Parser`, `Value`, scalar resolution, merge keys, sets, key domains, input decoding) and the `fy parse` command.
-> **Baseline**: v0.7.0 at HEAD dbe1f2b (release/v0.7.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637. Behavior below was confirmed by running `fy` and reading the code.
+> **Baseline**: v0.8.0 (release/v0.8.0), reverse-specified from v0.6.6 (e5e6cfb) at v0.7.0 and kept in sync through #713. Behavior below was confirmed by running `fy` and reading the code.
 
 ## 1. Purpose and value
 
@@ -204,6 +204,10 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | FR-045 | WHEN a stream holds more documents than `ParseLimits::max_documents` (default 100 000) THE SYSTEM SHALL fail every entry point that loads documents (`parse_all*`, `parse_str*`, events, formatter, parallel chunks sharing a `StreamBudget`) with `ParseError::LimitExceeded{Documents}` at the start of the first rejected document, including empty and comment-only documents ([[009-limits-security/spec]] FR-017). | must |
 | FR-046 | WHEN a float is used as a mapping key THE SYSTEM SHALL spell it for key collision and `StringKeys` conversion like ECMAScript `Number` toString (`1e21` is `1e+21`, `100.0` is `100`, `.inf` is `Infinity`, `-.inf` is `-Infinity`, `.nan` is `NaN`, `-0.0` is `0`). | must |
 | FR-047 | `Parser::validate_normalized_observed` SHALL report the same error and show `on_event` the same events as `parse_normalized_observed` without building the documents; it skips the tree builder only for `KeyDomain::Yaml`, where the limit guard and merge validator raise every builder error, and loads in full for any other domain. A differential test and the `validate_differential` fuzz target pin the equivalence. | must |
+| FR-048 | WHEN a BOM is not the first character of the input and not inside a quoted scalar or before `---` THE SYSTEM SHALL fail with `a byte order mark must not appear inside a document` and a position, identically in `parse_str`, `parse_all` and `parse_parallel`; this is `saphyr-parser` 0.3.3 behavior, adopted by spec 011 (#701, #713). | must |
+| FR-049 | WHEN a block scalar header is followed by end of input THE SYSTEM SHALL load the empty string `""` in `parse_all` and `parse_parallel` alike (`saphyr-parser` 0.3.3, #713). | must |
+| FR-050 | `fs::read_regular_file` and `fs::read_regular_file_with_handle` SHALL read only a regular file within `MaxInputBytes`, open it with `O_NONBLOCK` on Unix so a swapped FIFO cannot block, and clear `O_NONBLOCK` once the handle is verified regular so FUSE or network file systems never fail with `WouldBlock`; the `_with_handle` variant SHALL also return the open `File` so a later in-place write can be bound to the file that was read (#599, #709, #680). | must |
+| FR-051 | `Value::sort_keys` SHALL sort every mapping and set at any depth in place, iteratively, by kind then by value (numbers by value across `Int`, `BigInt` and `Float`, strings by code point), keeping insertion order for equal entries; the Python and Node.js bindings SHALL share it (#640). | should |
 
 ## 4. Key entities
 
@@ -215,6 +219,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | `Float`, `BigInt` | Newtypes over `f64` and canonical decimal text (`IntRadix` remembers the spelling). |
 | `ResolvedScalar`, `ScalarStyle` | Borrowed scalar classification; styles `Plain/SingleQuoted/DoubleQuoted/Literal/Folded`. |
 | `LoadOptions` | `KeyDomain` x `DuplicateMergeKeys` x `SetValues`; all `#[non_exhaustive]`, defaults `Yaml/Reject/Reject`. |
+| `fs::read_regular_file*` | Bounded regular-file reader; clears `O_NONBLOCK` after the regular-file check. |
 | `NormalizedInput` | Validated, BOM-stripped text with original-offset mapping. |
 | `ParseError`, `SyntaxError`, `SourcePosition`, `OneBased`, `DocumentIndex`, `LineCount`, `DocumentCount` | Positioned, document-indexed errors; `SourcePosition` holds `OneBased` (never 0) line and column and `DocumentIndex` counts from 0, so the two cannot be swapped; `LineCount` and `DocumentCount` are the shifts `relocated` applies. |
 | `ParseLimits`, `StreamBudget` | See [[009-limits-security/spec|Limits and security]]. |
@@ -231,6 +236,7 @@ THEN  "✓ YAML is valid", blank line, "Statistics:", "  Keys: 2", "  Max depth:
 | `1e400` | `+inf` float; `fy convert json` then fails ("JSON does not support infinity/NaN") |
 | `!!int 1e30` | String `"1e30"`, no diagnostic |
 | `\r` alone or `\r\n` line breaks | Accepted as line breaks |
+| `a: |` then end of input (empty block scalar) | `""` in `parse_str`, `parse_all` and `parse_parallel` |
 | 150 000 empty documents (`---` lines) | Rejected by `fy parse` with `document count exceeds 100000 (document 100001)`; exactly 100 000 pass |
 
 ## 6. Success criteria

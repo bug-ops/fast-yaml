@@ -16,7 +16,7 @@ related:
 # Technical Plan: Batch and parallel processing
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the existing implementation at v0.7.0 (HEAD dbe1f2b), reverse-specified from v0.6.6 and kept in sync through #637 (#581/#532, #531, #366, #587, #577, #574, #610).
+> **Spec**: [[spec]]. This plan describes the existing implementation at v0.8.0, reverse-specified from v0.6.6 and kept in sync through v0.7.0 and the v0.8.0 batch changes (#581/#532, #531, #366, #587, #577, #574, #610, #685, #692, #695, #697, #703, #713).
 
 ## 1. Architecture
 
@@ -41,11 +41,12 @@ graph TD
 | Decision | Choice | Rationale | Alternatives |
 |----------|--------|-----------|--------------|
 | Scheduling | rayon `par_iter` on indexed slices | Order-preserving `collect`, work stealing | Channel-based pipeline |
-| Small-batch cutoff | Sequential below 4 files, or < 1 MB and < 10 files | Avoid pool overhead | Always parallel |
+| Small-batch cutoff | Sequential below `MIN_PARALLEL_ITEMS` (4) files, or < 1 MB and < 10 files; 10 or more files skip the serial stat pass and `Probe` (length and `FileId`) is taken inside the pool | Avoid pool overhead and a serial stat pass | Always parallel |
 | Document splitting | Hand-written state machine over lines (`chunker.rs`) | Parse chunks independently; handles directives, `...`, root block scalars, quoting | Parse once and slice by events |
 | Error choice | Lowest chunk index wins | Deterministic regardless of timing | First error observed |
 | Reading | `read_file`: regular-file check before and after open, fstat size check, `take(max+1)`, decode; no mmap | Bounded memory, no unbounded reads, no `unsafe` | mmap (removed: SIGBUS race) |
-| Writing | `write_atomic` / `AtomicFile`: O_EXCL temp in same dir, fsync, owner and mode restored, rename, dir fsync; caller-owned hard-linked target written in place via `O_NOFOLLOW` | No torn files, no planted-symlink following, links keep their content | Truncate-and-write |
+| Writing | `write_atomic(path, bytes, HardLinkPolicy)` / `write_atomic_bound` / `AtomicFile`: O_EXCL temp in same dir, fsync, owner, mode, xattrs, macOS ACL, Windows DACL and `Zone.Identifier` restored, rename, dir fsync; caller-owned hard-linked target written in place via `O_NOFOLLOW` under `WriteInPlace`, refused under `Refuse`; every own failure is an `AtomicWriteError` payload | No torn files, no planted-symlink following, links keep their content | Truncate-and-write |
+| In-place binding | `read_file_identified` returns the content with the `FileId` of the opened file; `write_atomic_bound` fails with `TargetChanged` when the target is another file; same-`FileId` targets run in turn on one worker | A swapped file or a second name of one file cannot be clobbered or raced | Check by path only |
 | Pool | One cached `Arc<ThreadPool>` keyed by worker count (`pool.rs`) | Thread spawn is costly; `-j N` means N threads | A pool per call (previous), global pool only |
 | Scan-ahead | `ScanAheadPolicy::{Fixed, Scaled}`; `Scaled` = `max(default / workers, 1 MiB)` with a per-run retry lane at the full limit | Bounds worst-case look-ahead memory (about 190 B per char per worker) while keeping every file's outcome equal to a single-file run | Per-worker fixed 4 Mi (workers x 760 MB worst case) |
 | Lint report | Collect per-file results, sort by path, render once | Deterministic output for any `-j` | Stream as completed |
@@ -61,11 +62,11 @@ crates/fast-yaml-parallel/src/
   chunker.rs        document-boundary state machine, SourceOrigin for error marks
   processor.rs      document-level parallel parse, pool selection, earliest-error rule
   files/processor.rs FileProcessor, CommentPolicy, FormatOutput
-  io/reader.rs      read_file (bounded regular-file read)
+  io/reader.rs      read_file, read_file_identified (bounded regular-file read)
   pool.rs           shared_pool, per-process cached rayon pool
   scan_ahead.rs     ScanAheadPolicy, ScanAheadLane
   result.rs         FileOutcome, FileResult, BatchResult
-  atomic.rs         write_atomic, AtomicFile
+  atomic.rs         write_atomic, write_atomic_bound, AtomicFile, AtomicWriteError (Windows DACL in win_acl)
   error.rs          Error / Result
 crates/fast-yaml-cli/src/
   discovery.rs      DiscoveryConfig, FileDiscovery, glob and --stdin-files handling
@@ -78,13 +79,13 @@ crates/fast-yaml-cli/src/
 
 `Config` defaults: `workers=None`, `max_input_bytes=100 MiB`, `sequential_threshold=4096`, `ParseLimits::default()` (document limit 100_000 inside), `scan_ahead=Fixed(default)`. Pools cap at 128 threads.
 
-`BatchResult { total, success, changed, failed, duration, errors }`; `from_results` folds `FileResult` values and sets `duration` only for aggregation (callers overwrite it).
+`BatchResult` keeps private counts (`unchanged`, `changed`, `duration`, `errors`); `total`, `succeeded` and `failed` are derived by getters. `from_results(results, duration)` folds `FileResult` values (`Success` counts as unchanged); `new()` is removed and `Default` is the empty result.
 
 CLI constants: stdin list max 100,000 lines of at most 4096 bytes; glob max 100,000 matches; walk depth 100.
 
 ## 4. API design
 
-Library: `parse_parallel(&str) -> Result<Vec<Value>>`, `parse_parallel_with_config(&str, &Config)`, `FileProcessor::{new, with_config, process, parse_files, format_files(paths, &EmitterConfig, CommentPolicy) -> Vec<(PathBuf, Result<FormatOutput>)>, format_in_place(paths, &EmitterConfig, CommentPolicy) -> BatchResult}`, `read_file(&Path, MaxInputBytes) -> Result<String>`, `shared_pool(NonZeroUsize) -> Result<Arc<ThreadPool>>`, `write_atomic(&Path, &[u8]) -> io::Result<()>`, `AtomicFile::{create, commit}`, `ScanAheadPolicy`, `ScanAheadLane::{for_policy, first_limit, run}`.
+Library: `parse_parallel(&str) -> Result<Vec<Value>>`, `parse_parallel_with_config(&str, &Config)`, `FileProcessor::{new, with_config, process(paths, Fn(&Path, &str) -> Result<()>) -> BatchResult, parse_files, format_files(paths, &EmitterConfig, CommentPolicy) -> Vec<(PathBuf, Result<FormatOutput>)>, check_format(paths, &EmitterConfig, CommentPolicy) -> BatchResult, format_in_place(&[InPlaceTarget], &EmitterConfig, CommentPolicy) -> BatchResult}`, `read_file(&Path, MaxInputBytes) -> Result<String>`, `read_file_identified(&Path, MaxInputBytes) -> Result<(String, Option<FileId>)>`, `shared_pool(NonZeroUsize) -> Result<Arc<ThreadPool>>`, `write_atomic(&Path, &[u8], HardLinkPolicy) -> io::Result<()>`, `write_atomic_bound(..., Option<FileId>)`, `AtomicFile::{create, commit}`, `FileId::of_path`, `ScanAheadPolicy`, `ScanAheadLane::{for_policy, first_limit, run}`.
 
 CLI contract is in [[006-cli-contract/spec|the CLI contract]].
 
@@ -99,10 +100,10 @@ CLI contract is in [[006-cli-contract/spec|the CLI contract]].
 ## 6. Security
 
 - Input size enforced before and during read; document count enforced before parsing (chunker) and per document start (`StreamBudget`).
-- Atomic writes with `O_EXCL` temp names; non-regular targets and dangling links refused; a hard-linked target is written in place only for its owner.
-- Symlinks are not followed during walks; explicit symlinked files are followed. The library does not canonicalise or filter `..` (documented trust boundary).
-- No `unsafe` and no memory map: the former mmap race no longer exists.
-- Residual risks: aggregate batch memory (spec item 9, 14); xattrs/ACLs lost on rewrite.
+- Atomic writes with `O_EXCL` temp names; non-regular targets and dangling links refused; a hard-linked target is written in place only for its owner and only under `HardLinkPolicy::WriteInPlace`; an in-place write is bound to the `FileId` read (`TargetChanged`), and the open that writes in place uses `O_NONBLOCK`, so a FIFO swapped in cannot hang it.
+- Symlinks are not followed during walks or quoted-glob expansion (#692); explicit symlinked files are followed. The library does not canonicalise or filter `..` (documented trust boundary).
+- No `unsafe` outside the Windows-only `atomic::win_acl` module, and no memory map: the former mmap race no longer exists.
+- Residual risks: aggregate batch memory (spec item 9, 14); Windows owner, SACL, integrity label and alternate data streams other than `Zone.Identifier` are lost on rewrite (spec item 15).
 
 ## 7. Testing strategy
 
@@ -129,7 +130,7 @@ Already shipped. Any change to `-j` semantics or exclude matching is a breaking 
 |-----------|--------|-------|
 | Type safety (newtype limits) | Compliant | `MaxInputBytes`, `MaxDocuments` newtypes; `CommentPolicy` enum instead of bool |
 | Limits everywhere | Compliant | Document limit lives in `ParseLimits` and applies to file APIs too; `key_domain` is the only unapplied setting (spec item 3) |
-| Safe Rust | Compliant | `forbid(unsafe_code)`; mmap removed |
+| Safe Rust | Compliant | `forbid(unsafe_code)` except the Windows `atomic::win_acl` module; mmap removed |
 
 ## 11. Risks and mitigations
 

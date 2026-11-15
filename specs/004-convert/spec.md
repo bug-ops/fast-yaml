@@ -17,7 +17,7 @@ related:
 # Feature: Convert (JSON and YAML)
 
 > [!info] Metadata
-> **Product version**: fast-yaml v0.7.0 at HEAD dbe1f2b (release/v0.7.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through #637. **Surface**: `fy convert <yaml|json> [FILE]` (CLI only; bindings expose their own load/dump APIs).
+> **Product version**: fast-yaml v0.8.0 (release/v0.8.0), reverse-specified from v0.6.6 (e5e6cfb) and kept in sync through v0.7.0 and #632, #671, #703, #713. **Surface**: `fy convert <yaml|json> [FILE]` (CLI only; bindings expose their own load/dump APIs).
 > **Method**: reverse-specified from `crates/fast-yaml-cli/src/commands/convert.rs` and real `fy` runs.
 
 ## 1. Purpose and value
@@ -180,6 +180,7 @@ THEN  "alias expansion exceeds 100 bytes" with "hint: raise with --max-alias-byt
 | FR-032 | WHEN conversion fails THE SYSTEM SHALL write nothing to stdout or the target file and exit 1. | MUST |
 | FR-033 | WHEN the YAML input starts with a BOM THE SYSTEM SHALL ignore it; output never contains a BOM. | MUST |
 | FR-034 | THE SYSTEM SHALL produce deterministic output: object keys keep their input order in both directions (insertion-ordered `serde_json` map, `preserve_order`). | MUST |
+| FR-035 | WHEN `-i FILE` rewrites a file THE SYSTEM SHALL bind the write to the `FileId` of the file it read (`read_file_identified`, `write_atomic_bound`), so a file swapped in after the read fails with `TargetChanged` (`<path> is not the file that was read; run the command again`, exit 1) and stays untouched; the write is atomic and keeps the file's permissions (#703). `-o FILE` is not bound and is refused when it names an input ([[006-cli-contract/spec]] FR-043). | MUST |
 
 ## 4. Key entities and types
 

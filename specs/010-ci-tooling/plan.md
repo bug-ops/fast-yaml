@@ -16,7 +16,7 @@ related:
 # Technical Plan: CI tooling
 
 > [!info] References
-> **Spec**: [[spec]]. Reverse-specified from the implementation in PR #669 (issue #665, not yet merged); it is not a proposal. Adoption decision and measurements: issue #668.
+> **Spec**: [[spec]]. Reverse-specified from the implementation in PR #669 (issue #665, merged) and kept in sync through v0.8.0; it is not a proposal. Measurements and the adopt-partially decision: [[spec]] section 6 and section 8 item 9 (issues #668, #675).
 
 ## 1. Architecture
 
@@ -44,10 +44,11 @@ related:
 
 | CI job | Task(s) | `install_args` |
 |--------|---------|----------------|
-| Lint (rust) | `fmt:check:rust`, `lint:clippy`, `doc` | none (`install: false`; no mise tools) |
+| Lint (rust) | `fmt:check:rust`, `lint:clippy`, `lint:clippy-wasm`, `doc` | none (`install: false`; no mise tools) |
+| Unsafe Allowances | `lint:unsafe-allow` (no `changes` filter) | none (`install: false`) |
 | Clippy Feature Powerset | `lint:clippy-hack` | `github:taiki-e/cargo-hack` |
 | Security Audit | `deny`, `semver` | `aqua:EmbarkStudios/cargo-deny`, `github:obi1kenobi/cargo-semver-checks` |
-| Test Rust | `test:rust` | `github:nextest-rs/nextest[version_prefix=cargo-nextest-]` |
+| Test Rust | `test:rust`; Windows leg also `lint:clippy-windows` | `github:nextest-rs/nextest[version_prefix=cargo-nextest-]` |
 | Test Core (no arena) | `test:core-no-arena` | `github:nextest-rs/nextest[version_prefix=cargo-nextest-]` |
 | Code Coverage | `coverage:rust` | `aqua:taiki-e/cargo-llvm-cov`, `github:nextest-rs/nextest[version_prefix=cargo-nextest-]` |
 | Python Quality Checks | `lint:python`, `fmt:check:python` | `python uv` |
@@ -56,10 +57,10 @@ related:
 | Test NodeJS | `test:nodejs` (`MISE_ENV=node22` on the Node 22 leg; unset otherwise) | `node pnpm` |
 | Python / NodeJS Coverage | `coverage:python` / `coverage:nodejs` | per job |
 | NodeJS Build | `release:nodejs` | `node pnpm` |
-| Check MSRV | `msrv` (toolchain from rustup, `install: false` mise step) | not applicable |
+| Check MSRV (1.99.0) | `msrv` (toolchain from rustup, `install: false` mise step) | not applicable |
 | Release Build Check | unchanged (rustup only) | not applicable |
 
-The workflow has no `mise-ci` job and CI never calls the `ci` task; it is the local aggregate only. `ci-success` ("CI Success") is the only required check (ruleset `master`), so other job names may change; it needs `changes` (must be `success`), `lint`, `clippy-powerset`, `security`, `test-rust`, `test-core-no-arena`, `coverage`, `msrv`, `test-python`, `python-quality`, `python-coverage`, `test-nodejs`, `nodejs-quality` and `nodejs-coverage`. Test jobs wait for `lint` (and for the matching quality job). The `Test Rust (windows-latest)` leg also runs `lint:clippy-windows` (FR-029), and `Lint (rust)` runs `lint:clippy-wasm` (FR-036). Issue #665's proposed layout, lock platforms and `mise-ci` job differ from this implementation: see the deviations table in [[spec]] section 8.
+The workflow has no `mise-ci` job and CI never calls the `ci` task; it is the local aggregate only. `ci-success` ("CI Success") is the only required check (ruleset `master`), so other job names may change; it needs `changes` and `unsafe-allow` (both must be `success`), `lint`, `clippy-powerset`, `security`, `test-rust`, `test-core-no-arena`, `coverage`, `msrv`, `test-python`, `python-quality`, `python-coverage`, `test-nodejs`, `nodejs-quality` and `nodejs-coverage`. Test jobs wait for `lint` (and for the matching quality job). The `Test Rust (windows-latest)` leg also runs `lint:clippy-windows` (FR-029), and `Lint (rust)` runs `lint:clippy-wasm` (FR-036). Issue #665's proposed layout, lock platforms and `mise-ci` job differ from this implementation: see the deviations table in [[spec]] section 8.
 
 Install ids are load-bearing: `MISE_TASK_RUN_AUTO_INSTALL=false` makes a mismatch between `install_args` and the config fail the job. The Python and Node.js assertion steps (`uv python find` in `python/`; `node --version`) follow each setup step in `test-python` and `test-nodejs`.
 
@@ -99,11 +100,11 @@ Install ids are load-bearing: `MISE_TASK_RUN_AUTO_INSTALL=false` makes a mismatc
 
 - Local: `mise install --locked` (default and each `MISE_ENV`), `MISE_ENV=py310 mise run test:python`, `mise run ci`; actionlint and zizmor on `ci.yml`.
 - CI: the Assert steps guard the selected interpreter.
-- First full CI run: check the Windows legs (Test Rust, Test Python, Test NodeJS, NodeJS Build), the macOS legs, `install_args` with the nextest id, and `MISE_SAFE` on installs; record the result in issue #668. Fork PRs are checked on the first fork PR.
+- First full CI run (done, run 41342007315; Windows, macOS and `MISE_SAFE` verified): check the Windows legs (Test Rust, Test Python, Test NodeJS, NodeJS Build), the macOS legs, `install_args` with the nextest id, and `MISE_SAFE` on installs; record the result in issue #668. Fork PRs are checked on the first fork PR.
 
 ## 6. Rollout and rollback
 
-PR #669 migrates the jobs directly, without a parallel comparison job. Measurements and the adoption decision are tracked in issue #668. Rollback is described in [[spec]] section 8.
+PR #669 migrated the jobs directly, without a parallel comparison job. Measurement (median 541 s over 10 push runs vs the 600 s baseline) and the decision to adopt partially (Rust stays on rustup) are recorded in issue #675 and [[spec]] sections 6 and 8. Rollback is described in [[spec]] section 8.
 
 ## 7. Constitution compliance
 

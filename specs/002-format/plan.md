@@ -15,7 +15,7 @@ related:
 # Technical Plan: Format
 
 > [!info] References
-> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.7.0 (HEAD dbe1f2b), reverse-specified from v0.6.6 and kept in sync through #637.
+> **Spec**: [[spec]]. This plan describes the implementation as it exists at v0.8.0, reverse-specified from v0.6.6 at v0.7.0 and kept in sync through #713.
 
 ## 1. Architecture
 
@@ -48,7 +48,6 @@ graph TD
 | Multi-line scalars | Normalize to one double-quoted line | Idempotent and simple | Preserve original folding |
 | Batch | `fast-yaml-parallel` with per-file isolation on the shared pool; `-j N` = N threads; scan-ahead scaled per worker with a full-limit retry lane | Throughput; one bad file never aborts the run; bounded look-ahead memory | Sequential |
 | Dry-run | Exit 5 when changes pending | CI friendliness | Exit 1 (conflates with failure) |
-| `width` | Typed and range-checked but unused | PyYAML-compat surface | Implement folding |
 
 ## 2. Project structure
 
@@ -108,7 +107,7 @@ Input size (`MaxInputBytes`), scan-ahead (`MaxScanAhead`), depth, and alias limi
 | CLI integration | `crates/fast-yaml-cli/tests` | dry-run exit codes, comment guard, in-place |
 | Manual | fixtures in `tests/fixtures/` | idempotency sweep (`--strip-comments`) |
 
-Missing tests worth adding: duplicate-key preservation, error precedence (comment vs syntax), width inertness pin.
+Missing tests worth adding: duplicate-key preservation, error precedence (comment vs syntax).
 
 ## 8. Performance considerations
 
