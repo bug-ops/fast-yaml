@@ -21,7 +21,7 @@ Thank you for your interest in contributing to fast-yaml. This document provides
 
 You will need the following tools installed:
 
-**Rust toolchain** (MSRV 1.91, stable for building, nightly for `rustfmt`):
+**Rust toolchain** (MSRV 1.99, stable for building, nightly for `rustfmt`):
 ```bash
 # Install Rust via rustup
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
@@ -195,9 +195,9 @@ Add a `[tasks."name"]` table to `.config/mise/config.toml` with a `description` 
 
 ##### What stays outside mise
 
-- Rust toolchains (stable, nightly for rustfmt, beta, and the MSRV 1.91.0) come from rustup and `dtolnay/rust-toolchain`; mise does not manage them.
+- Rust toolchains (stable, nightly for rustfmt, beta, and the MSRV 1.99.0) come from rustup and `dtolnay/rust-toolchain`; mise does not manage them.
 - `clippy-sarif` and `sarif-fmt` come from `taiki-e/install-action` in the Clippy job: they have no mise registry entry and share one repository with several tag prefixes, which collide in the lockfile.
-- The release build check uses rustup only; the MSRV check uses the rustup 1.91.0 toolchain through `mise run msrv`. When the MSRV changes, update `rust-version`, the `msrv` job and the `msrv` task together.
+- The release build check uses rustup only; the MSRV check uses the rustup 1.99.0 toolchain through `mise run msrv`. When the MSRV changes, update `rust-version`, the `msrv` job and the `msrv` task together.
 
 ##### Troubleshooting
 

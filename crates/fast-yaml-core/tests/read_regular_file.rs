@@ -1,5 +1,6 @@
 //! Behavior of the shared bounded regular-file reader (#593).
 
+use std::assert_matches;
 use std::path::PathBuf;
 
 use fast_yaml_core::fs::{NotRegularKind, ReadFileError, read_regular_file};
@@ -28,8 +29,7 @@ fn rejects_a_file_over_the_limit_and_accepts_one_at_it() {
     let file = dir.join("a.yaml");
     std::fs::write(&file, "key: value").unwrap();
     let err = read_regular_file(&file, MaxInputBytes::new(9).unwrap()).unwrap_err();
-    assert!(
-        matches!(&err, ReadFileError::TooLarge(e) if e.size == 10),
+    assert_matches!(&err, ReadFileError::TooLarge(e) if e.size == 10,
         "{err:?}"
     );
     assert!(read_regular_file(&file, MaxInputBytes::new(10).unwrap()).is_ok());
@@ -39,15 +39,16 @@ fn rejects_a_file_over_the_limit_and_accepts_one_at_it() {
 fn missing_path_is_an_io_error() {
     let dir = scratch("missing");
     let err = read_regular_file(&dir.join("nope.yaml"), MaxInputBytes::DEFAULT).unwrap_err();
-    assert!(matches!(err, ReadFileError::Io(_)), "{err:?}");
+    assert_matches!(err, ReadFileError::Io(_), "{err:?}");
 }
 
 #[test]
 fn directory_is_not_regular() {
     let dir = scratch("dir");
     let err = read_regular_file(&dir, MaxInputBytes::DEFAULT).unwrap_err();
-    assert!(
-        matches!(err, ReadFileError::NotRegular(NotRegularKind::Directory)),
+    assert_matches!(
+        err,
+        ReadFileError::NotRegular(NotRegularKind::Directory),
         "{err:?}"
     );
     assert!(err.to_string().contains("directory"));
@@ -66,8 +67,9 @@ fn fifo_is_rejected_without_blocking() {
             .success()
     );
     let err = read_regular_file(&fifo, MaxInputBytes::DEFAULT).unwrap_err();
-    assert!(
-        matches!(err, ReadFileError::NotRegular(NotRegularKind::Special)),
+    assert_matches!(
+        err,
+        ReadFileError::NotRegular(NotRegularKind::Special),
         "{err:?}"
     );
 }
@@ -83,8 +85,8 @@ fn symlink_to_a_file_is_followed_and_to_a_directory_is_rejected() {
     symlink(&target, dir.join("link.yaml")).unwrap();
     symlink(&dir, dir.join("dirlink")).unwrap();
     assert!(read_regular_file(&dir.join("link.yaml"), MaxInputBytes::DEFAULT).is_ok());
-    assert!(matches!(
+    assert_matches!(
         read_regular_file(&dir.join("dirlink"), MaxInputBytes::DEFAULT),
         Err(ReadFileError::NotRegular(NotRegularKind::Directory))
-    ));
+    );
 }

@@ -30,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Parallel: every `io::Error` the atomic writer builds carries the new `AtomicWriteError` payload (`TargetChanged` and `HardLinkRefused` become its variants), and a swapped target now reports `<path> is not the file that was read; run the command again` (#695) (#713)
 - Parallel: `BatchResult` fields are private with derived getters, `from_results` takes the duration, `new()` is removed, and `FileProcessor::process` takes `Fn(&Path, &str) -> Result<()>` (#697) (#713)
 - Python/Node.js: `BatchConfig` drops `sequential_threshold`/`sequentialThreshold`, which the file processor never read, passing it raises `TypeError`/`InvalidArg`, and the Python limits after `max_input_bytes` are keyword-only (#696) (#713)
+- Raise the minimum supported Rust version from 1.91.0 to 1.99.0 (#700) (#727)
+
+### Changed
+
+- Python/Node.js: 16 `#[allow]` attributes become `#[expect]`, the 20 on macro-expanded or `unsafe_code` items stay `allow` (#714) (#727)
+- CI: record the mise migration median (541 s over 10 push runs, baseline 600 s) and the adopt-partially decision in `specs/010-ci-tooling/` (#675) (#727)
 
 ### Added
 

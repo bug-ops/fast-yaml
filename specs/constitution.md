@@ -72,7 +72,7 @@ graph TD
 
 Data flow of every command: bytes -> input checks (size, NUL, encoding/BOM) -> `NormalizedInput` -> bounded scanner -> events -> resolved `Value` (or lint context) -> emitter / report.
 
-Toolchain: Rust edition 2024, MSRV 1.91, workspace version 0.7.0, license MIT OR Apache-2.0. FFI crates build separately (`maturin`, `napi`).
+Toolchain: Rust edition 2024, MSRV 1.99, workspace version 0.7.0, license MIT OR Apache-2.0. FFI crates build separately (`maturin`, `napi`).
 
 ## 4. Spec map
 

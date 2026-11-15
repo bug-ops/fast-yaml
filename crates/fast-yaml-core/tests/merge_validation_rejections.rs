@@ -1,6 +1,7 @@
 //! Invalid merge values, repeated `<<` keys and set member values are rejected at their key.
 
 use fast_yaml_core::{MergeError, ParseError, Parser};
+use std::assert_matches;
 
 fn merge_error(yaml: &str) -> Option<MergeError> {
     match Parser::parse_str(yaml) {
@@ -57,10 +58,10 @@ fn duplicate_merge_key_is_rejected() {
 
 #[test]
 fn set_member_value_is_rejected_but_null_is_not() {
-    assert!(matches!(
+    assert_matches!(
         Parser::parse_str("!!set {a: 1}\n"),
         Err(ParseError::SetValue { .. })
-    ));
+    );
     assert!(Parser::parse_str("!!set {a, b: }\n").is_ok());
 }
 
@@ -83,8 +84,8 @@ fn anchors_do_not_leak_between_documents() {
 #[test]
 fn error_position_is_the_merge_key() {
     let err = Parser::parse_str("a: 1\nm:\n  k: 2\n  <<: 3\n").unwrap_err();
-    assert!(matches!(
+    assert_matches!(
         err,
         ParseError::Merge { at, .. } if (at.line().get(), at.column().get()) == (4, 3)
-    ));
+    );
 }

@@ -5,6 +5,7 @@ use fast_yaml_core::{EmitterConfig, ParseLimits};
 use fast_yaml_parallel::{
     CommentPolicy, Config, Error, FileProcessor, HardLinkPolicy, InPlaceTarget,
 };
+use std::assert_matches;
 use std::fs;
 use tempfile::TempDir;
 
@@ -76,8 +77,9 @@ fn parse_files_reports_the_failing_document_index_for_limit_errors() {
     let Some((_, Error::Parse { index, source })) = result.errors().first() else {
         panic!("expected a parse error");
     };
-    assert!(
-        matches!(source, fast_yaml_core::ParseError::LimitExceeded { .. }),
+    assert_matches!(
+        source,
+        fast_yaml_core::ParseError::LimitExceeded { .. },
         "{source:?}"
     );
     assert_eq!(*index, 2);

@@ -409,6 +409,7 @@ mod tests {
     use super::*;
     use crate::error::EmitError;
     use crate::value::{Float, Mapping, Set};
+    use std::assert_matches;
 
     #[test]
     fn test_emit_str_string() {
@@ -481,10 +482,10 @@ mod tests {
         let config = EmitterConfig::new().with_max_emit_depth(MaxDepth::new(2).unwrap());
         for flow in [Layout::Block, Layout::Flow] {
             let config = config.clone().with_layout(flow);
-            assert!(matches!(
+            assert_matches!(
                 Emitter::emit_str_with_config(&doc, &config),
                 Err(EmitError::DepthLimitExceeded { limit: 2 })
-            ));
+            );
         }
         let wide = EmitterConfig::new().with_max_emit_depth(MaxDepth::MAX);
         assert!(Emitter::emit_str_with_config(&doc, &wide).is_ok());
@@ -2104,8 +2105,9 @@ mod tests {
         for flow in [Layout::Block, Layout::Flow] {
             let config = EmitterConfig::new().with_layout(flow);
             let err = Emitter::emit_str_with_config(&doc, &config).unwrap_err();
-            assert!(
-                matches!(err, EmitError::DepthLimitExceeded { limit: 512 }),
+            assert_matches!(
+                err,
+                EmitError::DepthLimitExceeded { limit: 512 },
                 "flow={flow:?}: {err:?}"
             );
         }
@@ -2123,10 +2125,10 @@ mod tests {
         let doc = Value::Mapping(map);
         assert!(Emitter::emit_str(&doc).is_ok());
         let flow = EmitterConfig::new().with_layout(Layout::Flow);
-        assert!(matches!(
+        assert_matches!(
             Emitter::emit_str_with_config(&doc, &flow),
             Err(EmitError::ComplexFlowKey)
-        ));
+        );
     }
 
     #[test]
@@ -2181,10 +2183,10 @@ mod tests {
         let doc = Value::Set(set);
         assert!(Emitter::emit_str(&doc).is_ok());
         let flow = EmitterConfig::new().with_layout(Layout::Flow);
-        assert!(matches!(
+        assert_matches!(
             Emitter::emit_str_with_config(&doc, &flow),
             Err(EmitError::ComplexFlowKey)
-        ));
+        );
     }
 
     #[test]
@@ -2201,11 +2203,9 @@ mod tests {
         for doc in [Value::Mapping(as_key), Value::Set(nested)] {
             for flow in [Layout::Block, Layout::Flow] {
                 let config = EmitterConfig::new().with_layout(flow);
-                assert!(
-                    matches!(
-                        Emitter::emit_str_with_config(&doc, &config),
-                        Err(EmitError::SetAsKey | EmitError::ComplexFlowKey)
-                    ),
+                assert_matches!(
+                    Emitter::emit_str_with_config(&doc, &config),
+                    Err(EmitError::SetAsKey | EmitError::ComplexFlowKey),
                     "{flow:?}"
                 );
             }

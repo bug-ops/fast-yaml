@@ -103,7 +103,7 @@ pub struct BatchResult {
 
 impl From<RustBatchResult> for BatchResult {
     fn from(result: RustBatchResult) -> Self {
-        #[allow(
+        #[expect(
             clippy::cast_possible_truncation,
             reason = "counts are exposed to JavaScript as u32"
         )]

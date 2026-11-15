@@ -79,6 +79,7 @@ impl Target {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::fs;
     use tempfile::TempDir;
 
@@ -104,13 +105,13 @@ mod tests {
     #[test]
     fn test_no_paths_is_stdin() {
         let target = Target::resolve(vec![], false, &args(&[], 0)).unwrap();
-        assert!(matches!(target, Target::Stdin));
+        assert_matches!(target, Target::Stdin);
     }
 
     #[test]
     fn test_batch_flags_without_paths_error() {
         let err = Target::resolve(vec![], false, &args(&[], 2)).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoInput));
+        assert_matches!(err, DiscoveryError::NoInput);
     }
 
     #[test]
@@ -118,7 +119,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = touch(&dir, "a.yaml");
         let target = Target::resolve(vec![file.clone()], false, &args(&[], 0)).unwrap();
-        assert!(matches!(target, Target::File(p) if p == file));
+        assert_matches!(target, Target::File(p) if p == file);
     }
 
     #[test]
@@ -126,18 +127,18 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let paths = vec![touch(&dir, "a.yaml"), touch(&dir, "b.yaml")];
         let target = Target::resolve(paths, false, &args(&[], 0)).unwrap();
-        assert!(matches!(target, Target::Batch(_)));
+        assert_matches!(target, Target::Batch(_));
     }
 
     #[test]
     fn test_directory_and_glob_are_batch() {
         let dir = TempDir::new().unwrap();
         let target = Target::resolve(vec![dir.path().to_path_buf()], false, &args(&[], 0)).unwrap();
-        assert!(matches!(target, Target::Batch(_)));
+        assert_matches!(target, Target::Batch(_));
 
         let glob = dir.path().join("*.yaml");
         let target = Target::resolve(vec![glob], false, &args(&[], 0)).unwrap();
-        assert!(matches!(target, Target::Batch(_)));
+        assert_matches!(target, Target::Batch(_));
     }
 
     #[test]
@@ -145,22 +146,22 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = touch(&dir, "a.yaml");
         let target = Target::resolve(vec![file.clone()], false, &args(&["*.yml"], 0)).unwrap();
-        assert!(matches!(target, Target::Batch(_)));
+        assert_matches!(target, Target::Batch(_));
 
         let target = Target::resolve(vec![file], false, &args(&[], 2)).unwrap();
-        assert!(matches!(&target, Target::Batch(b) if matches!(b.workers, Workers::Fixed(_))));
+        assert_matches!(&target, Target::Batch(b) if matches!(b.workers, Workers::Fixed(_)));
     }
 
     #[test]
     fn test_stdin_files_is_batch_stdin_list() {
         let target = Target::resolve(vec![], true, &args(&[], 0)).unwrap();
-        assert!(matches!(
+        assert_matches!(
             target,
             Target::Batch(BatchTarget {
                 source: BatchSource::StdinList,
                 ..
             })
-        ));
+        );
     }
 
     #[test]

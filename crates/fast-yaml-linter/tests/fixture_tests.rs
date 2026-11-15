@@ -311,6 +311,7 @@ mod integration_tests {
 
 #[cfg(test)]
 mod config_fixtures {
+    use std::assert_matches;
     use std::path::{Path, PathBuf};
 
     use fast_yaml_linter::{
@@ -423,8 +424,9 @@ mod config_fixtures {
             ),
         ] {
             let error = load(&format!("invalid/{file}")).unwrap_err();
-            assert!(
-                matches!(error, ConfigFileError::InvalidRules { .. }),
+            assert_matches!(
+                error,
+                ConfigFileError::InvalidRules { .. },
                 "{file}: {error:?}"
             );
             let ConfigFileError::InvalidRules { source, .. } = error else {
@@ -439,10 +441,10 @@ mod config_fixtures {
 
     #[test]
     fn top_level_keys_are_validated() {
-        assert!(matches!(
+        assert_matches!(
             load("invalid/top-level-typo.yaml"),
             Err(ConfigFileError::UnknownKey { .. })
-        ));
+        );
         for (file, missing) in [
             ("yamllint-extends.yaml", "base.yaml"),
             ("extends-unknown-preset.yaml", "strict"),
@@ -451,8 +453,9 @@ mod config_fixtures {
             let ConfigFileError::Extended { source, .. } = error else {
                 panic!("{file}: expected Extended, got {error:?}");
             };
-            assert!(
-                matches!(*source, ConfigFileError::Io { ref path, .. } if path.ends_with(missing)),
+            assert_matches!(
+                *source,
+                ConfigFileError::Io { ref path, .. } if path.ends_with(missing),
                 "{file}: {source:?}"
             );
         }

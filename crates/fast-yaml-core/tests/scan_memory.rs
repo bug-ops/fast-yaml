@@ -3,6 +3,7 @@
 //! Every shape below makes the saphyr scanner buffer tokens for far more input than it reports
 //! as events; the limit must reject it while peak memory stays near `190 x limit`.
 
+use std::assert_matches;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use fast_yaml_core::{LimitKind, MaxScanAhead, NormalizedInput, ParseError, ParseLimits, Parser};
@@ -197,7 +198,7 @@ fn invalid_character_after_a_huge_flow_collection_is_found_within_a_small_budget
     for tail in ["\x01", "\x7F"] {
         let input = format!("[{}1]\n{tail}", items(4 * 1024 * 1024));
         let (result, peak) = normalized(&input);
-        assert!(matches!(result, Err(ParseError::Syntax(_))), "{result:?}");
+        assert_matches!(result, Err(ParseError::Syntax(_)), "{result:?}");
         assert!(
             peak < PEAK_PER_CHAR * 64 * 1024 + 4 * input.len(),
             "peak {peak}"

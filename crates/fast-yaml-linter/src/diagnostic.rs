@@ -915,6 +915,7 @@ mod tests {
 #[cfg(test)]
 mod code_tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn a_static_message_is_not_copied() {
@@ -924,6 +925,6 @@ mod code_tests {
         );
         let diagnostic =
             DiagnosticBuilder::new(RuleName::Colons, Severity::Info, "fixed", span).build();
-        assert!(matches!(diagnostic.message, Cow::Borrowed("fixed")));
+        assert_matches!(diagnostic.message, Cow::Borrowed("fixed"));
     }
 }

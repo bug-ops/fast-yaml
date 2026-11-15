@@ -319,6 +319,7 @@ fn big_int_group(canonical: &str) -> Group {
 mod tests {
     use super::*;
     use crate::value::{BigInt, Float};
+    use std::assert_matches;
 
     fn check_all(domain: KeyDomain, keys: &[Value]) -> Result<(), KeyError> {
         let mut guard = KeyGuard::new(domain);
@@ -351,7 +352,7 @@ mod tests {
             [Value::Float(Float::new(f64::INFINITY)), string("Infinity")],
         ] {
             let err = check_all(KeyDomain::StringKeys, &keys).unwrap_err();
-            assert!(matches!(err, KeyError::StringCollision { .. }), "{keys:?}");
+            assert_matches!(err, KeyError::StringCollision { .. }, "{keys:?}");
         }
     }
 
@@ -375,7 +376,7 @@ mod tests {
             ],
         ] {
             let err = check_all(KeyDomain::Python, &keys).unwrap_err();
-            assert!(matches!(err, KeyError::PythonCollision { .. }), "{keys:?}");
+            assert_matches!(err, KeyError::PythonCollision { .. }, "{keys:?}");
         }
     }
 

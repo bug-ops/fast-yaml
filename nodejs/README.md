@@ -355,7 +355,7 @@ Pre-built binaries are available for:
 ### Prerequisites
 
 - Node.js >= 22
-- Rust >= 1.91.0
+- Rust >= 1.99.0
 - NAPI-RS CLI (`npm install -g @napi-rs/cli`)
 
 ### Build from Source

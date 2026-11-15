@@ -72,7 +72,7 @@ cargo add fast-yaml-core
 ```
 
 > [!IMPORTANT]
-> Requires Rust 1.91 or later.
+> Requires Rust 1.99 or later.
 
 ## Usage
 

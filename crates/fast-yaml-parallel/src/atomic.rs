@@ -647,7 +647,7 @@ impl Write for AtomicFile {
 
 fn parent_dir(target: &Path) -> &Path {
     match target.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        Some(parent) if !parent.is_empty() => parent,
         _ => Path::new("."),
     }
 }
@@ -1170,6 +1170,7 @@ fn resolve_unbound(path: &Path) -> io::Result<(PathBuf, Option<Existing>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn restore_error() -> io::Error {
         io::Error::new(io::ErrorKind::PermissionDenied, "denied")
@@ -1260,11 +1261,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let err = write_atomic(dir.path(), b"x").unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
-        assert!(matches!(
+        assert_matches!(
             err.get_ref()
                 .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
             Some(AtomicWriteError::NotRegular { .. })
-        ));
+        );
     }
 
     #[test]
@@ -1567,11 +1568,11 @@ mod tests {
             symlink(dir.path().join("missing"), &link).unwrap();
             let err = write_atomic(&link, b"x").unwrap_err();
             assert_eq!(err.kind(), io::ErrorKind::NotFound);
-            assert!(matches!(
+            assert_matches!(
                 err.get_ref()
                     .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
                 Some(AtomicWriteError::DanglingSymlink { .. })
-            ));
+            );
             assert!(err.to_string().contains("dangling symlink"));
             assert!(fs::symlink_metadata(&link).unwrap().is_symlink());
         }

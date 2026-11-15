@@ -357,6 +357,7 @@ impl<'a> Iterator for EventStream<'a> {
 mod tests {
     use super::*;
     use crate::limits::{LimitKind, MaxAliasBytes};
+    use std::assert_matches;
     use std::fmt::Write;
 
     fn stream<'a>(input: &'a NormalizedInput<'_>) -> EventStream<'a> {
@@ -413,7 +414,7 @@ mod tests {
         let all = default_events("a: 1").unwrap();
         assert_eq!(all.first(), Some(&Event::StreamStart));
         assert_eq!(all.last(), Some(&Event::StreamEnd));
-        assert!(matches!(all[1], Event::DocumentStart { explicit: false }));
+        assert_matches!(all[1], Event::DocumentStart { explicit: false });
     }
 
     #[test]
@@ -518,13 +519,13 @@ mod tests {
             ..ParseLimits::default()
         };
         let input = NormalizedInput::new("[[1]]").unwrap();
-        assert!(matches!(
+        assert_matches!(
             events(&input, limits),
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::Depth(_),
                 ..
             })
-        ));
+        );
     }
 
     #[test]
@@ -534,13 +535,13 @@ mod tests {
             ..ParseLimits::default()
         };
         let input = NormalizedInput::new("[1, 2, 3, 4, 5, 6, 7, 8, 9]").unwrap();
-        assert!(matches!(
+        assert_matches!(
             events(&input, limits),
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::ScanAhead(_),
                 ..
             })
-        ));
+        );
         let input = NormalizedInput::new("a: [1, 2, 3, 4, 5, 6, 7, 8, 9]").unwrap();
         assert!(events(&input, limits).is_ok());
     }
@@ -557,13 +558,13 @@ mod tests {
             max_alias_bytes: MaxAliasBytes::new(1 << 20).unwrap(),
             ..ParseLimits::default()
         };
-        assert!(matches!(
+        assert_matches!(
             events(&input, limits),
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::AnchorCopies(_),
                 ..
             })
-        ));
+        );
         let shared = EventStream::new(&input, limits).sharing_anchors();
         assert!(shared.collect::<Result<Vec<_>, _>>().is_ok());
 
@@ -575,10 +576,10 @@ mod tests {
     #[test]
     fn rejects_invalid_merge_value() {
         let input = NormalizedInput::new("{<<: 1}").unwrap();
-        assert!(matches!(
+        assert_matches!(
             events(&input, ParseLimits::default()),
             Err(ParseError::Merge { .. })
-        ));
+        );
     }
 
     #[test]

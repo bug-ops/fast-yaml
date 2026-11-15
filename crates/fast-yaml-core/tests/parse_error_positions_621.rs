@@ -6,6 +6,7 @@ use fast_yaml_core::{
     DocumentCount, DocumentIndex, KeyDomain, LimitKind, LineCount, LoadOptions, MergeError,
     OneBased, ParseError, Parser, SourcePosition,
 };
+use std::assert_matches;
 
 const fn at(line: usize, column: usize) -> SourcePosition {
     SourcePosition::new(OneBased::new(line).unwrap(), OneBased::new(column).unwrap())
@@ -78,7 +79,7 @@ fn limit_errors_carry_the_event_position_and_the_document() {
     else {
         panic!("limit error expected");
     };
-    assert!(matches!(kind, LimitKind::Depth(_)));
+    assert_matches!(kind, LimitKind::Depth(_));
     assert_eq!(position.line().get(), 5);
     assert_eq!(document, DocumentIndex::new(1));
 }
@@ -86,7 +87,7 @@ fn limit_errors_carry_the_event_position_and_the_document() {
 #[test]
 fn syntax_errors_carry_the_position_and_the_document() {
     let err = Parser::parse_all("a: 1\n---\nb: 2\n---\nc: [\n").unwrap_err();
-    assert!(matches!(err, ParseError::Syntax(_)));
+    assert_matches!(err, ParseError::Syntax(_));
     assert_eq!(err.document_index(), DocumentIndex::new(2));
     assert!(err.position().line().get() >= 5);
 }

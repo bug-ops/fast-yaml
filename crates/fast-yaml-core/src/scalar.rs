@@ -211,7 +211,7 @@ fn exceeds_bit_cap(digits: &str, bits_per_digit: u32) -> bool {
     else {
         return false;
     };
-    let top_bits = u64::BITS - top.leading_zeros();
+    let top_bits = top.bit_width();
     (significant.len() - 1) * bits_per_digit as usize + top_bits as usize > MAX_RADIX_BIG_BITS
 }
 
@@ -519,6 +519,7 @@ pub(crate) const fn is_c_printable(c: char) -> bool {
 mod tests {
     use super::*;
     use ResolvedScalar::{Bool, Float, Int, Null, Str};
+    use std::assert_matches;
 
     fn big_of(raw: &str) -> BigIntRef<'_> {
         let ResolvedScalar::BigInt(big) = resolve_scalar(raw, ScalarStyle::Plain, None) else {
@@ -603,7 +604,7 @@ mod tests {
             let canonical = big_of(raw).canonical().into_owned();
             let again = big_of(&canonical);
             assert_eq!(again.radix(), IntRadix::Decimal);
-            assert!(matches!(again.canonical(), Cow::Borrowed(c) if c == canonical));
+            assert_matches!(again.canonical(), Cow::Borrowed(c) if c == canonical);
         }
     }
 
@@ -626,16 +627,10 @@ mod tests {
             format!("-0x1{}", "0".repeat(3571)),
         ];
         for raw in &fits {
-            assert!(
-                matches!(plain(raw), ResolvedScalar::BigInt(_)),
-                "plain {}",
-                &raw[..8]
-            );
-            assert!(
-                matches!(
-                    tagged(raw, ScalarStyle::Plain, "int"),
-                    ResolvedScalar::BigInt(_)
-                ),
+            assert_matches!(plain(raw), ResolvedScalar::BigInt(_), "plain {}", &raw[..8]);
+            assert_matches!(
+                tagged(raw, ScalarStyle::Plain, "int"),
+                ResolvedScalar::BigInt(_),
                 "!!int {}",
                 &raw[..8]
             );
@@ -733,7 +728,7 @@ mod tests {
         assert_eq!(plain(".inf"), Float(f64::INFINITY));
         assert_eq!(plain(".Inf"), Float(f64::INFINITY));
         assert_eq!(plain("-.inf"), Float(f64::NEG_INFINITY));
-        assert!(matches!(plain(".nan"), Float(f) if f.is_nan()));
+        assert_matches!(plain(".nan"), Float(f) if f.is_nan());
         assert_eq!(plain("yes"), Str("yes"));
     }
 

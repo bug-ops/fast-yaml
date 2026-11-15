@@ -56,36 +56,37 @@ pub enum ReportEvent<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::path::PathBuf;
 
     #[test]
     fn test_report_event_creation() {
         let path = PathBuf::from("test.yaml");
 
-        assert!(matches!(
+        assert_matches!(
             ReportEvent::Error {
                 path: Some(&path),
                 message: "Test error",
             },
             ReportEvent::Error { .. }
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             ReportEvent::Success {
                 message: "Test success",
             },
             ReportEvent::Success { .. }
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             ReportEvent::Timing {
                 operation: "parse",
                 duration: Duration::from_secs(1),
             },
             ReportEvent::Timing { .. }
-        ));
+        );
 
-        assert!(matches!(
+        assert_matches!(
             ReportEvent::BatchSummary(BatchStats {
                 total: 10,
                 formatted: 5,
@@ -95,6 +96,6 @@ mod tests {
                 duration: Duration::from_secs(5),
             }),
             ReportEvent::BatchSummary(_)
-        ));
+        );
     }
 }

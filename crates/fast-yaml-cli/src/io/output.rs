@@ -341,13 +341,14 @@ impl Write for OutputSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::fs;
     use tempfile::NamedTempFile;
 
     #[test]
     fn test_new_stdout() {
         let writer = OutputWriter::new(OutputTarget::Stdout);
-        assert!(matches!(writer.destination, OutputDestination::Stdout));
+        assert_matches!(writer.destination, OutputDestination::Stdout);
     }
 
     #[test]
@@ -363,7 +364,7 @@ mod tests {
     #[test]
     fn test_dev_null_discards_the_output() {
         let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/null")));
-        assert!(matches!(writer.destination, OutputDestination::Null));
+        assert_matches!(writer.destination, OutputDestination::Null);
         writer.write("a: 1\n").unwrap();
         let mut sink = writer.sink().unwrap();
         sink.write_all(b"a: 1\n").unwrap();
@@ -398,31 +399,31 @@ mod tests {
     #[test]
     fn test_new_dev_stdout() {
         let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/stdout")));
-        assert!(matches!(writer.destination, OutputDestination::Stdout));
+        assert_matches!(writer.destination, OutputDestination::Stdout);
     }
 
     #[test]
     fn test_new_dash() {
         let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("-")));
-        assert!(matches!(writer.destination, OutputDestination::Stdout));
+        assert_matches!(writer.destination, OutputDestination::Stdout);
     }
 
     #[test]
     fn test_new_dev_fd_1() {
         let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/fd/1")));
-        assert!(matches!(writer.destination, OutputDestination::Stdout));
+        assert_matches!(writer.destination, OutputDestination::Stdout);
     }
 
     #[test]
     fn test_new_dev_stderr() {
         let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/stderr")));
-        assert!(matches!(writer.destination, OutputDestination::Stderr));
+        assert_matches!(writer.destination, OutputDestination::Stderr);
     }
 
     #[test]
     fn test_new_dev_fd_2() {
         let writer = OutputWriter::new(OutputTarget::File(PathBuf::from("/dev/fd/2")));
-        assert!(matches!(writer.destination, OutputDestination::Stderr));
+        assert_matches!(writer.destination, OutputDestination::Stderr);
     }
 
     #[test]
@@ -460,12 +461,12 @@ mod tests {
 
         let err = writer.write("a: 1\n").unwrap_err();
 
-        assert!(matches!(
+        assert_matches!(
             err.downcast_ref::<io::Error>()
                 .and_then(io::Error::get_ref)
                 .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
             Some(AtomicWriteError::TargetChanged(_))
-        ));
+        );
         assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated: 1\n");
     }
 

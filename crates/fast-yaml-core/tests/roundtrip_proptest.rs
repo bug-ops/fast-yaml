@@ -236,7 +236,7 @@ proptest! {
 
     #[test]
     fn arbitrary_text_never_panics_and_stays_idempotent(bom in prop::option::of(Just('\u{feff}')), body in "[ -~\r\n\t]{0,200}") {
-        let input = format!("{}{body}", bom.map(String::from).unwrap_or_default());
+        let input = format!("{}{body}", bom.map_or_default(String::from));
         if Parser::parse_all(&input).is_ok()
             && let Ok(once) = Emitter::format(&input)
         {

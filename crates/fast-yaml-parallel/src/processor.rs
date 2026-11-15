@@ -142,6 +142,7 @@ mod tests {
     use crate::chunker::{SourceOrigin, chunk_documents};
     use fast_yaml_core::LimitKind;
     use fast_yaml_core::limits::{MaxDocuments, MaxInputBytes, ParseLimits};
+    use std::assert_matches;
 
     fn budget() -> StreamBudget {
         StreamBudget::new(ParseLimits::default())
@@ -156,7 +157,7 @@ mod tests {
             writeln!(yaml, "a{i}: &a{i} [{refs}]").unwrap();
         }
         let result = process_parallel(&yaml, &Config::default());
-        assert!(matches!(result, Err(Error::Parse { .. })));
+        assert_matches!(result, Err(Error::Parse { .. }));
     }
 
     #[test]
@@ -197,7 +198,7 @@ mod tests {
         let mut yaml = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
         yaml.extend((0..1_000).map(|i| format!("k{i}: !e!x v\n")));
         let err = process_parallel(&yaml, &Config::default()).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             Error::Parse {
                 source: fast_yaml_core::ParseError::LimitExceeded {
@@ -206,7 +207,7 @@ mod tests {
                 },
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -245,7 +246,7 @@ mod tests {
             max_depth: MaxDepth::new(2).unwrap(),
             ..ParseLimits::default()
         });
-        assert!(matches!(
+        assert_matches!(
             process_parallel(nested, &depth),
             Err(Error::Parse {
                 source: fast_yaml_core::ParseError::LimitExceeded {
@@ -254,7 +255,7 @@ mod tests {
                 },
                 ..
             })
-        ));
+        );
         assert!(process_parallel(nested, &parallel()).is_ok());
 
         let aliased = "a: &x [1, 2, 3]\nb: *x\n---\nc: &y [1, 2, 3]\nd: *y\n";
@@ -268,7 +269,7 @@ mod tests {
             max_alias_bytes: MaxAliasBytes::new(300).unwrap(),
             ..ParseLimits::default()
         });
-        assert!(matches!(
+        assert_matches!(
             process_parallel(aliased, &alias),
             Err(Error::Parse {
                 source: fast_yaml_core::ParseError::LimitExceeded {
@@ -277,7 +278,7 @@ mod tests {
                 },
                 ..
             })
-        ));
+        );
         assert!(process_parallel(aliased, &parallel()).is_ok());
     }
 
@@ -306,7 +307,7 @@ mod tests {
             parse_sequential(&chunks, &fresh(), LoadOptions::default()),
             parse_chunks_parallel(&chunks, &fresh(), LoadOptions::default()),
         ] {
-            assert!(matches!(
+            assert_matches!(
                 result,
                 Err(Error::Parse {
                     source: fast_yaml_core::ParseError::LimitExceeded {
@@ -315,7 +316,7 @@ mod tests {
                     },
                     ..
                 })
-            ));
+            );
         }
     }
 
@@ -530,8 +531,7 @@ mod tests {
     fn test_process_parallel_input_size_limit() {
         assert!(process_parallel("small", &max_input(100)).is_ok());
         let result = process_parallel("large input", &max_input(5));
-        assert!(
-            matches!(&result, Err(Error::InputTooLarge(e)) if e.size == 11 && e.limit.get() == 5),
+        assert_matches!(&result, Err(Error::InputTooLarge(e)) if e.size == 11 && e.limit.get() == 5,
             "{result:?}"
         );
     }
@@ -593,7 +593,7 @@ mod tests {
     fn assert_alias_limit(result: &Result<Vec<Value>>) {
         use fast_yaml_core::ParseError;
         use fast_yaml_core::limits::LimitKind;
-        assert!(matches!(
+        assert_matches!(
             result,
             Err(Error::Parse {
                 source: ParseError::LimitExceeded {
@@ -602,20 +602,20 @@ mod tests {
                 },
                 ..
             })
-        ));
+        );
     }
 
     #[test]
     fn test_alias_budget_is_shared_across_chunks() {
         let stream = bomb_doc().repeat(4);
         assert!(Parser::parse_all(&bomb_doc()).is_ok());
-        assert!(matches!(
+        assert_matches!(
             Parser::parse_all(&stream),
             Err(fast_yaml_core::ParseError::LimitExceeded {
                 kind: fast_yaml_core::LimitKind::AliasBytes(_),
                 ..
             })
-        ));
+        );
         assert_alias_limit(&process_parallel(&stream, &sequential()));
         assert_alias_limit(&process_parallel(&stream, &Config::default()));
         assert_alias_limit(&process_parallel(

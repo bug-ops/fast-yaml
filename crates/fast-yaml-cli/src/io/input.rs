@@ -108,6 +108,7 @@ impl InputSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -118,7 +119,7 @@ mod tests {
 
         let input = InputSource::from_file(temp_file.path(), MaxInputBytes::DEFAULT).unwrap();
         assert_eq!(input.as_str(), "test: value");
-        assert!(matches!(input.origin, InputOrigin::File { .. }));
+        assert_matches!(input.origin, InputOrigin::File { .. });
         assert_eq!(input.file_path(), Some(temp_file.path()));
     }
 

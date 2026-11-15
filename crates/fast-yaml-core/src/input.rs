@@ -420,6 +420,7 @@ fn prefix_bom_offsets(input: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn normalized(input: &str) -> String {
         NormalizedInput::new(input).unwrap().as_str().to_owned()
@@ -430,7 +431,7 @@ mod tests {
     #[test]
     fn printable_input_is_borrowed_unchanged() {
         let input = NormalizedInput::new("a: 1\n\tb: \u{85}\u{A0}\u{10FFFF}\r\n").unwrap();
-        assert!(matches!(input.text, Cow::Borrowed(_)));
+        assert_matches!(input.text, Cow::Borrowed(_));
         assert_eq!(input.original_offset(5), 5);
     }
 

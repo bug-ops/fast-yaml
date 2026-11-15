@@ -1196,6 +1196,7 @@ impl LimitGuard {
 mod tests {
     use super::*;
     use saphyr_parser::{Marker, ScalarStyle};
+    use std::assert_matches;
     use std::borrow::Cow;
 
     #[test]
@@ -1389,26 +1390,26 @@ mod tests {
             guard.observe(&Event::DocumentStart(true), span()).unwrap();
             guard.observe(&Event::DocumentEnd, span()).unwrap();
         }
-        assert!(matches!(
+        assert_matches!(
             guard.observe(&Event::DocumentStart(true), span()),
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::Documents(_),
                 document,
                 ..
             }) if document == DocumentIndex::new(2)
-        ));
+        );
     }
 
     #[test]
     fn default_limit_rejects_more_than_100k_documents() {
         let yaml = "---\n".repeat(MaxDocuments::DEFAULT.get() + 1);
-        assert!(matches!(
+        assert_matches!(
             crate::Parser::parse_all(&yaml),
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::Documents(_),
                 ..
             })
-        ));
+        );
         let at_limit = "---\n".repeat(MaxDocuments::DEFAULT.get());
         assert_eq!(
             crate::Parser::parse_all(&at_limit).unwrap().len(),
@@ -1440,13 +1441,13 @@ mod tests {
             }
             guard.observe(&Event::SequenceEnd, span()).unwrap();
         }
-        assert!(matches!(
+        assert_matches!(
             outcome,
             Err(ParseError::LimitExceeded {
                 kind: LimitKind::AliasBytes(_),
                 ..
             })
-        ));
+        );
     }
 
     fn tagged_scalar(prefix_len: usize) -> Event<'static> {
@@ -1486,13 +1487,13 @@ mod tests {
         guard.observe(&event, span()).unwrap();
         guard.observe(&event, span()).unwrap();
         let err = guard.observe(&event, span()).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             ParseError::LimitExceeded {
                 kind: LimitKind::TagBytes(_),
                 ..
             }
-        ));
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! End-to-end tests for the `--max-depth` and `--max-alias-bytes` flags.
 
 use assert_cmd::cargo_bin_cmd;
+use std::assert_matches;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,7 @@ fn run(args: &[&str], path: &Path) -> (Option<i32>, String) {
     let output = cargo_bin_cmd!("fy").args(args).arg(path).output().unwrap();
     (
         output.status.code(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
+        String::from_utf8_lossy_owned(output.stderr),
     )
 }
 
@@ -40,7 +41,7 @@ fn max_depth_flag_lowers_and_raises_the_limit() {
         assert!(stderr.contains("raise with --max-depth"), "{stderr}");
 
         let (code, stderr) = run(&with_flag(cmd, "--max-depth", "3"), &path);
-        assert!(matches!(code, Some(0 | 2)), "{cmd:?}: {stderr}");
+        assert_matches!(code, Some(0 | 2), "{cmd:?}: {stderr}");
         assert!(!stderr.contains("limit exceeded"), "{stderr}");
     }
 }
@@ -56,7 +57,7 @@ fn many_documents_are_rejected_by_default_and_raised_by_the_flag() {
         assert!(stderr.contains("raise with --max-documents"), "{stderr}");
 
         let (code, stderr) = run(&with_flag(cmd, "--max-documents", "300000"), &path);
-        assert!(matches!(code, Some(0 | 2)), "{cmd:?}: {stderr}");
+        assert_matches!(code, Some(0 | 2), "{cmd:?}: {stderr}");
         assert!(!stderr.contains("limit exceeded"), "{stderr}");
     }
 }
@@ -94,7 +95,7 @@ fn max_alias_bytes_flag_accepts_suffixes_and_hints() {
 
         for value in ["4096", "4KiB", "1MiB", "1GiB"] {
             let (code, stderr) = run(&with_flag(cmd, "--max-alias-bytes", value), &path);
-            assert!(matches!(code, Some(0 | 2)), "{cmd:?} {value}: {stderr}");
+            assert_matches!(code, Some(0 | 2), "{cmd:?} {value}: {stderr}");
             assert!(!stderr.contains("limit exceeded"), "{stderr}");
         }
     }
@@ -175,10 +176,7 @@ fn boundary_limit_values_are_accepted() {
     ] {
         for cmd in SUBCOMMANDS {
             let (code, stderr) = run(&with_flag(cmd, flag, value), &path);
-            assert!(
-                matches!(code, Some(0 | 2)),
-                "{cmd:?} {flag} {value}: {stderr}"
-            );
+            assert_matches!(code, Some(0 | 2), "{cmd:?} {flag} {value}: {stderr}");
             assert!(
                 !stderr.contains("error"),
                 "{cmd:?} {flag} {value}: {stderr}"
