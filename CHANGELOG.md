@@ -67,10 +67,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Dependencies
 
-- Core: `saphyr-parser` 0.1.0 to 0.3.3 (#655) (#691)
-- Python: `pyo3` 0.29.3 to 0.30.1 (#656)
-- Core: `jsonschema` 0.58.6 to 0.60.0 and routine rust-minor-patch group updates (#663) (#646) (#653) (#662) (#690)
-- Node.js: `@napi-rs/cli`, `@biomejs/biome`, `@types/node` and `vite` dev-dependency bumps (#716) (#721) (#722) (#719)
+- Core: `saphyr-parser` 0.1.0 to 0.3.4, so a column-0 `---` after a BOM now ends a root block scalar (#655) (#691) (#731)
+- Python: `pyo3` 0.29.3 to 0.30.1 and refreshed `uv.lock` (#656) (#731)
+- Node.js: `napi` 3.16 and `napi-derive` 3.7 (#731)
+- Core: `jsonschema` 0.58.6 to 0.61, `xattr` 1.7, `proptest` 1.12 and routine rust-minor-patch group updates (#663) (#646) (#653) (#662) (#690) (#731)
+- Node.js: `@napi-rs/cli`, `@biomejs/biome`, `@types/node` and `vite` dev-dependency bumps (#716) (#721) (#722) (#719) (#731)
 - CI: routine GitHub Actions bumps (#647) (#649) (#652) (#657) (#659) (#660) (#661) (#687) (#688) (#689) (#706) (#707) (#708) (#717) (#718) (#720)
 
 ## [0.7.0] - 2026-10-02

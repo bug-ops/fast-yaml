@@ -2984,9 +2984,7 @@ m:
     #[test]
     fn marker_after_a_bom_ends_a_root_block_scalar() {
         let docs = Parser::parse_all(&format!("--- |\nfoo\n{B}---\nbar\n")).unwrap();
-        // saphyr reads a column-0 `---` inside a root block scalar as content (#407), so only the
-        // BOM is lost
-        assert_eq!(texts(&docs), ["foo\n---\nbar\n"]);
+        assert_eq!(texts(&docs), ["foo\n", "bar"]);
     }
 
     #[test]
