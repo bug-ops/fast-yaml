@@ -531,7 +531,9 @@ mod tests {
     fn test_process_parallel_input_size_limit() {
         assert!(process_parallel("small", &max_input(100)).is_ok());
         let result = process_parallel("large input", &max_input(5));
-        assert_matches!(&result, Err(Error::InputTooLarge(e)) if e.size == 11 && e.limit.get() == 5,
+        assert_matches!(
+            &result,
+            Err(Error::InputTooLarge(e)) if e.size == 11 && e.limit.get() == 5,
             "{result:?}"
         );
     }

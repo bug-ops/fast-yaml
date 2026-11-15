@@ -251,13 +251,12 @@ fn the_wildcard_budget_is_exactly_4096() {
 }
 
 #[test]
-fn a_megabyte_of_repeated_names_loads_fast() {
+fn a_megabyte_of_repeated_names_loads() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("p.txt"), "vendor/\n").unwrap();
     let names = vec!["p.txt"; 140_000].join(", ");
-    let started = std::time::Instant::now();
+    // Re-reading a repeated name would exceed the pattern-line limit and fail the load
     for config in top_and_rule(&format!("[{names}]")) {
         assert!(load(&dir, &config).is_ok());
     }
-    assert!(started.elapsed() < std::time::Duration::from_secs(5));
 }

@@ -304,7 +304,9 @@ mod tests {
         let max = MaxInputBytes::new(9).unwrap();
 
         let err = read_file(file.path(), max).unwrap_err();
-        assert_matches!(&err, Error::InputTooLarge(e) if e.size == 10 && e.limit == max,
+        assert_matches!(
+            &err,
+            Error::InputTooLarge(e) if e.size == 10 && e.limit == max,
             "{err:?}"
         );
     }

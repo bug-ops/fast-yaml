@@ -479,15 +479,15 @@ mod tests {
         let limit = |n| Some(MaxDocuments::new(n).unwrap());
         let err = chunk_documents(&input, limit(3)).unwrap_err();
         assert_matches!(
-                err,
-                Error::Parse {
-                    index: 3,
-                    source: ParseError::LimitExceeded {
-                        kind: LimitKind::Documents(_),
-                        document,
-                        ..
-                    }
-                } if document.get() == 3,
+            err,
+            Error::Parse {
+                index: 3,
+                source: ParseError::LimitExceeded {
+                    kind: LimitKind::Documents(_),
+                    document,
+                    ..
+                }
+            } if document.get() == 3,
             "{err:?}"
         );
         assert_eq!(
