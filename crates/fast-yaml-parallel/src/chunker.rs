@@ -112,8 +112,8 @@ impl RootNode {
 ///   starts one implicitly; trailing comments stay with the previous chunk
 /// - Input without boundaries is a single chunk unless it is completely empty
 /// - A column-0 `---` inside an unindented top-level block scalar (no indentation indicator,
-///   first content line at column 0) is content, like `saphyr`; indented scalars and `|N`
-///   headers still split at it (#407)
+///   first content line at column 0) stays in one chunk; `saphyr` 0.3.4 ends the scalar there, so
+///   that chunk parses to several documents. Indented scalars and `|N` headers split at it (#407)
 ///
 /// # Performance
 ///

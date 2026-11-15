@@ -2,11 +2,11 @@
 //!
 //! Pinned: `--- |2\n---\n` is an error for saphyr but not for the chunker. Tests flip when saphyr
 //! fixes it. An empty clip/keep block scalar yields `""` in both engines since saphyr 0.3 (#456).
-//! Column-0 `---` inside an unindented top-level block scalar is scalar content in both
-//! engines (#552). Update deliberately.
+//! Column-0 `---` ends an unindented top-level block scalar in both engines since saphyr 0.3.4
+//! (#552). Update deliberately.
 
 use fast_yaml_core::limits::{MaxDocuments, ParseLimits};
-use fast_yaml_core::{Parser, Value};
+use fast_yaml_core::{LimitKind, ParseError, Parser, Value};
 use fast_yaml_parallel::{Config, Error, Workers, parse_parallel, parse_parallel_with_config};
 
 fn string(s: &str) -> Value {
@@ -41,47 +41,44 @@ fn assert_agrees(input: &str, expected: &[Value]) {
 }
 
 #[test]
-fn marker_inside_unindented_top_level_block_scalar_is_content() {
-    assert_agrees("--- |\nx\n---\nb: 1\n", &[string("x\n---\nb: 1\n")]);
-    assert_agrees("--- >\nx\n---\nb: 1\n", &[string("x --- b: 1\n")]);
+fn marker_ends_unindented_top_level_block_scalar() {
+    assert_agrees("--- |\nx\n---\nb: 1\n", &[string("x\n"), int_map("b", 1)]);
+    assert_agrees("--- >\nx\n---\nb: 1\n", &[string("x\n"), int_map("b", 1)]);
 }
 
 #[test]
-fn marker_inside_top_level_block_scalar_without_document_start_is_content() {
-    assert_agrees("|\nx\n---\nb: 1\n", &[string("x\n---\nb: 1\n")]);
-    assert_agrees(">\nx\n---\nb: 1\n", &[string("x --- b: 1\n")]);
+fn marker_ends_top_level_block_scalar_without_document_start() {
+    assert_agrees("|\nx\n---\nb: 1\n", &[string("x\n"), int_map("b", 1)]);
+    assert_agrees(">\nx\n---\nb: 1\n", &[string("x\n"), int_map("b", 1)]);
 }
 
 #[test]
-fn marker_inside_top_level_block_scalar_is_content_for_every_chomping() {
-    for (header, value) in [
-        ("|-", "x\n---\nb: 1"),
-        ("|+", "x\n---\nb: 1\n"),
-        (">-", "x --- b: 1"),
-        (">+", "x --- b: 1\n"),
-    ] {
-        assert_agrees(&format!("--- {header}\nx\n---\nb: 1\n"), &[string(value)]);
+fn marker_ends_top_level_block_scalar_for_every_chomping() {
+    for (header, value) in [("|-", "x"), ("|+", "x\n"), (">-", "x"), (">+", "x\n")] {
+        assert_agrees(
+            &format!("--- {header}\nx\n---\nb: 1\n"),
+            &[string(value), int_map("b", 1)],
+        );
     }
 }
 
 #[test]
-fn marker_inside_top_level_block_scalar_is_content_with_crlf() {
-    assert_agrees("--- |\r\nx\r\n---\r\nb: 1\r\n", &[string("x\n---\nb: 1\n")]);
+fn marker_ends_top_level_block_scalar_with_crlf() {
+    assert_agrees(
+        "--- |\r\nx\r\n---\r\nb: 1\r\n",
+        &[string("x\n"), int_map("b", 1)],
+    );
 }
 
 #[test]
-fn marker_directly_after_top_level_block_header_is_content() {
-    for (header, value) in [
-        ("|", "---\nb: 1\n"),
-        (">", "--- b: 1\n"),
-        ("|-", "---\nb: 1"),
-        (">-", "--- b: 1"),
-        ("|+", "---\nb: 1\n"),
-        (">+", "--- b: 1\n"),
-    ] {
-        assert_agrees(&format!("--- {header}\n---\nb: 1\n"), &[string(value)]);
+fn marker_directly_after_top_level_block_header_ends_an_empty_scalar() {
+    for header in ["|", ">", "|-", ">-", "|+", ">+"] {
+        assert_agrees(
+            &format!("--- {header}\n---\nb: 1\n"),
+            &[string(""), int_map("b", 1)],
+        );
     }
-    assert_agrees("--- |\n\n---\nb: 1\n", &[string("\n---\nb: 1\n")]);
+    assert_agrees("--- |\n\n---\nb: 1\n", &[string(""), int_map("b", 1)]);
 }
 
 #[test]
@@ -146,7 +143,10 @@ fn indented_top_level_block_scalar_still_splits_at_marker_in_both() {
 
 #[test]
 fn comment_line_after_block_header_is_scalar_content() {
-    assert_agrees("--- |\n# c\n  x\n---\nb\n", &[string("# c\n  x\n---\nb\n")]);
+    assert_agrees(
+        "--- |\n# c\n  x\n---\nb\n",
+        &[string("# c\n  x\n"), string("b")],
+    );
 }
 
 #[test]
@@ -239,14 +239,23 @@ fn empty_block_scalar_followed_by_blank_line_keeps_one_newline_when_kept() {
 }
 
 #[test]
-fn max_documents_counts_documents_of_a_merged_chunk() {
+fn max_documents_counts_documents_after_a_top_level_block_scalar() {
     let input = "--- |\nx\n---\nb\n---\nc\n";
-    assert_eq!(Parser::parse_all(input).unwrap().len(), 1);
+    assert_eq!(Parser::parse_all(input).unwrap().len(), 3);
     let config = Config::new().with_parse_limits(ParseLimits {
-        max_documents: MaxDocuments::new(1).unwrap(),
+        max_documents: MaxDocuments::new(2).unwrap(),
         ..ParseLimits::default()
     });
-    assert_eq!(parse_parallel_with_config(input, &config).unwrap().len(), 1);
+    assert!(matches!(
+        parse_parallel_with_config(input, &config),
+        Err(Error::Parse {
+            source: ParseError::LimitExceeded {
+                kind: LimitKind::Documents(_),
+                ..
+            },
+            ..
+        })
+    ));
 }
 
 #[test]
