@@ -606,6 +606,7 @@ fn bigint_to_scalar(digits: &str) -> NapiResult<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn brand_names_convert_and_unknown_is_an_error() {
@@ -623,24 +624,24 @@ mod tests {
 
     #[test]
     fn negative_zero_stays_a_float() {
-        assert!(matches!(number_to_scalar(-0.0), Value::Float(f) if f.get().is_sign_negative()));
-        assert!(matches!(number_to_scalar(0.0), Value::Int(0)));
+        assert_matches!(number_to_scalar(-0.0), Value::Float(f) if f.get().is_sign_negative());
+        assert_matches!(number_to_scalar(0.0), Value::Int(0));
     }
 
     #[test]
     fn bigint_digits_split_at_i64() {
-        assert!(matches!(
+        assert_matches!(
             bigint_to_scalar("-9223372036854775808"),
             Ok(Value::Int(i64::MIN))
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             bigint_to_scalar("9223372036854775808"),
             Ok(Value::BigInt(_))
-        ));
-        assert!(matches!(
+        );
+        assert_matches!(
             bigint_to_scalar("-9223372036854775809"),
             Ok(Value::BigInt(_))
-        ));
+        );
     }
 
     #[test]

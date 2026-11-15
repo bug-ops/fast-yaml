@@ -304,6 +304,7 @@ impl MergeKeyValidator {
 mod tests {
     use super::*;
     use saphyr_parser::Parser;
+    use std::assert_matches;
 
     fn validate(yaml: &str) -> Result<(), ParseError> {
         let mut validator = MergeKeyValidator::default();
@@ -493,10 +494,7 @@ mod tests {
             "n: &n [1]\ns: !!set {a: *n}",
             "n: &n {b}\ns: !!set {a: *n}",
         ] {
-            assert!(
-                matches!(validate(yaml), Err(ParseError::SetValue { .. })),
-                "{yaml}"
-            );
+            assert_matches!(validate(yaml), Err(ParseError::SetValue { .. }), "{yaml}");
         }
         for yaml in [
             "!!set {a, b: , c: ~}",
@@ -521,13 +519,13 @@ mod tests {
     #[test]
     fn verbatim_set_tag_is_a_set_source_and_its_keys_are_ordinary() {
         let set = "s: &s !<tag:yaml.org,2002:set> {x}\nm:\n  <<: *s\n";
-        assert!(matches!(
+        assert_matches!(
             validate(set),
             Err(ParseError::Merge {
                 error: MergeError::SetSource,
                 ..
             })
-        ));
+        );
         assert!(validate("s: !<tag:yaml.org,2002:set> {k, <<}\n").is_ok());
     }
 
@@ -539,15 +537,13 @@ mod tests {
             "!<tag:yaml.org,2002:merge> merge",
         ] {
             let bad = format!("m:\n  {key}: 1\n");
-            assert!(
-                matches!(
-                    validate(&bad),
-                    Err(ParseError::Merge {
-                        error: MergeError::NotMapping,
-                        at,
-                        ..
-                    }) if at.line().get() == 2
-                ),
+            assert_matches!(
+                validate(&bad),
+                Err(ParseError::Merge {
+                    error: MergeError::NotMapping,
+                    at,
+                    ..
+                }) if at.line().get() == 2,
                 "{key}"
             );
             assert!(

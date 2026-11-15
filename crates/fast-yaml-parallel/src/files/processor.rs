@@ -691,6 +691,7 @@ impl Default for FileProcessor {
 mod tests {
     use super::*;
     use fast_yaml_core::limits::MaxInputBytes;
+    use std::assert_matches;
     use std::fs;
     use tempfile::TempDir;
 
@@ -851,7 +852,7 @@ mod tests {
         let result =
             FileProcessor::write_file_atomic(&path, "x: 1", HardLinkPolicy::WriteInPlace, read_id);
 
-        assert!(matches!(result, Err(Error::Write { .. })));
+        assert_matches!(result, Err(Error::Write { .. }));
         assert_eq!(fs::read_to_string(&path).unwrap(), "unrelated: 1");
     }
 
@@ -1145,10 +1146,7 @@ mod tests {
             (batch.changed(), batch.unchanged(), batch.failed()),
             (1, 1, 2)
         );
-        assert!(matches!(
-            batch.errors()[0].1,
-            Error::CommentsWouldBeStripped
-        ));
+        assert_matches!(batch.errors()[0].1, Error::CommentsWouldBeStripped);
         assert_eq!(batch.errors()[1].0, missing);
         assert_eq!(fs::read_to_string(&messy).unwrap(), "a:   1\n");
         assert_eq!(fs::read_to_string(&clean).unwrap(), "a: 1\n");
@@ -1171,7 +1169,7 @@ mod tests {
 
         let rejected =
             processor.format_files(std::slice::from_ref(&path), &cfg, CommentPolicy::Reject);
-        assert!(matches!(rejected[0].1, Err(Error::CommentsWouldBeStripped)));
+        assert_matches!(rejected[0].1, Err(Error::CommentsWouldBeStripped));
 
         let stripped =
             processor.format_files(std::slice::from_ref(&path), &cfg, CommentPolicy::Strip);
@@ -1191,10 +1189,7 @@ mod tests {
         );
 
         assert_eq!(result.failed(), 1);
-        assert!(matches!(
-            result.errors()[0].1,
-            Error::CommentsWouldBeStripped
-        ));
+        assert_matches!(result.errors()[0].1, Error::CommentsWouldBeStripped);
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
 
@@ -1222,10 +1217,10 @@ mod tests {
         );
         let results = processor.format_files(&[path], &EmitterConfig::new(), CommentPolicy::Strip);
 
-        assert!(matches!(
+        assert_matches!(
             &results[0].1,
             Err(Error::InputTooLarge(e)) if e.limit.get() == 4
-        ));
+        );
     }
 
     #[test]
@@ -1324,8 +1319,7 @@ mod tests {
         let strict = FileProcessor::with_config(limited(64));
         let results =
             strict.format_files(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
-        assert!(
-            matches!(&results[0].1, Err(e) if is_scan_ahead_rejection(e)),
+        assert_matches!(&results[0].1, Err(e) if is_scan_ahead_rejection(e),
             "{results:?}"
         );
 

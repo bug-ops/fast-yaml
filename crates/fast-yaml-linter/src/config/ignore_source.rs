@@ -193,6 +193,7 @@ pub(super) fn ignore_file_names(value: Value) -> Result<Vec<String>, ListError> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn patterns_file(dir: &Path, lines: usize) {
         let text = (0..lines)
@@ -218,10 +219,10 @@ mod tests {
         assert!(second.patterns.matches(Path::new("/r2/p1/a.log"), false));
         // 2 x 2048 wildcards fill the budget, so a third root cannot be charged
         let third = ignore_file_patterns(dir.path(), Path::new("/r3"), &names, &mut state);
-        assert!(matches!(
+        assert_matches!(
             third.unwrap_err().cause,
             IgnoreFileCause::OverBudget(BudgetKind::Wildcards)
-        ));
+        );
     }
 
     #[test]

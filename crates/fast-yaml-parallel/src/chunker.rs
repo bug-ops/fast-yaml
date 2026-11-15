@@ -286,6 +286,7 @@ impl<'a> Iterator for Lines<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn normalized(input: &str) -> NormalizedInput<'_> {
         NormalizedInput::new(input).unwrap()
@@ -477,8 +478,7 @@ mod tests {
         let input = normalized(&text);
         let limit = |n| Some(MaxDocuments::new(n).unwrap());
         let err = chunk_documents(&input, limit(3)).unwrap_err();
-        assert!(
-            matches!(
+        assert_matches!(
                 err,
                 Error::Parse {
                     index: 3,
@@ -487,8 +487,7 @@ mod tests {
                         document,
                         ..
                     }
-                } if document.get() == 3
-            ),
+                } if document.get() == 3,
             "{err:?}"
         );
         assert_eq!(

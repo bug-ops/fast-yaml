@@ -28,7 +28,7 @@ fn run(args: &[&str], path: &Path) -> (Option<i32>, String) {
     let output = fy(args).arg(path).output().unwrap();
     (
         output.status.code(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
+        String::from_utf8_lossy_owned(output.stderr),
     )
 }
 

@@ -449,13 +449,11 @@ mod tests {
 
     fn corpus() -> Vec<String> {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/yaml-spec");
-        let mut texts: Vec<String> = fs::read_dir(dir)
-            .map(|entries| {
-                entries
-                    .filter_map(|entry| fs::read_to_string(entry.ok()?.path()).ok())
-                    .collect()
-            })
-            .unwrap_or_default();
+        let mut texts: Vec<String> = fs::read_dir(dir).map_or_default(|entries| {
+            entries
+                .filter_map(|entry| fs::read_to_string(entry.ok()?.path()).ok())
+                .collect()
+        });
         assert!(texts.len() > 20, "fixture corpus not found");
         texts.extend(HAND_WRITTEN.iter().map(|text| (*text).to_owned()));
         texts.push(format!(

@@ -40,6 +40,7 @@ mod unix {
     use super::*;
     use fast_yaml_core::EmitterConfig;
     use fast_yaml_parallel::{CommentPolicy, FileProcessor, InPlaceTarget};
+    use std::assert_matches;
     use std::os::unix::fs::{PermissionsExt, symlink};
     use std::path::Path;
 
@@ -221,12 +222,12 @@ mod unix {
             fast_yaml_parallel::Error::Write { source, .. } => source,
             other => panic!("unexpected error: {other}"),
         };
-        assert!(matches!(
+        assert_matches!(
             io_error
                 .get_ref()
                 .and_then(|e| e.downcast_ref::<AtomicWriteError>()),
             Some(AtomicWriteError::HardLinkRefused(_))
-        ));
+        );
         for untouched in [&refused, &refused_alias] {
             assert_eq!(fs::read_to_string(untouched).unwrap(), "key:   value\n");
         }

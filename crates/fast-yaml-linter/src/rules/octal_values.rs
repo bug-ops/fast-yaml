@@ -136,8 +136,7 @@ impl OctalValuesRule {
                     .then(|| line_without_comment.split_once('-'))
                     .flatten()
             })
-            .map(|(before, after)| vec![(before.len() + 1, after)])
-            .unwrap_or_default();
+            .map_or_default(|(before, after)| vec![(before.len() + 1, after)]);
 
         for (part_start_in_line, part) in parts {
             let trimmed = part.trim_start();

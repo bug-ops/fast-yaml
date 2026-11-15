@@ -253,7 +253,7 @@ impl std::fmt::Display for DisplayPath<'_> {
 /// Whether a terminal could act on `c` instead of showing it: control characters, line and
 /// paragraph separators and the bidirectional overrides and isolates that reorder what is shown.
 #[must_use]
-pub fn is_terminal_unsafe(c: char) -> bool {
+pub const fn is_terminal_unsafe(c: char) -> bool {
     c.is_control()
         || matches!(
             c,

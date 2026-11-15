@@ -204,6 +204,7 @@ fn reject_unsupported_bom(bytes: &[u8]) -> Result<(), DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn detects_each_bom() {
@@ -251,8 +252,9 @@ mod tests {
     #[test]
     fn truncated_marks_are_invalid_utf8() {
         for bytes in [&[0xFE][..], &[0xFF], &[0x00, 0x00, 0xFE]] {
-            assert!(
-                matches!(decode_input(bytes), Err(DecodeError::InvalidUtf8(_))),
+            assert_matches!(
+                decode_input(bytes),
+                Err(DecodeError::InvalidUtf8(_)),
                 "{bytes:?}"
             );
         }
@@ -272,10 +274,10 @@ mod tests {
                 evidence: EncodingEvidence::ByteOrderMark
             })
         );
-        assert!(matches!(
+        assert_matches!(
             decode_input_owned(b"a: \xC3\x28".to_vec()),
             Err(DecodeError::InvalidUtf8(_))
-        ));
+        );
     }
 
     #[test]
@@ -295,14 +297,11 @@ mod tests {
 
     #[test]
     fn invalid_utf8_is_not_reported_as_encoding() {
-        assert!(matches!(
+        assert_matches!(
             decode_input(b"a: \xC3\x28"),
             Err(DecodeError::InvalidUtf8(_))
-        ));
-        assert!(matches!(
-            decode_input(b"\xFF"),
-            Err(DecodeError::InvalidUtf8(_))
-        ));
+        );
+        assert_matches!(decode_input(b"\xFF"), Err(DecodeError::InvalidUtf8(_)));
     }
 
     #[test]

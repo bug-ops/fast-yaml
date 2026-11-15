@@ -714,6 +714,7 @@ mod tests {
     use super::*;
     use crate::config::test_support::config_with_rule;
     use crate::rules::{DocumentRule, LintRule, SourceRule};
+    use std::assert_matches;
     use std::fmt::Write as _;
 
     fn indent(size: u64) -> IndentSize {
@@ -892,10 +893,10 @@ mod tests {
     fn test_lint_rejects_deeply_nested_input() {
         let input = format!("{}x", "- ".repeat(20_000));
         let err = Linter::with_all_rules().lint(&input).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             LintError::ParseError(fast_yaml_core::ParseError::LimitExceeded { .. })
-        ));
+        );
     }
 
     fn run_on_2mib_stack(f: impl FnOnce() + Send + 'static) {
@@ -952,12 +953,12 @@ mod tests {
         };
         let linter = Linter::with_config(LintConfig::new().with_parse_limits(limits));
         assert!(linter.lint("[[1]]").is_ok());
-        assert!(matches!(
+        assert_matches!(
             linter.lint("[[[1]]]"),
             Err(LintError::ParseError(
                 fast_yaml_core::ParseError::LimitExceeded { .. }
             ))
-        ));
+        );
     }
 
     #[test]
@@ -965,10 +966,10 @@ mod tests {
         let max = MaxInputBytes::new(5).unwrap();
         let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
         assert!(linter.lint("a: 1\n").is_ok());
-        assert!(matches!(
+        assert_matches!(
             linter.lint("a: 1\n#"),
             Err(LintError::InputTooLarge(InputTooLarge { size: 6, .. }))
-        ));
+        );
     }
 
     #[test]
@@ -999,10 +1000,10 @@ mod tests {
         let max = MaxInputBytes::new(6).unwrap();
         let linter = Linter::with_config(LintConfig::new().with_max_input_bytes(max));
         assert!(linter.lint("a: 1\n").is_ok());
-        assert!(matches!(
+        assert_matches!(
             linter.lint("\u{feff}a: 1\n"),
             Err(LintError::InputTooLarge(InputTooLarge { size: 8, .. }))
-        ));
+        );
     }
 
     #[test]
@@ -1015,13 +1016,13 @@ mod tests {
         let mut input = format!("%TAG !e! tag:e.com,{}\n---\n", "a".repeat(100_000));
         input.extend((0..1_000).map(|i| format!("k{i}: !e!x v\n")));
         let err = Linter::with_all_rules().lint(&input).unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             LintError::ParseError(fast_yaml_core::ParseError::LimitExceeded {
                 kind: fast_yaml_core::LimitKind::TagBytes(_),
                 ..
             })
-        ));
+        );
     }
 
     #[test]
@@ -1477,9 +1478,6 @@ mod tests {
         assert_eq!(raised.lint(&source).unwrap(), []);
 
         let lowered = Linter::with_config(LintConfig::new().with_parse_limits(limits(8)));
-        assert!(matches!(
-            lowered.lint(&source),
-            Err(LintError::ParseError(_))
-        ));
+        assert_matches!(lowered.lint(&source), Err(LintError::ParseError(_)));
     }
 }

@@ -295,7 +295,7 @@ impl CanonicalPath {
                 let name = path.file_name().ok_or(error)?;
                 let parent = path
                     .parent()
-                    .filter(|parent| !parent.as_os_str().is_empty())
+                    .filter(|parent| !parent.is_empty())
                     .unwrap_or_else(|| Path::new("."));
                 Ok(Self(parent.canonicalize()?.join(name)))
             }
@@ -375,7 +375,7 @@ impl IgnorePatterns {
     #[must_use]
     pub fn matches(&self, path: &Path, is_dir: bool) -> bool {
         path.strip_prefix(&self.root).is_ok_and(|relative| {
-            !relative.as_os_str().is_empty()
+            !relative.is_empty()
                 && self
                     .matcher
                     .matched_path_or_any_parents(relative, is_dir)
@@ -443,6 +443,7 @@ impl YamlFiles {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     fn lines(text: &str) -> Vec<String> {
         text.lines().map(str::to_owned).collect()
@@ -495,7 +496,7 @@ mod tests {
     #[test]
     fn invalid_pattern_names_the_line() {
         let error = IgnorePatterns::new(Path::new("/p"), &lines("ok\n{a")).unwrap_err();
-        assert!(matches!(&error, InvalidPathPattern::Syntax { pattern, .. } if pattern == "{a"));
+        assert_matches!(&error, InvalidPathPattern::Syntax { pattern, .. } if pattern == "{a");
         assert!(error.to_string().contains("'{a'"), "{error}");
     }
 

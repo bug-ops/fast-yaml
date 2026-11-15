@@ -1,5 +1,6 @@
 //! Per-rule `ignore` and `ignore-from-file` (#585) and `Linter::lint_file`.
 
+use std::assert_matches;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -129,11 +130,9 @@ fn invalid_patterns_and_shapes_are_rejected() {
             "cfg.yaml",
             &format!("rules:\n  braces: {{{entry}}}\n"),
         );
-        assert!(
-            matches!(
-                ConfigFile::load(&config),
-                Err(ConfigFileError::InvalidRules { .. })
-            ),
+        assert_matches!(
+            ConfigFile::load(&config),
+            Err(ConfigFileError::InvalidRules { .. }),
             "{entry}"
         );
     }

@@ -200,7 +200,7 @@ impl PyParallelConfig {
         })
     }
 
-    #[allow(clippy::unused_self, reason = "PyO3 requires &self for __repr__")]
+    #[expect(clippy::unused_self, reason = "PyO3 requires &self for __repr__")]
     fn __repr__(&self) -> String {
         "ParallelConfig()".to_string()
     }

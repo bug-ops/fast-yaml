@@ -116,8 +116,8 @@ run = [
 ]
 
 [tasks.msrv]
-description = "Type-check the workspace on the MSRV toolchain (CI: Check MSRV (1.91.0))"
-run = "cargo +1.91.0 check --workspace --all-targets"
+description = "Type-check the workspace on the MSRV toolchain (CI: Check MSRV (1.99.0))"
+run = "cargo +1.99.0 check --workspace --all-targets"
 
 [tasks."build:fy"]
 description = "Build the fy binary used by binding tests"

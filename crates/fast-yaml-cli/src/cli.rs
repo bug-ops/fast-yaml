@@ -628,6 +628,7 @@ impl LintFormat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn verify_cli() {
@@ -744,7 +745,7 @@ mod tests {
     #[test]
     fn jobs_zero_is_auto_and_bounds_are_enforced() {
         assert_eq!(parse_jobs("0").unwrap(), Workers::Auto);
-        assert!(matches!(parse_jobs("128").unwrap(), Workers::Fixed(n) if n.get() == 128));
+        assert_matches!(parse_jobs("128").unwrap(), Workers::Fixed(n) if n.get() == 128);
         assert_eq!(
             parse_jobs("129").unwrap_err(),
             "must be between 0 and 128, got 129"

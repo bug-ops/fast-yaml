@@ -719,7 +719,7 @@ impl GlobSplit {
                 base.push(component);
             }
         }
-        let implicit_base = base.as_os_str().is_empty();
+        let implicit_base = base.is_empty();
         if implicit_base {
             base.push(".");
         }
@@ -814,6 +814,7 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet, DiscoveryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::fs;
     use tempfile::TempDir;
 
@@ -1067,7 +1068,7 @@ mod tests {
         let plain = FileDiscovery::new(default_config())
             .unwrap()
             .discover(&[input(temp.path())]);
-        assert!(matches!(plain, Err(DiscoveryError::NoYamlFiles)));
+        assert_matches!(plain, Err(DiscoveryError::NoYamlFiles));
     }
 
     #[test]
@@ -1264,10 +1265,10 @@ mod tests {
         let err = discovery
             .discover_from_reader(format!("{at_limit}\n").as_bytes())
             .unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             path_error(&err),
             Some(PathError::IoError { .. } | PathError::PathNotFound { .. })
-        ));
+        );
 
         let over = "x".repeat(MAX_LINE_LENGTH + 1);
         let err = discovery
@@ -1311,7 +1312,7 @@ mod tests {
         let list = format!("{}\n{}\n", vendor.display(), text.display());
 
         let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[test]
@@ -1323,7 +1324,7 @@ mod tests {
         let discovery = FileDiscovery::new(config).unwrap();
 
         let err = discovery.discover(&[input(&text)]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[cfg(unix)]
@@ -1337,10 +1338,7 @@ mod tests {
         let discovery = FileDiscovery::new(default_config()).unwrap();
 
         let err = discovery.discover(&[input(&link)]).unwrap_err();
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::NotIncluded { .. })
-        ));
+        assert_matches!(path_error(&err), Some(PathError::NotIncluded { .. }));
     }
 
     #[test]
@@ -1360,7 +1358,7 @@ mod tests {
         let list = format!("{}\n", temp.path().display());
 
         let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
-        assert!(matches!(path_error(&err), Some(PathError::NotAFile { .. })));
+        assert_matches!(path_error(&err), Some(PathError::NotAFile { .. }));
     }
 
     #[test]
@@ -1372,11 +1370,8 @@ mod tests {
         let list = format!("{}\n", text.display());
 
         let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
-        assert!(matches!(err, DiscoveryError::StdinLine { line: 1, .. }));
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::NotIncluded { .. })
-        ));
+        assert_matches!(err, DiscoveryError::StdinLine { line: 1, .. });
+        assert_matches!(path_error(&err), Some(PathError::NotIncluded { .. }));
     }
 
     #[test]
@@ -1387,14 +1382,11 @@ mod tests {
         let discovery = FileDiscovery::new(default_config()).unwrap();
 
         let err = discovery.discover(&[input(&text)]).unwrap_err();
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::NotIncluded { .. })
-        ));
+        assert_matches!(path_error(&err), Some(PathError::NotIncluded { .. }));
 
         let glob = InputPath::Glob(temp.path().join("*.txt").display().to_string());
         let err = discovery.discover(&[glob]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[test]
@@ -1403,10 +1395,7 @@ mod tests {
         fs::write(temp.path().join("m1.yaml"), "a: 1\n").unwrap();
 
         let err = InputPath::resolve(temp.path().join("m[1].yaml")).unwrap_err();
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::PathNotFound { .. })
-        ));
+        assert_matches!(path_error(&err), Some(PathError::PathNotFound { .. }));
 
         let existing = temp.path().join("m[2].yaml");
         fs::write(&existing, "a: 1\n").unwrap();
@@ -1453,10 +1442,7 @@ mod tests {
     fn test_resolve_missing_path_errors() {
         let temp = TempDir::new().unwrap();
         let err = InputPath::resolve(temp.path().join("nonexist.yaml")).unwrap_err();
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::PathNotFound { .. })
-        ));
+        assert_matches!(path_error(&err), Some(PathError::PathNotFound { .. }));
         assert!(err.to_string().contains("path does not exist"));
     }
 
@@ -1467,10 +1453,7 @@ mod tests {
         let link = temp.path().join("link.yaml");
         std::os::unix::fs::symlink(temp.path().join("gone.yaml"), &link).unwrap();
         let err = InputPath::resolve(link).unwrap_err();
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::BrokenSymlink { .. })
-        ));
+        assert_matches!(path_error(&err), Some(PathError::BrokenSymlink { .. }));
     }
 
     #[test]
@@ -1486,7 +1469,7 @@ mod tests {
         let pattern = temp.path().join("nomatch*.yaml");
 
         let err = discovery.discover(&[input(pattern)]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::GlobNoMatch { .. }));
+        assert_matches!(err, DiscoveryError::GlobNoMatch { .. });
     }
 
     #[test]
@@ -1517,7 +1500,7 @@ mod tests {
         let err = discovery
             .discover(&[InputPath::Glob("[".to_owned())])
             .unwrap_err();
-        assert!(matches!(err, DiscoveryError::GlobSyntax { .. }));
+        assert_matches!(err, DiscoveryError::GlobSyntax { .. });
     }
 
     #[test]
@@ -1533,10 +1516,7 @@ mod tests {
         );
 
         let err = discovery.discover_from_reader(list.as_bytes()).unwrap_err();
-        assert!(matches!(
-            path_error(&err),
-            Some(PathError::PathNotFound { .. })
-        ));
+        assert_matches!(path_error(&err), Some(PathError::PathNotFound { .. }));
     }
 
     fn write(dir: &Path, name: &str) -> PathBuf {
@@ -1609,7 +1589,7 @@ mod tests {
         let pattern = temp.path().join("notes*");
 
         let err = discovery.discover(&[input(pattern)]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[test]
@@ -1619,7 +1599,7 @@ mod tests {
         let discovery = FileDiscovery::new(default_config()).unwrap();
 
         let err = discovery.discover(&[input(temp.path())]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[test]
@@ -1628,7 +1608,7 @@ mod tests {
         let discovery = FileDiscovery::new(default_config()).unwrap();
 
         let err = discovery.discover(&[input(temp.path())]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[test]
@@ -1638,7 +1618,7 @@ mod tests {
         let discovery = with_exclude("*.yaml");
 
         let err = discovery.discover(&[input(temp.path())]).unwrap_err();
-        assert!(matches!(err, DiscoveryError::NoYamlFiles));
+        assert_matches!(err, DiscoveryError::NoYamlFiles);
     }
 
     #[test]

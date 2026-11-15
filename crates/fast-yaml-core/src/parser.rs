@@ -610,6 +610,7 @@ mod tests {
     use crate::options::DuplicateMergeKeys;
     use crate::position::{DocumentCount, LineCount};
     use crate::value::BigInt;
+    use std::assert_matches;
 
     mod validate_matches_load {
         use super::*;
@@ -753,10 +754,7 @@ mod tests {
                 .unwrap();
             if let Value::Mapping(map) = result {
                 let v = map.values().next().unwrap();
-                assert!(
-                    matches!(v, Value::Bool(true)),
-                    "{variant} should be Bool(true)"
-                );
+                assert_matches!(v, Value::Bool(true), "{variant} should be Bool(true)");
             } else {
                 panic!("expected mapping");
             }
@@ -771,10 +769,7 @@ mod tests {
                 .unwrap();
             if let Value::Mapping(map) = result {
                 let v = map.values().next().unwrap();
-                assert!(
-                    matches!(v, Value::Bool(false)),
-                    "{variant} should be Bool(false)"
-                );
+                assert_matches!(v, Value::Bool(false), "{variant} should be Bool(false)");
             } else {
                 panic!("expected mapping");
             }
@@ -786,7 +781,7 @@ mod tests {
         let result = Parser::parse_str("val: Null").unwrap().unwrap();
         if let Value::Mapping(map) = result {
             let v = map.values().next().unwrap();
-            assert!(matches!(v, Value::Null), "Null should be Null");
+            assert_matches!(v, Value::Null, "Null should be Null");
         } else {
             panic!("expected mapping");
         }
@@ -850,7 +845,7 @@ development:
     #[test]
     fn test_explicit_tag_int_quoted() {
         let v = get_mapping_val("val: !!int '42'", "val");
-        assert!(matches!(v, Value::Int(42)), "got {v:?}");
+        assert_matches!(v, Value::Int(42), "got {v:?}");
     }
 
     #[test]
@@ -871,43 +866,43 @@ development:
     #[test]
     fn test_explicit_tag_bool() {
         let v = get_mapping_val("val: !!bool 'true'", "val");
-        assert!(matches!(v, Value::Bool(true)), "got {v:?}");
+        assert_matches!(v, Value::Bool(true), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_null() {
         let v = get_mapping_val("val: !!null ''", "val");
-        assert!(matches!(v, Value::Null), "got {v:?}");
+        assert_matches!(v, Value::Null, "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_str_int() {
         let v = get_mapping_val("val: !!str 42", "val");
-        assert!(matches!(v, Value::String(ref s) if s == "42"), "got {v:?}");
+        assert_matches!(v, Value::String(ref s) if s == "42", "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_float_truncation() {
         let v = get_mapping_val("val: !!int 3.14", "val");
-        assert!(matches!(v, Value::Int(3)), "got {v:?}");
+        assert_matches!(v, Value::Int(3), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_negative_float() {
         let v = get_mapping_val("val: !!int -2.7", "val");
-        assert!(matches!(v, Value::Int(-2)), "got {v:?}");
+        assert_matches!(v, Value::Int(-2), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_scientific() {
         let v = get_mapping_val("val: !!int 1.0e2", "val");
-        assert!(matches!(v, Value::Int(100)), "got {v:?}");
+        assert_matches!(v, Value::Int(100), "got {v:?}");
     }
 
     #[test]
     fn test_explicit_tag_int_exact_float() {
         let v = get_mapping_val("val: !!int 3.0", "val");
-        assert!(matches!(v, Value::Int(3)), "got {v:?}");
+        assert_matches!(v, Value::Int(3), "got {v:?}");
     }
 
     #[test]
@@ -943,8 +938,9 @@ development:
             "x: 1\n---\nm:\n  <<: [1]",
             "x: 1\n---\ny: 2\n---\nm:\n  <<: 1",
         ] {
-            assert!(
-                matches!(Parser::parse_str(yaml), Err(ParseError::Merge { .. })),
+            assert_matches!(
+                Parser::parse_str(yaml),
+                Err(ParseError::Merge { .. }),
                 "{yaml}"
             );
             assert!(Parser::parse_all(yaml).is_err(), "{yaml}");
@@ -972,7 +968,7 @@ development:
         };
         let err =
             Parser::parse_str_with_limits("a: 1\n---\nb: 2\n---\n[[[1]]]\n", &limits).unwrap_err();
-        assert!(matches!(err, ParseError::LimitExceeded { .. }));
+        assert_matches!(err, ParseError::LimitExceeded { .. });
     }
 
     #[test]
@@ -1026,8 +1022,7 @@ override:
             panic!("expected mapping")
         };
         let host_key = Value::String("host".into());
-        assert!(
-            matches!(&ov[&host_key], Value::String(s) if s == "remotehost"),
+        assert_matches!(&ov[&host_key], Value::String(s) if s == "remotehost",
             "explicit host should win over merged"
         );
     }
@@ -1160,14 +1155,12 @@ m:
             "true",
         ] {
             let yaml = format!("m:\n  <<: {merge}\n  k: 0\n");
-            assert!(
-                matches!(
-                    Parser::parse_str(&yaml),
-                    Err(ParseError::Merge {
-                        error: MergeError::NotMapping,
-                        ..
-                    })
-                ),
+            assert_matches!(
+                Parser::parse_str(&yaml),
+                Err(ParseError::Merge {
+                    error: MergeError::NotMapping,
+                    ..
+                }),
                 "{merge}"
             );
         }
@@ -1186,10 +1179,7 @@ m:
             let m = sub_mapping(&Parser::parse_str(&yaml).unwrap().unwrap(), "m");
             assert_eq!(entry_texts(&m).len(), 2, "{key}");
             assert_eq!(scalar_text(m.keys().next().unwrap()), "<<", "{key}");
-            assert!(
-                matches!(m.values().next(), Some(Value::Mapping(_))),
-                "{key}"
-            );
+            assert_matches!(m.values().next(), Some(Value::Mapping(_)), "{key}");
         }
     }
 
@@ -1217,7 +1207,7 @@ m:
         .unwrap();
         let m = sub_mapping(&Parser::parse_str(&yaml).unwrap().unwrap(), "m");
         assert_eq!(scalar_text(m.keys().next().unwrap()), "<<");
-        assert!(matches!(m.values().next(), Some(Value::Mapping(_))));
+        assert_matches!(m.values().next(), Some(Value::Mapping(_)));
         assert_eq!(m.len(), 2);
     }
 
@@ -1229,13 +1219,13 @@ m:
     #[test]
     fn test_merge_key_mixed_sequence() {
         let yaml = "a: &a {x: 1}\nm:\n  <<: [*a, 5, null, [{w: 0}], {z: 3}]\n  k: 0\n";
-        assert!(matches!(
+        assert_matches!(
             Parser::parse_str(yaml),
             Err(ParseError::Merge {
                 error: MergeError::NotMapping,
                 ..
             })
-        ));
+        );
     }
 
     fn merge_error(yaml: &str) -> Option<MergeError> {
@@ -1517,8 +1507,7 @@ m:
 b: 2\n---\nc: [\n",
         )
         .unwrap_err();
-        assert!(
-            matches!(&scanner, ParseError::Syntax(e) if e.document().get() == 2),
+        assert_matches!(&scanner, ParseError::Syntax(e) if e.document().get() == 2,
             "{scanner:?}"
         );
         assert_eq!(scanner.document_index().get(), 2);
@@ -1530,8 +1519,7 @@ b: 2\n---\nc: [\n",
         let err =
             Parser::parse_all_with_limits("a: 1\n---\nb: 2\n---\nc: {d: {e: {f: 1}}}\n", &limits)
                 .unwrap_err();
-        assert!(
-            matches!(err, ParseError::LimitExceeded { document, .. } if document.get() == 2),
+        assert_matches!(err, ParseError::LimitExceeded { document, .. } if document.get() == 2,
             "{err:?}"
         );
     }
@@ -1555,10 +1543,7 @@ b: 2\n---\nc: [\n",
     #[test]
     fn test_self_referencing_alias_is_a_syntax_error_in_every_position() {
         for input in ["&a {*a : 1}\n", "&a [*a]\n", "&a {k: *a}\n"] {
-            assert!(matches!(
-                Parser::parse_str(input),
-                Err(ParseError::Syntax(_))
-            ));
+            assert_matches!(Parser::parse_str(input), Err(ParseError::Syntax(_)));
         }
     }
 
@@ -1581,8 +1566,7 @@ b: 2\n---\nc: [\n",
     #[test]
     fn test_stale_alias_error_reports_its_document() {
         let err = Parser::parse_all("a: &x 1\n---\nb: *x\n").unwrap_err();
-        assert!(
-            matches!(&err, ParseError::Syntax(e) if e.document().get() == 1),
+        assert_matches!(&err, ParseError::Syntax(e) if e.document().get() == 1,
             "{err:?}"
         );
     }
@@ -1592,12 +1576,12 @@ b: 2\n---\nc: [\n",
         let err = Parser::parse_all("m: {<<: 1}\n")
             .unwrap_err()
             .relocated(LineCount::new(4), DocumentCount::new(3));
-        assert!(matches!(
+        assert_matches!(
             err,
             ParseError::Merge { at, document, .. }
                 if (at.line().get(), at.column().get()) == (5, 5)
                     && document == DocumentIndex::new(3)
-        ));
+        );
     }
 
     #[test]
@@ -1795,8 +1779,9 @@ m:
     #[test]
     fn test_i64_max_boundary() {
         let v = get_mapping_val("x: 9223372036854775807", "x");
-        assert!(
-            matches!(v, Value::Int(i64::MAX)),
+        assert_matches!(
+            v,
+            Value::Int(i64::MAX),
             "i64::MAX should stay Integer, got {v:?}"
         );
 
@@ -1807,10 +1792,7 @@ m:
     #[test]
     fn test_leading_plus_large_integer() {
         let v = get_mapping_val("x: +42", "x");
-        assert!(
-            matches!(v, Value::Int(42)),
-            "+42 should be Integer(42), got {v:?}"
-        );
+        assert_matches!(v, Value::Int(42), "+42 should be Integer(42), got {v:?}");
 
         let v = get_mapping_val("x: +99999999999999999999", "x");
         assert_eq!(v, big_int("99999999999999999999"));
@@ -1827,8 +1809,7 @@ m:
     #[test]
     fn test_quoted_large_integer_stays_string() {
         let v = get_mapping_val("x: \"9223372036854775808\"", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s == "9223372036854775808"),
+        assert_matches!(v, Value::String(ref s) if s == "9223372036854775808",
             "got {v:?}"
         );
     }
@@ -1851,8 +1832,7 @@ m:
     #[test]
     fn test_tagged_str_large_integer_is_string() {
         let v = get_mapping_val("x: !!str 9223372036854775808", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s == "9223372036854775808"),
+        assert_matches!(v, Value::String(ref s) if s == "9223372036854775808",
             "got {v:?}"
         );
     }
@@ -1872,13 +1852,13 @@ m:
     #[test]
     fn test_normal_integer_unaffected() {
         let v = get_mapping_val("x: 42", "x");
-        assert!(matches!(v, Value::Int(42)), "got {v:?}");
+        assert_matches!(v, Value::Int(42), "got {v:?}");
     }
 
     #[test]
     fn test_float_unaffected() {
         let v = get_mapping_val("x: 1.5e10", "x");
-        assert!(matches!(v, Value::Float(_)), "got {v:?}");
+        assert_matches!(v, Value::Float(_), "got {v:?}");
     }
 
     #[test]
@@ -1997,8 +1977,7 @@ m:
             };
             let entries: Vec<_> = map.iter().collect();
             assert_eq!(entries.len(), 2, "{input:?}: {entries:?}");
-            assert!(
-                matches!(entries[1].0, Value::String(s) if s == "b"),
+            assert_matches!(entries[1].0, Value::String(s) if s == "b",
                 "{input:?}: {entries:?}"
             );
             assert_eq!(entries[1].1, &Value::Int(2), "{input:?}");
@@ -2027,10 +2006,10 @@ m:
     #[test]
     fn test_literal_duplicate_keys_leave_no_marker_in_output() {
         let doc = Parser::parse_str("a: 1\nb: 2\na: 3\n").unwrap().unwrap();
-        assert!(matches!(
+        assert_matches!(
             &doc,
             Value::Mapping(map) if map.keys().all(|k| matches!(k, Value::String(_)))
-        ));
+        );
     }
 
     #[test]
@@ -2069,14 +2048,14 @@ m:
     #[test]
     fn test_hex_min_i64_is_integer() {
         let v = get_mapping_val("x: -0x8000000000000000", "x");
-        assert!(matches!(v, Value::Int(i64::MIN)), "got {v:?}");
+        assert_matches!(v, Value::Int(i64::MIN), "got {v:?}");
     }
 
     #[test]
     fn test_hex_beyond_bit_cap_stays_string() {
         let raw = format!("0x1{}", "0".repeat(3571));
         let v = get_mapping_val(&format!("x: {raw}"), "x");
-        assert!(matches!(v, Value::String(ref s) if *s == raw), "got {v:?}");
+        assert_matches!(v, Value::String(ref s) if *s == raw, "got {v:?}");
     }
 
     #[test]
@@ -2093,15 +2072,16 @@ m:
         let (key, value) = map.iter().next().unwrap();
         assert_eq!(key, &big_int("99999999999999999999"));
         assert_eq!(radix_text_of(key), None);
-        assert!(matches!(value, Value::String(s) if s == "c"));
+        assert_matches!(value, Value::String(s) if s == "c");
     }
 
     #[test]
     fn test_hex_max_i64_preserved_as_integer() {
         // 0x7FFFFFFFFFFFFFFF == i64::MAX == 9223372036854775807
         let v = get_mapping_val("x: 0x7FFFFFFFFFFFFFFF", "x");
-        assert!(
-            matches!(v, Value::Int(9_223_372_036_854_775_807)),
+        assert_matches!(
+            v,
+            Value::Int(9_223_372_036_854_775_807),
             "0x7FFFFFFFFFFFFFFF should be Integer(i64::MAX), got {v:?}"
         );
     }
@@ -2110,8 +2090,9 @@ m:
     fn test_octal_max_fitting_preserved_as_integer() {
         // 0o777777777777777777777 == i64::MAX == 9223372036854775807
         let v = get_mapping_val("x: 0o777777777777777777777", "x");
-        assert!(
-            matches!(v, Value::Int(9_223_372_036_854_775_807)),
+        assert_matches!(
+            v,
+            Value::Int(9_223_372_036_854_775_807),
             "0o777777777777777777777 should be Integer(i64::MAX), got {v:?}"
         );
     }
@@ -2119,8 +2100,9 @@ m:
     #[test]
     fn test_tagged_int_hex_fits_i64() {
         let v = get_mapping_val("x: !!int 0xFF", "x");
-        assert!(
-            matches!(v, Value::Int(255)),
+        assert_matches!(
+            v,
+            Value::Int(255),
             "!!int 0xFF should be Integer(255), got {v:?}"
         );
     }
@@ -2137,41 +2119,41 @@ m:
     fn test_whitespace_only_yields_null_doc() {
         let docs = Parser::parse_all("   ").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Null));
+        assert_matches!(docs[0], Value::Null);
     }
 
     #[test]
     fn test_comment_only_yields_null_doc() {
         let docs = Parser::parse_all("# comment").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Null));
+        assert_matches!(docs[0], Value::Null);
     }
 
     #[test]
     fn test_bare_doc_end_yields_null_doc() {
         let docs = Parser::parse_all("...").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Null));
+        assert_matches!(docs[0], Value::Null);
     }
 
     #[test]
     fn test_comment_then_doc_end_yields_null_doc() {
         let docs = Parser::parse_all("# c\n...").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Null));
+        assert_matches!(docs[0], Value::Null);
     }
 
     #[test]
     fn test_bare_doc_start_yields_null_doc() {
         let docs = Parser::parse_all("---").unwrap();
         assert_eq!(docs.len(), 1);
-        assert!(matches!(docs[0], Value::Null));
+        assert_matches!(docs[0], Value::Null);
     }
 
     #[test]
     fn test_parse_str_comment_only_returns_null() {
         let result = Parser::parse_str("# comment").unwrap();
-        assert!(matches!(result, Some(Value::Null)));
+        assert_matches!(result, Some(Value::Null));
     }
 
     #[test]
@@ -2194,8 +2176,7 @@ m:
     #[test]
     fn test_non_specific_tag_plain_integer_is_string() {
         let v = get_mapping_val("x: ! 99", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s == "99"),
+        assert_matches!(v, Value::String(ref s) if s == "99",
             "! 99 should be String(\"99\"), got {v:?}"
         );
     }
@@ -2203,8 +2184,7 @@ m:
     #[test]
     fn test_non_specific_tag_quoted_is_string() {
         let v = get_mapping_val("x: ! \"99\"", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s == "99"),
+        assert_matches!(v, Value::String(ref s) if s == "99",
             "! \"99\" should be String(\"99\"), got {v:?}"
         );
     }
@@ -2212,8 +2192,7 @@ m:
     #[test]
     fn test_non_specific_tag_true_is_string() {
         let v = get_mapping_val("x: ! true", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s == "true"),
+        assert_matches!(v, Value::String(ref s) if s == "true",
             "! true should be String(\"true\"), got {v:?}"
         );
     }
@@ -2221,8 +2200,7 @@ m:
     #[test]
     fn test_non_specific_tag_null_keyword_is_string() {
         let v = get_mapping_val("x: ! null", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s == "null"),
+        assert_matches!(v, Value::String(ref s) if s == "null",
             "! null should be String(\"null\"), got {v:?}"
         );
     }
@@ -2231,8 +2209,7 @@ m:
     fn test_non_specific_tag_empty_is_string_not_null() {
         // `! ''` must be String(""), NOT Null. Order of branches is load-bearing.
         let v = get_mapping_val("x: ! ''", "x");
-        assert!(
-            matches!(v, Value::String(ref s) if s.is_empty()),
+        assert_matches!(v, Value::String(ref s) if s.is_empty(),
             "! '' should be String(\"\") not Null, got {v:?}"
         );
     }
@@ -2247,8 +2224,9 @@ m:
         };
         let k = Value::String("x".into());
         let val = &map[&k];
-        assert!(
-            matches!(val, Value::Sequence(_)),
+        assert_matches!(
+            val,
+            Value::Sequence(_),
             "! on sequence must stay Sequence, got {val:?}"
         );
     }
@@ -2287,7 +2265,7 @@ m:
     #[test]
     fn test_mid_text_bom_stays_data_inside_quotes() {
         let v = get_mapping_val("b: \"\u{FEFF}x\"", "b");
-        assert!(matches!(v, Value::String(ref s) if s == "\u{FEFF}x"));
+        assert_matches!(v, Value::String(ref s) if s == "\u{FEFF}x");
         assert!(Parser::parse_str("b: \u{FEFF}x").is_err());
     }
 
@@ -2301,7 +2279,7 @@ m:
     #[test]
     fn test_bom_crlf_parses() {
         let v = get_mapping_val("\u{FEFF}# c\r\na: 1\r\n", "a");
-        assert!(matches!(v, Value::Int(1)));
+        assert_matches!(v, Value::Int(1));
     }
 
     #[test]
@@ -2313,7 +2291,7 @@ m:
     #[test]
     fn test_bom_only_parse_str_is_null() {
         let v = Parser::parse_str("\u{FEFF}").unwrap();
-        assert!(matches!(v, Some(Value::Null)));
+        assert_matches!(v, Some(Value::Null));
     }
 
     mod limits {
@@ -2364,17 +2342,12 @@ m:
             assert!(Parser::parse_str_with_limits(&nested(5, 2000), &alias_limits(1)).is_ok());
             // many wrappers: the copies dwarf the source
             for levels in [50, 100, 250] {
-                assert!(
-                    matches!(
-                        Parser::parse_str_with_limits(
-                            &nested(levels, 2000),
-                            &alias_limits(1 << 20)
-                        ),
-                        Err(ParseError::LimitExceeded {
-                            kind: LimitKind::AnchorCopies(_),
-                            ..
-                        })
-                    ),
+                assert_matches!(
+                    Parser::parse_str_with_limits(&nested(levels, 2000), &alias_limits(1 << 20)),
+                    Err(ParseError::LimitExceeded {
+                        kind: LimitKind::AnchorCopies(_),
+                        ..
+                    }),
                     "{levels}"
                 );
             }
@@ -2412,26 +2385,26 @@ m:
             for i in 0..1000 {
                 writeln!(input, "{}k:", " ".repeat(i)).unwrap();
             }
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_str(&input),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::Depth(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
         fn depth_boundary_is_inclusive() {
             let limits = depth_limits(3);
             assert!(Parser::parse_str_with_limits("[[[1]]]", &limits).is_ok());
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_str_with_limits("[[[[1]]]]", &limits),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::Depth(_),
                     ..
                 })
-            ));
+            );
         }
 
         fn parse_and_drop_on_512k_stack(input: String) {
@@ -2523,13 +2496,13 @@ m:
         #[test]
         fn long_scalar_bombs_are_rejected() {
             for input in [str_bomb(10_240, 5), str_bomb(1_024, 6)] {
-                assert!(matches!(
+                assert_matches!(
                     Parser::parse_all(&input),
                     Err(ParseError::LimitExceeded {
                         kind: LimitKind::AliasBytes(_),
                         ..
                     })
-                ));
+                );
             }
         }
 
@@ -2544,13 +2517,13 @@ m:
                 )
                 .unwrap();
             }
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all(&input),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::AliasBytes(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2570,10 +2543,10 @@ m:
                 )
                 .unwrap();
             }
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all(&input),
                 Err(ParseError::LimitExceeded { .. })
-            ));
+            );
         }
 
         #[test]
@@ -2588,13 +2561,13 @@ m:
             let limits = alias_limits(400);
             assert!(Parser::parse_all_with_limits(&doc("a"), &limits).is_ok());
             let stream = format!("{}---\n{}", doc("a"), doc("b"));
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all_with_limits(&stream, &limits),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::AliasBytes(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2611,13 +2584,13 @@ m:
         fn alias_depth_boundary_is_inclusive() {
             let limits = depth_limits(3);
             assert!(Parser::parse_all_with_limits("- &a [[1]]\n- *a\n", &limits).is_ok());
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all_with_limits("- &a [[1]]\n- [*a]\n", &limits),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::Depth(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2631,13 +2604,13 @@ m:
         #[test]
         fn bom_prefixed_deep_input_is_rejected() {
             let input = format!("\u{FEFF}{}x", "- ".repeat(300));
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all(&input),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::Depth(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2662,13 +2635,13 @@ m:
             for i in 1..4 {
                 writeln!(input, "a{i}: &a{i} {}", nest(&format!("*a{}", i - 1))).unwrap();
             }
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_str(&input),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::Depth(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2677,13 +2650,13 @@ m:
             let three = "- &a [x]\n- *a\n- *a\n- *a\n";
             let four = "- &a [x]\n- *a\n- *a\n- *a\n- *a\n";
             assert!(Parser::parse_all_with_limits(three, &limits).is_ok());
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all_with_limits(four, &limits),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::AliasBytes(_),
                     ..
                 })
-            ));
+            );
         }
 
         fn tag_limits(bytes: usize) -> ParseLimits {
@@ -2708,13 +2681,13 @@ m:
             let doc = tag_doc("%TAG !e! tag:e.com,PREFIX", "!e!x", 10);
             let per_use = 200 + "tag:e.com,".len() - crate::limits::TAG_PREFIX_ALLOWANCE;
             assert!(Parser::parse_all_with_limits(&doc, &tag_limits(per_use * 10)).is_ok());
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all_with_limits(&doc, &tag_limits(per_use * 10 - 1)),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::TagBytes(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2724,14 +2697,12 @@ m:
                 ("%TAG ! tag:e.com,PREFIX", "!x"),
             ] {
                 let doc = tag_doc(directive, tag, 10);
-                assert!(
-                    matches!(
-                        Parser::parse_all_with_limits(&doc, &tag_limits(1_000)),
-                        Err(ParseError::LimitExceeded {
-                            kind: LimitKind::TagBytes(_),
-                            ..
-                        })
-                    ),
+                assert_matches!(
+                    Parser::parse_all_with_limits(&doc, &tag_limits(1_000)),
+                    Err(ParseError::LimitExceeded {
+                        kind: LimitKind::TagBytes(_),
+                        ..
+                    }),
                     "{directive}"
                 );
             }
@@ -2744,13 +2715,13 @@ m:
             for _ in 0..10 {
                 doc.push_str("- !e!m {a: 1}\n- !e!s [1]\n");
             }
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all_with_limits(&doc, &tag_limits(1_000)),
                 Err(ParseError::LimitExceeded {
                     kind: LimitKind::TagBytes(_),
                     ..
                 })
-            ));
+            );
         }
 
         #[test]
@@ -2765,7 +2736,7 @@ m:
         #[test]
         fn cross_document_alias_is_unknown_anchor() {
             let err = Parser::parse_all("--- &a [x]\n--- *a\n").unwrap_err();
-            assert!(matches!(err, ParseError::Syntax(_)), "{err:?}");
+            assert_matches!(err, ParseError::Syntax(_), "{err:?}");
             assert!(err.to_string().contains("unknown anchor"));
         }
 
@@ -2779,7 +2750,7 @@ m:
 ",
             ] {
                 let err = Parser::parse_all(input).unwrap_err();
-                assert!(matches!(err, ParseError::Syntax(_)), "{input:?}: {err:?}");
+                assert_matches!(err, ParseError::Syntax(_), "{input:?}: {err:?}");
                 assert!(err.to_string().contains("still being defined"), "{err}");
             }
             let position = Parser::parse_all("&a [*a]").unwrap_err().position();
@@ -3076,7 +3047,7 @@ m:
                 ("n: &n 1\ns: !!set {a: *n}", 2, 11),
             ] {
                 let err = Parser::parse_all(yaml).unwrap_err();
-                assert!(matches!(err, ParseError::SetValue { .. }), "{yaml}: {err}");
+                assert_matches!(err, ParseError::SetValue { .. }, "{yaml}: {err}");
                 let at = err.position();
                 assert_eq!(
                     (at.line().get(), at.column().get()),
@@ -3095,10 +3066,10 @@ m:
             ] {
                 assert!(Parser::parse_all(yaml).is_ok(), "{yaml}");
             }
-            assert!(matches!(
+            assert_matches!(
                 Parser::parse_all("&a !!set {x: *a}"),
                 Err(ParseError::Syntax(_))
-            ));
+            );
         }
 
         #[test]
@@ -3130,7 +3101,7 @@ m:
                 let ParseError::Key { error, .. } = &err else {
                     panic!("{yaml}: {err}");
                 };
-                assert!(matches!(error, KeyError::StringCollision { .. }), "{yaml}");
+                assert_matches!(error, KeyError::StringCollision { .. }, "{yaml}");
                 let at = err.position();
                 assert_eq!(
                     (at.line().get(), at.column().get()),
@@ -3178,7 +3149,7 @@ m:
                 let ParseError::Key { error, .. } = &err else {
                     panic!("{yaml}: {err}");
                 };
-                assert!(matches!(error, KeyError::PythonCollision { .. }), "{yaml}");
+                assert_matches!(error, KeyError::PythonCollision { .. }, "{yaml}");
             }
             for yaml in ["1: a\n'1': b\n", "1: a\n1.5: b\n", "null: a\n'null': b\n"] {
                 assert!(load(yaml, KeyDomain::Python).is_ok(), "{yaml}");

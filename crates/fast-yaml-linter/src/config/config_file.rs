@@ -383,7 +383,7 @@ fn extends_of(value: &Value) -> Result<Extends, String> {
 /// Directory of the config file, where relative paths in it start.
 fn config_dir(path: &Path) -> &Path {
     path.parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
+        .filter(|parent| !parent.is_empty())
         .unwrap_or_else(|| Path::new("."))
 }
 
@@ -812,6 +812,7 @@ fn parse_limit<K: Bounds>(
 mod tests {
     use super::*;
     use crate::Linter;
+    use std::assert_matches;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -906,8 +907,9 @@ mod tests {
             ("max-input-bytes: [1]\n", "got a list"),
         ] {
             let err = load_str(text).unwrap_err();
-            assert!(
-                matches!(err, ConfigFileError::LimitNotPositive { .. }),
+            assert_matches!(
+                err,
+                ConfigFileError::LimitNotPositive { .. },
                 "{text}: {err:?}"
             );
             let message = err.to_string();
@@ -921,8 +923,9 @@ mod tests {
             "max-input-bytes: 4294967296000000\n",
         ] {
             let err = load_str(text).unwrap_err();
-            assert!(
-                matches!(err, ConfigFileError::LimitOutOfRange { .. }),
+            assert_matches!(
+                err,
+                ConfigFileError::LimitOutOfRange { .. },
                 "{text}: {err:?}"
             );
         }
@@ -943,21 +946,21 @@ mod tests {
             MaxScanAhead::DEFAULT
         );
         for text in ["max-scan-ahead: 4MiB\n", "max-scan-ahead: -1\n"] {
-            assert!(matches!(
+            assert_matches!(
                 load_str(text).unwrap_err(),
                 ConfigFileError::LimitNotPositive {
                     key: TopLevelKey::MaxScanAhead,
                     ..
                 }
-            ));
+            );
         }
-        assert!(matches!(
+        assert_matches!(
             load_str("max-scan-ahead: 0\n").unwrap_err(),
             ConfigFileError::LimitOutOfRange {
                 key: TopLevelKey::MaxScanAhead,
                 ..
             }
-        ));
+        );
     }
 
     #[test]
@@ -970,7 +973,7 @@ mod tests {
     #[test]
     fn test_max_input_bytes_beyond_u64_is_a_parse_error_naming_the_key() {
         let err = load_str("max-input-bytes: 99999999999999999999\n").unwrap_err();
-        assert!(matches!(err, ConfigFileError::Parse { .. }), "{err:?}");
+        assert_matches!(err, ConfigFileError::Parse { .. }, "{err:?}");
         let source = std::error::Error::source(&err).unwrap().to_string();
         assert!(source.contains("max-input-bytes"), "{source}");
     }
@@ -978,7 +981,7 @@ mod tests {
     #[test]
     fn test_load_missing_file_returns_error() {
         let result = ConfigFile::load(Path::new("/nonexistent/path/.fast-yaml.yaml"));
-        assert!(matches!(result, Err(ConfigFileError::Io { .. })));
+        assert_matches!(result, Err(ConfigFileError::Io { .. }));
     }
 
     #[test]
@@ -986,17 +989,17 @@ mod tests {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(&[0xFF, 0xFE, b'r', 0x00]).unwrap();
         let err = ConfigFile::load(f.path()).unwrap_err();
-        assert!(matches!(err, ConfigFileError::Decode { .. }), "{err:?}");
+        assert_matches!(err, ConfigFileError::Decode { .. }, "{err:?}");
         let source = std::error::Error::source(&err).unwrap().to_string();
         assert!(source.contains("UTF-16LE"), "{source}");
     }
 
     #[test]
     fn test_load_invalid_yaml_returns_rejected_error() {
-        assert!(matches!(
+        assert_matches!(
             load_str("rules: [broken yaml: {"),
             Err(ConfigFileError::Rejected { .. })
-        ));
+        );
     }
 
     #[test]
@@ -1012,7 +1015,7 @@ mod tests {
     #[test]
     fn test_top_level_typo_is_rejected() {
         let err = load_str("rulez:\n  line-length: {max: 10}\n").unwrap_err();
-        assert!(matches!(err, ConfigFileError::UnknownKey { .. }), "{err:?}");
+        assert_matches!(err, ConfigFileError::UnknownKey { .. }, "{err:?}");
         let message = err.to_string();
         assert!(
             message.contains("rulez") && message.contains("'rules'"),
@@ -1022,14 +1025,11 @@ mod tests {
 
     #[test]
     fn test_non_mapping_file_is_rejected() {
-        assert!(matches!(
+        assert_matches!(
             load_str("- a\n- b\n"),
             Err(ConfigFileError::NotAMapping { .. })
-        ));
-        assert!(matches!(
-            load_str("5\n"),
-            Err(ConfigFileError::NotAMapping { .. })
-        ));
+        );
+        assert_matches!(load_str("5\n"), Err(ConfigFileError::NotAMapping { .. }));
     }
 
     #[test]
@@ -1060,13 +1060,13 @@ mod tests {
     #[test]
     fn test_unknown_rule_is_hard_error() {
         let err = load_str("rules:\n  unknown-rule-xyz:\n    enabled: true\n").unwrap_err();
-        assert!(matches!(
+        assert_matches!(
             err,
             ConfigFileError::InvalidRules {
                 source: RuleConfigError::UnknownRule(_),
                 ..
             }
-        ));
+        );
         assert!(rule_error(err).contains("unknown-rule-xyz"));
     }
 
@@ -1186,10 +1186,7 @@ mod tests {
             let refs = vec![format!("*a{}", i - 1); 9].join(",");
             writeln!(yaml, "a{i}: &a{i} [{refs}]").unwrap();
         }
-        assert!(matches!(
-            load_str(&yaml),
-            Err(ConfigFileError::Rejected { .. })
-        ));
+        assert_matches!(load_str(&yaml), Err(ConfigFileError::Rejected { .. }));
     }
 
     fn load_in(dir: &tempfile::TempDir, content: &str) -> Result<ConfigFile, ConfigFileError> {
@@ -1370,8 +1367,9 @@ mod tests {
         let ConfigFileError::Extended { source, .. } = &err else {
             panic!("expected Extended, got {err:?}");
         };
-        assert!(
-            matches!(**source, ConfigFileError::Io { ref path, .. } if path.ends_with("nowhere.yaml")),
+        assert_matches!(
+            **source,
+            ConfigFileError::Io { ref path, .. } if path.ends_with("nowhere.yaml"),
             "{source:?}"
         );
         assert!(err.to_string().contains("'extends'"));
@@ -1386,19 +1384,13 @@ mod tests {
         while let ConfigFileError::Extended { source, .. } = error {
             error = *source;
         }
-        assert!(
-            matches!(error, ConfigFileError::ExtendsCycle { .. }),
-            "{error:?}"
-        );
+        assert_matches!(error, ConfigFileError::ExtendsCycle { .. }, "{error:?}");
         let selfish = write_file(&dir, "self.yaml", "extends: ./self.yaml\n");
         let mut error = ConfigFile::load(&selfish).unwrap_err();
         while let ConfigFileError::Extended { source, .. } = error {
             error = *source;
         }
-        assert!(
-            matches!(error, ConfigFileError::ExtendsCycle { .. }),
-            "{error:?}"
-        );
+        assert_matches!(error, ConfigFileError::ExtendsCycle { .. }, "{error:?}");
     }
 
     #[test]
@@ -1417,10 +1409,7 @@ mod tests {
         while let ConfigFileError::Extended { source, .. } = error {
             error = *source;
         }
-        assert!(
-            matches!(error, ConfigFileError::ExtendsTooDeep { .. }),
-            "{error:?}"
-        );
+        assert_matches!(error, ConfigFileError::ExtendsTooDeep { .. }, "{error:?}");
         let within = MAX_EXTENDS_DEPTH - 1;
         write_file(&dir, &format!("{within}.yaml"), "rules: {}\n");
         assert!(ConfigFile::load(&dir.path().join("0.yaml")).is_ok());
@@ -1465,7 +1454,7 @@ mod tests {
         assert_eq!(key, TopLevelKey::IgnoreFromFile);
         assert!(message.contains("together"), "{message}");
         let err = load_in(&dir, "ignore-from-file: missing.txt\n").unwrap_err();
-        assert!(matches!(err, ConfigFileError::Io { .. }), "{err:?}");
+        assert_matches!(err, ConfigFileError::Io { .. }, "{err:?}");
         let (key, _) = invalid_key(load_in(&dir, "ignore-from-file: 5\n").unwrap_err());
         assert_eq!(key, TopLevelKey::IgnoreFromFile);
     }
@@ -1486,20 +1475,20 @@ mod tests {
             &"a\n".repeat(MAX_CONFIG_FILE_BYTES / 2 + 1),
         );
         let err = load_in(&dir, "ignore-from-file: huge.txt\n").unwrap_err();
-        assert!(matches!(err, ConfigFileError::TooLarge { .. }), "{err:?}");
+        assert_matches!(err, ConfigFileError::TooLarge { .. }, "{err:?}");
         assert!(err.to_string().contains(&MAX_CONFIG_FILE_BYTES.to_string()));
         let huge = write_file(
             &dir,
             "huge.yaml",
             &format!("#{}\n", "a".repeat(MAX_CONFIG_FILE_BYTES)),
         );
-        assert!(matches!(
+        assert_matches!(
             ConfigFile::load(&huge).unwrap_err(),
             ConfigFileError::TooLarge { .. }
-        ));
+        );
         let main = write_file(&dir, "main.yaml", "extends: huge.yaml\n");
         let err = innermost(ConfigFile::load(&main).unwrap_err());
-        assert!(matches!(err, ConfigFileError::TooLarge { .. }), "{err:?}");
+        assert_matches!(err, ConfigFileError::TooLarge { .. }, "{err:?}");
         let exact = write_file(&dir, "exact.yaml", &"#".repeat(MAX_CONFIG_FILE_BYTES));
         assert!(ConfigFile::load(&exact).is_ok());
     }
@@ -1510,16 +1499,14 @@ mod tests {
         std::fs::create_dir(dir.path().join("sub")).unwrap();
         for content in ["extends: sub\n", "ignore-from-file: sub\n"] {
             let err = innermost(load_in(&dir, content).unwrap_err());
-            assert!(
-                matches!(err, ConfigFileError::NotRegularFile { .. }),
+            assert_matches!(
+                err,
+                ConfigFileError::NotRegularFile { .. },
                 "{content}: {err:?}"
             );
         }
         let err = ConfigFile::load(&dir.path().join("sub")).unwrap_err();
-        assert!(
-            matches!(err, ConfigFileError::NotRegularFile { .. }),
-            "{err:?}"
-        );
+        assert_matches!(err, ConfigFileError::NotRegularFile { .. }, "{err:?}");
     }
 
     #[cfg(unix)]
@@ -1534,23 +1521,25 @@ mod tests {
         assert!(status.success());
         for content in ["extends: pipe\n", "ignore-from-file: pipe\n"] {
             let err = innermost(load_in(&dir, content).unwrap_err());
-            assert!(
-                matches!(err, ConfigFileError::NotRegularFile { .. }),
+            assert_matches!(
+                err,
+                ConfigFileError::NotRegularFile { .. },
                 "{content}: {err:?}"
             );
         }
-        assert!(matches!(
+        assert_matches!(
             ConfigFile::load(&fifo).unwrap_err(),
             ConfigFileError::NotRegularFile { .. }
-        ));
+        );
         for device in ["/dev/zero", "/dev/null"] {
             for content in [
                 format!("extends: {device}\n"),
                 format!("ignore-from-file: {device}\n"),
             ] {
                 let err = innermost(load_in(&dir, &content).unwrap_err());
-                assert!(
-                    matches!(err, ConfigFileError::NotRegularFile { .. }),
+                assert_matches!(
+                    err,
+                    ConfigFileError::NotRegularFile { .. },
                     "{content}: {err:?}"
                 );
             }
@@ -1654,9 +1643,9 @@ mod tests {
 
     #[test]
     fn load_multi_document_config_errors() {
-        assert!(matches!(
+        assert_matches!(
             load_str("---\nrules: {}\n---\nrules: {}\n"),
             Err(ConfigFileError::Parse { .. })
-        ));
+        );
     }
 }

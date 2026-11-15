@@ -131,7 +131,7 @@ fn run_with_closed_stdout(args: &[&str]) -> (Option<i32>, String) {
     let output = child.wait_with_output().unwrap();
     (
         output.status.code(),
-        String::from_utf8_lossy(&output.stderr).into_owned(),
+        String::from_utf8_lossy_owned(output.stderr),
     )
 }
 

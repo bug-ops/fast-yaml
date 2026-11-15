@@ -20,7 +20,7 @@
 //! - `TypeError`: Type conversion errors (unsupported Python types)
 //! - `IOError`: I/O failures (stream write errors)
 
-#![allow(
+#![expect(
     clippy::doc_markdown,
     reason = "Python docstrings use different conventions"
 )]
@@ -71,7 +71,7 @@ impl SafeLoader {
         Self
     }
 
-    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
+    #[expect(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "SafeLoader()".to_string()
     }
@@ -97,7 +97,7 @@ impl FullLoader {
         Self
     }
 
-    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
+    #[expect(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "FullLoader()".to_string()
     }
@@ -123,7 +123,7 @@ impl Loader {
         Self
     }
 
-    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
+    #[expect(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "Loader()".to_string()
     }
@@ -153,7 +153,7 @@ impl SafeDumper {
         Self
     }
 
-    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
+    #[expect(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "SafeDumper()".to_string()
     }
@@ -179,7 +179,7 @@ impl Dumper {
         Self
     }
 
-    #[allow(clippy::unused_self, reason = "PyO3 requires a method receiver")]
+    #[expect(clippy::unused_self, reason = "PyO3 requires a method receiver")]
     fn __repr__(&self) -> String {
         "Dumper()".to_string()
     }
@@ -281,7 +281,7 @@ impl Mark {
     ///     line: Line number (0-indexed)
     ///     column: Column number (0-indexed)
     #[new]
-    #[allow(
+    #[expect(
         clippy::missing_const_for_fn,
         reason = "PyO3 #[new] with String can't be const"
     )]
@@ -835,7 +835,7 @@ pub(crate) fn estimate_dump_yaml_size(yaml: &Value) -> usize {
     explicit_start=false,
     chunk_size=None
 ))]
-#[allow(
+#[expect(
     clippy::too_many_arguments,
     reason = "mirrors the public Python call signature"
 )]
@@ -1010,7 +1010,7 @@ fn safe_dump_all(
 ///     >>> data = fast_yaml.load("key: value", fast_yaml.SafeLoader())
 #[pyfunction]
 #[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
-#[allow(
+#[expect(
     clippy::needless_pass_by_value,
     reason = "PyO3 requires by-value for Python objects"
 )]
@@ -1064,7 +1064,7 @@ fn load(
 ///     [{'foo': 1}, {'bar': 2}]
 #[pyfunction]
 #[pyo3(signature = (stream, loader=None, *, max_depth=None, max_alias_bytes=None, max_scan_ahead=None, max_documents=None))]
-#[allow(
+#[expect(
     clippy::needless_pass_by_value,
     reason = "PyO3 requires by-value for Python objects"
 )]
@@ -1156,6 +1156,7 @@ fn core_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use fast_yaml_core::Parser;
+    use std::assert_matches;
 
     #[test]
     fn test_parse_simple() {
@@ -1209,8 +1210,9 @@ development:
         // Valid null representations in YAML 1.2.2: ~ and null (lowercase)
         for null_str in &["~", "null"] {
             let docs: Vec<Value> = Parser::parse_all(null_str).unwrap();
-            assert!(
-                matches!(docs[0], Value::Null),
+            assert_matches!(
+                docs[0],
+                Value::Null,
                 "Failed for: {} (got {:?})",
                 null_str,
                 docs[0]
@@ -1221,8 +1223,9 @@ development:
         // Use Parser::parse_str() to test the full fast-yaml pipeline.
         for null_str in &["Null", "NULL"] {
             let result = Parser::parse_str(null_str).unwrap().unwrap();
-            assert!(
-                matches!(result, Value::Null),
+            assert_matches!(
+                result,
+                Value::Null,
                 "Expected null for '{null_str}', got {result:?}",
             );
         }
@@ -1246,8 +1249,9 @@ development:
         for input in &["yes", "no", "on", "off", "y", "n"] {
             let docs: Vec<Value> = Parser::parse_all(input).unwrap();
             // saphyr correctly treats these as strings in YAML 1.2 mode
-            assert!(
-                matches!(docs[0], Value::String(_)),
+            assert_matches!(
+                docs[0],
+                Value::String(_),
                 "Should be string, not boolean: {input}"
             );
         }

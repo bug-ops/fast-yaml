@@ -1,5 +1,6 @@
 //! yamllint rule names, `enable` semantics over `extends` (#589) and the `locale` key (#585).
 
+use std::assert_matches;
 use std::fs;
 use std::path::PathBuf;
 
@@ -51,14 +52,12 @@ fn yamllint_rule_names_are_accepted_as_keys() {
 #[test]
 fn a_yamllint_name_and_the_fast_yaml_code_cannot_both_be_set() {
     let error = rules_error("rules:\n  trailing-spaces: error\n  trailing-whitespace: warning\n");
-    assert!(
-        matches!(
-            error,
-            RuleConfigError::InvalidEntry {
-                rule: RuleName::TrailingWhitespace,
-                ..
-            }
-        ),
+    assert_matches!(
+        error,
+        RuleConfigError::InvalidEntry {
+            rule: RuleName::TrailingWhitespace,
+            ..
+        },
         "{error:?}"
     );
 }

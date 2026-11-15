@@ -111,7 +111,7 @@ fn may_hold_block_entry(source: &str) -> bool {
     let bytes = source.as_bytes();
     bytes.last() == Some(&b'-')
         || bytes
-            .windows(2)
+            .array_windows::<2>()
             .any(|pair| matches!(pair, [b'-', b' ' | b'\t' | b'\r' | b'\n']))
 }
 

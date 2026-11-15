@@ -72,7 +72,7 @@ fn render(config: &LintConfig) -> String {
             .unwrap()
             .to_string_lossy()
             .replace('\\', "/");
-        let source = String::from_utf8_lossy(&fs::read(&path).unwrap()).into_owned();
+        let source = String::from_utf8_lossy_owned(fs::read(&path).unwrap());
         match linter.lint(&source) {
             Ok(diagnostics) => {
                 let source = ReportSource::Stdin;

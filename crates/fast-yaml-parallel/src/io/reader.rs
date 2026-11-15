@@ -107,6 +107,7 @@ fn read_decoded(path: &Path, max: MaxInputBytes) -> Result<(String, File)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -158,7 +159,7 @@ mod tests {
     #[test]
     fn test_read_nonexistent_file() {
         let result = read_file(Path::new("/nonexistent/file.yaml"), MaxInputBytes::DEFAULT);
-        assert!(matches!(result, Err(Error::Io { .. })));
+        assert_matches!(result, Err(Error::Io { .. }));
     }
 
     #[test]
@@ -181,7 +182,7 @@ mod tests {
             file.write_all(bom).unwrap();
 
             let err = read(&file).unwrap_err();
-            assert!(matches!(err, Error::Decode { .. }), "{err:?}");
+            assert_matches!(err, Error::Decode { .. }, "{err:?}");
             let text = err.to_string();
             assert!(text.contains("unsupported encoding"), "{text}");
             assert!(text.contains(name), "{text}");
@@ -200,7 +201,7 @@ mod tests {
             file.write_all(&vec![b'x'; 600 * 1024]).unwrap();
 
             let err = read(&file).unwrap_err();
-            assert!(matches!(err, Error::Decode { .. }), "{err:?}");
+            assert_matches!(err, Error::Decode { .. }, "{err:?}");
             assert!(err.to_string().contains(name), "{err}");
         }
     }
@@ -254,7 +255,7 @@ mod tests {
     fn test_directory_instead_of_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let result = read_file(temp_dir.path(), MaxInputBytes::DEFAULT);
-        assert!(matches!(result, Err(Error::Io { .. })));
+        assert_matches!(result, Err(Error::Io { .. }));
     }
 
     #[test]
@@ -288,12 +289,12 @@ mod tests {
         };
 
         assert_eq!(source.kind(), std::io::ErrorKind::InvalidInput);
-        assert!(matches!(
+        assert_matches!(
             source
                 .get_ref()
                 .and_then(|e| e.downcast_ref::<ReadFileError>()),
             Some(ReadFileError::NotRegular(NotRegularKind::Directory))
-        ));
+        );
     }
 
     #[test]
@@ -303,8 +304,7 @@ mod tests {
         let max = MaxInputBytes::new(9).unwrap();
 
         let err = read_file(file.path(), max).unwrap_err();
-        assert!(
-            matches!(&err, Error::InputTooLarge(e) if e.size == 10 && e.limit == max),
+        assert_matches!(&err, Error::InputTooLarge(e) if e.size == 10 && e.limit == max,
             "{err:?}"
         );
     }

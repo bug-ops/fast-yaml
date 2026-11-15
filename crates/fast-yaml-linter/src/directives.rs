@@ -470,6 +470,7 @@ fn first_content_line(ctx: &SourceContext<'_>) -> OneBased {
 mod tests {
     use super::*;
     use crate::{Linter, Severity};
+    use std::assert_matches;
 
     fn known(name: &str) -> Option<DiagnosticCode> {
         builtin_code(name)
@@ -576,8 +577,8 @@ mod tests {
 
     #[test]
     fn grammar_bad_verbs() {
-        assert!(matches!(parse("# fy: nope", known), Parsed::Invalid(_)));
-        assert!(matches!(parse("# fy:", known), Parsed::Invalid(_)));
+        assert_matches!(parse("# fy: nope", known), Parsed::Invalid(_));
+        assert_matches!(parse("# fy:", known), Parsed::Invalid(_));
         assert!(!is_directive("# yamllint nope"));
         assert!(!is_directive("# yamllint is great"));
         assert!(!is_directive("# yamllintdisable"));
@@ -586,10 +587,10 @@ mod tests {
 
     #[test]
     fn grammar_disable_file_with_args_is_invalid() {
-        assert!(matches!(
+        assert_matches!(
             parse("# fy: disable-file line-length", known),
             Parsed::Invalid(_)
-        ));
+        );
     }
 
     #[test]

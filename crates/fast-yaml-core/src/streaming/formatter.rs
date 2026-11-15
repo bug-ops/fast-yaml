@@ -73,7 +73,7 @@ struct PendingStart {
 /// Whether `c` is a YAML non-printable that only a double-quoted escape can represent (tab excluded),
 /// a byte order mark, which the loader drops where it starts a document, or U+2028/U+2029, which
 /// YAML 1.1 readers take for line breaks.
-fn needs_escape(c: char) -> bool {
+const fn needs_escape(c: char) -> bool {
     (c.is_control() && c != '\t')
         || matches!(
             c,
@@ -974,6 +974,7 @@ impl<'a, B: FormatterBackend> StreamingFormatter<'a, B> {
 )]
 mod tests {
     use saphyr_parser::{Event, Parser};
+    use std::assert_matches;
 
     use super::misdecoded_escape;
     use crate::error::ParseError;
@@ -1364,14 +1365,12 @@ mod tests {
 
     fn assert_depth_error(yaml: &str) {
         for result in format_all_backends(yaml) {
-            assert!(
-                matches!(
-                    result,
-                    Err(EmitError::Parse(ParseError::LimitExceeded {
-                        kind: LimitKind::Depth(limit),
-                        ..
-                    })) if limit == MaxDepth::DEFAULT
-                ),
+            assert_matches!(
+                result,
+                Err(EmitError::Parse(ParseError::LimitExceeded {
+                    kind: LimitKind::Depth(limit),
+                    ..
+                })) if limit == MaxDepth::DEFAULT,
                 "{result:?}"
             );
         }
@@ -1379,8 +1378,9 @@ mod tests {
 
     fn assert_anchor_error(yaml: &str) {
         for result in format_all_backends(yaml) {
-            assert!(
-                matches!(result, Err(EmitError::AnchorLimitExceeded { limit }) if limit == MAX_ANCHOR_ID)
+            assert_matches!(
+                result,
+                Err(EmitError::AnchorLimitExceeded { limit }) if limit == MAX_ANCHOR_ID
             );
         }
     }
@@ -1532,10 +1532,10 @@ mod tests {
     #[test]
     fn tag_prefix_amplification_is_rejected() {
         for result in format_all_backends(&amplifying_input()) {
-            assert!(matches!(
+            assert_matches!(
                 result,
                 Err(EmitError::TagLimitExceeded { limit }) if limit == MaxTagBytes::DEFAULT
-            ));
+            );
         }
     }
 

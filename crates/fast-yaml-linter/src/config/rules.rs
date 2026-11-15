@@ -1291,6 +1291,7 @@ impl RulesConfig {
 mod tests {
     use super::*;
     use crate::rules::RuleRegistry;
+    use std::assert_matches;
 
     fn apply(rules: &mut RulesConfig, yaml: &str) -> Result<(), RuleConfigError> {
         rules.apply(serde_norway::Deserializer::from_str(yaml))
@@ -1667,16 +1668,16 @@ mod tests {
             CustomRuleCode::new("").unwrap_err(),
             RuleConfigError::EmptyRuleCode
         );
-        assert!(matches!(
+        assert_matches!(
             CustomRuleCode::new("braces"),
             Err(RuleConfigError::ReservedRuleCode { .. })
-        ));
+        );
         assert_eq!(CustomRuleCode::new("mine").unwrap().as_str(), "mine");
         for reserved in ["syntax", "diagnostic-limit"] {
-            assert!(matches!(
+            assert_matches!(
                 CustomRuleCode::new(reserved),
                 Err(RuleConfigError::ReservedRuleCode { .. })
-            ));
+            );
         }
     }
 

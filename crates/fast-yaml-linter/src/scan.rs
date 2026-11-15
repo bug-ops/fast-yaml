@@ -575,7 +575,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
             key_repeats: self.key_repeats,
             scalars: self.scalars,
             nodes: self.nodes,
-            set_members: self.sets.map(SetMembers::into_members).unwrap_or_default(),
+            set_members: self.sets.map_or_default(SetMembers::into_members),
             gathered: self.needs,
             ..SourceScan::default()
         }
@@ -603,7 +603,7 @@ impl<'a, 'c, 'n> ScanCollector<'a, 'c, 'n> {
             key_repeats: self.key_repeats,
             scalars: self.scalars,
             nodes: self.nodes,
-            set_members: self.sets.map(SetMembers::into_members).unwrap_or_default(),
+            set_members: self.sets.map_or_default(SetMembers::into_members),
             gathered: self.needs,
             complete: true,
         }
