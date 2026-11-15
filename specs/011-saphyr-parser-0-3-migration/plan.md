@@ -118,7 +118,7 @@ Baseline: save the scratch failure list (`/private/tmp/claude-501/-Users-rabax-D
 ## 8. Performance Considerations
 
 - Anchor recovery becomes cheaper (slice of one node span instead of an inter-event gap).
-- Compare `cargo bench` for parse and format before and after; investigate OQ-5 (`a_megabyte_of_repeated_names_loads_fast`) on the 0.2.2 baseline under identical load before treating it as a regression.
+- Compare `cargo bench` for parse and format before and after. OQ-5 (`a_megabyte_of_repeated_names_loads_fast`) is resolved: the wall-clock bound was dropped (#723), so it is no longer a parse-performance signal; use `cargo bench`.
 
 ## 9. Rollout Plan
 
@@ -134,7 +134,7 @@ Baseline: save the scratch failure list (`/private/tmp/claude-501/-Users-rabax-D
 | 0 | Bump pin and lockfile, build, save baseline failure list | US-003 | none | 59 failures reproduced |
 | 1 | `anchors.rs`: take the name from the node span (gate on non-zero anchor id); update `formatter.rs` call sites; add unit tests | FR-001..003 | 0 | all class A tests pass; remaining E tests re-listed |
 | 1b | Add content-start helper in `position.rs`; use it in `merge_check`, `parser` merge errors and the linter `quoted_strings` rule where 0.2.2 positions must be kept; resolve OQ-3 first | FR-004 | 1, OQ-3 | class B tests pass or are deliberately changed with spec and CHANGELOG |
-| 2 | Re-run the whole suite; triage the residual (class E) one by one: fix, update with reason, or file issue; resolve OQ-4 (goldens) and OQ-5 (timing) | FR-009 | 1, 1b | only classes C and D fail |
+| 2 | Re-run the whole suite; triage the residual (class E) one by one: fix, update with reason, or file issue; resolve OQ-4 (goldens); OQ-5 (timing) is resolved by #723 | FR-009 | 1, 1b | only classes C and D fail |
 | 3 | BOM policy decided (OQ-2 = a, interior BOM is an error, no `NormalizedInput` pre-processing); update the roughly 10 pinned tests (`bom_elsewhere_is_content`, `test_mid_text_bom_stays_data`, `test_parse_all_strips_only_one_of_double_bom`, CLI `test_double_bom_strips_only_one`, formatter BOM escaping, `anchor_with_bom_is_idempotent`, `parse_all_parity`) | FR-005..007 | 2, OQ-2 | BOM tests agree with the policy on every surface |
 | 4 | Flip empty-block-scalar expectations in `saphyr_divergence.rs`; keep `marker_after_block_scalar_with_explicit_indent_indicator_errors_only_in_saphyr` as the documented report-1 divergence (adjust if 0.3.3 changes its outcome) | FR-008, FR-011 | 2 | those 3 tests green with comments updated |
 | 5 | OQ-1 and OQ-6 verification: alias-bomb event loop and `fy` run; yaml-test-suite xfail refresh; re-verify #586/#543/#544 guard tests | FR-010, FR-012, NFR-002 | 2 | recorded result; xfail list explained |

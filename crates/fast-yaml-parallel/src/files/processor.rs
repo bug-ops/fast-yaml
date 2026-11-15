@@ -1319,7 +1319,9 @@ mod tests {
         let strict = FileProcessor::with_config(limited(64));
         let results =
             strict.format_files(std::slice::from_ref(&path), &emitter, CommentPolicy::Reject);
-        assert_matches!(&results[0].1, Err(e) if is_scan_ahead_rejection(e),
+        assert_matches!(
+            &results[0].1,
+            Err(e) if is_scan_ahead_rejection(e),
             "{results:?}"
         );
 

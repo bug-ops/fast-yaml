@@ -51,6 +51,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Linter: the repeated-names ignore-file test no longer asserts on wall-clock time, so it stops flaking on loaded CI runners (#723)
+- Parallel: guarded `assert_matches!` calls in tests are re-indented to the surrounding style (#726)
 - Core: bump `saphyr-parser` to 0.3.3; node spans keep starting at their content, a BOM inside a document is rejected and an empty block scalar is `""` in `parse_all` and `parse_parallel` (#691)
 - Linter: `colons` no longer reports the mandatory space after an alias key (#644) (#671)
 - CLI: `--pretty` and `--allow-duplicate-keys` no longer swallow the next path (#632) (#671)
