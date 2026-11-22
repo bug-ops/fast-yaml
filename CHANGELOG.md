@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Core/Linter/Parallel: `unwrap`, `expect` and `panic` are denied outside tests, and local builds deny lint warnings through `.cargo/config.toml` (#734) (#735)
+- Linter: the `ignore_source` dedup tests count `canonicalize` calls instead of asserting wall-clock bounds (#728) (#735)
+- Core: re-indent guarded `assert_matches!` calls in tests (#729) (#735)
+
 ## [0.8.0] - 2026-11-15
 
 ### Breaking Changes

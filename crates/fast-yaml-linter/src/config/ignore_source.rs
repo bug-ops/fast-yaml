@@ -70,7 +70,7 @@ pub(super) fn ignore_file_patterns(
     names: &[String],
     state: &mut PatternState,
 ) -> Result<Shared, IgnoreFileError> {
-    let key = cache_key(dir, root, names);
+    let key = cache_key(dir, root, names, |path| path.canonicalize().ok());
     if let Some(hit) = key.as_ref().and_then(|key| state.cached(key)) {
         return Ok(hit);
     }
@@ -87,7 +87,12 @@ pub(super) fn ignore_file_patterns(
 
 /// The canonical files behind `names` in order, or `None` when one cannot be resolved (the
 /// read then reports the failure).
-fn cache_key(dir: &Path, root: &Path, names: &[String]) -> Option<CacheKey> {
+fn cache_key(
+    dir: &Path,
+    root: &Path,
+    names: &[String],
+    mut canonicalize: impl FnMut(&Path) -> Option<PathBuf>,
+) -> Option<CacheKey> {
     let mut distinct: HashSet<&str> = HashSet::new();
     let mut files: Vec<PathBuf> = Vec::new();
     for name in names {
@@ -98,7 +103,7 @@ fn cache_key(dir: &Path, root: &Path, names: &[String]) -> Option<CacheKey> {
         if distinct.len() > MAX_IGNORE_FILES {
             return None;
         }
-        let canonical = dir.join(name).canonicalize().ok()?;
+        let canonical = canonicalize(&dir.join(name))?;
         if !files.contains(&canonical) {
             files.push(canonical);
         }
@@ -237,24 +242,38 @@ mod tests {
     }
 
     #[test]
-    fn a_huge_list_of_repeated_names_is_resolved_quickly() {
+    fn a_huge_list_of_repeated_names_is_resolved_once() {
         let dir = tempfile::tempdir().unwrap();
         patterns_file(dir.path(), 1);
         let names = vec!["p.txt".to_owned(); 200_000];
-        let started = std::time::Instant::now();
+
+        let mut calls = 0_usize;
+        let key = cache_key(dir.path(), Path::new("/r"), &names, |path| {
+            calls += 1;
+            path.canonicalize().ok()
+        });
+
+        assert_eq!(calls, 1);
+        assert_eq!(key.unwrap().0.len(), 1);
         let mut state = PatternState::new();
         ignore_file_patterns(dir.path(), Path::new("/r"), &names, &mut state).unwrap();
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 
     #[test]
     fn a_huge_list_of_different_names_stops_at_the_file_cap() {
         let dir = tempfile::tempdir().unwrap();
         let names: Vec<String> = (0..200_000).map(|i| format!("missing{i}.txt")).collect();
-        let started = std::time::Instant::now();
+
+        let mut calls = 0_usize;
+        let key = cache_key(dir.path(), Path::new("/r"), &names, |path| {
+            calls += 1;
+            Some(path.to_owned())
+        });
+
+        assert!(key.is_none());
+        assert_eq!(calls, MAX_IGNORE_FILES);
         let mut state = PatternState::new();
         let error = ignore_file_patterns(dir.path(), Path::new("/r"), &names, &mut state);
         assert!(error.is_err());
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }

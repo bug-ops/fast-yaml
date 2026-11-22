@@ -29,7 +29,9 @@ fn rejects_a_file_over_the_limit_and_accepts_one_at_it() {
     let file = dir.join("a.yaml");
     std::fs::write(&file, "key: value").unwrap();
     let err = read_regular_file(&file, MaxInputBytes::new(9).unwrap()).unwrap_err();
-    assert_matches!(&err, ReadFileError::TooLarge(e) if e.size == 10,
+    assert_matches!(
+        &err,
+        ReadFileError::TooLarge(e) if e.size == 10,
         "{err:?}"
     );
     assert!(read_regular_file(&file, MaxInputBytes::new(10).unwrap()).is_ok());

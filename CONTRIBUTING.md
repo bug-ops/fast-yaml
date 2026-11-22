@@ -248,6 +248,8 @@ Code must pass clippy with no warnings:
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 ```
 
+`.cargo/config.toml` sets `build.warnings = "deny"`, so compiler warnings fail local builds as they do in CI. While work is in progress, downgrade them with `cargo check --config 'build.warnings="warn"'` (needs cargo 1.97 or newer; older cargo ignores the key).
+
 ### Workspace Lints
 
 The project uses workspace-level lint configuration in root `Cargo.toml`:
