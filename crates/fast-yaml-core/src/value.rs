@@ -715,6 +715,10 @@ impl std::ops::Index<&Value> for Mapping {
     /// # Panics
     ///
     /// Panics when `key` is absent; use [`Mapping::get`] for a fallible lookup.
+    #[expect(
+        clippy::expect_used,
+        reason = "documented panic, matching std Index impls"
+    )]
     fn index(&self, key: &Value) -> &Value {
         self.get(key).expect("key not found in mapping")
     }

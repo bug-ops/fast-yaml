@@ -2,6 +2,10 @@
 //!
 #![forbid(unsafe_code)]
 #![cfg_attr(not(test), warn(clippy::string_slice, clippy::indexing_slicing))]
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
 //!
 //! This crate provides a comprehensive YAML linting engine with:
 //! - Precise error location tracking (line, column, byte offset)

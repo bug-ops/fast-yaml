@@ -1,0 +1,3 @@
+[build]
+# WIP escape hatch: cargo check --config 'build.warnings="warn"'
+warnings = "deny"

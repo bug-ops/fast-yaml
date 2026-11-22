@@ -132,6 +132,7 @@ THEN  the Python 3.10 pinned in the lock runs the binding tests
 | FR-032 | ALL actions SHALL be pinned to a full commit SHA with a version comment. | must |
 | FR-033 | THE lockfiles SHALL be reviewed like code: a lock diff that changes a version or checksum not mentioned in the PR is a review blocker. | should |
 | FR-039 | THE workspace lint table (`[workspace.lints.clippy]` in `Cargo.toml`) SHALL set `allow_attributes_without_reason = "warn"`, which `lint:clippy` and `lint:clippy-windows` (run with `-D warnings`) turn into a failure, so every `#[allow]` and `#[expect]` carries a `reason`; `#[expect(..., reason)]` is used wherever the lint fires reliably, and `#[allow]` stays only on macro-expanded items and `unsafe_code` items, which the `lint:unsafe-allow` allowlist pins (#698, #715, #727). | must |
+| FR-040 | THE repository SHALL set `build.warnings = "deny"` in `.cargo/config.toml` so compiler warnings fail local builds as `-D warnings` does in CI; `cargo check --config 'build.warnings="warn"'` is the documented work-in-progress escape hatch, and the key needs cargo 1.97 or newer (the MSRV 1.99 satisfies it) (#734). | must |
 
 ## 4. Key entities
 

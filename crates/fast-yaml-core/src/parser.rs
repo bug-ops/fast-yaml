@@ -1022,7 +1022,9 @@ override:
             panic!("expected mapping")
         };
         let host_key = Value::String("host".into());
-        assert_matches!(&ov[&host_key], Value::String(s) if s == "remotehost",
+        assert_matches!(
+            &ov[&host_key],
+            Value::String(s) if s == "remotehost",
             "explicit host should win over merged"
         );
     }
@@ -1507,7 +1509,9 @@ m:
 b: 2\n---\nc: [\n",
         )
         .unwrap_err();
-        assert_matches!(&scanner, ParseError::Syntax(e) if e.document().get() == 2,
+        assert_matches!(
+            &scanner,
+            ParseError::Syntax(e) if e.document().get() == 2,
             "{scanner:?}"
         );
         assert_eq!(scanner.document_index().get(), 2);
@@ -1519,7 +1523,9 @@ b: 2\n---\nc: [\n",
         let err =
             Parser::parse_all_with_limits("a: 1\n---\nb: 2\n---\nc: {d: {e: {f: 1}}}\n", &limits)
                 .unwrap_err();
-        assert_matches!(err, ParseError::LimitExceeded { document, .. } if document.get() == 2,
+        assert_matches!(
+            err,
+            ParseError::LimitExceeded { document, .. } if document.get() == 2,
             "{err:?}"
         );
     }
@@ -1566,7 +1572,9 @@ b: 2\n---\nc: [\n",
     #[test]
     fn test_stale_alias_error_reports_its_document() {
         let err = Parser::parse_all("a: &x 1\n---\nb: *x\n").unwrap_err();
-        assert_matches!(&err, ParseError::Syntax(e) if e.document().get() == 1,
+        assert_matches!(
+            &err,
+            ParseError::Syntax(e) if e.document().get() == 1,
             "{err:?}"
         );
     }
@@ -1809,7 +1817,9 @@ m:
     #[test]
     fn test_quoted_large_integer_stays_string() {
         let v = get_mapping_val("x: \"9223372036854775808\"", "x");
-        assert_matches!(v, Value::String(ref s) if s == "9223372036854775808",
+        assert_matches!(
+            v,
+            Value::String(ref s) if s == "9223372036854775808",
             "got {v:?}"
         );
     }
@@ -1832,7 +1842,9 @@ m:
     #[test]
     fn test_tagged_str_large_integer_is_string() {
         let v = get_mapping_val("x: !!str 9223372036854775808", "x");
-        assert_matches!(v, Value::String(ref s) if s == "9223372036854775808",
+        assert_matches!(
+            v,
+            Value::String(ref s) if s == "9223372036854775808",
             "got {v:?}"
         );
     }
@@ -1977,7 +1989,9 @@ m:
             };
             let entries: Vec<_> = map.iter().collect();
             assert_eq!(entries.len(), 2, "{input:?}: {entries:?}");
-            assert_matches!(entries[1].0, Value::String(s) if s == "b",
+            assert_matches!(
+                entries[1].0,
+                Value::String(s) if s == "b",
                 "{input:?}: {entries:?}"
             );
             assert_eq!(entries[1].1, &Value::Int(2), "{input:?}");
@@ -2176,7 +2190,9 @@ m:
     #[test]
     fn test_non_specific_tag_plain_integer_is_string() {
         let v = get_mapping_val("x: ! 99", "x");
-        assert_matches!(v, Value::String(ref s) if s == "99",
+        assert_matches!(
+            v,
+            Value::String(ref s) if s == "99",
             "! 99 should be String(\"99\"), got {v:?}"
         );
     }
@@ -2184,7 +2200,9 @@ m:
     #[test]
     fn test_non_specific_tag_quoted_is_string() {
         let v = get_mapping_val("x: ! \"99\"", "x");
-        assert_matches!(v, Value::String(ref s) if s == "99",
+        assert_matches!(
+            v,
+            Value::String(ref s) if s == "99",
             "! \"99\" should be String(\"99\"), got {v:?}"
         );
     }
@@ -2192,7 +2210,9 @@ m:
     #[test]
     fn test_non_specific_tag_true_is_string() {
         let v = get_mapping_val("x: ! true", "x");
-        assert_matches!(v, Value::String(ref s) if s == "true",
+        assert_matches!(
+            v,
+            Value::String(ref s) if s == "true",
             "! true should be String(\"true\"), got {v:?}"
         );
     }
@@ -2200,7 +2220,9 @@ m:
     #[test]
     fn test_non_specific_tag_null_keyword_is_string() {
         let v = get_mapping_val("x: ! null", "x");
-        assert_matches!(v, Value::String(ref s) if s == "null",
+        assert_matches!(
+            v,
+            Value::String(ref s) if s == "null",
             "! null should be String(\"null\"), got {v:?}"
         );
     }
@@ -2209,7 +2231,9 @@ m:
     fn test_non_specific_tag_empty_is_string_not_null() {
         // `! ''` must be String(""), NOT Null. Order of branches is load-bearing.
         let v = get_mapping_val("x: ! ''", "x");
-        assert_matches!(v, Value::String(ref s) if s.is_empty(),
+        assert_matches!(
+            v,
+            Value::String(ref s) if s.is_empty(),
             "! '' should be String(\"\") not Null, got {v:?}"
         );
     }
